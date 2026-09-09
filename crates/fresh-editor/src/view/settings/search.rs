@@ -128,8 +128,8 @@ fn search_composite_control(
     query_lower: &str,
 ) {
     match &item.control {
-        SettingControl::Map(map_state) => {
-            for (entry_idx, (key, value)) in map_state.entries.iter().enumerate() {
+        SettingControl::Map { entries, .. } => {
+            for (entry_idx, (key, value)) in entries.iter().enumerate() {
                 // Match on map key
                 let (key_score, key_matches) = fuzzy_match(&key.to_lowercase(), query_lower);
                 if key_score > 0 {
@@ -166,8 +166,8 @@ fn search_composite_control(
                 );
             }
         }
-        SettingControl::TextList(list_state) => {
-            for (list_idx, text) in list_state.items.iter().enumerate() {
+        SettingControl::TextList { items, .. } => {
+            for (list_idx, text) in items.iter().enumerate() {
                 let (score, matches) = fuzzy_match(&text.to_lowercase(), query_lower);
                 if score > 0 {
                     results.push(SearchResult {
@@ -365,7 +365,6 @@ pub fn matching_categories(pages: &[SettingsPage], query: &str) -> Vec<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::view::controls::ToggleState;
     use crate::view::settings::items::{ItemBoxStyle, SettingControl};
 
     fn make_item(name: &str, description: Option<&str>, path: &str) -> SettingItem {
@@ -373,7 +372,11 @@ mod tests {
             path: path.to_string(),
             name: name.to_string(),
             description: description.map(String::from),
-            control: SettingControl::Toggle(ToggleState::new(false, name)),
+            control: SettingControl::Toggle {
+                label: name.to_string(),
+                checked: false,
+                inherited: false,
+            },
             default: None,
             modified: false,
             layer_source: crate::config_io::ConfigLayer::System,
@@ -530,14 +533,17 @@ mod tests {
         path: &str,
         entries: Vec<(String, serde_json::Value)>,
     ) -> SettingItem {
-        use crate::view::controls::MapState;
-        let mut map_state = MapState::new(name);
-        map_state.entries = entries;
         SettingItem {
             path: path.to_string(),
             name: name.to_string(),
             description: None,
-            control: SettingControl::Map(map_state),
+            control: SettingControl::Map {
+                label: name.to_string(),
+                entries,
+                value_schema: None,
+                display_field: None,
+                no_add: false,
+            },
             default: None,
             modified: false,
             layer_source: crate::config_io::ConfigLayer::System,
@@ -553,14 +559,15 @@ mod tests {
     }
 
     fn make_text_list_item(name: &str, path: &str, items: Vec<String>) -> SettingItem {
-        use crate::view::controls::TextListState;
-        let mut list_state = TextListState::new(name);
-        list_state.items = items;
         SettingItem {
             path: path.to_string(),
             name: name.to_string(),
             description: None,
-            control: SettingControl::TextList(list_state),
+            control: SettingControl::TextList {
+                label: name.to_string(),
+                items,
+                integer: false,
+            },
             default: None,
             modified: false,
             layer_source: crate::config_io::ConfigLayer::System,

@@ -80,12 +80,14 @@ fn test_switch_project_shows_folder_browser() {
         .unwrap();
 
     // Wait for folder browser to appear with directory contents loaded
-    // On Windows, async directory loading may take longer
+    // On Windows, async directory loading may take longer. The input row
+    // carries the prompt's own label — "Switch project: ", not the
+    // "Open file: " it used to hardcode for every browser mode.
     harness
         .wait_until(|h| {
             let screen = h.screen_to_string();
             screen.contains("Navigation:")
-                && screen.contains("Open")
+                && screen.contains("Switch project")
                 && (screen.contains("subdir1") || screen.contains("subdir2"))
         })
         .expect("Folder browser should appear with directories listed");

@@ -1,0 +1,56 @@
+%YAML 1.2
+---
+name: Doxygen
+file_extensions:
+  - dox
+  - doxy
+scope: text.doxygen
+
+contexts:
+  main:
+    - include: comments
+    - include: commands
+    - include: markdown
+
+  comments:
+    - match: '/\*\*?'
+      scope: punctuation.definition.comment.begin.doxygen
+      push:
+        - meta_scope: comment.block.documentation.doxygen
+        - include: commands
+        - include: markdown
+        - match: '\*/'
+          scope: punctuation.definition.comment.end.doxygen
+          pop: true
+    - match: '^\s*///?'
+      scope: punctuation.definition.comment.doxygen
+
+  commands:
+    - match: '([@\\])(code|endcode|verbatim|endverbatim|dot|enddot|msc|endmsc|startuml|enduml)\b'
+      captures:
+        1: punctuation.definition.keyword.doxygen
+        2: keyword.control.block.doxygen
+    - match: '([@\\])(brief|details|file|page|mainpage|section|subsection|subsubsection|paragraph|defgroup|addtogroup|ingroup|name|class|struct|namespace|fn|var|typedef|enum|example|author|authors|date|version|since|deprecated|todo|bug|warning|note|attention|remark|remarks|pre|post|invariant|return|returns|retval|param|tparam|exception|throw|throws|see|sa|ref|link|endlink|cite|anchor|image|include|snippet|htmlonly|endhtmlonly|latexonly|endlatexonly)\b'
+      captures:
+        1: punctuation.definition.keyword.doxygen
+        2: keyword.other.documentation.doxygen
+    - match: '([@\\])([A-Za-z_][A-Za-z0-9_]*)'
+      captures:
+        1: punctuation.definition.keyword.doxygen
+        2: support.function.documentation.doxygen
+    - match: '\{(?:@|#)'
+      scope: punctuation.section.group.begin.doxygen
+    - match: '@\}'
+      scope: punctuation.section.group.end.doxygen
+
+  markdown:
+    - match: '^\s*#{1,6}\s+.*$'
+      scope: markup.heading.doxygen
+    - match: '^\s*[-*+]\s+'
+      scope: punctuation.definition.list.doxygen
+    - match: '`[^`]+`'
+      scope: markup.raw.inline.doxygen
+    - match: '\*\*[^*]+\*\*|__[^_]+__'
+      scope: markup.bold.doxygen
+    - match: '\[[^\]]+\]\([^)]+\)'
+      scope: markup.underline.link.doxygen

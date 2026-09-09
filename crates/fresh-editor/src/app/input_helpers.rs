@@ -8,7 +8,7 @@
 //! contain only the central key/action dispatch.
 
 use anyhow::Result as AnyhowResult;
-use rust_i18n::t;
+use fresh_i18n::t;
 
 use crate::input::keybindings::Action;
 use crate::model::event::{BufferId, Event};
@@ -160,7 +160,7 @@ impl Editor {
             })
             .collect();
 
-        self.active_window_mut().prompt = Some(crate::view::prompt::Prompt::with_suggestions(
+        self.set_prompt(crate::view::prompt::Prompt::with_suggestions(
             "Switch to tab: ".to_string(),
             PromptType::SwitchToTab,
             suggestions,
@@ -260,11 +260,13 @@ impl Editor {
             .action_to_events(Action::InsertChar(c))
         {
             if events.len() > 1 {
-                // Multi-cursor: use optimized bulk edit (O(n) instead of O(n²))
+                // Multi-cursor: use optimized bulk edit (O(n) instead of O(n²)).
+                // A cursor-only list — every cursor stepping over an existing
+                // closing delimiter — is applied as one Batch in there rather
+                // than dropped. See `apply_events_as_bulk_edit`.
                 let description = format!("Insert '{}'", c);
-                if let Some(bulk_edit) = self.apply_events_as_bulk_edit(events, description.clone())
-                {
-                    self.active_event_log_mut().append(bulk_edit);
+                if let Some(applied) = self.apply_events_as_bulk_edit(events, description) {
+                    self.active_event_log_mut().append(applied);
                 }
             } else {
                 // Single cursor - apply normally
@@ -318,21 +320,13 @@ impl Editor {
             }
 
             if events.len() > 1 {
-                if has_buffer_mods {
-                    // Multi-cursor buffer edit: use optimized bulk edit (O(n) instead of O(n²))
-                    if let Some(bulk_edit) =
-                        self.apply_events_as_bulk_edit(events.clone(), action_description)
-                    {
-                        self.active_event_log_mut().append(bulk_edit);
-                    }
-                } else {
-                    // Multi-cursor non-buffer operation: use Batch for atomic undo
-                    let batch = Event::Batch {
-                        events: events.clone(),
-                        description: action_description,
-                    };
-                    self.active_event_log_mut().append(batch.clone());
-                    self.apply_event_to_active_buffer(&batch);
+                // Multi-cursor buffer edit: use optimized bulk edit (O(n)
+                // instead of O(n²)). A cursor-only list becomes one Batch for
+                // atomic undo inside the same call.
+                if let Some(applied) =
+                    self.apply_events_as_bulk_edit(events.clone(), action_description)
+                {
+                    self.active_event_log_mut().append(applied);
                 }
 
                 // Track position history for all events

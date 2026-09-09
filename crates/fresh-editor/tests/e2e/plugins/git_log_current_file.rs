@@ -1,11 +1,11 @@
-//! E2E test for the "Git Log (Current File)" command.
+//! E2E test for the "Git Log: Current File" command.
 //!
 //! The command scopes the magit-style log to the focused buffer's file
 //! (`git log -- <file>`), as opposed to the full-repository "Git Log"
 //! command. The test asserts on rendered output only: the focused file's
 //! commits appear, and a commit that touches a *different* file does not.
 
-use crate::common::git_test_helper::{DirGuard, GitTestRepo};
+use crate::common::git_test_helper::GitTestRepo;
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::Config;
@@ -34,8 +34,7 @@ fn git_log_current_file_filters_to_focused_file() {
 
     repo.setup_git_log_plugin();
 
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -56,9 +55,9 @@ fn git_log_current_file_filters_to_focused_file() {
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     harness.wait_for_prompt().unwrap();
-    harness.type_text("Git Log (Current File)").unwrap();
+    harness.type_text("Git Log: Current File").unwrap();
     harness
-        .wait_for_screen_contains("Git Log (Current File)")
+        .wait_for_screen_contains("Git Log: Current File")
         .unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)

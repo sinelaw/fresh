@@ -9,6 +9,15 @@ The search toolbar shows toggle buttons for:
 - **Whole Word** — match complete words only
 - **Regex** — use regular expressions
 
+## Stepping Through Matches
+
+With the search bar open, `F3` jumps to the next match and `Shift+F3` to the
+previous one **without closing the bar**, so the query stays editable and the
+toggles stay reachable. The status bar reports `Match N of M` as you go. The
+same keys work after the bar is closed, continuing from the last search.
+
+`Enter` jumps to the current match and closes the bar; `Esc` cancels.
+
 ## Regex and Capture Groups
 
 When regex mode is enabled, the replacement string supports capture groups: `$1`, `$2`, or `${name}` for named groups. For example, searching for `(\w+): (\w+)` and replacing with `$2: $1` swaps the two words around the colon.

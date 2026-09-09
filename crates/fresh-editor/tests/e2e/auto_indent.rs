@@ -1,3 +1,4 @@
+use crate::common::global_state::pin_config_globals;
 use crate::common::harness::{EditorTestHarness, HarnessOptions};
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::{Config, LanguageConfig};
@@ -175,6 +176,61 @@ fn test_fallback_copies_previous_indent() {
         content.contains("    indented line\n    "),
         "Expected fallback to copy 4-space indent, got: {:?}",
         content
+    );
+}
+
+/// #3165: Enter on the blank last line of a text file does not indent.
+#[test]
+fn test_plain_text_enter_on_blank_last_line_does_not_indent() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.txt");
+    std::fs::write(
+        &file_path,
+        "    line1\n    line2\n        line3\n        line4\n",
+    )
+    .unwrap();
+
+    let mut harness = harness_with_auto_indent();
+    harness.open_file(&file_path).unwrap();
+
+    harness
+        .send_key(KeyCode::End, KeyModifiers::CONTROL)
+        .unwrap();
+    harness.assert_screen_contains("Ln 5, Col 1");
+
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.assert_screen_contains("Ln 6, Col 1");
+
+    harness.type_text("x").unwrap();
+    harness.assert_screen_contains("Ln 6, Col 2");
+    // Not `assert_buffer_content`: the harness's shadow string does not
+    // model auto-indent.
+    assert_eq!(
+        harness.get_buffer_content().unwrap(),
+        "    line1\n    line2\n        line3\n        line4\n\nx"
+    );
+
+    // Enter at the end of an indented line, then at the end of the
+    // inserted whitespace, keeps the indent: the rule is the cursor's column.
+    harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness.assert_screen_contains("Ln 4, Col 14");
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.assert_screen_contains("Ln 5, Col 9");
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.assert_screen_contains("Ln 6, Col 9");
+    harness.type_text("y").unwrap();
+    harness.assert_screen_contains("Ln 6, Col 10");
+    assert_eq!(
+        harness.get_buffer_content().unwrap(),
+        "    line1\n    line2\n        line3\n        line4\n        \n        y\n\nx"
     );
 }
 
@@ -2136,14 +2192,28 @@ fn test_dart_auto_dedent_closing_brace_top_level() {
 /// entries registered from JSON. Mirrors production config loading: the
 /// languages flow through `reload_indent_overrides`, so any `indent` block is
 /// registered under its config id — exactly the path #2314 exercises.
-fn harness_with_languages(languages: &[(&str, &str)]) -> EditorTestHarness {
+///
+/// Returns the harness paired with the config-globals pin, which the caller
+/// must hold for the rest of the test. `reload_indent_overrides` *clears*
+/// the process-global `indent_rules::USER_RULES` before registering its own
+/// config's blocks, and every harness construction runs it — so under
+/// `cargo test`, where the binary's tests share a process, any unrelated
+/// test building an editor between this call and the keystroke under test
+/// deletes the rule being tested. What the assertion then sees is a line
+/// that merely copied the previous indent: the exact failure #2314 is about,
+/// arriving for a reason that has nothing to do with the fix. The pin keeps
+/// other constructions out for the duration; see `common::global_state`.
+fn harness_with_languages(languages: &[(&str, &str)]) -> (EditorTestHarness, impl Drop) {
+    let pin = pin_config_globals();
     let mut config = Config::default();
     config.editor.auto_indent = true;
     for (id, json) in languages {
         let lang: LanguageConfig = serde_json::from_str(json).expect("valid LanguageConfig JSON");
         config.languages.insert((*id).to_string(), lang);
     }
-    EditorTestHarness::create(80, 24, HarnessOptions::new().with_config(config)).unwrap()
+    let harness = EditorTestHarness::create(80, 24, HarnessOptions::new().with_config(config))
+        .expect("build harness with config languages");
+    (harness, pin)
 }
 
 /// Regression for #2314: a user-defined language's `increase_indent_pattern`
@@ -2160,7 +2230,7 @@ fn test_config_increase_indent_pattern_applies() {
     // rule, never Fresh's built-in bracket/colon heuristics.
     std::fs::write(&file_path, "foo OPEN").unwrap();
 
-    let mut harness = harness_with_languages(&[(
+    let (mut harness, _pin) = harness_with_languages(&[(
         "incend",
         r#"{"extensions":["t1"],"tab_size":4,"use_tabs":false,"indent":{"increase_indent_pattern":"OPEN\\s*$"}}"#,
     )]);
@@ -2195,7 +2265,7 @@ fn test_config_indent_next_line_pattern_applies() {
     let file_path = temp_dir.path().join("test.t4");
     std::fs::write(&file_path, "HDR thing").unwrap();
 
-    let mut harness = harness_with_languages(&[(
+    let (mut harness, _pin) = harness_with_languages(&[(
         "indnext",
         r#"{"extensions":["t4"],"tab_size":4,"use_tabs":false,"indent":{"indent_next_line_pattern":"^\\s*HDR\\b"}}"#,
     )]);

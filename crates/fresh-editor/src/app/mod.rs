@@ -1,21 +1,26 @@
+mod action_dispatch;
 mod action_events;
 mod active_focus;
+mod agent_scripts;
 mod async_dispatch;
 mod async_messages;
 mod bookmark_actions;
 mod bookmarks;
+pub mod buffer_capabilities;
 mod buffer_close;
 mod buffer_config_resolve;
 mod buffer_groups;
 mod buffer_management;
 mod calibration_actions;
 pub mod calibration_wizard;
-mod click_geometry;
+pub(crate) mod chrome;
+pub(crate) mod click_geometry;
 mod click_handlers;
 mod clipboard;
 mod composite_buffer_actions;
 mod dabbrev_actions;
 mod diagnostic_jumps;
+pub(crate) mod diff_baselines;
 mod editor_accessors;
 mod editor_init;
 mod event_apply;
@@ -57,6 +62,10 @@ mod path_utils;
 mod plugin_commands;
 #[cfg(feature = "plugins")]
 mod plugin_dispatch;
+#[cfg(feature = "plugins")]
+mod plugin_offloop;
+#[cfg(feature = "plugins")]
+pub(crate) mod plugin_timers;
 mod popup_actions;
 mod popup_dialogs;
 mod popup_overlay_actions;
@@ -67,6 +76,7 @@ mod regex_replace;
 pub(crate) mod render;
 mod scan_orchestrators;
 mod scroll_sync;
+mod scrollbar_facts;
 mod scrollbar_input;
 mod scrollbar_math;
 mod search_ops;
@@ -74,6 +84,9 @@ mod search_scan;
 mod settings_actions;
 mod settings_prompts;
 mod shell_command;
+pub(crate) mod shell_host;
+pub(crate) mod shell_style;
+pub(crate) mod sidebar;
 mod smart_home;
 mod split_actions;
 mod stdin_stream;
@@ -85,8 +98,10 @@ mod terminal_link;
 mod terminal_mouse;
 mod text_ops;
 mod theme_inspect;
+pub use theme_inspect::CellsProvenance;
 mod toggle_actions;
 pub mod types;
+mod ui_tree_dump;
 mod undo_actions;
 mod view_actions;
 mod virtual_buffers;
@@ -98,7 +113,7 @@ pub mod window_resources;
 pub mod workspace;
 
 use anyhow::Result as AnyhowResult;
-use rust_i18n::t;
+use fresh_i18n::t;
 
 /// Shared per-tick housekeeping: process async messages, check timers, auto-save, etc.
 /// Returns true if a render is needed. The `clear_terminal` callback handles full-redraw
@@ -120,7 +135,7 @@ pub fn editor_tick(
 
     let async_messages = {
         let _s = tracing::info_span!("process_async_messages").entered();
-        editor.process_async_messages()
+        editor.process_async_messages_budgeted()
     };
     if async_messages {
         needs_render = true;
@@ -139,6 +154,14 @@ pub fn editor_tick(
     }
     if editor.process_line_scan() {
         needs_render = true;
+    }
+    // Repair any LSP document whose change stream was broken while its server
+    // was not draining commands, so diagnostics recover without needing the
+    // user to type again (#3038).
+    for window in editor.windows.values_mut() {
+        if window.resync_desynced_lsp_documents() {
+            needs_render = true;
+        }
     }
     let search_scan = {
         let _s = tracing::info_span!("process_search_scan").entered();
@@ -167,6 +190,14 @@ pub fn editor_tick(
         needs_render = true;
     }
     if editor.check_completion_trigger_timer() {
+        needs_render = true;
+    }
+    // Plugin `setInterval` / `setTimeout` fires from the tick rather than
+    // from a promise chain the plugin has to keep alive itself, so a throw in
+    // one handler costs one tick instead of ending the schedule, and unload
+    // can cancel it.
+    #[cfg(feature = "plugins")]
+    if editor.check_plugin_timers() {
         needs_render = true;
     }
     editor.active_window_mut().check_diagnostic_pull_timer();
@@ -198,8 +229,7 @@ pub(crate) use path_utils::{
 };
 
 use self::types::{
-    LspMenuItem, LspMessageEntry, LspProgressInfo, SearchState, TabContextMenu,
-    DEFAULT_BACKGROUND_FILE,
+    LspMenuItem, LspMessageEntry, LspProgressInfo, SearchState, DEFAULT_BACKGROUND_FILE,
 };
 use crate::config::Config;
 use crate::config_io::DirectoryContext;
@@ -210,7 +240,7 @@ use crate::input::quick_open::{
     BufferProvider, CommandProvider, FileProvider, GotoLineProvider, QuickOpenRegistry,
 };
 use crate::model::cursor::Cursors;
-use crate::model::event::{Event, EventLog, LeafId, SplitDirection};
+use crate::model::event::{Event, EventLog, LeafId};
 use crate::model::filesystem::FileSystem;
 use crate::services::async_bridge::AsyncBridge;
 use crate::services::fs::FsManager;
@@ -222,15 +252,8 @@ use crate::types::{LspLanguageConfig, LspServerConfig};
 use crate::view::file_tree::{FileTree, FileTreeView};
 use crate::view::prompt::PromptType;
 use crate::view::split::{SplitManager, SplitViewState};
-use crate::view::ui::{
-    ExplorerDecorations, FileExplorerRenderer, SplitRenderer, StatusBarRenderer,
-    SuggestionsRenderer,
-};
 use crossterm::event::{KeyCode, KeyModifiers};
-use ratatui::{
-    layout::{Constraint, Direction, Layout},
-    Frame,
-};
+use ratatui::Frame;
 use std::collections::HashMap;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
@@ -270,6 +293,27 @@ pub struct PendingGrammar {
     pub grammar_path: String,
     /// File extensions to associate with this grammar
     pub extensions: Vec<String>,
+}
+
+/// What a still-being-built workspace shows in place of its contents.
+///
+/// See [`Editor::preparing_windows`]. The window is real; this is only
+/// the copy on its placeholder page, so the plugin driving the build can
+/// narrate it ("Adding worktree…", then "Starting agent…") without the
+/// host knowing anything about worktrees.
+#[derive(Clone, Debug)]
+pub struct PreparingWindow {
+    /// Progress line under the workspace name, e.g. `Adding worktree…`.
+    pub message: String,
+    /// Name to show on the page, when it should differ from the window's
+    /// own label — the Orchestrator's resolved display name, so renaming a
+    /// workspace mid-build renames the page too. Empty falls back to the
+    /// window label.
+    pub label: String,
+    /// The build failed and `message` is the reason. Renders in the error
+    /// colour with a retry hint instead of the "any moment now" one — the
+    /// same distinction a disconnected remote session draws.
+    pub failed: bool,
 }
 
 /// Track an in-flight semantic token range request.
@@ -352,8 +396,85 @@ pub(crate) struct GotoLinePreviewSnapshot {
     pub last_jump_position: usize,
 }
 
+/// How long the editor thread may spend dispatching plugin commands in one
+/// tick. This is a pathology guard, not a frame pacer: a normal burst — a
+/// plugin load, a large file firing hooks, a hundred queued commands —
+/// should clear in one or two passes rather than being spread over many
+/// frames, so the limit sits at the same order as the per-handler watchdog
+/// (50ms). Only a genuinely pathological flood gets deferred, in arrival
+/// order, at one budget per frame.
+#[cfg(feature = "plugins")]
+pub(crate) const PLUGIN_COMMAND_FRAME_BUDGET: std::time::Duration =
+    std::time::Duration::from_millis(50);
+
+/// Minimum dispatches per drain pass, regardless of the deadline. Without a
+/// floor, one dispatch costing more than the whole budget collapses the
+/// drain to a single item per frame — a startup batch then trickles for
+/// seconds and sustained load can outgrow the backlog. Eight items bounds
+/// the extra frame cost at eight times the worst handler, which the 50ms
+/// watchdog keeps honest.
+pub(crate) const DRAIN_MIN_PER_PASS: usize = 8;
+
+/// A single plugin command handler taking longer than this on the editor
+/// thread is over budget: the work belongs in `plugin_offloop`. Logged at
+/// DEBUG naming the offending variant — a handler can cross 50ms on a loaded
+/// machine or a cold cache without anything being wrong, so this is a lead to
+/// follow when profiling, not a complaint aimed at the user. See
+/// `dispatch_plugin_command_measured` for why an overrun is a diagnostic
+/// rather than a failure, and which test does fail.
+#[cfg(feature = "plugins")]
+pub(crate) const PLUGIN_COMMAND_HANDLER_LIMIT: std::time::Duration =
+    std::time::Duration::from_millis(50);
+
+/// An overrun this far past `PLUGIN_COMMAND_HANDLER_LIMIT` is a visible stall
+/// — ten frames' worth of editor thread — and no amount of machine noise
+/// explains it. Logged at WARN, so the noisy-but-harmless case stays at DEBUG
+/// while the genuinely broken handler still gets named by default.
+#[cfg(feature = "plugins")]
+pub(crate) const PLUGIN_COMMAND_HANDLER_HARD_LIMIT: std::time::Duration =
+    std::time::Duration::from_millis(500);
+
+/// Counters for work whose cost must not grow with a buffer's content.
+///
+/// A frame and a tick are supposed to cost what is on screen, not what is
+/// in the buffer. That contract had no way to fail: the per-tick copy of
+/// every text property of every buffer went unnoticed until it was timed
+/// by hand, on a review diff carrying a property per line. Timings can't
+/// hold the line in CI — they vary with machine and build profile — but
+/// these counters are exact, so a test can assert the shape directly (see
+/// `plugin_snapshot_scaling`).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PerfCounters {
+    /// Buffers whose text-property set was shared into the plugin state
+    /// snapshot — one refcount bump each, so this tracks the number of
+    /// buffers and never their contents.
+    pub text_property_shares: u64,
+    /// Text properties *copied* into the snapshot. Zero by construction:
+    /// the snapshot holds shared handles. A copy reappearing here is the
+    /// per-tick cost returning, which is what `plugin_snapshot_scaling`
+    /// watches for.
+    pub text_properties_copied: u64,
+    /// Rows shipped into a plugin's panel by `SetPanelContent`. Laying
+    /// out a big panel — a review diff of a hundred commits, say — costs
+    /// about a second, and the panel it lands in is already on screen, so
+    /// a needless one is a visible stale-then-jump rather than invisible
+    /// waste. Counted in rows rather than calls because that is what
+    /// separates re-emitting a whole diff stream from repainting the
+    /// one-row sticky header above it.
+    ///
+    /// A row is a line of the entries' text, not an entry: an entry can
+    /// carry one row or a whole file's diff (the review stream ships
+    /// git's output verbatim, in blocks), and it is the rows that cost.
+    pub panel_content_rows: u64,
+}
+
 /// The main editor struct - manages multiple buffers, clipboard, and rendering
 pub struct Editor {
+    /// See [`PerfCounters`]. Cheap to maintain (two increments on a path
+    /// that is already copying), and the only way an assertion can tell a
+    /// per-tick copy from a per-change one.
+    pub(crate) perf_counters: PerfCounters,
+
     // Buffers moved onto `Window` (Step 0c). Each window owns its
     // own buffer storage; opening the same file in two windows
     // produces two independent buffers. Access through
@@ -492,7 +613,6 @@ pub struct Editor {
 
     /// Scroll offset (in rows) for the workspace-trust dialog when it's too
     /// tall for the terminal. Driven by the mouse wheel; clamped in render.
-    workspace_trust_scroll: u16,
 
     /// Should the client detach (keep server running)?
     should_detach: bool,
@@ -503,8 +623,16 @@ pub struct Editor {
     /// Backend does not render a hardware cursor — always use software cursor indicators.
     software_cursor_only: bool,
 
-    /// Session name for display in status bar (session mode only)
+    /// Name of the *named* daemon whose persistence scope this editor uses
+    /// (`fresh --cmd daemon new NAME`). `None` in direct mode and for an
+    /// unnamed working-directory daemon, which shares the directory's
+    /// workspaces and recovery with a direct-mode run. Not a display field —
+    /// see `session_display_name`.
     session_name: Option<String>,
+
+    /// Status-bar label for a daemon-backed editor: the daemon's name, or the
+    /// working directory for an unnamed one. Cosmetic only.
+    session_display_name: Option<String>,
 
     /// Pending escape sequences to send to client (session mode only)
     /// These get prepended to the next render output
@@ -737,6 +865,14 @@ pub struct Editor {
     /// `materialize_window`.
     pub(crate) materialize_pending: std::collections::HashSet<fresh_core::WindowId>,
 
+    /// Whether workspace files (`workspaces/*.json`) may be written at all;
+    /// `false` under `--no-restore`. Quit-time saves and mid-session
+    /// checkpoints must be suppressed together — a checkpoint that ignored
+    /// the flag persisted the source workspace while the co-tenant extracted
+    /// out of it was never written, silently dropping it (#2735). Enforced
+    /// in [`Editor::save_workspace_for`].
+    pub(crate) workspace_persistence_enabled: bool,
+
     /// Persisted **remote** sessions (SSH / kube) discovered at boot but not
     /// yet connected — there is deliberately **no `Window`** for them, because a
     /// `Window` must always own its session's *real* authority and a remote
@@ -753,6 +889,23 @@ pub struct Editor {
         fresh_core::WindowId,
         crate::app::orchestrator_persistence::PersistedWindow,
     >,
+
+    /// Windows whose *contents* are still being built — the Orchestrator's
+    /// "create a workspace" flow, where the `git worktree add` behind a new
+    /// workspace can run for a long time on a big repo or a slow disk.
+    ///
+    /// The window itself is entirely real from the moment the user asks for
+    /// it: a `Window` with its own id, durable `stable_id`, label, and local
+    /// authority, so it can be focused, renamed, filed into a folder,
+    /// archived, or closed exactly like any other workspace. Only what it
+    /// *shows* differs — [`Editor::render_preparing_shell_page`] paints the
+    /// progress line here instead of an empty scratch buffer, the same shape
+    /// a not-yet-connected remote session shows.
+    ///
+    /// The entry is dropped when the workspace's terminal is finally seeded
+    /// into it (via `create_window_with_terminal`'s adopt path), at which
+    /// point the window renders as the ordinary session it has become.
+    pub(crate) preparing_windows: std::collections::HashMap<fresh_core::WindowId, PreparingWindow>,
 
     /// Monotonic counter for the next session id. The base session
     /// uses 1; new sessions take 2, 3, …. Closing a session does
@@ -872,6 +1025,14 @@ pub struct Editor {
     /// `last_register`, and the `playing` guard flag).
     // `macros` moved onto `Window`.
 
+    /// Clickable lines per buffer, from `editor.setLineTargets`.
+    ///
+    /// Editor-owned rather than plugin-owned so a view outlives the script
+    /// that built it: a one-shot agent can leave behind an index whose lines
+    /// still open their targets long after it has exited.
+    #[cfg(feature = "plugins")]
+    line_targets: std::collections::HashMap<fresh_core::BufferId, Vec<fresh_core::api::LineTarget>>,
+
     /// Pending plugin action receivers (for async action execution)
     #[cfg(feature = "plugins")]
     pending_plugin_actions: Vec<(
@@ -882,6 +1043,52 @@ pub struct Editor {
     /// Flag set by plugin commands that need a render (e.g., RefreshLines)
     #[cfg(feature = "plugins")]
     plugin_render_requested: bool,
+    /// A frame is owed: the last frame's reconcile moved a viewport under
+    /// the rectangle layout gave it (a resize), so what was described from
+    /// the viewport before the move — a scrollbar's thumb — is a frame
+    /// behind what was painted. Taken by the main loop's tick.
+    pub(crate) frame_requested: bool,
+
+    /// Clone of the buffer as it stood at the end of the previous render
+    /// pass. Ratatui's `swap_buffers` resets the "current" buffer, so at
+    /// the start of the next draw `frame.buffer_mut()` is blank rather
+    /// than the previous frame; animations need what the user actually
+    /// saw. Editor-wide, not per-window: only the active window paints,
+    /// so a per-window copy would go stale the moment focus moved, and
+    /// cross-window transitions read it from the *incoming* window.
+    last_rendered_frame: Option<ratatui::buffer::Buffer>,
+
+    /// Plugin commands the frame budget deferred, in arrival order. Drained
+    /// ahead of the plugin channel on the next tick so a burst is spread
+    /// across frames without reordering.
+    #[cfg(feature = "plugins")]
+    plugin_command_backlog: std::collections::VecDeque<fresh_core::api::PluginCommand>,
+
+    /// Cancellation flag for the in-flight `grepProject`, if any. A new
+    /// request supersedes the old one rather than queueing behind it.
+    #[cfg(feature = "plugins")]
+    grep_project_cancel: std::collections::HashMap<String, Arc<std::sync::atomic::AtomicBool>>,
+
+    /// Live `editor.setInterval` / `setTimeout` timers, checked once per
+    /// tick by `check_plugin_timers`. Held on the editor rather than in the
+    /// plugin runtime on purpose: the editor's tick is what runs whether or
+    /// not any JS is awaiting, which is the property that makes a timer fire
+    /// the same way regardless of where it was created.
+    #[cfg(feature = "plugins")]
+    plugin_timers: Vec<crate::app::plugin_timers::PluginTimer>,
+
+    /// Registered diff baselines (registerDiffBaseline plugin API family).
+    /// Shared with off-loop loader tasks; see `app/diff_baselines.rs`.
+    #[cfg(feature = "plugins")]
+    diff_baselines: crate::app::diff_baselines::BaselineStore,
+
+    /// Next baseline id to allocate (editor thread only).
+    #[cfg(feature = "plugins")]
+    next_diff_baseline_id: u64,
+
+    /// Async messages the frame budget deferred, in arrival order. Drained
+    /// ahead of the bridges on the next tick.
+    async_message_backlog: std::collections::VecDeque<crate::services::async_bridge::AsyncMessage>,
 
     /// Pending chord sequence for multi-key bindings (e.g., C-x C-s in Emacs)
     /// Stores the keys pressed so far in a chord sequence
@@ -904,9 +1111,6 @@ pub struct Editor {
     // `file_mod_times`.
     /// File open dialog state (when PromptType::OpenFile is active)
     // `file_open_state` moved onto `Window`.
-
-    /// Cached layout for file browser (for mouse hit testing)
-    // `file_browser_layout` moved onto `Window`.
 
     /// Recovery service for auto-recovery-save and crash recovery.
     /// `Arc<Mutex>` because it is shared into every `Window` via
@@ -935,6 +1139,114 @@ pub struct Editor {
     /// hide. The TUI/GUI leave it `false` and draw chrome to cells as before.
     /// See docs/internal/web-ui.md.
     pub(crate) suppress_chrome_cells: bool,
+    /// The status bar's elements for the frame being rendered.
+    ///
+    /// Kept because reading a rectangle
+    /// back out of the tree needs to know *which* element each key belongs to,
+    /// and that is the description. Set by `shell_frame`; read by the popup
+    /// anchors, the click rail and the web projection — all of which used to
+    /// re-run the placement walk instead.
+    pub(crate) shell_frame_status_bar: Option<crate::view::shell::status_bar::StatusBar>,
+    /// What the pointer is over *in the shell's tree*, as the tree itself
+    /// reported it.
+    ///
+    /// **The** hover target now, read through `Editor::hovered`. It had to be
+    /// its own field while a `mouse_state` one existed beside it, written by
+    /// the legacy hover walk on every motion event: a migrated surface's box
+    /// was deleted, so that walk found nothing there and cleared whatever the
+    /// tree had just set. Two owners, one field.
+    ///
+    /// Two earlier attempts at that were worse. Claiming the `Move` in the
+    /// tree killed the plugin `mouse_move` hook, the terminal-link and LSP
+    /// hover trackers, and any drag whose pointer crossed the migrated row. A
+    /// one-event flag saying "the tree answered" flickered, because `Enter`
+    /// fires once on the way in and says nothing on the motions that follow
+    /// inside the same node.
+    ///
+    /// Separate ownership was the answer, and then the walk went, and with it
+    /// the field it wrote.
+    pub(crate) shell_hover: Option<crate::app::types::HoverTarget>,
+    /// The migration shell's retained tree: elements, focus, and the dirty
+    /// set, surviving across frames.
+    ///
+    /// Held in an `Option` and **moved out for the duration of a frame**. The
+    /// display list is borrowed from the `Ui` while the fold calls back into
+    /// `&mut Editor` for host regions; as a plain field those borrows would
+    /// conflict and the callback could not take the `with_all_mut` split that
+    /// painting a buffer needs. Moving it out makes it a local for the frame,
+    /// which is the same disjointness the library's own tutorial gets by
+    /// keeping `app` and `ui` side by side in `main`.
+    pub(crate) shell_ui: Option<fresh_ui::Ui<crate::view::shell::msg::UiMsg>>,
+
+    /// The shell's description has changed since the tree was last laid out
+    /// from it, and no frame has carried the change yet.
+    ///
+    /// **Input is never routed over a tree older than the facts it routes
+    /// over.** A panel's focus fact, its spec and its model state are read by
+    /// the description, and the tree follows them on the next frame — a
+    /// plugin's `setFocusKey` onto a widget the same write introduced lands on
+    /// the frame that builds it, with nothing held back or replayed. What that
+    /// leaves is the batch: two keys processed with no frame between them,
+    /// the first moving a panel's focus (the dock's `/` to its filter) and the
+    /// second a Tab the tree would resolve from where focus *was*. So a
+    /// dispatch that finds this set lays the tree out first
+    /// (`Editor::lay_out_shell_if_stale`), from the same frame builder
+    /// `render` uses, and only then routes the key.
+    pub(crate) shell_description_stale: bool,
+
+    /// Where the shell tree's `Persisted` values live, and the handle that can
+    /// drop a window's.
+    ///
+    /// The `Ui` holds this too — that is how `Persisted` reaches it — but the
+    /// tree can only ever say "this subtree is not currently shown", which is
+    /// exactly the case where a window's values must be *kept*. Deciding that
+    /// a scope is dead is the host's call and nobody else's, so the editor
+    /// keeps its own handle and calls `forget_scope` when a window closes.
+    /// Without that the map grows for the life of the process, and a later
+    /// window reusing a freed id would inherit the dead one's view state.
+    pub(crate) shell_store: std::rc::Rc<fresh_ui::behavior::MemStore>,
+
+    /// The mouse event currently being routed, and whether it was a double.
+    ///
+    /// Set immediately before the tree is offered the pointer. Its last
+    /// reader is the legacy split walk (`chrome::splits`), which distinguishes
+    /// a drag from a move — which a tree `Event` deliberately cannot, since
+    /// the library routes drags by pointer capture instead. Retires with the
+    /// pane as a host leaf (S7).
+    pub(crate) shell_pointer_event: Option<(crossterm::event::MouseEvent, bool)>,
+    /// The key the tree is being offered, for the same reason and on the same
+    /// terms.
+    ///
+    /// Set immediately before the tree is offered the key, and read only by
+    /// `UiFact::ModalKey`. A modal's interior reads a crossterm `KeyEvent` —
+    /// a larger vocabulary than the tree's `KeyPress`, which has no variant
+    /// for a media key or a modifier-only press — so the tree decides *which
+    /// surface* the key belongs to and the key itself stays here. Retires with
+    /// those interiors.
+    pub(crate) shell_key_event: Option<crossterm::event::KeyEvent>,
+
+    /// The viewport a *page* panel scrolls in, per buffer-mounted panel that
+    /// declared `WidgetPanelOptions::page`. The tree owns the window; this
+    /// is the host's handle on it — `scrollToWidget` and the page's arrow
+    /// keys are commands on it, applied by the layout that measured the
+    /// page (`fresh_ui::behavior::Anchor`).
+    pub(crate) page_anchors:
+        HashMap<crate::widgets::PanelKey, std::rc::Rc<fresh_ui::behavior::Anchor>>,
+
+    /// Where the reader is on a page that asked for `focusFollowsCursor`:
+    /// `(row, column)` in the page's **content**, which is what the tree laid
+    /// out — not a screen cell and not a byte of the mirror.
+    ///
+    /// **A page's reading position is the host's, because a page has no caret
+    /// of its own.** The surface it replaced was a document in a buffer, where
+    /// the buffer's caret was both "where I am reading" and "what Enter acts
+    /// on"; a described page is a tree in one viewport, and its mirror buffer
+    /// neither scrolls nor shows a caret. So the fact moves here, beside the
+    /// window it drives (`Editor::page_anchors`): the movement keys move it,
+    /// focus is resolved from it, and the anchor reveals the row it lands on.
+    ///
+    /// Absent means the top of the page, which is where a page opens.
+    pub(crate) page_reading: HashMap<crate::widgets::PanelKey, (u32, u16)>,
 
     /// Request the event loop to suspend the process (SIGTSTP on Unix).
     /// Consumed by the outer event loop after the current action returns.
@@ -972,6 +1284,20 @@ pub struct Editor {
 
     /// Periodic update checker (checks for new releases every hour)
     update_checker: Option<crate::services::release_checker::PeriodicUpdateChecker>,
+
+    /// Lifecycle of an interactive in-editor self-update, reflected by the
+    /// status-bar update indicator (see `SelfUpdatePhase`).
+    self_update_phase: crate::services::release_checker::SelfUpdatePhase,
+
+    /// The local terminal running an interactive self-update, if one is in
+    /// flight — matched against `TerminalExited` to move the indicator to its
+    /// terminal state. `None` once reaped.
+    self_update_terminal: Option<fresh_core::TerminalId>,
+
+    /// The (window, buffer) of the update terminal, so the indicator can switch
+    /// back to it on click. The update always runs locally, so this is a local
+    /// terminal buffer regardless of the window's authority.
+    self_update_output: Option<(fresh_core::WindowId, fresh_core::BufferId)>,
 
     // Terminal subsystem moved onto `Window` (Step 0d). PTYs and
     // their backing files belong to the window that spawned them, so
@@ -1100,6 +1426,10 @@ pub struct Editor {
     /// cancel the prior one instead of stacking trail effects.
     pub(crate) cursor_jump_animation: Option<crate::view::animation::AnimationId>,
 
+    /// A wheel gesture still playing out, one line at a time. See
+    /// [`PendingWheelScroll`].
+    pub(crate) pending_wheel_scroll: Option<crate::app::mouse_input::PendingWheelScroll>,
+
     /// Deferred plugin animations targeting a virtual buffer whose
     /// on-screen Rect wasn't in the cached split layout at command
     /// dispatch time. Drained at the top of each render pass once
@@ -1115,6 +1445,16 @@ pub struct Editor {
     /// the originating plugin needing to re-emit. See
     /// `docs/internal/plugin-widget-library-design.md`.
     pub(crate) widget_registry: crate::widgets::WidgetRegistry,
+    /// How deep the focus↔caret sync currently is.
+    ///
+    /// A `focusFollowsCursor` panel makes `set_panel_focus_and_notify`
+    /// re-entrant on purpose and exactly once: focusing a widget seats
+    /// the caret on it, and seating the caret re-resolves focus from
+    /// where it landed. The second resolve finds them agreeing and
+    /// stops. This counts the nesting so that "exactly once" is a
+    /// `debug_assert!` rather than a paragraph of prose — see
+    /// `Editor::set_panel_focus_and_notify`.
+    pub(crate) seat_focus_depth: u8,
 
     /// Currently-mounted floating widget panel, if any.
     ///
@@ -1142,6 +1482,32 @@ pub struct Editor {
     pub(crate) dock_width: Option<u16>,
     /// True while the user is dragging the dock's right border to resize.
     pub(crate) dock_resizing: bool,
+    /// The sidebar's sections, top to bottom; section 0 is the explorer.
+    /// Editor-global for the same reason the dock is — see `app::sidebar`.
+    pub(crate) sidebar_sections: Vec<sidebar::SidebarSection>,
+    /// The divider drag in progress, if a section header holds the pointer.
+    pub(crate) sidebar_drag: Option<sidebar::SidebarDrag>,
+    /// In-flight mouse drag-to-select on a widget markdown/text document:
+    /// armed by the press that placed the caret, extended on every Drag,
+    /// cleared on button-up. `anchor_flat` is the press position as a
+    /// flat byte offset into the widget's shadow TextEdit value.
+    pub(crate) widget_text_drag: Option<WidgetTextDrag>,
+    /// Row budget each buffer-mounted widget panel was last rendered
+    /// against, so a panel whose split has since changed size can be
+    /// re-rendered once — and only once — against the new one. Comparing
+    /// against what was *rendered* (rather than against the previous
+    /// frame's viewport) is what keeps that a single repaint instead of a
+    /// per-frame one.
+    pub(crate) widget_panel_render_heights:
+        std::collections::HashMap<crate::widgets::PanelKey, u32>,
+}
+
+/// See [`Editor::widget_text_drag`].
+#[derive(Debug, Clone)]
+pub(crate) struct WidgetTextDrag {
+    pub panel: crate::widgets::PanelKey,
+    pub widget: String,
+    pub anchor_flat: usize,
 }
 
 /// Control plane for a long-running plugin child process.
@@ -1164,6 +1530,20 @@ pub(crate) const FLOATING_PANEL_BUFFER_ID: BufferId = BufferId(usize::MAX);
 /// time. See `Editor::dock` and `PanelSlot`.
 pub(crate) const DOCK_PANEL_BUFFER_ID: BufferId = BufferId(usize::MAX - 1);
 
+/// Sentinel `BufferId` of sidebar section 0's panel slot; section `i`'s is
+/// `SIDEBAR_PANEL_BUFFER_BASE - i`, so every section has its own, below the
+/// two above and above anything a real buffer could be allocated. See
+/// `PanelSlot::Sidebar`.
+pub(crate) const SIDEBAR_PANEL_BUFFER_BASE: BufferId = BufferId(usize::MAX - 2);
+/// How many sidebar sections the sentinel range spans.
+pub(crate) const SIDEBAR_PANEL_BUFFER_SPAN: usize = 256;
+/// The buffer id the overlay prompt's toolbar panel is registered against.
+/// No buffer has it: the toolbar is described in the prompt card's header
+/// band and never had a text projection to write anywhere. Below the sidebar
+/// sections' span, so `slot_for_panel_buffer` answers `None` for it.
+pub(crate) const PROMPT_TOOLBAR_BUFFER_ID: BufferId =
+    BufferId(SIDEBAR_PANEL_BUFFER_BASE.0 - SIDEBAR_PANEL_BUFFER_SPAN - 1);
+
 /// Selects which of the two coexisting widget-panel slots an operation
 /// targets: the centered modal overlay (`Floating`, the picker /
 /// new-session form / plugin modals) or the persistent editor-global
@@ -1172,6 +1552,9 @@ pub(crate) const DOCK_PANEL_BUFFER_ID: BufferId = BufferId(usize::MAX - 1);
 pub(crate) enum PanelSlot {
     Floating,
     Dock,
+    /// A section of the sidebar column, by section index (section 0 is the
+    /// explorer, so a panel's index is at least 1). See `app::sidebar`.
+    Sidebar(usize),
 }
 
 impl PanelSlot {
@@ -1179,6 +1562,7 @@ impl PanelSlot {
         match self {
             PanelSlot::Floating => FLOATING_PANEL_BUFFER_ID,
             PanelSlot::Dock => DOCK_PANEL_BUFFER_ID,
+            PanelSlot::Sidebar(i) => BufferId(SIDEBAR_PANEL_BUFFER_BASE.0 - i),
         }
     }
 }
@@ -1213,6 +1597,11 @@ pub(crate) enum PanelPlacement {
     /// Still input-modal via the `FloatingModal` layer: keys route to it
     /// and a click outside dismisses it.
     Anchored { x: u16, y: u16 },
+    /// A section of the sidebar column under the file explorer, `rows`
+    /// body rows tall as the plugin requested it — the user's drag
+    /// overrides that (`sidebar::SidebarSection::dragged`). Non-modal like
+    /// the dock; see `app::sidebar`.
+    SidebarSection { rows: u16 },
 }
 
 #[derive(Debug, Clone)]
@@ -1229,50 +1618,57 @@ pub(crate) struct FloatingWidgetState {
     /// `FloatingPanelControl{op:"focus"|"blur"}` so the editor
     /// underneath stays keyboard-usable while the dock is visible.
     pub focused: bool,
-    /// Most-recently rendered entries. Refreshed on every spec /
-    /// command / mutate; painted into the overlay rect at draw
-    /// time.
+    /// The plugin mode whose bindings this panel's keys resolve against
+    /// first — the panel's own keymap (`view::shell::panel::Keymap`),
+    /// declared at mount. `None`: the window's editor mode, as before.
+    pub mode: Option<String>,
+    /// The text projection's rows for this panel, refreshed on every spec /
+    /// command / mutate.
+    ///
+    /// **Text, not paint.** They were painted into the overlay rect at draw
+    /// time and hit-tested against; both readers are gone. What is left reads
+    /// them as strings: the anchored popup's width
+    /// (`view::shell::panel::Panel::anchored_width`, which is 2.3's one named
+    /// exception) and the row count a `Host` interior's box is sized by.
     pub entries: Vec<fresh_core::text_property::TextPropertyEntry>,
-    /// Hardware-cursor target when a `TextInput` is focused.
-    pub focus_cursor: Option<crate::widgets::FocusCursor>,
-    /// Window-embed rectangles reserved by `WindowEmbed`
-    /// widgets in the panel's spec. After the entries paint
-    /// down their (blank) cells, the floating panel render
-    /// walks these and invokes the per-window paint path
-    /// scoped to each rect — giving us a live render of the
-    /// referenced editor window inside the floating overlay.
-    pub embeds: Vec<crate::widgets::EmbedRect>,
+    // **`focus_cursor` and `embeds` are gone from here; both were
+    // write-only.**
+    //
+    // The first was the hardware-cursor target for a focused field, the second
+    // the rectangles a `WindowEmbed` reserved so the panel painter could walk
+    // them and invoke the per-window paint scoped to each. Both existed for
+    // that painter, and it is deleted: a caret is a marker node whose cell
+    // layout reports, and an embed is a `Host` leaf handed its own rectangle.
+    //
+    // The runtime still *computes* both — `apply_widget_focus_cursor` uses its
+    // focus cursor to move a pane-mounted panel's buffer cursor, which is
+    // contract a plugin reads through `cursor_moved` — so what went is the
+    // storage on this struct, not the value.
     /// Rows produced by `WidgetSpec::Overlay` children. Painted
-    /// AFTER `entries` and `embeds`, on top of whatever's at
-    /// each `buffer_row`. Used for dropdown completions /
-    /// transient popups that should appear next to a focused
-    /// widget without reflowing the rest of the panel when
-    /// they show or hide.
-    pub overlays: Vec<crate::widgets::OverlayRow>,
-    /// Scrollable `List` widgets that overflowed, with the geometry
-    /// the draw pass uses to paint a scrollbar. Refreshed on every
-    /// render alongside `entries`/`embeds`.
-    pub scroll_regions: Vec<crate::widgets::ScrollRegion>,
-    /// Screen-space scrollbar tracks computed at the last draw — used
-    /// by the mouse hit-test to start/continue a scrollbar drag. One
-    /// per overflowing list.
-    pub scrollbar_tracks: Vec<WidgetScrollbarTrack>,
-    /// Shared press/drag/release state for the panel's list
-    /// scrollbars (the canonical `ScrollbarMouse`).
-    pub scrollbar_mouse: crate::view::ui::scrollbar::ScrollbarMouse,
-    /// `list_key` of the scrollbar currently being drag-scrolled.
-    pub scrollbar_drag_key: Option<String>,
-    /// Inner rect (frame interior) of the last draw — used by the
-    /// click hit-test to map terminal coords back to buffer coords.
-    pub last_inner_rect: Option<ratatui::layout::Rect>,
-    /// Screen-space regions (one per overflowing list) over which the
-    /// pointer reveals that list's overlay scrollbar. Refreshed every
-    /// draw alongside `scrollbar_tracks`; empty when no list overflows.
-    /// Only the dock populates this — its scrollbars are hover-revealed.
-    pub scrollbar_hover_zones: Vec<ratatui::layout::Rect>,
-    /// Whether the pointer was last seen inside a `scrollbar_hover_zone`.
-    /// Memoised so the mouse-move handler only forces a re-render on the
-    /// enter/leave transition rather than on every motion event.
+    // **The overlay rows, the box arena and the scrollbar state are gone from
+    // here, and they went with the last thing that read them (S7).** The rows
+    // and the arena were the panel's *second* layout — where each row's text
+    // ended up and which box covered which cell — kept so a screen cell could
+    // be turned back into a widget. The tree answers that now: a described
+    // panel's widgets are nodes with their own rectangles, and the probe that
+    // scanned these was unreachable on every path (its chain is in
+    // `view::shell::msg::UiFact::DockFocus`). The scrollbar tracks and the
+    // press/drag state went the same way one step earlier: the interior
+    // painter that recorded a track was deleted in 2.4, so nothing could arm
+    // a drag, and a described list's bar is its viewport's.
+    //
+    // `entries` stays because it is still read as *text*, and one measurement
+    // of it survives: an anchored popup's width (`view::shell::panel::
+    // Panel::anchored_width`).
+    /// Whether the pointer is over the dock's column.
+    ///
+    /// **The tree says so** (`UiFact::DockHover`), because the column is a
+    /// node and a node knows when the pointer crosses its edge. What this
+    /// replaced was a list of screen-space rectangles the painter's scrollbar
+    /// pass recorded every draw, which a mouse arm then tested every motion
+    /// event against — so the reveal worked only while there was a painter to
+    /// record them, and stopped when the dock's interior became a
+    /// description.
     pub scrollbar_zone_hovered: bool,
     /// Deadline until which the dock's overlay scrollbar is "flashed"
     /// visible after a keyboard selection move (Up/Down/Page in the dock
@@ -1314,57 +1710,50 @@ pub(crate) struct FloatingWidgetState {
     /// `dismiss_floating_panel_with_cancel`). Opt-in at mount
     /// (`MountFloatingWidget.closable`); `false` draws no button.
     pub closable: bool,
-    /// Screen rect of the `[×]` close button, recomputed on every draw
-    /// (like `last_inner_rect`) so the mouse hit-test can map a press back
-    /// to the dismiss action, and the web projection can ship it for a
-    /// native close control. Populated even under `suppress_chrome_cells`
-    /// (web mode) since geometry is computed there without painting cells.
-    /// `None` when the panel isn't a closable `Centered` modal.
-    pub close_button_rect: Option<ratatui::layout::Rect>,
-    /// The open `Dropdown`'s option list, surfaced by the widget renderer
-    /// for a screen-level floating pop-over (drawn by
-    /// `render_floating_widget_panel` at the trigger's screen row, clipped
-    /// to the terminal so it extends past the panel/modal frame). `None`
-    /// when no keyed Dropdown in this panel is open. Refreshed on every
-    /// render alongside `entries`.
-    pub dropdown_popup: Option<crate::widgets::DropdownPopup>,
-    /// Screen-space hit rectangles for the open dropdown pop-over's option
-    /// rows, recomputed on every draw (like `close_button_rect`). Each maps
-    /// a terminal rect to the absolute option index; the mouse hit-test
-    /// checks these BEFORE the panel-inner gate so a click on an option
-    /// below the modal border still selects it. Empty when no pop-over is
-    /// drawn.
-    pub dropdown_popup_hits: Vec<DropdownPopupOptionHit>,
-    /// Full screen rect of the drawn dropdown pop-over box (border
-    /// included), so a click anywhere inside it is consumed rather than
-    /// dismissing the modal. `None` when no pop-over is drawn.
-    pub dropdown_popup_rect: Option<ratatui::layout::Rect>,
-}
-
-/// One option row of the open dropdown pop-over, captured at draw time as
-/// a screen rect → absolute option index, so the mouse hit-test can route
-/// a click on the (panel-escaping) pop-over back to `dropdown_select`.
-#[derive(Debug, Clone)]
-pub(crate) struct DropdownPopupOptionHit {
-    pub rect: ratatui::layout::Rect,
-    pub index: usize,
+    /// Widget key the pointer is currently over, tracked from mouse-move
+    /// events against this panel's hit areas. Empty for "nothing hovered".
+    ///
+    /// Feeds `RenderContext::hover_key` on the next render, where widgets
+    /// carrying a `hover_style` compare it against their own key. Only a
+    /// crossing between widgets changes it, so motion inside one control
+    /// costs nothing.
+    pub hovered_widget_key: String,
+    /// Per-row identity of the pointer's target inside a `List` / `Tree`,
+    /// taken from the hovered hit's `key` payload. Empty when the pointer
+    /// is over nothing, or over a widget whose hits carry no row key.
+    ///
+    /// `hovered_widget_key` alone can't light a single row: every row of a
+    /// tree shares the *tree's* spec key, so it names the list, not the
+    /// line under the pointer. This feeds `RenderContext::hover_item_key`,
+    /// which the list/tree collectors compare against each row's item key.
+    pub hovered_item_key: String,
+    /// The open dropdown pop-over's hovered option, as a decimal index, or
+    /// empty. Separate from `hovered_item_key` because a pop-over's rows are
+    /// not panel rows: `update_widget_hover` probes the runtime's entries and
+    /// never sees them, so this is reported by the tree instead.
+    pub hovered_popup_row: String,
+    // The open `Dropdown`'s rendered option list was here — rows, an anchor
+    // and per-row click payloads, refreshed on every render beside `entries`.
+    // The described pop-over is built by `view::shell::widgets`'s `Dropdown`
+    // arm from `dropdown::popup_of`, and the painter that drew this one is
+    // deleted, so the rows and the anchor had no reader left. The one thing
+    // still asked of it was *which* dropdown is open, for
+    // `UiFact::WidgetPopupDismiss`, and that is identity rather than
+    // geometry: `dropdown::open_key` walks the spec for it.
+    //
+    // The pop-over's screen rectangles were here — one per option row plus
+    // the box's own — so a click that escaped the modal's border could still
+    // be routed to `dropdown_select`. The described pop-over is a `layer()`
+    // whose rows answer their own presses, the hit path already resolves it
+    // top-down, and the painter that recorded these rectangles is deleted, so
+    // both were empty on every path (S7). The key above survives them: it is
+    // identity, not geometry.
 }
 
 /// How long the dock's overlay scrollbar stays visible after a keyboard
 /// selection move before it fades back to hover-only (see
 /// `FloatingWidgetState::scrollbar_flash_until`).
 pub(crate) const DOCK_SCROLLBAR_FLASH: std::time::Duration = std::time::Duration::from_secs(3);
-
-/// A list scrollbar's screen rect + scroll state, captured at draw
-/// time so mouse press/drag can hit-test and drive `ScrollbarMouse`.
-#[derive(Debug, Clone)]
-pub(crate) struct WidgetScrollbarTrack {
-    pub list_key: String,
-    pub rect: ratatui::layout::Rect,
-    pub total: usize,
-    pub visible: usize,
-    pub scroll: usize,
-}
 
 /// A file that should be opened after the TUI starts
 #[derive(Debug, Clone)]
@@ -1448,6 +1837,12 @@ impl Editor {
         ids
     }
 
+    /// Counters for work that must not scale with buffer content. See
+    /// [`PerfCounters`].
+    pub fn perf_counters(&self) -> PerfCounters {
+        self.perf_counters
+    }
+
     /// Get the currently active buffer state
     pub fn active_state(&self) -> &EditorState {
         self.windows
@@ -1498,9 +1893,18 @@ impl Editor {
             .cursors
     }
 
-    /// Set completion items for type-to-filter (for testing)
+    /// Set completion items for type-to-filter (for testing).
+    ///
+    /// The items come from no server, so nothing can be resolved against
+    /// one: a `completionItem/resolve` needs the server that minted the
+    /// item's opaque `data`.
     pub fn set_completion_items(&mut self, items: Vec<lsp_types::CompletionItem>) {
-        self.active_window_mut().completion_items = Some(items);
+        self.active_window_mut().completion_items = Some(
+            items
+                .into_iter()
+                .map(crate::app::window::LspCompletionCandidate::unattributed)
+                .collect(),
+        );
     }
 
     /// Get the viewport for the active split
@@ -1762,6 +2166,7 @@ fn parse_key_string(key_str: &str) -> Option<(KeyCode, KeyModifiers)> {
         "END" => KeyCode::End,
         "PAGEUP" | "PGUP" => KeyCode::PageUp,
         "PAGEDOWN" | "PGDN" => KeyCode::PageDown,
+        "MENU" => KeyCode::Menu,
         s if s.starts_with('F') && s.len() > 1 => {
             // Function key (F1-F12)
             if let Ok(n) = s[1..].parse::<u8>() {
@@ -1873,78 +2278,154 @@ mod tests {
             height_pct: 50,
             placement,
             focused,
+            mode: None,
             entries: Vec::new(),
-            focus_cursor: None,
-            embeds: Vec::new(),
-            overlays: Vec::new(),
-            scroll_regions: Vec::new(),
-            scrollbar_tracks: Vec::new(),
-            scrollbar_mouse: Default::default(),
-            scrollbar_drag_key: None,
-            last_inner_rect: None,
-            scrollbar_hover_zones: Vec::new(),
             scrollbar_zone_hovered: false,
             scrollbar_flash_until: None,
             fullscreen: false,
             focus_marker: false,
             title: None,
             closable: false,
-            close_button_rect: None,
-            dropdown_popup: None,
-            dropdown_popup_hits: Vec::new(),
-            dropdown_popup_rect: None,
+            hovered_widget_key: String::new(),
+            hovered_item_key: String::new(),
+            hovered_popup_row: String::new(),
         }
     }
 
-    /// The overlay layer stack always terminates in the editor base layer,
-    /// which owns the keyboard, so a fresh editor resolves to its active
-    /// window's context.
-    #[test]
-    fn overlay_stack_base_layer_owns_keyboard() {
-        use crate::app::overlay::LayerKind;
-        use crate::input::keybindings::KeyContext;
-
-        let editor = default_test_editor();
-        let layers = editor.overlay_layers();
-        let base = layers.last().expect("at least the base layer");
-        assert_eq!(base.kind, LayerKind::Editor);
-        assert!(base.owns_keyboard);
-        assert!(!base.blocks_terminal_input);
-        assert_eq!(editor.get_key_context(), KeyContext::Normal);
+    /// A frame, drawn: the same `render` a terminal's frame runs, into a
+    /// test backend.
+    fn draw_frame(editor: &mut Editor) {
+        let backend = ratatui::backend::TestBackend::new(80, 24);
+        let mut terminal = ratatui::Terminal::new(backend).expect("terminal");
+        terminal.draw(|frame| editor.render(frame)).expect("draw");
     }
 
-    /// P1 invariant preserved through the P2 layer walk: a *focused* dock
-    /// owns the keyboard (`KeyContext::Dock`); once blurred it falls
-    /// through to the editor underneath so the buffer stays usable.
+    /// **The provenance gate.** Every cell a frame shows is the fold's, from
+    /// a described item, or the pane painter's inside a host leaf; no
+    /// painter writes outside one. Over a plain frame, a split one, and one
+    /// with a prompt and its list up.
+    #[test]
+    fn no_painter_written_cell_lies_outside_a_host_leaf() {
+        use crate::input::keybindings::Action;
+        let mut editor = default_test_editor();
+        for c in "fn main() {}".chars() {
+            editor.handle_action(Action::InsertChar(c)).unwrap();
+        }
+        editor.handle_action(Action::InsertNewline).unwrap();
+        for c in "let x = 1;".chars() {
+            editor.handle_action(Action::InsertChar(c)).unwrap();
+        }
+        draw_frame(&mut editor);
+        let p = editor.cells_provenance();
+        assert!(p.fold > 0, "the chrome is the fold's: {p:?}");
+        assert!(
+            p.painter_in_hosts > 0,
+            "the pane's text is the painter's: {p:?}"
+        );
+        assert!(
+            p.painter_outside_hosts.is_empty(),
+            "a painter wrote outside every host: {:?}",
+            p.painter_outside_hosts
+        );
+
+        editor.handle_action(Action::SplitVertical).unwrap();
+        draw_frame(&mut editor);
+        let p = editor.cells_provenance();
+        assert!(p.painter_in_hosts > 0);
+        assert!(
+            p.painter_outside_hosts.is_empty(),
+            "{:?}",
+            p.painter_outside_hosts
+        );
+
+        editor.handle_action(Action::CommandPalette).unwrap();
+        draw_frame(&mut editor);
+        let p = editor.cells_provenance();
+        assert!(p.fold > 0);
+        assert!(
+            p.painter_outside_hosts.is_empty(),
+            "{:?}",
+            p.painter_outside_hosts
+        );
+    }
+
+    /// One frame of the shell's tree, without a terminal — the same call
+    /// `render` makes, so the context read below reads a real tree.
+    fn frame_the_shell(editor: &mut Editor) {
+        use ratatui::layout::Rect;
+        let rect = Rect::new(0, 0, 80, 24);
+        let split = editor.compute_dock_split(rect);
+        let shell = editor.shell_frame(split);
+        editor.lay_out_shell_tree(shell, fresh_ui::Size::new(80, 24));
+    }
+
+    /// The PTY gate, as the tree derives it: a live terminal's leaf takes
+    /// raw input while the keyboard is its own (`Ui::raw_input`).
+    fn pty_open(editor: &Editor) -> bool {
+        editor.shell_ui.as_ref().is_some_and(|ui| ui.raw_input())
+    }
+
+    /// With nothing layered over the content, the context is the active
+    /// window's — before any frame exists, and after one.
+    #[test]
+    fn a_fresh_editor_resolves_to_its_windows_context() {
+        use crate::input::keybindings::KeyContext;
+
+        let mut editor = default_test_editor();
+        assert_eq!(editor.get_key_context(), KeyContext::Normal);
+        frame_the_shell(&mut editor);
+        assert_eq!(editor.get_key_context(), KeyContext::Normal);
+        assert!(editor.editor_base_owns_keyboard());
+        assert!(!pty_open(&editor), "no terminal takes the keyboard raw");
+        editor.active_window_mut().key_context = KeyContext::Terminal;
+        frame_the_shell(&mut editor);
+        assert!(pty_open(&editor), "the terminal's pane leaf does");
+    }
+
+    /// A *focused* dock holds the keyboard (`KeyContext::Dock`), read off
+    /// the tree's focus sitting in the dock's keyboard layer; once blurred
+    /// the layer is gone and the context falls through to the editor
+    /// underneath so the buffer stays usable. The PTY gate follows the same
+    /// read.
     #[test]
     fn focused_dock_owns_keyboard_blurred_falls_through() {
         use crate::input::keybindings::KeyContext;
 
         let mut editor = default_test_editor();
+        editor.active_window_mut().key_context = KeyContext::Terminal;
         editor.dock = Some(test_panel(
             PanelPlacement::LeftDock { width_cols: 30 },
             true,
         ));
+        frame_the_shell(&mut editor);
         assert_eq!(editor.get_key_context(), KeyContext::Dock);
+        assert!(!pty_open(&editor), "the dock holds the keyboard");
+        assert!(!editor.editor_base_owns_keyboard());
 
         editor.dock.as_mut().unwrap().focused = false;
-        assert_eq!(editor.get_key_context(), KeyContext::Normal);
+        frame_the_shell(&mut editor);
+        assert_eq!(editor.get_key_context(), KeyContext::Terminal);
+        assert!(pty_open(&editor), "blurred, the terminal has it back");
     }
 
-    /// A focused centered modal outranks a focused dock — when the
-    /// new-session form opens on top of the dock, the modal owns input.
+    /// A focused centered modal over a focused dock: the frame declares the
+    /// modal's keyboard layer after the dock's, so it is the one holding
+    /// focus, and the context is the modal's (`Normal`, so a plugin mode's
+    /// bindings resolve), not the dock's.
     #[test]
     fn centered_modal_outranks_dock() {
         use crate::input::keybindings::KeyContext;
 
         let mut editor = default_test_editor();
+        editor.active_window_mut().key_context = KeyContext::Terminal;
         editor.dock = Some(test_panel(
             PanelPlacement::LeftDock { width_cols: 30 },
             true,
         ));
         editor.floating_widget_panel = Some(test_panel(PanelPlacement::Centered, true));
-        // The centered modal resolves as Normal (not Dock).
+        frame_the_shell(&mut editor);
         assert_eq!(editor.get_key_context(), KeyContext::Normal);
+        assert!(!pty_open(&editor), "the modal holds the keyboard");
     }
 
     /// F3: hiding the left dock (Toggle Dock → unmount) must request a
@@ -3914,6 +4395,289 @@ mod tests {
             })
             .sum();
         assert!(view_state.tab_scroll_offset <= total_width);
+    }
+
+    /// Regression for sinelaw/fresh#2650 (Part 2).
+    ///
+    /// In a vertical split each pane's tab bar is only as wide as the pane,
+    /// but `ensure_active_tab_visible` used to be fed `effective_tabs_width`
+    /// (the whole editor width), so the scroll math ran against ~2x the real
+    /// width. `split_tabs_width` must report the focused split's real pane
+    /// width (minus the split-control button columns, which the tab bar
+    /// reserves) instead — roughly half the editor after a vertical split.
+    #[test]
+    fn split_tabs_width_reports_per_split_pane_width() {
+        let config = Config::default();
+        let (dir_context, _temp) = test_dir_context();
+        let mut editor = Editor::new(
+            config,
+            80,
+            24,
+            dir_context,
+            crate::view::color_support::ColorCapability::TrueColor,
+            test_filesystem(),
+        )
+        .unwrap();
+
+        let full_width = editor.active_window().effective_tabs_width();
+
+        // Split vertically into two side-by-side panes.
+        editor.split_pane_vertical();
+
+        // The panes as the split's relayout placed them.
+        let panes: Vec<(crate::model::event::LeafId, u16)> = editor
+            .active_window()
+            .visible_panes()
+            .into_iter()
+            .map(|(leaf, _buf, area)| (leaf, area.width))
+            .collect();
+        assert_eq!(panes.len(), 2, "vertical split should yield two panes");
+
+        // Two side-by-side splits show the maximize + close buttons, so the tab
+        // bar reserves those columns; split_tabs_width reflects that.
+        let reserve = crate::view::ui::tabs::split_control_reserve(true, true);
+        for (leaf, pane_width) in &panes {
+            let w = editor.active_window().split_tabs_width(*leaf);
+            assert_eq!(
+                w,
+                pane_width.saturating_sub(reserve),
+                "split_tabs_width must equal the pane's real width minus the control-button reserve"
+            );
+            assert!(
+                w < full_width,
+                "each pane width ({}) must be narrower than the whole editor ({})",
+                w,
+                full_width
+            );
+        }
+    }
+
+    /// A pane created by an action is placed before the frame that would
+    /// paint it: the split's relayout lays the frame out once and the
+    /// window retains where the panes are, so the neighbour query — which
+    /// pane is beside this one, by geometry — answers off the grid as it is.
+    #[cfg(feature = "plugins")]
+    #[test]
+    fn a_new_pane_is_beside_its_source_before_any_frame() {
+        use crate::view::shell::geometry::stats;
+        let config = Config::default();
+        let (dir_context, _temp) = test_dir_context();
+        let mut editor = Editor::new(
+            config,
+            80,
+            24,
+            dir_context,
+            crate::view::color_support::ColorCapability::TrueColor,
+            test_filesystem(),
+        )
+        .unwrap();
+        let source = editor.active_split_id();
+        assert_eq!(
+            editor.pane_beside(source),
+            None,
+            "one pane has no neighbour"
+        );
+
+        let _ = stats::take();
+        editor.split_pane_vertical();
+        // The split reflowed through the funnel: one `layout_only` of the
+        // frame, no grid laid out alone.
+        assert_eq!(
+            stats::take(),
+            stats::LayoutCounts {
+                shell: 1,
+                offscreen_grids: 0,
+            }
+        );
+
+        let panes = editor.active_window().visible_panes();
+        assert_eq!(panes.len(), 2);
+        let (left, right) = (panes[0], panes[1]);
+        assert_eq!(left.0, source, "the source keeps the first slot");
+        assert_eq!(left.2.y, right.2.y);
+        assert_eq!(left.2.height, right.2.height);
+        assert_eq!(
+            right.2.x,
+            left.2.x + left.2.width + 1,
+            "the new pane sits past the source and the separator"
+        );
+        assert_eq!(editor.pane_beside(source), Some(right.0));
+        assert_eq!(editor.pane_beside(right.0), Some(source));
+    }
+
+    /// **A prompt opened over another takes the other's toolbar down.** The
+    /// toolbar's registry entry lives exactly as long as the prompt that
+    /// shows it; a prompt assigned over another used to leave the other's
+    /// mounted, and the next toolbar for that plugin found it and carried a
+    /// focus the user never gave this session.
+    #[test]
+    fn a_prompt_opened_over_another_unmounts_its_toolbar() {
+        use crate::view::prompt::{Prompt, PromptType};
+        let config = Config::default();
+        let (dir_context, _temp) = test_dir_context();
+        let mut editor = Editor::new(
+            config,
+            80,
+            24,
+            dir_context,
+            crate::view::color_support::ColorCapability::TrueColor,
+            test_filesystem(),
+        )
+        .unwrap();
+        editor.set_prompt(Prompt::new("a: ".into(), PromptType::QueryReplaceConfirm));
+        let key =
+            crate::widgets::PanelKey::new("test-plugin", crate::widgets::PROMPT_TOOLBAR_PANEL_ID);
+        editor.mount_prompt_toolbar(
+            &key,
+            fresh_core::api::WidgetSpec::Col {
+                children: Vec::new(),
+                key: None,
+            },
+        );
+        editor.active_window_mut().prompt.as_mut().unwrap().toolbar = Some(key.clone());
+        assert!(editor.widget_registry.get(&key).is_some(), "mounted");
+
+        editor.set_prompt(Prompt::new("b: ".into(), PromptType::QueryReplaceConfirm));
+        assert!(
+            editor.widget_registry.get(&key).is_none(),
+            "the toolbar went down with the prompt it belonged to"
+        );
+        assert!(
+            editor.active_window().prompt.is_some(),
+            "and the new prompt is up"
+        );
+    }
+
+    /// **The terminal's context is read off the leaf, not the window.** The
+    /// window's mode is what the description states on the active pane's
+    /// leaf, and `get_key_context` reads it off the focus chain like every
+    /// other surface's; the window is asked for nothing.
+    #[test]
+    fn terminal_mode_is_read_off_the_pane_leaf() {
+        use crate::input::keybindings::KeyContext;
+        let config = Config::default();
+        let (dir_context, _temp) = test_dir_context();
+        let mut editor = Editor::new(
+            config,
+            80,
+            24,
+            dir_context,
+            crate::view::color_support::ColorCapability::TrueColor,
+            test_filesystem(),
+        )
+        .unwrap();
+        assert_eq!(editor.get_key_context(), KeyContext::Normal);
+        editor.active_window_mut().key_context = KeyContext::Terminal;
+        editor.shell_description_stale = true;
+        assert_eq!(editor.get_key_context(), KeyContext::Terminal);
+        assert!(
+            editor.shell_ui.as_ref().is_some_and(|ui| ui.raw_input()),
+            "and the tree says the terminal takes raw input"
+        );
+        editor.active_window_mut().key_context = KeyContext::Normal;
+        editor.shell_description_stale = true;
+        assert_eq!(editor.get_key_context(), KeyContext::Normal);
+    }
+
+    /// **A typed key lays the tree out once.** The key's own spend marks the
+    /// description stale, so the *next* key lays it out at its head; the
+    /// fact the key produced is applied over the tree that produced it, and
+    /// its context read does not lay it out again. Two layouts per key made
+    /// typing a long text on CI time out.
+    #[test]
+    fn a_typed_key_lays_the_tree_out_once() {
+        use crate::view::shell::geometry::stats;
+        let config = Config::default();
+        let (dir_context, _temp) = test_dir_context();
+        let mut editor = Editor::new(
+            config,
+            80,
+            24,
+            dir_context,
+            crate::view::color_support::ColorCapability::TrueColor,
+            test_filesystem(),
+        )
+        .unwrap();
+        editor
+            .handle_key(KeyCode::Char('a'), KeyModifiers::NONE)
+            .unwrap();
+        let _ = stats::take();
+        editor
+            .handle_key(KeyCode::Char('b'), KeyModifiers::NONE)
+            .unwrap();
+        assert_eq!(stats::take().shell, 1, "one layout for one key");
+        assert_eq!(editor.active_state().buffer.to_string().unwrap(), "ab");
+    }
+
+    /// **A key before the first frame is routed by the tree, not dropped.**
+    /// The tree is the whole keyboard, so an editor that has never rendered
+    /// — a daemon's, whose client types before its terminal reports a size
+    /// — lays the tree out from its description at its own size and routes
+    /// the key over it; the active pane's content is the base's focus
+    /// holder there and hands the key to the editor.
+    #[test]
+    fn a_key_before_the_first_frame_reaches_the_buffer() {
+        let config = Config::default();
+        let (dir_context, _temp) = test_dir_context();
+        let mut editor = Editor::new(
+            config,
+            80,
+            24,
+            dir_context,
+            crate::view::color_support::ColorCapability::TrueColor,
+            test_filesystem(),
+        )
+        .unwrap();
+        editor
+            .handle_key(KeyCode::Char('a'), KeyModifiers::NONE)
+            .unwrap();
+        assert_eq!(
+            editor.active_state().buffer.to_string().unwrap(),
+            "a",
+            "typed into the buffer with no frame ever rendered"
+        );
+    }
+
+    /// Every window's panes are placed by the layout funnel, not only the
+    /// active window's: the active window's off the frame, another window's
+    /// off one offscreen layout of its own grid at its own body.
+    #[test]
+    fn the_funnel_places_every_windows_panes() {
+        use crate::view::shell::geometry::stats;
+        let config = Config::default();
+        let (dir_context, _temp) = test_dir_context();
+        let mut editor = Editor::new(
+            config,
+            80,
+            24,
+            dir_context,
+            crate::view::color_support::ColorCapability::TrueColor,
+            test_filesystem(),
+        )
+        .unwrap();
+        let other_root = tempfile::tempdir().unwrap();
+        let other = editor.create_window_at(other_root.path().to_path_buf(), "other".into());
+        assert_ne!(other, editor.active_window);
+
+        let _ = stats::take();
+        editor.relayout();
+        assert_eq!(
+            stats::take(),
+            stats::LayoutCounts {
+                shell: 1,
+                offscreen_grids: 1,
+            },
+            "the frame once for the active window, one offscreen grid for the other"
+        );
+
+        let active = editor.active_window().visible_panes();
+        let theirs = editor.windows[&other].visible_panes();
+        assert_eq!(active.len(), 1);
+        assert_eq!(theirs.len(), 1);
+        // The other window's one pane fills its own body, which is the same
+        // chrome at the same screen size.
+        assert_eq!(theirs[0].2, editor.windows[&other].editor_content_area());
+        assert_eq!(theirs[0].2, active[0].2);
     }
 
     /// Regression for sinelaw/fresh#2229.

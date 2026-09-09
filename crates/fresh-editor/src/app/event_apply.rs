@@ -84,7 +84,22 @@ impl Editor {
         // IMPORTANT: Calculate LSP changes and line info BEFORE applying to buffer!
         // The byte positions in the events are relative to the ORIGINAL buffer,
         // so we must convert them to LSP positions before modifying the buffer.
-        let lsp_changes = self.active_window().collect_lsp_changes(event);
+        //
+        // Only when a server could receive them. Deriving the change set reads
+        // the line up to the cursor to convert byte offsets into LSP's UTF-16
+        // positions, and step 5's empty-set fallback snapshots the whole
+        // document; on a file that is one long line those were 18 MB and the
+        // file respectively, per keystroke, and `send_lsp_changes_for_buffer`
+        // then discarded them because the buffer has no server. Ask first.
+        let lsp_wanted = {
+            let buf = self.active_buffer();
+            self.active_window().lsp_change_could_be_sent(buf)
+        };
+        let lsp_changes = if lsp_wanted {
+            self.active_window().collect_lsp_changes(event)
+        } else {
+            Vec::new()
+        };
 
         // Calculate line info for plugin hooks (using same pre-modification buffer state)
         let line_info = self.active_window().calculate_event_line_info(event);
@@ -132,6 +147,7 @@ impl Editor {
                 let buf = self.active_buffer();
                 let win = self.active_window_mut();
                 win.invalidate_layouts_for_buffer(buf);
+                win.prune_orphaned_folds(buf);
                 win.schedule_semantic_tokens_full_refresh(buf);
                 win.schedule_folding_ranges_refresh(buf);
             }
@@ -143,6 +159,7 @@ impl Editor {
                     let buf = self.active_buffer();
                     let win = self.active_window_mut();
                     win.invalidate_layouts_for_buffer(buf);
+                    win.prune_orphaned_folds(buf);
                     win.schedule_semantic_tokens_full_refresh(buf);
                     win.schedule_folding_ranges_refresh(buf);
                 }
@@ -210,45 +227,78 @@ impl Editor {
             }
         }
 
-        // 3. Trigger plugin hooks for this event (with pre-calculated line info)
+        // 3b. A `focusFollowsCursor` panel keeps its focus on whatever the
+        // caret is on, so this runs for every event: an arrow key, a page
+        // key, a click on the text, and equally an edit, which moves the
+        // caret without being a `MoveCursor`.
+        //
+        // It reads the caret the buffer *ended up with* rather than a
+        // position taken out of the event. Those differ — an edit has no
+        // new-position field at all, a `Batch` can nest another `Batch`
+        // whose last move is the one that counts, and a position can be
+        // clamped on the way in — and every one of those differences was
+        // a hole while this matched on the event's shape instead.
+        //
+        self.page_follows_caret();
+
+        // 4. Trigger plugin hooks for this event (with pre-calculated line info)
         self.trigger_plugin_hooks_for_event(event, line_info);
 
-        // 4. Notify LSP of the change using pre-calculated positions
+        // 5. Notify LSP of the change using pre-calculated positions
         // For BulkEdit events (undo/redo of code actions, renames, etc.),
         // collect_lsp_changes returns empty because there are no incremental byte
         // positions to convert — BulkEdit restores a tree snapshot.  Send a
         // full-document replacement so the LSP server stays in sync.
-        if lsp_changes.is_empty() && event.modifies_buffer() {
-            if let Some(full_text) = self.active_state().buffer.to_string() {
-                let full_change = vec![TextDocumentContentChangeEvent {
-                    range: None,
-                    range_length: None,
-                    text: full_text,
-                }];
+        if lsp_wanted {
+            if lsp_changes.is_empty() && event.modifies_buffer() {
+                if let Some(full_text) = self.active_state().buffer.to_string() {
+                    let full_change = vec![TextDocumentContentChangeEvent {
+                        range: None,
+                        range_length: None,
+                        text: full_text,
+                    }];
+                    let buf = self.active_buffer();
+                    self.active_window_mut()
+                        .send_lsp_changes_for_buffer(buf, full_change);
+                }
+            } else {
                 let buf = self.active_buffer();
                 self.active_window_mut()
-                    .send_lsp_changes_for_buffer(buf, full_change);
+                    .send_lsp_changes_for_buffer(buf, lsp_changes);
             }
-        } else {
-            let buf = self.active_buffer();
-            self.active_window_mut()
-                .send_lsp_changes_for_buffer(buf, lsp_changes);
         }
     }
 
-    /// Apply multiple Insert/Delete events efficiently using bulk edit optimization.
+    /// Apply a multi-event list — typically one keystroke's worth across every
+    /// cursor — and return the single event that represents it, for the caller
+    /// to append to the event log.
     ///
-    /// This avoids O(n²) complexity by:
+    /// # Two shapes of input
+    ///
+    /// **Lists containing `Insert`/`Delete`** take the bulk-edit path, which
+    /// avoids O(n²) complexity by:
     /// 1. Converting events to (position, delete_len, insert_text) tuples
     /// 2. Applying all edits in a single tree pass via apply_bulk_edits
     /// 3. Creating a BulkEdit event for undo (stores tree snapshot via Arc clone = O(1))
     ///
-    /// # Arguments
-    /// * `events` - Vec of Insert/Delete events (sorted by position descending for correct application)
-    /// * `description` - Description for the undo log
+    /// **Lists with no edits at all** — every cursor stepping over an existing
+    /// closing delimiter, a backspace in virtual space that has nothing to
+    /// delete yet — are applied as a single `Event::Batch`. There is nothing
+    /// for the bulk machinery to do, but the cursor moves still have to land.
     ///
     /// # Returns
-    /// The BulkEdit event that was applied, for tracking purposes
+    ///
+    /// `Some(Event::BulkEdit)` for the first shape, `Some(Event::Batch)` for
+    /// the second, and `None` only for an empty list. **Match on the payload at
+    /// your peril:** every caller today just forwards it to
+    /// `active_event_log_mut().append(...)`, and a caller that pattern-matched
+    /// `Some(Event::BulkEdit { .. })` would silently drop the cursor-only case —
+    /// which is the bug this function's own contract used to invite (#3125).
+    ///
+    /// # Arguments
+    /// * `events` - the events to apply. Insert/Delete are sorted by position
+    ///   descending internally, so callers need not pre-sort.
+    /// * `description` - Description for the undo log
     pub fn apply_events_as_bulk_edit(
         &mut self,
         events: Vec<Event>,
@@ -262,8 +312,28 @@ impl Editor {
             .any(|e| matches!(e, Event::Insert { .. } | Event::Delete { .. }));
 
         if !has_buffer_mods {
-            // No buffer modifications - use regular Batch
-            return None;
+            // A cursor-only event list is not nothing to do. Every cursor
+            // skipping over an existing closing delimiter, or a backspace in
+            // virtual space with nothing yet to delete, produces `MoveCursor`
+            // and no edits — the bulk machinery below has nothing to apply,
+            // but the moves still have to land. Apply them as one `Batch` so
+            // undo treats them atomically, and hand it back to be logged the
+            // same way a bulk edit is.
+            //
+            // Returning `None` and leaving this to the caller is what made
+            // typing `)` over an auto-closed `)` do nothing at all with more
+            // than one cursor: only two of this function's callers remembered
+            // to special-case it, so the rest dropped the keystroke outright
+            // (#3125).
+            if events.is_empty() {
+                return None;
+            }
+            let batch = Event::Batch {
+                events,
+                description,
+            };
+            self.apply_event_to_active_buffer(&batch);
+            return Some(batch);
         }
 
         // Multi-cursor edits and code-action rewrites go through this path
@@ -391,15 +461,21 @@ impl Editor {
         }
         position_deltas.sort_by_key(|(pos, _)| *pos);
 
+        // Prefix-summed deltas so the shift for a position is a binary search
+        // rather than a walk over every edit. Re-summing the whole list per
+        // cursor event made a replace-all quadratic in the match count — one
+        // edit per match, one event per match (issue #2893).
+        let delta_positions: Vec<usize> = position_deltas.iter().map(|(pos, _)| *pos).collect();
+        let delta_prefix: Vec<isize> = std::iter::once(0)
+            .chain(position_deltas.iter().scan(0isize, |acc, (_, delta)| {
+                *acc += delta;
+                Some(*acc)
+            }))
+            .collect();
+
         // Helper: calculate cumulative shift for a position based on edits at lower positions
         let calc_shift = |original_pos: usize| -> isize {
-            let mut shift: isize = 0;
-            for (edit_pos, delta) in &position_deltas {
-                if *edit_pos < original_pos {
-                    shift += delta;
-                }
-            }
-            shift
+            delta_prefix[delta_positions.partition_point(|pos| *pos < original_pos)]
         };
 
         // Apply adjustments to cursor positions
@@ -505,7 +581,7 @@ impl Editor {
         }
 
         // Update cursors in SplitViewState (sole source of truth)
-        {
+        let primary_position = {
             let cursors = &mut self
                 .split_view_states_mut()
                 .get_mut(&split_id)
@@ -525,21 +601,27 @@ impl Editor {
                     cursor.sticky_column = *sticky;
                 }
             }
-        }
+            cursors.primary().position
+        };
+
+        let state = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&active_buf)
+            .unwrap();
+
+        // The cursors were written directly rather than through `MoveCursor`,
+        // so the primary's cached line number did not follow (#3167).
+        state.sync_primary_cursor_line_number(primary_position);
 
         // Notify the highlighter of each edit so the cache can take the
         // partial-update path on the next render. Throwing the whole cache
         // away here (the previous behaviour) wiped every checkpoint as well,
         // forcing a cold reparse from byte zero on the next keystroke — see
         // https://github.com/sinelaw/fresh/issues/1958.
-        self.windows
-            .get_mut(&self.active_window)
-            .map(|w| &mut w.buffers)
-            .expect("active window present")
-            .get_mut(&active_buf)
-            .unwrap()
-            .highlighter
-            .notify_edits(&edit_lengths);
+        state.highlighter.notify_edits(&edit_lengths);
 
         // Bulk edits (multi-cursor typing, paste, code-action rewrites) apply
         // here instead of through the Insert/Delete hook arms, so shift plugin
@@ -776,7 +858,7 @@ impl Editor {
         // `seen_byte_ranges`, re-fire `lines_changed` for all visible
         // lines, and rebuild every conceal/soft-break marker — bumping the
         // manager versions and invalidating the whole `LineWrapCache` and
-        // `VisualRowIndex` per keypress (the compose-mode arrow-key lag).
+        // the wrap index per keypress (the compose-mode arrow-key lag).
         //
         // A structure-changing edit (a newline inserted or deleted) still
         // needs a full refresh, for a subtler reason: it renumbers every row

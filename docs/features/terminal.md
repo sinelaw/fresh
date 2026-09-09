@@ -21,6 +21,30 @@ You can open multiple terminal tabs and switch between them like regular file bu
 
 `Ctrl+Click` (or `Ctrl`-hover, which underlines the target) opens file paths from terminal output, including scrollback. Paths resolve as absolute (with `~` expansion), then relative to the terminal's working directory, then relative to Fresh's working directory. The shell's working directory is tracked via OSC 7, so relative paths resolve correctly after `cd` — and resolution works over SSH.
 
+## Restarting an Exited Terminal
+
+When a terminal's process quits, the tab is marked `claude (exited)` and the buffer stays open as read-only scrollback, frozen exactly on the process's last screen — nothing is written into the output, so the top of that screen isn't pushed out of view. The status bar shows a clickable restart indicator on the bottom-left — `⟳ Restart terminal`, or `⟳ Restart npm` / `⟳ Resume claude` named after whatever was running. A non-zero exit code rides along: `⟳ Resume claude (exit 3)`.
+
+Restart it three ways — all equivalent:
+
+*   **Click the indicator**
+*   **Command palette** → **Restart Terminal Process**
+*   **View → Terminal → Restart Terminal Process**
+
+The process comes back **in the same buffer**, appending below the existing transcript, so what was there stays where it was and you don't have to open a new terminal and lose your place. The tab drops its `(exited)` marker. This is the same mechanism that reattaches a workspace's terminals when you reopen the editor, now available per buffer and on demand — including the same argv precedence:
+
+1.  the terminal's **agent-resume** argv, if it has one (e.g. `claude --resume <id>`), so a coding agent *rejoins its conversation* rather than starting a fresh one;
+2.  otherwise the **launch command** it was started with;
+3.  otherwise a plain interactive shell.
+
+Agent resume obeys the `terminal.resume_agents` setting (default on); turn it off to always re-run the launch command instead.
+
+The offer survives the editor, too: quit with a dead terminal and the workspace comes back showing that pane's transcript with the indicator still on it. It comes back *dead* on purpose — reopening a workspace never silently re-runs a process you had finished with, which for an agent would mean resuming the conversation (and spending tokens) unasked. The restart stays one click away.
+
+A **running** terminal is never restarted — the indicator only appears once the process has quit, and asking anyway (from the palette while the split sits in scrollback) reports "Terminal process is still running" rather than killing what's there.
+
+The indicator is the `{terminal_restart}` status-bar element and can be moved or removed via `editor.status_bar.left` / `.right` like any other.
+
 ## Terminal Modes
 
 The terminal has two modes, indicated in the status bar:
@@ -69,7 +93,7 @@ The override applies to host-shell terminals; wrappers that re-parent the shell 
 
 ## Tips and Quirks
 
-*   **Workspace Persistence:** Terminal scrollback is preserved across editor restarts, but running processes are terminated.
+*   **Workspace Persistence:** Terminal scrollback and tab names are preserved across editor restarts, but running processes are terminated.
 *   **Daemon Mode:** Use `fresh -a` to start in daemon mode, then detach with `Ctrl+Shift+D` to keep terminal processes running in the background. Reattach with `fresh -a`. See [Daemon Mode](./session-persistence.md) for details.
 *   **Automatic Scroll:** When new output arrives while the focused split is in scrollback mode, it automatically returns to terminal mode to show the latest output. Disable this with the `terminal.jump_to_end_on_output` config option — handy when you want to read scrollback in one split while another split (or the same one) keeps streaming. The jump always yields while a text selection is active, so new output can't destroy a selection you're about to copy.
 *   **Mouse Selection:** Dragging on a live terminal selects text — the split drops into read-only scrollback (`Ctrl+Space` resumes) with a real selection that `Ctrl+C` copies; a bare click still just focuses the terminal, and double-click selects words in scrollback. Set `terminal.mouse_drag_selects = false` to make drags on the live grid inert again.

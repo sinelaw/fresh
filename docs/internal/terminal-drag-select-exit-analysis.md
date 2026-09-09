@@ -261,7 +261,7 @@ docs. No new config knob initially; if field feedback wants one,
 
 ### Tests that need to move
 
-- `web-ui/test/drive.mjs` terminal-selection block (lines ~708-755)
+- `crates/fresh-editor/web-ui/test/drive.mjs` terminal-selection block (lines ~708-755)
   currently asserts the *old* contract: it presses `Ctrl+Space` after the
   copy and expects that to resume. Under the recommendation the copy itself
   resumes; the block should assert auto-resume on copy, then verify
@@ -310,7 +310,7 @@ resumes the grid, keeping the mode change visible.
 
 Verified by: 6 new core e2e tests (`cargo test -p fresh-editor --test
 e2e_tests terminal_drag_select` + explicit/phantom/double-click tests), the
-updated `web-ui/test/drive.mjs` terminal block (copy auto-resumes, Ctrl+Space
+updated `crates/fresh-editor/web-ui/test/drive.mjs` terminal block (copy auto-resumes, Ctrl+Space
 round-trips, bare click stays live — 140/140 checks green), and a manual
 Playwright sweep of all five exit rules against the web bridge.
 

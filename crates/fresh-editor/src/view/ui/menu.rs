@@ -1,123 +1,118 @@
-//! Menu bar rendering
+//! The menu bar's state, styles and item rules. Its description is
+//! `view::shell::menu`; the walk that laid it out by hand is gone (design §3.4).
 
-use crate::app::types::CellThemeRecorder;
 use crate::config::{generate_dynamic_items, Menu, MenuItem, MenuItemExt};
-use crate::primitives::display_width::str_width;
-use crate::view::theme::Theme;
-use crate::view::ui::layout::point_in_rect;
-use ratatui::layout::Rect;
-use ratatui::style::{Modifier, Style};
-use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, Paragraph};
-use ratatui::Frame;
 
 // Re-export context_keys from the shared types module
 pub use crate::types::context_keys;
 
-/// Layout information for hit testing menu interactions
-///
-/// Returned by `MenuRenderer::render()` to enable mouse hit testing
-/// without duplicating position calculations.
-#[derive(Debug, Clone, Default)]
-pub struct MenuLayout {
-    /// Areas for top-level menu labels: (menu_index, area)
-    pub menu_areas: Vec<(usize, Rect)>,
-    /// Areas for dropdown items: (item_index, area)
-    /// Only populated when a menu is open
-    pub item_areas: Vec<(usize, Rect)>,
-    /// Areas for submenu items at each depth: (depth, item_index, area)
-    pub submenu_areas: Vec<(usize, usize, Rect)>,
-    /// The full menu bar area
-    pub bar_area: Rect,
-    /// The open dropdown's full bordered box (item areas sit inside it, one
-    /// row/column in from every edge). Only populated when a menu is open.
-    /// Recorded so non-cell frontends can draw the same panel footprint the
-    /// TUI's border occupies — items alone would leave a one-row gap under
-    /// the menu bar.
-    pub dropdown_box: Option<Rect>,
-    /// Each expanded submenu level's full bordered box: (depth, area).
-    pub submenu_boxes: Vec<(usize, Rect)>,
-}
-
-/// Hit test result for menu interactions
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MenuHit {
-    /// Hit a top-level menu label
-    MenuLabel(usize),
-    /// Hit a dropdown item (in the main dropdown)
-    DropdownItem(usize),
-    /// Hit a submenu item at a given depth
-    SubmenuItem { depth: usize, index: usize },
-    /// Hit the menu bar background
-    BarBackground,
+pub(crate) enum BarLabelStyle {
+    Normal,
+    /// The menu whose dropdown is open. Bold, as the painter had it.
+    Active,
+    Hovered,
 }
 
-impl MenuLayout {
-    /// Create a new empty layout
-    pub fn new(bar_area: Rect) -> Self {
-        Self {
-            menu_areas: Vec::new(),
-            item_areas: Vec::new(),
-            submenu_areas: Vec::new(),
-            bar_area,
-            dropdown_box: None,
-            submenu_boxes: Vec::new(),
+impl BarLabelStyle {
+    pub(crate) fn of(is_active: bool, is_hovered: bool) -> BarLabelStyle {
+        if is_active {
+            BarLabelStyle::Active
+        } else if is_hovered {
+            BarLabelStyle::Hovered
+        } else {
+            BarLabelStyle::Normal
         }
     }
 
-    /// Get the menu index at a given position
-    pub fn menu_at(&self, x: u16, y: u16) -> Option<usize> {
-        for (idx, area) in &self.menu_areas {
-            if point_in_rect(*area, x, y) {
-                return Some(*idx);
-            }
+    /// The `(fg, bg)` theme keys this label reads.
+    ///
+    /// One pair, for every consumer: the inspector's provenance, the ratatui
+    /// painter's colours, and the shell's `ThemeKey`. Hover used to report the
+    /// *resting* keys here while `style()` returned the hover colours — the two
+    /// disagreed, and nothing noticed because only the inspector read this one.
+    pub(crate) fn theme_keys(self) -> (&'static str, &'static str) {
+        match self {
+            BarLabelStyle::Normal => ("ui.menu_fg", "ui.menu_bg"),
+            BarLabelStyle::Active => ("ui.menu_active_fg", "ui.menu_active_bg"),
+            BarLabelStyle::Hovered => ("ui.menu_hover_fg", "ui.menu_hover_bg"),
         }
-        None
     }
 
-    /// Get the dropdown item index at a given position
-    pub fn item_at(&self, x: u16, y: u16) -> Option<usize> {
-        for (idx, area) in &self.item_areas {
-            if point_in_rect(*area, x, y) {
-                return Some(*idx);
-            }
+    /// The description's name for this label, and for its mnemonic character —
+    /// which differs only by an underline, and an underline is part of how a
+    /// run looks, so it is part of the name.
+    pub(crate) fn shell_theme(self, mnemonic: bool) -> String {
+        use crate::app::shell_host::shell_theme;
+        let (fg, bg) = self.theme_keys();
+        // Structural attributes, not themed ones: the active label is bold
+        // because it is active, the mnemonic underlined because it is a
+        // mnemonic. They compose, so `active + mnemonic` needs no sixth name.
+        let mut attrs: Vec<&str> = Vec::new();
+        if self == BarLabelStyle::Active {
+            attrs.push("bold");
         }
-        None
+        if mnemonic {
+            attrs.push("underline");
+        }
+        shell_theme::attrs(fg, bg, &attrs)
+    }
+}
+
+/// How one dropdown row is coloured.
+///
+/// The single style decision for a row: paint reads it for a `Style`, the
+/// theme inspector reads it for provenance keys, and the shell's description
+/// reads it for a `ThemeKey`. Three consumers, one ladder — they used to be
+/// two ladders that disagreed about hover.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MenuRowStyle {
+    Normal,
+    Highlighted,
+    Hovered,
+    Disabled,
+    /// A `Label` item: disabled ink on the ordinary dropdown ground.
+    Info,
+    Separator,
+}
+
+impl MenuRowStyle {
+    /// The ladder itself. `enabled` is only meaningful for the kinds that can
+    /// be disabled; the caller passes what the item resolved to.
+    pub(crate) fn of(
+        item: &MenuItem,
+        enabled: bool,
+        is_highlighted: bool,
+        is_hovered: bool,
+        has_open_submenu: bool,
+    ) -> MenuRowStyle {
+        match item {
+            MenuItem::Separator { .. } => MenuRowStyle::Separator,
+            MenuItem::Label { .. } => MenuRowStyle::Info,
+            MenuItem::Action { .. } if !enabled => MenuRowStyle::Disabled,
+            _ if is_highlighted || has_open_submenu => MenuRowStyle::Highlighted,
+            _ if is_hovered => MenuRowStyle::Hovered,
+            _ => MenuRowStyle::Normal,
+        }
     }
 
-    /// Get the submenu item at a given position
-    pub fn submenu_item_at(&self, x: u16, y: u16) -> Option<(usize, usize)> {
-        for (depth, idx, area) in &self.submenu_areas {
-            if point_in_rect(*area, x, y) {
-                return Some((*depth, *idx));
-            }
+    /// The `(fg, bg)` provenance keys the theme inspector reports.
+    pub(crate) fn theme_keys(self) -> (&'static str, &'static str) {
+        match self {
+            MenuRowStyle::Normal => ("ui.menu_dropdown_fg", "ui.menu_dropdown_bg"),
+            MenuRowStyle::Highlighted => ("ui.menu_highlight_fg", "ui.menu_highlight_bg"),
+            MenuRowStyle::Hovered => ("ui.menu_hover_fg", "ui.menu_hover_bg"),
+            MenuRowStyle::Disabled => ("ui.menu_disabled_fg", "ui.menu_disabled_bg"),
+            MenuRowStyle::Info => ("ui.menu_disabled_fg", "ui.menu_dropdown_bg"),
+            MenuRowStyle::Separator => ("ui.menu_separator_fg", "ui.menu_dropdown_bg"),
         }
-        None
     }
 
-    /// Perform a complete hit test
-    pub fn hit_test(&self, x: u16, y: u16) -> Option<MenuHit> {
-        // Check submenu items first (they're on top)
-        if let Some((depth, idx)) = self.submenu_item_at(x, y) {
-            return Some(MenuHit::SubmenuItem { depth, index: idx });
-        }
-
-        // Check dropdown items
-        if let Some(idx) = self.item_at(x, y) {
-            return Some(MenuHit::DropdownItem(idx));
-        }
-
-        // Check menu labels
-        if let Some(idx) = self.menu_at(x, y) {
-            return Some(MenuHit::MenuLabel(idx));
-        }
-
-        // Check bar background
-        if point_in_rect(self.bar_area, x, y) {
-            return Some(MenuHit::BarBackground);
-        }
-
-        None
+    /// The name the shell's description carries, resolved by the fold's
+    /// palette. One name per style, so the two backends cannot drift.
+    pub(crate) fn shell_theme(self) -> String {
+        let (fg, bg) = self.theme_keys();
+        crate::app::shell_host::shell_theme::pair(fg, bg)
     }
 }
 
@@ -149,7 +144,7 @@ pub(crate) fn is_checkbox_checked(checkbox: &Option<String>, context: &MenuConte
 }
 
 /// Whether a top-level menu is visible given its `when` condition. Shared by the
-/// TUI `MenuRenderer` and the web `menu_view` projection so menu visibility is
+/// shell's description and the web `menu_view` projection so menu visibility is
 /// computed in one place rather than independently per frontend.
 pub(crate) fn is_menu_visible(menu: &Menu, context: &MenuContext) -> bool {
     match &menu.when {
@@ -498,630 +493,6 @@ impl MenuState {
     }
 }
 
-/// Renders the menu bar
-pub struct MenuRenderer;
-
-impl MenuRenderer {
-    /// Render the menu bar at the top of the screen
-    ///
-    /// # Arguments
-    /// * `frame` - The ratatui frame to render to
-    /// * `area` - The rectangular area to render the menu bar in
-    /// * `menu_config` - The menu configuration
-    /// * `menu_state` - Current menu state (which menu/item is active, and context)
-    /// * `keybindings` - Keybinding resolver for displaying shortcuts
-    /// * `theme` - The active theme for colors
-    /// * `hover_target` - The currently hovered UI element (if any)
-    ///
-    /// # Returns
-    /// `MenuLayout` containing hit areas for mouse interaction
-    #[allow(clippy::too_many_arguments)]
-    pub fn render(
-        frame: &mut Frame,
-        area: Rect,
-        // The already-expanded menu list (config + plugin menus, dynamic
-        // submenus resolved) — produced by `Editor::all_menus_expanded()`, the
-        // single content source shared with the web `menu_view()` projection.
-        all_menus: &[Menu],
-        menu_state: &MenuState,
-        keybindings: &crate::input::keybindings::KeybindingResolver,
-        theme: &Theme,
-        hover_target: Option<&crate::app::HoverTarget>,
-        mnemonics_enabled: bool,
-        mut rec: Option<&mut CellThemeRecorder>,
-        // When false, compute + record layout but skip emitting cells (the host
-        // renders the menu from the semantic model). See docs/internal/web-ui.md.
-        draw: bool,
-    ) -> MenuLayout {
-        let mut layout = MenuLayout::new(area);
-        // Seed the menu bar with its base keys; each label overwrites its own
-        // cells (active menu → menu_active) below.
-        if let Some(r) = rec.as_deref_mut() {
-            r.run(
-                area.x,
-                area.y,
-                area.width,
-                Some("ui.menu_fg"),
-                Some("ui.menu_bg"),
-                "Menu Bar",
-            );
-        }
-        // `all_menus` is already expanded (config + plugin menus) by the caller.
-
-        // Track which menus are visible (based on their `when` condition)
-        let menu_visible: Vec<bool> = all_menus
-            .iter()
-            .map(|menu| match &menu.when {
-                Some(condition) => menu_state.context.get(condition),
-                None => true, // No condition = always visible
-            })
-            .collect();
-
-        // Build spans for each menu label and track their areas
-        let mut spans = Vec::new();
-        let mut current_x = area.x;
-
-        for (idx, menu) in all_menus.iter().enumerate() {
-            // Skip hidden menus
-            if !menu_visible[idx] {
-                continue;
-            }
-
-            let is_active = menu_state.active_menu == Some(idx);
-            let is_hovered =
-                matches!(hover_target, Some(crate::app::HoverTarget::MenuBarItem(i)) if *i == idx);
-
-            let base_style = if is_active {
-                Style::default()
-                    .fg(theme.menu_active_fg)
-                    .bg(theme.menu_active_bg)
-                    .add_modifier(Modifier::BOLD)
-            } else if is_hovered {
-                Style::default()
-                    .fg(theme.menu_hover_fg)
-                    .bg(theme.menu_hover_bg)
-            } else {
-                Style::default().fg(theme.menu_fg).bg(theme.menu_bg)
-            };
-
-            // Calculate label width: " Label " = 1 + label_width + 1
-            let label_width = str_width(&menu.label) as u16 + 2;
-
-            // Track the menu label area for hit testing
-            layout
-                .menu_areas
-                .push((idx, Rect::new(current_x, area.y, label_width, 1)));
-
-            // Record this label's keys (active menu wears menu_active; hover is
-            // transient and not recorded).
-            if let Some(r) = rec.as_deref_mut() {
-                let (fg, bg) = if is_active {
-                    ("ui.menu_active_fg", "ui.menu_active_bg")
-                } else {
-                    ("ui.menu_fg", "ui.menu_bg")
-                };
-                r.run(
-                    current_x,
-                    area.y,
-                    label_width,
-                    Some(fg),
-                    Some(bg),
-                    "Menu Bar",
-                );
-            }
-
-            // Check for mnemonic character (Alt+letter keybinding)
-            let mnemonic = if mnemonics_enabled {
-                keybindings.find_menu_mnemonic(&menu.label)
-            } else {
-                None
-            };
-
-            // Build the label with underlined mnemonic
-            spans.push(Span::styled(" ", base_style));
-
-            if let Some(mnemonic_char) = mnemonic {
-                // Find the first occurrence of the mnemonic character in the label
-                let mut found = false;
-                for c in menu.label.chars() {
-                    if !found && c.to_ascii_lowercase() == mnemonic_char {
-                        // Underline this character
-                        spans.push(Span::styled(
-                            c.to_string(),
-                            base_style.add_modifier(Modifier::UNDERLINED),
-                        ));
-                        found = true;
-                    } else {
-                        spans.push(Span::styled(c.to_string(), base_style));
-                    }
-                }
-            } else {
-                // No mnemonic, just render the label normally
-                spans.push(Span::styled(menu.label.clone(), base_style));
-            }
-
-            spans.push(Span::styled(" ", base_style));
-            spans.push(Span::raw(" "));
-
-            // Move to next position: label_width + 1 for trailing space
-            current_x += label_width + 1;
-        }
-
-        if draw {
-            let line = Line::from(spans);
-            let paragraph = Paragraph::new(line).style(Style::default().bg(theme.menu_bg));
-            frame.render_widget(paragraph, area);
-        }
-
-        // Render dropdown if a menu is active
-        if let Some(active_idx) = menu_state.active_menu {
-            if let Some(menu) = all_menus.get(active_idx) {
-                Self::render_dropdown_chain(
-                    frame,
-                    area,
-                    menu,
-                    menu_state,
-                    active_idx,
-                    all_menus,
-                    keybindings,
-                    theme,
-                    hover_target,
-                    &mut layout,
-                    rec,
-                    draw,
-                );
-            }
-        }
-
-        layout
-    }
-
-    /// Render a dropdown menu and all its open submenus
-    #[allow(clippy::too_many_arguments)]
-    fn render_dropdown_chain(
-        frame: &mut Frame,
-        menu_bar_area: Rect,
-        menu: &Menu,
-        menu_state: &MenuState,
-        menu_index: usize,
-        all_menus: &[Menu],
-        keybindings: &crate::input::keybindings::KeybindingResolver,
-        theme: &Theme,
-        hover_target: Option<&crate::app::HoverTarget>,
-        layout: &mut MenuLayout,
-        mut rec: Option<&mut CellThemeRecorder>,
-        draw: bool,
-    ) {
-        // Calculate the x position of the top-level dropdown based on menu index
-        // Skip hidden menus (those with `when` conditions that evaluate to false)
-        let mut x_offset = 0usize;
-        for (idx, m) in all_menus.iter().enumerate() {
-            if idx == menu_index {
-                break;
-            }
-            // Only count visible menus
-            let is_visible = match &m.when {
-                Some(condition) => menu_state.context.get(condition),
-                None => true,
-            };
-            if is_visible {
-                x_offset += str_width(&m.label) + 3; // label + spaces
-            }
-        }
-
-        let terminal_width = frame.area().width;
-        let terminal_height = frame.area().height;
-
-        // Track dropdown positions for rendering submenus
-        let mut current_items: &[MenuItem] = &menu.items;
-        let mut current_x = menu_bar_area.x.saturating_add(x_offset as u16);
-        let mut current_y = menu_bar_area.y.saturating_add(1);
-
-        // Render the main dropdown and collect submenu rendering info
-        // We'll render depth 0, then 1, etc.
-        for depth in 0..=menu_state.submenu_path.len() {
-            let is_deepest = depth == menu_state.submenu_path.len();
-            let highlighted_item = if is_deepest {
-                menu_state.highlighted_item
-            } else {
-                Some(menu_state.submenu_path[depth])
-            };
-
-            // Render this dropdown level
-            let dropdown_rect = Self::render_dropdown_level(
-                frame,
-                current_items,
-                highlighted_item,
-                current_x,
-                current_y,
-                terminal_width,
-                terminal_height,
-                depth,
-                &menu_state.submenu_path,
-                menu_index,
-                keybindings,
-                theme,
-                hover_target,
-                &menu_state.context,
-                layout,
-                rec.as_deref_mut(),
-                draw,
-            );
-
-            // If not at the deepest level, navigate into the submenu for next iteration
-            if !is_deepest {
-                let submenu_idx = menu_state.submenu_path[depth];
-                // Handle both Submenu and DynamicSubmenu
-                let submenu_items = match current_items.get(submenu_idx) {
-                    Some(MenuItem::Submenu { items, .. }) => Some(items.as_slice()),
-                    Some(MenuItem::DynamicSubmenu { .. }) => {
-                        // DynamicSubmenu items will be generated and stored temporarily
-                        // This case shouldn't happen in normal flow since we expand before entering
-                        None
-                    }
-                    _ => None,
-                };
-                if let Some(items) = submenu_items {
-                    current_items = items;
-                    // Position submenu to the right of parent, aligned with the highlighted item
-                    current_x = dropdown_rect
-                        .x
-                        .saturating_add(dropdown_rect.width.saturating_sub(1));
-                    // Align the submenu's first item with the parent item it was
-                    // opened from. Items render at `dropdown_rect.y + 1 + idx`
-                    // (the `+ 1` skips the top border), so the submenu's top
-                    // border sits one row above the parent item's row.
-                    current_y = dropdown_rect.y.saturating_add(submenu_idx as u16);
-
-                    // Adjust if submenu would go off screen to the right - flip to left side
-                    let next_width = Self::calculate_dropdown_width(items);
-                    if current_x.saturating_add(next_width as u16) > terminal_width {
-                        current_x = dropdown_rect
-                            .x
-                            .saturating_sub(next_width as u16)
-                            .saturating_add(1);
-                    }
-                } else {
-                    break;
-                }
-            }
-        }
-    }
-
-    /// Calculate the width needed for a dropdown containing the given items
-    fn calculate_dropdown_width(items: &[MenuItem]) -> usize {
-        items
-            .iter()
-            .map(|item| match item {
-                MenuItem::Action { label, .. } => str_width(label) + 20,
-                MenuItem::Submenu { label, .. } => str_width(label) + 20,
-                MenuItem::DynamicSubmenu { label, .. } => str_width(label) + 20,
-                MenuItem::Separator { .. } => 20,
-                MenuItem::Label { info } => str_width(info) + 4,
-            })
-            .max()
-            .unwrap_or(20)
-            .min(40)
-    }
-
-    /// Render a single dropdown level and return its bounding Rect
-    #[allow(clippy::too_many_arguments)]
-    fn render_dropdown_level(
-        frame: &mut Frame,
-        items: &[MenuItem],
-        highlighted_item: Option<usize>,
-        x: u16,
-        y: u16,
-        terminal_width: u16,
-        terminal_height: u16,
-        depth: usize,
-        submenu_path: &[usize],
-        menu_index: usize,
-        keybindings: &crate::input::keybindings::KeybindingResolver,
-        theme: &Theme,
-        hover_target: Option<&crate::app::HoverTarget>,
-        context: &MenuContext,
-        layout: &mut MenuLayout,
-        mut rec: Option<&mut CellThemeRecorder>,
-        draw: bool,
-    ) -> Rect {
-        let dropdown_area = Self::fit_dropdown_area(items, x, y, terminal_width, terminal_height);
-
-        // Only render if we have at least minimal space
-        if dropdown_area.width < 10 || dropdown_area.height < 3 {
-            return dropdown_area;
-        }
-        let adjusted_x = dropdown_area.x;
-
-        // Record the bordered box itself (items are tracked per row below):
-        // hit-testing only needs the item rows, but frontends drawing the
-        // dropdown as a native panel need the full footprint the border
-        // occupies in the TUI.
-        if depth == 0 {
-            layout.dropdown_box = Some(dropdown_area);
-        } else {
-            layout.submenu_boxes.push((depth, dropdown_area));
-        }
-
-        // Seed the dropdown box (border + fill) with its surface keys; each
-        // item row overwrites its own cells below.
-        if let Some(r) = rec.as_deref_mut() {
-            for row in dropdown_area.y..dropdown_area.y + dropdown_area.height {
-                r.run(
-                    dropdown_area.x,
-                    row,
-                    dropdown_area.width,
-                    Some("ui.menu_border_fg"),
-                    Some("ui.menu_dropdown_bg"),
-                    "Menu Dropdown",
-                );
-            }
-        }
-
-        // Build dropdown content
-        let mut lines = Vec::new();
-        let max_items = (dropdown_area.height.saturating_sub(2)) as usize;
-        let items_to_show = items.len().min(max_items);
-        let content_width = (dropdown_area.width as usize).saturating_sub(2);
-
-        for (idx, item) in items.iter().enumerate().take(items_to_show) {
-            let is_highlighted = highlighted_item == Some(idx);
-            // Check if this item is in the submenu path (has an open child submenu)
-            let has_open_submenu = depth < submenu_path.len() && submenu_path[depth] == idx;
-
-            // For hover target matching at submenu levels
-            let is_hovered = if depth == 0 {
-                matches!(
-                    hover_target,
-                    Some(crate::app::HoverTarget::MenuDropdownItem(mi, ii)) if *mi == menu_index && *ii == idx
-                )
-            } else {
-                matches!(
-                    hover_target,
-                    Some(crate::app::HoverTarget::SubmenuItem(d, ii)) if *d == depth && *ii == idx
-                )
-            };
-            let enabled = is_menu_item_enabled(item, context);
-
-            // Track item area for hit testing
-            // Item position: inside border (x+1, y+1+idx), full content width
-            let item_area = Rect::new(adjusted_x + 1, y + 1 + idx as u16, content_width as u16, 1);
-            if depth == 0 {
-                layout.item_areas.push((idx, item_area));
-            } else {
-                layout.submenu_areas.push((depth, idx, item_area));
-            }
-
-            // Record this item's keys, mirroring the per-kind style below.
-            if let Some(r) = rec.as_deref_mut() {
-                Self::record_dropdown_item_run(
-                    r,
-                    item,
-                    item_area,
-                    enabled,
-                    is_highlighted,
-                    has_open_submenu,
-                );
-            }
-
-            lines.push(Self::build_dropdown_item_line(
-                item,
-                content_width,
-                enabled,
-                is_highlighted,
-                is_hovered,
-                has_open_submenu,
-                keybindings,
-                theme,
-                context,
-            ));
-        }
-
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(theme.menu_border_fg))
-            .style(Style::reset().bg(theme.menu_dropdown_bg));
-
-        if draw {
-            let paragraph = Paragraph::new(lines).block(block);
-            frame.render_widget(paragraph, dropdown_area);
-        }
-
-        dropdown_area
-    }
-
-    /// Compute the on-screen rectangle for a dropdown of `items` anchored at
-    /// (`x`, `y`), clamped to stay within the terminal. The width is derived
-    /// from the longest label; near a screen edge the returned rect may be
-    /// smaller than desired, which callers treat as "no room to render".
-    fn fit_dropdown_area(
-        items: &[MenuItem],
-        x: u16,
-        y: u16,
-        terminal_width: u16,
-        terminal_height: u16,
-    ) -> Rect {
-        let desired_width = Self::calculate_dropdown_width(items) as u16;
-        let desired_height = (items.len() + 2) as u16; // +2 for borders
-
-        // Bounds check: ensure the dropdown fits within the visible area.
-        let adjusted_x = if x.saturating_add(desired_width) > terminal_width {
-            terminal_width.saturating_sub(desired_width)
-        } else {
-            x
-        };
-
-        let width = desired_width.min(terminal_width.saturating_sub(adjusted_x));
-        let height = desired_height.min(terminal_height.saturating_sub(y));
-
-        Rect {
-            x: adjusted_x,
-            y,
-            width,
-            height,
-        }
-    }
-
-    /// Record the theme-key run for one dropdown item row. The fg/bg selection
-    /// mirrors the visual style chosen in [`Self::build_dropdown_item_line`] so
-    /// the theme inspector matches what is painted.
-    fn record_dropdown_item_run(
-        rec: &mut CellThemeRecorder,
-        item: &MenuItem,
-        item_area: Rect,
-        enabled: bool,
-        is_highlighted: bool,
-        has_open_submenu: bool,
-    ) {
-        let (fg, bg) = match item {
-            MenuItem::Separator { .. } => ("ui.menu_separator_fg", "ui.menu_dropdown_bg"),
-            MenuItem::Label { .. } => ("ui.menu_disabled_fg", "ui.menu_dropdown_bg"),
-            _ if !enabled => ("ui.menu_disabled_fg", "ui.menu_disabled_bg"),
-            _ if is_highlighted || has_open_submenu => {
-                ("ui.menu_highlight_fg", "ui.menu_highlight_bg")
-            }
-            _ => ("ui.menu_dropdown_fg", "ui.menu_dropdown_bg"),
-        };
-        rec.run(
-            item_area.x,
-            item_area.y,
-            item_area.width,
-            Some(fg),
-            Some(bg),
-            "Menu Dropdown",
-        );
-    }
-
-    /// Build the styled line for one dropdown item: an action (with optional
-    /// checkbox and keybinding hint), a separator, a submenu row (with the `>`
-    /// arrow), or a disabled info label.
-    #[allow(clippy::too_many_arguments)]
-    fn build_dropdown_item_line(
-        item: &MenuItem,
-        content_width: usize,
-        enabled: bool,
-        is_highlighted: bool,
-        is_hovered: bool,
-        has_open_submenu: bool,
-        keybindings: &crate::input::keybindings::KeybindingResolver,
-        theme: &Theme,
-        context: &MenuContext,
-    ) -> Line<'static> {
-        match item {
-            MenuItem::Action {
-                label,
-                action,
-                checkbox,
-                ..
-            } => {
-                let style = if !enabled {
-                    Style::default()
-                        .fg(theme.menu_disabled_fg)
-                        .bg(theme.menu_disabled_bg)
-                } else if is_highlighted {
-                    Style::default()
-                        .fg(theme.menu_highlight_fg)
-                        .bg(theme.menu_highlight_bg)
-                } else if is_hovered {
-                    Style::default()
-                        .fg(theme.menu_hover_fg)
-                        .bg(theme.menu_hover_bg)
-                } else {
-                    Style::default()
-                        .fg(theme.menu_dropdown_fg)
-                        .bg(theme.menu_dropdown_bg)
-                };
-
-                let keybinding = keybindings
-                    .find_keybinding_for_action(
-                        action,
-                        crate::input::keybindings::KeyContext::Normal,
-                    )
-                    .unwrap_or_default();
-
-                let checkbox_icon = if checkbox.is_some() {
-                    if is_checkbox_checked(checkbox, context) {
-                        "☑ "
-                    } else {
-                        "☐ "
-                    }
-                } else {
-                    ""
-                };
-
-                let checkbox_width = if checkbox.is_some() { 2 } else { 0 };
-                let label_display_width = str_width(label);
-                let keybinding_display_width = str_width(&keybinding);
-
-                let text = if keybinding.is_empty() {
-                    let padding_needed =
-                        content_width.saturating_sub(checkbox_width + label_display_width + 1);
-                    format!(" {}{}{}", checkbox_icon, label, " ".repeat(padding_needed))
-                } else {
-                    let padding_needed = content_width.saturating_sub(
-                        checkbox_width + label_display_width + keybinding_display_width + 2,
-                    );
-                    format!(
-                        " {}{}{} {}",
-                        checkbox_icon,
-                        label,
-                        " ".repeat(padding_needed),
-                        keybinding
-                    )
-                };
-
-                Line::from(vec![Span::styled(text, style)])
-            }
-            MenuItem::Separator { .. } => {
-                let separator = "─".repeat(content_width);
-                Line::from(vec![Span::styled(
-                    format!(" {separator}"),
-                    Style::default()
-                        .fg(theme.menu_separator_fg)
-                        .bg(theme.menu_dropdown_bg),
-                )])
-            }
-            MenuItem::Submenu { label, .. } | MenuItem::DynamicSubmenu { label, .. } => {
-                // Highlight submenu items that have an open child
-                let style = if is_highlighted || has_open_submenu {
-                    Style::default()
-                        .fg(theme.menu_highlight_fg)
-                        .bg(theme.menu_highlight_bg)
-                } else if is_hovered {
-                    Style::default()
-                        .fg(theme.menu_hover_fg)
-                        .bg(theme.menu_hover_bg)
-                } else {
-                    Style::default()
-                        .fg(theme.menu_dropdown_fg)
-                        .bg(theme.menu_dropdown_bg)
-                };
-
-                // Format: " Label        > " - label left-aligned, arrow near the end with padding
-                // content_width minus: leading space (1) + space before arrow (1) + arrow (1) + trailing space (2)
-                let label_display_width = str_width(label);
-                let padding_needed = content_width.saturating_sub(label_display_width + 5);
-                Line::from(vec![Span::styled(
-                    format!(" {}{} >  ", label, " ".repeat(padding_needed)),
-                    style,
-                )])
-            }
-            MenuItem::Label { info } => {
-                // Disabled info label - always shown in disabled style
-                let style = Style::default()
-                    .fg(theme.menu_disabled_fg)
-                    .bg(theme.menu_dropdown_bg);
-                let info_display_width = str_width(info);
-                let padding_needed = content_width.saturating_sub(info_display_width);
-                Line::from(vec![Span::styled(
-                    format!(" {}{}", info, " ".repeat(padding_needed)),
-                    style,
-                )])
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1348,120 +719,6 @@ mod tests {
         state.highlighted_item = Some(1); // Separator
 
         assert!(state.get_highlighted_action(&menus).is_none());
-    }
-
-    #[test]
-    fn test_menu_layout_menu_at() {
-        // Build a layout manually simulating what render would produce
-        let bar_area = Rect::new(0, 0, 80, 1);
-        let mut layout = MenuLayout::new(bar_area);
-
-        // " File " at x=0, width=6
-        layout.menu_areas.push((0, Rect::new(0, 0, 6, 1)));
-        // " Edit " at x=7, width=6
-        layout.menu_areas.push((1, Rect::new(7, 0, 6, 1)));
-        // " View " at x=14, width=6
-        layout.menu_areas.push((2, Rect::new(14, 0, 6, 1)));
-
-        // File: x=0-5, y=0
-        assert_eq!(layout.menu_at(0, 0), Some(0));
-        assert_eq!(layout.menu_at(3, 0), Some(0));
-        assert_eq!(layout.menu_at(5, 0), Some(0));
-
-        // Space between: x=6
-        assert_eq!(layout.menu_at(6, 0), None);
-
-        // Edit: x=7-12
-        assert_eq!(layout.menu_at(7, 0), Some(1));
-        assert_eq!(layout.menu_at(10, 0), Some(1));
-        assert_eq!(layout.menu_at(12, 0), Some(1));
-
-        // Space between: x=13
-        assert_eq!(layout.menu_at(13, 0), None);
-
-        // View: x=14-19
-        assert_eq!(layout.menu_at(14, 0), Some(2));
-        assert_eq!(layout.menu_at(17, 0), Some(2));
-        assert_eq!(layout.menu_at(19, 0), Some(2));
-
-        // After View
-        assert_eq!(layout.menu_at(20, 0), None);
-        assert_eq!(layout.menu_at(100, 0), None);
-
-        // Wrong row returns None
-        assert_eq!(layout.menu_at(3, 1), None);
-    }
-
-    #[test]
-    fn test_menu_layout_item_at() {
-        // Build a layout manually simulating what render would produce
-        let bar_area = Rect::new(0, 0, 80, 1);
-        let mut layout = MenuLayout::new(bar_area);
-
-        // Dropdown items for File menu at x=1 (inside border), y=2,3,4,5 (inside border)
-        // Item 0 (New) at y=2
-        layout.item_areas.push((0, Rect::new(1, 2, 20, 1)));
-        // Item 1 (Separator) at y=3
-        layout.item_areas.push((1, Rect::new(1, 3, 20, 1)));
-        // Item 2 (Save) at y=4
-        layout.item_areas.push((2, Rect::new(1, 4, 20, 1)));
-        // Item 3 (Quit) at y=5
-        layout.item_areas.push((3, Rect::new(1, 5, 20, 1)));
-
-        // Menu bar row returns None
-        assert_eq!(layout.item_at(5, 0), None);
-        // Border row returns None
-        assert_eq!(layout.item_at(5, 1), None);
-
-        // y=2: New (index 0)
-        assert_eq!(layout.item_at(5, 2), Some(0));
-
-        // y=3: Separator (index 1) - note: layout includes all items, filtering happens elsewhere
-        assert_eq!(layout.item_at(5, 3), Some(1));
-
-        // y=4: Save (index 2)
-        assert_eq!(layout.item_at(5, 4), Some(2));
-
-        // y=5: Quit (index 3)
-        assert_eq!(layout.item_at(5, 5), Some(3));
-
-        // Beyond items
-        assert_eq!(layout.item_at(5, 6), None);
-        assert_eq!(layout.item_at(5, 100), None);
-    }
-
-    #[test]
-    fn test_menu_layout_hit_test() {
-        let bar_area = Rect::new(0, 0, 80, 1);
-        let mut layout = MenuLayout::new(bar_area);
-
-        // Menu labels
-        layout.menu_areas.push((0, Rect::new(0, 0, 6, 1)));
-
-        // Dropdown items
-        layout.item_areas.push((0, Rect::new(1, 2, 20, 1)));
-        layout.item_areas.push((1, Rect::new(1, 3, 20, 1)));
-
-        // Submenu items at depth 1
-        layout.submenu_areas.push((1, 0, Rect::new(22, 3, 15, 1)));
-
-        // Hit test menu label
-        assert_eq!(layout.hit_test(3, 0), Some(MenuHit::MenuLabel(0)));
-
-        // Hit test dropdown item
-        assert_eq!(layout.hit_test(5, 2), Some(MenuHit::DropdownItem(0)));
-
-        // Hit test submenu item (should have priority)
-        assert_eq!(
-            layout.hit_test(25, 3),
-            Some(MenuHit::SubmenuItem { depth: 1, index: 0 })
-        );
-
-        // Hit test bar background (inside bar area but not on menu)
-        assert_eq!(layout.hit_test(50, 0), Some(MenuHit::BarBackground));
-
-        // Hit test outside everything
-        assert_eq!(layout.hit_test(50, 10), None);
     }
 
     #[test]
@@ -1816,113 +1073,5 @@ mod tests {
         // Navigate up wraps to end
         state.prev_item(&menus[0]);
         assert_eq!(state.highlighted_item, Some(2));
-    }
-
-    /// Helper function to calculate dropdown x offset (mirrors the logic in render_dropdown_chain)
-    fn calculate_dropdown_x_offset(
-        all_menus: &[Menu],
-        menu_index: usize,
-        context: &MenuContext,
-    ) -> usize {
-        let mut x_offset = 0usize;
-        for (idx, m) in all_menus.iter().enumerate() {
-            if idx == menu_index {
-                break;
-            }
-            // Only count visible menus
-            let is_visible = match &m.when {
-                Some(condition) => context.get(condition),
-                None => true,
-            };
-            if is_visible {
-                x_offset += str_width(&m.label) + 3; // label + spaces
-            }
-        }
-        x_offset
-    }
-
-    #[test]
-    fn test_dropdown_position_skips_hidden_menus() {
-        // Create menus: File (always visible), Explorer (conditional), Help (always visible)
-        let menus = vec![
-            Menu {
-                id: None,
-                label: "File".to_string(), // width 4, total 7 with padding
-                items: vec![],
-                when: None,
-            },
-            Menu {
-                id: None,
-                label: "Explorer".to_string(), // width 8, total 11 with padding
-                items: vec![],
-                when: Some("file_explorer_focused".to_string()),
-            },
-            Menu {
-                id: None,
-                label: "Help".to_string(), // width 4, total 7 with padding
-                items: vec![],
-                when: None,
-            },
-        ];
-
-        // When Explorer is hidden, Help dropdown should be at File's width only
-        let context_hidden = MenuContext::new().with("file_explorer_focused", false);
-        let x_help_hidden = calculate_dropdown_x_offset(&menus, 2, &context_hidden);
-        // "File" = 4 chars + 3 spaces = 7
-        assert_eq!(
-            x_help_hidden, 7,
-            "Help dropdown should be at x=7 when Explorer is hidden"
-        );
-
-        // When Explorer is visible, Help dropdown should be at File + Explorer width
-        let context_visible = MenuContext::new().with("file_explorer_focused", true);
-        let x_help_visible = calculate_dropdown_x_offset(&menus, 2, &context_visible);
-        // "File" = 4 chars + 3 spaces = 7, "Explorer" = 8 chars + 3 spaces = 11, total = 18
-        assert_eq!(
-            x_help_visible, 18,
-            "Help dropdown should be at x=18 when Explorer is visible"
-        );
-    }
-
-    #[test]
-    fn test_dropdown_position_with_multiple_hidden_menus() {
-        let menus = vec![
-            Menu {
-                id: None,
-                label: "A".to_string(), // width 1, total 4
-                items: vec![],
-                when: None,
-            },
-            Menu {
-                id: None,
-                label: "B".to_string(), // width 1, total 4
-                items: vec![],
-                when: Some("show_b".to_string()),
-            },
-            Menu {
-                id: None,
-                label: "C".to_string(), // width 1, total 4
-                items: vec![],
-                when: Some("show_c".to_string()),
-            },
-            Menu {
-                id: None,
-                label: "D".to_string(),
-                items: vec![],
-                when: None,
-            },
-        ];
-
-        // No conditional menus visible: D should be right after A
-        let context_none = MenuContext::new();
-        assert_eq!(calculate_dropdown_x_offset(&menus, 3, &context_none), 4);
-
-        // Only B visible: D should be after A + B
-        let context_b = MenuContext::new().with("show_b", true);
-        assert_eq!(calculate_dropdown_x_offset(&menus, 3, &context_b), 8);
-
-        // Both B and C visible: D should be after A + B + C
-        let context_both = MenuContext::new().with("show_b", true).with("show_c", true);
-        assert_eq!(calculate_dropdown_x_offset(&menus, 3, &context_both), 12);
     }
 }

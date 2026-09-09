@@ -1,10 +1,8 @@
 #[cfg(feature = "plugins")]
-mod common;
-
 #[cfg(feature = "plugins")]
-use common::harness::EditorTestHarness;
+use crate::common::harness::EditorTestHarness;
 #[cfg(feature = "plugins")]
-use common::tracing::init_tracing_from_env;
+use crate::common::tracing::init_tracing_from_env;
 #[cfg(feature = "plugins")]
 use crossterm::event::{KeyCode, KeyModifiers};
 #[cfg(feature = "plugins")]
@@ -119,7 +117,7 @@ editor.setStatus("Test i18n plugin loaded");
     let _rx = harness
         .editor()
         .plugin_manager()
-        .execute_action_async("test_i18n_action")
+        .execute_action_async("test_i18n_action", None, None)
         .unwrap()
         .unwrap();
     println!("Action started...");
@@ -168,7 +166,7 @@ editor.setStatus("Test i18n plugin loaded");
     let _rx = harness
         .editor()
         .plugin_manager()
-        .execute_action_async("test_i18n_action")
+        .execute_action_async("test_i18n_action", None, None)
         .unwrap()
         .unwrap();
 

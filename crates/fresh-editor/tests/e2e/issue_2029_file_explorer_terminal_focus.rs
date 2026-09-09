@@ -93,8 +93,14 @@ fn toggle_file_explorer_clears_terminal_mode() {
          dispatch_terminal_input stops swallowing keys destined for \
          the file explorer (issue #2029)"
     );
+    // **The context is the frame's, so a frame settles it.** `get_key_context`
+    // reads the focus chain of the tree the last render laid out (design
+    // §3.7.5); the toggle moves focus, and the frame that follows it is what
+    // states where focus now is. The editor's loop renders between one key and
+    // the next, so this is the order the next keystroke actually sees.
+    harness.render().unwrap();
     assert_eq!(
-        harness.editor().get_key_context(),
+        harness.editor_mut().get_key_context(),
         KeyContext::FileExplorer,
         "toggle_file_explorer must hand keyboard focus to the explorer"
     );
@@ -123,20 +129,18 @@ fn click_in_explorer_while_terminal_active_keeps_focus_on_explorer() {
     fs::write(project.join("alpha.txt"), "ALPHA_FILE_CONTENT\n").unwrap();
     fs::write(project.join("beta.txt"), "BETA_FILE_CONTENT\n").unwrap();
 
-    // Wait for the terminal tab to render before sending any keys —
-    // without this gate, on heavily-loaded CI the Ctrl+B can race
-    // ahead of the terminal's async setup.
-    harness.editor_mut().open_terminal();
-    harness.wait_for_screen_contains("*Terminal 0*").unwrap();
-
-    // Open the file explorer and wait for both target files to
-    // render so the click lands against a settled tree.
+    // Explorer first: Ctrl+B belongs to the shell once a terminal has focus,
+    // so it cannot be used to open the explorer from one. Wait for both target
+    // files so the click later lands against a settled tree.
     harness
         .send_key(KeyCode::Char('b'), KeyModifiers::CONTROL)
         .unwrap();
     harness.wait_for_file_explorer().unwrap();
     harness.wait_for_file_explorer_item("alpha.txt").unwrap();
     harness.wait_for_file_explorer_item("beta.txt").unwrap();
+
+    harness.editor_mut().open_terminal();
+    harness.wait_for_screen_contains("*Terminal 0*").unwrap();
 
     // Single-click alpha.txt. Wait for the preview to render so the
     // next keypress is observed against a settled UI.

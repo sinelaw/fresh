@@ -11,16 +11,70 @@ const editor = getEditor();
 
 
 interface MarkdownConfig {
-  composeWidth: number | null;
+  // Page width for compose mode, as a three-state value:
+  //   * `undefined` — the user has not chosen one for this session; resolve it
+  //     from the editor config (see `configuredPageWidth`). This is the
+  //     startup state, so compose defaults to a readable measure.
+  //   * `number`    — an explicit width in columns.
+  //   * `null`      — explicitly full viewport width ("None" in the
+  //                   Set Compose Width prompt).
+  // The `undefined`/`null` distinction is what lets a config-driven default
+  // exist without overriding a user who deliberately asked for full width.
+  composeWidth: number | null | undefined;
   maxWidth: number;
   hideLineNumbers: boolean;
 }
 
 const config: MarkdownConfig = {
-  composeWidth: null,
+  composeWidth: undefined,
   maxWidth: 100,
   hideLineNumbers: true,
 };
+
+// Fallback measure when the editor config can't be read at all. Matches the
+// editor's own `editor.page_width` default (see `default_page_width` in
+// config.rs) so the two never disagree.
+const FALLBACK_PAGE_WIDTH = 80;
+
+/** Shape of the bits of the resolved editor config this plugin reads. */
+interface PageWidthConfig {
+  editor?: { page_width?: number | null };
+  languages?: Record<string, { page_width?: number | null } | undefined>;
+}
+
+/**
+ * The compose width the *config* asks for, in columns, or `null` for the full
+ * viewport width.
+ *
+ * Mirrors the Rust resolution in `buffer_config_resolve::page_view`:
+ * `languages.markdown.page_width` wins over the global `editor.page_width`,
+ * and a language-level `0` means "unset at this level" (inherit the global)
+ * rather than "full width" — the same rule `Config::normalize_zero_sentinels`
+ * applies. A global `0`/`null` *does* mean full width, which is how the
+ * pre-default behaviour stays reachable.
+ */
+function configuredPageWidth(): number | null {
+  const cfg = editor.getConfig() as PageWidthConfig | null;
+  if (!cfg || typeof cfg !== "object") return FALLBACK_PAGE_WIDTH;
+
+  const lang = cfg.languages?.markdown?.page_width;
+  if (typeof lang === "number" && lang > 0) return lang;
+
+  const global = cfg.editor?.page_width;
+  if (typeof global === "number") return global > 0 ? global : null;
+  if (global === null) return null;
+
+  return FALLBACK_PAGE_WIDTH;
+}
+
+/**
+ * The compose width in effect right now: an explicit session choice if the
+ * user made one, else whatever the config resolves to.
+ */
+function activeComposeWidth(): number | null {
+  if (config.composeWidth !== undefined) return config.composeWidth;
+  return configuredPageWidth();
+}
 
 // When true, compose/preview mode is automatically enabled for all open and
 // newly opened markdown buffers.  Toggled by the "Toggle Compose/Preview
@@ -84,7 +138,341 @@ type LineInfoLike = {
   byte_start: number;
   byte_end: number;
   content: string;
+  region?: RegionLine;
+  table?: TableLine;
 };
+
+// Where a line sits in a table, as the highlighting engine classifies it from
+// the Markdown grammar's own `meta.table` scope while parsing.
+//
+// This is the same trick `region` is (see below), one step generalized, and it
+// exists for the half of the table frame that has always been guesswork.
+// "Is this line a table row" is decided from the line alone — that part was
+// never the problem. What is NOT line-local is which *edge* of the frame a row
+// carries: the `┌─┬─┐` goes above the header and the `└─┴─┘` below the last
+// row, and both of those are facts about the line's *neighbours*. A
+// `lines_changed` batch holds only the lines a scroll or an edit touched, so
+// when the neighbour was off-screen the plugin had to guess, and guessed
+// conservatively: a table scrolled past its top drew a `├─┼─┤` where its `┌─┬─┐`
+// belonged, and kept it even after scrolling back, because by then the line
+// above was no longer in a batch either.
+//
+// The engine has the answer for free — it already tracks where the table's
+// scope opens and closes while parsing — so it now says so per line, alongside
+// coordinates the plugin already trusts. Nothing is stored, so nothing goes
+// stale.
+//
+// Unlike `region`, absence here is *recoverable*: the batch-local rules below
+// still work, just conservatively. So absence falls back to them rather than
+// dropping the frame — which matters, because the grammar scopes fewer things
+// as tables than this plugin renders as tables (a table inside a blockquote,
+// for one), and a buffer too large to resolve would otherwise lose every frame.
+type TableRole = "header" | "delimiter" | "row";
+type TableLine = { role: TableRole; first_row: boolean; last: boolean };
+
+// =============================================================================
+// Fenced code blocks: framed from the editor's own region classification
+// =============================================================================
+//
+// A code block gets the same treatment a table does — its delimiters concealed
+// into a box-drawing frame, its body left to the syntax highlighter (embedded
+// fence highlighting has worked since issue #2689, so the body already renders
+// in the fence's own language).
+//
+// The one thing that is NOT like a table: "is this line a table row" is decided
+// from that line alone, but "is this line inside a fence" is not. A bare ```
+// opens or closes depending on every fence above it, `lines_changed` batches
+// carry only the lines an edit or scroll touched, and the plugin cannot read
+// the buffer above its batch synchronously (`getBufferText` is a Promise, and
+// the decoration pass has to emit its clear+add in one command batch).
+//
+// Deriving it plugin-side is therefore not possible correctly: any batch-local
+// rule frames a block whose opening fence happens to be visible and gives up on
+// one that isn't, so the frame appears and disappears with scroll position.
+// Nor can it be memoised — the table width memo is safe *because* it carries
+// only numbers, where staleness costs a column width for one frame; a memo of
+// fence extents would carry structure, and staleness there means framing the
+// wrong lines.
+//
+// So the editor answers it. `line.region` on the `lines_changed` payload is the
+// classification the highlighting engine already makes per line while parsing
+// (`open` / `body` / `close`, absent outside a region) — the same source of
+// truth that colours the block's contents, so the frame can never disagree with
+// the highlighting. It arrives with the batch, alongside coordinates the plugin
+// already trusts, so there is nothing to store and nothing to go stale.
+//
+// `region` is absent both for ordinary lines and when the editor could not
+// resolve the state (a >1MiB buffer whose viewport has no parse checkpoint
+// before it yet). Absence therefore means *unknown*, and an unknown fence line
+// is left rendering literally — the same conservative choice the table frame
+// makes when a neighbouring row is off-screen.
+type RegionLine = "open" | "body" | "close";
+
+/** Whether a line is inside a fenced code block (delimiters included). */
+function isCodeRegion(region: RegionLine | undefined): boolean {
+  return region !== undefined;
+}
+
+/** Whether a line reads as a fence delimiter from its own text alone.
+ *
+ * Only ever used to decide whether an *edit* may have restructured the
+ * document (see `fenceEditArmed`) — never to decide how a line renders, which
+ * is what `region` is for. It has to be textual precisely because it must also
+ * fire for a line that has just STOPPED being a delimiter. */
+function looksLikeFence(content: string): boolean {
+  return /^\s*(?:`{3,}|~{3,})/.test(content);
+}
+
+// Region membership is the one per-line property an edit can change for lines
+// it does not touch: appending a word to a closing ``` (CommonMark forbids an
+// info string on a closer) turns every line below it into code. The editor
+// re-fires `lines_changed` only for the edited line when the edit doesn't
+// change the line count — a structural edit already forces a whole-viewport
+// refresh in `event_apply` — so those lines below would keep the frame they
+// were last rendered with, disagreeing with the highlighting, which does
+// re-converge.
+//
+// Two narrow triggers force the one extra whole-viewport pass that repairs it,
+// between them covering both directions:
+//
+//   * the edit put a fence character into, or took one out of, the buffer —
+//     the only way to create or destroy a delimiter outright
+//     (`touchesFenceChars`, checked on the edit itself because the *deleted*
+//     text is not visible in any later batch);
+//   * the edited line is still delimiter-shaped afterwards — the ``` that just
+//     stopped closing because a word was appended to it (`fenceEditArmed`,
+//     checked on the batch, since only there is the line's new text known).
+//
+// Deliberately NOT "the edited line is inside a block": that is true of every
+// keystroke while typing code, and would put a whole-viewport refresh behind
+// each one. Typing that restructures a block always types a backtick.
+//
+// The armed flag is disarmed by the batch that acts on it, so the refresh's own
+// whole-viewport batch cannot re-arm it.
+const fenceEditArmed = new Set<number>();
+
+/** Whether an edit's text could create or destroy a fence delimiter. */
+function touchesFenceChars(text: string): boolean {
+  return /[`~]/.test(text);
+}
+
+/** Total rendered width of a code block's frame, borders and side rails alike.
+ *
+ * One function so the four edges cannot disagree — a rail computed against a
+ * different budget than the border it has to meet is off by exactly the
+ * difference, on every line of the block.
+ *
+ * Four columns short of the measure, where the thematic-break rule needs only
+ * two. The extra pair is for the rails specifically: a body row is assembled
+ * as `│ ` + code + padding + ` │`, and that padding is a run of *spaces* —
+ * break opportunities to the word-wrap machine, which sees inline virtual text
+ * (`splice_inline_virtual_text` runs before wrapping in `wrap_index`). At the
+ * measure the closing rail is the word that no longer fits, and it wraps onto
+ * a row of its own. */
+function codeFrameWidth(measure: number): number {
+  return Math.max(4, measure - 4);
+}
+
+/** A horizontal code-block frame line of the given corner style.
+ *
+ * Deliberately unlabelled. The fence's info string is not repeated in the
+ * border: the block's language is already legible from the code itself, which
+ * is highlighted with that language's grammar, so the tag was a caption on a
+ * picture that says the same thing. */
+function buildCodeFrameLine(measure: number, left: string, right: string): string {
+  const inner = Math.max(
+    1, codeFrameWidth(measure) - displayWidth(left) - displayWidth(right),
+  );
+  return left + "─".repeat(inner) + right;
+}
+
+// fg matches the table frame's so the two kinds of block read as one system.
+const codeFrameStyle = { fg: "editor.fg" };
+
+// =============================================================================
+// Code block side rails
+// =============================================================================
+//
+// The block's left and right edges, closing the box the delimiters cap. They
+// have to be *inline virtual text* rather than conceals: a conceal replaces
+// source bytes, and a rail adds columns that no byte pays for — concealing a
+// real character to make room would cost that character its syntax colour, on
+// every line, and blank lines inside a block have no character to spend.
+//
+// Rails are the one part of the block that touches its body lines, so they are
+// deliberately the *only* thing that does: the code itself is still never read
+// as markdown, and the highlighting still comes through untouched.
+//
+// Clearing follows the same per-line discipline as the borders, via the
+// id-prefix + byte-range form (`clearVirtualTextsInRange`). A byte-exact
+// removal by id would not do: under the async `lines_changed` lag a rail
+// placed on the previous pass rides a few bytes ahead of the event's
+// `byteStart`, so its id — derived from where it *was* — is not the id derived
+// from where the event says the line is now, and the stale rail would survive
+// alongside the new one. The range clear resolves anchors live, so it catches
+// the rail wherever it drifted to.
+const CODE_RAIL_ID_PREFIX = "mdcr:";
+
+// The rail glyphs carry no padding of their own: the renderer adds exactly one
+// space between inline virtual text and the source text it anchors to — after a
+// `before` hint, in front of an `after` hint, and on both sides of a `before`
+// hint anchored on a newline (`splice_inline_virtual_text`). That is the inlay
+// hint convention and it is not optional, so the widths below count it rather
+// than trying to avoid it: a left rail costs 2 columns, a right rail its
+// padding plus 2.
+/** Columns of leading whitespace on a line, ignoring its terminator. */
+function leadingIndent(content: string): number {
+  const text = content.replace(/\r?\n$/, "");
+  return text.length - text.trimStart().length;
+}
+
+const RAIL_GLYPH = "│";
+const RAIL_RENDERED_COLUMNS = 2;
+
+/** Remove this line's rails, clearing its whole content range for the same
+ * reason `clearRowBorders` does. Called for *every* line in a batch, so a line
+ * that stops being code loses its rails. */
+function clearCodeRails(bufferId: number, byteStart: number, byteEnd: number): void {
+  editor.clearVirtualTextsInRange(
+    bufferId, CODE_RAIL_ID_PREFIX, byteStart, Math.max(byteEnd, byteStart + 1),
+  );
+}
+
+/** Columns of code a framed row can hold: the frame less both rails. */
+function codeInnerWidth(measure: number): number {
+  return Math.max(1, codeFrameWidth(measure) - 2 * RAIL_RENDERED_COLUMNS);
+}
+
+/** How one code line is split across framed rows: where each row breaks, and
+ * the `[start, end)` char range of each row's text.
+ *
+ * A code line too wide for the frame has to break *somewhere* — the buffer has
+ * line wrap on, so the renderer will otherwise fold it to column zero, outside
+ * the frame and with no rails. Choosing the break points here instead means
+ * every row is a row this pass knows the width of, so every row can be railed
+ * and padded to the frame.
+ *
+ * Breaks prefer the last space that leaves a non-empty row, and fall back to
+ * cutting mid-word at the frame's inner width when there is no such space — a
+ * bare URL is one token and one row of the frame is not wide enough for it.
+ * The two cases differ in whether the break character survives: a break *on* a
+ * space consumes it (the row ends there), while a mid-word break sits before a
+ * character that still has to be drawn.
+ *
+ * Shared by the rail pass and the soft-break pass so the two cannot disagree
+ * about where the rows are, exactly as `widthsForRow` is shared for tables. */
+interface CodeRow { start: number; end: number }
+function codeRowLayout(text: string, measure: number): { breaks: number[]; rows: CodeRow[] } {
+  const inner = codeInnerWidth(measure);
+  const breaks: number[] = [];
+  const rows: CodeRow[] = [];
+  let rowStart = 0;
+  let lastSpace = -1;
+  let column = 0;
+
+  for (let i = 0; i < text.length; i++) {
+    const w = displayWidth(text[i]);
+    if (column + w > inner && i > rowStart) {
+      if (lastSpace > rowStart) {
+        // Word break: the space ends the row and is consumed by it.
+        breaks.push(lastSpace);
+        rows.push({ start: rowStart, end: lastSpace });
+        rowStart = lastSpace + 1;
+      } else {
+        // Nothing to break at — cut the word. The break sits *before* this
+        // character, which starts the next row rather than being consumed.
+        breaks.push(i);
+        rows.push({ start: rowStart, end: i });
+        rowStart = i;
+      }
+      lastSpace = -1;
+      column = 0;
+      for (let j = rowStart; j <= i; j++) column += displayWidth(text[j]);
+      continue;
+    }
+    if (text[i] === " ") lastSpace = i;
+    column += w;
+  }
+  rows.push({ start: rowStart, end: text.length });
+  return { breaks, rows };
+}
+
+/** Draw the rails for one code-body line, one pair per framed row.
+ *
+ * Rows come from `codeRowLayout`, so a wrapped line is railed and padded on
+ * every row rather than only its first. A row still wider than the frame — a
+ * long unbroken token, which has no space to break at — gets its left rail and
+ * no right one: forcing a right rail there would push the row past the wrap
+ * width and put the rail on a line of its own, which is worse than an open
+ * edge. */
+function emitCodeRails(
+  bufferId: number,
+  lineContent: string,
+  byteStart: number,
+  measure: number,
+  // Columns the whole block is indented by — its opening delimiter's indent.
+  // The frame sits that far in, and the block's own measure shrinks to match,
+  // so an indented block wraps where its narrower box actually ends.
+  blockIndent: number,
+): void {
+  const contentEnd = lineContentEndByte(lineContent, byteStart);
+  const text = lineContent.replace(/\r?\n$/, "");
+  const blockMeasure = Math.max(4, measure - blockIndent);
+  const inner = codeInnerWidth(blockMeasure);
+
+  // An empty line has no character to hang two separate rails off, so both
+  // edges and the gap between them go in one piece at its line break. Anchored
+  // on the newline of a line with nothing else in it, which the renderer pads
+  // on neither side, so the glyphs land in the frame's own columns.
+  if (contentEnd <= byteStart) {
+    editor.addVirtualTextStyled(
+      bufferId, `${CODE_RAIL_ID_PREFIX}${byteStart}:e`, byteStart,
+      " ".repeat(blockIndent) + RAIL_GLYPH + " ".repeat(inner + 2) + RAIL_GLYPH,
+      codeFrameStyle, true,
+    );
+    return;
+  }
+
+  // The block's indent is real text on this line, drawn before the rail — so
+  // the rail is anchored past it and the layout measures only what follows.
+  const body = text.slice(blockIndent);
+  const { rows } = codeRowLayout(body, blockMeasure);
+  // A code line's indent WITHIN the block is real text too, so the first row
+  // draws it and the rows it wraps onto do not — they would restart flush
+  // against the rail, left of the code they continue. The rail supplies it for
+  // those rows, because the wrap's own hanging indent would push the RAIL right
+  // instead of the code.
+  const codeIndent = body.length - body.trimStart().length;
+  for (let r = 0; r < rows.length; r++) {
+    const row = rows[r];
+    if (row.end <= row.start) continue;
+    const rowText = body.slice(row.start, row.end);
+    const railIndent = r === 0 ? 0 : Math.min(codeIndent, Math.max(0, inner - 1));
+    // Only the first row has the block's indent as real text ahead of it.
+    const railLead = r === 0 ? "" : " ".repeat(blockIndent);
+
+    editor.addVirtualTextStyled(
+      bufferId, `${CODE_RAIL_ID_PREFIX}${byteStart}:${r}:l`,
+      charToByte(lineContent, blockIndent + row.start, byteStart),
+      railLead + RAIL_GLYPH + " ".repeat(railIndent), codeFrameStyle, true,
+    );
+
+    const pad = inner - displayWidth(rowText) - railIndent;
+    if (pad < 0) continue; // unbreakable over-long row: leave the edge open
+    // Anchor the closing rail *after the last character* of the row, found by
+    // code point rather than by `end - 1`: a byte before the end lands inside
+    // a multi-byte glyph, and the row's last character is exactly where a
+    // multi-byte glyph is most likely to be.
+    const lastChar = Array.from(rowText).pop() as string;
+    const lastCharStart = charToByte(
+      lineContent, blockIndent + row.end - lastChar.length, byteStart,
+    );
+    editor.addVirtualTextStyled(
+      bufferId, `${CODE_RAIL_ID_PREFIX}${byteStart}:${r}:r`, lastCharStart,
+      " ".repeat(pad) + RAIL_GLYPH, codeFrameStyle, false,
+    );
+  }
+}
 
 // Table borders are emitted PER LINE, exactly like conceals: for each table row
 // in a `lines_changed` batch we clear the virtual lines anchored at that row and
@@ -100,6 +488,158 @@ type LineInfoLike = {
 // via `clearVirtualLinesInRange`, so adjacent rows / distinct tables never
 // collide and a tall table needs no whole-table rebuild.
 const TABLE_BORDER_NS = "md-tb";
+
+// =============================================================================
+// Heading markers on the scrollbar
+// =============================================================================
+//
+// Headings are marked on the scrollbar track so a document's structure is
+// visible at a glance and off-screen sections can be located without
+// scrolling. This rides the same per-line pass as conceals and borders, and
+// uses the *range-scoped* form of the API for the same reason the conceal
+// clears are range-scoped:
+//
+//   * `lines_changed` only ever reports the lines the editor decided to
+//     (re)process — typically the viewport, or the lines an edit touched. A
+//     whole-namespace replace would therefore delete the markers for every
+//     heading currently off-screen, and the scrollbar would show only the
+//     headings near the viewport.
+//   * `setScrollbarMarkersInRange` replaces only the markers anchored inside
+//     the batch's byte span, so headings scrolled past keep their marks and
+//     coverage accumulates as the document is explored. Editor-side byte
+//     anchors then shift those accumulated markers through later edits, so
+//     nothing goes stale between batches.
+//
+// Marks are emitted for every batch — including batches with no headings —
+// so a line that stops being a heading loses its mark.
+const HEADING_MARKER_NS = "md-headings";
+
+// Heading level → marker color. Theme keys resolve at render time, so the
+// marks follow theme changes like the emphasis overlays do.
+const HEADING_MARKER_COLORS: string[] = [
+  "syntax.keyword",  // # h1
+  "syntax.function", // ## h2
+  "syntax.type",     // ### h3+
+];
+
+function headingMarkerColor(level: number): string {
+  return HEADING_MARKER_COLORS[Math.min(level, HEADING_MARKER_COLORS.length) - 1];
+}
+
+/** Heading level of a source line (1-6), or 0 when it isn't an ATX heading. */
+function headingLevel(content: string): number {
+  const m = content.match(/^\s*(#{1,6})\s+\S/);
+  return m ? m[1].length : 0;
+}
+
+// Deepest heading level that earns a mark. The track oversamples hard — one
+// cell covers many lines in any real document — so marking every level packs
+// several headings into one cell where only the shallowest survives anyway.
+const HEADING_MARKER_MAX_LEVEL = 1;
+
+/**
+ * The headings in `text`, skipping fenced code blocks.
+ *
+ * A `#` at the start of a line inside a fence is a comment in whatever
+ * language the block is written in — `# Binary package (recommended)` in a
+ * bash block is the common case — not a heading. This scan tracks fences
+ * itself because it works from raw text, where the editor's `region`
+ * classification (which the per-line pass uses for exactly this question)
+ * isn't available. Both answer the same question from the same rule; only
+ * the input differs.
+ */
+function scanHeadings(text: string): ScrollbarMarker[] {
+  const markers: ScrollbarMarker[] = [];
+  let offset = 0;
+  let inFence = false;
+  let fenceChar = "";
+
+  for (const line of text.split("\n")) {
+    const lineBytes = utf8Length(line);
+    if (looksLikeFence(line)) {
+      // A closer has to match its opener's character, so a ``` inside a ~~~
+      // block is content, not a delimiter.
+      const char = line.trimStart()[0];
+      if (!inFence) {
+        inFence = true;
+        fenceChar = char;
+      } else if (char === fenceChar) {
+        inFence = false;
+      }
+    } else if (!inFence) {
+      const level = headingLevel(line);
+      if (level > 0 && level <= HEADING_MARKER_MAX_LEVEL) {
+        markers.push({
+          position: offset,
+          color: headingMarkerColor(level),
+          priority: 10 - level,
+        });
+      }
+    }
+    offset += lineBytes + 1; // +1 for the "\n" the split consumed
+  }
+
+  return markers;
+}
+
+/** UTF-8 byte length; marker positions are byte offsets, JS indices are not. */
+function utf8Length(str: string): number {
+  let n = 0;
+  for (let i = 0; i < str.length; i++) {
+    const code = str.charCodeAt(i);
+    if (code <= 0x7f) n += 1;
+    else if (code <= 0x7ff) n += 2;
+    else if (code >= 0xd800 && code <= 0xdfff) { n += 4; i++; }
+    else n += 3;
+  }
+  return n;
+}
+
+// Byte cap for the one-shot scan, from the editor's own large-file setting.
+function prescanByteLimit(): number {
+  const cfg = editor.getConfig() as { editor?: { large_file_threshold_bytes?: number } } | null;
+  const v = cfg?.editor?.large_file_threshold_bytes;
+  return typeof v === "number" && v > 0 ? v : 1048576;
+}
+
+/**
+ * Mark every heading in the document, once, when compose mode turns on.
+ *
+ * Without this the track only ever shows the parts of the file that have been
+ * scrolled through, because `lines_changed` reports the viewport. Worse than
+ * the missing marks: a track cell covers many lines, so which heading wins a
+ * shared cell depended on how far the reader had scrolled, and cells changed
+ * colour under them. A complete set makes the winner a property of the
+ * document.
+ *
+ * The whole-namespace `setScrollbarMarkers` is correct here even though the
+ * per-batch pass uses the range-scoped form: this runs first and publishes
+ * everything, and each later batch replaces only its own byte span.
+ *
+ * Over-limit files keep the old lazy behaviour rather than losing marks. The
+ * size probe is the read itself — asking for `limit + 1` bytes costs a bounded
+ * copy and tells us whether the buffer exceeds the limit, so no separate
+ * length API is needed.
+ */
+async function prescanHeadingMarkers(bufferId: number): Promise<void> {
+  const limit = prescanByteLimit();
+  let text: string;
+  try {
+    text = await editor.getBufferText(bufferId, 0, limit + 1);
+  } catch (e) {
+    editor.debug(`Heading pre-scan skipped for buffer ${bufferId}: ${e}`);
+    return;
+  }
+  if (utf8Length(text) > limit) {
+    editor.debug(`Heading pre-scan skipped for buffer ${bufferId}: over ${limit} bytes`);
+    return;
+  }
+  // The await gave the user time to toggle compose off (or close the buffer);
+  // publishing now would strand marks the disable path has already cleared.
+  if (!isComposingInAnySplit(bufferId)) return;
+
+  editor.setScrollbarMarkers(bufferId, HEADING_MARKER_NS, scanHeadings(text));
+}
 
 // Per-render column widths, keyed by a row's byte_start. Rebuilt at the top of
 // every `lines_changed` pass (computeRowWidths) and read synchronously in the
@@ -131,6 +671,84 @@ function widthsForRow(byte: number): number[] | undefined {
   return w && w.length ? w : undefined;
 }
 
+/** How a table row is laid out across visual rows: the row texts the conceal
+ * pass draws, and the source positions the soft-break pass breaks at.
+ *
+ * One function because the two passes have to agree exactly — the conceal for
+ * visual row N covers the source between break N-1 and break N, so a break the
+ * other pass didn't pick puts a row's text on the wrong side of a fold. They
+ * were two copies of the same loop under a "must match" comment, which is how
+ * they came to disagree.
+ *
+ * Returns `null` for a row that fits on one visual line.
+ *
+ * Break positions must be spaces: a Space token carries its own source offset,
+ * while the characters inside a Text token all share the token's start, so a
+ * break asked for mid-token silently never happens. They must also be spread
+ * out — segment N+1 runs from the previous break + 1 up to this one, so two
+ * adjacent spaces leave it empty, and a conceal over an empty range renders
+ * nothing at all: the row it was carrying disappears into a blank line through
+ * the middle of the table.
+ */
+interface TableRowLayout { visualLines: string[]; breakChars: number[] }
+function tableRowLayout(
+  lineContent: string,
+  colWidths: number[],
+): TableRowLayout | null {
+  let inner = lineContent.trim();
+  if (inner.startsWith('|')) inner = inner.slice(1);
+  if (inner.endsWith('|')) inner = inner.slice(0, -1);
+  const cells = inner.split('|');
+  const numCols = Math.min(cells.length, colWidths.length);
+
+  const cellWrapped: string[][] = [];
+  let maxVisualLines = 1;
+  for (let ci = 0; ci < numCols; ci++) {
+    // 1 leading + 1 trailing space margin, matching the frame's cell padding.
+    const wrapped = wrapText(
+      concealedText(cells[ci]).trim(), Math.max(1, colWidths[ci] - 2),
+    );
+    cellWrapped.push(wrapped);
+    maxVisualLines = Math.max(maxVisualLines, wrapped.length);
+  }
+
+  // Cap to available source characters (excluding the trailing newline): each
+  // extra visual row costs one break position, and there are only so many.
+  let effLen = lineContent.length;
+  if (effLen > 0 && lineContent[effLen - 1] === '\n') effLen--;
+  if (effLen > 0 && lineContent[effLen - 1] === '\r') effLen--;
+  maxVisualLines = Math.min(maxVisualLines, effLen);
+  if (maxVisualLines <= 1) return null;
+
+  const breakChars: number[] = [];
+  let lastBreak = -1;
+  for (let i = 1; i < effLen - 1 && breakChars.length < maxVisualLines - 1; i++) {
+    if (lineContent[i] !== ' ' || i <= lastBreak + 1) continue;
+    breakChars.push(i);
+    lastBreak = i;
+  }
+  // A row with too few usable break positions renders the rows it can.
+  const rows = breakChars.length + 1;
+
+  const visualLines: string[] = [];
+  for (let vl = 0; vl < rows; vl++) {
+    let vline = '│';
+    for (let ci = 0; ci < numCols; ci++) {
+      const wrapW = Math.max(1, colWidths[ci] - 2);
+      const text = cellWrapped[ci][vl] ?? '';
+      vline += ' ' + text + ' '.repeat(Math.max(0, wrapW - displayWidth(text))) + ' │';
+    }
+    visualLines.push(vline);
+  }
+  return { visualLines, breakChars };
+}
+
+/** Whether a source line is a list item, for the inter-item spacing pass.
+ * Indent widening doesn't matter here, so the measure is irrelevant. */
+function isListItemContent(content: string): boolean {
+  return listItemInfo(content, 0) !== null;
+}
+
 function isTableRowContent(content: string): boolean {
   const t = content.trim();
   return t.startsWith("|") || t.endsWith("|");
@@ -148,10 +766,19 @@ function tableCells(content: string): string[] {
 }
 
 // Viewport-constrained per-column widths from accumulated max raw widths.
+//
+// The frame's own columns come off the top: one `│` per column plus the
+// closing one. Two more go the way the thematic-break rule's do — the renderer
+// reserves an end-of-line column, and a frame that reaches it wraps its right
+// edge onto a row of its own. A table laid out at the full measure only got
+// away with it while the pane was wider than the measure; in a pane narrower
+// than the configured compose width (a vertical split, the file explorer
+// open), `effectiveComposeWidth` clamps to the pane and every border line
+// folded.
 function allocatedFor(maxW: number[]): number[] {
   const viewport = editor.getViewport();
   const composeW = effectiveComposeWidth(viewport ? viewport.width : 80);
-  const available = composeW - (maxW.length + 1);
+  const available = composeW - 2 - (maxW.length + 1);
   return distributeColumnWidths(maxW, available);
 }
 
@@ -579,19 +1206,51 @@ function enableMarkdownCompose(bufferId: number): void {
   // Tell Rust side this buffer is in compose mode (idempotent)
   editor.setViewMode(bufferId, "compose");
 
-  // Hide line numbers in compose mode
-  editor.setLineNumbers(bufferId, false);
+  // Hide line numbers in compose mode. This runs again on every
+  // `buffer_activated`, including switching back to a tab that is already
+  // composing, so it passes an opinion rather than a setting: the editor keeps
+  // it apart from the user's own "Toggle Line Numbers (Current Buffer)" pin,
+  // which still wins here and is what comes back on the way out (issue #2931).
+  editor.setLineNumbersDefault(bufferId, false);
+
+  // Same for the gutter's fold arrows: they are a code-editor affordance, and
+  // a document preview with no line numbers has no use for them — they only
+  // break up the clean left edge.
+  editor.setFoldIndicators(bufferId, false);
+
+  // And for indentation guides. They are a code-editor affordance too, and a
+  // composed document has nothing for them to guide: the indentation they would
+  // track belongs to the SOURCE — a list item's continuation lines, a fenced
+  // block's body — which compose mode has already re-laid-out or concealed. The
+  // guides that survived that drew as a column of disconnected verticals beside
+  // reflowed paragraphs, tracking indents no longer on screen.
+  editor.setIndentationGuide(bufferId, false);
 
   // Enable native line wrapping so that long lines without whitespace
   // (which the plugin can't soft-break) are force-wrapped by the Rust
   // wrapping transform at the content width.
-  editor.setLineWrap(bufferId, null, true);
+  //
+  // Scoped to THIS split, not to every split showing the buffer (which is what
+  // a `null` split id means). Compose mode is a property of one pane: a
+  // markdown buffer open in two panes, one composing and one in source, had
+  // wrap forced on in the source pane every time focus landed on the composing
+  // one — this hook runs on `buffer_activated`, so merely switching between
+  // the two rewrote the source pane's setting.
+  editor.setLineWrap(bufferId, editor.getActiveSplitId(), true);
 
-  // Set layout hints for centered margins
-  editor.setLayoutHints(bufferId, null, { composeWidth: config.composeWidth ?? undefined });
+  // Set layout hints for centered margins. With no explicit session choice
+  // this resolves to the configured page width (default 80), so compose opens
+  // as a readable measure rather than running the full pane width.
+  editor.setLayoutHints(bufferId, null, { composeWidth: activeComposeWidth() ?? undefined });
 
   // Trigger a refresh so lines_changed hooks fire for visible content
   editor.refreshLines(bufferId);
+
+  // Mark every heading in the document, not just the ones scrolled past.
+  // Fire-and-forget: the per-batch pass below keeps the marks current either
+  // way, so a failed or skipped scan degrades to the old lazy behaviour.
+  void prescanHeadingMarkers(bufferId);
+
   editor.debug(`Markdown compose enabled for buffer ${bufferId}`);
 }
 
@@ -602,6 +1261,12 @@ function disableMarkdownCompose(bufferId: number): void {
     // can't linger as orphaned virtual lines after compose is toggled off, and
     // drop the per-table width memos.
     editor.clearVirtualTextNamespace(bufferId, TABLE_BORDER_NS);
+    // Same for the inter-list-item spacer rows, so they can't linger as
+    // orphaned virtual lines after compose is toggled off.
+    editor.clearVirtualTextNamespace(bufferId, LIST_SPACING_NS);
+    // And the code blocks' side rails, which are inline virtual text rather
+    // than virtual lines and so are not covered by the namespace clears.
+    editor.removeVirtualTextsByPrefix(bufferId, CODE_RAIL_ID_PREFIX);
     const memos = (editor.queryMarkers(bufferId, 0, 0x7fffffff) as Array<{ id: string }>) || [];
     for (const m of memos) {
       if (m.id.startsWith(TABLE_WIDTH_NS_PREFIX)) editor.deleteMarker(bufferId, m.id);
@@ -610,14 +1275,24 @@ function disableMarkdownCompose(bufferId: number): void {
     // Tell Rust side this buffer is back in source mode
     editor.setViewMode(bufferId, "source");
 
-    // Re-enable line numbers
-    editor.setLineNumbers(bufferId, true);
+    // Withdraw the line-number opinion rather than forcing the gutter back on:
+    // `null` restores whatever the user's own setting resolves to, which for
+    // someone who had `editor.line_numbers` off, or who pinned this buffer, is
+    // not necessarily "on".
+    editor.setLineNumbersDefault(bufferId, null);
+
+    // Same for the fold indicators and the indentation guides — `null`
+    // withdraws the opinion rather than forcing them on, so a user who had
+    // either turned off keeps them off on the way out.
+    editor.setFoldIndicators(bufferId, null);
+    editor.setIndentationGuide(bufferId, null);
 
     // Clear layout hints, emphasis overlays, conceals, and soft breaks
     editor.setLayoutHints(bufferId, null, {});
     editor.clearNamespace(bufferId, "md-emphasis");
     editor.clearConcealNamespace(bufferId, "md-syntax");
     editor.clearSoftBreakNamespace(bufferId, "md-wrap");
+    editor.clearScrollbarMarkers(bufferId, HEADING_MARKER_NS);
 
     editor.refreshLines(bufferId);
     editor.debug(`Markdown compose disabled for buffer ${bufferId}`);
@@ -694,137 +1369,6 @@ function extractTextFromTokens(tokens: ViewTokenWire[]): string {
   return text;
 }
 
-/**
- * Transform tokens for markdown compose mode with hanging indents
- *
- * Strategy: Parse the source text to identify block structure, then walk through
- * incoming tokens and emit transformed tokens with soft wraps and hanging indents.
- */
-function transformMarkdownTokens(
-  inputTokens: ViewTokenWire[],
-  width: number,
-  viewportStart: number
-): ViewTokenWire[] {
-  // First, extract text to understand block structure
-  const text = extractTextFromTokens(inputTokens);
-  const blocks = parseMarkdownBlocks(text);
-
-  // Build a map of source_offset -> block info for quick lookup
-  // Block byte positions are 0-based within extracted text
-  // Source offsets are actual buffer positions (viewportStart + position_in_text)
-  const offsetToBlock = new Map<number, ParsedBlock>();
-  for (const block of blocks) {
-    // Map byte positions that fall within this block to the block
-    // contentStartByte and endByte are positions within extracted text (0-based)
-    // source_offset = viewportStart + position_in_extracted_text
-    for (let textPos = block.startByte; textPos < block.endByte; textPos++) {
-      const sourceOffset = viewportStart + textPos;
-      offsetToBlock.set(sourceOffset, block);
-    }
-  }
-
-  const outputTokens: ViewTokenWire[] = [];
-  let column = 0;  // Current column position
-  let currentBlock: ParsedBlock | null = null;
-  let lineStarted = false;  // Have we output anything on current line?
-
-  for (let i = 0; i < inputTokens.length; i++) {
-    const token = inputTokens[i];
-    const kind = token.kind;
-    const sourceOffset = token.source_offset;
-
-    // Track which block we're in based on source offset
-    if (sourceOffset !== null) {
-      const block = offsetToBlock.get(sourceOffset);
-      if (block) {
-        currentBlock = block;
-      }
-    }
-
-    // Get hanging indent for current block (default 0)
-    const hangingIndent = currentBlock?.hangingIndent ?? 0;
-
-    // Determine if current block should be soft-wrapped
-    const blockType = currentBlock?.type;
-    const noWrap = blockType === 'table-row' || blockType === 'code-fence' ||
-                   blockType === 'code-content' || blockType === 'hr' ||
-                   blockType === 'heading' || blockType === 'image' ||
-                   blockType === 'empty';
-
-    // Handle different token types
-    if (kind === "Newline") {
-      // Real newlines pass through - they end a block
-      outputTokens.push(token);
-      column = 0;
-      lineStarted = false;
-      currentBlock = null;  // Reset at line boundary
-    } else if (kind === "Space") {
-      // Space handling - potentially wrap before space + next word
-      if (!lineStarted) {
-        // Leading space on a line - preserve it
-        outputTokens.push(token);
-        column++;
-        lineStarted = true;
-      } else {
-        // Mid-line space - look ahead to see if we need to wrap
-        // Find next non-space token to check word length
-        let nextWordLen = 0;
-        for (let j = i + 1; j < inputTokens.length; j++) {
-          const nextKind = inputTokens[j].kind;
-          if (nextKind === "Space" || nextKind === "Newline" || nextKind === "Break") {
-            break;
-          }
-          if (typeof nextKind === 'object' && 'Text' in nextKind) {
-            nextWordLen += nextKind.Text.length;
-          }
-        }
-
-        // Check if space + next word would exceed width
-        if (!noWrap && column + 1 + nextWordLen > width && nextWordLen > 0) {
-          // Wrap: emit soft newline + hanging indent instead of space
-          outputTokens.push({ source_offset: null, kind: "Newline" });
-          for (let j = 0; j < hangingIndent; j++) {
-            outputTokens.push({ source_offset: null, kind: "Space" });
-          }
-          column = hangingIndent;
-          // Don't emit the space - we wrapped instead
-        } else {
-          // No wrap needed - emit the space normally
-          outputTokens.push(token);
-          column++;
-        }
-      }
-    } else if (kind === "Break") {
-      // Existing soft breaks - we're replacing wrapping logic, so skip these
-      // and handle wrapping ourselves
-    } else if (typeof kind === 'object' && 'Text' in kind) {
-      const text = kind.Text;
-
-      if (!lineStarted) {
-        lineStarted = true;
-      }
-
-      // Check if this word alone would exceed width (need to wrap)
-      if (!noWrap && column > hangingIndent && column + text.length > width) {
-        // Wrap before this word
-        outputTokens.push({ source_offset: null, kind: "Newline" });
-        for (let j = 0; j < hangingIndent; j++) {
-          outputTokens.push({ source_offset: null, kind: "Space" });
-        }
-        column = hangingIndent;
-      }
-
-      // Emit the text token
-      outputTokens.push(token);
-      column += text.length;
-    } else {
-      // Unknown token type - pass through
-      outputTokens.push(token);
-    }
-  }
-
-  return outputTokens;
-}
 
 // =============================================================================
 // Line-level conceal/overlay processing
@@ -832,7 +1376,6 @@ function transformMarkdownTokens(
 // Conceals and overlays are managed per-line using targeted range-based clearing.
 // The lines_changed hook processes newly visible or edited lines.
 // The after_insert/after_delete hooks clear affected byte ranges.
-// The view_transform_request hook handles cursor-aware reveal/conceal updates
 // and soft wrapping.
 
 /**
@@ -1017,7 +1560,7 @@ const MIN_COL_W = 3;
  * allocation, soft-wrap width) need to match.
  */
 function effectiveComposeWidth(viewportWidth: number): number {
-  const cw = config.composeWidth;
+  const cw = activeComposeWidth();
   if (cw == null) return viewportWidth;
   return Math.min(cw, viewportWidth);
 }
@@ -1066,6 +1609,180 @@ function wrapText(text: string, width: number): string[] {
   return lines.length > 0 ? lines : [text];
 }
 
+// =============================================================================
+// Heading text styling
+// =============================================================================
+//
+// Headings ride the same conceal + overlay pass as emphasis: the `#` run is
+// concealed (so the rendered line is just its text) and the text carries an
+// overlay chosen by level. Both are per-line and stateless, so headings need
+// none of the block bookkeeping tables need.
+//
+// This is deliberately separate from the scrollbar heading marks
+// (HEADING_MARKER_NS above), which answer a different question — "where are
+// the headings in the whole document" rather than "how does this line look".
+//
+// Theme keys resolve at render time, so heading colors follow theme changes
+// the way the emphasis overlays do. Levels descend in visual weight: the top
+// three are bold and colour-coded, deeper ones lighten to italic so a heading
+// still reads as structure without shouting.
+const HEADING_TEXT_STYLES: Array<Record<string, unknown>> = [
+  { fg: "syntax.keyword", bold: true },                // #
+  { fg: "syntax.function", bold: true },               // ##
+  { fg: "syntax.type", bold: true },                   // ###
+  { fg: "syntax.type", bold: true, italic: true },     // ####
+  { fg: "syntax.constant", bold: true, italic: true }, // #####
+  { fg: "syntax.constant", italic: true },             // ######
+];
+
+// =============================================================================
+// List rendering
+// =============================================================================
+//
+// Three things, each decided from a single source line so the whole pass stays
+// per-line and stateless:
+//   * the `-`/`*`/`+` bullet becomes a real bullet glyph (1 char for 1 char,
+//     so nothing shifts),
+//   * a nested item's leading indent is widened, so nesting depth is legible
+//     at a glance rather than by counting two-space steps,
+//   * each item gets a blank row after it (see LIST_SPACING_NS).
+//
+// The indent widening is the one piece that has to be known by *both* decoration
+// passes: the conceal pass renders it, and the soft-break pass has to charge the
+// wider indent against the wrap budget and use it as the hanging indent, or a
+// wrapped nested item's continuation rows would not line up under its text and
+// could run past the measure. `listItemInfo` is the single source of truth both
+// call.
+const LIST_BULLET = "•";
+
+// A nested item's indent renders as written, because markdown's own indent is
+// already the alignment: a child item is nested precisely by being indented to
+// where its parent's TEXT begins, so `2. ` puts its children at three columns
+// and `- ` at two. Rendering that unchanged lands each child's marker under the
+// first letter of its parent, which is what the nesting means and what every
+// other renderer draws.
+//
+// Scaling it — this was doubled once, to keep relative depth when the source's
+// own step is unknown — breaks that: three source columns became six, so a
+// sub-bullet under `2. ` sat three columns right of the text it belongs to,
+// reading as a deeper level than it is. Depth is already carried by the source,
+// and doubling it only doubles the error when the guess is wrong.
+//
+// Still capped, so a deeply nested list cannot push its text off the page.
+const LIST_INDENT_SCALE = 1;
+
+interface ListLineInfo {
+  sourceIndent: number;  // chars of leading whitespace
+  renderedIndent: number; // columns it renders as
+  bullet: string | null;  // the `-`/`*`/`+` char, or null for an ordered item
+  markerLen: number;      // chars of marker + the whitespace after it
+}
+
+function expandListIndent(sourceIndent: number, measure: number): number {
+  if (sourceIndent === 0) return 0;
+  const cap = Math.max(sourceIndent, Math.floor(measure / 4));
+  return Math.min(sourceIndent * LIST_INDENT_SCALE, cap);
+}
+
+/** List-item structure for a source line, or null when it isn't one.
+ *
+ * Requires whitespace and then non-space content after the marker, so a line
+ * that merely starts with `*` (e.g. `*emphasis*`) is not treated as a bullet.
+ * Ordered markers follow `parseMarkdownBlocks`' `\d+.` form. Thematic breaks
+ * never reach here — they are handled and returned earlier in the pass. */
+function listItemInfo(content: string, measure: number): ListLineInfo | null {
+  const m = content.match(/^(\s*)([-*+]|\d+\.)([ \t]+)(?=\S)/);
+  if (!m) return null;
+  const sourceIndent = m[1].length;
+  return {
+    sourceIndent,
+    renderedIndent: expandListIndent(sourceIndent, measure),
+    bullet: /^[-*+]$/.test(m[2]) ? m[2] : null,
+    markerLen: m[2].length + m[3].length,
+  };
+}
+
+// Blank rows between consecutive list items. Emitted per line in their own
+// namespace and cleared range-scoped for *every* line in a batch — exactly the
+// discipline the table border frame uses, and for the same reason: a line that
+// stops being a list item has to lose its spacer, and a spacer that rides a few
+// bytes ahead under the async `lines_changed` lag must still be caught by the
+// clear.
+const LIST_SPACING_NS = "md-ls";
+const listSpacingOptions = { bg: "editor.bg" };
+const listBulletStyle = { fg: "syntax.keyword" };
+
+// Block-quote rendering. The bar is a left half-block: it fills the full cell
+// height, so consecutive quote lines join into an unbroken vertical rule the
+// way a rendered blockquote's border does. Theme keys resolve at render time,
+// like the emphasis overlays.
+const QUOTE_BAR = "▌";
+const quoteBarStyle = { fg: "syntax.type" };
+const quoteTextStyle = { fg: "syntax.comment", italic: true };
+
+/** The leading `>` marker run of a block quote line, or null if there is none.
+ *
+ * `runStart`/`runEnd` are character offsets into `lineContent`; `rendered` is
+ * how the run's columns look once compose mode has concealed it — every `>`
+ * replaced by the bar glyph, every other character (the leading indent, the
+ * spaces between and after markers) left as a space. Width is preserved
+ * one-for-one, so the quoted text keeps its source column.
+ *
+ * Shared by the conceal pass, which draws the run in place on the source row,
+ * and the soft-break pass, which repeats it as the continuation rows' indent.
+ * Both must agree on where the run ends: that column is where the quoted text
+ * starts, and therefore where every wrapped row has to line up.
+ */
+function quoteMarkerRun(
+  lineContent: string,
+): { runStart: number; runEnd: number; rendered: string } | null {
+  // Spaces and tabs only, never `\s`: `lineContent` can carry its trailing
+  // newline, and `[>\s]*` would swallow it into the run — putting a phantom
+  // column into `rendered` and pushing `runEnd` past the end of the row.
+  const match = lineContent.match(/^([ \t]*)(>[> \t]*)/);
+  if (!match) return null;
+  const runStart = match[1].length;
+  const runEnd = runStart + match[2].length;
+  let rendered = "";
+  for (let i = 0; i < runEnd; i++) {
+    rendered += lineContent[i] === '>' ? QUOTE_BAR : " ";
+  }
+  return { runStart, runEnd, rendered };
+}
+
+function headingTextStyle(level: number): Record<string, unknown> {
+  const idx = Math.min(Math.max(level, 1), HEADING_TEXT_STYLES.length) - 1;
+  return HEADING_TEXT_STYLES[idx];
+}
+
+/** `[indent, markerLen, level]` for an ATX heading line, else null.
+ *
+ * `markerLen` covers the `#` run *and* the spaces after it, so concealing
+ * `[indent, indent + markerLen)` leaves the heading text starting at the
+ * line's left edge. Requires at least one space and some non-space text after
+ * the hashes, so a bare `#` or a `#hashtag` is left alone — matching how
+ * CommonMark reads them. */
+/** Byte offset of the end of a line's *content*, excluding any trailing
+ * newline.
+ *
+ * `lines_changed` line content can carry its terminator, and a conceal whose
+ * range covers the newline swallows the line break — the concealed line and
+ * the one after it render as a single row. Whole-line conceals must therefore
+ * stop here rather than at the reported `byte_end`. Same trailing-CR/LF trim
+ * the table wrapping path does for its segment ranges. */
+function lineContentEndByte(lineContent: string, byteStart: number): number {
+  let len = lineContent.length;
+  if (len > 0 && lineContent[len - 1] === '\n') len--;
+  if (len > 0 && lineContent[len - 1] === '\r') len--;
+  return charToByte(lineContent, len, byteStart);
+}
+
+function atxHeading(content: string): [number, number, number] | null {
+  const m = content.match(/^(\s*)(#{1,6})([ \t]+)(?=\S)/);
+  if (!m) return null;
+  return [m[1].length, m[2].length + m[3].length, m[2].length];
+}
+
 /**
  * Process a single line: add overlays (emphasis, link styling) and conceals
  * (hide markdown syntax markers).
@@ -1085,7 +1802,15 @@ function processLineConceals(
   lineContent: string,
   byteStart: number,
   byteEnd: number,
+  measure: number,
+  region: RegionLine | undefined,
   lineNumber?: number,
+  /** This line is a flow continuation: its leading indent and `>` run are
+   * already inside the join conceal that merges it into the block above (see
+   * `processFlowBlock`), so the decorations that would render them in place
+   * stand down. Overlapping conceals over the same bytes would otherwise both
+   * fire and the run would render twice. */
+  joined = false,
 ): void {
   // Clear existing conceals and overlays for this line first.
   // This ensures clear+add commands are sent together from the plugin thread
@@ -1105,10 +1830,59 @@ function processLineConceals(
   const lineScopeInclEnd = byteEnd + 1;
   const lineScopeStrictEnd = byteEnd;
 
-  // Skip lines inside code fences (we'd need multi-line context for this;
-  // for now, detect fence lines and code content lines)
   const trimmed = lineContent.trim();
-  if (trimmed.startsWith('```')) return; // fence line itself
+
+  // --- Fenced code blocks ---
+  // The delimiters become the block's frame; the body is left entirely alone,
+  // so the embedded-language highlighting shows through untouched and none of
+  // the inline markdown rules below fire inside code (a `*` in a glob, a `-`
+  // starting a shell line, a `#` comment are not emphasis, a bullet, or a
+  // heading). See the RegionLine notes above for why this is the editor's
+  // answer and not a local guess.
+  if (region === "body") return;
+  if (region === "open" || region === "close") {
+    const frameEnd = lineContentEndByte(lineContent, byteStart);
+    // A block indented into a list item keeps its indent as real text and puts
+    // the corner after it, so the box sits inside the item the way every other
+    // renderer draws it. Concealing from the line's start instead pulled the
+    // border back to the page's left edge, under text it belongs beside.
+    const blockIndent = leadingIndent(lineContent);
+    const frameStart = charToByte(lineContent, blockIndent, byteStart);
+    const blockMeasure = Math.max(4, measure - blockIndent);
+    const frame = region === "open"
+      ? buildCodeFrameLine(blockMeasure, "┌", "┐")
+      : buildCodeFrameLine(blockMeasure, "└", "┘");
+    editor.addConceal(
+      bufferId, "md-syntax", frameStart, frameEnd, frame,
+      "unless-cursor-in", byteStart, lineScopeInclEnd,
+    );
+    editor.addOverlay(bufferId, "md-emphasis", frameStart, frameEnd, codeFrameStyle);
+    return;
+  }
+  // A fence-looking line the editor could not classify: leave it literal
+  // rather than guess a corner. Same conservative choice the table frame
+  // makes for a row whose neighbour is off-screen.
+  if (looksLikeFence(lineContent)) return;
+
+  // --- Thematic breaks: `---` / `***` / `___` → one full-measure rule ---
+  // Rendered as a single conceal replacement rather than per-character
+  // substitution so the rule spans the page measure regardless of how many
+  // dashes the source used. Two columns short of the measure for the same
+  // reason the wrap budget is (see `wrapBudget`): the renderer reserves an
+  // end-of-line column, and a rule that reaches it would wrap onto a second
+  // visual row. Matches the `hr` pattern in `parseMarkdownBlocks`.
+  if (/^(-{3,}|\*{3,}|_{3,})$/.test(trimmed)) {
+    const hrWidth = Math.max(1, measure - 2);
+    const hrEnd = lineContentEndByte(lineContent, byteStart);
+    editor.addConceal(
+      bufferId, "md-syntax", byteStart, hrEnd, "─".repeat(hrWidth),
+      "unless-cursor-in", byteStart, lineScopeInclEnd,
+    );
+    editor.addOverlay(
+      bufferId, "md-emphasis", byteStart, hrEnd, { fg: "ui.split_separator_fg" },
+    );
+    return;
+  }
 
   // --- Table row handling ---
   // Table conceals apply even when the cursor is on the line (pipes stay
@@ -1141,45 +1915,15 @@ function processLineConceals(
     // the wrapped rendering is the cursor-OFF variant).
     let handledByWrapping = false;
     if (colWidths && !isSeparator) {
-      const numCols = Math.min(cells.length, colWidths.length);
-      const cellWrapped: string[][] = [];
-      let maxVisualLines = 1;
-      for (let ci = 0; ci < numCols; ci++) {
-        const cellText = concealedText(cells[ci]).trim();
-        const wrapW = Math.max(1, colWidths[ci] - 2); // 1 leading + 1 trailing space margin
-        const wrapped = wrapText(cellText, wrapW);
-        cellWrapped.push(wrapped);
-        maxVisualLines = Math.max(maxVisualLines, wrapped.length);
-      }
-      // Cap to available source bytes (excluding trailing newline)
-      let effLen = lineContent.length;
-      if (effLen > 0 && lineContent[effLen - 1] === '\n') effLen--;
-      if (effLen > 0 && lineContent[effLen - 1] === '\r') effLen--;
-      maxVisualLines = Math.min(maxVisualLines, effLen);
-
-      if (maxVisualLines > 1) {
-        // Build formatted visual line for each wrapped row
-        const visualLines: string[] = [];
-        for (let vl = 0; vl < maxVisualLines; vl++) {
-          let vline = '│';
-          for (let ci = 0; ci < numCols; ci++) {
-            const wrapW = Math.max(1, colWidths[ci] - 2);
-            const wrapped = cellWrapped[ci] || [];
-            const text = vl < wrapped.length ? wrapped[vl] : '';
-            vline += ' ' + text + ' '.repeat(Math.max(0, wrapW - displayWidth(text))) + ' │';
-          }
-          visualLines.push(vline);
-        }
+      const layout = tableRowLayout(lineContent, colWidths);
+      if (layout) {
+        const { visualLines, breakChars } = layout;
 
         // Divide source bytes into segments, one per visual line.
-        // Soft breaks at segment boundaries (added by processLineSoftBreaks)
-        // create the visual line breaks; conceals replace each segment.
+        // Soft breaks at segment boundaries (added by processFlowBlock, from
+        // the same `tableRowLayout`) create the visual line breaks; conceals
+        // replace each segment.
         //
-        // IMPORTANT: break positions MUST land on Space characters.
-        // Space tokens have individual source_offset values matching their
-        // byte positions, so soft breaks will reliably trigger. Non-space
-        // characters inside Text tokens share the token's START offset,
-        // so breaks at mid-token positions silently fail.
         // The consumed space (replaced by Newline) must NOT be covered by
         // any segment's conceal range, so segment N+1 starts at spacePos+1.
         // Exclude trailing newline from segment range so the Newline token
@@ -1188,17 +1932,10 @@ function processLineConceals(
         let lineCharLen = lineContent.length;
         if (lineCharLen > 0 && lineContent[lineCharLen - 1] === '\n') lineCharLen--;
         if (lineCharLen > 0 && lineContent[lineCharLen - 1] === '\r') lineCharLen--;
-        const spacePositions: number[] = [];
-        for (let i = 1; i < lineCharLen; i++) {
-          if (lineContent[i] === ' ') spacePositions.push(i);
-        }
-        const breakChars = spacePositions.slice(0, maxVisualLines - 1);
-        // Trim visual lines if we couldn't find enough break positions
-        const actualVisualLines = breakChars.length + 1;
         // Segments: first starts at 0, subsequent start AFTER the consumed space
         const segStarts = [0, ...breakChars.map(c => c + 1)];
         const segEnds = [...breakChars, lineCharLen];
-        for (let vl = 0; vl < actualVisualLines; vl++) {
+        for (let vl = 0; vl < visualLines.length; vl++) {
           const sByteS = charToByte(lineContent, segStarts[vl], byteStart);
           const sByteE = charToByte(lineContent, segEnds[vl], byteStart);
           editor.addConceal(
@@ -1250,6 +1987,59 @@ function processLineConceals(
         }
       }
 
+      // A data cell's surrounding spaces are alignment, not content.
+      //
+      // The wrapping path above already reads a cell as `concealedText(...)
+      // .trim()` and re-lays it out as `␣content␣pad`. This path used to
+      // measure the cell verbatim, so a hand-aligned source — `|What
+      // ..........|`, which is how most people write a markdown table — read
+      // as a cell 14 columns wide, overflowed a 10-column allocation, and came
+      // out truncated to `What     -`: the header row of an otherwise fine
+      // table, mangled and a column out of step with the rows under it.
+      //
+      // So normalise here too. Concealing the cell's two whitespace RUNS
+      // rather than the whole cell is what keeps the content's own conceals
+      // and emphasis overlays alive inside it — the whole-cell replacement
+      // below is still the fallback for content that genuinely doesn't fit.
+      // `lead === 0` has no run to conceal, so its single space is appended to
+      // the *opening* pipe's replacement instead.
+      interface CellNorm {
+        charStart: number; charEnd: number;
+        lead: number; trail: number;
+        width: number;      // display width of the trimmed, concealed content
+        truncate: boolean;
+      }
+      //
+      // Only for a row that opens with a pipe, which is what makes `cells[ci]`
+      // the text between `pipePositions[ci]` and `[ci + 1]`. A row written
+      // without its leading `|` shifts that correspondence by one, and this
+      // pass conceals source rather than merely padding it — so it stands down
+      // there and the old width-only path below handles the row.
+      const cellNorms = new Map<number, CellNorm>();
+      if (colWidths && !isSeparator && trimmed.startsWith('|')) {
+        for (let ci = 0; ci < Math.min(cells.length, colWidths.length); ci++) {
+          const prevPipe = pipePositions[ci];
+          const nextPipe = pipePositions[ci + 1];
+          if (prevPipe === undefined || nextPipe === undefined) continue;
+          const charStart = prevPipe + 1;
+          const raw = lineContent.slice(charStart, nextPipe);
+          const trimmedStart = raw.trimStart();
+          // An all-whitespace cell is one run, not two: counting it twice
+          // would emit two overlapping conceals over the same bytes.
+          const lead = raw.length - trimmedStart.length;
+          const trail = trimmedStart.length === 0
+            ? 0
+            : raw.length - raw.trimEnd().length;
+          const width = displayWidth(concealedText(raw).trim());
+          cellNorms.set(ci, {
+            charStart, charEnd: nextPipe, lead, trail, width,
+            // One column goes to the leading space, so the content has
+            // `allocated - 1` to live in.
+            truncate: width > colWidths[ci] - 1,
+          });
+        }
+      }
+
       // Track which pipe index we're on (0 = leading pipe)
       let pipeIdx = 0;
       for (let i = 0; i < lineContent.length; i++) {
@@ -1271,33 +2061,70 @@ function processLineConceals(
           // stays fully visible for editing.
           let padOff = ""; // cursor elsewhere: concealed text width
           let padOn = ""; // cursor on this row: raw text width
+          // The single leading space of the cell this pipe OPENS, when that
+          // cell has no whitespace run of its own to normalise into one.
+          let leadOff = "";
           const cellIdx = pipeIdx - 1;
           if (colWidths && pipeIdx > 0 && cellIdx < cells.length && cellIdx < colWidths.length) {
-            const offText = concealedText(cells[cellIdx]);
-            const offWidth = displayWidth(offText);
             const rawWidth = displayWidth(cells[cellIdx]);
             const allocatedWidth = colWidths[cellIdx];
+            const norm = cellNorms.get(cellIdx);
 
-            if (offWidth > allocatedWidth) {
-              // Truncate (cursor-off only): conceal entire cell content and
-              // replace with truncated text. Separator rows use box-drawing ─
-              // to match the non-truncated path (per-char conceals replace
-              // source `-` with ─ and pad via pipe replacement).
-              const prevPipeCharPos = pipePositions[pipeIdx - 1];
-              const cellByteStart = charToByte(lineContent, prevPipeCharPos + 1, byteStart);
-              const cellByteEnd = pipeByte;
-              const truncated = isSeparator
-                ? '─'.repeat(allocatedWidth)
-                : offText.slice(0, allocatedWidth - 1) + '-';
+            if (norm && !norm.truncate) {
+              // Normalised: `␣` + content + pad, the two whitespace runs
+              // concealed away so the content keeps its own decorations.
+              if (norm.lead > 0) {
+                editor.addConceal(
+                  bufferId, "md-syntax",
+                  charToByte(lineContent, norm.charStart, byteStart),
+                  charToByte(lineContent, norm.charStart + norm.lead, byteStart),
+                  " ", "unless-cursor-in", byteStart, lineScopeStrictEnd,
+                );
+              }
+              if (norm.trail > 0) {
+                editor.addConceal(
+                  bufferId, "md-syntax",
+                  charToByte(lineContent, norm.charEnd - norm.trail, byteStart),
+                  pipeByte, "", "unless-cursor-in", byteStart, lineScopeStrictEnd,
+                );
+              }
+              const padCount = allocatedWidth - 1 - norm.width;
+              if (padCount > 0) padOff = " ".repeat(padCount);
+            } else if (norm) {
+              // Content too wide even trimmed: replace the whole cell, leading
+              // space included, and mark the range so the inline passes below
+              // don't decorate bytes that are no longer drawn.
+              const cellByteStart = charToByte(lineContent, norm.charStart, byteStart);
+              const content = concealedText(
+                lineContent.slice(norm.charStart, norm.charEnd),
+              ).trim();
               editor.addConceal(
-                bufferId, "md-syntax", cellByteStart, cellByteEnd, truncated,
+                bufferId, "md-syntax", cellByteStart, pipeByte,
+                " " + content.slice(0, Math.max(0, allocatedWidth - 2)) + "-",
                 "unless-cursor-in", byteStart, lineScopeStrictEnd,
               );
-              truncatedByteRanges.push({start: cellByteStart, end: cellByteEnd});
-              // padOff stays "" — the truncate conceal fills the cell.
+              truncatedByteRanges.push({start: cellByteStart, end: pipeByte});
+              // padOff stays "" — the replacement fills the cell.
             } else {
-              const padCount = allocatedWidth - offWidth;
-              if (padCount > 0) {
+              // A separator row — whose `─` fill is the whole point, so it is
+              // never normalised — or a row whose pipes and cells don't line
+              // up, which leaves the cell without a normalisation to apply.
+              // Both pad from the concealed width, as this path always did.
+              const offText = concealedText(cells[cellIdx]);
+              const offWidth = displayWidth(offText);
+              if (offWidth > allocatedWidth) {
+                const prevPipeCharPos = pipePositions[pipeIdx - 1];
+                const cellByteStart = charToByte(lineContent, prevPipeCharPos + 1, byteStart);
+                editor.addConceal(
+                  bufferId, "md-syntax", cellByteStart, pipeByte,
+                  isSeparator
+                    ? '─'.repeat(allocatedWidth)
+                    : offText.slice(0, allocatedWidth - 1) + '-',
+                  "unless-cursor-in", byteStart, lineScopeStrictEnd,
+                );
+                truncatedByteRanges.push({start: cellByteStart, end: pipeByte});
+              } else if (allocatedWidth > offWidth) {
+                const padCount = allocatedWidth - offWidth;
                 padOff = isSeparator ? "─".repeat(padCount) : " ".repeat(padCount);
               }
             }
@@ -1310,6 +2137,8 @@ function processLineConceals(
             // rawWidth > allocatedWidth: the cursor row keeps the too-wide
             // cell raw (no padding, no truncation) so it stays editable.
           }
+          const opening = cellNorms.get(pipeIdx);
+          if (opening && opening.lead === 0 && !opening.truncate) leadOff = " ";
 
           let glyph = "│";
           if (isSeparator) {
@@ -1319,12 +2148,12 @@ function processLineConceals(
             if (pipeIndex === 1) glyph = '├';
             else if (pipeIndex === totalPipes) glyph = '┤';
           }
-          if (padOff === padOn) {
+          if (padOff === padOn && leadOff === "") {
             // Same rendering in both cursor states — one always-active conceal.
             editor.addConceal(bufferId, "md-syntax", pipeByte, pipeByteEnd, padOff + glyph);
           } else {
             editor.addConceal(
-              bufferId, "md-syntax", pipeByte, pipeByteEnd, padOff + glyph,
+              bufferId, "md-syntax", pipeByte, pipeByteEnd, padOff + glyph + leadOff,
               "unless-cursor-in", byteStart, lineScopeStrictEnd,
             );
             editor.addConceal(
@@ -1371,6 +2200,97 @@ function processLineConceals(
       "unless-cursor-in", byteStart, lineScopeInclEnd,
     );
     return;
+  }
+
+  // --- Block quotes: `>` markers become a left bar ---
+  // Each `>` is concealed into a bar glyph in place, one character for one
+  // character, so the quote's text keeps its source column and the bars of
+  // consecutive quote lines stack into a continuous rule down the block. A
+  // nested quote (`> >`) therefore renders as two bars, which is the nesting
+  // depth made visible for free.
+  //
+  // Per-character rather than one conceal over the whole marker run because
+  // width must be preserved exactly: the run can contain spaces between the
+  // markers, and collapsing them would shift the quoted text left of where the
+  // soft-break hanging indent (leadingIndent + 2) puts its continuation rows.
+  //
+  // Falls through to inline-span processing, so emphasis and links inside a
+  // quote still render.
+  const quoteRun = quoteMarkerRun(lineContent);
+  if (quoteRun) {
+    const { runStart, runEnd } = quoteRun;
+    // A joined continuation's own markers are concealed by the join; only the
+    // quoted-text overlay below still applies to it. The bar it would have
+    // drawn is supplied for the whole block by the head row and by the
+    // continuation rows' soft-break prefix.
+    for (let i = joined ? runEnd : runStart; i < runEnd; i++) {
+      if (lineContent[i] !== '>') continue;
+      const markerByte = charToByte(lineContent, i, byteStart);
+      const markerByteEnd = charToByte(lineContent, i + 1, byteStart);
+      editor.addConceal(
+        bufferId, "md-syntax", markerByte, markerByteEnd, QUOTE_BAR,
+        "unless-cursor-in", byteStart, lineScopeInclEnd,
+      );
+      editor.addOverlay(
+        bufferId, "md-emphasis", markerByte, markerByteEnd, quoteBarStyle,
+      );
+    }
+    // Quoted text reads as an aside, not as body copy.
+    const quotedStart = charToByte(lineContent, runEnd, byteStart);
+    const quotedEnd = lineContentEndByte(lineContent, byteStart);
+    if (quotedEnd > quotedStart) {
+      editor.addOverlay(
+        bufferId, "md-emphasis", quotedStart, quotedEnd, quoteTextStyle,
+      );
+    }
+  }
+
+  // --- ATX headings: conceal the `#` run, style the text by level ---
+  // Falls through to inline-span processing below, so emphasis and links
+  // inside a heading still render. The conceal is cursor-revealable (the `#`
+  // markers come back while editing the line); the overlay is not, so the
+  // heading keeps its colour in both states and doesn't flicker weight as the
+  // cursor passes through it.
+  const heading = atxHeading(lineContent);
+  if (heading) {
+    const [indent, markerLen, level] = heading;
+    const markerByteStart = charToByte(lineContent, indent, byteStart);
+    const markerByteEnd = charToByte(lineContent, indent + markerLen, byteStart);
+    editor.addConceal(
+      bufferId, "md-syntax", markerByteStart, markerByteEnd, null,
+      "unless-cursor-in", byteStart, lineScopeInclEnd,
+    );
+    editor.addOverlay(
+      bufferId, "md-emphasis", markerByteEnd, byteEnd, headingTextStyle(level),
+    );
+  }
+
+  // --- List items: bullet glyph + widened nesting indent ---
+  // Falls through to inline-span processing so emphasis inside an item works.
+  const listInfo = listItemInfo(lineContent, measure);
+  if (listInfo) {
+    if (listInfo.renderedIndent > listInfo.sourceIndent) {
+      // Widen the indent by concealing the source whitespace and replacing it
+      // with a longer run. processLineSoftBreaks charges the same widened
+      // indent against the wrap budget, so the two passes agree.
+      const indentEndByte = charToByte(lineContent, listInfo.sourceIndent, byteStart);
+      editor.addConceal(
+        bufferId, "md-syntax", byteStart, indentEndByte,
+        " ".repeat(listInfo.renderedIndent),
+        "unless-cursor-in", byteStart, lineScopeInclEnd,
+      );
+    }
+    if (listInfo.bullet !== null) {
+      const bulletByte = charToByte(lineContent, listInfo.sourceIndent, byteStart);
+      const bulletByteEnd = charToByte(lineContent, listInfo.sourceIndent + 1, byteStart);
+      editor.addConceal(
+        bufferId, "md-syntax", bulletByte, bulletByteEnd, LIST_BULLET,
+        "unless-cursor-in", byteStart, lineScopeInclEnd,
+      );
+      editor.addOverlay(
+        bufferId, "md-emphasis", bulletByte, bulletByteEnd, listBulletStyle,
+      );
+    }
   }
 
   // --- Inline spans: code, emphasis, links, entities ---
@@ -1436,44 +2356,460 @@ function processLineConceals(
 let lastViewportWidth = 0;
 
 // =============================================================================
+// Reflow: a run of source lines renders as one flowed block
+// =============================================================================
+//
+// Markdown reads consecutive non-blank lines as ONE paragraph (or one list
+// item, or one quote): the newlines between them are word separators, not line
+// breaks. Compose mode has to render that reading, or a hard-wrapped source
+// file — the ordinary way markdown is written — shows every source break as a
+// rendered break, leaving the page ragged and the continuation rows hanging
+// under nothing.
+//
+// Reflow is expressed with the two decorations already in play, so it needs no
+// machinery of its own:
+//
+//   * a JOIN conceal over `[end of the previous line's text, start of this
+//     line's text)` — the newline, this line's leading indent, and its `>` run
+//     when it is a quote — replaced by a single space. A conceal whose range
+//     covers a newline swallows the line break (see `lineContentEndByte`), so
+//     the two source rows render as one;
+//   * soft breaks computed over the WHOLE block instead of per line, so rows
+//     break at the measure and hang under the item's text rather than
+//     restarting at each source line's own column.
+//
+// Both are decided from a `lines_changed` batch alone. That is sound because
+// the editor makes such a batch *run-closed* for a composing buffer: a line is
+// never offered without the rest of its blank-line-delimited run (see
+// `flow_run_start` in `app/render.rs`). A line whose predecessor is absent
+// from the batch is therefore either its run's first line or part of a run too
+// long to close, and both are treated as block heads — the conservative
+// answer, the same one the table frame gives a row whose neighbour it cannot
+// see.
+
+/** The kind of block a flow head opens. A continuation has to match it: a
+ * quote continues only with more quote lines, and prose only with prose. */
+type FlowKind = "paragraph" | "list" | "quote";
+
+/** A source line's text without its terminator.
+ *
+ * `lines_changed` content carries the newline, and every flow decision here is
+ * about the text — a trailing `\n` would read as a trailing space, break the
+ * hard-break test, and put a phantom column into the wrap. */
+function lineText(line: LineInfoLike): string {
+  return line.content.replace(/\r?\n$/, "");
+}
+
+/** A line that is only `=`s or `-`s: a setext heading's underline, or a
+ * thematic break. Never joins to the line above (it *decorates* it) and never
+ * opens a flow block of its own. */
+function isRuleLine(text: string): boolean {
+  return /^\s*(?:=+|-+)\s*$/.test(text);
+}
+
+/** An image on a line of its own, which compose mode renders as a banner. */
+function isImageLine(text: string): boolean {
+  return /^\s*!\[[^\]]*\]\([^)]+\)\s*$/.test(text.trim());
+}
+
+/** A line that is raw HTML rather than prose: an open or close tag, or a
+ * comment, that makes up the whole line.
+ *
+ * Requiring the line to END in `>` is what keeps a paragraph that merely
+ * *starts* with an inline tag — `<em>like this</em> and then prose` — reading
+ * as the prose it is. An unterminated `<!--` still opens: a comment spanning
+ * several lines is the common case that would otherwise flow. */
+function isHtmlBlockLine(text: string): boolean {
+  const t = text.trim();
+  if (t.startsWith("<!--")) return true;
+  if (!/^<(?:\/?[A-Za-z][A-Za-z0-9-]*(?:[\s/>]|$)|[!?])/.test(t)) return false;
+  return t.endsWith(">");
+}
+
+/** A line that opens an indented code block: four columns of indent or a tab,
+ * and not a list marker.
+ *
+ * Only asked of a run's FIRST line, because an indented code block cannot
+ * interrupt a paragraph — it can only begin where a block can. That is exactly
+ * what keeps a list item's continuation lines out of it: they are indented too,
+ * often past four columns for a wide marker like `12. `, but they are never a
+ * run's first line. */
+function opensIndentedCode(text: string): boolean {
+  if (!/^(?: {4}|\t)/.test(text)) return false;
+  return !/^\s*(?:[-*+]|\d{1,9}[.)])\s/.test(text);
+}
+
+/** A `---` or `+++` on a line of its own: a front-matter delimiter, when it is
+ * the buffer's first line or the one that closes the block it opened. */
+const FRONT_MATTER_FENCE = /^(?:---|\+\+\+)\s*$/;
+
+/** Whether each line of a batch is *verbatim* — text the reader must see laid
+ * out as written, never re-flowed as prose, and never read as a heading.
+ * `true` for a line inside a fenced code block, a raw HTML block or the file's
+ * front matter; `false` for ordinary markdown; `null` where the batch cannot
+ * say.
+ *
+ * `region` is the editor's answer for the fenced case and wins wherever it is
+ * present, but it is absent BOTH for an ordinary line and when the engine
+ * could not resolve the state (see `RegionLine`), so "no region" is not
+ * evidence of "outside a fence". The rest is recovered the way `scanHeadings`
+ * does it, by tracking the delimiters textually across the batch, seeded
+ * wherever the batch proves the state: the buffer's first line is outside
+ * every fence, the line after a `close` is too, and an opener is the only
+ * fence delimiter that may carry an info string (CommonMark forbids one on a
+ * closer).
+ *
+ * The other three need no such seeding, because a batch is run-closed: an HTML
+ * block, an indented code block and a front-matter block all run to a blank
+ * line — front matter from the buffer's first line — so a batch that carries
+ * any of their lines carries the opener too.
+ *
+ * Consumers differ in what they do with `null`, and should: the flow pass
+ * falls back to reading the line as prose, which is what every other per-line
+ * pass in this plugin already does with an unresolved region, while the
+ * heading marks stand down rather than replace a correct pre-scan mark with a
+ * guess. */
+function verbatimStates(lines: LineInfoLike[]): Array<boolean | null> {
+  const out: Array<boolean | null> = [];
+  // A batch showing no sign of a fence anywhere starts outside one.
+  //
+  // Without this the fenced state is unknowable for most batches of a document
+  // that has no fences at all: the seeds are the buffer's first line, a line
+  // the engine placed in a region, and a delimiter carrying an info string, and
+  // such a document offers none of them below line 0. Every line then came back
+  // `null`, and the heading marks — which stand down on `null` rather than
+  // guess — stopped republishing below the first screen: a heading typed
+  // mid-document never got a mark, and one that stopped being a heading kept a
+  // stale one, since only the pre-scan could correct it and it re-runs on
+  // backtick edits alone.
+  //
+  // Evidence of a fence is a delimiter line or a line the engine gave a region,
+  // both of which the tracking below already handles. Their complete absence is
+  // what is being read as "no fence is in play here", and it is the same
+  // reading the pre-scan makes of the whole document.
+  const noFenceInSight = !lines.some(
+    (line) => isCodeRegion(line.region) || looksLikeFence(lineText(line)),
+  );
+  let inFence: boolean | null = noFenceInSight ? false : null;
+  let fenceChar = "";
+  let inHtml = false;
+  let inIndentedCode = false;
+  let inFrontMatter = false;
+  // The next non-blank line opens a block, so it is the one that may open an
+  // indented code block. True for the batch's own first line: the walk that
+  // built it backed up to the run's start.
+  let atRunStart = true;
+  let prevLineNumber = -2;
+  for (const line of lines) {
+    // A gap in the batch loses the state: the lines in between could have
+    // opened or closed any of these.
+    if (line.line_number !== prevLineNumber + 1) {
+      inFence = noFenceInSight ? false : null;
+      inHtml = false;
+      inIndentedCode = false;
+      inFrontMatter = false;
+      atRunStart = true;
+    }
+    prevLineNumber = line.line_number;
+    const text = lineText(line);
+    const blank = text.trim() === "";
+    const openingRun = atRunStart && !blank;
+    if (!blank) atRunStart = false;
+
+    if (line.line_number === 0) {
+      inFence = false;
+      fenceChar = "";
+      inHtml = false;
+      inFrontMatter = FRONT_MATTER_FENCE.test(text);
+      if (inFrontMatter) { out.push(true); continue; }
+    }
+    if (inFrontMatter) {
+      out.push(true);
+      if (FRONT_MATTER_FENCE.test(text)) inFrontMatter = false;
+      continue;
+    }
+
+    if (isCodeRegion(line.region)) {
+      out.push(true);
+      inFence = line.region !== "close";
+      inHtml = false;
+      continue;
+    }
+
+    if (inFence === true) {
+      out.push(true);
+      // A closer has to match its opener's character, so a ``` inside a ~~~
+      // block is content, not a delimiter.
+      if (looksLikeFence(text) && text.trimStart()[0] === fenceChar) inFence = false;
+      continue;
+    }
+    if (looksLikeFence(text)) {
+      const marker = text.trimStart();
+      // With no seed, an info string is what tells an opener from a closer.
+      if (inFence === false || /^(?:`{3,}|~{3,})\S/.test(marker)) {
+        inFence = true;
+        fenceChar = marker[0];
+        out.push(true);
+      } else {
+        out.push(null);
+      }
+      continue;
+    }
+
+    // An HTML block and an indented code block both run to a blank line, which
+    // is also what ends a flow run.
+    if (blank) {
+      inHtml = false;
+      inIndentedCode = false;
+      atRunStart = true;
+      out.push(inFence);
+      continue;
+    }
+    if (openingRun) inIndentedCode = opensIndentedCode(text);
+    if (inIndentedCode) {
+      out.push(true);
+      continue;
+    }
+    if (inHtml || isHtmlBlockLine(text)) {
+      inHtml = true;
+      out.push(true);
+      continue;
+    }
+    out.push(inFence);
+  }
+  return out;
+}
+
+/** The kind of flow block this line opens, or null when it opens none —
+ * blank, code, fence, heading, rule, table row or image. Those either have no
+ * prose to flow or are single-line by definition. */
+function flowHeadKind(
+  line: LineInfoLike,
+  measure: number,
+  verbatim: boolean | null,
+): FlowKind | null {
+  if (isCodeRegion(line.region) || verbatim === true) return null;
+  const text = lineText(line);
+  if (text.trim() === "") return null;
+  if (looksLikeFence(text) || isRuleLine(text) || isImageLine(text)) return null;
+  if (atxHeading(text) || isTableRowContent(text)) return null;
+  if (quoteMarkerRun(text)) return "quote";
+  if (listItemInfo(text, measure)) return "list";
+  return "paragraph";
+}
+
+/** Whether `line` continues the `kind` block that `prev` is part of.
+ *
+ * Everything that opens a block of its own ends the one above it, and so does
+ * a hard break — two trailing spaces or a trailing backslash are markdown's
+ * one line ending that is NOT read as a space, which is exactly what a reflow
+ * must not swallow. */
+function continuesFlow(
+  kind: FlowKind,
+  prev: LineInfoLike,
+  line: LineInfoLike,
+  measure: number,
+  verbatim: boolean | null,
+): boolean {
+  if (line.line_number !== prev.line_number + 1) return false;
+  if (isCodeRegion(prev.region) || isCodeRegion(line.region)) return false;
+  if (verbatim === true) return false;
+  if (/(?:  |\\)$/.test(lineText(prev))) return false;
+
+  const text = lineText(line);
+  if (text.trim() === "") return false;
+  if (looksLikeFence(text) || isRuleLine(text) || isImageLine(text)) return false;
+  if (atxHeading(text) || isTableRowContent(text)) return false;
+
+  const run = quoteMarkerRun(text);
+  if (kind === "quote") {
+    // Same depth only: `> a` followed by `> > b` opens a quote INSIDE the
+    // first one, and flowing them together would erase exactly the nesting
+    // the second row exists to show.
+    const prevRun = quoteMarkerRun(lineText(prev));
+    return run !== null && prevRun !== null
+      && quoteDepth(run.rendered) === quoteDepth(prevRun.rendered);
+  }
+  if (run) return false;
+  // A marker starts a new item rather than continuing the one above, however
+  // it is indented.
+  return listItemInfo(text, measure) === null;
+}
+
+/** Nesting depth of a quote marker run: how many bars its rendering draws. */
+function quoteDepth(rendered: string): number {
+  let depth = 0;
+  for (const ch of rendered) if (ch === QUOTE_BAR) depth++;
+  return depth;
+}
+
+/** Character offset where a continuation line's flowed text begins: past its
+ * leading whitespace, and past the `>` run when the block is a quote. That
+ * span is what the join conceal replaces with a single space. */
+function flowContentStart(kind: FlowKind, text: string): number {
+  if (kind === "quote") {
+    const run = quoteMarkerRun(text);
+    if (run) return run.runEnd;
+  }
+  return text.length - text.trimStart().length;
+}
+
+/** One block of the batch: its head line plus every line that flows into it.
+ * A line that opens no block (blank, code, table, heading) is a block of one
+ * with `kind === null`, so the blocks always partition the batch and every
+ * line's soft breaks are cleared and rebuilt exactly once. */
+interface FlowBlock {
+  kind: FlowKind | null;
+  lines: LineInfoLike[];
+  /** `contentStart[i]` is the char offset in `lines[i]`; always 0 for the head. */
+  contentStart: number[];
+}
+
+/** Partition a `lines_changed` batch into flow blocks, in batch order. */
+function groupFlowBlocks(
+  lines: LineInfoLike[],
+  measure: number,
+  verbatim: Array<boolean | null>,
+): FlowBlock[] {
+  const blocks: FlowBlock[] = [];
+  let cur: FlowBlock | null = null;
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (
+      cur !== null && cur.kind !== null &&
+      continuesFlow(cur.kind, cur.lines[cur.lines.length - 1], line, measure, verbatim[i])
+    ) {
+      cur.contentStart.push(flowContentStart(cur.kind, lineText(line)));
+      cur.lines.push(line);
+      continue;
+    }
+    cur = { kind: flowHeadKind(line, measure, verbatim[i]), lines: [line], contentStart: [0] };
+    blocks.push(cur);
+  }
+  return blocks;
+}
+
+/** Per-character visual width of a source line as compose mode renders it:
+ * concealed markup costs nothing, an entity costs its replacement, and a list
+ * item's widened indent is charged to its first column (the shape the indent
+ * conceal produces). Shared by every line of a flow block so the wrap measures
+ * the rendering, not the source. */
+function composedCharWidths(text: string, listInfo: ListLineInfo | null): number[] {
+  const charW = new Array<number>(text.length).fill(1);
+  if (listInfo && listInfo.sourceIndent > 0) {
+    for (let c = 0; c < listInfo.sourceIndent && c < charW.length; c++) charW[c] = 0;
+    charW[0] = listInfo.renderedIndent;
+  }
+  for (const span of findInlineSpans(text)) {
+    for (const range of span.concealRanges) {
+      for (let c = range.start; c < range.end && c < text.length; c++) charW[c] = 0;
+      if (range.replacement !== null && range.start < text.length) {
+        charW[range.start] = range.replacement.length;
+      }
+    }
+  }
+  return charW;
+}
+
+/** One column of a flow block's rendered text.
+ *
+ * `li`/`ci` locate the cell in the block: the character at `ci` of
+ * `lines[li]`, or — when `ci` is `JOIN_CELL` — the join *before* `lines[li]`,
+ * the single space a swallowed newline renders as. A break taken there falls
+ * on the join itself, which is why the joins' conceal replacements are decided
+ * after the wrap and not before it. */
+const JOIN_CELL = -1;
+interface FlowCell {
+  w: number;
+  /** A break opportunity: a space that survives concealment, or a join. */
+  brk: boolean;
+  li: number;
+  ci: number;
+}
+
+// =============================================================================
 // Hook handlers
 // =============================================================================
 
 /**
- * Compute soft break points for a single line, using the same block parsing
- * and word-wrap logic as the old transformMarkdownTokens, but emitting
- * marker-based soft breaks instead of view_transform tokens.
+ * Emit one flow block's soft breaks — and, when it spans more than one source
+ * line, the join conceals that make those lines render as a single flowed
+ * block.
+ *
+ * A block of one line is the old per-line pass unchanged: code rows break at
+ * the frame's inner width, table rows at their cells' segment boundaries, and
+ * prose at the measure. A block of several adds only the two things reflow
+ * needs — the wrap runs over the block's concatenated text instead of
+ * restarting at each source line, and the newlines between them are concealed.
  */
-function processLineSoftBreaks(
+function processFlowBlock(
   bufferId: number,
-  lineContent: string,
-  byteStart: number,
-  byteEnd: number,
-  lineNumber?: number,
+  block: FlowBlock,
+  width: number,
+  blockIndents: Map<number, number>,
 ): void {
-  // Clear existing soft breaks for this line range
-  editor.clearSoftBreaksInRange(bufferId, byteStart, byteEnd);
+  const head = block.lines[0];
+  // Clear existing soft breaks for every line in the block, so a block that
+  // has shrunk (an edit split it) leaves none behind.
+  for (const line of block.lines) {
+    editor.clearSoftBreaksInRange(bufferId, line.byte_start, line.byte_end);
+  }
 
-  const viewport = editor.getViewport();
-  if (!viewport) return;
-  const width = effectiveComposeWidth(viewport.width);
+  const lineContent = head.content;
+  const byteStart = head.byte_start;
+  const byteEnd = head.byte_end;
 
-  // Parse this single line to get block structure
+  // Code is never re-flowed as prose: its line breaks are significant, and a
+  // body line is not a markdown block at all. `parseMarkdownBlocks` cannot tell
+  // — it sees one line with no fence context — so it would read an indented
+  // code line as a paragraph and wrap it at the measure.
+  //
+  // A code line too wide for the frame does still have to break, because the
+  // buffer has line wrap on and the renderer will otherwise fold it to column
+  // zero, outside the frame and unrailed. Breaking it here instead puts the
+  // fold where `emitCodeRails` expects a row to end, at the frame's inner
+  // width, and hangs the continuation under the code rather than under the
+  // rail. Same positions from the same helper, so the two passes agree.
+  if (isCodeRegion(head.region)) {
+    if (head.region !== "body") return;
+    const text = lineText(head);
+    // The block's own indent is ahead of the rail and outside its box, so the
+    // rows are measured on what follows it — the same split `emitCodeRails`
+    // makes, or the two passes would disagree about where a row ends.
+    const blockIndent = blockIndents.get(head.byte_start) ?? 0;
+    const body = text.slice(blockIndent);
+    const blockWidth = Math.max(4, width - blockIndent);
+    for (const charPos of codeRowLayout(body, blockWidth).breaks.map(
+      (p) => p + blockIndent,
+    )) {
+      // Indent 0, not the rail's width: the continuation row's own left rail
+      // is virtual text spliced in ahead of the wrap, so it already supplies
+      // those columns — including the code's own leading indent, which
+      // `emitCodeRails` folds into the rail for exactly this reason. Asking for
+      // it here instead indents the RAIL, not the code.
+      editor.addSoftBreak(
+        bufferId, "md-wrap", charToByte(lineContent, charPos, byteStart), 0,
+      );
+    }
+    return;
+  }
+
+  // Parse the head line to get block structure
   const blocks = parseMarkdownBlocks(lineContent);
   if (blocks.length === 0) return;
 
-  const block = blocks[0]; // Single line = single block
+  const parsed = blocks[0]; // Single line = single block
 
   // Determine if this block type should be soft-wrapped
-  const noWrap = block.type === 'table-row' || block.type === 'code-fence' ||
-                 block.type === 'code-content' || block.type === 'hr' ||
-                 block.type === 'heading' || block.type === 'image' ||
-                 block.type === 'empty';
+  const noWrap = parsed.type === 'table-row' || parsed.type === 'code-fence' ||
+                 parsed.type === 'code-content' || parsed.type === 'hr' ||
+                 parsed.type === 'heading' || parsed.type === 'image' ||
+                 parsed.type === 'empty';
 
   // Image blocks: add a trailing blank line for visual separation when
   // concealed. Deactivates while the cursor is on the line (same scope as
   // the image conceal), where the raw markup shows instead.
-  if (block.type === 'image') {
+  if (parsed.type === 'image') {
     editor.addSoftBreak(
       bufferId, "md-wrap", byteEnd - 1, 0,
       "unless-cursor-in", byteStart, byteEnd + 1,
@@ -1484,72 +2820,75 @@ function processLineSoftBreaks(
   // concealed cell widths — the cursor-OFF rendering. The breaks deactivate
   // while the cursor is on the row (strict scope, matching the segment
   // conceals), where the row renders as a plain single line.
-  if (block.type === 'table-row') {
-    const trimmedLine = lineContent.trim();
-    const isSep = /^\|[-:\s|]+\|$/.test(trimmedLine);
+  if (parsed.type === 'table-row') {
+    const isSep = /^\|[-:\s|]+\|$/.test(lineContent.trim());
     if (!isSep) {
       const colWidths = widthsForRow(byteStart);
-      if (colWidths) {
-        let innerLine = trimmedLine;
-        if (innerLine.startsWith('|')) innerLine = innerLine.slice(1);
-        if (innerLine.endsWith('|')) innerLine = innerLine.slice(0, -1);
-        const tableCells = innerLine.split('|');
-        let maxVisualLines = 1;
-        const numCols = Math.min(tableCells.length, colWidths.length);
-        for (let ci = 0; ci < numCols; ci++) {
-          const cellText = concealedText(tableCells[ci]).trim();
-          const wrapW = Math.max(1, colWidths[ci] - 2);
-          const wrapped = wrapText(cellText, wrapW);
-          maxVisualLines = Math.max(maxVisualLines, wrapped.length);
-        }
-        // Exclude trailing newline (same as processLineConceals)
-        let effLineLen = lineContent.length;
-        if (effLineLen > 0 && lineContent[effLineLen - 1] === '\n') effLineLen--;
-        if (effLineLen > 0 && lineContent[effLineLen - 1] === '\r') effLineLen--;
-        maxVisualLines = Math.min(maxVisualLines, effLineLen);
-
-        if (maxVisualLines > 1) {
-          // Must match the break positions from processLineConceals:
-          // pick Space chars (they have individual source_offsets that match).
-          const spacePositions: number[] = [];
-          for (let i = 1; i < effLineLen; i++) {
-            if (lineContent[i] === ' ') spacePositions.push(i);
-          }
-          const breakChars = spacePositions.slice(0, maxVisualLines - 1);
-          for (const charPos of breakChars) {
-            const breakBytePos = byteStart + editor.utf8ByteLength(lineContent.slice(0, charPos));
-            editor.addSoftBreak(
-              bufferId, "md-wrap", breakBytePos, 0,
-              "unless-cursor-in", byteStart, byteEnd,
-            );
-          }
-        }
+      // Exactly the positions `processLineConceals` cut its segments at — one
+      // layout, so a fold can never land somewhere no conceal ends.
+      const layout = colWidths ? tableRowLayout(lineContent, colWidths) : null;
+      for (const charPos of layout?.breakChars ?? []) {
+        const breakBytePos = byteStart + editor.utf8ByteLength(lineContent.slice(0, charPos));
+        editor.addSoftBreak(
+          bufferId, "md-wrap", breakBytePos, 0,
+          "unless-cursor-in", byteStart, byteEnd,
+        );
       }
     }
   }
 
   if (noWrap) return;
 
-  const hangingIndent = block.hangingIndent;
+  // A nested list item renders at a widened indent (see listItemInfo), so both
+  // the wrap budget and the continuation indent have to use the *rendered*
+  // width, not the source's. Otherwise a wrapped nested item's continuation
+  // rows sit left of its text and its last row can overrun the measure.
+  const headText = lineText(head);
+  const listInfo = listItemInfo(headText, width);
 
-  // Compute per-character visual width so concealed markup (emphasis
-  // markers, link syntax, entities) doesn't count towards line width.
-  const spans = findInlineSpans(lineContent);
-  const charW = new Array<number>(lineContent.length).fill(1);
-  for (const span of spans) {
-    for (const range of span.concealRanges) {
-      for (let c = range.start; c < range.end && c < lineContent.length; c++) {
-        charW[c] = 0;
-      }
-      // Entity replacements contribute their replacement's length
-      if (range.replacement !== null && range.start < lineContent.length) {
-        charW[range.start] = range.replacement.length;
-      }
+  // A block quote's bar is drawn by concealing its `>` markers, which only
+  // exist on the source row — so a quote long enough to wrap used to lose the
+  // bar on every continuation row and the block's left edge broke apart.
+  // Repeat the concealed marker run as the continuation rows' indent instead:
+  // the run's own columns, `>` rendered as the bar and everything else blank.
+  // It replaces the indent rather than adding to it (the editor charges the
+  // prefix against `indent`), so the quoted text stays in its source column.
+  //
+  // Deliberately not cursor-gated, unlike the conceals: the head of a
+  // continuation row is entirely virtual — there is no source markup there to
+  // reveal for editing — so hiding the bar while the cursor sits on the quote
+  // would only break the block's edge exactly when the user is working in it.
+  const quoteRun = parsed.type === 'blockquote' ? quoteMarkerRun(headText) : null;
+  const quotePrefix = quoteRun
+    ? { text: quoteRun.rendered, ...quoteBarStyle }
+    : null;
+
+  const hangingIndent = listInfo
+    ? listInfo.renderedIndent + listInfo.markerLen
+    : quoteRun
+    ? editor.stringWidth(quoteRun.rendered)
+    : parsed.hangingIndent;
+
+  // The block's rendered columns, head first and then each continuation
+  // preceded by the join it renders as. Compose-mode widths throughout
+  // (`composedCharWidths`), so concealed markup doesn't count towards the
+  // measure.
+  const cells: FlowCell[] = [];
+  for (let li = 0; li < block.lines.length; li++) {
+    const text = li === 0 ? headText : lineText(block.lines[li]);
+    if (li > 0) cells.push({ w: 1, brk: true, li, ci: JOIN_CELL });
+    const charW = composedCharWidths(text, li === 0 ? listInfo : null);
+    for (let ci = block.contentStart[li]; ci < text.length; ci++) {
+      cells.push({
+        w: charW[ci],
+        brk: text[ci] === ' ' && charW[ci] > 0,
+        li,
+        ci,
+      });
     }
   }
 
-  // Walk through the line content and find word-wrap break points
-  // We need to find Space positions where wrapping should occur.
+  // Walk the block's columns and find word-wrap break points.
   //
   // The wrap budget must reserve columns to match the Rust renderer's
   // `apply_wrapping_transform`, which subtracts one from `content_width`
@@ -1564,47 +2903,86 @@ function processLineSoftBreaks(
   // covering minor differences in scrollbar / gutter / EOL-cursor
   // reservation between terminals.
   const wrapBudget = Math.max(1, width - 2);
+  const breaks: FlowCell[] = [];
   let column = 0;
-  let i = 0;
 
-  while (i < lineContent.length) {
-    const ch = lineContent[i];
-
-    if (ch === ' ' && column > 0 && charW[i] > 0) {
+  for (let i = 0; i < cells.length; i++) {
+    const cell = cells[i];
+    if (cell.brk && column > 0) {
       // Look ahead to find the next word's visual length
       let nextWordLen = 0;
-      for (let j = i + 1; j < lineContent.length; j++) {
-        if ((lineContent[j] === ' ' || lineContent[j] === '\n') && charW[j] > 0) break;
-        nextWordLen += charW[j];
+      for (let j = i + 1; j < cells.length; j++) {
+        if (cells[j].brk) break;
+        nextWordLen += cells[j].w;
       }
 
-      // Check if space + next word would exceed wrap budget
-      if (column + 1 + nextWordLen > wrapBudget && nextWordLen > 0) {
-        // Add a soft break at this space's buffer position
-        const breakBytePos = byteStart + editor.utf8ByteLength(lineContent.slice(0, i));
-        editor.addSoftBreak(bufferId, "md-wrap", breakBytePos, hangingIndent);
+      // Check if the separator + next word would exceed the wrap budget
+      if (column + cell.w + nextWordLen > wrapBudget && nextWordLen > 0) {
+        breaks.push(cell);
         column = hangingIndent;
-        i++;
         continue;
       }
     }
+    column += cell.w;
+  }
 
-    column += charW[i];
-    i++;
+  // The joins themselves. Anchored from the end of the previous line's text
+  // (trailing whitespace included in the concealed span, so a line padded with
+  // spaces doesn't flow with two) to the start of this line's own text.
+  for (let li = 1; li < block.lines.length; li++) {
+    const prev = block.lines[li - 1];
+    const line = block.lines[li];
+    const prevText = lineText(prev).replace(/\s+$/, "");
+    const joinStart = prev.byte_start + editor.utf8ByteLength(prevText);
+    const text = lineText(line);
+    const joinEnd = line.byte_start
+      + editor.utf8ByteLength(text.slice(0, block.contentStart[li]));
+    editor.addConceal(
+      bufferId, "md-syntax", joinStart, joinEnd, " ",
+    );
+  }
+
+  for (const cell of breaks) {
+    const line = block.lines[cell.li];
+    let breakBytePos: number;
+    if (cell.ci === JOIN_CELL) {
+      // Past the join, not at it. A row break falling on a join is a break
+      // between two words whose separator is the swallowed line ending: like
+      // any other wrap between words, that separator trails the row it ends
+      // rather than opening the next one. Anchoring at the join instead put
+      // its replacement space at the head of the row below — a stray leading
+      // column — and left the row above with no separator for the caret.
+      breakBytePos = line.byte_start
+        + editor.utf8ByteLength(lineText(line).slice(0, block.contentStart[cell.li]));
+    } else {
+      const text = lineText(line);
+      breakBytePos = line.byte_start + editor.utf8ByteLength(text.slice(0, cell.ci));
+    }
+    if (quotePrefix) {
+      editor.addSoftBreak(
+        bufferId, "md-wrap", breakBytePos, hangingIndent,
+        undefined, undefined, undefined, quotePrefix,
+      );
+    } else {
+      editor.addSoftBreak(bufferId, "md-wrap", breakBytePos, hangingIndent);
+    }
   }
 }
 
 /** Group consecutive table rows in a `lines_changed` batch (adjacency by
  * line_number). Each group is one table's currently-visible run; column widths
- * are uniform within a group. */
+ * are uniform within a group. Lines inside a fenced code block are not table
+ * rows however many pipes they contain, so they both fail to join a group and
+ * break one — matching how a code block separates two tables in the source. */
 function groupTableRows(lines: LineInfoLike[]): LineInfoLike[][] {
   const groups: LineInfoLike[][] = [];
   let cur: LineInfoLike[] = [];
   let lastLn = -2;
   for (const line of lines) {
-    if (isTableRowContent(line.content) && line.line_number === lastLn + 1) {
+    const isRow = !isCodeRegion(line.region) && isTableRowContent(line.content);
+    if (isRow && line.line_number === lastLn + 1) {
       cur.push(line);
-    } else if (isTableRowContent(line.content)) {
+    } else if (isRow) {
       if (cur.length) groups.push(cur);
       cur = [line];
     } else {
@@ -1708,10 +3086,10 @@ function computeRowWidths(bufferId: number, lines: LineInfoLike[]): boolean {
 // after_delete: no-op for conceals/overlays (same reasoning as after_insert).
 
 
-// view_transform_request is no longer needed — soft wrapping is handled by
+// Soft wrapping is handled by
 // marker-based soft breaks (computed in lines_changed), and layout hints
 // are set directly via setLayoutHints. This eliminates the one-frame flicker
-// caused by the async view_transform round-trip.
+// caused by an async round-trip.
 
 // Handle buffer close events - clean up compose mode tracking
 
@@ -1726,7 +3104,16 @@ function computeRowWidths(bufferId: number, lines: LineInfoLike[]): boolean {
 
 // Register hooks
 editor.on("lines_changed", (data) => {
-  if (!isComposingInAnySplit(data.buffer_id)) return;
+  // Gate on the batch's OWN compose flag, not on `getBufferInfo`. The two
+  // answer the same question, but only this one is guaranteed to be about the
+  // buffer these lines came from: `getBufferInfo` reads the editor's state
+  // snapshot, which is refreshed on the editor thread's schedule and can still
+  // say "source" for a buffer whose compose commands the same frame already
+  // applied. The lines in a batch are marked seen when the batch is sent, so a
+  // batch dropped on a stale read is not offered again — turning compose on
+  // left the document literal until an edit or a scroll happened to produce
+  // another batch (#2968). The payload cannot lag what it was built from.
+  if (!data.is_composing_in_any_split) return;
   // Cursor reveal/conceal decisions are NOT made here: every emitted
   // decoration carries an activation scope and the renderer evaluates it
   // per frame against each split's own cursors. This handler runs only
@@ -1747,42 +3134,201 @@ editor.on("lines_changed", (data) => {
   // `isLast` can never be true at end-of-buffer and the bottom border is missing.
   const bufEnd = editor.getBufferLength(data.buffer_id);
 
-  // Per line: clear+rebuild conceals, soft-breaks, and the table border frame —
-  // all anchored to this one line. No whole-table rebuild, no stored row model;
-  // borders for lines not in this batch keep riding their auto-shift markers.
+  // The page measure, read once for the batch rather than per line — the
+  // conceal pass needs it for the thematic-break rule and the list indent, and
+  // it can't change within a single render.
+  const batchViewport = editor.getViewport();
+  const measure = effectiveComposeWidth(batchViewport ? batchViewport.width : 80);
+
+  // The batch's flow blocks, computed before the per-line pass because the
+  // conceal pass needs to know which lines are continuations: their leading
+  // indent and `>` run are inside a join conceal, so the per-line decorations
+  // that would otherwise render them must stand down.
+  const verbatim = verbatimStates(data.lines);
+  const blocks = groupFlowBlocks(data.lines, measure, verbatim);
+  const joined = new Set<number>();
+  for (const block of blocks) {
+    for (let i = 1; i < block.lines.length; i++) joined.add(block.lines[i].byte_start);
+  }
+
+  // Per line: clear+rebuild conceals and the table border frame — all anchored
+  // to this one line. No whole-table rebuild, no stored row model; borders for
+  // lines not in this batch keep riding their auto-shift markers. Soft breaks
+  // are the one pass that is per *block* rather than per line (see
+  // `processFlowBlock`), and they run below, after every line's clear.
+  // Columns each fenced line's BLOCK is indented by, keyed by line start.
+  //
+  // A fenced block inside a list item is indented to the item's content column,
+  // and its frame belongs there too. The indent is the OPENING delimiter's: a
+  // body line's own leading whitespace is code, not block indent, so a
+  // `    if x:` inside the block must not push the frame right for that row
+  // alone. Computed once here because two passes need it — the rails and border
+  // below, and the code rows' soft breaks after them — and they have to agree
+  // about the box's width or a row will break where the frame does not end.
+  //
+  // Absent when the opening delimiter is not in this batch, which a block whose
+  // body spans a blank line can be re-offered without. Those rows render as
+  // they did before the frame learned about indents, rather than at a guess.
+  const blockIndents = new Map<number, number>();
+  {
+    let indent: number | null = null;
+    for (const line of data.lines) {
+      if (line.region === "open") indent = leadingIndent(line.content);
+      if (isCodeRegion(line.region) && indent !== null) {
+        blockIndents.set(line.byte_start, indent);
+      }
+      if (line.region === "close") indent = null;
+    }
+  }
+
   for (const line of data.lines) {
     // Clear this row's border range first (covers a row that stopped being a
     // table row, e.g. its pipes were deleted, and stale frames left a few bytes
     // off by the async lag).
     clearRowBorders(data.buffer_id, line.byte_start, line.byte_end);
+    // Same clear-then-rebuild for the code block's side rails, so a line that
+    // stops being code loses them. Re-added below only for `body` lines — the
+    // delimiter rows draw their own corners as part of the border conceal.
+    clearCodeRails(data.buffer_id, line.byte_start, line.byte_end);
+    if (line.region === "body") {
+      emitCodeRails(
+        data.buffer_id, line.content, line.byte_start, measure,
+        blockIndents.get(line.byte_start) ?? 0,
+      );
+    }
+    // Same range-scoped clear-then-rebuild as the borders, so a line that stops
+    // being a list item loses its spacer.
+    editor.clearVirtualLinesInRange(
+      data.buffer_id, LIST_SPACING_NS,
+      line.byte_start, Math.max(line.byte_end, line.byte_start + 1),
+    );
 
-    processLineConceals(data.buffer_id, line.content, line.byte_start, line.byte_end, line.line_number);
-    processLineSoftBreaks(data.buffer_id, line.content, line.byte_start, line.byte_end, line.line_number);
+    processLineConceals(data.buffer_id, line.content, line.byte_start, line.byte_end, measure, line.region, line.line_number, joined.has(line.byte_start));
 
-    if (isTableRowContent(line.content)) {
+    // Blank row after each list item, so items read as discrete entries.
+    //
+    // Deliberately decided from this line ALONE, not from its neighbours. The
+    // obvious rule — "a spacer above an item whose predecessor is also an
+    // item" — needs two lines, and an edit-sized `lines_changed` batch
+    // contains only the lines the edit touched. The spacer would then be
+    // cleared (this line is in the batch) but not re-derivable (its neighbour
+    // isn't), so editing inside a list silently dropped its spacing and never
+    // got it back: unlike the table frame, there is no later batch that
+    // restores it, because `lines_changed` is edge-triggered on ranges it
+    // hasn't seen.
+    //
+    // Anchoring below every item is line-local, so clear-and-rebuild is always
+    // a complete decision. The cost is one blank row after a list's final item
+    // as well as between items, which reads as ordinary block separation.
+    //
+    // Inside a fence none of this applies: `- foo` in a shell block is not a
+    // list item and `| a | b |` in a code sample is not a table row, so both
+    // the spacer and the frame are skipped (the clears above already ran, so a
+    // line that becomes code loses whichever it had).
+    if (!isCodeRegion(line.region) && isListItemContent(line.content)) {
+      editor.addVirtualLine(
+        data.buffer_id, line.byte_start, "",
+        listSpacingOptions, false, LIST_SPACING_NS, 0,
+      );
+    }
+
+    if (!isCodeRegion(line.region) && isTableRowContent(line.content)) {
       const widths = currentRowWidths.get(line.byte_start) ?? [];
-      const prev = byLineNum.get(line.line_number - 1);
-      const next = byLineNum.get(line.line_number + 1);
-      // First/last is local. A row is first if it's the buffer's line 0 or its
-      // previous line is present in this batch and is NOT a table row; last if
-      // its next line is present and not a table row. When a neighbour is
-      // off-screen (absent from the batch) we conservatively treat the row as
-      // mid-table, so a tall table scrolled past its top/bottom never draws a
-      // spurious frame edge — it redraws when that neighbour re-enters a batch.
-      const isFirst = line.line_number === 0 || (prev !== undefined && !isTableRowContent(prev.content));
-      // Last if the next line is present and not a table row, OR this row is the
-      // final line of the buffer (no next line exists at all — distinct from a
-      // next line merely off-screen, which we treat as mid-table).
-      const isLast =
-        (next !== undefined && !isTableRowContent(next.content)) ||
-        (next === undefined && line.byte_end >= bufEnd);
-      const isSep = isSepRowContent(line.content);
-      const prevIsSep = prev !== undefined && isSepRowContent(prev.content);
+      let isFirst: boolean, isSep: boolean, prevIsSep: boolean, isLast: boolean;
+      if (line.table) {
+        // The engine placed this row in its table (see `TableLine`). Every
+        // edge is then a property of the line itself, so the frame is the same
+        // whether the batch is a whole viewport or the one line an edit
+        // touched — which is the entire point.
+        isFirst = line.table.role === "header";
+        isSep = line.table.role === "delimiter";
+        // The delimiter row already renders as `├─┼─┤` from its own pipes, so
+        // the first data row must not draw a second one above itself.
+        prevIsSep = line.table.first_row;
+        isLast = line.table.last;
+      } else {
+        // No answer from the engine — the grammar doesn't scope this as a
+        // table (it is inside a blockquote, say, or interrupts a paragraph),
+        // or the buffer is too large to resolve the state. Fall back to the
+        // batch-local rules: a row is first if it's the buffer's line 0 or its
+        // previous line is present in this batch and is NOT a table row; last
+        // if its next line is present and not a table row. When a neighbour is
+        // off-screen we conservatively treat the row as mid-table, so a tall
+        // table scrolled past its top/bottom never draws a spurious frame edge
+        // — it redraws when that neighbour re-enters a batch.
+        const prev = byLineNum.get(line.line_number - 1);
+        const next = byLineNum.get(line.line_number + 1);
+        isFirst = line.line_number === 0 || (prev !== undefined && !isTableRowContent(prev.content));
+        // Last if the next line is present and not a table row, OR this row is
+        // the final line of the buffer (no next line exists at all — distinct
+        // from a next line merely off-screen, which we treat as mid-table).
+        isLast =
+          (next !== undefined && !isTableRowContent(next.content)) ||
+          (next === undefined && line.byte_end >= bufEnd);
+        isSep = isSepRowContent(line.content);
+        prevIsSep = prev !== undefined && isSepRowContent(prev.content);
+      }
       emitRowBorders(data.buffer_id, line.byte_start, widths, isFirst, isSep, prevIsSep, isLast);
     }
   }
 
-  if (tableWidthsGrew) {
+  // Soft breaks, and the joins that make a run of source lines flow as one
+  // block. Deliberately a second pass: a join conceal is anchored in the line
+  // ABOVE the continuation it belongs to, and the per-line pass above clears
+  // conceals by range — so emitting joins inside that loop would have the next
+  // line's clear delete the join just added.
+  for (const block of blocks) {
+    processFlowBlock(data.buffer_id, block, measure, blockIndents);
+  }
+
+  // Publish this batch's heading marks. Range-scoped to the batch's byte span
+  // so headings outside it — the rest of the document, marked by the pre-scan
+  // at compose time — keep their marks; see HEADING_MARKER_NS. Emitted even
+  // when the batch has no headings, so a line that stops being one loses its
+  // mark.
+  if (data.lines.length > 0) {
+    const batchStart = data.lines[0].byte_start;
+    const batchEnd = data.lines[data.lines.length - 1].byte_end;
+    const headingMarkers: ScrollbarMarker[] = [];
+    // False once any `#` line in the batch could not be told apart from a
+    // comment inside a fence (see `verbatimStates`). The whole republish is then
+    // skipped rather than replacing the pre-scan's marks with a guess — an
+    // out-of-date mark beats a wrong one, and the next batch that can see a
+    // fence boundary refreshes the range.
+    let classified = true;
+    for (let i = 0; i < data.lines.length; i++) {
+      const line = data.lines[i];
+      const level = headingLevel(lineText(line));
+      if (level === 0 || level > HEADING_MARKER_MAX_LEVEL) continue;
+      // `# ...` inside a fenced block is a comment in the block's language,
+      // and inside front matter it is a YAML comment. Neither is a heading.
+      if (verbatim[i] === null) { classified = false; continue; }
+      if (verbatim[i]) continue;
+      headingMarkers.push({
+        // Byte offsets, not line numbers: they are exact regardless of file
+        // size, and the editor anchors them so later edits shift the marks.
+        position: line.byte_start,
+        color: headingMarkerColor(level),
+        priority: 10 - level, // shallower headings win a shared track cell
+      });
+    }
+    if (classified) {
+      editor.setScrollbarMarkersInRange(
+        data.buffer_id, HEADING_MARKER_NS,
+        batchStart, Math.max(batchEnd, batchStart + 1),
+        headingMarkers,
+      );
+    }
+  }
+
+  // One whole-viewport re-fire when an edit left a delimiter-shaped line
+  // behind: every line below it may have crossed into or out of a block, and
+  // those lines are not in this batch (see `fenceEditArmed`). Disarmed first,
+  // so the refresh's own batch — which contains the same line — cannot re-arm.
+  const fenceEdit = fenceEditArmed.delete(data.buffer_id)
+    && data.lines.some((l) => looksLikeFence(l.content));
+
+  if (tableWidthsGrew || fenceEdit) {
     editor.refreshLines(data.buffer_id);
   }
 });
@@ -1803,10 +3349,24 @@ function resetEditedTableWidths(bufferId: number, affStart: number, affEnd: numb
 editor.on("after_insert", (data) => {
   if (!isComposingInAnySplit(data.buffer_id)) return;
   resetEditedTableWidths(data.buffer_id, data.affected_start, data.affected_end);
+  // Typed backticks can open or close a block; anything else can only stop an
+  // already-delimiter-shaped line from being one, which the batch will see.
+  if (touchesFenceChars(data.text)) {
+    editor.refreshLines(data.buffer_id);
+    // A fence flip changes whether the `#` lines under it are headings, for
+    // the whole document — including the parts this batch cannot see.
+    void prescanHeadingMarkers(data.buffer_id);
+  } else fenceEditArmed.add(data.buffer_id);
 });
 editor.on("after_delete", (data) => {
   if (!isComposingInAnySplit(data.buffer_id)) return;
   resetEditedTableWidths(data.buffer_id, data.affected_start, data.affected_start);
+  // Deleted backticks are checked here, not in the batch: the text that is gone
+  // appears in no later `lines_changed` payload.
+  if (touchesFenceChars(data.deleted_text)) {
+    editor.refreshLines(data.buffer_id);
+    void prescanHeadingMarkers(data.buffer_id);
+  } else fenceEditArmed.add(data.buffer_id);
 });
 // cursor_moved: no handler. Cursor-dependent reveal/conceal and table-row
 // un/re-wrap are baked into the markers as activation scopes (emitted in the
@@ -1814,7 +3374,6 @@ editor.on("after_delete", (data) => {
 // movement changes what's *active* without touching any marker, so it never
 // re-fires lines_changed, never bumps the conceal/soft-break versions, and
 // never invalidates the line-wrap cache or visual-row index.
-// view_transform_request hook no longer needed — wrapping is handled by soft breaks
 editor.on("buffer_closed", (data) => {
   // View state is cleaned up automatically when the buffer is removed from keyed_states
 });
@@ -1882,7 +3441,8 @@ editor.on("buffer_activated", (data) => {
 
 // Set compose width command - starts interactive prompt
 function markdownSetComposeWidth() : void {
-  const currentValue = config.composeWidth === null ? "None" : String(config.composeWidth);
+  const active = activeComposeWidth();
+  const currentValue = active === null ? "None" : String(active);
   editor.startPromptWithInitial(editor.t("prompt.compose_width"), "markdown-compose-width", currentValue);
   editor.setPromptInputSync(true);
   editor.setPromptSuggestions([

@@ -1,0 +1,157 @@
+[
+  {
+    "key": "region:2",
+    "label": "Menu bar",
+    "label_at": "above",
+    "offset": [
+      0,
+      -3
+    ],
+    "head": "The menu bar is a region",
+    "sub": "a memoised component: it rebuilds only when its own state moves"
+  },
+  {
+    "key": "region:3",
+    "label": "File explorer",
+    "label_at": "left",
+    "offset": [
+      -46,
+      1
+    ],
+    "spread": [
+      0,
+      0.28
+    ],
+    "head": "The file explorer is another",
+    "sub": "38 columns of chrome, laid out beside the editor, not inside it",
+    "dive_head": "Every row is an element",
+    "dive_sub": "one gesture target each, kept between frames and reused",
+    "children": [
+      {
+        "key": "explorer_row:*",
+        "label": ""
+      }
+    ],
+    "stagger": [
+      1.15,
+      0
+    ]
+  },
+  {
+    "key": "region:4",
+    "label": "Editor pane",
+    "label_at": "right",
+    "offset": [
+      46,
+      1
+    ],
+    "head": "The editor pane holds the buffer",
+    "sub": "the text itself is a host: the shell reserves the rect and stands back",
+    "dive_head": "Tabs, text, scrollbar",
+    "dive_sub": "three children, and the layout pass decides what each one gets",
+    "children": [
+      {
+        "key": "pane_tabs:0",
+        "label": "Tab strip",
+        "label_at": "above",
+        "offset": [
+          0,
+          -8
+        ]
+      },
+      {
+        "key": "pane_content:0",
+        "label": "Buffer",
+        "label_at": "left",
+        "offset": [
+          0,
+          1
+        ]
+      },
+      {
+        "key": "pane_vscroll:0",
+        "label": "Scrollbar",
+        "label_at": "right",
+        "offset": [
+          18,
+          1
+        ]
+      }
+    ]
+  },
+  {
+    "key": "region:7",
+    "label": "Prompt",
+    "label_at": "below",
+    "offset": [
+      0,
+      2
+    ],
+    "head": "One row is the prompt",
+    "sub": "what you type goes here, whatever it is going to mean"
+  },
+  {
+    "key": "prompt_suggestions",
+    "label": "Command palette",
+    "label_at": "below",
+    "offset": [
+      0,
+      17
+    ],
+    "spread": [
+      0,
+      0.95
+    ],
+    "head": "The palette is a layer",
+    "sub": "it floats over the rest, so nothing underneath had to make room",
+    "dive_head": "Ten rows, ranked",
+    "dive_sub": "the list is virtualised: only what fits is ever built",
+    "children": [
+      {
+        "key": "suggestion:0",
+        "label": ""
+      },
+      {
+        "key": "suggestion:1",
+        "label": "",
+        "head": "And a row is three fields",
+        "sub": "name, description, and where the command came from",
+        "dive_head": "Name, description, source",
+        "dive_sub": "fixed columns, so the eye can run straight down any of them",
+        "children": [
+          {
+            "key": "suggestion_name:1",
+            "label": "Name",
+            "label_at": "above",
+            "offset": [
+              0,
+              -5
+            ]
+          },
+          {
+            "id": "E194",
+            "label": "Description",
+            "label_at": "below",
+            "offset": [
+              0,
+              3
+            ]
+          },
+          {
+            "id": "E348",
+            "label": "Source",
+            "label_at": "below",
+            "offset": [
+              0,
+              7
+            ]
+          }
+        ]
+      },
+      {
+        "key": "suggestion:[2-9]",
+        "label": ""
+      }
+    ]
+  }
+]

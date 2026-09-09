@@ -1,0 +1,1130 @@
+use crate::model::buffer::TextBuffer;
+
+/// Iterator over lines in a TextBuffer with bidirectional support
+/// Uses piece iterator for efficient sequential scanning (ONE O(log n) initialization)
+///
+/// # Performance Characteristics
+///
+/// Line tracking is now always computed when chunks are loaded:
+/// - **All loaded chunks**: `line_starts = Vec<usize>` → exact line metadata available
+/// - **Unloaded chunks**: Only metadata unavailable until first access
+///
+/// ## Current Performance:
+/// - **Forward iteration (`next()`)**: ✅ Efficient O(1) amortized per line using piece iterator
+/// - **Backward iteration (`prev()`)**: ✅ O(log n) using piece tree line indexing
+/// - **Initialization (`new()`)**: ✅ O(log n) using offset_to_position
+///
+/// ## Design:
+/// - Loaded chunks are always indexed (10% memory overhead per chunk)
+/// - Cursor vicinity is always loaded and indexed → 100% accurate navigation
+/// - Forward scanning with lazy loading handles long lines efficiently
+/// - Backward navigation uses piece tree's line_range() lookup
+///
+/// The `estimated_line_length` parameter is still used for forward scanning to estimate
+/// initial chunk sizes, but line boundaries are always accurate after data is loaded.
+/// Maximum bytes to return per "line" to prevent memory exhaustion from huge single-line files.
+/// Lines longer than this are split into multiple chunks, each treated as a separate "line".
+/// This is generous enough for any practical line while preventing OOM from 10MB+ lines.
+pub const MAX_LINE_BYTES: usize = 100_000;
+
+/// How far back a line start is searched for before the position is treated as
+/// a continuation of a line that began further up.
+///
+/// The search exists to answer "which line is this byte on", and it answered it
+/// exactly, by scanning back to the previous newline however far away it was.
+/// On a file that is one enormous line that is a scan of everything above the
+/// cursor — per call, and the call sites are the status bar, the arrow keys and
+/// the scroll math, i.e. several times per keystroke. Past this bound the
+/// answer stops being worth its cost: a line this long has no useful column
+/// number, its hanging indent is clamped away by the renderer as unusably deep,
+/// and the position is reported in bytes rather than line and column anyway.
+///
+/// Matches `view::row_walk::LINE_START_SEARCH_BYTES`, which bounds the same
+/// search for the same reason on the row-walking path.
+pub const LINE_START_SEARCH_BYTES: usize = 64 * 1024;
+
+/// Bytes read per step of the backward search.
+///
+/// The search used to step by the caller's `estimated_line_length` — 80 bytes
+/// at every call site — so reaching a line start 64 KB up took 800 piece-tree
+/// range queries and 800 allocations. Reading a page at a time costs the same
+/// bytes in 16 queries.
+const LINE_START_SEARCH_CHUNK: usize = 4096;
+
+pub struct LineIterator<'a> {
+    buffer: &'a mut TextBuffer,
+    /// Current byte position in the document (points to start of current line)
+    current_pos: usize,
+    buffer_len: usize,
+    /// Estimated average line length in bytes (for large file estimation)
+    estimated_line_length: usize,
+    /// Whether we still need to emit a synthetic empty line at EOF
+    /// (set when starting at EOF after a trailing newline or when a newline-ending
+    /// line exhausts the buffer during forward iteration)
+    pending_trailing_empty_line: bool,
+    /// Cap on the bytes `next_line` will return for one line. Defaults to
+    /// [`MAX_LINE_BYTES`]; see [`LineIterator::with_max_line_bytes`].
+    max_line_bytes: usize,
+}
+
+impl<'a> LineIterator<'a> {
+    /// Start of the line containing `byte_pos`, searched for over at most
+    /// [`LINE_START_SEARCH_BYTES`].
+    ///
+    /// Returns the search floor when no newline is found within the bound: the
+    /// position is then read as a continuation of a line that started further
+    /// up, which is the same answer `row_walk` gives for the same question.
+    /// Everything downstream stays correct because source offsets are absolute
+    /// — only "this byte begins a line" degrades, and it degrades exactly where
+    /// a line is longer than 64 KB.
+    ///
+    /// The floor is nudged forward to a character boundary first. Where the
+    /// search succeeds the answer follows a `\n` and is a boundary by
+    /// construction; where it runs out of budget the answer is an arbitrary
+    /// byte, and callers read text from it and anchor edits at it. Approximate
+    /// about *which line* is the documented trade; approximate about *which
+    /// character* would put a replacement glyph on screen and let an edit cut a
+    /// character in half.
+    fn find_line_start_backward(buffer: &mut TextBuffer, byte_pos: usize) -> usize {
+        if byte_pos == 0 {
+            return 0;
+        }
+
+        let floor = byte_pos.saturating_sub(LINE_START_SEARCH_BYTES);
+        let mut search_end = byte_pos;
+
+        while search_end > floor {
+            let scan_start = search_end
+                .saturating_sub(LINE_START_SEARCH_CHUNK)
+                .max(floor);
+            let scan_len = search_end - scan_start;
+
+            if let Ok(chunk) = buffer.get_text_range_mut(scan_start, scan_len) {
+                if let Some(i) = chunk.iter().rposition(|&b| b == b'\n') {
+                    // Found newline - line starts at the next byte
+                    return scan_start + i + 1;
+                }
+            }
+
+            if scan_start == 0 {
+                // Reached the start of the buffer - line starts at 0
+                return 0;
+            }
+
+            search_end = scan_start;
+        }
+
+        Self::char_boundary_at_or_after(buffer, floor)
+    }
+
+    /// `pos`, or the next character boundary after it.
+    ///
+    /// UTF-8 continuation bytes are `0b10xxxxxx` and a character is at most
+    /// four bytes, so at most three need stepping over. A read that fails
+    /// leaves `pos` alone: this is a repair, not a place to invent an answer.
+    fn char_boundary_at_or_after(buffer: &mut TextBuffer, pos: usize) -> usize {
+        if pos == 0 || pos >= buffer.len() {
+            return pos;
+        }
+        let Ok(bytes) = buffer.get_text_range_mut(pos, 4.min(buffer.len() - pos)) else {
+            return pos;
+        };
+        let step = bytes
+            .iter()
+            .position(|&b| (b & 0xC0) != 0x80)
+            .unwrap_or(bytes.len());
+        pos + step
+    }
+
+    pub(crate) fn new(
+        buffer: &'a mut TextBuffer,
+        byte_pos: usize,
+        estimated_line_length: usize,
+    ) -> Self {
+        let buffer_len = buffer.len();
+        let byte_pos = byte_pos.min(buffer_len);
+
+        // Find the start of the line containing byte_pos
+        let line_start = if byte_pos == 0 {
+            0
+        } else {
+            // CRITICAL: Pre-load the chunk containing byte_pos to ensure offset_to_position works
+            // Handle EOF case where byte_pos might equal buffer_len
+            let pos_to_load = if byte_pos >= buffer_len {
+                buffer_len.saturating_sub(1)
+            } else {
+                byte_pos
+            };
+
+            if pos_to_load < buffer_len {
+                // Trigger lazy-load of chunk; result unused
+                #[allow(clippy::let_underscore_must_use)]
+                let _ = buffer.get_text_range_mut(pos_to_load, 1);
+            }
+
+            // Scan backward from byte_pos to find the start of the line
+            // We scan backward looking for a newline character
+            // NOTE: We previously tried to use offset_to_position() but it has bugs with column calculation
+            Self::find_line_start_backward(buffer, byte_pos)
+        };
+
+        let mut pending_trailing_empty_line = false;
+        if buffer_len > 0 && byte_pos == buffer_len {
+            if let Ok(bytes) = buffer.get_text_range_mut(buffer_len - 1, 1) {
+                if bytes.first() == Some(&b'\n') {
+                    pending_trailing_empty_line = true;
+                }
+            }
+        }
+
+        LineIterator {
+            buffer,
+            current_pos: line_start,
+            buffer_len,
+            estimated_line_length,
+            pending_trailing_empty_line,
+            max_line_bytes: MAX_LINE_BYTES,
+        }
+    }
+
+    /// Start iterating at exactly `byte`, without scanning back to a line start.
+    ///
+    /// The caller certifies that `byte` is a visual-row start — in practice it
+    /// came from `WrapIndex::byte_of_row` — which is what makes skipping the
+    /// scan sound. This is how the renderer begins at the viewport's anchor
+    /// instead of at byte 0 of the logical line: the difference between reading
+    /// a viewport and reading everything above it.
+    pub(crate) fn from_mid_line(
+        buffer: &'a mut TextBuffer,
+        byte: usize,
+        estimated_line_length: usize,
+    ) -> Self {
+        let buffer_len = buffer.len();
+        let byte = byte.min(buffer_len);
+        if byte < buffer_len {
+            // Trigger the lazy load the backward scan would otherwise have done.
+            #[allow(clippy::let_underscore_must_use)]
+            let _ = buffer.get_text_range_mut(byte, 1);
+        }
+        let pending_trailing_empty_line = buffer_len > 0
+            && byte == buffer_len
+            && buffer
+                .get_text_range_mut(buffer_len - 1, 1)
+                .is_ok_and(|b| b.first() == Some(&b'\n'));
+        LineIterator {
+            buffer,
+            current_pos: byte,
+            buffer_len,
+            estimated_line_length,
+            pending_trailing_empty_line,
+            max_line_bytes: MAX_LINE_BYTES,
+        }
+    }
+
+    /// Advance to the start of the next logical line without reading the rest
+    /// of this one, scanning at most `cap` bytes for the line break.
+    ///
+    /// `false` when no break lies within `cap`: the caller has reached a line
+    /// whose end is out of reach, and there is nothing further it can place.
+    /// This is how a reader that has taken all it can draw of one line moves on
+    /// to the next without paying for the part it skipped.
+    pub fn skip_to_next_line_within(&mut self, cap: usize) -> bool {
+        match self.buffer.next_line_start_within(self.current_pos, cap) {
+            Some(next) => {
+                self.current_pos = next;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Lower the per-line read cap below the default [`MAX_LINE_BYTES`].
+    ///
+    /// A line longer than the cap is yielded as several consecutive pieces, so
+    /// a caller that will discard everything past the first few thousand bytes
+    /// of a line — the renderer, which only fills a viewport — can avoid
+    /// reading and decoding 100 KB of it. Callers that need whole logical
+    /// lines (row counts, column math) must leave the default in place.
+    ///
+    /// Clamped to `1..=MAX_LINE_BYTES`; the cap can only ever tighten.
+    pub fn with_max_line_bytes(mut self, max_line_bytes: usize) -> Self {
+        self.max_line_bytes = max_line_bytes.clamp(1, MAX_LINE_BYTES);
+        self
+    }
+
+    /// Get the next line (moving forward)
+    /// Uses lazy loading to handle unloaded buffers transparently
+    pub fn next_line(&mut self) -> Option<(usize, String)> {
+        if self.pending_trailing_empty_line {
+            self.pending_trailing_empty_line = false;
+            let line_start = self.buffer_len;
+            return Some((line_start, String::new()));
+        }
+
+        if self.current_pos >= self.buffer_len {
+            return None;
+        }
+
+        let line_start = self.current_pos;
+
+        // Estimate line length for chunk loading (typically lines are < 200 bytes)
+        // We load more than average to handle long lines without multiple loads
+        let estimated_max_line_length = self.estimated_line_length * 3;
+        let bytes_to_scan = estimated_max_line_length.min(self.buffer_len - self.current_pos);
+
+        // Use get_text_range_mut() which handles lazy loading automatically
+        // This never scans the entire file - only loads the chunk needed for this line
+        let chunk = match self
+            .buffer
+            .get_text_range_mut(self.current_pos, bytes_to_scan)
+        {
+            Ok(data) => data,
+            Err(e) => {
+                tracing::error!(
+                    "LineIterator: Failed to load chunk at offset {}: {}",
+                    self.current_pos,
+                    e
+                );
+                return None;
+            }
+        };
+
+        // Scan for newline in the loaded chunk
+        let mut line_len = 0;
+        let mut found_newline = false;
+        for &byte in chunk.iter() {
+            line_len += 1;
+            if byte == b'\n' {
+                found_newline = true;
+                break;
+            }
+        }
+
+        // If we didn't find a newline and didn't reach EOF, the line is longer than our estimate
+        // Load more data iteratively (rare case for very long lines)
+        // BUT: limit to `max_line_bytes` to prevent memory exhaustion from huge lines
+        if !found_newline && self.current_pos + line_len < self.buffer_len {
+            // Line is longer than expected, keep loading until we find newline, EOF, or hit limit
+            let mut extended_chunk = chunk;
+            while !found_newline
+                && self.current_pos + extended_chunk.len() < self.buffer_len
+                && extended_chunk.len() < self.max_line_bytes
+            {
+                // Grow geometrically. Extending by a fixed `estimated_max_line_length`
+                // each round takes ~415 read-and-append round trips (each a
+                // piece-tree range query plus a realloc) to reach the 100 KB cap
+                // on a single-line file; doubling takes ~9.
+                let additional_bytes = estimated_max_line_length
+                    .max(extended_chunk.len())
+                    .min(self.buffer_len - self.current_pos - extended_chunk.len())
+                    .min(self.max_line_bytes - extended_chunk.len()); // Don't exceed limit
+                match self
+                    .buffer
+                    .get_text_range_mut(self.current_pos + extended_chunk.len(), additional_bytes)
+                {
+                    Ok(mut more_data) => {
+                        let start_len = extended_chunk.len();
+                        extended_chunk.reserve(more_data.len());
+                        extended_chunk.append(&mut more_data);
+
+                        // Scan the newly added portion
+                        for &byte in extended_chunk[start_len..].iter() {
+                            line_len += 1;
+                            if byte == b'\n' {
+                                found_newline = true;
+                                break;
+                            }
+                            // Also stop if we've hit the limit
+                            if line_len >= self.max_line_bytes {
+                                break;
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!("LineIterator: Failed to extend chunk: {}", e);
+                        break;
+                    }
+                }
+            }
+
+            // Clamp line_len to the per-line read cap (safety limit for huge single-line files)
+            line_len = line_len.min(self.max_line_bytes).min(extended_chunk.len());
+
+            // Use the extended chunk
+            let line_bytes = &extended_chunk[..line_len];
+            self.current_pos += line_len;
+            self.schedule_trailing_empty_line(line_bytes);
+            let line_string = String::from_utf8_lossy(line_bytes).into_owned();
+            return Some((line_start, line_string));
+        }
+
+        // Normal case: found newline or reached EOF within initial chunk
+        let line_bytes = &chunk[..line_len];
+        self.current_pos += line_len;
+        self.schedule_trailing_empty_line(line_bytes);
+        let line_string = String::from_utf8_lossy(line_bytes).into_owned();
+        Some((line_start, line_string))
+    }
+
+    /// Get the next *logical* line — never split at a chunk boundary.
+    ///
+    /// `next_line` caps each yielded piece at `MAX_LINE_BYTES` so a file
+    /// that is one huge line can be read without materializing all of it
+    /// at once. That cap is a read budget, not document structure: code
+    /// that reasons about layout (how many visual rows a line occupies,
+    /// where the *next* line starts) must not mistake a 100 KB read
+    /// offset for a line start, or scroll math snaps the viewport to it
+    /// (issue #2843). Such callers use this method, which re-joins the
+    /// pieces until a real terminator or EOF.
+    ///
+    /// The trade-off is the one already accepted elsewhere for wrapped
+    /// layout (the wrap index reads whole lines via `Buffer::get_line`):
+    /// the returned `String` is as long as the logical line.
+    pub fn next_logical_line(&mut self) -> Option<(usize, String)> {
+        let (line_start, content, _) = self.next_logical_line_budgeted(usize::MAX)?;
+        Some((line_start, content))
+    }
+
+    /// [`next_logical_line`](Self::next_logical_line) with a read budget.
+    ///
+    /// Returns `(line_start, text, complete)`. `complete` false means the line
+    /// runs past `max_bytes` and the iterator is left **parked mid-line**, so
+    /// `current_position()` is not a line start and the only way forward is
+    /// [`finish_logical_line`](Self::finish_logical_line).
+    ///
+    /// Lets a caller with a bounded question — "does this line fill the
+    /// viewport?" — stop reading once it can answer, instead of materializing a
+    /// 53 MB single-line file to lay out thirty rows (issue #1806).
+    pub fn next_logical_line_budgeted(
+        &mut self,
+        max_bytes: usize,
+    ) -> Option<(usize, String, bool)> {
+        // Must bind `next_line`'s per-piece cap too, or a budget under
+        // `MAX_LINE_BYTES` would still read a full piece before the join loop
+        // saw it. Tightening only, and restored on the way out.
+        let saved_max = self.max_line_bytes;
+        self.max_line_bytes = saved_max.min(max_bytes.max(1));
+
+        let joined = self.next_line().map(|(line_start, mut content)| {
+            // A piece that stopped short of a terminator while bytes remain was
+            // cut by the read budget — keep pulling until the line really ends.
+            while !content.ends_with('\n')
+                && self.current_pos < self.buffer_len
+                && content.len() < max_bytes
+            {
+                match self.next_line() {
+                    Some((_, more)) => content.push_str(&more),
+                    None => break,
+                }
+            }
+            let complete = content.ends_with('\n') || self.current_pos >= self.buffer_len;
+            (line_start, content, complete)
+        });
+
+        self.max_line_bytes = saved_max;
+        joined
+    }
+
+    /// Join the rest of the logical line onto `content`, for a caller that
+    /// ran [`next_logical_line_budgeted`](Self::next_logical_line_budgeted)
+    /// out of budget and then found it needed the whole line after all. A
+    /// no-op when `content` already ends the line.
+    pub fn finish_logical_line(&mut self, content: &mut String) {
+        while !content.ends_with('\n') && self.current_pos < self.buffer_len {
+            match self.next_line() {
+                Some((_, more)) => content.push_str(&more),
+                None => break,
+            }
+        }
+    }
+
+    /// Get the previous line (moving backward)
+    /// Uses direct byte scanning which works even with unloaded chunks
+    pub fn prev(&mut self) -> Option<(usize, String)> {
+        if self.current_pos == 0 {
+            return None;
+        }
+
+        // current_pos is the start of the current line
+        // Scan backward from current_pos-1 to find the end of the previous line
+        if self.current_pos == 0 {
+            return None;
+        }
+
+        // Load a reasonable chunk backward for scanning
+        let scan_distance = self.estimated_line_length * 3;
+        let scan_start = self.current_pos.saturating_sub(scan_distance);
+        let scan_len = self.current_pos - scan_start;
+
+        // Load the data we need to scan
+        let chunk = match self.buffer.get_text_range_mut(scan_start, scan_len) {
+            Ok(data) => data,
+            Err(e) => {
+                tracing::error!(
+                    "LineIterator::prev(): Failed to load chunk at {}: {}",
+                    scan_start,
+                    e
+                );
+                return None;
+            }
+        };
+
+        // Scan backward to find the last newline (end of previous line)
+        let mut prev_line_end = None;
+        for i in (0..chunk.len()).rev() {
+            if chunk[i] == b'\n' {
+                prev_line_end = Some(scan_start + i);
+                break;
+            }
+        }
+
+        let prev_line_end = prev_line_end?;
+
+        // Now find the start of the previous line by scanning backward from prev_line_end
+        let prev_line_start = if prev_line_end == 0 {
+            0
+        } else {
+            Self::find_line_start_backward(self.buffer, prev_line_end)
+        };
+
+        // Load the previous line content
+        let prev_line_len = prev_line_end - prev_line_start + 1; // +1 to include the newline
+        let line_bytes = match self
+            .buffer
+            .get_text_range_mut(prev_line_start, prev_line_len)
+        {
+            Ok(data) => data,
+            Err(e) => {
+                tracing::error!(
+                    "LineIterator::prev(): Failed to load line at {}: {}",
+                    prev_line_start,
+                    e
+                );
+                return None;
+            }
+        };
+
+        let line_string = String::from_utf8_lossy(&line_bytes).into_owned();
+        self.current_pos = prev_line_start;
+        Some((prev_line_start, line_string))
+    }
+
+    /// Get the current position in the buffer (byte offset of current line start)
+    pub fn current_position(&self) -> usize {
+        self.current_pos
+    }
+
+    fn schedule_trailing_empty_line(&mut self, line_bytes: &[u8]) {
+        if line_bytes.ends_with(b"\n") && self.current_pos == self.buffer_len {
+            self.pending_trailing_empty_line = true;
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// `from_mid_line` starts exactly where told, with no backward scan —
+    /// the property the renderer's anchor depends on.
+    #[test]
+    fn from_mid_line_starts_at_the_given_byte() {
+        let mut buffer = TextBuffer::from_bytes(b"alpha beta gamma delta".to_vec(), test_fs());
+
+        // A plain iterator rewinds to the line start; the mid-line one does not.
+        // "alpha beta gamma delta" — `gamma` starts at byte 11.
+        let rewound = LineIterator::new(&mut buffer, 11, 80).next_line();
+        assert_eq!(rewound.map(|(start, _)| start), Some(0));
+
+        let (start, text) = LineIterator::from_mid_line(&mut buffer, 11, 80)
+            .next_line()
+            .expect("a line");
+        assert_eq!(start, 11);
+        assert_eq!(text, "gamma delta");
+    }
+
+    /// Starting mid-line reads only the tail, which is the whole point: the
+    /// bytes before the anchor are never touched.
+    #[test]
+    fn from_mid_line_reads_only_the_tail() {
+        let body = "x".repeat(5_000);
+        let mut buffer = TextBuffer::from_bytes(body.into_bytes(), test_fs());
+
+        let (start, text) = LineIterator::from_mid_line(&mut buffer, 4_000, 80)
+            .next_line()
+            .expect("a line");
+        assert_eq!(start, 4_000);
+        assert_eq!(text.len(), 1_000);
+    }
+
+    /// The budgeted read stops early on a line longer than the budget, and
+    /// says so — the signal a caller needs to decide whether it has enough.
+    #[test]
+    fn budgeted_read_stops_short_of_a_long_line() {
+        let body = "x".repeat(50_000);
+        let mut buffer = TextBuffer::from_bytes(body.into_bytes(), test_fs());
+
+        let mut iter = buffer.line_iterator(0, 80);
+        let (start, text, complete) = iter.next_logical_line_budgeted(1_000).expect("a line");
+        assert_eq!(start, 0);
+        assert!(!complete, "a 50 KB line does not fit a 1 KB budget");
+        // `next_line` reads in chunks, so the budget is a floor, not a ceiling:
+        // what matters is that it is bounded well below the whole line.
+        assert!(
+            text.len() < 50_000,
+            "budgeted read returned the whole line ({} bytes)",
+            text.len()
+        );
+    }
+
+    /// A line inside the budget comes back whole and flagged complete, so the
+    /// budgeted read is a drop-in for `next_logical_line` on ordinary text.
+    #[test]
+    fn budgeted_read_returns_short_lines_whole() {
+        let mut buffer = TextBuffer::from_bytes(b"alpha\nbeta\ngamma".to_vec(), test_fs());
+
+        let mut iter = buffer.line_iterator(0, 80);
+        for expected in ["alpha\n", "beta\n", "gamma"] {
+            let (_, text, complete) = iter.next_logical_line_budgeted(1_000).expect("a line");
+            assert_eq!(text, expected);
+            assert!(complete, "{expected:?} fits the budget");
+        }
+        assert!(iter.next_logical_line_budgeted(1_000).is_none());
+    }
+
+    /// After a short read, `finish_logical_line` joins the rest, landing the
+    /// iterator exactly where `next_logical_line` would have left it.
+    #[test]
+    fn finish_logical_line_completes_a_budgeted_read() {
+        let body = format!("{}\nnext line\n", "x".repeat(50_000));
+        let mut buffer = TextBuffer::from_bytes(body.into_bytes(), test_fs());
+
+        let mut iter = buffer.line_iterator(0, 80);
+        let (_, mut text, complete) = iter.next_logical_line_budgeted(1_000).expect("a line");
+        assert!(!complete);
+        iter.finish_logical_line(&mut text);
+        assert_eq!(text.len(), 50_001, "the whole line plus its newline");
+        assert_eq!(iter.current_position(), 50_001);
+
+        let (start, rest) = iter.next_logical_line().expect("second line");
+        assert_eq!(start, 50_001);
+        assert_eq!(rest, "next line\n");
+    }
+
+    /// An unbudgeted read is the budgeted one with no budget — the delegation
+    /// that keeps the two from drifting.
+    #[test]
+    fn unbudgeted_read_matches_a_huge_budget() {
+        let body = format!("{}\ntail\n", "y".repeat(200_000));
+        let mut buffer = TextBuffer::from_bytes(body.clone().into_bytes(), test_fs());
+
+        let joined = {
+            let mut iter = buffer.line_iterator(0, 80);
+            iter.next_logical_line().expect("a line").1
+        };
+        let mut iter = buffer.line_iterator(0, 80);
+        let (_, budgeted, complete) = iter.next_logical_line_budgeted(usize::MAX).expect("a line");
+        assert!(complete);
+        assert_eq!(joined, budgeted);
+        assert_eq!(joined.len(), 200_001);
+    }
+
+    use crate::model::filesystem::StdFileSystem;
+    use std::sync::Arc;
+
+    fn test_fs() -> Arc<dyn crate::model::filesystem::FileSystem + Send + Sync> {
+        Arc::new(StdFileSystem)
+    }
+    use super::*;
+
+    #[test]
+    fn test_line_iterator_new_at_line_start() {
+        let mut buffer = TextBuffer::from_bytes(b"Hello\nWorld\nTest".to_vec(), test_fs());
+
+        // Test iterator at position 0 (start of line 0)
+        let iter = buffer.line_iterator(0, 80);
+        assert_eq!(iter.current_position(), 0, "Should be at start of line 0");
+
+        // Test iterator at position 6 (start of line 1, after \n)
+        let iter = buffer.line_iterator(6, 80);
+        assert_eq!(iter.current_position(), 6, "Should be at start of line 1");
+
+        // Test iterator at position 12 (start of line 2, after second \n)
+        let iter = buffer.line_iterator(12, 80);
+        assert_eq!(iter.current_position(), 12, "Should be at start of line 2");
+    }
+
+    #[test]
+    fn test_line_iterator_new_in_middle_of_line() {
+        let mut buffer = TextBuffer::from_bytes(b"Hello\nWorld\nTest".to_vec(), test_fs());
+
+        // Test iterator at position 3 (middle of "Hello")
+        let iter = buffer.line_iterator(3, 80);
+        assert_eq!(iter.current_position(), 0, "Should find start of line 0");
+
+        // Test iterator at position 9 (middle of "World")
+        let iter = buffer.line_iterator(9, 80);
+        assert_eq!(iter.current_position(), 6, "Should find start of line 1");
+
+        // Test iterator at position 14 (middle of "Test")
+        let iter = buffer.line_iterator(14, 80);
+        assert_eq!(iter.current_position(), 12, "Should find start of line 2");
+    }
+
+    #[test]
+    fn test_line_iterator_next() {
+        let mut buffer = TextBuffer::from_bytes(b"Hello\nWorld\nTest".to_vec(), test_fs());
+        let mut iter = buffer.line_iterator(0, 80);
+
+        // First line
+        let (pos, content) = iter.next_line().expect("Should have first line");
+        assert_eq!(pos, 0);
+        assert_eq!(content, "Hello\n");
+
+        // Second line
+        let (pos, content) = iter.next_line().expect("Should have second line");
+        assert_eq!(pos, 6);
+        assert_eq!(content, "World\n");
+
+        // Third line
+        let (pos, content) = iter.next_line().expect("Should have third line");
+        assert_eq!(pos, 12);
+        assert_eq!(content, "Test");
+
+        // No more lines
+        assert!(iter.next_line().is_none());
+    }
+
+    #[test]
+    fn test_line_iterator_from_middle_position() {
+        let mut buffer = TextBuffer::from_bytes(b"Hello\nWorld\nTest".to_vec(), test_fs());
+
+        // Start from position 9 (middle of "World")
+        let mut iter = buffer.line_iterator(9, 80);
+        assert_eq!(
+            iter.current_position(),
+            6,
+            "Should be at start of line containing position 9"
+        );
+
+        // First next() should return current line
+        let (pos, content) = iter.next_line().expect("Should have current line");
+        assert_eq!(pos, 6);
+        assert_eq!(content, "World\n");
+
+        // Second next() should return next line
+        let (pos, content) = iter.next_line().expect("Should have next line");
+        assert_eq!(pos, 12);
+        assert_eq!(content, "Test");
+    }
+
+    #[test]
+    fn test_line_iterator_offset_to_position_consistency() {
+        let mut buffer = TextBuffer::from_bytes(b"Hello\nWorld".to_vec(), test_fs());
+
+        // For each position, verify that offset_to_position returns correct values
+        let expected = vec![
+            (0, 0, 0),  // H
+            (1, 0, 1),  // e
+            (2, 0, 2),  // l
+            (3, 0, 3),  // l
+            (4, 0, 4),  // o
+            (5, 0, 5),  // \n
+            (6, 1, 0),  // W
+            (7, 1, 1),  // o
+            (8, 1, 2),  // r
+            (9, 1, 3),  // l
+            (10, 1, 4), // d
+        ];
+
+        for (offset, expected_line, expected_col) in expected {
+            let pos = buffer
+                .offset_to_position(offset)
+                .unwrap_or_else(|| panic!("Should have position for offset {}", offset));
+            assert_eq!(pos.line, expected_line, "Wrong line for offset {}", offset);
+            assert_eq!(
+                pos.column, expected_col,
+                "Wrong column for offset {}",
+                offset
+            );
+
+            // Verify LineIterator uses this correctly
+            let iter = buffer.line_iterator(offset, 80);
+            let expected_line_start = if expected_line == 0 { 0 } else { 6 };
+            assert_eq!(
+                iter.current_position(),
+                expected_line_start,
+                "LineIterator at offset {} should be at line start {}",
+                offset,
+                expected_line_start
+            );
+        }
+    }
+
+    #[test]
+    fn test_line_iterator_prev() {
+        let mut buffer = TextBuffer::from_bytes(b"Line1\nLine2\nLine3".to_vec(), test_fs());
+
+        // Start at line 2
+        let mut iter = buffer.line_iterator(12, 80);
+
+        // Go back to line 1
+        let (pos, content) = iter.prev().expect("Should have previous line");
+        assert_eq!(pos, 6);
+        assert_eq!(content, "Line2\n");
+
+        // Go back to line 0
+        let (pos, content) = iter.prev().expect("Should have previous line");
+        assert_eq!(pos, 0);
+        assert_eq!(content, "Line1\n");
+
+        // No more previous lines
+        assert!(iter.prev().is_none());
+    }
+
+    #[test]
+    fn test_line_iterator_single_line() {
+        let mut buffer = TextBuffer::from_bytes(b"Only one line".to_vec(), test_fs());
+        let mut iter = buffer.line_iterator(0, 80);
+
+        let (pos, content) = iter.next_line().expect("Should have the line");
+        assert_eq!(pos, 0);
+        assert_eq!(content, "Only one line");
+
+        assert!(iter.next_line().is_none());
+        assert!(iter.prev().is_none());
+    }
+
+    #[test]
+    fn test_line_iterator_empty_lines() {
+        let mut buffer = TextBuffer::from_bytes(b"Line1\n\nLine3".to_vec(), test_fs());
+        let mut iter = buffer.line_iterator(0, 80);
+
+        let (pos, content) = iter.next_line().expect("First line");
+        assert_eq!(pos, 0);
+        assert_eq!(content, "Line1\n");
+
+        let (pos, content) = iter.next_line().expect("Empty line");
+        assert_eq!(pos, 6);
+        assert_eq!(content, "\n");
+
+        let (pos, content) = iter.next_line().expect("Third line");
+        assert_eq!(pos, 7);
+        assert_eq!(content, "Line3");
+    }
+
+    #[test]
+    fn test_line_iterator_trailing_newline_emits_empty_line() {
+        let mut buffer = TextBuffer::from_bytes(b"Hello world\n".to_vec(), test_fs());
+        let mut iter = buffer.line_iterator(0, 80);
+
+        let (pos, content) = iter.next_line().expect("First line");
+        assert_eq!(pos, 0);
+        assert_eq!(content, "Hello world\n");
+
+        let (pos, content) = iter
+            .next_line()
+            .expect("Should emit empty line for trailing newline");
+        assert_eq!(pos, "Hello world\n".len());
+        assert_eq!(content, "");
+
+        assert!(iter.next_line().is_none(), "No more lines expected");
+    }
+
+    #[test]
+    fn test_line_iterator_trailing_newline_starting_at_eof() {
+        let mut buffer = TextBuffer::from_bytes(b"Hello world\n".to_vec(), test_fs());
+        let buffer_len = buffer.len();
+        let mut iter = buffer.line_iterator(buffer_len, 80);
+
+        let (pos, content) = iter
+            .next_line()
+            .expect("Should emit empty line at EOF when starting there");
+        assert_eq!(pos, buffer_len);
+        assert_eq!(content, "");
+
+        assert!(iter.next_line().is_none(), "No more lines expected");
+    }
+
+    /// BUG REPRODUCTION: Line longer than estimated_line_length
+    /// When a line is longer than the estimated_line_length passed to line_iterator(),
+    /// the LineIterator::new() constructor fails to find the actual line start.
+    ///
+    /// This causes Home/End key navigation to fail on long lines.
+    #[test]
+    fn test_line_iterator_long_line_exceeds_estimate() {
+        // Create a line that's 200 bytes long (much longer than typical estimate)
+        let long_line = "x".repeat(200);
+        let content = format!("{}\n", long_line);
+        let mut buffer = TextBuffer::from_bytes(content.as_bytes().to_vec(), test_fs());
+
+        // Use a small estimated_line_length (50 bytes) - smaller than actual line
+        let estimated_line_length = 50;
+
+        // Position cursor at the END of the long line (position 200, before the \n)
+        let cursor_at_end = 200;
+
+        // Create iterator from end of line - this should find position 0 as line start
+        let iter = buffer.line_iterator(cursor_at_end, estimated_line_length);
+
+        // BUG: iter.current_position() returns 150 (200 - 50) instead of 0
+        // because find_line_start_backward only scans back 50 bytes
+        assert_eq!(
+            iter.current_position(),
+            0,
+            "LineIterator should find actual line start (0), not estimation boundary ({})",
+            cursor_at_end - estimated_line_length
+        );
+
+        // Test with cursor in the middle too
+        let cursor_in_middle = 100;
+        let iter = buffer.line_iterator(cursor_in_middle, estimated_line_length);
+        assert_eq!(
+            iter.current_position(),
+            0,
+            "LineIterator should find line start regardless of cursor position"
+        );
+    }
+
+    /// BUG REPRODUCTION: Multiple lines where one exceeds estimate
+    /// Tests that line iteration works correctly even when one line is very long
+    #[test]
+    fn test_line_iterator_mixed_line_lengths() {
+        // Short line, very long line, short line
+        let long_line = "L".repeat(300);
+        let content = format!("Short1\n{}\nShort2\n", long_line);
+        let mut buffer = TextBuffer::from_bytes(content.as_bytes().to_vec(), test_fs());
+
+        let estimated_line_length = 50;
+
+        // Position cursor at end of long line (position 7 + 300 = 307)
+        let cursor_pos = 307;
+
+        let iter = buffer.line_iterator(cursor_pos, estimated_line_length);
+
+        // Should find position 7 (start of long line), not 257 (307 - 50)
+        assert_eq!(
+            iter.current_position(),
+            7,
+            "Should find start of long line at position 7, not estimation boundary"
+        );
+    }
+
+    /// Test that LineIterator correctly handles CRLF line endings
+    /// Each line should have the correct byte offset, accounting for 2 bytes per line ending
+    #[test]
+    fn test_line_iterator_crlf() {
+        // CRLF content: "abc\r\ndef\r\nghi\r\n"
+        // Bytes: a=0, b=1, c=2, \r=3, \n=4, d=5, e=6, f=7, \r=8, \n=9, g=10, h=11, i=12, \r=13, \n=14
+        let content = b"abc\r\ndef\r\nghi\r\n";
+        let buffer_len = content.len();
+        let mut buffer = TextBuffer::from_bytes(content.to_vec(), test_fs());
+
+        let mut iter = buffer.line_iterator(0, 80);
+
+        // First line: starts at 0, content is "abc\r\n"
+        let (pos, line_content) = iter.next_line().expect("Should have first line");
+        assert_eq!(pos, 0, "First line should start at byte 0");
+        assert_eq!(line_content, "abc\r\n", "First line content");
+
+        // Second line: starts at 5 (after "abc\r\n"), content is "def\r\n"
+        let (pos, line_content) = iter.next_line().expect("Should have second line");
+        assert_eq!(pos, 5, "Second line should start at byte 5 (after CRLF)");
+        assert_eq!(line_content, "def\r\n", "Second line content");
+
+        // Third line: starts at 10 (after "abc\r\ndef\r\n"), content is "ghi\r\n"
+        let (pos, line_content) = iter.next_line().expect("Should have third line");
+        assert_eq!(
+            pos, 10,
+            "Third line should start at byte 10 (after two CRLFs)"
+        );
+        assert_eq!(line_content, "ghi\r\n", "Third line content");
+
+        // Trailing CRLF means there's an empty synthetic line at EOF
+        let (pos, line_content) = iter
+            .next_line()
+            .expect("Should emit empty line after trailing CRLF");
+        assert_eq!(pos, buffer_len, "Empty line should start at EOF");
+        assert_eq!(line_content, "", "Empty line content");
+
+        assert!(iter.next_line().is_none(), "Should have no more lines");
+    }
+
+    /// Test that line_start values are correct for CRLF files when starting from middle
+    #[test]
+    fn test_line_iterator_crlf_from_middle() {
+        // CRLF content: "abc\r\ndef\r\nghi"
+        // Bytes: a=0, b=1, c=2, \r=3, \n=4, d=5, e=6, f=7, \r=8, \n=9, g=10, h=11, i=12
+        let content = b"abc\r\ndef\r\nghi";
+        let mut buffer = TextBuffer::from_bytes(content.to_vec(), test_fs());
+
+        // Start iterator from middle of second line (byte 6 = 'e')
+        let iter = buffer.line_iterator(6, 80);
+        assert_eq!(
+            iter.current_position(),
+            5,
+            "Iterator at byte 6 should find line start at byte 5"
+        );
+
+        // Start iterator from the \r of first line (byte 3)
+        let iter = buffer.line_iterator(3, 80);
+        assert_eq!(
+            iter.current_position(),
+            0,
+            "Iterator at byte 3 (\\r) should find line start at byte 0"
+        );
+
+        // Start iterator from the \n of first line (byte 4)
+        let iter = buffer.line_iterator(4, 80);
+        assert_eq!(
+            iter.current_position(),
+            0,
+            "Iterator at byte 4 (\\n) should find line start at byte 0"
+        );
+
+        // Start iterator from first char of third line (byte 10 = 'g')
+        let iter = buffer.line_iterator(10, 80);
+        assert_eq!(
+            iter.current_position(),
+            10,
+            "Iterator at byte 10 should be at line start already"
+        );
+    }
+
+    /// `next_logical_line` must hide the `MAX_LINE_BYTES` read budget: a line
+    /// longer than a chunk is still yielded as *one* line ending at the real
+    /// terminator, and iteration lands on the next line's start rather than on
+    /// a chunk boundary.
+    ///
+    /// Not visible on screen directly — it is the primitive the wrapped-scroll
+    /// math reads through, where a chunk boundary posing as a line start snaps
+    /// the viewport to byte 100,000 (issue #2843).
+    #[test]
+    fn test_next_logical_line_spans_chunk_boundaries() {
+        // First line straddles several MAX_LINE_BYTES chunks; second is short.
+        let long_line = "x".repeat(super::MAX_LINE_BYTES * 2 + 1234);
+        let content = format!("{long_line}\nsecond\n");
+        let mut buffer = TextBuffer::from_bytes(content.into_bytes(), test_fs());
+
+        // `next_line` splits it — that is the read budget doing its job.
+        let mut chunked = buffer.line_iterator(0, 200);
+        let (_, first_chunk) = chunked.next_line().expect("first chunk");
+        assert_eq!(
+            first_chunk.len(),
+            super::MAX_LINE_BYTES,
+            "next_line should stop at the read budget"
+        );
+        assert_ne!(
+            chunked.current_position(),
+            long_line.len() + 1,
+            "precondition: next_line does not reach the real line end"
+        );
+
+        // `next_logical_line` rejoins the pieces.
+        let mut iter = buffer.line_iterator(0, 200);
+        let (start, line) = iter.next_logical_line().expect("first logical line");
+        assert_eq!(start, 0);
+        assert_eq!(
+            line.len(),
+            long_line.len() + 1,
+            "the whole line plus its newline should be returned as one line"
+        );
+        assert!(line.ends_with('\n'));
+        assert_eq!(
+            iter.current_position(),
+            long_line.len() + 1,
+            "iteration should land on the next line's start, not a chunk boundary"
+        );
+
+        let (second_start, second) = iter.next_logical_line().expect("second logical line");
+        assert_eq!(second_start, long_line.len() + 1);
+        assert_eq!(second, "second\n");
+    }
+
+    /// A final line with no terminator must still come back whole, and the
+    /// iterator must then report EOF rather than looping on the tail.
+    #[test]
+    fn test_next_logical_line_unterminated_tail() {
+        let long_line = "y".repeat(super::MAX_LINE_BYTES + 7);
+        let mut buffer = TextBuffer::from_bytes(long_line.clone().into_bytes(), test_fs());
+
+        let mut iter = buffer.line_iterator(0, 200);
+        let (start, line) = iter.next_logical_line().expect("logical line");
+        assert_eq!(start, 0);
+        assert_eq!(line.len(), long_line.len());
+        assert!(iter.next_logical_line().is_none(), "should be at EOF");
+    }
+
+    /// Test that large single-line files are chunked correctly and all data is preserved.
+    /// This verifies the MAX_LINE_BYTES limit works correctly with sequential data.
+    #[test]
+    fn test_line_iterator_large_single_line_chunked_correctly() {
+        // Create content with sequential markers: "[00001][00002][00003]..."
+        // Each marker is 7 bytes, so we can verify order and completeness
+        let num_markers = 20_000; // ~140KB of data, spans multiple chunks
+        let content: String = (1..=num_markers).map(|i| format!("[{:05}]", i)).collect();
+
+        let content_bytes = content.as_bytes().to_vec();
+        let content_len = content_bytes.len();
+        let mut buffer = TextBuffer::from_bytes(content_bytes, test_fs());
+
+        // Iterate and collect all chunks
+        let mut iter = buffer.line_iterator(0, 200);
+        let mut all_content = String::new();
+        let mut chunk_count = 0;
+        let mut chunk_sizes = Vec::new();
+
+        while let Some((pos, chunk)) = iter.next_line() {
+            // Verify chunk starts at expected position
+            assert_eq!(
+                pos,
+                all_content.len(),
+                "Chunk {} should start at byte {}",
+                chunk_count,
+                all_content.len()
+            );
+
+            // Verify chunk is within MAX_LINE_BYTES limit
+            assert!(
+                chunk.len() <= super::MAX_LINE_BYTES,
+                "Chunk {} exceeds MAX_LINE_BYTES: {} > {}",
+                chunk_count,
+                chunk.len(),
+                super::MAX_LINE_BYTES
+            );
+
+            chunk_sizes.push(chunk.len());
+            all_content.push_str(&chunk);
+            chunk_count += 1;
+        }
+
+        // Verify all content was retrieved
+        assert_eq!(
+            all_content.len(),
+            content_len,
+            "Total content length should match original"
+        );
+        assert_eq!(
+            all_content, content,
+            "Reconstructed content should match original"
+        );
+
+        // With 140KB of data and 100KB limit, should have 2 chunks
+        assert!(
+            chunk_count >= 2,
+            "Should have multiple chunks for {}KB content (got {})",
+            content_len / 1024,
+            chunk_count
+        );
+
+        // The assert_eq!(all_content, content) above already proves byte-for-byte
+        // equality, which implies every marker is present and in order. Per-marker
+        // contains() scans would be O(n²) over 20k markers × 140KB and cause the
+        // test to time out; just sanity-check a few positions at O(1).
+        let pos_1000 = all_content.find("[01000]").unwrap();
+        let pos_2000 = all_content.find("[02000]").unwrap();
+        let pos_10000 = all_content.find("[10000]").unwrap();
+        assert!(
+            pos_1000 < pos_2000 && pos_2000 < pos_10000,
+            "Markers should be in sequential order"
+        );
+    }
+}

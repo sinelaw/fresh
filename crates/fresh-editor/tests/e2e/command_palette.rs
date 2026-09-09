@@ -400,37 +400,103 @@ fn test_quick_open_goto_line_live_preview_mouse_click_commits() {
     // the popup's outer rect absorbs clicks across its full chrome, so
     // reading coordinates on a transient taller-popup frame would have
     // the click silently no-op against the wrong layout.
+    //
+    // `wait_until_stable` (not plain `wait_until`): on slow CI runners
+    // this test failed fast three times (macOS ×1, Windows ×2 — never
+    // reproduced locally, 25/25 green under load) with no diagnostic
+    // output. The stability phase rules out clicking on a frame that
+    // met the condition mid-transition while a late async suggestion
+    // refresh was still reshaping the popup; the panic paths below all
+    // dump the screen so a fourth failure explains itself.
+    // Drain the background Quick Open file scan BEFORE reading click
+    // coordinates: on slow CI runners (the strike-4 evidence — Windows,
+    // screen showing the restored pre-preview `Ln 1` after Esc) the
+    // scan's `files_loaded` delivery lands seconds after Ctrl+P, inside
+    // the click window, and its suggestion refresh re-enters
+    // `apply_goto_line_preview` between the observed frame and the
+    // click's hit-test. Locally the scan completes in milliseconds,
+    // which is why this never reproduced (25/25 under load). Quiescence
+    // first makes the interleaving impossible rather than unlikely.
     harness
-        .wait_until(|h| {
-            let s = h.screen_to_string();
-            s.contains(" 78 │ LINE78") && s.contains("Go to line 80")
-        })
-        .expect("Goto-line preview popup should be fully rendered with LINE78 visible");
+        .wait_for_async_quiescence(3)
+        .expect("async pipeline should go quiet after the file scan");
+
+    if let Err(e) = harness.wait_until_stable(|h| {
+        let s = h.screen_to_string();
+        s.contains(" 78 │ LINE78") && s.contains("Go to line 80")
+    }) {
+        panic!(
+            "Goto-line preview wait errored: {e:#}\nscreen:\n{}",
+            harness.screen_to_string()
+        );
+    }
 
     // Locate the click target by the unique editor-body pattern
     // "│ LINE78": the `│` gutter separator only appears in the editor
     // body, never in popup chrome or hint bars. Click in the LINE78 text
     // (skip past "│ ") so the coordinate is unambiguously over editor
     // content rather than gutter or popup.
-    let (anchor_col, target_row) = harness
-        .find_text_on_screen("│ LINE78")
-        .expect("Editor row containing LINE78 should be visible");
+    let (anchor_col, target_row) = match harness.find_text_on_screen("│ LINE78") {
+        Some(hit) => hit,
+        None => panic!(
+            "LINE78 row vanished between the stable wait and the click — screen:\n{}",
+            harness.screen_to_string()
+        ),
+    };
     // find_text_on_screen returns the column of the matched substring's
     // first byte ('│', 1 cell wide). "LINE78" starts 2 columns to the
     // right of the separator (`│ LINE78`).
     let click_col = anchor_col + 2;
-    harness.mouse_click(click_col, target_row).unwrap();
+    if let Err(e) = harness.mouse_click(click_col, target_row) {
+        panic!(
+            "mouse_click({click_col},{target_row}) errored: {e:#}\nscreen:\n{}",
+            harness.screen_to_string()
+        );
+    }
 
-    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    // Post-click evidence for any future failure (nextest surfaces
+    // captured stderr only when the test fails): the byte position
+    // tells whether the click committed (line 78 ≈ byte 540) or was
+    // absorbed (still at the preview target, line 80), and the frame
+    // shows the popup/viewport state the click was hit-tested against.
+    if let Err(e) = harness.render() {
+        panic!("post-click render errored: {e:#}");
+    }
+    eprintln!(
+        "post-click: cursor_byte={} screen:\n{}",
+        harness.cursor_position(),
+        harness.screen_to_string()
+    );
+
+    if let Err(e) = harness.send_key(KeyCode::Esc, KeyModifiers::NONE) {
+        panic!(
+            "Esc after click errored: {e:#}\nscreen:\n{}",
+            harness.screen_to_string()
+        );
+    }
 
     // The pre-preview snapshot (line 1) must NOT overwrite the click target
     // (line 78) — status bar must report line 78 after the prompt closes.
+    //
+    // Wait for the status bar to report *a* line, then assert which one,
+    // rather than waiting for line 78 itself. The click and the Esc are both
+    // fully dispatched by the time we get here, so the cursor's line is
+    // already decided: if the click did not land where this test intends —
+    // absorbed by the suggestion popup's outer rect, or a row off — the
+    // status bar will say so on its first frame and no later frame will
+    // change it. Waiting on "Ln 78," in that case is a wait for a state that
+    // can no longer arrive, i.e. a 180 s nextest timeout with no failed
+    // assertion to point at (CONTRIBUTING Code §16); this way the same
+    // failure names the line the cursor actually ended on.
     harness
-        .wait_until(|h| h.screen_to_string().contains("Ln 78,"))
-        .expect(
-            "Cursor should stay on the clicked line 78 — pre-preview snapshot must be \
-             dropped on editor click",
-        );
+        .wait_until(|h| h.screen_to_string().contains(", Col "))
+        .expect("Status bar should be visible once the prompt closes");
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("Ln 78,"),
+        "Cursor should stay on the clicked line 78 — pre-preview snapshot must be \
+         dropped on editor click; screen:\n{screen}"
+    );
 }
 
 /// A buffer edit that shifts the cursor via `adjust_for_edit` while the
@@ -1560,6 +1626,11 @@ fn test_command_palette_shortcuts_with_filtering() {
     use crossterm::event::{KeyCode, KeyModifiers};
     let mut harness = EditorTestHarness::new(120, 30).unwrap();
 
+    // Give the buffer something to save: Save File is only offered when there
+    // are unsaved changes, and disabled entries sort below the visible rows.
+    harness.type_text("EDITED").unwrap();
+    harness.render().unwrap();
+
     // Trigger the command palette
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
@@ -1916,4 +1987,140 @@ fn test_command_palette_description_search() {
     // Should find commands whose descriptions match
     harness.assert_screen_contains("Toggle Page View");
     harness.assert_screen_contains("Set Page Width");
+}
+
+// ---------------------------------------------------------------------------
+// "The state changed and nothing asked for a repaint."
+//
+// The whole suite is blind to this class by construction: every input helper
+// on `EditorTestHarness` ends in `self.render()`, so a test can only ever
+// assert what a frame *contains*. In the real terminal nothing calls
+// `render()` for you — `main.rs` repaints only when `Editor::handle_mouse`
+// returns `true` — so a surface that mutates its own state and reports
+// `false` looks perfect here and is frozen on the user's screen.
+//
+// Three bugs of exactly that shape shipped on the retained-UI migration:
+//
+//  1. a described panel's hover changed state but no frame was requested;
+//  2. `Dispatched::changed` was `!result.msgs.is_empty()` alone, so a
+//     `widgets::List`'s own hover write — an updater that deliberately
+//     produces no message, so the host is not bothered with it — never got a
+//     frame. `changed` is now `ui.needs_frame() || !msgs.is_empty()`;
+//  3. `update_lsp_hover_state` dismissed a tooltip and returned nothing, so
+//     the dismissal was never drawn.
+//
+// The tests below use `mouse_move_reporting_render`, which does NOT render:
+// the returned bool is the assertion. The command palette's suggestion list is
+// a `fresh_ui::widgets::List` (`view::shell::prompt`), so it is bug 2's exact
+// shape — its rows keep their hover in list state, not in a `UiFact`.
+// ---------------------------------------------------------------------------
+
+/// The (col, row) of the first cell of `needle` on screen, in *character*
+/// columns — the popup is drawn inside a box-drawing frame, so a byte offset
+/// into the line is not a column.
+fn cell_of(harness: &EditorTestHarness, needle: &str) -> (u16, u16) {
+    let screen = harness.screen_to_string();
+    for (r, line) in screen.lines().enumerate() {
+        if let Some(byte) = line.find(needle) {
+            return (line[..byte].chars().count() as u16, r as u16);
+        }
+    }
+    panic!("screen missing '{needle}':\n{screen}");
+}
+
+/// Open the command palette and settle it, returning the cell of a suggestion
+/// row that is **not** the selected one.
+///
+/// Not the selected row on purpose: the selected row is already painted with
+/// its own band, so a hover that failed to repaint could hide behind it. The
+/// row under test is one whose only reason to be redrawn is the pointer.
+fn palette_with_unselected_row(harness: &mut EditorTestHarness) -> (u16, u16) {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    // "Add Cursor Above" sorts first and is therefore the selected row;
+    // "Add Cursor Below" is the row below it.
+    harness.assert_screen_contains("Add Cursor Below");
+    let cell = cell_of(harness, "Add Cursor Below");
+    // Settle: whatever the palette's own first frame queued must be flushed
+    // before the pointer is the only thing that can dirty the tree.
+    harness.render().unwrap();
+    harness.render().unwrap();
+    cell
+}
+
+/// Moving the pointer onto a suggestion row must **ask for a frame**, and
+/// leaving it there must not.
+///
+/// This is the pinned bug: a `widgets::List` owns its hover, and it writes it
+/// through an updater that returns no message — precisely so the host is not
+/// bothered with a highlight. `Dispatched::changed` was computed from
+/// `!result.msgs.is_empty()`, which is empty for exactly that write, so
+/// `handle_mouse` answered "nothing to draw" while the list sat dirty in the
+/// scheduler waiting for a frame that was never asked for. Rows never lit
+/// under the pointer, while the menu bar's did — the menu bar's hover is a
+/// `UiFact` and a list's is not.
+///
+/// The two halves are asserted together deliberately. A `true` on its own
+/// would survive anyone making `changed` unconditionally true; the second move
+/// lands on the same cell, crosses no element boundary, queues nothing, and
+/// must therefore answer `false`. Only the pair proves the bool is computed
+/// from the tree's state rather than being a constant.
+#[test]
+fn test_palette_row_hover_requests_a_frame() {
+    let mut harness = EditorTestHarness::new(100, 24).unwrap();
+    let (col, row) = palette_with_unselected_row(&mut harness);
+
+    let asked = harness.mouse_move_reporting_render(col, row).unwrap();
+    assert!(
+        asked,
+        "hovering the palette row at ({col},{row}) wrote the list's hover state, so \
+         handle_mouse had to report needs_render — it reported false, which in the \
+         real editor is a highlight that never gets drawn:\n{}",
+        harness.screen_to_string()
+    );
+
+    // Draw the frame that was just asked for, then hold still.
+    harness.render().unwrap();
+    let asked_again = harness.mouse_move_reporting_render(col, row).unwrap();
+    assert!(
+        !asked_again,
+        "a second motion onto the cell the pointer is already on crosses no element \
+         boundary and changes nothing, so it must not request a frame — reporting \
+         true here means the needs-render answer is a constant and the assertion \
+         above is vacuous:\n{}",
+        harness.screen_to_string()
+    );
+}
+
+/// A pointer moving over ground that owns no hover must not ask for a frame.
+///
+/// The negative half of the rule, on a second surface so it is not only the
+/// "same cell twice" case: the editor's own text area is not a tree surface
+/// with a hover, and bare motion across it changes nothing anybody draws. An
+/// editor that repaints on every motion event burns a frame per pointer
+/// sample, which is the failure mode a careless fix for the bug above
+/// produces — `changed = true` unconditionally makes every test in this file
+/// pass and the editor repaint continuously.
+#[test]
+fn test_bare_motion_over_the_text_area_requests_no_frame() {
+    let mut harness = EditorTestHarness::new(100, 24).unwrap();
+    let _fixture = harness
+        .load_buffer_from_text("alpha beta gamma\ndelta epsilon\n")
+        .unwrap();
+    harness.render().unwrap();
+
+    // Two moves: the first may legitimately request a frame (it is the first
+    // time the pointer has been anywhere), the second is the assertion.
+    harness.mouse_move(40, 10).unwrap();
+    harness.render().unwrap();
+    let asked = harness.mouse_move_reporting_render(41, 10).unwrap();
+    assert!(
+        !asked,
+        "bare motion across the text area changes nothing, so it must not request a \
+         frame:\n{}",
+        harness.screen_to_string()
+    );
 }

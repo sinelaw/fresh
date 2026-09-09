@@ -6,7 +6,7 @@ use super::calibration_wizard::{CalibrationWizard, WizardAction};
 use super::Editor;
 use crate::input::handler::InputResult;
 use crossterm::event::KeyEvent;
-use rust_i18n::t;
+use fresh_i18n::t;
 
 impl Editor {
     /// Open the calibration wizard

@@ -40,6 +40,7 @@ interface LastChange {
   findCharTarget?: string;   // For operator+find-char: the target character
   count?: number;            // Count used with the command
   insertedText?: string;     // Text inserted during insert mode
+  insertCommand?: string;    // For type "insert": the command that entered insert mode (i/a/I/A/o/O)
 }
 
 interface ViState {
@@ -55,6 +56,7 @@ interface ViState {
   visualHead: number | null; // Active end of computed visual selections
   visualRange: { start: number; end: number } | null; // Characterwise visual range for computed motions
   insertStartPos: number | null; // Cursor position when entering insert mode
+  pendingInsertCommand: string | null; // Insert-entering command (i/a/I/A/o/O) awaiting '.' recording
   visualBlockAnchor: { line: number; col: number } | null; // For visual block mode
   lastWordSearch: { text: string; direction: WordSearchDirection; wholeWord: boolean } | null; // For n/N after * or #
 }
@@ -72,6 +74,7 @@ const state: ViState = {
   visualHead: null,
   visualRange: null,
   insertStartPos: null,
+  pendingInsertCommand: null,
   visualBlockAnchor: null,
   lastWordSearch: null,
 };
@@ -82,13 +85,17 @@ const autoStart = editor.defineConfigBoolean("autoStart", {
     "Automatically enable vi mode when the editor starts. Default off — users opt in.",
 });
 
-const arrowKeys = editor.defineConfigBoolean("arrowKeys", {
+// `let`, not `const`: both feed the mode binding tables built in
+// `defineViModes()`, and the `config_changed` subscription at the bottom
+// of this file re-reads them and re-emits the modes so a Settings change
+// takes effect without an editor restart.
+let arrowKeys = editor.defineConfigBoolean("arrowKeys", {
   default: true,
   description:
     "Enable arrow key navigation in vi mode.",
 });
 
-const searchWordUnderCursor = editor.defineConfigBoolean("searchWordUnderCursor", {
+let searchWordUnderCursor = editor.defineConfigBoolean("searchWordUnderCursor", {
   default: true,
   description:
     "Enable * and # to search for the word under the cursor.",
@@ -187,18 +194,34 @@ function switchMode(newMode: ViMode): void {
 async function captureInsertedText(): Promise<void> {
   if (state.insertStartPos === null) return;
 
+  const startPos = state.insertStartPos;
+  state.insertStartPos = null;
+  const insertCommand = state.pendingInsertCommand;
+  state.pendingInsertCommand = null;
+
   const endPos = editor.getCursorPosition();
-  if (endPos === null || endPos <= state.insertStartPos) {
-    state.insertStartPos = null;
+  let text = "";
+  if (endPos !== null && endPos > startPos) {
+    const bufferId = editor.getActiveBufferId();
+    text = (await editor.getBufferText(bufferId, startPos, endPos)) ?? "";
+  }
+
+  if (insertCommand !== null) {
+    // Insert entered via i/a/I/A/o/O: '.' replays the command's cursor
+    // motion plus the typed text. An empty i/a/I/A insert is not a change
+    // (Vim keeps the previous one for '.'), but o/O open a line even when
+    // nothing is typed, which alone is repeatable.
+    if (text.length > 0 || insertCommand === "o" || insertCommand === "O") {
+      state.lastChange = { type: "insert", insertCommand };
+      if (text.length > 0) {
+        state.lastChange.insertedText = text;
+      }
+    }
     return;
   }
 
-  const bufferId = editor.getActiveBufferId();
-  const text = await editor.getBufferText(bufferId, state.insertStartPos, endPos);
-
-  if (text && text.length > 0) {
-    // Only record if we have a pending insert change or if there was actual text inserted
-    if (state.lastChange?.type === "insert" || !state.lastChange) {
+  if (text.length > 0) {
+    if (!state.lastChange || state.lastChange.type === "insert") {
       state.lastChange = {
         type: "insert",
         insertedText: text,
@@ -210,8 +233,6 @@ async function captureInsertedText(): Promise<void> {
       state.lastChange.insertedText = text;
     }
   }
-
-  state.insertStartPos = null;
 }
 
 // Get the current count (defaults to 1 if no count specified)
@@ -1696,41 +1717,87 @@ async function vi_search_word_backward() : Promise<void> {
 registerHandler("vi_search_word_backward", vi_search_word_backward);
 
 // Mode switching
+//
+// Each insert-entering command records itself in `pendingInsertCommand` so
+// the Escape-time capture can build a `lastChange` that '.' replays by
+// re-executing the command's cursor motion at the new cursor and then
+// re-inserting the recorded keystrokes (Vim `:help .`). Commands that
+// reposition the cursor before inserting must also flush the editor's
+// command queue first: `executeAction` is queued and applied on the editor
+// thread, so without the flush `switchMode("insert")` would record the
+// PRE-reposition cursor position as `insertStartPos`, and the '.' capture
+// would span intervening buffer text instead of just the typed keystrokes
+// (issue #2443: `o`/`a`/`A` + `.` injected unrelated line content).
+async function enterInsertRepositioned(command: string): Promise<void> {
+  await editor.flush();
+  state.pendingInsertCommand = command;
+  switchMode("insert");
+}
+
 function vi_insert_before() : void {
+  // No repositioning, so no flush needed: the cursor snapshot is already
+  // accurate. Recording the entering command keeps a stale previous change
+  // (e.g. an `x`) from swallowing this insert's recording at capture time.
+  state.pendingInsertCommand = "i";
   switchMode("insert");
 }
 registerHandler("vi_insert_before", vi_insert_before);
 
-function vi_insert_after() : void {
+async function vi_insert_after() : Promise<void> {
   editor.executeAction("move_right");
-  switchMode("insert");
+  await enterInsertRepositioned("a");
 }
 registerHandler("vi_insert_after", vi_insert_after);
 
-function vi_insert_line_start() : void {
+async function vi_insert_line_start() : Promise<void> {
   editor.executeAction("move_line_start");
-  switchMode("insert");
+  await enterInsertRepositioned("I");
 }
 registerHandler("vi_insert_line_start", vi_insert_line_start);
 
-function vi_insert_line_end() : void {
+async function vi_insert_line_end() : Promise<void> {
   editor.executeAction("move_line_end");
-  switchMode("insert");
+  await enterInsertRepositioned("A");
 }
 registerHandler("vi_insert_line_end", vi_insert_line_end);
 
-function vi_open_below() : void {
+async function vi_open_below() : Promise<void> {
   editor.executeAction("move_line_end");
   editor.executeAction("insert_newline");
-  switchMode("insert");
+  await enterInsertRepositioned("o");
 }
 registerHandler("vi_open_below", vi_open_below);
 
-function vi_open_above() : void {
-  editor.executeAction("move_line_start");
-  editor.executeAction("insert_newline");
-  editor.executeAction("move_up");
-  switchMode("insert");
+// Open a line above the cursor's line and leave the cursor at its start.
+// Implemented with an explicit insert at the line-start byte offset instead of
+// `insert_newline` + `move_up`: the offsets are computed from the pre-command
+// cursor, so the new empty line and the cursor position cannot disagree.
+async function openLineAbove(): Promise<boolean> {
+  const bufferId = editor.getActiveBufferId();
+  if (isActiveBufferEditingDisabled(bufferId)) {
+    return false;
+  }
+  const range = await getLinewiseRange(1);
+  if (range === null) {
+    // Empty buffer: open an (empty) line below the cursor's empty line.
+    if (editor.getBufferLength(bufferId) === 0) {
+      editor.insertText(bufferId, 0, "\n");
+      editor.setBufferCursor(bufferId, 0);
+      return true;
+    }
+    return false;
+  }
+  editor.insertText(range.bufferId, range.start, range.lineTerminator);
+  editor.setBufferCursor(range.bufferId, range.start);
+  return true;
+}
+
+async function vi_open_above() : Promise<void> {
+  if (!(await openLineAbove())) {
+    switchMode("normal");
+    return;
+  }
+  await enterInsertRepositioned("O");
 }
 registerHandler("vi_open_above", vi_open_above);
 
@@ -2064,9 +2131,35 @@ async function vi_repeat() : Promise<void> {
     }
 
     case "insert": {
-      // Pure insert (i, a, o, O)
+      // Pure insert (i, a, I, A, o, O): re-execute the entering command's
+      // cursor motion at the current cursor, then re-insert the recorded
+      // keystrokes (Vim `:help .`). Replaying only the text without the
+      // motion — or vice versa — is what corrupted buffers in issue #2443.
+      switch (change.insertCommand) {
+        case "a":
+          editor.executeAction("move_right");
+          break;
+        case "I":
+          editor.executeAction("move_line_start");
+          break;
+        case "A":
+          editor.executeAction("move_line_end");
+          break;
+        case "o":
+          editor.executeAction("move_line_end");
+          editor.executeAction("insert_newline");
+          break;
+        case "O":
+          if (!(await openLineAbove())) {
+            return;
+          }
+          break;
+      }
       if (change.insertedText) {
         editor.insertAtCursor(change.insertedText);
+        // Leave the cursor on the last inserted character, exactly as
+        // Escape does when the original insert ended.
+        editor.executeAction("move_left_in_line");
       }
       break;
     }
@@ -3388,381 +3481,390 @@ registerHandler("vi_cancel", vi_cancel);
 // Mode Definitions
 // ============================================================================
 
-// Define vi-normal mode
-editor.defineMode("vi-normal", [
-  // Count prefix (digits 1-9 start count, 0 is special)
-  ["1", "vi_digit_1"],
-  ["2", "vi_digit_2"],
-  ["3", "vi_digit_3"],
-  ["4", "vi_digit_4"],
-  ["5", "vi_digit_5"],
-  ["6", "vi_digit_6"],
-  ["7", "vi_digit_7"],
-  ["8", "vi_digit_8"],
-  ["9", "vi_digit_9"],
-  ["0", "vi_digit_0_or_line_start"], // 0 appends to count, or moves to line start
+// All mode definitions live in one function so they can be re-emitted
+// when a binding-affecting setting changes (see the `config_changed`
+// subscription below). `defineMode` replaces rather than accumulates —
+// the host clears the mode's existing plugin defaults before
+// re-registering — so calling this again is idempotent.
+function defineViModes(): void {
+  // Define vi-normal mode
+  editor.defineMode("vi-normal", [
+    // Count prefix (digits 1-9 start count, 0 is special)
+    ["1", "vi_digit_1"],
+    ["2", "vi_digit_2"],
+    ["3", "vi_digit_3"],
+    ["4", "vi_digit_4"],
+    ["5", "vi_digit_5"],
+    ["6", "vi_digit_6"],
+    ["7", "vi_digit_7"],
+    ["8", "vi_digit_8"],
+    ["9", "vi_digit_9"],
+    ["0", "vi_digit_0_or_line_start"], // 0 appends to count, or moves to line start
 
-  // Navigation
-  ["h", "vi_left"],
-  ["j", "vi_down"],
-  ["k", "vi_up"],
-  ["l", "vi_right"],
-  ["w", "vi_word"],
-  ["b", "vi_word_back"],
-  ["e", "vi_word_end"],
-  ...configuredBindings(arrowKeys, [
-    ["Left", "vi_left"],
-    ["Down", "vi_down"],
-    ["Up", "vi_up"],
-    ["Right", "vi_right"],
-  ]),
-  ["W", "vi_WORD"],
-  ["B", "vi_WORD_back"],
-  ["E", "vi_WORD_end"],
-  ["$", "vi_line_end"],
-  ["^", "vi_first_non_blank"],
-  ["g g", "vi_doc_start"],
-  ["G", "vi_doc_end"],
-  ["C-f", "vi_page_down"],
-  ["C-b", "vi_page_up"],
-  ["C-d", "vi_half_page_down"],
-  ["C-u", "vi_half_page_up"],
-  ["%", "vi_matching_bracket"],
-  ["z z", "vi_center_cursor"],
-  ["{", "vi_paragraph_up"],
-  ["}", "vi_paragraph_down"],
+    // Navigation
+    ["h", "vi_left"],
+    ["j", "vi_down"],
+    ["k", "vi_up"],
+    ["l", "vi_right"],
+    ["w", "vi_word"],
+    ["b", "vi_word_back"],
+    ["e", "vi_word_end"],
+    ...configuredBindings(arrowKeys, [
+      ["Left", "vi_left"],
+      ["Down", "vi_down"],
+      ["Up", "vi_up"],
+      ["Right", "vi_right"],
+    ]),
+    ["W", "vi_WORD"],
+    ["B", "vi_WORD_back"],
+    ["E", "vi_WORD_end"],
+    ["$", "vi_line_end"],
+    ["^", "vi_first_non_blank"],
+    ["g g", "vi_doc_start"],
+    ["G", "vi_doc_end"],
+    ["C-f", "vi_page_down"],
+    ["C-b", "vi_page_up"],
+    ["C-d", "vi_half_page_down"],
+    ["C-u", "vi_half_page_up"],
+    ["%", "vi_matching_bracket"],
+    ["z z", "vi_center_cursor"],
+    ["{", "vi_paragraph_up"],
+    ["}", "vi_paragraph_down"],
 
-  // Search
-  ["/", "vi_search_forward"],
-  ["?", "vi_search_backward"],
-  ["n", "vi_find_next"],
-  ["N", "vi_find_prev"],
-  ...configuredBindings(searchWordUnderCursor, [
-    ["*", "vi_search_word_forward"],
-    ["#", "vi_search_word_backward"],
-  ]),
+    // Search
+    ["/", "vi_search_forward"],
+    ["?", "vi_search_backward"],
+    ["n", "vi_find_next"],
+    ["N", "vi_find_prev"],
+    ...configuredBindings(searchWordUnderCursor, [
+      ["*", "vi_search_word_forward"],
+      ["#", "vi_search_word_backward"],
+    ]),
 
-  // Find character on line
-  ["f", "vi_find_char_f"],
-  ["t", "vi_find_char_t"],
-  ["F", "vi_find_char_F"],
-  ["T", "vi_find_char_T"],
-  [";", "vi_find_char_repeat"],
-  [",", "vi_find_char_repeat_reverse"],
+    // Find character on line
+    ["f", "vi_find_char_f"],
+    ["t", "vi_find_char_t"],
+    ["F", "vi_find_char_F"],
+    ["T", "vi_find_char_T"],
+    [";", "vi_find_char_repeat"],
+    [",", "vi_find_char_repeat_reverse"],
 
-  // Mode switching
-  ["i", "vi_insert_before"],
-  ["a", "vi_insert_after"],
-  ["I", "vi_insert_line_start"],
-  ["A", "vi_insert_line_end"],
-  ["o", "vi_open_below"],
-  ["O", "vi_open_above"],
-  ["Escape", "vi_escape"],
+    // Mode switching
+    ["i", "vi_insert_before"],
+    ["a", "vi_insert_after"],
+    ["I", "vi_insert_line_start"],
+    ["A", "vi_insert_line_end"],
+    ["o", "vi_open_below"],
+    ["O", "vi_open_above"],
+    ["Escape", "vi_escape"],
 
-  // Operators (single key - switches to operator-pending mode)
-  // The second d/c/y is handled in operator-pending mode
-  ["d", "vi_delete_operator"],
-  ["c", "vi_change_operator"],
-  ["y", "vi_yank_operator"],
-  [">", "vi_indent_operator"],
-  ["<", "vi_dedent_operator"],
+    // Operators (single key - switches to operator-pending mode)
+    // The second d/c/y is handled in operator-pending mode
+    ["d", "vi_delete_operator"],
+    ["c", "vi_change_operator"],
+    ["y", "vi_yank_operator"],
+    [">", "vi_indent_operator"],
+    ["<", "vi_dedent_operator"],
 
-  // Single char operations
-  ["x", "vi_delete_char"],
-  ["X", "vi_delete_char_before"],
-  ["r", "vi_replace_char"],
-  ["s", "vi_substitute"],
-  ["S", "vi_change_line"],
-  ["D", "vi_delete_to_end"],
-  ["C", "vi_change_to_end"],
+    // Single char operations
+    ["x", "vi_delete_char"],
+    ["X", "vi_delete_char_before"],
+    ["r", "vi_replace_char"],
+    ["s", "vi_substitute"],
+    ["S", "vi_change_line"],
+    ["D", "vi_delete_to_end"],
+    ["C", "vi_change_to_end"],
 
-  // Clipboard
-  ["p", "vi_paste_after"],
-  ["P", "vi_paste_before"],
+    // Clipboard
+    ["p", "vi_paste_after"],
+    ["P", "vi_paste_before"],
 
-  // Undo/Redo
-  ["u", "vi_undo"],
-  ["C-r", "vi_redo"],
+    // Undo/Redo
+    ["u", "vi_undo"],
+    ["C-r", "vi_redo"],
 
-  // Repeat last change
-  [".", "vi_repeat"],
+    // Repeat last change
+    [".", "vi_repeat"],
 
-  // Visual mode
-  ["v", "vi_visual_char"],
-  ["V", "vi_visual_line"],
-  ["C-v", "vi_visual_block"],
+    // Visual mode
+    ["v", "vi_visual_char"],
+    ["V", "vi_visual_line"],
+    ["C-v", "vi_visual_block"],
 
-  // Other
-  ["J", "vi_join"],
-  ["~", "vi_toggle_case"],
+    // Other
+    ["J", "vi_join"],
+    ["~", "vi_toggle_case"],
 
-  // Command mode
-  [":", "vi_command_mode"],
+    // Command mode
+    [":", "vi_command_mode"],
 
-  // Pass through to standard editor shortcuts
-  ["C-p", "command_palette"],
-  ["C-q", "quit"],
-], true); // read_only = true to prevent character insertion
+    // Pass through to standard editor shortcuts
+    ["C-p", "command_palette"],
+    ["C-q", "quit"],
+  ], true); // read_only = true to prevent character insertion
 
-// Define vi-insert mode - only Escape is special, other keys insert text
-editor.defineMode("vi-insert", [
-  ["Escape", "vi_escape"],
-  ...configuredBindings(arrowKeys, [
-    ["Left", "move_left"],
-    ["Down", "move_down"],
-    ["Up", "move_up"],
-    ["Right", "move_right"],
-  ]),
-  // Pass through to standard editor shortcuts
-  ["C-p", "command_palette"],
-  ["C-q", "quit"],
-], false); // read_only = false to allow normal typing
+  // Define vi-insert mode - only Escape is special, other keys insert text
+  editor.defineMode("vi-insert", [
+    ["Escape", "vi_escape"],
+    ...configuredBindings(arrowKeys, [
+      ["Left", "move_left"],
+      ["Down", "move_down"],
+      ["Up", "move_up"],
+      ["Right", "move_right"],
+    ]),
+    // Pass through to standard editor shortcuts
+    ["C-p", "command_palette"],
+    ["C-q", "quit"],
+  ], false); // read_only = false to allow normal typing
 
-// vi-find-char and vi-replace-char modes do not need bindings:
-// their entry-point handlers (vi_find_char_f/t/F/T, vi_replace_char) call
-// editor.getNextKey() to read the next character.  setEditorMode(...) is
-// still set across the await purely so the status bar shows the mode.
+  // vi-find-char and vi-replace-char modes do not need bindings:
+  // their entry-point handlers (vi_find_char_f/t/F/T, vi_replace_char) call
+  // editor.getNextKey() to read the next character.  setEditorMode(...) is
+  // still set across the await purely so the status bar shows the mode.
 
-// Define vi-operator-pending mode
-editor.defineMode("vi-operator-pending", [
-  // Count prefix in operator-pending mode (for d3w = delete 3 words)
-  ["1", "vi_digit_1"],
-  ["2", "vi_digit_2"],
-  ["3", "vi_digit_3"],
-  ["4", "vi_digit_4"],
-  ["5", "vi_digit_5"],
-  ["6", "vi_digit_6"],
-  ["7", "vi_digit_7"],
-  ["8", "vi_digit_8"],
-  ["9", "vi_digit_9"],
-  ["0", "vi_op_digit_0_or_line_start"], // 0 appends to count, or is motion to line start
+  // Define vi-operator-pending mode
+  editor.defineMode("vi-operator-pending", [
+    // Count prefix in operator-pending mode (for d3w = delete 3 words)
+    ["1", "vi_digit_1"],
+    ["2", "vi_digit_2"],
+    ["3", "vi_digit_3"],
+    ["4", "vi_digit_4"],
+    ["5", "vi_digit_5"],
+    ["6", "vi_digit_6"],
+    ["7", "vi_digit_7"],
+    ["8", "vi_digit_8"],
+    ["9", "vi_digit_9"],
+    ["0", "vi_op_digit_0_or_line_start"], // 0 appends to count, or is motion to line start
 
-  // Motions for operators
-  ["h", "vi_op_left"],
-  ["j", "vi_op_down"],
-  ["k", "vi_op_up"],
-  ["l", "vi_op_right"],
-  ["w", "vi_op_word"],
-  ["b", "vi_op_word_back"],
-  ["e", "vi_op_word_end"],
-  ...configuredBindings(arrowKeys, [
-    ["Left", "vi_op_left"],
-    ["Down", "vi_op_down"],
-    ["Up", "vi_op_up"],
-    ["Right", "vi_op_right"],
-  ]),
-  ["W", "vi_op_WORD"],
-  ["B", "vi_op_WORD_back"],
-  ["E", "vi_op_WORD_end"],
-  ["$", "vi_op_line_end"],
-  ["g g", "vi_op_doc_start"],
-  ["G", "vi_op_doc_end"],
-  ["%", "vi_op_matching_bracket"],
-  ["{", "vi_op_paragraph_up"],
-  ["}", "vi_op_paragraph_down"],
+    // Motions for operators
+    ["h", "vi_op_left"],
+    ["j", "vi_op_down"],
+    ["k", "vi_op_up"],
+    ["l", "vi_op_right"],
+    ["w", "vi_op_word"],
+    ["b", "vi_op_word_back"],
+    ["e", "vi_op_word_end"],
+    ...configuredBindings(arrowKeys, [
+      ["Left", "vi_op_left"],
+      ["Down", "vi_op_down"],
+      ["Up", "vi_op_up"],
+      ["Right", "vi_op_right"],
+    ]),
+    ["W", "vi_op_WORD"],
+    ["B", "vi_op_WORD_back"],
+    ["E", "vi_op_WORD_end"],
+    ["$", "vi_op_line_end"],
+    ["g g", "vi_op_doc_start"],
+    ["G", "vi_op_doc_end"],
+    ["%", "vi_op_matching_bracket"],
+    ["{", "vi_op_paragraph_up"],
+    ["}", "vi_op_paragraph_down"],
 
-  // Find-char motions (df/dt/cf/ct and backward dF/dT) — inclusive motions
-  ["f", "vi_op_find_char_f"],
-  ["t", "vi_op_find_char_t"],
-  ["F", "vi_op_find_char_F"],
-  ["T", "vi_op_find_char_T"],
+    // Find-char motions (df/dt/cf/ct and backward dF/dT) — inclusive motions
+    ["f", "vi_op_find_char_f"],
+    ["t", "vi_op_find_char_t"],
+    ["F", "vi_op_find_char_F"],
+    ["T", "vi_op_find_char_T"],
 
-  // Text objects
-  ["i", "vi_text_object_inner"],
-  ["a", "vi_text_object_around"],
+    // Text objects
+    ["i", "vi_text_object_inner"],
+    ["a", "vi_text_object_around"],
 
-  // Double operator = line operation
-  ["d", "vi_delete_line"],
-  ["c", "vi_change_line"],
-  ["y", "vi_yank_line"],
-  [">", "vi_indent_line"],
-  ["<", "vi_dedent_line"],
+    // Double operator = line operation
+    ["d", "vi_delete_line"],
+    ["c", "vi_change_line"],
+    ["y", "vi_yank_line"],
+    [">", "vi_indent_line"],
+    ["<", "vi_dedent_line"],
 
-  // Cancel
-  ["Escape", "vi_cancel"],
-], true);
+    // Cancel
+    ["Escape", "vi_cancel"],
+  ], true);
 
-// Define vi-text-object mode (waiting for object type: w, ", (, etc.)
-editor.defineMode("vi-text-object", [
-  // Word objects
-  ["w", "vi_to_word"],
-  ["W", "vi_to_WORD"],
+  // Define vi-text-object mode (waiting for object type: w, ", (, etc.)
+  editor.defineMode("vi-text-object", [
+    // Word objects
+    ["w", "vi_to_word"],
+    ["W", "vi_to_WORD"],
 
-  // Quote objects
-  ["\"", "vi_to_dquote"],
-  ["'", "vi_to_squote"],
-  ["`", "vi_to_backtick"],
+    // Quote objects
+    ["\"", "vi_to_dquote"],
+    ["'", "vi_to_squote"],
+    ["`", "vi_to_backtick"],
 
-  // Bracket objects
-  ["(", "vi_to_paren"],
-  [")", "vi_to_paren"],
-  ["b", "vi_to_paren"],
-  ["{", "vi_to_brace"],
-  ["}", "vi_to_brace"],
-  ["B", "vi_to_brace"],
-  ["[", "vi_to_bracket"],
-  ["]", "vi_to_bracket"],
-  ["<", "vi_to_angle"],
-  [">", "vi_to_angle"],
+    // Bracket objects
+    ["(", "vi_to_paren"],
+    [")", "vi_to_paren"],
+    ["b", "vi_to_paren"],
+    ["{", "vi_to_brace"],
+    ["}", "vi_to_brace"],
+    ["B", "vi_to_brace"],
+    ["[", "vi_to_bracket"],
+    ["]", "vi_to_bracket"],
+    ["<", "vi_to_angle"],
+    [">", "vi_to_angle"],
 
-  // Cancel
-  ["Escape", "vi_to_cancel"],
-], true);
+    // Cancel
+    ["Escape", "vi_to_cancel"],
+  ], true);
 
-// Define vi-visual mode (character-wise)
-editor.defineMode("vi-visual", [
-  // Count prefix
-  ["1", "vi_digit_1"],
-  ["2", "vi_digit_2"],
-  ["3", "vi_digit_3"],
-  ["4", "vi_digit_4"],
-  ["5", "vi_digit_5"],
-  ["6", "vi_digit_6"],
-  ["7", "vi_digit_7"],
-  ["8", "vi_digit_8"],
-  ["9", "vi_digit_9"],
-  ["0", "vi_vis_line_start"], // 0 moves to line start in visual mode
+  // Define vi-visual mode (character-wise)
+  editor.defineMode("vi-visual", [
+    // Count prefix
+    ["1", "vi_digit_1"],
+    ["2", "vi_digit_2"],
+    ["3", "vi_digit_3"],
+    ["4", "vi_digit_4"],
+    ["5", "vi_digit_5"],
+    ["6", "vi_digit_6"],
+    ["7", "vi_digit_7"],
+    ["8", "vi_digit_8"],
+    ["9", "vi_digit_9"],
+    ["0", "vi_vis_line_start"], // 0 moves to line start in visual mode
 
-  // Motions (extend selection)
-  ["h", "vi_vis_left"],
-  ["j", "vi_vis_down"],
-  ["k", "vi_vis_up"],
-  ["l", "vi_vis_right"],
-  ["w", "vi_vis_word"],
-  ["b", "vi_vis_word_back"],
-  ["e", "vi_vis_word_end"],
-  ...configuredBindings(arrowKeys, [
-    ["Left", "vi_vis_left"],
-    ["Down", "vi_vis_down"],
-    ["Up", "vi_vis_up"],
-    ["Right", "vi_vis_right"],
-  ]),
-  ["W", "vi_vis_WORD"],
-  ["B", "vi_vis_WORD_back"],
-  ["E", "vi_vis_WORD_end"],
-  ["$", "vi_vis_line_end"],
-  ["^", "vi_vis_line_start"],
-  ["g g", "vi_vis_doc_start"],
-  ["G", "vi_vis_doc_end"],
-  ["{", "vi_vis_paragraph_up"],
-  ["}", "vi_vis_paragraph_down"],
+    // Motions (extend selection)
+    ["h", "vi_vis_left"],
+    ["j", "vi_vis_down"],
+    ["k", "vi_vis_up"],
+    ["l", "vi_vis_right"],
+    ["w", "vi_vis_word"],
+    ["b", "vi_vis_word_back"],
+    ["e", "vi_vis_word_end"],
+    ...configuredBindings(arrowKeys, [
+      ["Left", "vi_vis_left"],
+      ["Down", "vi_vis_down"],
+      ["Up", "vi_vis_up"],
+      ["Right", "vi_vis_right"],
+    ]),
+    ["W", "vi_vis_WORD"],
+    ["B", "vi_vis_WORD_back"],
+    ["E", "vi_vis_WORD_end"],
+    ["$", "vi_vis_line_end"],
+    ["^", "vi_vis_line_start"],
+    ["g g", "vi_vis_doc_start"],
+    ["G", "vi_vis_doc_end"],
+    ["{", "vi_vis_paragraph_up"],
+    ["}", "vi_vis_paragraph_down"],
 
-  // Switch visual sub-modes
-  ["V", "vi_visual_toggle_line"],
-  ["C-v", "vi_visual_block"],  // Switch to block mode
+    // Switch visual sub-modes
+    ["V", "vi_visual_toggle_line"],
+    ["C-v", "vi_visual_block"],  // Switch to block mode
 
-  // Operators
-  ["d", "vi_vis_delete"],
-  ["x", "vi_vis_delete"],
-  ["c", "vi_vis_change"],
-  ["s", "vi_vis_change"],
-  ["y", "vi_vis_yank"],
-  [">", "vi_vis_indent"],
-  ["<", "vi_vis_dedent"],
+    // Operators
+    ["d", "vi_vis_delete"],
+    ["x", "vi_vis_delete"],
+    ["c", "vi_vis_change"],
+    ["s", "vi_vis_change"],
+    ["y", "vi_vis_yank"],
+    [">", "vi_vis_indent"],
+    ["<", "vi_vis_dedent"],
 
-  // Exit
-  ["Escape", "vi_vis_escape"],
-  ["v", "vi_vis_escape"], // v again exits visual mode
+    // Exit
+    ["Escape", "vi_vis_escape"],
+    ["v", "vi_vis_escape"], // v again exits visual mode
 
-  // Pass through to standard editor shortcuts
-  ["C-p", "command_palette"],
-  ["C-q", "quit"],
-], true);
+    // Pass through to standard editor shortcuts
+    ["C-p", "command_palette"],
+    ["C-q", "quit"],
+  ], true);
 
-// Define vi-visual-line mode (line-wise)
-editor.defineMode("vi-visual-line", [
-  // Count prefix
-  ["1", "vi_digit_1"],
-  ["2", "vi_digit_2"],
-  ["3", "vi_digit_3"],
-  ["4", "vi_digit_4"],
-  ["5", "vi_digit_5"],
-  ["6", "vi_digit_6"],
-  ["7", "vi_digit_7"],
-  ["8", "vi_digit_8"],
-  ["9", "vi_digit_9"],
+  // Define vi-visual-line mode (line-wise)
+  editor.defineMode("vi-visual-line", [
+    // Count prefix
+    ["1", "vi_digit_1"],
+    ["2", "vi_digit_2"],
+    ["3", "vi_digit_3"],
+    ["4", "vi_digit_4"],
+    ["5", "vi_digit_5"],
+    ["6", "vi_digit_6"],
+    ["7", "vi_digit_7"],
+    ["8", "vi_digit_8"],
+    ["9", "vi_digit_9"],
 
-  // Line motions (extend selection by lines)
-  ["j", "vi_vline_down"],
-  ["k", "vi_vline_up"],
-  ...configuredBindings(arrowKeys, [
-    ["Down", "vi_vline_down"],
-    ["Up", "vi_vline_up"],
-  ]),
-  ["g g", "vi_vis_doc_start"],
-  ["G", "vi_vis_doc_end"],
+    // Line motions (extend selection by lines)
+    ["j", "vi_vline_down"],
+    ["k", "vi_vline_up"],
+    ...configuredBindings(arrowKeys, [
+      ["Down", "vi_vline_down"],
+      ["Up", "vi_vline_up"],
+    ]),
+    ["g g", "vi_vis_doc_start"],
+    ["G", "vi_vis_doc_end"],
 
-  // Switch visual sub-modes
-  ["v", "vi_visual_toggle_line"],
-  ["C-v", "vi_visual_block"],  // Switch to block mode
+    // Switch visual sub-modes
+    ["v", "vi_visual_toggle_line"],
+    ["C-v", "vi_visual_block"],  // Switch to block mode
 
-  // Operators
-  ["d", "vi_vis_delete"],
-  ["x", "vi_vis_delete"],
-  ["c", "vi_vis_change"],
-  ["s", "vi_vis_change"],
-  ["y", "vi_vis_yank"],
-  [">", "vi_vis_indent"],
-  ["<", "vi_vis_dedent"],
+    // Operators
+    ["d", "vi_vis_delete"],
+    ["x", "vi_vis_delete"],
+    ["c", "vi_vis_change"],
+    ["s", "vi_vis_change"],
+    ["y", "vi_vis_yank"],
+    [">", "vi_vis_indent"],
+    ["<", "vi_vis_dedent"],
 
-  // Exit
-  ["Escape", "vi_vis_escape"],
-  ["V", "vi_vis_escape"], // V again exits visual-line mode
+    // Exit
+    ["Escape", "vi_vis_escape"],
+    ["V", "vi_vis_escape"], // V again exits visual-line mode
 
-  // Pass through to standard editor shortcuts
-  ["C-p", "command_palette"],
-  ["C-q", "quit"],
-], true);
+    // Pass through to standard editor shortcuts
+    ["C-p", "command_palette"],
+    ["C-q", "quit"],
+  ], true);
 
-// Define vi-visual-block mode (column/block selection)
-editor.defineMode("vi-visual-block", [
-  // Count prefix
-  ["1", "vi_digit_1"],
-  ["2", "vi_digit_2"],
-  ["3", "vi_digit_3"],
-  ["4", "vi_digit_4"],
-  ["5", "vi_digit_5"],
-  ["6", "vi_digit_6"],
-  ["7", "vi_digit_7"],
-  ["8", "vi_digit_8"],
-  ["9", "vi_digit_9"],
-  ["0", "vi_vblock_line_start"],
+  // Define vi-visual-block mode (column/block selection)
+  editor.defineMode("vi-visual-block", [
+    // Count prefix
+    ["1", "vi_digit_1"],
+    ["2", "vi_digit_2"],
+    ["3", "vi_digit_3"],
+    ["4", "vi_digit_4"],
+    ["5", "vi_digit_5"],
+    ["6", "vi_digit_6"],
+    ["7", "vi_digit_7"],
+    ["8", "vi_digit_8"],
+    ["9", "vi_digit_9"],
+    ["0", "vi_vblock_line_start"],
 
-  // Motions (extend block selection)
-  ["h", "vi_vblock_left"],
-  ["j", "vi_vblock_down"],
-  ["k", "vi_vblock_up"],
-  ["l", "vi_vblock_right"],
-  ...configuredBindings(arrowKeys, [
-    ["Left", "vi_vblock_left"],
-    ["Down", "vi_vblock_down"],
-    ["Up", "vi_vblock_up"],
-    ["Right", "vi_vblock_right"],
-  ]),
-  ["$", "vi_vblock_line_end"],
-  ["^", "vi_vblock_line_start"],
+    // Motions (extend block selection)
+    ["h", "vi_vblock_left"],
+    ["j", "vi_vblock_down"],
+    ["k", "vi_vblock_up"],
+    ["l", "vi_vblock_right"],
+    ...configuredBindings(arrowKeys, [
+      ["Left", "vi_vblock_left"],
+      ["Down", "vi_vblock_down"],
+      ["Up", "vi_vblock_up"],
+      ["Right", "vi_vblock_right"],
+    ]),
+    ["$", "vi_vblock_line_end"],
+    ["^", "vi_vblock_line_start"],
 
-  // Switch to other visual modes
-  ["v", "vi_vblock_toggle_char"],
-  ["V", "vi_vblock_toggle_line"],
+    // Switch to other visual modes
+    ["v", "vi_vblock_toggle_char"],
+    ["V", "vi_vblock_toggle_line"],
 
-  // Operators
-  ["d", "vi_vblock_delete"],
-  ["x", "vi_vblock_delete"],
-  ["c", "vi_vblock_change"],
-  ["s", "vi_vblock_change"],
-  ["y", "vi_vblock_yank"],
-  [">", "vi_vblock_indent"],
-  ["<", "vi_vblock_dedent"],
+    // Operators
+    ["d", "vi_vblock_delete"],
+    ["x", "vi_vblock_delete"],
+    ["c", "vi_vblock_change"],
+    ["s", "vi_vblock_change"],
+    ["y", "vi_vblock_yank"],
+    [">", "vi_vblock_indent"],
+    ["<", "vi_vblock_dedent"],
 
-  // Exit
-  ["Escape", "vi_vblock_escape"],
-  ["C-v", "vi_vblock_escape"], // Ctrl-v again exits visual-block mode
+    // Exit
+    ["Escape", "vi_vblock_escape"],
+    ["C-v", "vi_vblock_escape"], // Ctrl-v again exits visual-block mode
 
-  // Pass through to standard editor shortcuts
-  ["C-p", "command_palette"],
-  ["C-q", "quit"],
-], true);
+    // Pass through to standard editor shortcuts
+    ["C-p", "command_palette"],
+    ["C-q", "quit"],
+  ], true);
+}
+
+defineViModes();
 
 // ============================================================================
 // Register Commands
@@ -4731,5 +4833,28 @@ editor.exportPluginApi("vi-mode", {
 if (autoStart) {
   enableVi();
 }
+
+// Adopt Settings changes without an editor restart. `arrowKeys` and
+// `searchWordUnderCursor` are baked into the mode binding tables at
+// `defineMode` time, so re-reading them isn't enough — the modes have to
+// be re-emitted. Guarded on an actual change: `config_changed` fires for
+// every config save, and re-registering the tables on an unrelated one
+// would be pure churn.
+//
+// `autoStart` is deliberately not applied live. It means "enable vi when
+// the editor starts"; flipping vi on mid-session because a startup
+// preference changed is a different behaviour than the setting promises.
+editor.on("config_changed", () => {
+  const cfg = (editor.getPluginConfig() ?? {}) as {
+    arrowKeys?: boolean;
+    searchWordUnderCursor?: boolean;
+  };
+  const nextArrowKeys = cfg.arrowKeys !== false;
+  const nextSearchWord = cfg.searchWordUnderCursor !== false;
+  if (nextArrowKeys === arrowKeys && nextSearchWord === searchWordUnderCursor) return;
+  arrowKeys = nextArrowKeys;
+  searchWordUnderCursor = nextSearchWord;
+  defineViModes();
+});
 
 registerHandler("vi_to_brace", vi_to_brace);

@@ -508,10 +508,18 @@ fn build_persisted_window_shells(
         // This shell's own local authority, gated by its own per-session trust
         // + env (scoped to its root + project store) — never a clone of the
         // active session's handles.
+        // `shell_resources.fs_manager` is the local host filesystem these
+        // shells read through, so it's also what resolves a linked worktree
+        // to the repo whose trust decision governs it.
+        let trust_owner = crate::services::workspace_trust::trust_owner_root(
+            shell_resources.fs_manager.filesystem().as_ref(),
+            &ps.root,
+        );
         let shell_authority = crate::services::authority::Authority::local_scoped(
             crate::services::authority::SessionScope::for_root(
                 &ps.root,
                 &dir_context.project_state_dir(&ps.root),
+                &dir_context.project_state_dir(&trust_owner),
             ),
         );
         let mut shell = crate::app::window::Window::new(
@@ -554,7 +562,13 @@ impl Editor {
     /// than capturing a new clock — so two editors built from the
     /// same parts agree on "now".
     pub(super) fn from_parts(parts: EditorParts) -> Self {
+        // Held twice on purpose: the `Ui` reads and writes through it, and the
+        // editor keeps a handle so it can forget a closed window's scope. See
+        // `Editor::shell_store`.
+        let shell_store = std::rc::Rc::new(fresh_ui::behavior::MemStore::new());
         let editor = Editor {
+            seat_focus_depth: 0,
+            perf_counters: Default::default(),
             // From parts (non-trivial):
             next_buffer_id: parts.next_buffer_id,
             buffer_id_alloc: parts.buffer_id_alloc,
@@ -583,6 +597,7 @@ impl Editor {
             menu_state: crate::view::ui::MenuState::new(parts.dir_context.themes_dir()),
             windows: parts.windows,
             dormant_remote: parts.dormant_remote,
+            preparing_windows: std::collections::HashMap::new(),
             session_keepalives: HashMap::new(),
             remote_attach_inflight: std::collections::HashSet::new(),
             remote_attach_cancelled: std::collections::HashSet::new(),
@@ -605,6 +620,7 @@ impl Editor {
             remote_reconnect_forwarders: std::collections::HashSet::new(),
             remote_connected_cache: HashMap::new(),
             materialize_pending: std::collections::HashSet::new(),
+            workspace_persistence_enabled: true,
             grammar_reload_pending: false,
             grammar_build_in_progress: false,
             pending_grammar_callbacks: Vec::new(),
@@ -616,11 +632,11 @@ impl Editor {
             should_quit: false,
             workspace_trust_prompt_cancellable: false,
             workspace_trust_markers: Vec::new(),
-            workspace_trust_scroll: 0,
             should_detach: false,
             session_mode: false,
             software_cursor_only: false,
             session_name: None,
+            session_display_name: None,
             pending_escape_sequences: Vec::new(),
             restart_with_dir: None,
             last_window_title: None,
@@ -635,17 +651,53 @@ impl Editor {
             plugin_schemas: std::sync::Arc::new(std::sync::RwLock::new(parts.plugin_schemas)),
             event_broadcaster: parts.event_broadcaster,
             #[cfg(feature = "plugins")]
+            line_targets: std::collections::HashMap::new(),
+            #[cfg(feature = "plugins")]
             pending_plugin_actions: Vec::new(),
             #[cfg(feature = "plugins")]
             plugin_render_requested: false,
+            frame_requested: false,
+            last_rendered_frame: None,
+            #[cfg(feature = "plugins")]
+            plugin_command_backlog: std::collections::VecDeque::new(),
+            #[cfg(feature = "plugins")]
+            grep_project_cancel: std::collections::HashMap::new(),
+            #[cfg(feature = "plugins")]
+            plugin_timers: Vec::new(),
+            #[cfg(feature = "plugins")]
+            diff_baselines: crate::app::diff_baselines::BaselineStore::default(),
+            #[cfg(feature = "plugins")]
+            next_diff_baseline_id: 1,
+            async_message_backlog: std::collections::VecDeque::new(),
             full_redraw_requested: false,
             suppress_chrome_cells: false,
+            shell_frame_status_bar: None,
+            shell_hover: None,
+            shell_store: shell_store.clone(),
+            shell_ui: Some({
+                let mut ui = fresh_ui::Ui::new();
+                // The host's half of `Persisted`. Without a store the values
+                // are per-element defaults and a window switch loses them,
+                // which is the whole reason the window subtree is a scope.
+                ui.set_store(shell_store);
+                ui
+            }),
+            // Never laid out: the first input lays the tree out from the
+            // description before it is routed (`lay_out_shell_if_stale`).
+            shell_description_stale: true,
+            shell_pointer_event: None,
+            shell_key_event: None,
+            page_anchors: HashMap::new(),
+            page_reading: HashMap::new(),
             suspend_requested: false,
             plugin_global_state: parts.plugin_global_state,
             // Boot-loaded state came *from* disk — nothing is dirty yet.
             plugin_global_dirty: HashMap::new(),
             warning_log: None,
             status_log_path: None,
+            self_update_phase: crate::services::release_checker::SelfUpdatePhase::default(),
+            self_update_terminal: None,
+            self_update_output: None,
             #[cfg(feature = "plugins")]
             file_watcher_manager: crate::services::file_watcher::FileWatcherManager::new(),
             path_changes_for_test: Vec::new(),
@@ -659,12 +711,17 @@ impl Editor {
             global_popups: crate::view::popup::PopupManager::new(),
             previous_cursor_screen_pos: None,
             cursor_jump_animation: None,
+            pending_wheel_scroll: None,
             pending_vb_animations: Vec::new(),
             widget_registry: crate::widgets::WidgetRegistry::new(),
             floating_widget_panel: None,
             dock: None,
             dock_width: None,
             dock_resizing: false,
+            sidebar_sections: vec![sidebar::SidebarSection::explorer()],
+            sidebar_drag: None,
+            widget_text_drag: None,
+            widget_panel_render_heights: std::collections::HashMap::new(),
         };
 
         // The plugin per-window filesystem registry is populated on the first
@@ -751,13 +808,15 @@ impl Editor {
         let start = std::time::Instant::now();
         let mut grammar_registry = crate::primitives::grammar::GrammarRegistry::defaults_only();
         // Merge user config so find_by_path respects user globs/filenames
-        // from the very first lookup. `defaults_only` just built the Arc, so
-        // we're the sole owner; get_mut is guaranteed to succeed. Assert
+        // from the very first lookup, and load any `textmate_grammar` files
+        // the config points at. `defaults_only` just built the Arc, so we're
+        // the sole owner; the get_mut inside is guaranteed to succeed. Assert
         // rather than silently drop config — a failure here would leave the
         // user wondering why their `*.conf → bash` rule doesn't highlight.
-        std::sync::Arc::get_mut(&mut grammar_registry)
-            .expect("defaults_only returned a shared Arc")
-            .apply_language_config(&config.languages);
+        crate::primitives::grammar::GrammarRegistry::apply_languages(
+            &mut grammar_registry,
+            &config.languages,
+        );
         crate::config::reload_indent_overrides(&config.languages);
         tracing::info!("Default grammar registry built in {:?}", start.elapsed());
         // Don't start background grammar build here — it's deferred to the
@@ -811,9 +870,10 @@ impl Editor {
         // through `find_by_path`. Both call sites that feed into `for_test`
         // (`HarnessOptions::with_full_grammar_registry` and the default
         // `GrammarRegistry::empty()`) hand us the sole Arc owner.
-        std::sync::Arc::get_mut(&mut grammar_registry)
-            .expect("grammar registry Arc must be uniquely owned at for_test entry")
-            .apply_language_config(&config.languages);
+        crate::primitives::grammar::GrammarRegistry::apply_languages(
+            &mut grammar_registry,
+            &config.languages,
+        );
         crate::config::reload_indent_overrides(&config.languages);
         let authority = Self::local_authority_with_filesystem(filesystem);
         let mut editor = Self::with_options(
@@ -941,8 +1001,6 @@ impl Editor {
                 .expect("Default theme must exist")
         });
 
-        // Set terminal cursor color to match theme
-        theme_inner.set_terminal_cursor_color();
         let theme = Arc::new(RwLock::new(theme_inner));
 
         t.phase("theme_setup");
@@ -1191,7 +1249,9 @@ impl Editor {
             tracing::debug!("Update checking enabled, starting periodic checker");
             Some(
                 crate::services::release_checker::start_periodic_update_check(
-                    crate::services::release_checker::DEFAULT_RELEASES_URL,
+                    // Honours $FRESH_RELEASES_URL so the indicator and the
+                    // update it launches agree on where releases come from.
+                    &crate::services::release_checker::releases_url(),
                     time_source.clone(),
                     dir_context.data_dir.clone(),
                 ),
@@ -1506,6 +1566,12 @@ impl Editor {
             .filter(|id| *id != editor.active_window)
             .collect();
 
+        // Where the panes are, before anything asks: a terminal opened before
+        // the first frame is sized to its pane, and the snapshot below
+        // carries the panes' rects. One `layout_only` of the frame, the
+        // same pass the layout funnel runs.
+        editor.refresh_pane_rects();
+
         #[cfg(feature = "plugins")]
         {
             editor.update_plugin_state_snapshot();
@@ -1575,7 +1641,13 @@ impl Editor {
 
     /// Auto-load `~/.config/fresh/init.ts` if present, through the existing
     /// plugin pipeline under the stable name `crate::init_script::INIT_PLUGIN_NAME`.
-    pub fn load_init_script(&mut self, enabled: bool) {
+    ///
+    /// Returns what happened, so a caller that has someone to answer —
+    /// `editor.reloadInit()` from a script, and through it
+    /// `fresh --cmd init reload` — can report the failure rather than only
+    /// logging it. The interactive callers ignore the value; for them the
+    /// status message this already sets is the report.
+    pub fn load_init_script(&mut self, enabled: bool) -> crate::init_script::InitOutcome {
         use crate::init_script::{
             check, decide_load, describe, record_success, refresh_types_scaffolding, CheckSeverity,
             InitOutcome, LoadDecision,
@@ -1637,7 +1709,7 @@ impl Editor {
         };
 
         let summary = describe(&outcome);
-        match outcome {
+        match &outcome {
             InitOutcome::NotFound | InitOutcome::Disabled => tracing::debug!("{}", summary),
             InitOutcome::Loaded => tracing::info!("{}", summary),
             InitOutcome::CrashFused { .. } | InitOutcome::Failed { .. } => {
@@ -1645,6 +1717,7 @@ impl Editor {
                 self.set_status_message(summary);
             }
         }
+        outcome
     }
 
     /// Non-blocking variant of [`Self::load_init_script`] for the TUI
@@ -1964,6 +2037,29 @@ impl Editor {
                 .read()
                 .unwrap()
                 .run_hook("ready", crate::services::plugins::hooks::HookArgs::Ready {});
+        }
+    }
+
+    /// Fire the `config_changed` hook after the effective config has
+    /// been replaced (Settings-UI save, config reload from disk).
+    ///
+    /// Refreshes the plugin state snapshot *first* so a handler that
+    /// re-reads `getConfig()` / `getPluginConfig()` observes the new
+    /// values rather than the ones it just replaced — the snapshot
+    /// reserializes lazily off the `Arc<Config>` pointer, so without
+    /// this the hook would hand plugins a stale read. Mirrors the
+    /// snapshot-then-hook order used by `trust_changed`.
+    pub fn fire_config_changed_hook(&mut self) {
+        #[cfg(feature = "plugins")]
+        {
+            if !self.plugin_manager.read().unwrap().is_active() {
+                return;
+            }
+            self.update_plugin_state_snapshot();
+            self.plugin_manager.read().unwrap().run_hook(
+                "config_changed",
+                crate::services::plugins::hooks::HookArgs::ConfigChanged {},
+            );
         }
     }
 

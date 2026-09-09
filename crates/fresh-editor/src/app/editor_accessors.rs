@@ -223,7 +223,12 @@ impl Editor {
     ///      buffer or a file-backed one — `openFileStreaming` produces
     ///      the latter for streaming detail panels).
     pub fn active_buffer_mode(&self) -> Option<&str> {
-        let buffer_id = self.active_buffer();
+        self.buffer_mode(self.active_buffer())
+    }
+
+    /// The plugin mode a buffer of the active window resolves its keys
+    /// against: its own virtual mode, else its buffer group's.
+    pub fn buffer_mode(&self, buffer_id: fresh_core::BufferId) -> Option<&str> {
         let win = self.active_window();
         if let Some(mode) = win
             .buffer_metadata
@@ -328,10 +333,18 @@ impl Editor {
         // (~16ms) for smooth animation, which would turn the ~1s title poll
         // into a 60Hz busy loop. The loop's existing 50ms idle poll is fine
         // granularity to notice `terminal_titles_need_poll` going true.
-        [lsp_progress_deadline, anim_deadline, paste_deadline]
-            .into_iter()
-            .flatten()
-            .min()
+        // A wheel gesture walking its remaining lines needs a frame per
+        // line; without this the walk would stall on an idle loop.
+        let wheel_deadline = self.pending_wheel_scroll_deadline();
+        [
+            lsp_progress_deadline,
+            anim_deadline,
+            paste_deadline,
+            wheel_deadline,
+        ]
+        .into_iter()
+        .flatten()
+        .min()
     }
 
     /// Earliest time a terminal tab needs its foreground-process title
@@ -737,10 +750,38 @@ impl Editor {
         std::mem::replace(&mut self.active_window_mut().authority, placeholder)
     }
 
-    /// The editor's current working directory — the active window's
-    /// project root. Derived, not stored: there is no separate
-    /// `working_dir` field that could drift out of sync with the active
-    /// window (issue #2056). Individual buffers may live elsewhere.
+    /// Run a blocking effect (filesystem writes/deletes, teardown I/O) off
+    /// the editor thread. This is the escape hatch for the "mutation now,
+    /// effect off-loop" decomposition: the caller snapshots whatever the
+    /// effect needs while still on the editor thread, then hands the I/O
+    /// here. Fire-and-forget — effects that need a result should go through
+    /// `plugin_offloop` and settle a callback instead.
+    ///
+    /// Falls back to running inline when the editor was constructed without
+    /// a tokio runtime (some unit-test harnesses), preserving the old
+    /// synchronous behaviour there.
+    pub(crate) fn spawn_off_loop_effect(
+        &self,
+        label: &'static str,
+        f: impl FnOnce() + Send + 'static,
+    ) {
+        match &self.tokio_runtime {
+            Some(runtime) => {
+                runtime.spawn_blocking(move || {
+                    f();
+                });
+            }
+            None => {
+                tracing::debug!("spawn_off_loop_effect({label}): no runtime, running inline");
+                f();
+            }
+        }
+    }
+
+    /// The editor's current working directory — the active window's project
+    /// root. Derived, not stored: there is no separate `working_dir` field that
+    /// could drift out of sync with the active window (issue #2056).
+    /// Individual buffers may live elsewhere.
     pub fn working_dir(&self) -> &std::path::Path {
         &self.active_window().root
     }
@@ -934,6 +975,9 @@ impl Editor {
         match slot {
             crate::app::PanelSlot::Floating => self.floating_widget_panel.as_ref(),
             crate::app::PanelSlot::Dock => self.dock.as_ref(),
+            crate::app::PanelSlot::Sidebar(i) => {
+                self.sidebar_sections.get(i).and_then(|s| s.panel.as_ref())
+            }
         }
     }
 
@@ -945,22 +989,40 @@ impl Editor {
         match slot {
             crate::app::PanelSlot::Floating => self.floating_widget_panel.as_mut(),
             crate::app::PanelSlot::Dock => self.dock.as_mut(),
+            crate::app::PanelSlot::Sidebar(i) => self
+                .sidebar_sections
+                .get_mut(i)
+                .and_then(|s| s.panel.as_mut()),
         }
     }
 
     /// Mutable handle to the slot *option* itself (for take/assign).
+    ///
+    /// `None` only for a sidebar index with no section — the two fixed
+    /// slots always exist. Emptying a sidebar slot leaves its section as a
+    /// header over a placeholder; dropping the section is
+    /// `Editor::close_sidebar_section`.
     pub(crate) fn panel_opt_mut(
         &mut self,
         slot: crate::app::PanelSlot,
-    ) -> &mut Option<crate::app::FloatingWidgetState> {
+    ) -> Option<&mut Option<crate::app::FloatingWidgetState>> {
         match slot {
-            crate::app::PanelSlot::Floating => &mut self.floating_widget_panel,
-            crate::app::PanelSlot::Dock => &mut self.dock,
+            crate::app::PanelSlot::Floating => Some(&mut self.floating_widget_panel),
+            crate::app::PanelSlot::Dock => Some(&mut self.dock),
+            crate::app::PanelSlot::Sidebar(i) => {
+                self.sidebar_sections.get_mut(i).map(|s| &mut s.panel)
+            }
         }
     }
 
     /// Which slot currently holds the panel with this identity, if any.
-    #[cfg(feature = "plugins")]
+    ///
+    /// **Not `plugins`-gated, though its first caller was.** The panel slots
+    /// and `PanelKey` are ungated, and S6 gave this a second caller in
+    /// `advance_panel_focus_in_tree`, which the focus ring reaches on every
+    /// host-driven advance whether or not plugins are compiled in. The gate was
+    /// inherited from the one caller it used to have, and `--no-default-features
+    /// --features runtime` is where that showed.
     pub(crate) fn slot_of_panel(
         &self,
         panel_key: &crate::widgets::PanelKey,
@@ -978,7 +1040,10 @@ impl Editor {
         {
             Some(crate::app::PanelSlot::Dock)
         } else {
-            None
+            self.sidebar_sections
+                .iter()
+                .position(|s| s.panel.as_ref().is_some_and(|f| &f.panel_key == panel_key))
+                .map(crate::app::PanelSlot::Sidebar)
         }
     }
 
@@ -989,22 +1054,26 @@ impl Editor {
         } else if buffer_id == crate::app::DOCK_PANEL_BUFFER_ID {
             Some(crate::app::PanelSlot::Dock)
         } else {
-            None
+            let base = crate::app::SIDEBAR_PANEL_BUFFER_BASE.0;
+            (buffer_id.0 <= base && buffer_id.0 > base - crate::app::SIDEBAR_PANEL_BUFFER_SPAN)
+                .then(|| crate::app::PanelSlot::Sidebar(base - buffer_id.0))
         }
     }
 
     /// The active window's layout-cache (split-leaf rects, tab rects,
     /// file-explorer rect, view-line mappings). Mouse hit-testing and
     /// visual-line motion read from here.
-    pub(crate) fn active_layout(&self) -> &crate::app::types::WindowLayoutCache {
-        &self.active_window().layout_cache
-    }
-
-    /// Mutable handle to the active window's layout cache. Renderer
-    /// writes split / tab / file-explorer hit-test rects here at the
-    /// end of each frame.
-    pub(crate) fn active_layout_mut(&mut self) -> &mut crate::app::types::WindowLayoutCache {
-        &mut self.active_window_mut().layout_cache
+    /// What the pointer is on.
+    ///
+    /// One answer, from one walk. There were two: the tree wrote `shell_hover`
+    /// and a box walk wrote `mouse_state.hover_target`, and because the walk
+    /// ran *after* the tree on the same event it could erase a migrated
+    /// surface's hover — which is what happened to the split dividers when
+    /// they became nodes, the walk finding nothing under that cell and storing
+    /// `None` over the tree's answer. The walk is gone; the field it wrote is
+    /// gone with it.
+    pub fn hovered(&self) -> Option<crate::app::types::HoverTarget> {
+        self.shell_hover.clone()
     }
 
     /// The active window's editor-chrome layout cache (status bar,
@@ -1022,14 +1091,6 @@ impl Editor {
     }
 
     // --- semantic accessors for the web/GUI chrome (read-only projections) ---
-
-    /// Read access to the shared keybinding resolver, for view projections
-    /// that surface shortcut hints (e.g. the search-options toggles).
-    pub(crate) fn keybinding_resolver(
-        &self,
-    ) -> std::sync::RwLockReadGuard<'_, crate::input::keybindings::KeybindingResolver> {
-        self.keybindings.read().unwrap()
-    }
 
     /// The menu-bar state (which menu is open, highlighted item, condition
     /// context for `when`/checkbox evaluation).
@@ -1102,6 +1163,43 @@ impl Editor {
     /// directly.
     pub(crate) fn buffers(&self) -> &crate::app::window::WindowBuffers {
         &self.active_window().buffers
+    }
+
+    /// Every open window's id, ascending. `windows` is a `HashMap`, so
+    /// shutdown work that touches every workspace needs an order of its own to
+    /// be reproducible.
+    pub(crate) fn window_ids_sorted(&self) -> Vec<fresh_core::WindowId> {
+        let mut ids: Vec<_> = self.windows.keys().copied().collect();
+        ids.sort_by_key(|id| id.0);
+        ids
+    }
+
+    /// Run `f` with the active-window pointer temporarily retargeted.
+    ///
+    /// Lets shutdown work reuse the many per-window helpers written against
+    /// `active_window` instead of growing a window-parameterized twin of each
+    /// (issue #3189). Deliberately not [`Editor::set_active_window`]: no
+    /// checkpoint, materialization, hooks or layout — none of which shutdown
+    /// wants.
+    ///
+    /// Only safe for synchronous, non-rendering work: nothing here may yield
+    /// to the event loop or paint, or the user sees the wrong workspace. A
+    /// panic in `f` leaves the pointer retargeted, tolerable only because
+    /// callers are on the way out of the process.
+    pub(crate) fn with_window_retargeted<R>(
+        &mut self,
+        window_id: fresh_core::WindowId,
+        f: impl FnOnce(&mut Self) -> R,
+    ) -> R {
+        if !self.windows.contains_key(&window_id) {
+            tracing::warn!("with_window_retargeted: unknown window id {window_id}");
+            return f(self);
+        }
+        let previous = self.active_window;
+        self.active_window = window_id;
+        let out = f(self);
+        self.active_window = previous;
+        out
     }
 
     /// Mutable handle to the active window's buffer storage.
@@ -1253,6 +1351,56 @@ impl Editor {
         }
     }
 
+    /// Current phase of an interactive in-editor self-update (drives the
+    /// status-bar update indicator).
+    pub fn self_update_phase(&self) -> crate::services::release_checker::SelfUpdatePhase {
+        self.self_update_phase
+    }
+
+    /// Mark that an interactive self-update has started in a local terminal
+    /// buffer, remembering the terminal (to match its `TerminalExited`) and the
+    /// (window, buffer) so the indicator can switch back to it.
+    pub fn begin_self_update(
+        &mut self,
+        terminal: fresh_core::TerminalId,
+        window: fresh_core::WindowId,
+        buffer: fresh_core::BufferId,
+    ) {
+        self.self_update_phase = crate::services::release_checker::SelfUpdatePhase::Running;
+        self.self_update_terminal = Some(terminal);
+        self.self_update_output = Some((window, buffer));
+    }
+
+    /// Move the update indicator to its terminal state when the update terminal
+    /// exits. The child's exit code carries which of the three outcomes it was
+    /// — see [`SelfUpdatePhase::from_exit_code`].
+    ///
+    /// [`SelfUpdatePhase::from_exit_code`]:
+    ///     crate::services::release_checker::SelfUpdatePhase::from_exit_code
+    pub fn finish_self_update(&mut self, exit_code: Option<i32>) {
+        use crate::services::release_checker::SelfUpdatePhase;
+        self.self_update_phase = SelfUpdatePhase::from_exit_code(exit_code);
+    }
+
+    /// Switch to the update terminal buffer so the user can watch progress or
+    /// read the outcome. The update always runs locally, so this is a local
+    /// terminal buffer regardless of any remote authority attached to the
+    /// window. If the buffer has since been closed, report that instead.
+    pub fn show_self_update_output(&mut self) {
+        if let Some((window, buffer)) = self.self_update_output {
+            let exists = self
+                .windows
+                .get(&window)
+                .is_some_and(|w| w.buffers.get(&buffer).is_some());
+            if exists {
+                self.active_window = window;
+                self.active_window_mut().set_active_buffer(buffer);
+                return;
+            }
+        }
+        self.set_status_message(t!("update.log_unavailable").to_string());
+    }
+
     /// Check for and handle any new warnings in the warning log
     ///
     /// Updates the general warning domain for the status bar.
@@ -1350,6 +1498,16 @@ impl Editor {
         // Suppress hover while the LSP status popup is open so the hover card
         // doesn't stack on top of it.
         if self.is_lsp_status_popup_open() {
+            return false;
+        }
+
+        // Suppress hover while a modal overlay (Open File dialog, command
+        // palette, menu, …) covers the editor: the tracked position maps to
+        // the buffer behind the overlay, and the resulting popup would render
+        // on top of the dialog (sinelaw/fresh#2912). This also covers a hover
+        // armed just before the modal opened — the pending timer must not
+        // fire underneath it.
+        if self.modal_overlay_active() {
             return false;
         }
 

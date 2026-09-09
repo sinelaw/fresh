@@ -117,9 +117,9 @@ fn test_switching_into_restored_terminal_window_activates_it() {
     }
 
     // ---- Session 2: restart; the session comes back with the terminal as
-    // its active buffer, restored read-only. Diving *away* to another window
-    // and back is the dock's window-switch — it must re-activate the
-    // terminal. ----
+    // its active buffer. Diving *away* to another window and back is the
+    // dock's window-switch — it must land on a live terminal, never on the
+    // stale read-only scrollback view. ----
     {
         let mut harness = EditorTestHarness::create(
             120,
@@ -143,13 +143,18 @@ fn test_switching_into_restored_terminal_window_activates_it() {
             "restored session should come back with its terminal as the \
              active buffer"
         );
-        // Precondition: the restored terminal starts read-only (scrollback),
-        // exactly the state the dive must wake. If this ever changes, the
-        // dive-back below would no longer exercise the transition.
+        // A restored terminal that is the *focused* buffer now comes back
+        // live: the restore derives the terminal flags from its active buffer
+        // rather than leaving it focused-but-inert (#2828). It used to start
+        // read-only here, which is the state this test's dive was written to
+        // wake — the dive still has to be right, because the dock's real
+        // target is a *background* window, whose lazy materialization inside
+        // `set_active_window` restores it while it is not yet the active
+        // window and so never runs that derivation. Diving in is the only
+        // thing that can activate that terminal.
         assert!(
-            !harness.editor().is_terminal_mode(),
-            "a restored terminal starts in read-only scrollback, not \
-             terminal mode"
+            harness.editor().is_terminal_mode(),
+            "a restored, focused terminal must come back live (#2828)"
         );
 
         // A second, non-terminal window to switch to — the "other session"

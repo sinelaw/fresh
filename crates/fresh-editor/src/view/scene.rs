@@ -15,7 +15,6 @@ use crate::app::Editor;
 use fresh_core::LeafId;
 use ratatui::layout::Rect;
 use serde::Serialize;
-use std::collections::BTreeMap;
 use std::collections::HashMap;
 
 /// A cell rectangle, serialized as `{x, y, w, h}` (matching the bridge's
@@ -78,15 +77,14 @@ pub struct MenuEntry {
     pub items: Vec<MenuItemView>,
 }
 
-/// The currently open dropdown's cell geometry (from the pipeline's MenuLayout),
-/// so a frontend can position native rows at the exact cells the editor
-/// hit-tests against.
+/// The currently open dropdown's cell geometry, read off the shell tree that
+/// placed it, so a frontend can position native rows at the exact cells the
+/// editor hit-tests against.
 #[derive(Debug, Clone, Serialize)]
 pub struct DropdownView {
-    /// The dropdown's full bordered box from the pipeline's `MenuLayout` —
-    /// one row/column larger than the item union on every side, flush under
-    /// the menu bar (falls back to the item union if the layout predates the
-    /// recorded box).
+    /// The dropdown's full bordered box — one row/column larger than the
+    /// item union on every side, under its bar label (falls back to the item
+    /// union when the box has no rectangle).
     pub rect: Option<RectView>,
     pub items: Vec<ItemArea>,
     pub submenus: Vec<SubmenuArea>,
@@ -143,7 +141,7 @@ fn item_view(editor: &Editor, item: &fresh_core::menu::MenuItem) -> MenuItemView
             action: action.clone(),
             args: args.clone(),
             accel: editor.accelerator_for(action),
-            // Same enabled/checked logic the TUI MenuRenderer uses — one source.
+            // Same enabled/checked logic the TUI description uses — one source.
             enabled: crate::view::ui::menu::is_menu_item_enabled(
                 item,
                 &editor.menu_state().context,
@@ -188,15 +186,16 @@ impl Editor {
     /// structure, enabled/checked state and accelerators are derived; the TUI
     /// renderer and the web bridge both consume this rather than recomputing it.
     ///
-    /// Geometry (`x`/`w`, dropdown rects) comes from the pipeline's `MenuLayout`,
-    /// which is populated during render — so this reflects the most recent frame.
+    /// Geometry — each label's `x`/`w`, the dropdown boxes and their rows —
+    /// is read off the shell tree that placed them (`view::shell::menu`), the
+    /// same rectangles the TUI painted from.
     pub fn menu_view(&self) -> MenuView {
-        let chrome = self.active_chrome();
-        let menu_areas: HashMap<usize, Rect> = chrome
-            .menu_layout
-            .as_ref()
-            .map(|m| m.menu_areas.iter().cloned().collect())
-            .unwrap_or_default();
+        use crate::view::shell::menu::{dropdown_item_key, dropdown_key, menu_label_key};
+        let rect_of = |key: &fresh_ui::Key| -> Option<Rect> {
+            let ui = self.shell_ui.as_ref()?;
+            let f = self.active_chrome().last_frame;
+            crate::view::shell::rect_of(ui, key, Rect::new(0, 0, f.width, f.height))
+        };
 
         // Same expanded menu list the TUI renderer uses (config + plugin menus),
         // so the two frontends never diverge on which menus/items exist.
@@ -204,50 +203,63 @@ impl Editor {
             .all_menus_expanded()
             .iter()
             .enumerate()
-            .map(|(i, m)| MenuEntry {
-                label: m.label.clone(),
-                visible: crate::view::ui::menu::is_menu_visible(m, &self.menu_state().context),
-                x: menu_areas.get(&i).map(|r| r.x),
-                w: menu_areas.get(&i).map(|r| r.width),
-                items: m.items.iter().map(|it| item_view(self, it)).collect(),
+            .map(|(i, m)| {
+                let label = rect_of(&menu_label_key(i));
+                MenuEntry {
+                    label: m.label.clone(),
+                    visible: crate::view::ui::menu::is_menu_visible(m, &self.menu_state().context),
+                    x: label.map(|r| r.x),
+                    w: label.map(|r| r.width),
+                    items: m.items.iter().map(|it| item_view(self, it)).collect(),
+                }
             })
             .collect();
 
-        let dropdown = chrome.menu_layout.as_ref().and_then(|ml| {
-            if ml.item_areas.is_empty() {
+        // The open chain: level by level, each box and its rows as the tree
+        // laid them out. Rows are keyed by depth and index, so their
+        // rectangles come straight back without a walk.
+        let (_, levels) = self.menu_description();
+        let rows_of = |depth: usize, n: usize| -> Vec<(usize, Rect)> {
+            (0..n)
+                .filter_map(|i| rect_of(&dropdown_item_key(depth, i)).map(|r| (i, r)))
+                .collect()
+        };
+        let dropdown = levels.first().and_then(|top| {
+            let items = rows_of(0, top.rows.len());
+            if items.is_empty() {
                 return None;
             }
-            let rects: Vec<Rect> = ml.item_areas.iter().map(|(_, r)| *r).collect();
+            let rects: Vec<Rect> = items.iter().map(|(_, r)| *r).collect();
+            let mut submenus = Vec::new();
+            let mut submenu_boxes = Vec::new();
+            for (depth, level) in levels.iter().enumerate().skip(1) {
+                for (index, r) in rows_of(depth, level.rows.len()) {
+                    submenus.push(SubmenuArea {
+                        depth,
+                        index,
+                        rect: RectView::from(r),
+                    });
+                }
+                if let Some(r) = rect_of(&dropdown_key(depth)) {
+                    submenu_boxes.push(SubmenuBoxArea {
+                        depth,
+                        rect: RectView::from(r),
+                    });
+                }
+            }
             Some(DropdownView {
-                rect: ml
-                    .dropdown_box
+                rect: rect_of(&dropdown_key(0))
                     .map(RectView::from)
                     .or_else(|| union_rect(&rects).map(RectView::from)),
-                items: ml
-                    .item_areas
+                items: items
                     .iter()
                     .map(|(index, r)| ItemArea {
                         index: *index,
                         rect: RectView::from(*r),
                     })
                     .collect(),
-                submenus: ml
-                    .submenu_areas
-                    .iter()
-                    .map(|(depth, index, r)| SubmenuArea {
-                        depth: *depth,
-                        index: *index,
-                        rect: RectView::from(*r),
-                    })
-                    .collect(),
-                submenu_boxes: ml
-                    .submenu_boxes
-                    .iter()
-                    .map(|(depth, r)| SubmenuBoxArea {
-                        depth: *depth,
-                        rect: RectView::from(*r),
-                    })
-                    .collect(),
+                submenus,
+                submenu_boxes,
             })
         });
 
@@ -315,7 +327,7 @@ pub struct SuggestionView {
 /// One search-option toggle (Case / Whole Word / Regex / Confirm-each) as the
 /// TUI lays it out on the options row: state + the cell span of its checkbox,
 /// so a non-cell frontend can render a native toggle and route clicks back to
-/// the exact cells `SearchOptionsLayout::checkbox_at` hit-tests.
+/// the exact cells the shell's tree assigned it.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SearchOptionView {
@@ -388,33 +400,36 @@ impl Editor {
     /// Semantic tab bar for a pane (leaf). Single derivation of tab labels /
     /// active / modified shared by the TUI tab renderer and the web bridge.
     pub fn tab_bar_view(&self, leaf: LeafId) -> TabBarView {
+        // Both halves off the retained tree: the strip's row by its key, and
+        // each tab's rectangles and label by the tab's — the same nodes the
+        // TUI's clicks land on, so a native tab and a painted one cannot
+        // disagree about where a tab is or what it says.
+        let f = self.active_chrome().last_frame;
+        let size = ratatui::layout::Rect::new(0, 0, f.width, f.height);
+        let bar = self.shell_ui.as_ref().and_then(|ui| {
+            crate::view::shell::rect_of(ui, &crate::view::shell::splits::tabs_key(leaf), size)
+        });
+        let Some(bar) = bar else {
+            return TabBarView::default();
+        };
         let active = self.active_buffer();
-        let layout = self.active_layout();
-        match layout.tab_layouts.get(&leaf) {
-            None => TabBarView::default(),
-            Some(tl) => TabBarView {
-                bar: Some(RectView::from(tl.bar_area)),
-                tabs: tl
-                    .tabs
-                    .iter()
-                    .map(|tab| {
-                        let bid = tab.target.as_buffer();
-                        TabView {
-                            buffer_id: bid.map(|b| b.0),
-                            // The label the renderer resolved for this tab — the
-                            // disambiguated filename (or group name), matching the
-                            // TUI and the width the tab was laid out for. Reading
-                            // the buffer's metadata display name here instead would
-                            // leak the full workspace-relative path into the tab.
-                            label: tab.label.clone(),
-                            active: bid == Some(active),
-                            modified: bid.map(|b| self.buffer_is_modified(b)).unwrap_or(false),
-                            rect: RectView::from(tab.tab_area),
-                            close_rect: RectView::from(tab.close_area),
-                        }
-                    })
-                    .collect(),
-            },
+        TabBarView {
+            bar: Some(RectView::from(bar)),
+            tabs: self
+                .tab_rects(leaf)
+                .into_iter()
+                .map(|t| {
+                    let bid = t.target.as_buffer();
+                    TabView {
+                        buffer_id: bid.map(|b| b.0),
+                        label: t.label,
+                        active: bid == Some(active),
+                        modified: bid.map(|b| self.buffer_is_modified(b)).unwrap_or(false),
+                        rect: RectView::from(t.name),
+                        close_rect: RectView::from(t.close),
+                    }
+                })
+                .collect(),
         }
     }
 
@@ -423,21 +438,24 @@ impl Editor {
     /// segment *text* is lifted from the rendered `buf` for now. Single
     /// derivation shared by both frontends.
     pub fn status_view(&self) -> Option<StatusView> {
-        let chrome = self.active_chrome();
-        let (sy, sx, sw) = chrome.status_bar.area?;
+        // Both halves come off the retained tree: the row's rectangle from the
+        // frame's regions, the segments from the keyed elements inside it.
+        // `status_bar_area_now` is also what says the bar is *there* — it
+        // returns `None` when the user hid it or a suggestions / file-browser
+        // popup took the row, so there is no capture to clear by hand and no
+        // way for the web to keep drawing a bar the TUI does not have.
+        let area = self.status_bar_area_now()?;
 
-        // Read the status bar's semantic model captured by the renderer — no
-        // cell scraping. Each rendered element (indicators + text) is a segment,
-        // and `side` is the renderer's actual left/right tiling (carried on the
-        // segment), not a midpoint guess from `x`.
-        let segments: Vec<StatusSegment> = chrome
-            .status_bar
-            .segments
-            .iter()
+        // Each keyed element (indicators + text) is a segment, and `side` is
+        // the description's own left/right tiling carried on the segment, not
+        // a midpoint guess from `x`. No cell scraping either way.
+        let segments: Vec<StatusSegment> = self
+            .shell_status_segments()
+            .into_iter()
             .filter(|s| !s.text.trim().is_empty())
             .map(|s| StatusSegment {
                 name: s.name,
-                key: s.key.clone(),
+                key: s.key,
                 text: s.text.trim().to_string(),
                 x: s.x,
                 w: s.w,
@@ -447,9 +465,9 @@ impl Editor {
 
         Some(StatusView {
             rect: RectView {
-                x: sx,
-                y: sy,
-                w: sw,
+                x: area.x,
+                y: area.y,
+                w: area.width,
                 h: 1,
             },
             segments,
@@ -463,8 +481,21 @@ impl Editor {
         let chrome = self.active_chrome();
         let sugg_outer = chrome.suggestions_outer_area;
         let sugg_area = chrome.suggestions_area;
-        let prompt_results = chrome.prompt_results_area;
         let p = self.active_window().prompt.as_ref()?;
+        // The overlay card's bands, read off the tree that placed them.
+        let card_band = |r: crate::view::shell::overlay_prompt::CardRegion| {
+            self.shell_ui.as_ref().and_then(|ui| {
+                crate::view::shell::overlay_prompt::regions_of(ui)
+                    .into_iter()
+                    .find(|(k, _)| *k == r)
+                    .map(|(_, rect)| rect)
+                    .filter(|rect| rect.width > 0 && rect.height > 0)
+            })
+        };
+        let prompt_results = p
+            .overlay
+            .then(|| card_band(crate::view::shell::overlay_prompt::CardRegion::Results))
+            .flatten();
         // EVERY active prompt projects. A picker list (non-empty suggestions)
         // or a floating overlay projects its full geometry; everything else —
         // plain input prompts (Add Ruler's column, goto-line, …) and prompts
@@ -480,73 +511,37 @@ impl Editor {
             p.suggestions.len(),
             p.suggestions.len(),
         ));
-        // Search-option toggles: mirror the TUI's options row from the layout
-        // the renderer recorded (`search_options_layout`) — same cell spans the
-        // TUI hit-tests — plus the live state and the same label/shortcut
-        // derivation `StatusBarRenderer::render_search_options` uses.
-        let search_options = chrome.search_options_layout.as_ref().map(|lo| {
-            use crate::input::keybindings::{Action, KeyContext};
-            use rust_i18n::t;
-            let win = self.active_window();
-            let kb = self.keybinding_resolver();
-            let shortcut = |a: &Action| {
-                kb.get_keybinding_for_action(a, KeyContext::SearchPrompt)
-                    .or_else(|| kb.get_keybinding_for_action(a, KeyContext::Prompt))
-                    .or_else(|| kb.get_keybinding_for_action(a, KeyContext::Global))
-            };
-            let opt = |span: Option<(u16, u16)>,
-                       name: &'static str,
-                       label: String,
-                       active: bool,
-                       shortcut: Option<String>| {
-                span.map(|(x0, x1)| SearchOptionView {
-                    name,
-                    label,
-                    shortcut,
-                    active,
-                    x: x0,
-                    w: x1.saturating_sub(x0).max(1),
+        // Search-option toggles: the row's own content — the same values the
+        // TUI describes its toggles with — plus the cell spans the shell's
+        // layout assigned them, READ BACK off the laid-out tree rather than
+        // recomputed. The web frontend routes clicks to those exact cells, so
+        // a second derivation here is a second chance to disagree; there used
+        // to be one (`SearchOptionsLayout::compute`) and it existed only to
+        // be re-checked against the painter.
+        let search_options = self.search_options_content().and_then(|content| {
+            use crate::view::shell::search_options::Piece;
+            let spans = self.search_option_spans_now()?;
+            let row = spans.first().map(|(_, r)| r.y)?;
+            let options = content
+                .pieces
+                .iter()
+                .filter_map(|piece| {
+                    let Piece::Toggle(t) = piece else { return None };
+                    let (_, rect) = spans.iter().find(|(o, _)| *o == t.option)?;
+                    Some(SearchOptionView {
+                        name: t.option.web_name(),
+                        label: t.label.clone(),
+                        shortcut: t.shortcut.clone(),
+                        active: t.checked,
+                        x: rect.x,
+                        w: rect.width.max(1),
+                    })
                 })
-            };
-            SearchOptionsView {
-                row: lo.row,
-                options: [
-                    opt(
-                        lo.case_sensitive,
-                        "case",
-                        t!("search.case_sensitive").to_string(),
-                        win.search_case_sensitive,
-                        shortcut(&Action::ToggleSearchCaseSensitive),
-                    ),
-                    opt(
-                        lo.whole_word,
-                        "word",
-                        t!("search.whole_word").to_string(),
-                        win.search_whole_word,
-                        shortcut(&Action::ToggleSearchWholeWord),
-                    ),
-                    opt(
-                        lo.regex,
-                        "regex",
-                        t!("search.regex").to_string(),
-                        win.search_use_regex,
-                        shortcut(&Action::ToggleSearchRegex),
-                    ),
-                    opt(
-                        lo.confirm_each,
-                        "confirm",
-                        t!("search.confirm_each").to_string(),
-                        win.search_confirm_each,
-                        shortcut(&Action::ToggleSearchConfirmEach),
-                    ),
-                ]
-                .into_iter()
-                .flatten()
-                .collect(),
-            }
+                .collect();
+            Some(SearchOptionsView { row, options })
         });
         Some(PaletteView {
-            query: p.input.clone(),
+            query: p.input_str().to_string(),
             message: p.message.clone(),
             prompt_type: prompt_type_tag(&p.prompt_type),
             overlay: p.overlay,
@@ -561,19 +556,14 @@ impl Editor {
                 .map(|(r, _, _, _)| r)
                 .or(prompt_results)
                 .map(RectView::from),
-            // Inner content of the preview pane: the stored area minus its
-            // single left border column (matches `Block::borders(LEFT)` in
-            // render_overlay_prompt). Only meaningful for overlay prompts.
-            preview_rect: chrome.prompt_preview_area.and_then(|r| {
-                (r.width > 1 && r.height > 0).then(|| {
-                    RectView::from(Rect::new(
-                        r.x.saturating_add(1),
-                        r.y,
-                        r.width.saturating_sub(1),
-                        r.height,
-                    ))
-                })
-            }),
+            // The preview pane's content: the band names the pane inside its
+            // rule, so this is the rectangle as the tree placed it. Only
+            // meaningful for overlay prompts.
+            preview_rect: p
+                .overlay
+                .then(|| card_band(crate::view::shell::overlay_prompt::CardRegion::Preview))
+                .flatten()
+                .map(RectView::from),
             suggestions: p
                 .suggestions
                 .iter()
@@ -584,8 +574,17 @@ impl Editor {
                     disabled: s.disabled,
                 })
                 .collect(),
-            toolbar: p.toolbar_widget.clone(),
-            toolbar_focus: p.toolbar_focus.clone(),
+            toolbar: p
+                .toolbar
+                .as_ref()
+                .and_then(|k| self.widget_registry.get(k))
+                .map(|panel| panel.spec.clone()),
+            toolbar_focus: p
+                .toolbar
+                .as_ref()
+                .and_then(|k| self.widget_registry.focus_key(k))
+                .filter(|f| !f.is_empty())
+                .map(str::to_string),
             search_options,
         })
     }
@@ -656,7 +655,7 @@ fn project_popup(
                 .collect(),
             selected: *selected,
         },
-        PopupContent::Text(lines) | PopupContent::Custom(lines) => PopupContentView::Lines {
+        PopupContent::Text(lines) => PopupContentView::Lines {
             lines: lines.clone(),
         },
         PopupContent::Markdown(styled) => PopupContentView::Lines {
@@ -720,18 +719,32 @@ pub struct FileExplorerView {
     pub scroll_offset: usize,
     pub viewport_height: usize,
     pub selected: Option<usize>,
+    /// Flattened-row indices in screen order, including sticky ancestors.
+    pub viewport_rows: Vec<usize>,
     pub rows: Vec<FileRow>,
 }
 
 impl Editor {
     /// Semantic file-explorer sidebar: the flattened visible tree rows (the same
     /// `get_display_nodes()` the TUI renderer uses) plus selection/scroll and the
-    /// sidebar rect. Rendered natively by the web frontend; row clicks route back
-    /// through `handle_mouse` at the sidebar's content cells, which the existing
-    /// file-explorer hit-test resolves to the same display index.
+    /// sidebar rect. Rendered natively by the web frontend; row clicks route
+    /// back through `handle_mouse` at the sidebar's content cells, where the
+    /// shell's own row nodes answer them — `viewport_rows[n]` and the tree's
+    /// n-th row key are the same number by construction.
     pub fn file_explorer_view(&self) -> Option<FileExplorerView> {
-        let rect = self.active_layout().file_explorer_area?;
+        // **Derived, not recorded.** The sidebar's rectangle is
+        // `HostRegion::Explorer`'s, which is a keyed node — so this asks the
+        // tree rather than reading a copy the draw filed a frame ago. Presence
+        // is app state and stays app state: a hidden sidebar still has a
+        // rectangle, and it is `file_explorer_visible` that says it is not
+        // there.
+        if !self.file_explorer_visible() {
+            return None;
+        }
         let view = self.file_explorer()?;
+        let rect = self.panel_rect(&crate::view::shell::frame::region_key(
+            crate::view::shell::frame::HostRegion::Explorer,
+        ))?;
         let tree = view.tree();
         let rows = view
             .get_display_nodes()
@@ -755,7 +768,257 @@ impl Editor {
             scroll_offset: view.get_scroll_offset(),
             viewport_height: view.viewport_height,
             selected: view.get_selected_index(),
+            viewport_rows: view.viewport_display_indices(),
             rows,
+        })
+    }
+}
+
+// ──────────────────── file browser (Open File / Save As / Switch Project) ────────────────────
+
+/// One visible file row of the browser popup. The window of rows is the
+/// tree's (`shell::file_browser::window`), so `row` — the grid row the entry
+/// was laid out on — is the cell a click on it is sent to, where the row
+/// answers for itself.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileBrowserRowView {
+    /// Index into the editor's entry list (not into this window).
+    pub index: usize,
+    /// Grid row this entry occupies.
+    pub row: u16,
+    pub name: String,
+    pub is_dir: bool,
+    pub is_symlink: bool,
+    /// Formatted size, empty for directories (the TUI prints "--").
+    pub size: String,
+    /// Formatted modification time, empty when unknown.
+    pub modified: String,
+    pub selected: bool,
+    /// False for entries the current filter text does not match — the TUI dims
+    /// them rather than hiding them.
+    pub matches_filter: bool,
+}
+
+/// A checkbox toggle (Show Hidden / Detect Encoding) with the cell span the
+/// tree laid it out at, so a native frontend can draw its own checkbox and
+/// send the click to the cells where the toggle's own node answers it.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileBrowserToggleView {
+    pub name: &'static str,
+    pub label: String,
+    pub shortcut: Option<String>,
+    pub active: bool,
+    pub x: u16,
+    pub y: u16,
+    pub w: u16,
+}
+
+/// A navigation shortcut (`..`, `/`, `~`, …) plus its cell span.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileBrowserShortcutView {
+    pub index: usize,
+    pub label: String,
+    pub description: String,
+    pub selected: bool,
+    pub x: u16,
+    pub y: u16,
+    pub w: u16,
+}
+
+/// A sortable column header plus its cell span.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileBrowserColumnView {
+    pub name: &'static str,
+    pub label: String,
+    /// This column is the active sort key.
+    pub active: bool,
+    /// Sort direction, meaningful when `active`.
+    pub ascending: bool,
+    pub x: u16,
+    pub y: u16,
+    pub w: u16,
+}
+
+/// Semantic file-browser popup: the dialog behind Open File, Save File As and
+/// Switch Project. Everything the TUI paints into its bordered band — the
+/// directory, the toggles, the nav shortcuts, the sortable columns and the
+/// visible slice of entries — with the cell span of every interactive element
+/// so a native frontend renders it as DOM and sends clicks to the cells the
+/// tree placed each control at. `None` unless one of those prompts is active.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileBrowserView {
+    /// The popup band (including the TUI's border cells).
+    pub rect: RectView,
+    /// The file-list rows only.
+    pub list_rect: RectView,
+    /// One-cell scrollbar column beside the list.
+    pub scrollbar_rect: RectView,
+    /// Directory being browsed, in full — eliding it is the frontend's call.
+    pub path: String,
+    pub toggles: Vec<FileBrowserToggleView>,
+    pub shortcuts: Vec<FileBrowserShortcutView>,
+    pub columns: Vec<FileBrowserColumnView>,
+    pub rows: Vec<FileBrowserRowView>,
+    pub scroll_offset: usize,
+    pub visible_rows: usize,
+    /// Total entries in the directory (the list scrolls within this).
+    pub total: usize,
+    pub selected: Option<usize>,
+    /// Which section has keyboard focus: `"navigation"` or `"files"`.
+    pub active_section: &'static str,
+    pub loading: bool,
+    pub error: Option<String>,
+    /// Scrollbar thumb, in rows from the top of `scrollbar_rect`.
+    pub thumb_start: usize,
+    pub thumb_end: usize,
+}
+
+impl Editor {
+    /// Semantic file browser, derived from the dialog's description and the
+    /// tree that laid it out (rects, the list's window and the cell span of
+    /// every interactive element, read back by key). Rendered natively by
+    /// the web frontend; clicks go to those cells, where the controls answer
+    /// for themselves — so there is no hit-testing implementation anywhere
+    /// but the tree's.
+    pub fn file_browser_view(&self) -> Option<FileBrowserView> {
+        use crate::app::file_open::{FileOpenSection, SortMode, Toggle};
+        use crate::view::shell::file_browser as fb;
+        use fresh_i18n::t;
+
+        let win = self.active_window();
+        let state = win.file_open_state.as_ref()?;
+        let ui = self.shell_ui.as_ref()?;
+        let frame = self.active_chrome().last_frame;
+        let size = ratatui::layout::Rect {
+            x: 0,
+            y: 0,
+            width: frame.width,
+            height: frame.height,
+        };
+        let rects = fb::rects(ui, size, state.shortcuts.len())?;
+        let window = fb::window(ui, size)?;
+        // The same content the tree laid out, so a label the web shows is
+        // the label the TUI painted.
+        let b = self.browser_description(rects.dialog.height)?;
+        // The band's last column is the bar's, reserved whether or not the
+        // list overflows — the painter's `scrollbar_width` beside the rows.
+        let list_rect = ratatui::layout::Rect {
+            width: rects.list.width.saturating_sub(1),
+            ..rects.list
+        };
+        let scrollbar_rect = ratatui::layout::Rect {
+            x: rects.list.x + list_rect.width,
+            width: rects.list.width.min(1),
+            ..rects.list
+        };
+
+        let toggles = rects
+            .toggles
+            .iter()
+            .filter_map(|(id, r)| {
+                let t = b.toggles.iter().find(|t| t.id == *id)?;
+                Some(FileBrowserToggleView {
+                    name: id.name(),
+                    label: t.label.clone(),
+                    shortcut: t.shortcut.clone(),
+                    active: match id {
+                        Toggle::ShowHidden => state.show_hidden,
+                        Toggle::DetectEncoding => state.detect_encoding,
+                    },
+                    x: r.x,
+                    y: r.y,
+                    w: r.width,
+                })
+            })
+            .collect();
+
+        let shortcuts = rects
+            .shortcuts
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, r)| {
+                let sc = state.shortcuts.get(idx)?;
+                Some(FileBrowserShortcutView {
+                    index: idx,
+                    label: sc.label.clone(),
+                    description: sc.description.clone(),
+                    selected: b.selected_shortcut == Some(idx),
+                    x: r.x,
+                    y: r.y,
+                    w: r.width,
+                })
+            })
+            .collect();
+
+        let columns = rects
+            .columns
+            .iter()
+            .map(|(mode, r)| {
+                let (name, label) = match mode {
+                    SortMode::Name => ("name", t!("file_browser.name")),
+                    SortMode::Size => ("size", t!("file_browser.size")),
+                    SortMode::Modified => ("modified", t!("file_browser.modified")),
+                    SortMode::Type => ("type", t!("file_browser.name")),
+                };
+                FileBrowserColumnView {
+                    name,
+                    label: label.to_string(),
+                    active: state.sort_mode == *mode,
+                    ascending: state.sort_ascending,
+                    x: r.x,
+                    y: r.y,
+                    w: r.width,
+                }
+            })
+            .collect();
+
+        // The window the tree is showing: the rows the TUI has on screen, at
+        // the grid rows it put them on.
+        let rows = match &b.listing {
+            fb::Listing::Entries(entries) => entries
+                .iter()
+                .enumerate()
+                .skip(window.first)
+                .take(window.visible)
+                .map(|(index, e)| FileBrowserRowView {
+                    index,
+                    row: list_rect.y + (index - window.first) as u16,
+                    name: e.name.clone(),
+                    is_dir: e.is_dir,
+                    is_symlink: e.is_symlink,
+                    size: e.size.clone().unwrap_or_default(),
+                    modified: e.modified.clone().unwrap_or_default(),
+                    selected: b.selected == Some(index),
+                    matches_filter: e.matches,
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
+        let files_active = state.active_section == FileOpenSection::Files;
+
+        Some(FileBrowserView {
+            rect: RectView::from(rects.dialog),
+            list_rect: RectView::from(list_rect),
+            scrollbar_rect: RectView::from(scrollbar_rect),
+            path: state.current_dir.display().to_string(),
+            toggles,
+            shortcuts,
+            columns,
+            rows,
+            scroll_offset: window.first,
+            visible_rows: window.visible,
+            total: state.entries.len(),
+            selected: state.selected_index,
+            active_section: if files_active { "files" } else { "navigation" },
+            loading: state.loading,
+            error: state.error.clone(),
+            thumb_start: window.thumb.0,
+            thumb_end: window.thumb.1,
         })
     }
 }
@@ -788,11 +1051,22 @@ pub struct TrustDialogView {
 
 impl Editor {
     /// Semantic workspace-trust dialog (the blocking "trust this folder?" modal).
-    /// `None` unless it's showing. Geometry comes from the pipeline's
-    /// `TrustDialogLayout`; clicks on the options / OK / Quit route back through
-    /// `handle_mouse` at those rects (the existing `handle_workspace_trust_mouse`).
+    /// `None` unless it's showing.
+    ///
+    /// Geometry comes off the shell's tree, which is what placed the controls.
+    /// It used to come from `TrustDialogLayout`, a set of rectangles the
+    /// painter recorded for a hit test the TUI no longer performs — the nodes
+    /// answer their own presses, and this projection is the last caller that
+    /// wanted the rectangles at all.
     pub fn trust_dialog_view(&self) -> Option<TrustDialogView> {
-        let layout = self.active_chrome().workspace_trust_dialog.clone()?;
+        let frame = self.active_chrome().last_frame;
+        let size = ratatui::layout::Rect {
+            x: 0,
+            y: 0,
+            width: frame.width,
+            height: frame.height,
+        };
+        let layout = crate::view::shell::trust::rects(self.shell_ui.as_ref()?, size)?;
         let selected = self.current_workspace_trust_selection();
         let data = ["trusted", "restricted", "blocked"];
         let options = crate::view::workspace_trust_dialog::options()
@@ -807,249 +1081,461 @@ impl Editor {
             })
             .collect();
         let quit_label = if self.workspace_trust_cancellable() {
-            rust_i18n::t!("trust.dialog.btn_cancel").into_owned()
+            fresh_i18n::t!("trust.dialog.btn_cancel").into_owned()
         } else {
-            rust_i18n::t!("trust.dialog.btn_quit").into_owned()
+            fresh_i18n::t!("trust.dialog.btn_quit").into_owned()
         };
         Some(TrustDialogView {
             dialog: RectView::from(layout.dialog),
-            title: rust_i18n::t!("trust.dialog.security_warning").into_owned(),
+            title: fresh_i18n::t!("trust.dialog.security_warning").into_owned(),
             path: self.working_dir().display().to_string(),
             triggers: self.workspace_trust_markers().join(", "),
             cancellable: self.workspace_trust_cancellable(),
             options,
             ok: RectView::from(layout.ok),
-            ok_label: rust_i18n::t!("trust.dialog.btn_ok").into_owned(),
-            quit: RectView::from(layout.quit),
+            ok_label: fresh_i18n::t!("trust.dialog.btn_ok").into_owned(),
+            quit: RectView::from(layout.secondary),
             quit_label,
         })
     }
 }
 
-// ─────────────────────────── plugin widget surfaces (floating / dock) ───────────────────────────
+// ─────────────────────── plugin widget surfaces: deleted with the web path ───────────────────────
+//
+// **What was here.** `WidgetSurfaceView` / `WidgetInstanceView` /
+// `WidgetHitView` and `Editor::widgets_view`: the dock's and the floating
+// panel's `WidgetSpec`, the registry's instance-state map, the recorded hit
+// list's identity half, the focused key and the panel's rectangle, shipped to
+// the web frontend so it could lay the spec out itself and echo a click back
+// as an index plus an identity.
+//
+// **Why it is gone.** It was the last consumer of `WidgetPanelState::hits` and
+// `boxes` for a *described* panel, and so the last reason the immediate-mode
+// collector had to run for one. Deleting it is what lets the retained tree be
+// the only thing that lays a plugin panel out. See
+// `docs/internal/retained-mode-ui.md` §3.9 for what the replacement is: the web
+// consuming the display list the TUI already folds, the way it consumes the
+// status bar, the settings dialog and the file browser.
+//
+// That landed: the panel subtrees below are what the web draws from now.
+// Every other surface was unaffected throughout — this deleted one region of
+// the scene, not the bridge.
 
+// ─────────────────────────── the tree: plugin panels as the display list ───────────────────────────
+//
+// **The web consumes the display list.** A plugin panel is nodes in the same
+// tree the terminal folds into cells, so the web is handed the *items* that
+// tree produced for the panel subtrees — rectangle, clip, resolved colours,
+// and what to draw — and folds them into DOM the way the terminal folds them
+// into cells. There is no plugin-specific projection: no spec shipped for the
+// browser to lay out itself, no recorded hit list, no index to echo back. A
+// press comes back as a cell through the ordinary mouse path and is routed
+// over the tree like a terminal click; a text press reaches the field through
+// `text_byte` like any other. See `docs/internal/retained-mode-ui.md` §3.9.
+//
+// What is shipped is the panel subtrees only — the dock, the floating panel's
+// frame, and each sidebar section a plugin mounted — plus every layer those
+// subtrees raised (a dropdown's pop-over, a modal's scrim), found by element
+// ancestry rather than by key range, because a layer paints in the display
+// list's tail and not inside its parent's range. A subtree is the whole of
+// what stands there, not the keyed element alone: the dock's wall is the
+// column's sibling, so the column by itself is a dock with no right edge and
+// no grip to drag (`items_from_parent`, below). The rest of the chrome the web
+// still draws natively from its own region views; they retire onto this
+// projection surface by surface.
+
+/// One of the panel subtrees the web draws from the display list.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct WidgetHitView {
-    /// Index into this surface's `hits` — sent back on click so the editor runs
-    /// the exact same hit it would for a TUI cell click.
-    pub index: usize,
-    pub widget_key: String,
-    pub widget_kind: String,
-    pub event_type: String,
-    pub payload: serde_json::Value,
+pub struct TreeSurfaceView {
+    /// `"dock"`, `"floating"` or `"sidebar"`.
+    pub kind: &'static str,
+    pub x: i32,
+    pub y: i32,
+    pub w: u16,
+    pub h: u16,
+    /// A floating panel raised as an anchored popup (a context menu) rather
+    /// than a centered modal. Meaningful for `"floating"` only.
+    pub anchored: bool,
+    /// The sidebar section index, for `"sidebar"`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub section: Option<usize>,
 }
 
-/// Host-owned instance state a frontend needs to render a widget correctly.
-/// Keyed by widget `key`. The host is authoritative for ALL of this — the
-/// spec's `value`/`checked`/`selected_index` are initial-only seeds once a
-/// widget has mounted (see `WidgetInstanceState`), so a frontend that renders
-/// from the spec alone shows stale values (e.g. a text field that only
-/// updates after the plugin's spec round-trip instead of on every keystroke).
+/// One display-list item, resolved for a backend that does not hold the
+/// theme: the colours are the fold's answer.
+///
+/// **And the question with it.** `ThemeKey` is the library's per-item
+/// provenance — "a backend maps it to colours; the library never interprets
+/// it" (`fresh_ui::render::spec`) — and for the shell it is an `Ink` naming
+/// the two theme keys the fold read. The terminal is one backend and answers
+/// with the editor's theme. The web is a second, and its *chrome* look is a
+/// frontend choice layered over that (`web-ui/README.md`): a Winamp dock is a
+/// sunken green playlist whatever the editor's palette says. Shipping the
+/// names next to the answer is what lets a web theme re-map the handful of
+/// keys it wants to dress and inherit the fold's answer for the rest — the
+/// same latitude the terminal backend has, in the language the frontend
+/// already thinks in. Nothing here decides a colour: `fg`/`bg` stay the
+/// fold's, and a frontend that ignores the names renders exactly as before.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TreeItemView {
+    /// The index into `surfaces` of the subtree this item belongs to.
+    pub surface: usize,
+    /// Painted by a layer the subtree raised — a pop-over, a scrim — rather
+    /// than by the subtree's own flow. Layers paint after everything in flow.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub layer: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub key: Option<String>,
+    /// `"fill"`, `"border"`, `"lines"`, `"scrollbar"`, `"scrim"`,
+    /// `"selectable"` or `"host"`.
+    pub kind: &'static str,
+    /// The visible rectangle: the item's own, cut by every enclosing clip.
+    pub x: i32,
+    pub y: i32,
+    pub w: u16,
+    pub h: u16,
+    /// Where the item's own rectangle begins, which for `lines` is where
+    /// column zero of each row sits — left of `x` when the clip cut it.
+    pub ox: i32,
+    pub oy: i32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fg: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bg: Option<String>,
+    /// The theme keys the two colours above were read from, when the item's
+    /// provenance names them. `None` for a half the ink spelled as a literal
+    /// colour (it has no name, by construction) and for an untagged item.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fg_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bg_key: Option<String>,
+    /// What the item *is* — the space-separated class list its node named, or
+    /// the nearest enclosing one. The terminal reads the same string through
+    /// its own rule table; here it becomes `data-class`, and CSS decides what
+    /// a button looks like.
+    ///
+    /// **Read it together with `kind`.** A classed node emits a `fill` over
+    /// its own rectangle and its label arrives as a separate `lines` item
+    /// wearing the same class, so the fill is *where the control is* and the
+    /// lines are *what it says*. A rule that matched the class alone would
+    /// draw the control twice.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub classes: Option<String>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub bold: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub italic: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub underline: bool,
+    /// A `scrim` that dims rather than covers.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub dim: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lines: Option<Vec<String>>,
+    /// The border's corner style, for `border`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub border: Option<String>,
+    /// `[top, len]` of the thumb in track cells, for `scrollbar` — the same
+    /// arithmetic every backend uses (`Draw::scrollbar_thumb`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thumb: Option<[u16; 2]>,
+    /// For `scrollbar`: the track runs across rather than down.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub horizontal: bool,
+    /// For `scrollbar`: the marks on the track, each `[cell, colour]` with
+    /// the colour resolved, and whether the mark takes the whole cell.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub marks: Option<Vec<MarkView>>,
+}
+
+/// One mark on a `scrollbar` item's track, for the web.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MarkView {
+    pub at: u16,
+    pub color: String,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub full: bool,
+}
+
 #[derive(Debug, Clone, Default, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct WidgetInstanceView {
-    pub selected_index: Option<i32>,
-    pub scroll_offset: Option<u32>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub expanded_keys: Vec<String>,
-    /// Text widget: the host `TextEdit`'s live value — what the TUI echoes
-    /// per keystroke.
+pub struct TreeView {
+    pub surfaces: Vec<TreeSurfaceView>,
+    pub items: Vec<TreeItemView>,
+    /// The hardware caret, when the display list places it inside one of the
+    /// surfaces: a text field in a panel.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub text_value: Option<String>,
-    /// Text widget: cursor position as a flat byte offset into `text_value`.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub cursor_byte: Option<u32>,
-    /// Text widget: active selection as a flat `[start, end)` byte range.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub selection: Option<(u32, u32)>,
-    /// Text widget: completion popup candidate labels (empty = closed).
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub completions: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub completion_selected: Option<u32>,
-    /// Text widget: whether ↑/↓ has moved into the open completion popup
-    /// (drives the highlighted row, mirroring the TUI).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub completion_navigated: Option<bool>,
-    /// Number widget: the host-owned current value.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub number_value: Option<f64>,
-    /// Dropdown widget: whether the option list is open (the selected
-    /// option index rides in `selected_index`).
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub dropdown_open: Option<bool>,
-    /// DualList widget: host-owned ordered included values + column focus.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub included: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub active_included: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub available_cursor: Option<u32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub included_cursor: Option<u32>,
+    pub cursor: Option<[i32; 2]>,
 }
 
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WidgetSurfaceView {
-    /// "dock" (left dock) or "floatingModal" (centered).
-    pub kind: &'static str,
-    /// True for a `floatingModal` in the anchored (context-menu popup)
-    /// placement: content-sized, pinned near its opening click, and — unlike
-    /// the centered modal — drawn without a background dim, dismissed by a
-    /// click outside its box.
-    pub anchored: bool,
-    pub plugin: String,
-    pub panel_id: u64,
-    pub rect: RectView,
-    pub focus_key: String,
-    /// The raw, already-serializable `WidgetSpec` tree — rendered natively.
-    pub spec: fresh_core::api::WidgetSpec,
-    /// Keyed by widget key. A `BTreeMap` (not `HashMap`) so serialization is
-    /// key-ordered and therefore STABLE across scene builds: the region-diff
-    /// hashes the serialized bytes, and a randomized map order made an
-    /// otherwise-unchanged panel hash differently every tick, pushing a
-    /// redundant `regions.widgets` frame ~once a second — a full dock rebuild
-    /// (scrollbar flicker, dropped scroll gesture) for no real change.
-    pub instances: BTreeMap<String, WidgetInstanceView>,
-    pub hits: Vec<WidgetHitView>,
-    /// Native modal-frame title (the declarative dialog's *shell*, drawn by
-    /// the frontend as a title bar — not part of the `spec`). `None` for the
-    /// dock, anchored popups, and untitled centered panels.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub title: Option<String>,
-    /// True when the centered modal draws a `[×]` close button; the frontend
-    /// renders it and forwards a click to `close_rect` (below).
-    pub closable: bool,
-    /// Screen rect of the `[×]` close button, in terminal cells. The frontend
-    /// forwards a click at this cell back through `handle_mouse`, which the
-    /// TUI hit-test resolves to the same dismiss path. `None` when the panel
-    /// isn't a closable centered modal.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub close_rect: Option<RectView>,
+fn css_color(c: ratatui::style::Color) -> Option<String> {
+    use ratatui::style::Color;
+    // The xterm 256-colour cube and ramp, so an indexed colour a theme names
+    // reads the same in a browser as in a terminal.
+    fn indexed(i: u8) -> (u8, u8, u8) {
+        const BASE: [(u8, u8, u8); 16] = [
+            (0, 0, 0),
+            (205, 0, 0),
+            (0, 205, 0),
+            (205, 205, 0),
+            (0, 0, 238),
+            (205, 0, 205),
+            (0, 205, 205),
+            (229, 229, 229),
+            (127, 127, 127),
+            (255, 0, 0),
+            (0, 255, 0),
+            (255, 255, 0),
+            (92, 92, 255),
+            (255, 0, 255),
+            (0, 255, 255),
+            (255, 255, 255),
+        ];
+        match i {
+            0..=15 => BASE[i as usize],
+            16..=231 => {
+                let i = i - 16;
+                let step = |v: u8| if v == 0 { 0 } else { 55 + v * 40 };
+                (step(i / 36), step((i / 6) % 6), step(i % 6))
+            }
+            232..=255 => {
+                let v = 8 + (i - 232) * 10;
+                (v, v, v)
+            }
+        }
+    }
+    let (r, g, b) = match c {
+        Color::Rgb(r, g, b) => (r, g, b),
+        Color::Indexed(i) => indexed(i),
+        Color::Black => indexed(0),
+        Color::Red => indexed(1),
+        Color::Green => indexed(2),
+        Color::Yellow => indexed(3),
+        Color::Blue => indexed(4),
+        Color::Magenta => indexed(5),
+        Color::Cyan => indexed(6),
+        Color::Gray => indexed(7),
+        Color::DarkGray => indexed(8),
+        Color::LightRed => indexed(9),
+        Color::LightGreen => indexed(10),
+        Color::LightYellow => indexed(11),
+        Color::LightBlue => indexed(12),
+        Color::LightMagenta => indexed(13),
+        Color::LightCyan => indexed(14),
+        Color::White => indexed(15),
+        Color::Reset => return None,
+    };
+    Some(format!("#{r:02x}{g:02x}{b:02x}"))
 }
 
 impl Editor {
-    /// Semantic model for plugin-mounted floating / dock widget panels (e.g. the
-    /// orchestrator session dock). Each surface ships its `WidgetSpec` tree +
-    /// instance state + on-screen rect + hit list; the frontend renders the spec
-    /// natively and forwards a clicked hit's index back through `/widget`, which
-    /// runs the same `deliver_widget_hit` path as a TUI cell click. `None`
-    /// surfaces (unmounted panels) are simply omitted.
-    pub fn widgets_view(&self) -> Vec<WidgetSurfaceView> {
-        let mut out = Vec::new();
-        for (kind, slot) in [
-            ("dock", self.dock.as_ref()),
-            ("floatingModal", self.floating_widget_panel.as_ref()),
-        ] {
-            let Some(fwp) = slot else { continue };
-            let Some(rect) = fwp.last_inner_rect else {
-                continue;
-            };
-            let Some(panel) = self.widget_registry.get(&fwp.panel_key) else {
-                continue;
-            };
-            let mut instances = BTreeMap::new();
-            for (key, st) in &panel.instance_states {
-                use crate::widgets::WidgetInstanceState as W;
-                let view = match st {
-                    W::List {
-                        scroll_offset,
-                        selected_index,
-                        ..
-                    } => WidgetInstanceView {
-                        selected_index: Some(*selected_index),
-                        scroll_offset: Some(*scroll_offset),
-                        ..Default::default()
-                    },
-                    W::Tree {
-                        scroll_offset,
-                        selected_index,
-                        expanded_keys,
-                        ..
-                    } => WidgetInstanceView {
-                        selected_index: Some(*selected_index),
-                        scroll_offset: Some(*scroll_offset),
-                        expanded_keys: expanded_keys.iter().cloned().collect(),
-                        ..Default::default()
-                    },
-                    // The host TextEdit is the live editing state — export
-                    // value + caret + selection so a frontend echoes every
-                    // keystroke (the spec's `value` is initial-only and lags
-                    // until the plugin round-trips it), plus the completion
-                    // popup the TUI paints as overlay rows.
-                    W::Text {
-                        editor: te,
-                        completions,
-                        completion_selected_index,
-                        completion_navigated,
-                        ..
-                    } => WidgetInstanceView {
-                        text_value: Some(te.value()),
-                        cursor_byte: Some(te.flat_cursor_byte() as u32),
-                        selection: te.selection_flat_range().map(|(s, e)| (s as u32, e as u32)),
-                        completions: completions.iter().map(|c| c.value.clone()).collect(),
-                        completion_selected: Some(*completion_selected_index as u32),
-                        completion_navigated: Some(*completion_navigated),
-                        ..Default::default()
-                    },
-                    W::Number { value } => WidgetInstanceView {
-                        number_value: Some(*value),
-                        ..Default::default()
-                    },
-                    W::Dropdown {
-                        selected_index,
-                        open,
-                    } => WidgetInstanceView {
-                        selected_index: Some(*selected_index),
-                        dropdown_open: Some(*open),
-                        ..Default::default()
-                    },
-                    W::DualList {
-                        included,
-                        active_included,
-                        available_cursor,
-                        included_cursor,
-                    } => WidgetInstanceView {
-                        included: included.clone(),
-                        active_included: Some(*active_included),
-                        available_cursor: Some(*available_cursor),
-                        included_cursor: Some(*included_cursor),
-                        ..Default::default()
-                    },
-                    W::None => continue,
-                };
-                instances.insert(key.clone(), view);
+    /// The plugin panels, as the display list the tree produced for them.
+    /// Empty when no panel is mounted in any of the three slots.
+    pub fn tree_view(&self) -> TreeView {
+        use crate::view::shell::fold::Palette;
+        use crate::view::shell::widgets::Slot;
+        use fresh_ui::{Draw, Scrim};
+        let Some(ui) = self.shell_ui.as_ref() else {
+            return TreeView::default();
+        };
+        let mut surfaces = Vec::new();
+        let mut roots = Vec::new();
+        // `items_from_parent`: the surface's rectangle is the keyed element's,
+        // but the items to collect are its *parent's* — the keyed element is
+        // one child of what actually stands there. Two surfaces need it, for
+        // the same reason. A floating panel's scrim is its layer's own item,
+        // and the layer is the panel's parent. And `dock::dock` stacks the
+        // column with `grip_strip`, which draws the divider in the column's
+        // last cell — so rooting the dock at `dock_column` shipped the web a
+        // dock with no wall down its edge and nothing to say the edge drags,
+        // while the terminal drew both.
+        let mut push = |kind: &'static str,
+                        key: fresh_ui::Key,
+                        anchored: bool,
+                        section: Option<usize>,
+                        items_from_parent: bool| {
+            if let Some(el) = ui.find_by_key(&key) {
+                let r = ui.rect_of(el);
+                if r.w > 0 && r.h > 0 {
+                    surfaces.push(TreeSurfaceView {
+                        kind,
+                        x: r.x,
+                        y: r.y,
+                        w: r.w,
+                        h: r.h,
+                        anchored,
+                        section,
+                    });
+                    let root = match items_from_parent {
+                        true => ui.parent(el).unwrap_or(el),
+                        false => el,
+                    };
+                    roots.push(root);
+                }
             }
-            let hits = panel
-                .hits
-                .iter()
-                .enumerate()
-                .map(|(index, h)| WidgetHitView {
-                    index,
-                    widget_key: h.widget_key.clone(),
-                    widget_kind: h.widget_kind.to_string(),
-                    event_type: h.event_type.to_string(),
-                    payload: h.payload.clone(),
-                })
-                .collect();
-            out.push(WidgetSurfaceView {
+        };
+        if self.dock.is_some() {
+            push(
+                "dock",
+                crate::view::shell::dock::column_key(),
+                false,
+                None,
+                true,
+            );
+        }
+        if let Some(f) = self.floating_widget_panel.as_ref() {
+            let anchored = matches!(f.placement, crate::app::PanelPlacement::Anchored { .. });
+            push(
+                "floating",
+                crate::view::shell::panel::key(),
+                anchored,
+                None,
+                true,
+            );
+        }
+        for (i, s) in self.sidebar_sections.iter().enumerate() {
+            if s.panel.is_some() {
+                push(
+                    "sidebar",
+                    crate::view::shell::panel::interior_key(Slot::Sidebar(i)),
+                    false,
+                    Some(i),
+                    false,
+                );
+            }
+        }
+        if roots.is_empty() {
+            return TreeView::default();
+        }
+        let palette = self.shell_palette();
+        let spec = ui.spec();
+        let mut items = Vec::new();
+        for (index, item) in spec.items.iter().enumerate() {
+            let Some(surface) = roots.iter().position(|r| ui.contains(*r, item.id)) else {
+                continue;
+            };
+            // A scrim is a statement about the whole frame, and its rect says
+            // so; everything else is cut to what is visible.
+            let vis = match item.draw {
+                Draw::Scrim(_) => fresh_ui::Rect {
+                    x: 0,
+                    y: 0,
+                    w: spec.frame.w,
+                    h: spec.frame.h,
+                },
+                _ => item.visible_rect(),
+            };
+            if vis.w == 0 || vis.h == 0 {
+                continue;
+            }
+            let style = palette.style(&item.theme);
+            // The names behind those colours, read back out of the ink the
+            // item was tagged with — the value carries its own provenance, so
+            // nothing has to be threaded alongside it.
+            let (fg_key, bg_key) =
+                crate::app::shell_host::shell_theme::Ink::parse(item.theme.as_str())
+                    .map(|ink| {
+                        let (f, b) = ink.names();
+                        (f.map(str::to_string), b.map(str::to_string))
+                    })
+                    .unwrap_or((None, None));
+            let m = style.add_modifier;
+            let (mut horizontal, mut marks) = (false, None);
+            let (kind, lines, border, thumb, dim) = match &item.draw {
+                Draw::Fill => ("fill", None, None, None, false),
+                Draw::Wash => ("wash", None, None, None, false),
+                Draw::Border(bs) => (
+                    "border",
+                    None,
+                    Some(format!("{bs:?}").to_lowercase()),
+                    None,
+                    false,
+                ),
+                Draw::Scrim(Scrim::Opaque) => ("scrim", None, None, None, false),
+                Draw::Scrim(Scrim::Dim) => ("scrim", None, None, None, true),
+                Draw::Lines(ls) => (
+                    "lines",
+                    Some(ls.iter().map(|l| l.to_string()).collect()),
+                    None,
+                    None,
+                    false,
+                ),
+                Draw::Scrollbar {
+                    offset,
+                    content,
+                    window,
+                    axis,
+                    marks: ms,
+                } => {
+                    horizontal = *axis == fresh_ui::Axis::Horizontal;
+                    let track = match axis {
+                        fresh_ui::Axis::Vertical => item.rect.h.max(1),
+                        fresh_ui::Axis::Horizontal => item.rect.w.max(1),
+                    };
+                    let (top, len) =
+                        Draw::scrollbar_thumb(*offset, *content, u32::from(*window), track);
+                    if !ms.is_empty() {
+                        marks = Some(
+                            ms.iter()
+                                .filter_map(|m| {
+                                    let st = palette.style(&m.theme);
+                                    let c = if m.full { st.bg.or(st.fg) } else { st.fg };
+                                    Some(MarkView {
+                                        at: m.at,
+                                        color: c.and_then(css_color)?,
+                                        full: m.full,
+                                    })
+                                })
+                                .collect(),
+                        );
+                    }
+                    ("scrollbar", None, None, Some([top, len]), false)
+                }
+                Draw::Selectable => ("selectable", None, None, None, false),
+                Draw::Host(_) => ("host", None, None, None, false),
+            };
+            items.push(TreeItemView {
+                surface,
+                layer: index >= spec.layers_from,
+                key: item.key.as_ref().map(|k| k.to_string()),
                 kind,
-                anchored: matches!(fwp.placement, crate::app::PanelPlacement::Anchored { .. }),
-                plugin: fwp.panel_key.plugin.clone(),
-                panel_id: fwp.panel_key.id,
-                rect: RectView::from(rect),
-                focus_key: panel.focus_key.clone(),
-                spec: panel.spec.clone(),
-                instances,
-                hits,
-                title: fwp.title.clone(),
-                closable: fwp.closable,
-                close_rect: fwp.close_button_rect.map(RectView::from),
+                x: vis.x,
+                y: vis.y,
+                w: vis.w,
+                h: vis.h,
+                ox: item.rect.x,
+                oy: item.rect.y,
+                fg: style.fg.and_then(css_color),
+                bg: style.bg.and_then(css_color),
+                fg_key,
+                bg_key,
+                classes: (!item.classes.is_empty()).then(|| item.classes.as_str().to_string()),
+                bold: m.contains(ratatui::style::Modifier::BOLD),
+                italic: m.contains(ratatui::style::Modifier::ITALIC),
+                underline: m.contains(ratatui::style::Modifier::UNDERLINED),
+                dim,
+                lines,
+                border,
+                thumb,
+                horizontal,
+                marks,
             });
         }
-        out
+        let cursor = spec.cursor.as_ref().filter(|c| c.visible).and_then(|c| {
+            let (x, y) = (c.pos.x, c.pos.y);
+            let inside = surfaces.iter().any(|s| {
+                x >= s.x && x < s.x + i32::from(s.w) && y >= s.y && y < s.y + i32::from(s.h)
+            });
+            inside.then_some([x, y])
+        });
+        TreeView {
+            surfaces,
+            items,
+            cursor,
+        }
     }
 }
 
@@ -1074,16 +1560,20 @@ impl Editor {
     pub fn context_menu_view(&self) -> Option<ContextMenuView> {
         use crate::app::types::ContextMenuKind;
         let w = self.active_window();
-        let chrome = self.active_chrome();
-        // One shared geometry core drives all three menus; the only per-menu
-        // difference the web cares about is the `kind` tag. Position is
-        // edge-clamped so the native box matches the TUI renderer / hit-test.
+        // One shared geometry core drives all four menus; the only per-menu
+        // difference the web cares about is the `kind` tag.
         let (kind, core) = w.open_context_menu()?;
-        let (x, y) = core.clamped_position(chrome.last_frame.width, chrome.last_frame.height);
+        // Where layout actually put it. The TUI and the web draw the menu
+        // differently but must agree on the cells it covers, so both read the
+        // one rectangle the shell's tree produced rather than each re-deriving
+        // the clamp.
+        let rect = self.shell_menu_rect()?;
+        let (x, y) = (rect.x.max(0) as u16, rect.y.max(0) as u16);
         let kind = match kind {
             ContextMenuKind::FileExplorer => "fileExplorer",
             ContextMenuKind::NewTab => "newTab",
             ContextMenuKind::Tab => "tab",
+            ContextMenuKind::CloseSplit => "closeSplit",
         };
         Some(ContextMenuView {
             kind,
@@ -1142,16 +1632,16 @@ impl Editor {
                 .collect();
             if lines.is_empty() {
                 lines.push(AuxLine {
-                    text: rust_i18n::t!("event_debug.no_events").into_owned(),
+                    text: fresh_i18n::t!("event_debug.no_events").into_owned(),
                     selected: false,
                 });
             }
             return Some(AuxModalView {
                 kind: "eventDebug",
-                title: rust_i18n::t!("event_debug.title").into_owned(),
+                title: fresh_i18n::t!("event_debug.title").into_owned(),
                 rect: None,
                 lines,
-                footer: Some(rust_i18n::t!("event_debug.help_text").into_owned()),
+                footer: Some(fresh_i18n::t!("event_debug.help_text").into_owned()),
             });
         }
         // Theme-info popup (anchored at its click position).
@@ -1416,9 +1906,12 @@ pub enum SettingControlView {
         checked: bool,
     },
     Number {
-        value: i64,
-        min: Option<i64>,
-        max: Option<i64>,
+        /// The value as the JSON carries it; a `percent` displays ×100.
+        value: f64,
+        min: Option<f64>,
+        max: Option<f64>,
+        integer: bool,
+        percent: bool,
     },
     Dropdown {
         selected: usize,
@@ -1554,103 +2047,173 @@ pub struct SettingsView {
     pub showing_reset: bool,
 }
 
-fn setting_control_view(c: &crate::view::settings::items::SettingControl) -> SettingControlView {
+/// `store` is the surface's — the page's or the dialog's — and says which
+/// control is live (a text field being edited, a dropdown's list up).
+/// The row a map's or an object array's list cursor is on, while the list
+/// has the keyboard.
+fn list_cursor(
+    c: &crate::view::settings::items::SettingControl,
+    path: &str,
+    store: &crate::widgets::WidgetPanelState,
+) -> Option<usize> {
+    if store.focus_key != path {
+        return None;
+    }
+    let spec = crate::view::settings::widget_map::live_widget(path, c, path);
+    crate::view::settings::live::list_row(store, &spec, path)
+}
+
+fn setting_control_view(
+    c: &crate::view::settings::items::SettingControl,
+    path: &str,
+    store: &crate::widgets::WidgetPanelState,
+) -> SettingControlView {
     use crate::view::settings::items::SettingControl as C;
     match c {
-        C::Toggle(s) => SettingControlView::Toggle { checked: s.checked },
-        C::Number(s) => SettingControlView::Number {
-            value: s.value,
-            min: s.min,
-            max: s.max,
+        C::Toggle { checked, .. } => SettingControlView::Toggle { checked: *checked },
+        C::Number {
+            value,
+            min,
+            max,
+            integer,
+            percent,
+            ..
+        } => SettingControlView::Number {
+            value: *value,
+            min: *min,
+            max: *max,
+            integer: *integer,
+            percent: *percent,
         },
-        C::Dropdown(s) => SettingControlView::Dropdown {
-            selected: s.selected,
-            options: s.options.clone(),
-            open: s.open,
+        C::Dropdown {
+            selected, options, ..
+        } => SettingControlView::Dropdown {
+            selected: *selected,
+            options: options.clone(),
+            open: crate::widgets::kinds::dropdown::is_open(path, store),
         },
-        C::Text(s) => SettingControlView::Text {
-            value: s.value(),
-            editing: s.editing,
-            placeholder: s.placeholder.clone(),
+        C::Text {
+            value, placeholder, ..
+        } => SettingControlView::Text {
+            value: value.clone(),
+            editing: store.focus_key == path,
+            placeholder: placeholder.clone(),
         },
-        C::TextList(s) => SettingControlView::TextList {
-            items: s.items.clone(),
-            focused: s.focused_item,
+        // A text list's focused row is the one whose field is live.
+        C::TextList { items, .. } => SettingControlView::TextList {
+            items: items.clone(),
+            focused: crate::view::settings::live::text_list::live_row(store, path).flatten(),
         },
-        C::DualList(s) => SettingControlView::DualList {
-            // Use the control's own item enumerations so the row indices the
-            // web sends back (ControlDualListIncluded/Available(idx,row)) match
-            // exactly what `add_selected`/`remove_selected` index into.
-            included: s
-                .included_items()
+        // The columns and cursors as the kind resolves them — the same call
+        // the TUI's description makes — so the row indices the web sends
+        // back (`ControlDualListIncluded/Available(idx, row)`) name the rows
+        // the kind's `dual_focus` press expects.
+        C::DualList {
+            options,
+            included,
+            excluded,
+            ..
+        } => {
+            use crate::widgets::kinds::dual_list as dl;
+            let opts: Vec<fresh_core::api::DualListOption> = options
                 .iter()
-                .map(|(_, n)| n.to_string())
-                .collect(),
-            available: s.available_items().iter().map(|(_, n)| n.clone()).collect(),
-            included_cursor: s.included_cursor,
-            available_cursor: s.available_cursor,
-            active_column: match s.active_column {
-                crate::view::controls::DualListColumn::Included => "included",
-                crate::view::controls::DualListColumn::Available => "available",
-            },
-        },
-        // Rows must read exactly as the TUI's: the same domain helper
-        // (`get_display_value`, e.g. `/grammar` → "Assembly") formats the
-        // value preview, and the value-column title mirrors the TUI's
-        // `Name │ <Col>` header — never the raw JSON blob.
-        C::Map(s) => SettingControlView::Map {
-            entries: s
-                .entries
-                .iter()
-                .map(|(k, v)| MapEntryView {
-                    key: k.clone(),
-                    display: s.get_display_value(v),
+                .map(|(value, label)| fresh_core::api::DualListOption {
+                    value: value.clone(),
+                    label: label.clone(),
                 })
-                .collect(),
-            column: s
-                .display_field
-                .as_deref()
-                .map(crate::view::settings::widget_map::column_title),
-            no_add: s.no_add,
-            focused: (s.focus == crate::view::controls::FocusState::Focused)
-                .then_some(s.focused_entry)
-                .flatten(),
-            add_focused: s.focus == crate::view::controls::FocusState::Focused
-                && s.focused_entry.is_none(),
-        },
+                .collect();
+            let st = dl::resolve(
+                &opts,
+                &dl::DualListSeed {
+                    included,
+                    excluded,
+                    active_included: false,
+                    available_cursor: 0,
+                    included_cursor: 0,
+                },
+                Some(path),
+                &store.instance_states,
+                store.focus_key == path,
+            );
+            let name = |v: &String| {
+                options
+                    .iter()
+                    .find(|(value, _)| value == v)
+                    .map(|(_, label)| label.clone())
+                    .unwrap_or_else(|| v.clone())
+            };
+            SettingControlView::DualList {
+                included: st.included.iter().map(name).collect(),
+                available: st.available.iter().map(name).collect(),
+                included_cursor: st.included_cursor,
+                available_cursor: st.available_cursor,
+                active_column: match st.active_included {
+                    true => "included",
+                    false => "available",
+                },
+            }
+        }
+        // Rows must read exactly as the TUI's: the same domain helper
+        // (`map_display_value`, e.g. `/grammar` → "Assembly") formats the
+        // value preview, and the value-column title mirrors the TUI's
+        // `Name │ <Col>` header — never the raw JSON blob. The cursor is the
+        // list's, as the kind resolves it, while the list has the keyboard.
+        C::Map {
+            entries,
+            display_field,
+            no_add,
+            ..
+        } => {
+            let cursor = list_cursor(c, path, store);
+            SettingControlView::Map {
+                entries: entries
+                    .iter()
+                    .map(|(k, v)| MapEntryView {
+                        key: k.clone(),
+                        display: crate::view::settings::items::map_display_value(
+                            display_field.as_deref(),
+                            v,
+                        ),
+                    })
+                    .collect(),
+                column: display_field
+                    .as_deref()
+                    .map(crate::view::settings::widget_map::column_title),
+                no_add: *no_add,
+                focused: cursor.filter(|r| *r < entries.len()),
+                add_focused: cursor.is_some() && cursor == c.add_row(),
+            }
+        }
         // Same combo → action row text the TUI renders (keybinding-shaped
         // entries), collapsing to the bare display value when there is no
         // key combo (LSP server lists and other non-keybinding arrays).
-        C::ObjectArray(s) => SettingControlView::ObjectArray {
-            entries: s
-                .bindings
-                .iter()
-                .map(|b| {
-                    let field = s
-                        .display_field
-                        .as_deref()
-                        .and_then(|p| p.strip_prefix('/'))
-                        .or(s.display_field.as_deref())
-                        .unwrap_or("action");
-                    let combo = crate::view::controls::keybinding_list::format_key_combo(b);
-                    let action = b
-                        .get(field)
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("(no action)");
-                    if combo.trim().is_empty() {
-                        action.to_string()
-                    } else {
-                        format!("{combo} → {action}")
-                    }
-                })
-                .collect(),
-            focused: (s.focus == crate::view::controls::FocusState::Focused)
-                .then_some(s.focused_index)
-                .flatten(),
-            add_focused: s.focus == crate::view::controls::FocusState::Focused
-                && s.focused_index.is_none(),
+        C::ObjectArray {
+            items,
+            display_field,
+            ..
+        } => {
+            let cursor = list_cursor(c, path, store);
+            SettingControlView::ObjectArray {
+                entries: items
+                    .iter()
+                    .map(|b| {
+                        let (combo, action) = crate::view::settings::items::object_array_row(
+                            display_field.as_deref(),
+                            b,
+                        );
+                        match combo.trim().is_empty() {
+                            true => action,
+                            false => format!("{combo} → {action}"),
+                        }
+                    })
+                    .collect(),
+                focused: cursor.filter(|r| *r < items.len()),
+                add_focused: cursor.is_some() && cursor == c.add_row(),
+            }
+        }
+        C::Json { text, .. } => SettingControlView::Json {
+            value: text.clone(),
         },
-        C::Json(s) => SettingControlView::Json { value: s.value() },
         C::Complex { type_name } => SettingControlView::Complex {
             type_name: type_name.clone(),
         },
@@ -1661,6 +2224,7 @@ fn setting_item_view(
     item: &crate::view::settings::items::SettingItem,
     i: usize,
     selected: bool,
+    store: &crate::widgets::WidgetPanelState,
 ) -> SettingItemView {
     SettingItemView {
         index: i,
@@ -1674,7 +2238,7 @@ fn setting_item_view(
         nullable: item.nullable,
         is_null: item.is_null,
         selected,
-        control: setting_control_view(&item.control),
+        control: setting_control_view(&item.control, &item.path, store),
     }
 }
 
@@ -1711,7 +2275,7 @@ impl Editor {
                 p.items
                     .iter()
                     .enumerate()
-                    .map(|(i, it)| setting_item_view(it, i, i == st.selected_item))
+                    .map(|(i, it)| setting_item_view(it, i, i == st.selected_item, &st.controls))
                     .collect()
             })
             .unwrap_or_default();
@@ -1723,7 +2287,7 @@ impl Editor {
                 .items
                 .iter()
                 .enumerate()
-                .map(|(i, it)| setting_item_view(it, i, i == d.selected_item))
+                .map(|(i, it)| setting_item_view(it, i, i == d.selected_item, &d.controls))
                 .collect(),
             selected_item: d.selected_item,
             focus_on_buttons: d.focus_on_buttons,
@@ -1733,10 +2297,10 @@ impl Editor {
 
         Some(SettingsView {
             title: "Settings".to_string(),
-            focus: match st.focus.current() {
-                Some(FocusPanel::Settings) => "settings",
-                Some(FocusPanel::Footer) => "footer",
-                _ => "categories",
+            focus: match st.focus_panel() {
+                FocusPanel::Settings => "settings",
+                FocusPanel::Footer => "footer",
+                FocusPanel::Categories => "categories",
             },
             target_layer: format!("{:?}", st.target_layer),
             categories,

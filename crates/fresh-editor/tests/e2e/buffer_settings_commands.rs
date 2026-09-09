@@ -59,7 +59,7 @@ fn test_toggle_indentation_command() {
     harness.render().unwrap();
 
     // Run "Toggle Indentation" command to switch to spaces
-    run_command(&mut harness, "Toggle Indentation");
+    run_command(&mut harness, "Toggle Indentation: Spaces");
 
     // Now Tab should insert spaces
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
@@ -81,7 +81,7 @@ fn test_toggle_indentation_command() {
         .unwrap();
     harness.render().unwrap();
 
-    run_command(&mut harness, "Toggle Indentation");
+    run_command(&mut harness, "Toggle Indentation: Spaces");
 
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     let content = harness.get_buffer_content().unwrap();
@@ -186,6 +186,65 @@ fn test_toggle_whitespace_indicators_restores_configured_spaces() {
         screen_on.contains('·'),
         "After toggling back on, configured space indicators should return. Screen:\n{}",
         screen_on
+    );
+}
+
+/// The whitespace master toggle has to *show* whitespace when it is switched
+/// on. With the default settings (space indicators off, tab indicators on) the
+/// "on" state marked nothing at all in a space-indented file, so both halves of
+/// the toggle looked identical and the command read as broken.
+///
+/// Toggling it on marks every space; toggling it off again marks nothing.
+#[test]
+fn test_toggle_whitespace_indicators_shows_spaces_with_default_config() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.txt");
+
+    // Space-indented, with an inner and a trailing run of spaces too.
+    std::fs::write(&file_path, "    hello  world  \n").unwrap();
+
+    let config = Config::default();
+    assert!(
+        !config.editor.whitespace_spaces_leading,
+        "space indicators are off in the default config; this test is about \
+         what the master toggle does on top of those defaults"
+    );
+
+    let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    assert!(
+        !harness.screen_to_string().contains('·'),
+        "space indicators start hidden with the default config. Screen:\n{}",
+        harness.screen_to_string()
+    );
+
+    // First invocation turns the master toggle off (tab indicators are on by
+    // default, so the toggle starts from the "shown" side) — still nothing.
+    run_command(&mut harness, "Toggle Whitespace Indicators");
+    assert!(
+        !harness.screen_to_string().contains('·'),
+        "turning the master toggle off must not draw indicators. Screen:\n{}",
+        harness.screen_to_string()
+    );
+
+    // Second invocation turns it on: this is the one that has to be visible.
+    run_command(&mut harness, "Toggle Whitespace Indicators");
+    let screen_on = harness.screen_to_string();
+    assert!(
+        screen_on.contains('·'),
+        "with the toggle on, spaces must be marked even though the config \
+         leaves space indicators off. Screen:\n{}",
+        screen_on
+    );
+
+    // And off again, so the toggle is a real toggle and not a one-way switch.
+    run_command(&mut harness, "Toggle Whitespace Indicators");
+    assert!(
+        !harness.screen_to_string().contains('·'),
+        "toggling off again must hide the indicators. Screen:\n{}",
+        harness.screen_to_string()
     );
 }
 
@@ -380,7 +439,7 @@ fn test_reset_buffer_settings_command() {
 
     // Modify settings: toggle tab indicators and toggle indentation to spaces
     run_command(&mut harness, "Toggle Tab Indicators");
-    run_command(&mut harness, "Toggle Indentation"); // Go uses tabs by default, so toggle switches to spaces
+    run_command(&mut harness, "Toggle Indentation: Spaces"); // Go uses tabs by default, so toggle switches to spaces
 
     // Verify modifications took effect
     let screen_modified = harness.screen_to_string();
@@ -563,4 +622,163 @@ fn test_toggle_line_numbers_persists_across_file_changes() {
 
     // Verify the edited content is still visible
     harness.assert_screen_contains("Edited line 5");
+}
+
+// ===========================================================================
+// Line-ending indicator tests
+// (`whitespace_newlines` / `whitespace_carriage_returns`)
+// ===========================================================================
+
+/// Newline indicators (↵) render at the end of every line of an LF file when
+/// `whitespace_newlines` is enabled, and the master toggle hides and restores
+/// them like any other whitespace indicator.
+#[test]
+fn test_newline_indicators_lf_file() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.txt");
+    std::fs::write(&file_path, "one\ntwo\n").unwrap();
+
+    let mut config = Config::default();
+    config.editor.whitespace_show = true;
+    config.editor.whitespace_newlines = true;
+
+    let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("one↵") && screen.contains("two↵"),
+        "Newline indicators should render at each line end. Screen:\n{}",
+        screen
+    );
+
+    // Master toggle hides the newline indicators.
+    run_command(&mut harness, "Toggle Whitespace Indicators");
+    let screen_off = harness.screen_to_string();
+    assert!(
+        !screen_off.contains('↵'),
+        "Master toggle off should hide newline indicators. Screen:\n{}",
+        screen_off
+    );
+
+    // Toggling back on restores the configured newline indicators.
+    run_command(&mut harness, "Toggle Whitespace Indicators");
+    let screen_on = harness.screen_to_string();
+    assert!(
+        screen_on.contains("one↵"),
+        "Master toggle on should restore newline indicators. Screen:\n{}",
+        screen_on
+    );
+}
+
+/// A CRLF buffer's line break carries both halves: with carriage returns and
+/// newlines enabled each line ends with `␍↵`.
+#[test]
+fn test_crlf_line_ending_indicators() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.txt");
+    std::fs::write(&file_path, "one\r\ntwo\r\n").unwrap();
+
+    let mut config = Config::default();
+    config.editor.whitespace_show = true;
+    config.editor.whitespace_newlines = true;
+    config.editor.whitespace_carriage_returns = true;
+
+    let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("one␍↵") && screen.contains("two␍↵"),
+        "CRLF line endings should render both CR and newline indicators. Screen:\n{}",
+        screen
+    );
+}
+
+/// With only `whitespace_newlines` enabled, a CRLF buffer shows just the
+/// newline half; with only `whitespace_carriage_returns`, just the CR half.
+#[test]
+fn test_crlf_indicator_halves_are_independent() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.txt");
+    std::fs::write(&file_path, "one\r\ntwo\r\n").unwrap();
+
+    let mut config = Config::default();
+    config.editor.whitespace_show = true;
+    config.editor.whitespace_newlines = true;
+    config.editor.whitespace_carriage_returns = false;
+
+    let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("one↵") && !screen.contains('␍'),
+        "Newlines-only should render ↵ without ␍ on CRLF files. Screen:\n{}",
+        screen
+    );
+
+    let mut config = Config::default();
+    config.editor.whitespace_show = true;
+    config.editor.whitespace_newlines = false;
+    config.editor.whitespace_carriage_returns = true;
+
+    let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("one␍") && !screen.contains('↵'),
+        "CR-only should render ␍ without ↵ on CRLF files. Screen:\n{}",
+        screen
+    );
+}
+
+/// A Classic-Mac (CR) buffer saves its line breaks as `\r`; with carriage
+/// returns enabled its line ends show the CR indicator.
+#[test]
+fn test_cr_buffer_line_ending_indicator() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.txt");
+    std::fs::write(&file_path, "one\rtwo\rthree\r").unwrap();
+
+    let mut config = Config::default();
+    config.editor.whitespace_show = true;
+    config.editor.whitespace_carriage_returns = true;
+
+    let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("one␍") && screen.contains("two␍"),
+        "CR buffers should render the CR indicator at line ends. Screen:\n{}",
+        screen
+    );
+}
+
+/// Line-ending indicators are off by default — a default config must not
+/// suddenly decorate every line end.
+#[test]
+fn test_line_ending_indicators_off_by_default() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.txt");
+    std::fs::write(&file_path, "one\r\ntwo\r\n").unwrap();
+
+    let config = Config::default();
+    let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains('↵') && !screen.contains('␍'),
+        "No line-ending indicators should render by default. Screen:\n{}",
+        screen
+    );
 }

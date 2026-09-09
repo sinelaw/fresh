@@ -12,7 +12,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::Result as AnyhowResult;
-use rust_i18n::t;
+use fresh_i18n::t;
 
 use crate::model::event::BufferId;
 use crate::state::EditorState;
@@ -24,13 +24,22 @@ impl Editor {
     /// The temp file path is preserved internally for lazy loading to work.
     ///
     /// # Arguments
-    /// * `temp_path` - Path to temp file where stdin content is being written
-    /// * `thread_handle` - Optional handle to background thread streaming stdin to temp file
+    /// * `spool` - the nameless spool stdin is being drained into
+    /// * `thread_handle` - Optional handle to the thread doing the draining
     pub fn open_stdin_buffer(
         &mut self,
-        temp_path: &Path,
+        spool: std::sync::Arc<crate::services::stdin_spool::StdinSpool>,
         thread_handle: Option<std::thread::JoinHandle<anyhow::Result<()>>>,
     ) -> AnyhowResult<BufferId> {
+        // The spool has no name, so the editor's filesystem cannot see it.
+        // This view can, and it is what the buffer keeps for its lazy chunk
+        // loads — including under a remote authority, where the spool is
+        // still a local file belonging to this process.
+        let filesystem = crate::services::stdin_spool::wrap(
+            Arc::clone(&self.authority().filesystem),
+            Arc::clone(&spool),
+        );
+        let temp_path = spool.path();
         // Save current position before switching to new buffer
         self.active_window_mut()
             .position_history
@@ -70,7 +79,7 @@ impl Editor {
         };
 
         // Get file size for status message before loading
-        let file_size = self.authority().filesystem.metadata(temp_path)?.size as usize;
+        let file_size = filesystem.metadata(temp_path)?.size as usize;
 
         // Load from temp file using EditorState::from_file_with_languages
         // This enables lazy chunk loading for large inputs (>100MB by default)
@@ -81,7 +90,7 @@ impl Editor {
             self.config.editor.large_file_threshold_bytes as usize,
             &self.grammar_registry,
             &self.config.languages,
-            Arc::clone(&self.authority().filesystem),
+            Arc::clone(&filesystem),
         )?;
 
         // Clear the file path so the buffer is "unnamed" for save purposes
@@ -152,8 +161,13 @@ impl Editor {
         // Set up stdin streaming state for polling.
         // If no thread handle, the subsystem starts already-complete — used
         // by tests and the "stdin was fully drained before we started" case.
-        self.stdin_stream
-            .start(temp_path.to_path_buf(), buffer_id, file_size, thread_handle);
+        self.stdin_stream.start(
+            temp_path.to_path_buf(),
+            filesystem,
+            buffer_id,
+            file_size,
+            thread_handle,
+        );
 
         // Status will be updated by poll_stdin_streaming
         self.active_window_mut().status_message = Some(t!("stdin.streaming").to_string());
@@ -180,9 +194,9 @@ impl Editor {
 
         // Check current file size
         let current_size = self
-            .authority()
-            .filesystem
-            .metadata(&temp_path)
+            .stdin_stream
+            .filesystem()
+            .and_then(|fs| fs.metadata(&temp_path).ok())
             .map(|m| m.size as usize)
             .unwrap_or(last_known);
 
@@ -242,9 +256,9 @@ impl Editor {
 
         // Final poll to get any remaining data
         let final_size = self
-            .authority()
-            .filesystem
-            .metadata(&temp_path)
+            .stdin_stream
+            .filesystem()
+            .and_then(|fs| fs.metadata(&temp_path).ok())
             .map(|m| m.size as usize)
             .unwrap_or(self.stdin_stream.last_known_size());
 
@@ -448,36 +462,49 @@ impl crate::app::window::Window {
         }
         state.buffer.insert(0, &text);
 
+        // A diff gutter is derived from the text, so it is rebuilt with it.
+        if state.diff_gutter.is_some() {
+            state.diff_gutter = Some(crate::view::diff_gutter::DiffGutter::build(&text));
+        }
+
         // Clear modified flag since this is virtual buffer content setting, not user edits
         state.buffer.clear_modified();
 
         // Set text properties
         state.text_properties = properties;
 
+        // Regions a plugin declared on the previous content pointed into
+        // it; the new content brings its own (see `SetSyntaxRegions`).
+        state.highlighter.set_declared_regions(Vec::new());
+
         // Create inline overlays for the new content. Build the full vec
         // first and bulk-add it so the OverlayManager sorts exactly once;
         // a per-overlay `add` re-sorts every time and is O(n² log n) for
         // N entries (a big git-show diff can be ~500k overlays).
+        //
+        // The markers behind those overlays are built in bulk for the same
+        // reason: each overlay is three markers in the buffer's interval
+        // tree, and adding them one at a time is that many independent
+        // descents through a tree growing under them.
         {
             use crate::view::overlay::{Overlay, OverlayFace};
             use fresh_core::overlay::OverlayNamespace;
 
             let inline_ns = OverlayNamespace::from_string("_inline".to_string());
-            let mut new_overlays = Vec::with_capacity(collected_overlays.len());
-
+            let mut specs = Vec::with_capacity(collected_overlays.len());
+            let mut extras = Vec::with_capacity(collected_overlays.len());
             for co in collected_overlays {
                 let face = OverlayFace::from_options(&co.options);
-                let mut overlay = Overlay::with_namespace(
-                    &mut state.marker_list,
-                    co.range,
-                    face,
-                    inline_ns.clone(),
-                );
-                overlay.extend_to_line_end = co.options.extend_to_line_end;
-                if let Some(url) = co.options.url {
+                extras.push((co.options.extend_to_line_end, co.options.url));
+                specs.push((co.range, face));
+            }
+            let mut new_overlays =
+                Overlay::many_with_namespace(&mut state.marker_list, specs, inline_ns);
+            for (overlay, (extend_to_line_end, url)) in new_overlays.iter_mut().zip(extras) {
+                overlay.extend_to_line_end = extend_to_line_end;
+                if let Some(url) = url {
                     overlay.url = Some(url);
                 }
-                new_overlays.push(overlay);
             }
             state.overlays.extend(new_overlays);
         }

@@ -2,6 +2,7 @@
 import { computed } from "vue";
 import { useRoute, withBase } from "vitepress";
 import DefaultTheme from "vitepress/theme";
+import ImageZoom from "./ImageZoom.vue";
 
 const rssIcon = withBase("/rss.svg");
 
@@ -33,4 +34,5 @@ const isBlogEntry = computed(() => {
       </a>
     </template>
   </Layout>
+  <ImageZoom />
 </template>

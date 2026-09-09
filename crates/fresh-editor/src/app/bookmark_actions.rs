@@ -10,7 +10,7 @@
 //! plugin-hook firing is available on `Window`, `jump_to_bookmark`
 //! becomes a Window method too.
 
-use rust_i18n::t;
+use fresh_i18n::t;
 
 use crate::model::event::Event;
 

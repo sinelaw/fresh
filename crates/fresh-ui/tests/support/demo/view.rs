@@ -1,0 +1,559 @@
+//! The demo application's view: a pure function from state to a description.
+//!
+//! Between them, the pieces here use every capability the library has —
+//! all seven primitives, ambients, behaviors, layers of three different
+//! modalities, both list forms, pointer capture, focus scopes and intents.
+
+use std::rc::Rc;
+
+use fresh_ui::ambient::{provide, Ambient};
+use fresh_ui::desc::{
+    col, gesture, host, layer, row, shared_rc, stack, text, Align, Anchor, Dismiss, Fit, Modality,
+    Node, Place, Scrim, Sizing,
+};
+use fresh_ui::event::{Event, GestureKind, KeyCode, KeyPress, Mods};
+use fresh_ui::focus::Intent;
+use fresh_ui::key::Key;
+use fresh_ui::render::geom::Point;
+use fresh_ui::schedule::BuildCx;
+use fresh_ui::widgets::{divider, Button, Dropdown, List, RadioGroup, TextField};
+use fresh_ui::{Component, ComponentExt};
+
+use super::model::{App, Filter, Menu, Msg, Task, Theme, COMMANDS, PROJECTS};
+
+/// The theme reaches the status bar and the rows without appearing in a single
+/// intermediate signature.
+pub static THEME: Ambient<Theme> = Ambient::new("theme");
+
+pub fn view(app: &App) -> Node<Msg> {
+    // A root focusable that traversal skips: it exists to catch the intents no
+    // more specific part of the interface claimed. It deliberately does *not*
+    // claim Cancel — a layer that declares `dismiss(ESCAPE)` needs Escape to
+    // reach it, and an action here would swallow it first.
+    fresh_ui::desc::focusable(app_body(app))
+        .skip_traversal()
+        .action(Intent::Custom("palette"), |_| Msg::OpenPalette)
+        // The menu mnemonics are actions on the root focusable, so they fire
+        // wherever focus happens to be — that is what makes them global.
+        .action(Intent::Custom("menu.file"), |_| Msg::Menu(Some(Menu::File)))
+        .action(Intent::Custom("menu.go"), |_| Msg::Menu(Some(Menu::Go)))
+        .action(Intent::Custom("project.next"), |_| Msg::NextProject)
+}
+
+/// A scratch note, per project, owned by the element and not by the model.
+///
+/// **The point of the whole arrangement.** Its value is `Persisted` under the
+/// enclosing scope, so switching projects discards this element — the subtree
+/// above it is keyed by project — and switching back restores what this
+/// project had. Nothing in `App` knows the note exists.
+///
+/// A per-project visit counter, and the reason it counts rather than saying
+/// something fixed.
+///
+/// A note seeded per project reads the same whether it was *restored* or
+/// merely re-seeded, so it proves nothing. A count cannot be faked: this
+/// element is constructed once per visit — the subtree above it is keyed by
+/// project, so switching away destroys it — and the number it shows is
+/// therefore the number of times this project has been visited, which is only
+/// possible if the previous visit's value came back.
+///
+/// Alt-P a few times and watch the two counts advance independently. Without
+/// the scope, or without a `Store` installed on the `Ui`, both would sit at 1
+/// forever.
+struct Scratch;
+
+#[derive(Default)]
+struct ScratchState {
+    visits: Option<Rc<fresh_ui::behavior::Persisted<u32>>>,
+    scope: String,
+}
+
+impl Component<Msg> for Scratch {
+    type State = ScratchState;
+
+    fn init(&self, cx: &mut fresh_ui::InitCx<'_, Msg>) -> ScratchState {
+        // Read in `init`, which is where `Persisted` needs it — and is safe
+        // precisely because `scope()` keys the subtree, so this element never
+        // outlives the scope it read.
+        let scope = cx
+            .read(&fresh_ui::behavior::PERSISTENCE_SCOPE)
+            .map(|s| (*s).clone())
+            .unwrap_or_else(|| "<unscoped>".into());
+        let visits = cx.register(fresh_ui::behavior::Persisted::new(&scope, "visits", 0u32));
+        // One construction is one visit. `set` writes through, so the store is
+        // current immediately rather than at teardown — which matters because
+        // disposal is deferred past the *next* document's construction.
+        visits.set(visits.get() + 1);
+        ScratchState {
+            visits: Some(visits),
+            scope,
+        }
+    }
+
+    fn build(&self, s: &ScratchState, _cx: &mut BuildCx<'_, Msg>) -> Node<Msg> {
+        let n = s.visits.as_ref().map(|v| v.get()).unwrap_or(0);
+        text(format!(" {} · visit {n}", s.scope)).theme("statusbar")
+    }
+}
+
+fn app_body(app: &App) -> Node<Msg> {
+    provide(
+        &THEME,
+        app.theme.clone(),
+        col()
+            .theme("app")
+            .children([
+                menu_bar(app),
+                // **The document boundary.** `scope` keys this subtree by the
+                // project *and* provides the persistence scope, which have to
+                // travel together: a scope that changed value under a
+                // surviving element would be an ambient change, and
+                // `Persisted` reads its scope in `init()`. Switching projects
+                // therefore replaces everything below — and the scratch note
+                // comes back, because its value is anchored to the scope
+                // rather than to a position in the tree.
+                fresh_ui::ambient::scope(
+                    PROJECTS[app.project],
+                    col().flex(1).children([
+                        row().flex(1).children([
+                            sidebar(app).w(Sizing::Cells(app.sidebar)),
+                            grip(),
+                            body(app).flex(1),
+                            preview(app),
+                        ]),
+                        Scratch.node().h(Sizing::Cells(1)),
+                    ]),
+                )
+                .flex(1),
+                StatusBar {
+                    count: app.tasks.len(),
+                    status: app.status.clone(),
+                    slot: app.sync_slot.clone(),
+                }
+                .node(),
+            ])
+            .child_if(app.context.is_some(), || context_menu(app))
+            .child_if(app.confirm.is_some(), || confirm_modal(app))
+            .child_if(app.palette.is_some(), || palette(app)),
+    )
+}
+
+// -- the menu bar ------------------------------------------------------------
+
+/// The menu bar is controlled by `app.menu`: the trigger, the Alt mnemonic and
+/// a dismissal all route through the same app state, so any of them can open or
+/// close a menu and they never disagree. It can no longer be hoisted — it is a
+/// function of state now — which is the honest cost of lifting the open flag.
+fn menu_bar(app: &App) -> Node<Msg> {
+    // One binding per menu for the open flag and the toggle message, both
+    // derived from `app.menu`. `now.then_some(m)` reads as "open this menu, or
+    // close" and the enum makes a mismatch impossible.
+    let toggle = |m: Menu| move |now: bool| Msg::Menu(now.then_some(m));
+    row().theme("menubar").h(Sizing::Cells(1)).children([
+        Dropdown::new("File")
+            .item("new", "New task")
+            .item("quit", "Quit")
+            .open(app.menu == Some(Menu::File))
+            .on_toggle(toggle(Menu::File))
+            .on_choose(Msg::MenuChoice)
+            .node()
+            .key("menu.file"),
+        Dropdown::new("Go")
+            .item("palette", "Command palette")
+            .open(app.menu == Some(Menu::Go))
+            .on_toggle(toggle(Menu::Go))
+            .on_choose(Msg::MenuChoice)
+            .node()
+            .key("menu.go"),
+    ])
+}
+
+// -- the sidebar and the divider --------------------------------------------
+
+fn sidebar(app: &App) -> Node<Msg> {
+    let mut group = RadioGroup::new().selected(app.filter.key());
+    for f in Filter::ALL {
+        group = group.option(f.key(), f.label());
+    }
+    col().theme("sidebar").children([
+        text("Filter").h(Sizing::Cells(1)).theme("sidebar.title"),
+        group
+            .on_change(|k| {
+                Msg::SetFilter(match format!("{k}").as_str() {
+                    "#Open" => Filter::Open,
+                    "#Done" => Filter::Done,
+                    _ => Filter::All,
+                })
+            })
+            .node(),
+        overflow_panel(app),
+    ])
+}
+
+/// A bordered panel whose content cannot fit, so a bound has something to do.
+///
+/// Ten cells inside the frame; eleven cells of promises. A nine-cell name, a
+/// gap that will not close below one cell, and a one-cell slot. An
+/// over-wide child is normally clamped to what remains and never escapes — but
+/// `min_w` is a floor layout keeps *even when keeping it puts the slot outside
+/// the parent*, and outside the parent is the column the border is drawn on.
+///
+/// **"Toggle clipping"** in the palette (Ctrl-P) turns the bound off and on.
+/// With it on — the default, because `border()` implies it — the wall survives
+/// and the slot is simply not drawn: `│clip-test │`. With it off, the slot is
+/// placed on the wall's column and paints over it: `│clip-test M`.
+fn overflow_panel(app: &App) -> Node<Msg> {
+    col()
+        .border()
+        .clip(app.clip)
+        .theme("sidebar")
+        .h(Sizing::Cells(3))
+        // A width of its own, not the sidebar's: ten cells inside the frame,
+        // for eleven cells of promises. Dragging the grip then moves the panel
+        // without changing what it is demonstrating.
+        .w(Sizing::Cells(12))
+        .child(row().h(Sizing::Cells(1)).children([
+            text("clip-test").w(Sizing::Cells(9)),
+            row().flex(1).min_w(1),
+            text("M").w(Sizing::Cells(1)).theme("sidebar.title"),
+        ]))
+}
+
+/// A one-cell column that resizes the sidebar. Pressing it captures the
+/// pointer, so the drag continues wherever the pointer goes — that is the whole
+/// drag mechanism.
+fn grip() -> Node<Msg> {
+    gesture(col().theme("grip"))
+        .w(Sizing::Cells(1))
+        .on(
+            GestureKind::Press,
+            Rc::new(|e: &Event| {
+                e.capture_pointer();
+                Some(Msg::BeginResize)
+            }),
+        )
+        .on(
+            GestureKind::Move,
+            Rc::new(|e: &Event| Some(Msg::Resize(e.pos.x))),
+        )
+        .on(GestureKind::Release, Rc::new(|_| Some(Msg::EndResize)))
+}
+
+// -- the task list -----------------------------------------------------------
+
+fn body(app: &App) -> Node<Msg> {
+    // The list, with a ribbon drawn *over* its first row rather than above it.
+    // See `ribbon`.
+    stack().children([
+        col().children([
+            new_task_row(app).h(Sizing::Cells(1)),
+            divider(0).h(Sizing::Cells(0)),
+            task_list(app).flex(1),
+        ]),
+        // The overlay column spans the whole body — a stack child stretches —
+        // so it, and the spacer that positions the strip, have to say they are
+        // not pointer targets. A container that draws nothing still hits by
+        // default, and without this the column swallows every click on the
+        // list below it.
+        col()
+            .pointer_mode(fresh_ui::desc::PointerMode::Transparent)
+            .children([
+                // One row down: past the entry field, onto the list's own
+                // first row. (The divider between them is zero-height.)
+                row()
+                    .h(Sizing::Cells(1))
+                    .pointer_mode(fresh_ui::desc::PointerMode::Transparent),
+                ribbon(app).h(Sizing::Cells(1)),
+            ]),
+    ])
+}
+
+/// A one-row strip drawn on top of the list's first row.
+///
+/// **The point of it is what it does *not* absorb.** The strip spans the whole
+/// width, but only its button is a pointer target: everything else is
+/// `PointerMode::Transparent`, so a press on the strip's text reaches the task
+/// row underneath and selects it. Without a pointer mode on ordinary
+/// containers this could not be written — a container that draws nothing still
+/// hits, so the strip would swallow the whole first row.
+///
+/// It is the shape a title bar drawn on a panel's border takes, or a pinned
+/// header over a list.
+fn ribbon(app: &App) -> Node<Msg> {
+    // The run count the host reported for the last row press, shown here
+    // because the row's own `toggled #N` status would overwrite it.
+    let last = match app.last_click {
+        Some((i, n)) => format!("row {i} ×{n}"),
+        None => "—".into(),
+    };
+    let label = format!(" ribbon: click the text, it falls through · last press: {last} ");
+    row()
+        // The strip itself, and the spacer inside it, let presses through.
+        .pointer_mode(fresh_ui::desc::PointerMode::Transparent)
+        .children([
+            text(label)
+                .theme("ribbon")
+                .pointer_mode(fresh_ui::desc::PointerMode::Transparent),
+            row()
+                .flex(1)
+                .pointer_mode(fresh_ui::desc::PointerMode::Transparent),
+            // …and this one does not.
+            gesture(text(" [clear filter] ").theme("ribbon.button")).on_click(|_| Msg::RibbonClear),
+        ])
+}
+
+fn new_task_row(app: &App) -> Node<Msg> {
+    row().children([
+        TextField::new(&app.draft)
+            .placeholder("new task…")
+            .on_change(Msg::Draft)
+            .on_submit(|_| Msg::Add)
+            .node()
+            .flex(1),
+        Button::new("Add").on_press(|_| Msg::Add).node(),
+    ])
+}
+
+fn task_list(app: &App) -> Node<Msg> {
+    let visible = app.visible();
+    let tasks = app.tasks.clone();
+    let n = visible.len();
+    let by_row = visible.clone();
+    let accent = app.theme.accent;
+
+    List::windowed(
+        n,
+        {
+            let v = visible.clone();
+            let t = tasks.clone();
+            move |i| Key::from(v.get(i).map(|x| t[x].id).unwrap_or(0))
+        },
+        move |i| {
+            let idx = by_row.get(i).expect("index inside the window");
+            task_row(&tasks[idx], i, accent)
+        },
+    )
+    .selected(app.selected.min(n.saturating_sub(1)))
+    .on_select(Msg::Select)
+    .on_activate(Msg::Toggle)
+    .scrollbar()
+    .node()
+}
+
+fn task_row(task: &Task, i: usize, accent: &'static str) -> Node<Msg> {
+    let mark = if task.done { "[x]" } else { "[ ]" };
+    let id = task.id;
+    // No Click handler for *activation* here: the enclosing List activates a
+    // row on click and on Enter alike, and this row's list is wired with
+    // on_activate(Toggle), so a click toggles it once. The row keeps only what
+    // the List does not do — the secondary-click context menu, and the run
+    // count below.
+    gesture(row().children([
+        text(format!("{accent}{mark} ")),
+        text(task.title.clone()),
+        // **A gap that refuses to close.** `flex(1)` alone gives the badge its
+        // right edge, and `min_w(3)` keeps three cells between the title and
+        // the badge once the column is too narrow for both — the title
+        // truncates instead of the gap silently vanishing. Drag the sidebar
+        // grip right to squeeze this and watch the gap hold.
+        row().flex(1).min_w(3),
+        text(format!("#{id}")).theme("badge"),
+    ]))
+    .on(
+        GestureKind::SecondaryClick,
+        Rc::new(move |e: &Event| Some(Msg::OpenContext(i, e.pos))),
+    )
+    // How many presses in a run this was, straight off the event. The library
+    // has no clock: the host counts the run and reports it, and a `Click`
+    // carries the count of the press it completes.
+    .on(
+        GestureKind::Click,
+        Rc::new(move |e: &Event| Some(Msg::Clicked(i, e.clicks))),
+    )
+}
+
+fn preview(app: &App) -> Node<Msg> {
+    if !app.preview {
+        return Node::nil();
+    }
+    // Foreign content the host draws itself: a buffer, a terminal grid, an
+    // image. The library gives it a rectangle and nothing else. A stack puts a
+    // caption over it without either one affecting the other's layout.
+    stack()
+        .w(Sizing::Cells(12))
+        .key("preview")
+        .children([host(1u64), text("preview").h(Sizing::Cells(1))])
+}
+
+// -- layers ------------------------------------------------------------------
+
+/// Anchored to the point the click landed on, dismissed by a click outside or
+/// by Escape. Non-modal: the rest of the interface keeps working.
+fn context_menu(app: &App) -> Node<Msg> {
+    let at = app.context.map(|(_, p)| p).unwrap_or(Point::ZERO);
+    layer()
+        .key("context")
+        .anchor(Anchor::Point(at.x as u16, at.y as u16))
+        .place(Place::Below)
+        .fit(Fit::FLIP.or(Fit::CLAMP))
+        // Inert: while the menu is up, the rest of the interface takes no
+        // input, and traversal cannot leave it.
+        .modality(Modality::Inert)
+        .dismiss(Dismiss::OUTSIDE_POINTER.or(Dismiss::ESCAPE))
+        .on_dismiss(|_| Msg::CloseContext)
+        .child(
+            // A fixed width, so rows stretch across it and the selected one is
+            // a full-width region rather than exactly its own text.
+            col().border().theme("menu").w(Sizing::Cells(11)).child(
+                List::keyed(
+                    &[("toggle", "Toggle"), ("delete", "Delete…")],
+                    |(k, _)| Key::from(*k),
+                    |(_, label)| text(*label),
+                )
+                .autofocus()
+                .on_activate(|i| {
+                    Msg::ContextChoice(Key::from(if i == 0 { "toggle" } else { "delete" }))
+                })
+                .node(),
+            ),
+        )
+}
+
+/// Exclusive: everything outside is inert, traversal cannot leave, and a scrim
+/// covers what is behind.
+fn confirm_modal(app: &App) -> Node<Msg> {
+    let id = app.confirm.unwrap_or(0);
+    layer()
+        .key("modal")
+        .anchor(Anchor::Screen(Align::Center))
+        .modality(Modality::Exclusive)
+        .scrim(Some(Scrim::Dim))
+        .dismiss(Dismiss::ESCAPE)
+        .on_dismiss(|_| Msg::CancelModal)
+        .child(
+            col().border().pad(1, 0).theme("modal").children([
+                text(format!("Delete task #{id}?")).h(Sizing::Cells(1)),
+                row().gap(2).children([
+                    Button::new("Delete")
+                        .on_press(|_| Msg::ConfirmDelete)
+                        .autofocus()
+                        .node(),
+                    Button::new("Cancel").on_press(|_| Msg::CancelModal).node(),
+                ]),
+            ]),
+        )
+}
+
+/// A prompt over the whole frame: a field that takes focus, and a list of
+/// matches under it. Re-keyed on nothing here, but the pattern is the same one
+/// that resets a prompt's editing state by re-keying it on its kind.
+fn palette(app: &App) -> Node<Msg> {
+    let query = app.palette.clone().unwrap_or_default();
+    let matches = app.palette_matches();
+    let labels: Vec<&'static str> = matches.iter().map(|i| COMMANDS[*i]).collect();
+
+    layer()
+        .key("palette")
+        .anchor(Anchor::Screen(Align::Center))
+        .modality(Modality::Inert)
+        .dismiss(Dismiss::ESCAPE)
+        .on_dismiss(|_| Msg::ClosePalette)
+        .child(
+            col()
+                .border()
+                .theme("palette")
+                .w(Sizing::Cells(24))
+                .children([
+                    TextField::new(&query)
+                        .placeholder("command…")
+                        .autofocus()
+                        .on_change(Msg::PaletteQuery)
+                        .on_submit(|_| Msg::RunCommand(0))
+                        .node()
+                        .h(Sizing::Cells(1)),
+                    List::keyed(&labels, |l| Key::from(*l), |l| text(*l))
+                        .selected(app.palette_selection.min(labels.len().saturating_sub(1)))
+                        .on_select(Msg::PaletteSelect)
+                        .on_activate(Msg::RunCommand)
+                        .node()
+                        .h(Sizing::Cells(labels.len().max(1) as u16)),
+                ]),
+        )
+}
+
+// -- a component that reads an ambient ---------------------------------------
+
+pub struct StatusBar {
+    count: usize,
+    status: String,
+    /// Where the harness (standing in for a network client) picks up the handle
+    /// it delivers results through.
+    slot: SyncSlot,
+}
+
+pub type SyncSlot = Rc<std::cell::RefCell<Option<fresh_ui::behavior::TaskHandle<usize>>>>;
+
+#[derive(Default)]
+pub struct StatusState {
+    synced: usize,
+    /// Held so the behavior lives exactly as long as the element does.
+    _tasks: Option<Rc<fresh_ui::behavior::Tasks<usize>>>,
+}
+
+impl Component<Msg> for StatusBar {
+    type State = StatusState;
+
+    fn init(&self, cx: &mut fresh_ui::schedule::InitCx<'_, Msg>) -> StatusState {
+        let tasks = cx.register(fresh_ui::behavior::Tasks::<usize>::new());
+        let up = cx.updater::<StatusState>();
+        tasks.on_result(move |n| up.set(move |s: &mut StatusState| s.synced = n));
+        *self.slot.borrow_mut() = Some(tasks.handle("sync"));
+        StatusState {
+            synced: 0,
+            _tasks: Some(tasks),
+        }
+    }
+
+    fn build(&self, s: &StatusState, cx: &mut BuildCx<'_, Msg>) -> Node<Msg> {
+        // One explicit hop. When the theme changes this element is marked, and
+        // nothing else is.
+        let theme = cx.read(&THEME).map(|t| t.name).unwrap_or("none");
+        row()
+            .theme("status")
+            .h(Sizing::Cells(1))
+            .children([text(format!(
+                "{} tasks · {} · synced {} · {}",
+                self.count, theme, s.synced, self.status
+            ))])
+    }
+
+    fn describe_state(&self, s: &StatusState) -> Option<String> {
+        Some(format!("synced={}", s.synced))
+    }
+}
+
+/// Global shortcuts the demo installs on top of the default map.
+pub fn shortcuts() -> Vec<fresh_ui::focus::Shortcut> {
+    let mut s = fresh_ui::focus::default_shortcuts();
+    s.push(fresh_ui::focus::Shortcut::new(
+        KeyPress::with(KeyCode::Char('p'), Mods::CTRL),
+        Intent::Custom("palette"),
+    ));
+    // Menu mnemonics: Alt-F opens File, Alt-G opens Go — the same intents the
+    // root focusable acts on, so the chord works from anywhere.
+    s.push(fresh_ui::focus::Shortcut::new(
+        KeyPress::with(KeyCode::Char('f'), Mods::ALT),
+        Intent::Custom("menu.file"),
+    ));
+    s.push(fresh_ui::focus::Shortcut::new(
+        KeyPress::with(KeyCode::Char('g'), Mods::ALT),
+        Intent::Custom("menu.go"),
+    ));
+    // Alt-P switches documents. Everything below the scope is replaced, and
+    // the scratch note comes back with the project it belongs to.
+    s.push(fresh_ui::focus::Shortcut::new(
+        KeyPress::with(KeyCode::Char('p'), Mods::ALT),
+        Intent::Custom("project.next"),
+    ));
+    s
+}

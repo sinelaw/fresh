@@ -932,8 +932,8 @@ fn test_session_cursor_visible_in_splits_after_restore() {
             "[TEST] Before render: cursor={} (line {}), top_byte={}, top_view_line_offset={}",
             cursor_before_render,
             line_before + 1,
-            viewport_before.top_byte,
-            viewport_before.top_view_line_offset
+            viewport_before.top_byte(),
+            viewport_before.top_view_line_offset()
         );
 
         harness.render().unwrap();
@@ -950,8 +950,8 @@ fn test_session_cursor_visible_in_splits_after_restore() {
             "[TEST] After render: cursor={} (line {}), top_byte={}, top_view_line_offset={}",
             cursor_after_render,
             line_after + 1,
-            viewport_after.top_byte,
-            viewport_after.top_view_line_offset
+            viewport_after.top_byte(),
+            viewport_after.top_view_line_offset()
         );
 
         // CRITICAL: Cursor must be on line 150 after restore
@@ -963,10 +963,11 @@ fn test_session_cursor_visible_in_splits_after_restore() {
         );
 
         // Check if scroll position changed
-        if viewport_before.top_byte != viewport_after.top_byte {
+        if viewport_before.top_byte() != viewport_after.top_byte() {
             eprintln!(
                 "[TEST] WARNING: Scroll changed during render! {} -> {}",
-                viewport_before.top_byte, viewport_after.top_byte
+                viewport_before.top_byte(),
+                viewport_after.top_byte()
             );
         }
 
@@ -1919,8 +1920,9 @@ fn test_plugin_ephemeral_terminal_excluded_from_workspace() {
             window_id: None,
             command: None,
             title: None,
+            resume: None,
             env: None,
-            command_allowlist: None,
+            allow_script: false,
             request_id: 0,
         })
         .unwrap();
@@ -1967,8 +1969,9 @@ fn test_plugin_persistent_terminal_included_in_workspace() {
             window_id: None,
             command: None,
             title: None,
+            resume: None,
             env: None,
-            command_allowlist: None,
+            allow_script: false,
             request_id: 0,
         })
         .unwrap();
@@ -2021,8 +2024,9 @@ fn test_plugin_split_terminal_not_duplicated_in_active_split() {
             window_id: None,
             command: None,
             title: None,
+            resume: None,
             env: None,
-            command_allowlist: None,
+            allow_script: false,
             request_id: 0,
         })
         .unwrap();

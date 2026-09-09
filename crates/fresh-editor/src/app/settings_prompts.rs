@@ -11,7 +11,7 @@
 //! sibling impl Editor block. A future phase will collapse the
 //! boilerplate into a single SettingsPromptBuilder<T>.
 
-use rust_i18n::t;
+use fresh_i18n::t;
 
 use crate::config_io::{ConfigLayer, ConfigResolver};
 use crate::view::prompt::PromptType;
@@ -56,7 +56,7 @@ impl Editor {
             })
             .collect();
 
-        self.active_window_mut().prompt = Some(crate::view::prompt::Prompt::with_suggestions(
+        self.set_prompt(crate::view::prompt::Prompt::with_suggestions(
             "Line ending: ".to_string(),
             PromptType::SetLineEnding,
             suggestions,
@@ -66,9 +66,7 @@ impl Editor {
             if !prompt.suggestions.is_empty() {
                 prompt.selected_suggestion = Some(current_index);
                 let (_, name, desc) = options[current_index];
-                prompt.input = format!("{} ({})", name, desc);
-                prompt.cursor_pos = prompt.input.len();
-                prompt.selection_anchor = Some(0);
+                prompt.set_input_selected(format!("{} ({})", name, desc));
             }
         }
     }
@@ -104,7 +102,7 @@ impl Editor {
             .position(|enc| *enc == current_encoding)
             .unwrap_or(0);
 
-        self.active_window_mut().prompt = Some(crate::view::prompt::Prompt::with_suggestions(
+        self.set_prompt(crate::view::prompt::Prompt::with_suggestions(
             "Encoding: ".to_string(),
             PromptType::SetEncoding,
             suggestions,
@@ -114,10 +112,11 @@ impl Editor {
             if !prompt.suggestions.is_empty() {
                 prompt.selected_suggestion = Some(current_index);
                 let enc = Encoding::all()[current_index];
-                prompt.input = format!("{} ({})", enc.display_name(), enc.description());
-                prompt.cursor_pos = prompt.input.len();
-                // Select all text so typing immediately replaces it
-                prompt.selection_anchor = Some(0);
+                prompt.set_input_selected(format!(
+                    "{} ({})",
+                    enc.display_name(),
+                    enc.description()
+                ));
             }
         }
     }
@@ -182,7 +181,7 @@ impl Editor {
             .position(|enc| *enc == current_encoding)
             .unwrap_or(0);
 
-        self.active_window_mut().prompt = Some(crate::view::prompt::Prompt::with_suggestions(
+        self.set_prompt(crate::view::prompt::Prompt::with_suggestions(
             "Reload with encoding: ".to_string(),
             PromptType::ReloadWithEncoding,
             suggestions,
@@ -192,9 +191,11 @@ impl Editor {
             if !prompt.suggestions.is_empty() {
                 prompt.selected_suggestion = Some(current_index);
                 let enc = Encoding::all()[current_index];
-                prompt.input = format!("{} ({})", enc.display_name(), enc.description());
-                prompt.cursor_pos = prompt.input.len();
-                prompt.selection_anchor = Some(0);
+                prompt.set_input_selected(format!(
+                    "{} ({})",
+                    enc.display_name(),
+                    enc.description()
+                ));
             }
         }
     }
@@ -302,7 +303,7 @@ impl Editor {
         // Find current language index
         let current_index = current_index_found.unwrap_or(0);
 
-        self.active_window_mut().prompt = Some(crate::view::prompt::Prompt::with_suggestions(
+        self.set_prompt(crate::view::prompt::Prompt::with_suggestions(
             "Language: ".to_string(),
             PromptType::SetLanguage,
             suggestions,
@@ -379,7 +380,7 @@ impl Editor {
             })
             .collect();
 
-        self.active_window_mut().prompt = Some(crate::view::prompt::Prompt::with_suggestions(
+        self.set_prompt(crate::view::prompt::Prompt::with_suggestions(
             "Select theme: ".to_string(),
             PromptType::SelectTheme {
                 original_theme: current_theme_key.to_string(),
@@ -392,13 +393,11 @@ impl Editor {
                 prompt.selected_suggestion = Some(current_index);
                 // Set input to match selected theme key
                 if let Some(suggestion) = prompt.suggestions.get(current_index) {
-                    prompt.input = suggestion.get_value().to_string();
+                    let synced = suggestion.get_value().to_string();
+                    prompt.set_input_selected(synced);
                 } else {
-                    prompt.input = current_theme_key.to_string();
+                    prompt.set_input_selected(current_theme_key.to_string());
                 }
-                prompt.cursor_pos = prompt.input.len();
-                // Select all so typing replaces the pre-filled value
-                prompt.selection_anchor = Some(0);
             }
         }
     }
@@ -415,11 +414,10 @@ impl Editor {
         if !self.config.editor.animations {
             return;
         }
-        let animations = &mut self.active_window_mut().animations;
-        let Some(area) = animations.last_frame_area() else {
+        let Some(area) = self.last_rendered_frame.as_ref().map(|b| b.area) else {
             return;
         };
-        animations.start(
+        self.active_window_mut().animations.start(
             area,
             crate::view::animation::AnimationKind::ColorTransition {
                 duration: std::time::Duration::from_millis(200),
@@ -433,9 +431,6 @@ impl Editor {
             if let Some(theme) = self.theme_registry.get_cloned(key_or_name) {
                 *self.theme.write().unwrap() = theme;
                 self.start_theme_transition_animation();
-
-                // Set terminal cursor color to match theme
-                self.theme.read().unwrap().set_terminal_cursor_color();
 
                 // Re-apply all overlays so colors match the new theme
                 // (diagnostic and semantic token overlays bake RGB at creation time).
@@ -548,7 +543,6 @@ impl Editor {
                     // a new transition replaces the in-flight one and
                     // fades from whatever is on screen right now.
                     self.start_theme_transition_animation();
-                    self.theme.read().unwrap().set_terminal_cursor_color();
                     self.reapply_all_overlays();
                 }
             }
@@ -648,7 +642,7 @@ impl Editor {
             })
             .collect();
 
-        self.active_window_mut().prompt = Some(crate::view::prompt::Prompt::with_suggestions(
+        self.set_prompt(crate::view::prompt::Prompt::with_suggestions(
             "Select keybinding map: ".to_string(),
             PromptType::SelectKeybindingMap,
             suggestions,
@@ -657,9 +651,7 @@ impl Editor {
         if let Some(prompt) = self.active_window_mut().prompt.as_mut() {
             if !prompt.suggestions.is_empty() {
                 prompt.selected_suggestion = Some(current_index);
-                prompt.input = current_map.clone();
-                prompt.cursor_pos = prompt.input.len();
-                prompt.selection_anchor = Some(0);
+                prompt.set_input_selected(current_map.clone());
             }
         }
     }
@@ -748,7 +740,7 @@ impl Editor {
             .position(|s| *s == current_style.as_str())
             .unwrap_or(0);
 
-        self.active_window_mut().prompt = Some(crate::view::prompt::Prompt::with_suggestions(
+        self.set_prompt(crate::view::prompt::Prompt::with_suggestions(
             "Select cursor style: ".to_string(),
             PromptType::SelectCursorStyle,
             suggestions,
@@ -757,9 +749,7 @@ impl Editor {
         if let Some(prompt) = self.active_window_mut().prompt.as_mut() {
             if !prompt.suggestions.is_empty() {
                 prompt.selected_suggestion = Some(current_index);
-                prompt.input = CursorStyle::DESCRIPTIONS[current_index].to_string();
-                prompt.cursor_pos = prompt.input.len();
-                prompt.selection_anchor = Some(0);
+                prompt.set_input_selected(CursorStyle::DESCRIPTIONS[current_index].to_string());
             }
         }
     }
@@ -838,7 +828,7 @@ impl Editor {
             })
             .collect();
 
-        self.active_window_mut().prompt = Some(crate::view::prompt::Prompt::with_suggestions(
+        self.set_prompt(crate::view::prompt::Prompt::with_suggestions(
             t!("rulers.remove_prompt").to_string(),
             PromptType::RemoveRuler,
             suggestions,
@@ -922,7 +912,7 @@ impl Editor {
             })
             .collect();
 
-        self.active_window_mut().prompt = Some(crate::view::prompt::Prompt::with_suggestions(
+        self.set_prompt(crate::view::prompt::Prompt::with_suggestions(
             t!("locale.select_prompt").to_string(),
             PromptType::SelectLocale,
             suggestions,
@@ -932,8 +922,7 @@ impl Editor {
             if !prompt.suggestions.is_empty() {
                 prompt.selected_suggestion = Some(current_index);
                 // Start with empty input to show all options initially
-                prompt.input = String::new();
-                prompt.cursor_pos = 0;
+                prompt.set_input_plain(String::new());
             }
         }
     }

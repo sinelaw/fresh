@@ -1,15 +1,16 @@
 //! Click and scroll-position helpers on `Editor`.
 //!
-//! - `move_cursor_to_visible_area` and `calculate_max_scroll_position`:
-//!   small helpers that fix up cursor position after scroll-driven moves
-//!   so the user keeps a visible cursor.
+//! - `calculate_max_scroll_position`: the small helper that caps a
+//!   scroll-driven move so the last line lands at the bottom of the view.
 //! - `fold_toggle_line_at_screen_position`: maps a click in the gutter to
 //!   the byte to fold/unfold (uses the pure helper from
 //!   `super::click_geometry`).
 //! - `handle_editor_click`: dispatches mouse clicks to gutter / scrollbar
-//!   / cursor placement / multi-cursor add depending on modifiers.
-//! - `handle_file_explorer_click`: file-browser entry selection and
-//!   expand/collapse.
+//!   / caret placement. A plain click places the caret and collapses to
+//!   one cursor; Shift/Ctrl extend the selection. No click adds a cursor.
+//!
+//! (`handle_file_explorer_click` lives with its component in
+//! `chrome/file_explorer.rs`.)
 
 use anyhow::Result as AnyhowResult;
 
@@ -20,9 +21,7 @@ use crate::services::plugins::hooks::HookArgs;
 use super::Editor;
 
 impl Editor {
-    // `move_cursor_to_visible_area` and `calculate_max_scroll_position`
-    // live on `impl Window` — call them via
-    // `self.active_window_mut().move_cursor_to_visible_area(...)` and
+    // `calculate_max_scroll_position` lives on `impl Window` — call it via
     // `Window::calculate_max_scroll_position(buffer, viewport_height)`.
 
     pub(super) fn fold_toggle_line_at_screen_position(
@@ -30,107 +29,114 @@ impl Editor {
         col: u16,
         row: u16,
     ) -> Option<(BufferId, usize)> {
-        for (split_id, buffer_id, content_rect, _scrollbar_rect, _thumb_start, _thumb_end) in
-            &self.active_layout().split_areas
+        // Which pane covers the cell, and where its content is — one
+        // question the shell answers from the tree, rather than a scan of
+        // the painter's record repeating the containment test by hand.
+        let (split_id, content_rect) = self.pane_content_at(col, row)?;
+        let buffer_id = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.pane_buffer(split_id))?;
+        let (split_id, buffer_id, content_rect) = (&split_id, &buffer_id, &content_rect);
+        // Neither a terminal grid nor a composite view has fold gutters.
+        if self.active_window().is_terminal_buffer(*buffer_id)
+            || self.active_window().is_composite_buffer(*buffer_id)
         {
-            if col < content_rect.x
-                || col >= content_rect.x + content_rect.width
-                || row < content_rect.y
-                || row >= content_rect.y + content_rect.height
-            {
-                continue;
-            }
+            return None;
+        }
 
-            if self.active_window().is_terminal_buffer(*buffer_id)
-                || self.active_window().is_composite_buffer(*buffer_id)
-            {
-                continue;
-            }
-
-            let (gutter_width, collapsed_header_bytes) = {
-                let state = self
-                    .windows
-                    .get(&self.active_window)
-                    .map(|w| &w.buffers)
-                    .expect("active window present")
-                    .get(buffer_id)?;
-                let headers = self
-                    .windows
-                    .get(&self.active_window)
-                    .and_then(|w| w.buffers.splits())
-                    .map(|(_, vs)| vs)
-                    .expect("active window must have a populated split layout")
-                    .get(split_id)
-                    .map(|vs| {
-                        vs.folds
-                            .collapsed_header_bytes(&state.buffer, &state.marker_list)
-                    })
-                    .unwrap_or_default();
-                (state.margins.left_total_width() as u16, headers)
-            };
-
-            let cached_mappings = self
-                .active_layout()
-                .view_line_mappings
-                .get(split_id)
-                .cloned();
-            let fallback = self
-                .windows
-                .get(&self.active_window)
-                .and_then(|w| w.buffers.splits())
-                .map(|(_, vs)| vs)
-                .expect("active window must have a populated split layout")
-                .get(split_id)
-                .map(|vs| vs.viewport.top_byte)
-                .unwrap_or(0);
-            let compose_width = self
-                .windows
-                .get(&self.active_window)
-                .and_then(|w| w.buffers.splits())
-                .map(|(_, vs)| vs)
-                .expect("active window must have a populated split layout")
-                .get(split_id)
-                .and_then(|vs| vs.compose_width);
-
-            let target_position = super::click_geometry::screen_to_buffer_position(
-                col,
-                row,
-                *content_rect,
-                gutter_width,
-                &cached_mappings,
-                fallback,
-                true,
-                compose_width,
-            )?;
-
-            let adjusted_rect = super::click_geometry::adjust_content_rect_for_compose(
-                *content_rect,
-                compose_width,
-            );
-            let content_col = col.saturating_sub(adjusted_rect.x);
+        let (gutter_width, collapsed_header_bytes) = {
             let state = self
                 .windows
                 .get(&self.active_window)
                 .map(|w| &w.buffers)
                 .expect("active window present")
                 .get(buffer_id)?;
-            if let Some(byte_pos) = super::click_geometry::fold_toggle_byte_from_position(
-                state,
-                &collapsed_header_bytes,
-                target_position,
-                content_col,
-                gutter_width,
-            ) {
-                return Some((*buffer_id, byte_pos));
-            }
+            let headers = self
+                .windows
+                .get(&self.active_window)
+                .and_then(|w| w.buffers.splits())
+                .map(|(_, vs)| vs)
+                .expect("active window must have a populated split layout")
+                .get(split_id)
+                .map(|vs| {
+                    vs.folds
+                        .collapsed_header_bytes(&state.buffer, &state.marker_list)
+                })
+                .unwrap_or_default();
+            (state.margins.left_total_width() as u16, headers)
+        };
+
+        let cached_mappings = self
+            .active_window()
+            .pane_view(*split_id)
+            .map(|v| v.rows.clone());
+        let fallback = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.splits())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
+            .get(split_id)
+            .map(|vs| vs.viewport.top_byte())
+            .unwrap_or(0);
+        let compose_width = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.splits())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
+            .get(split_id)
+            .and_then(|vs| vs.compose_width);
+
+        let target_position = super::click_geometry::screen_to_buffer_position(
+            col,
+            row,
+            *content_rect,
+            gutter_width,
+            cached_mappings.as_deref(),
+            fallback,
+            true,
+            compose_width,
+        )?;
+
+        let adjusted_rect =
+            super::click_geometry::adjust_content_rect_for_compose(*content_rect, compose_width);
+        let content_col = col.saturating_sub(adjusted_rect.x);
+        let state = self
+            .windows
+            .get(&self.active_window)
+            .map(|w| &w.buffers)
+            .expect("active window present")
+            .get(buffer_id)?;
+        let fold_indicators_visible = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.splits())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
+            .get(split_id)
+            .map(|vs| vs.fold_indicators_visible())
+            .unwrap_or(true);
+        if let Some(byte_pos) = super::click_geometry::fold_toggle_byte_from_position(
+            state,
+            &collapsed_header_bytes,
+            target_position,
+            content_col,
+            gutter_width,
+            fold_indicators_visible,
+        ) {
+            return Some((*buffer_id, byte_pos));
         }
 
         None
     }
 
     /// Handle click in editor content area
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn handle_editor_click(
         &mut self,
+        byte: Option<usize>,
         col: u16,
         row: u16,
         split_id: crate::model::event::LeafId,
@@ -140,6 +146,7 @@ impl Editor {
     ) -> AnyhowResult<()> {
         use crate::model::event::{CursorId, Event};
         use crossterm::event::KeyModifiers;
+
         // Build modifiers string for plugins
         let modifiers_str = if modifiers.contains(KeyModifiers::SHIFT) {
             "shift".to_string()
@@ -151,85 +158,49 @@ impl Editor {
         // and the mouse_click hook need them, and the cost (a single
         // `screen_to_buffer_position` call) is non-trivial — share the
         // result.
-        let (mc_buffer_row, mc_buffer_col) = {
-            let cached_mappings = self
-                .active_layout()
-                .view_line_mappings
-                .get(&split_id)
-                .cloned();
-            let fallback = self
-                .windows
-                .get(&self.active_window)
-                .and_then(|w| w.buffers.splits())
-                .map(|(_, vs)| vs)
-                .expect("active window must have a populated split layout")
-                .get(&split_id)
-                .map(|vs| vs.viewport.top_byte)
-                .unwrap_or(0);
-            let compose_width = self
-                .windows
-                .get(&self.active_window)
-                .and_then(|w| w.buffers.splits())
-                .map(|(_, vs)| vs)
-                .expect("active window must have a populated split layout")
-                .get(&split_id)
-                .and_then(|vs| vs.compose_width);
-            let gutter_width = self
-                .buffers()
-                .get(&buffer_id)
-                .map(|s| s.margins.left_total_width() as u16)
-                .unwrap_or(0);
-            let target = super::click_geometry::screen_to_buffer_position(
-                col,
-                row,
-                content_rect,
-                gutter_width,
-                &cached_mappings,
-                fallback,
-                true,
-                compose_width,
-            );
-            match target {
-                Some(byte_pos) => {
-                    let state = self
-                        .windows
-                        .get(&self.active_window)
-                        .map(|w| &w.buffers)
-                        .expect("active window present")
-                        .get(&buffer_id);
-                    if let Some(s) = state {
+        // **A described pane has no screen-to-line projection, and must say
+        // so rather than answer.** Its content is the panel's subtree, not
+        // the buffer's leaf, so no rows are settled for it and a byte would
+        // be a number that is wrong for every click but one; `None` is what
+        // both readers below expect for "no position", and what the
+        // `mouse_click` hook's `Option` fields mean.
+        let described_pane = self.pane_panel_is_described(buffer_id);
+        let (mc_buffer_row, mc_buffer_col) = match byte.filter(|_| !described_pane) {
+            Some(byte_pos) => {
+                let state = self
+                    .windows
+                    .get(&self.active_window)
+                    .map(|w| &w.buffers)
+                    .expect("active window present")
+                    .get(&buffer_id);
+                match state {
+                    Some(s) => {
                         let (line, col_b) = s.buffer.position_to_line_col(byte_pos);
                         (
                             Some(line.min(u32::MAX as usize) as u32),
                             Some(col_b.min(u32::MAX as usize) as u32),
                         )
-                    } else {
-                        (None, None)
                     }
+                    None => (None, None),
                 }
-                None => (None, None),
             }
+            None => (None, None),
         };
 
-        // Widget hit-test: if the click landed on a Toggle/Button
-        // inside a mounted widget panel, fire the semantic
-        // `widget_event` hook. We still fall through to `mouse_click`
-        // afterwards so plugins that bind both hooks get both events
-        // — needed for incremental migration of plugins that haven't
-        // moved their click handlers off the raw `mouse_click` path
-        // yet. Once a plugin's click handling is fully widget-event
-        // driven, it stops listening to `mouse_click` for its panel
-        // and the duplicate dispatch becomes a no-op.
-        if let (Some(brow), Some(bcol)) = (mc_buffer_row, mc_buffer_col) {
-            // Row-aware so a click past a list/tree row's text still lands on
-            // the row (see `hit_test_row_aware`) — the mounted panels
-            // (Settings, Search & Replace) get the same full-width rows the
-            // floating dock does, from the one shared resolver.
-            if let Some((panel_key, hit)) = self
-                .widget_registry
-                .hit_test_row_aware(buffer_id, brow, bcol)
-            {
-                self.deliver_widget_hit(&panel_key, &hit, Some(bcol as usize));
+        // A press on a widget never reaches here: a mounted panel's widgets
+        // are nodes in the tree, and a node answers its own press and stops
+        // it (`view::shell::widgets`). What arrives is a press the panel's
+        // nodes declined, and the buffer's own readers below get it.
+
+        // A line that points somewhere (`editor.setLineTargets`) opens its
+        // target on click. Checked before the plugin hook so a declarative
+        // index behaves the same whether or not anything is listening — its
+        // author is typically a script that has already exited.
+        #[cfg(feature = "plugins")]
+        if let Some(brow) = mc_buffer_row {
+            if let Some(target) = self.line_target_at(buffer_id, brow as usize) {
+                self.follow_line_target(target, split_id);
+                return Ok(());
             }
         }
 
@@ -267,11 +238,20 @@ impl Editor {
         // A widget-panel buffer can also be non-scrollable (it owns its own
         // scroll window, e.g. Search & Replace), but it IS an interactive
         // target — its click must still route focus to the split so
-        // keyboard nav works afterward. So only swallow non-scrollable
-        // buffers that don't host a widget panel.
-        if self.active_window().is_non_scrollable_buffer(buffer_id)
-            && self.widget_registry.panels_for_buffer(buffer_id).is_empty()
-        {
+        // keyboard nav works afterward.
+        if self.active_window().is_non_scrollable_buffer(buffer_id) {
+            if self.widget_registry.panels_for_buffer(buffer_id).is_empty() {
+                return Ok(());
+            }
+            // Widget panel: take the focus, then stop. The panel owns every
+            // row it draws, and its nodes already answered any click that
+            // landed on a control. A click that missed one — a
+            // `labeledSection` border, the padding under a short list — must
+            // not fall through to cursor placement: the buffer's cursor is
+            // hidden, but the viewport still follows it, so the click scrolls
+            // the panel's own header and buttons out of view with no way to
+            // scroll them back.
+            self.focus_split(split_id, buffer_id);
             return Ok(());
         }
 
@@ -330,23 +310,12 @@ impl Editor {
             self.active_window_mut().key_context = crate::input::keybindings::KeyContext::Normal;
         }
 
-        // Get cached view line mappings for this split (before mutable borrow of buffers)
+        // The rows the pane's last text pass drew, as its leaf keeps them —
+        // the same rows the leaf answered `byte` from.
         let cached_mappings = self
-            .active_layout()
-            .view_line_mappings
-            .get(&split_id)
-            .cloned();
-
-        // Get fallback from SplitViewState viewport
-        let fallback = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(_, vs)| vs)
-            .expect("active window must have a populated split layout")
-            .get(&split_id)
-            .map(|vs| vs.viewport.top_byte)
-            .unwrap_or(0);
+            .active_window()
+            .pane_view(split_id)
+            .map(|v| v.rows.clone());
 
         // Get compose width for this split (adjusts content rect for centered layout)
         let compose_width = self
@@ -358,6 +327,11 @@ impl Editor {
             .get(&split_id)
             .and_then(|vs| vs.compose_width);
 
+        // Shift-click extends the selection; Ctrl-click too, since some
+        // terminals intercept Shift+click.
+        let extend_selection =
+            modifiers.contains(KeyModifiers::SHIFT) || modifiers.contains(KeyModifiers::CONTROL);
+
         // Calculate clicked position in buffer
         let (toggle_fold_byte, onclick_action, click_target, cursor_snapshot) = if let Some(state) =
             self.windows
@@ -368,21 +342,30 @@ impl Editor {
         {
             let gutter_width = state.margins.left_total_width() as u16;
 
-            let Some(click_target) =
-                super::click_geometry::screen_to_buffer_position_with_overshoot(
-                    col,
-                    row,
-                    content_rect,
-                    gutter_width,
-                    &cached_mappings,
-                    fallback,
-                    true, // Allow gutter clicks - position cursor at start of line
-                    compose_width,
+            // **The byte is the leaf's; the overshoot is read from the same
+            // rows.** The press carries the byte the pane's leaf answered
+            // (`Event::text_byte`); how far past the drawn content the cell
+            // was — what virtual space places the caret by — is the same
+            // projection asked once more here, in the leaf's own cells
+            // (`content_rect` is the tree's, as the leaf's rectangle was
+            // when it answered), and the two agree because they are one
+            // function over one view.
+            let Some(click_target) = self.active_window().pane_view(split_id).and_then(|v| {
+                v.click_target(
+                    col.saturating_sub(content_rect.x),
+                    row.saturating_sub(content_rect.y),
                 )
-            else {
+            }) else {
                 return Ok(());
             };
-            let target_position = click_target.position;
+            if byte.is_some() {
+                debug_assert_eq!(
+                    byte,
+                    Some(click_target.position),
+                    "the press's byte is the leaf's answer for its cell"
+                );
+            }
+            let target_position = byte.unwrap_or(click_target.position);
 
             // Toggle fold on gutter click if this line is foldable/collapsed
             let adjusted_rect =
@@ -400,12 +383,22 @@ impl Editor {
                         .collapsed_header_bytes(&state.buffer, &state.marker_list)
                 })
                 .unwrap_or_default();
+            let fold_indicators_visible = self
+                .windows
+                .get(&self.active_window)
+                .and_then(|w| w.buffers.splits())
+                .map(|(_, vs)| vs)
+                .expect("active window must have a populated split layout")
+                .get(&split_id)
+                .map(|vs| vs.fold_indicators_visible())
+                .unwrap_or(true);
             let toggle_fold_byte = super::click_geometry::fold_toggle_byte_from_position(
                 state,
                 &collapsed_header_bytes,
                 target_position,
                 content_col,
                 gutter_width,
+                fold_indicators_visible,
             );
 
             let cursor_snapshot = self
@@ -416,16 +409,55 @@ impl Editor {
                 .expect("active window must have a populated split layout")
                 .get(&split_id)
                 .map(|vs| {
-                    let cursor = vs.cursors.primary();
+                    // A plain click ends multi-cursor editing: every other
+                    // cursor goes and the one kept moves to the click — as
+                    // in VS Code, Sublime and Zed. Before this the click
+                    // moved the primary and kept the rest, which may be
+                    // out of the viewport, and the next keystroke edited
+                    // every one of them (#3125). Shift/Ctrl-click extends
+                    // the primary's selection and leaves the set alone.
+                    //
+                    // The survivor is the lowest id, as `Esc`
+                    // (`RemoveSecondaryCursors`) keeps it, not the primary:
+                    // the add-cursor commands allocate the next id from the
+                    // cursor count, so a lone survivor with a higher id
+                    // would be overwritten by the next `Ctrl+Alt+Down`.
+                    let kept_id = if extend_selection {
+                        vs.cursors.primary_id()
+                    } else {
+                        vs.cursors
+                            .ids()
+                            .into_iter()
+                            .min_by_key(|id| id.0)
+                            .unwrap_or_else(|| vs.cursors.primary_id())
+                    };
+                    let cursor = vs
+                        .cursors
+                        .get(kept_id)
+                        .copied()
+                        .unwrap_or(*vs.cursors.primary());
+                    // Sorted by id so the logged batch, and which cursor an
+                    // undo re-adds last, do not depend on hash order.
+                    let mut removed: Vec<(CursorId, usize, Option<usize>)> = if extend_selection {
+                        Vec::new()
+                    } else {
+                        vs.cursors
+                            .iter()
+                            .filter(|(id, _)| *id != kept_id)
+                            .map(|(id, c)| (id, c.position, c.anchor))
+                            .collect()
+                    };
+                    removed.sort_by_key(|(id, _, _)| id.0);
                     (
-                        vs.cursors.primary_id(),
+                        kept_id,
                         cursor.position,
                         cursor.anchor,
                         cursor.sticky_column,
                         cursor.deselect_on_move,
+                        removed,
                     )
                 })
-                .unwrap_or((CursorId(0), 0, None, None, true));
+                .unwrap_or((CursorId(0), 0, None, None, true, Vec::new()));
 
             // Check for onClick text property at this position
             // This enables clickable UI elements in virtual buffers
@@ -456,14 +488,12 @@ impl Editor {
         // buffer's last display line) parks the cursor on a virtual line at
         // the clicked column, regardless of the last line's width. Only when
         // virtual space is fully on and the click doesn't extend a selection.
-        let extend_click =
-            modifiers.contains(KeyModifiers::SHIFT) || modifiers.contains(KeyModifiers::CONTROL);
         let virtual_lines_below = self
             .buffers()
             .get(&buffer_id)
             .filter(|state| {
                 click_target.row_overshoot > 0
-                    && !extend_click
+                    && !extend_selection
                     && state.buffer_settings.virtual_space.cursor_beyond_eol()
                     && cached_mappings
                         .as_ref()
@@ -489,8 +519,14 @@ impl Editor {
             return Ok(());
         }
 
-        let (primary_cursor_id, old_position, old_anchor, old_sticky_column, deselect_on_move) =
-            cursor_snapshot;
+        let (
+            kept_cursor_id,
+            old_position,
+            old_anchor,
+            old_sticky_column,
+            deselect_on_move,
+            removed_cursors,
+        ) = cursor_snapshot;
 
         if let Some(action_name) = onclick_action {
             // Execute the action associated with this clickable element
@@ -507,9 +543,6 @@ impl Editor {
         }
 
         // Move cursor to clicked position (respect shift for selection)
-        // Both modifiers supported since some terminals intercept shift+click.
-        let extend_selection =
-            modifiers.contains(KeyModifiers::SHIFT) || modifiers.contains(KeyModifiers::CONTROL);
         let new_anchor = if extend_selection {
             Some(old_anchor.unwrap_or(old_position))
         } else if deselect_on_move {
@@ -552,8 +585,8 @@ impl Editor {
             crate::primitives::display_width::visual_column_of(&state.buffer, target_position)
         });
 
-        let event = Event::MoveCursor {
-            cursor_id: primary_cursor_id,
+        let move_event = Event::MoveCursor {
+            cursor_id: kept_cursor_id,
             old_position,
             new_position: target_position,
             old_anchor,
@@ -562,9 +595,37 @@ impl Editor {
             new_sticky_column,
         };
 
+        // The removals (see the cursor snapshot above) and the move are one
+        // `Batch`. Removing a cursor is a write action, so unlike the lone
+        // `MoveCursor` a click used to log, a collapsing click is an undo
+        // step — `Ctrl+Z` brings the cursors back — and it truncates redo,
+        // exactly as `Esc` does today.
+        let mut events: Vec<Event> = removed_cursors
+            .into_iter()
+            .map(|(cursor_id, position, anchor)| Event::RemoveCursor {
+                cursor_id,
+                position,
+                anchor,
+            })
+            .collect();
+        let event = if events.is_empty() {
+            move_event
+        } else {
+            events.push(move_event);
+            Event::Batch {
+                events,
+                description: "Click".to_string(),
+            }
+        };
+
         self.active_event_log_mut().append(event.clone());
         self.apply_event_to_active_buffer(&event);
-        self.track_cursor_movement(&event);
+        // Position history follows the move, not the removals.
+        let moved = match &event {
+            Event::Batch { events, .. } => events.last().expect("the batch ends with the move"),
+            other => other,
+        };
+        self.track_cursor_movement(moved);
 
         // Park the cursor on the clicked virtual line (transient state, not
         // carried by the MoveCursor event — see Cursor::virtual_lines_below).
@@ -577,96 +638,6 @@ impl Editor {
         self.active_window_mut().mouse_state.drag_selection_split = Some(split_id);
         self.active_window_mut().mouse_state.drag_selection_anchor =
             Some(new_anchor.unwrap_or(target_position));
-
-        Ok(())
-    }
-
-    /// Handle click in file explorer
-    pub(super) fn handle_file_explorer_click(
-        &mut self,
-        col: u16,
-        row: u16,
-        explorer_area: ratatui::layout::Rect,
-    ) -> AnyhowResult<()> {
-        // Check if click is on the title bar (first row)
-        if row == explorer_area.y {
-            // Check if click is on close button (× at right side of title bar)
-            // Close button is at position: explorer_area.x + explorer_area.width - 3 to -1
-            let close_button_x = explorer_area.x + explorer_area.width.saturating_sub(3);
-            if col >= close_button_x && col < explorer_area.x + explorer_area.width {
-                self.toggle_file_explorer();
-                return Ok(());
-            }
-        }
-
-        // Focus file explorer. `open_file_preview` below routes through
-        // `set_active_buffer`, which detects "leaving a terminal buffer
-        // while terminal_mode is on" and resets `key_context = Normal`
-        // (active_focus.rs:103-107) — clobbering our FileExplorer write
-        // and stealing focus to the previewed editor buffer (issue
-        // #2029, sub-issue 1b). Use `take_focus_for_file_explorer` so
-        // terminal_mode is cleared *before* the preview opens; then
-        // re-assert `key_context = FileExplorer` after the preview in
-        // case `set_active_buffer` reset it via one of its other
-        // branches (e.g. switching to a regular file buffer).
-        self.take_focus_for_file_explorer();
-
-        // Calculate which item was clicked (accounting for border and title)
-        // The file explorer has a 1-line border at top and bottom
-        let relative_row = row.saturating_sub(explorer_area.y + 1); // +1 for top border
-
-        if let Some(explorer) = self.file_explorer_mut().as_mut() {
-            let display_nodes = explorer.get_display_nodes();
-            let scroll_offset = explorer.get_scroll_offset();
-            let clicked_index = (relative_row as usize) + scroll_offset;
-
-            if clicked_index < display_nodes.len() {
-                let (node_id, _indent) = display_nodes[clicked_index];
-
-                // Select this node
-                explorer.set_selected(Some(node_id));
-
-                // Check if it's a file or directory
-                let node = explorer.tree().get_node(node_id);
-                if let Some(node) = node {
-                    if node.is_dir() {
-                        // Toggle expand/collapse using the existing method
-                        self.file_explorer_toggle_expand();
-                    } else if node.is_file() {
-                        // Open the file but keep focus on file explorer (single click).
-                        // Double-click or Enter will focus the editor and promote to
-                        // a permanent tab. Single-click opens in "preview" mode so a
-                        // string of exploratory clicks doesn't accumulate tabs.
-                        let path = node.entry.path.clone();
-                        let name = node.entry.name.clone();
-                        match self.open_file_preview(&path) {
-                            Ok(_) => {
-                                self.set_status_message(
-                                    rust_i18n::t!("explorer.opened_file", name = &name).to_string(),
-                                );
-                            }
-                            Err(e) => {
-                                // Check if this is a large file encoding confirmation error
-                                if let Some(confirmation) = e.downcast_ref::<
-                                    crate::model::buffer::LargeFileEncodingConfirmation,
-                                >() {
-                                    self.start_large_file_encoding_confirmation(confirmation);
-                                } else {
-                                    self.set_status_message(
-                                        rust_i18n::t!("file.error_opening", error = e.to_string())
-                                            .to_string(),
-                                    );
-                                }
-                            }
-                        }
-                        // `set_active_buffer` may have flipped key_context
-                        // back to Normal during the preview open; restore it.
-                        self.active_window_mut().key_context =
-                            crate::input::keybindings::KeyContext::FileExplorer;
-                    }
-                }
-            }
-        }
 
         Ok(())
     }

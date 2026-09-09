@@ -479,6 +479,22 @@ impl Language {
         }
     }
 
+    /// Whether `<` and `>` are structural delimiters in this language rather
+    /// than comparison / shift operators.
+    ///
+    /// Only markup qualifies. In HTML (and templ, which is HTML with Go in
+    /// it) a `<` opens a tag and the matching `>` closes it, so the pair is
+    /// unambiguous and nests exactly as far as the tag does. Everywhere else
+    /// the same two characters are overwhelmingly operators — `if (a < b)` —
+    /// and the cases where they are delimiters (`template <typename T>`,
+    /// `Vec<T>`) cannot be told from a comparison without parsing the
+    /// expression. Counting them as brackets there gave one comparison
+    /// operator the power to recolour every bracket below it: the `<` pushed
+    /// a nesting level nothing popped (issue #3090).
+    pub fn angle_brackets_are_delimiters(&self) -> bool {
+        matches!(self, Self::HTML | Self::Templ)
+    }
+
     /// File extensions associated with this language.
     ///
     /// Keep in sync with `from_path`. Used by the grammar catalog so that

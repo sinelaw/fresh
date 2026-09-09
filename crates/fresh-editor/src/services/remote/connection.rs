@@ -5,6 +5,7 @@
 use crate::services::process_hidden::HideWindow;
 use crate::services::remote::channel::AgentChannel;
 use crate::services::remote::protocol::AgentResponse;
+use crate::services::remote::transport::agent_bootstrap_pycode;
 use crate::services::remote::AGENT_SOURCE;
 use std::path::PathBuf;
 use std::process::Stdio;
@@ -564,10 +565,7 @@ fn configure_agent_carrier_ssh(cmd: &mut Command, params: &ConnectionParams) {
     // the remote: python reads exactly N bytes (the agent source), execs it, and
     // the agent then keeps reading stdin for protocol messages. ssh runs the
     // remote command through a shell, hence the double quotes.
-    cmd.arg(format!(
-        "python3 -u -c \"import sys;exec(sys.stdin.read({}))\"",
-        AGENT_SOURCE.len()
-    ));
+    cmd.arg(format!("python3 -u -c \"{}\"", agent_bootstrap_pycode()));
 }
 
 /// Detach a carrier `ssh` child from the editor's controlling terminal.
@@ -918,6 +916,39 @@ mod tests {
             args.iter().any(|a| a == "me@host"),
             "ssh target missing; args = {args:?}"
         );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn agent_bootstrap_starts_before_stdin_closes_on_windows() {
+        use std::io::{BufRead, Write};
+        use std::process::{Command as StdCommand, Stdio};
+
+        // Write exactly the embedded agent bytes and deliberately retain stdin:
+        // the ready line must not require EOF.
+        let mut child = StdCommand::new("py.exe")
+            .args(["-3", "-u", "-c"])
+            .arg(agent_bootstrap_pycode())
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .expect("start the Python agent bootstrap");
+        let mut stdin = child.stdin.take().expect("bootstrap stdin");
+        stdin
+            .write_all(AGENT_SOURCE.as_bytes())
+            .expect("send agent source");
+        stdin.flush().expect("flush agent source");
+
+        let stdout = child.stdout.take().expect("bootstrap stdout");
+        let mut ready = String::new();
+        std::io::BufReader::new(stdout)
+            .read_line(&mut ready)
+            .expect("read agent ready line while stdin remains open");
+
+        child.kill().expect("stop test agent");
+        child.wait().expect("reap test agent");
+        let response: AgentResponse = serde_json::from_str(&ready).expect("valid ready response");
+        assert!(response.is_ready());
     }
 
     #[test]

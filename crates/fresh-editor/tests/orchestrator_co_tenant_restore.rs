@@ -9,13 +9,15 @@
 //! (both loading the freshest snapshot, so both showing `beta`) — exactly the
 //! "same buffer opened twice" hazard multiple-workspaces-per-root has to avoid.
 //!
-//! Lives in its own integration binary because it sets the process-global
-//! `XDG_DATA_HOME` to isolate persistence: workspace save/load key off
-//! `$XDG_DATA_HOME/fresh`, and the editor's boot discovery reads the same
-//! `DirectoryContext::data_dir`, so both must point at one isolated tree. A
-//! shared-process test binary (e.g. the big `e2e_tests`) can't host that
-//! global mutation without poisoning its siblings. Linux-gated:
-//! `dirs::data_dir()` ignores `XDG_DATA_HOME` off Linux.
+//! Persistence is isolated by `common::global_state::isolated_dir_context`:
+//! workspace save/load resolve through the pinned data dir, and the editor's
+//! boot discovery reads the same `DirectoryContext::data_dir`, so both point
+//! at one isolated tree. The pin is thread-local — the `$XDG_DATA_HOME`
+//! `set_var` it replaced was process-global, and once every root was folded
+//! into one `all_tests` binary a sibling's `set_var` moved this test's
+//! workspaces dir out from under it between the save and the read below.
+//! Linux-gated: `dirs::data_dir()` ignores `XDG_DATA_HOME` off Linux, so the
+//! fallback these paths model is not the platform one there.
 #![cfg(target_os = "linux")]
 
 use fresh::config::Config;
@@ -25,22 +27,7 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-/// Isolate ALL editor persistence into `base`: `$XDG_DATA_HOME/fresh` is where
-/// workspace save/load live, and the returned `DirectoryContext`'s `data_dir`
-/// is the SAME path — so session-1 saves and session-2 boot discovery agree,
-/// inside the test's temp tree.
-fn isolated_dir_context(base: &Path) -> DirectoryContext {
-    let xdg_data = base.join("xdg-data");
-    std::fs::create_dir_all(&xdg_data).unwrap();
-    std::env::set_var("XDG_DATA_HOME", &xdg_data);
-    DirectoryContext {
-        data_dir: xdg_data.join("fresh"),
-        config_dir: base.join("config"),
-        home_dir: Some(base.join("home")),
-        documents_dir: None,
-        downloads_dir: None,
-    }
-}
+use crate::common::global_state::isolated_dir_context;
 
 fn editor_in(project: &Path, dir_context: &DirectoryContext) -> fresh::app::Editor {
     let filesystem: Arc<dyn fresh::model::filesystem::FileSystem + Send + Sync> =
@@ -68,7 +55,7 @@ fn editor_in(project: &Path, dir_context: &DirectoryContext) -> fresh::app::Edit
 #[test]
 fn co_tenants_persist_and_restore_each_own_file() {
     let sandbox = tempfile::tempdir().unwrap();
-    let dir_context = isolated_dir_context(sandbox.path());
+    let (dir_context, _data_dir_pin) = isolated_dir_context(sandbox.path());
     let project = sandbox.path().join("project");
     std::fs::create_dir(&project).unwrap();
     let project = project.canonicalize().unwrap();

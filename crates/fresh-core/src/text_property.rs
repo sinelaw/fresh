@@ -170,6 +170,15 @@ pub struct TextPropertyEntry {
     /// (Unicode codepoints). No-op when `text` already has at
     /// least this many codepoints. Applied before overlays are
     /// resolved.
+    ///
+    /// **Render-only.** The padding is applied when the line is drawn, not
+    /// when the entry is stored, so `getBufferText()` returns the text you
+    /// supplied — unpadded. Columns therefore cannot be verified by reading
+    /// the buffer back; a script that checks its own output sees jammed-
+    /// together fields and concludes the padding is broken when the screen
+    /// is fine. If you need alignment that survives read-back (a test, a
+    /// copy to the clipboard, a diff), put real spaces in `text` with
+    /// `padEnd` instead.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pad_to_chars: Option<u32>,
     /// Truncate `text` to at most this many display columns
@@ -177,6 +186,9 @@ pub struct TextPropertyEntry {
     /// 3 the truncated tail is replaced with `...`; when it is
     /// 3 or less the text is cut at exactly the budget. Applied
     /// before overlays are resolved.
+    ///
+    /// **Render-only**, with the same consequence as `pad_to_chars`:
+    /// `getBufferText()` returns the full untruncated text.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub truncate_to_chars: Option<u32>,
 }

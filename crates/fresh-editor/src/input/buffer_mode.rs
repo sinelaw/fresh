@@ -14,10 +14,13 @@ pub struct BufferMode {
     /// Whether buffers with this mode are read-only by default
     pub read_only: bool,
 
-    /// When true, unbound character keys in a read-only mode are dispatched as
-    /// `PluginAction("mode_text_input:<char>")` instead of being silently dropped.
-    /// This allows plugins to handle inline text editing (e.g. search fields)
-    /// without registering individual bindings for every character.
+    /// When true, unbound character keys in a read-only mode are dispatched
+    /// through the typed `mode_text_input` lane (mode + character as
+    /// structured fields) instead of being silently dropped. This allows
+    /// plugins to handle inline text editing (e.g. search fields) without
+    /// registering individual bindings for every character. The mode
+    /// qualifier routes the character to the plugin that defined *this*
+    /// mode, so several text-input modes can coexist.
     pub allow_text_input: bool,
 
     /// When true, keys not bound by this mode fall through to the Normal-context

@@ -15,33 +15,44 @@
 pub(crate) mod base_tokens;
 mod char_style;
 mod folding;
+pub(crate) use folding::fold_skip_set;
 mod gutter;
-mod layout;
+pub mod instrument;
+pub(crate) mod layout;
 mod orchestration;
+
+// The grid's paint, one phase at a time. `render_content` above runs all
+// three for a caller that hands it a whole rectangle; the shell folds a
+// display list and calls them one `Host` at a time instead, so that a pane's
+// rectangle is the one layout gave it.
+pub(crate) use orchestration::render_buffer::wrap_index_geometry_for;
+pub(crate) use orchestration::{
+    content_pass, paint_leaf, prepare_content, reconcile_panes, ContentPass, FrameFacts,
+    PaneContent, Stores,
+};
 mod post_pass;
-mod scrollbar;
+pub(crate) mod scrollbar;
+#[cfg(test)]
+mod scrollbar_marker_scroll_perf;
 mod spans;
 mod style;
 pub(crate) mod transforms;
-mod view_data;
+pub(crate) mod view_data;
 
-use crate::app::types::ViewLineMapping;
-use crate::app::BufferMetadata;
 use crate::config::IndentationGuideMode;
 use crate::model::buffer::Buffer;
-use crate::model::event::{BufferId, EventLog, LeafId, SplitDirection};
+use crate::model::event::{BufferId, EventLog};
 use crate::primitives::ansi_background::AnsiBackground;
 use crate::state::EditorState;
-use crate::view::split::SplitManager;
+use crate::view::bracket_highlight_overlay::BracketHighlightSettings;
 use ratatui::layout::Rect;
-use std::collections::HashMap;
 
 /// Maximum line width before forced wrapping is applied, even when line wrapping is disabled.
 /// This prevents memory exhaustion when opening files with extremely long lines (e.g., 10MB
 /// single-line JSON files). Lines exceeding this width are wrapped into multiple visual lines,
 /// each bounded to this width. 10,000 columns is far wider than any monitor while keeping
 /// memory usage reasonable (~80KB per ViewLine instead of hundreds of MB).
-const MAX_SAFE_LINE_WIDTH: usize = 10_000;
+pub(crate) const MAX_SAFE_LINE_WIDTH: usize = 10_000;
 
 /// Immutable editor render settings for one frame.
 ///
@@ -66,6 +77,7 @@ pub struct EditorRenderConfig<'a> {
     pub indentation_guide: IndentationGuideMode,
     pub indentation_guide_glyph: &'a str,
     pub rainbow_indentation: bool,
+    pub bracket_highlight: BracketHighlightSettings,
     pub hide_current_line_on_selection: bool,
     pub background_fade: f32,
     pub software_cursor_only: bool,
@@ -96,6 +108,7 @@ impl<'a> EditorRenderConfig<'a> {
             indentation_guide: editor.indentation_guide,
             indentation_guide_glyph: &editor.indentation_guide_glyph,
             rainbow_indentation: editor.rainbow_indentation,
+            bracket_highlight: BracketHighlightSettings::from_config(editor),
             hide_current_line_on_selection: editor.hide_current_line_on_selection,
             background_fade,
             software_cursor_only,
@@ -107,7 +120,7 @@ impl<'a> EditorRenderConfig<'a> {
 /// every split in a frame: the theme, the ANSI backdrop, and the editor
 /// render config. Built once at the top of the render pass and threaded by
 /// reference through the whole painter chain (`render_content` →
-/// `render_buffer_in_split` → …), so each layer forwards one `RenderStyle`
+/// `content_pass` → `paint_leaf` → …), so each layer forwards one `RenderStyle`
 /// instead of re-listing ~16 style parameters. Distinct from per-split state
 /// and the draw target, which vary or are mutated.
 //
@@ -127,124 +140,6 @@ pub struct RenderStyle<'a> {
 pub struct SplitRenderer;
 
 impl SplitRenderer {
-    #[allow(clippy::too_many_arguments)]
-    #[allow(clippy::type_complexity)]
-    pub fn render_content(
-        buf: &mut ratatui::buffer::Buffer,
-        area: Rect,
-        split_manager: &SplitManager,
-        buffers: &mut HashMap<BufferId, EditorState>,
-        buffer_metadata: &HashMap<BufferId, BufferMetadata>,
-        preview_buffer: Option<BufferId>,
-        event_logs: &mut HashMap<BufferId, EventLog>,
-        composite_buffers: &mut HashMap<BufferId, crate::model::composite_buffer::CompositeBuffer>,
-        composite_view_states: &mut HashMap<
-            (LeafId, BufferId),
-            crate::view::composite_view::CompositeViewState,
-        >,
-        style: RenderStyle<'_>,
-        lsp_waiting: bool,
-        split_view_states: Option<&mut HashMap<LeafId, crate::view::split::SplitViewState>>,
-        grouped_subtrees: &HashMap<LeafId, crate::view::split::SplitNode>,
-        hide_cursor: bool,
-        hovered_tab: Option<(crate::view::split::TabTarget, LeafId, bool)>,
-        hovered_close_split: Option<LeafId>,
-        hovered_maximize_split: Option<LeafId>,
-        is_maximized: bool,
-        tab_bar_visible: bool,
-        session_mode: bool,
-        scrollback_view_splits: &std::collections::HashSet<LeafId>,
-        cell_theme_map: &mut Vec<crate::app::types::CellThemeInfo>,
-        screen_width: u16,
-        pending_hardware_cursor: &mut Option<(u16, u16)>,
-        // Forwarded to the tab-bar renderer: when false the tab bar lays out but
-        // paints no cells (web renders tabs natively); panes always draw.
-        draw_tab_bar: bool,
-    ) -> (
-        Vec<(LeafId, BufferId, Rect, Rect, usize, usize)>,
-        HashMap<LeafId, crate::view::ui::tabs::TabLayout>,
-        Vec<(LeafId, u16, u16, u16)>,
-        Vec<(LeafId, u16, u16, u16)>,
-        HashMap<LeafId, Vec<ViewLineMapping>>,
-        Vec<(LeafId, BufferId, Rect, usize, usize, usize)>,
-        Vec<(
-            crate::model::event::ContainerId,
-            SplitDirection,
-            u16,
-            u16,
-            u16,
-        )>,
-    ) {
-        orchestration::render_content(
-            buf,
-            area,
-            split_manager,
-            buffers,
-            buffer_metadata,
-            preview_buffer,
-            event_logs,
-            composite_buffers,
-            composite_view_states,
-            style,
-            lsp_waiting,
-            split_view_states,
-            grouped_subtrees,
-            hide_cursor,
-            hovered_tab,
-            hovered_close_split,
-            hovered_maximize_split,
-            is_maximized,
-            tab_bar_visible,
-            session_mode,
-            scrollback_view_splits,
-            cell_theme_map,
-            screen_width,
-            pending_hardware_cursor,
-            draw_tab_bar,
-        )
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn compute_content_layout(
-        area: Rect,
-        split_manager: &SplitManager,
-        buffers: &mut HashMap<BufferId, EditorState>,
-        split_view_states: &mut HashMap<LeafId, crate::view::split::SplitViewState>,
-        theme: &crate::view::theme::Theme,
-        lsp_waiting: bool,
-        estimated_line_length: usize,
-        highlight_context_bytes: usize,
-        relative_line_numbers: bool,
-        use_terminal_bg: bool,
-        session_mode: bool,
-        software_cursor_only: bool,
-        tab_bar_visible: bool,
-        show_vertical_scrollbar: bool,
-        show_horizontal_scrollbar: bool,
-        diagnostics_inline_text: bool,
-        show_tilde: bool,
-    ) -> HashMap<LeafId, Vec<ViewLineMapping>> {
-        orchestration::compute_content_layout(
-            area,
-            split_manager,
-            buffers,
-            split_view_states,
-            theme,
-            lsp_waiting,
-            estimated_line_length,
-            highlight_context_bytes,
-            relative_line_numbers,
-            use_terminal_bg,
-            session_mode,
-            software_cursor_only,
-            tab_bar_visible,
-            show_vertical_scrollbar,
-            show_horizontal_scrollbar,
-            diagnostics_inline_text,
-            show_tilde,
-        )
-    }
-
     /// Render a single buffer into an arbitrary screen rect.
     ///
     /// Public façade over the per-leaf renderer for callers that
@@ -267,7 +162,6 @@ impl SplitRenderer {
         view_mode: crate::state::ViewMode,
         compose_width: Option<u16>,
         compose_column_guides: Option<Vec<u16>>,
-        view_transform: Option<crate::services::plugins::api::ViewTransformPayload>,
         buffer_id: BufferId,
         session_mode: bool,
         rulers: &[usize],
@@ -286,38 +180,86 @@ impl SplitRenderer {
         // - lsp_waiting = false (preview never owns LSP requests)
         // - pending_hardware_cursor: the preview must not move the
         //   terminal's hardware cursor away from the prompt input.
-        let mut sink: Option<(u16, u16)> = None;
-        orchestration::render_buffer_in_split(
-            buf,
+        // The leaf is outside the split tree, so the frame's pre-paint
+        // reconcile never saw it: place it here, immediately before its
+        // text pass. Only the formatter's half — this pane never ran the
+        // byte-oriented sync, and does not now.
+        orchestration::reconcile::place_pane(
+            state,
+            viewport,
+            cursors,
+            folds,
+            &view_mode,
+            compose_width,
+            show_line_numbers,
+            area,
+        );
+        let crate::view::ui::EditorRenderConfig {
+            estimated_line_length,
+            highlight_context_bytes,
+            relative_line_numbers,
+            use_terminal_bg,
+            software_cursor_only,
+            diagnostics_inline_text,
+            indentation_guide,
+            indentation_guide_glyph,
+            rainbow_indentation,
+            bracket_highlight,
+            background_fade,
+            ..
+        } = style.cfg;
+        let mut layout = orchestration::compute_buffer_layout(
             state,
             cursors,
             viewport,
             folds,
-            event_log,
             area,
             /* is_active */ false,
-            style,
+            style.theme,
             /* lsp_waiting */ false,
             view_mode,
             compose_width,
-            compose_column_guides,
-            view_transform,
-            buffer_id,
-            /* hide_cursor */ true,
+            estimated_line_length,
+            highlight_context_bytes,
+            relative_line_numbers,
+            use_terminal_bg,
             session_mode,
-            rulers,
+            software_cursor_only,
             show_line_numbers,
             highlight_current_line,
+            true, // preview leaves have no per-split fold pin
+            diagnostics_inline_text,
             show_tilde,
-            highlight_current_column,
-            cell_theme_map,
-            screen_width,
-            &mut sink,
-        )
+            indentation_guide,
+            indentation_guide_glyph,
+            rainbow_indentation,
+            bracket_highlight,
+            Some((cell_theme_map, screen_width)),
+        );
+        let _ = (event_log, highlight_current_column, buffer_id);
+        let rows = std::mem::take(&mut layout.view_line_mappings);
+        let left_column = layout.left_column;
+        // A preview leaf is never the active pane: it shows no caret, and
+        // no caret column is highlighted.
+        orchestration::draw_buffer_in_split(
+            buf,
+            layout,
+            area,
+            style.theme,
+            style.ansi_background,
+            background_fade,
+            software_cursor_only,
+            rulers,
+            compose_column_guides,
+            false,
+            None,
+        );
+        orchestration::reconcile::settle_pane(state, viewport, left_column, false);
+        rows
     }
 
     /// Public wrapper for building base tokens - used by render.rs for the
-    /// view_transform_request hook.
+    /// plugin hooks.
     pub fn build_base_tokens_for_hook(
         buffer: &mut Buffer,
         top_byte: usize,
@@ -471,7 +413,6 @@ mod tests {
         let view_data = build_view_data(
             &mut state,
             &viewport,
-            None,
             content.len().max(1),
             visible_count,
             false, // line wrap disabled for tests
@@ -481,6 +422,9 @@ mod tests {
             &empty_folds,
             &theme,
             &[],
+            // These façade helpers render from the viewport's own top_byte;
+            // there is no resolved anchor to start from.
+            None,
         );
         let view_anchor = calculate_view_anchor(&view_data.lines, 0);
 
@@ -491,8 +435,8 @@ mod tests {
         let selection = selection_context(&state, &cursors);
         let _ = state
             .buffer
-            .populate_line_cache(viewport.top_byte, visible_count);
-        let viewport_start = viewport.top_byte;
+            .populate_line_cache(viewport.top_byte(), visible_count);
+        let viewport_start = viewport.top_byte();
         let viewport_end = calculate_viewport_end(
             &mut state,
             viewport_start,
@@ -506,17 +450,21 @@ mod tests {
             viewport_start,
             viewport_end,
             selection.primary_cursor_position,
+            selection.primary_selection.clone(),
             &empty_folds,
             &theme,
             100_000,           // default highlight context bytes
             &ViewMode::Source, // Tests use source mode
             false,             // inline diagnostics off for test
+            BracketHighlightSettings::default(),
             &[],
+            true, // auxiliary render paths have no per-split fold pin
         );
 
         let mut dummy_theme_map = Vec::new();
         let output = render_view_lines(LineRenderInput {
             state: &state,
+            margin: &state.margins.left_config,
             theme: &theme,
             view_lines: &view_data.lines,
             view_anchor,
@@ -536,6 +484,7 @@ mod tests {
             show_line_numbers: true, // Tests show line numbers
             byte_offset_mode: false, // Tests use exact line numbers
             show_tilde: true,
+            effective_editor_bg: theme.editor_bg,
             highlight_current_line: true,
             indentation_guide,
             indentation_guide_glyph: &indentation_guide_glyph,
@@ -564,7 +513,7 @@ mod tests {
         let mut cursors = crate::model::cursor::Cursors::new();
         cursors.primary_mut().position = 0;
         let mut viewport = Viewport::new(20, 10);
-        viewport.top_byte = top_byte;
+        viewport.set_top_byte(top_byte);
         state.margins.left_config.enabled = false;
 
         let render_area = Rect::new(0, 0, 20, 10);
@@ -576,7 +525,6 @@ mod tests {
         let view_data = build_view_data(
             &mut state,
             &viewport,
-            None,
             content.len().max(1),
             visible_count,
             false,
@@ -586,8 +534,11 @@ mod tests {
             &empty_folds,
             &theme,
             &[],
+            // These façade helpers render from the viewport's own top_byte;
+            // there is no resolved anchor to start from.
+            None,
         );
-        let view_anchor = calculate_view_anchor(&view_data.lines, viewport.top_byte);
+        let view_anchor = calculate_view_anchor(&view_data.lines, viewport.top_byte());
 
         let estimated_lines = (state.buffer.len() / state.buffer.estimated_line_length()).max(1);
         state.margins.update_width_for_buffer(estimated_lines, true);
@@ -596,8 +547,8 @@ mod tests {
         let selection = selection_context(&state, &cursors);
         let _ = state
             .buffer
-            .populate_line_cache(viewport.top_byte, visible_count);
-        let viewport_start = viewport.top_byte;
+            .populate_line_cache(viewport.top_byte(), visible_count);
+        let viewport_start = viewport.top_byte();
         let viewport_end = calculate_viewport_end(
             &mut state,
             viewport_start,
@@ -611,18 +562,22 @@ mod tests {
             viewport_start,
             viewport_end,
             selection.primary_cursor_position,
+            selection.primary_selection.clone(),
             &empty_folds,
             &theme,
             100_000,
             &ViewMode::Source,
             false,
+            BracketHighlightSettings::default(),
             &[],
+            true, // auxiliary render paths have no per-split fold pin
         );
 
         let glyph = crate::config::default_indentation_guide_glyph();
         let mut dummy_theme_map = Vec::new();
         render_view_lines(LineRenderInput {
             state: &state,
+            margin: &state.margins.left_config,
             theme: &theme,
             view_lines: &view_data.lines,
             view_anchor,
@@ -642,6 +597,7 @@ mod tests {
             show_line_numbers: true,
             byte_offset_mode: false,
             show_tilde: true,
+            effective_editor_bg: theme.editor_bg,
             highlight_current_line: true,
             indentation_guide: IndentationGuideMode::All,
             indentation_guide_glyph: &glyph,
@@ -988,8 +944,12 @@ mod tests {
         let (output, _, _, _) =
             render_output_for_with_indentation_guide("\tchild\n\t\tgrand\n", 0, 0);
 
-        assert_eq!(rendered_line_text(&output, 0), "▏   child");
-        assert_eq!(rendered_line_text(&output, 1), "▏   ▏   grand");
+        // The guide keeps the tab stop and the tab's marker takes the next
+        // column of the expansion. This used to read `▏   child`: the guide
+        // simply overwrote the marker, and with guides on there was then no
+        // way to tell a tab indent from a space indent (issue #3079).
+        assert_eq!(rendered_line_text(&output, 0), "▏→  child");
+        assert_eq!(rendered_line_text(&output, 1), "▏→  ▏→  grand");
     }
 
     #[test]
@@ -1124,10 +1084,12 @@ mod tests {
             IndentationGuideMode::Active,
         );
 
-        // Tab cells that are not replaced by the active guide retain the
-        // existing leading-tab whitespace indicator.
+        // Tab cells the active guide does not claim keep their marker where
+        // it is; the one it does claim hands the marker the next column of
+        // the expansion rather than swallowing it (issue #3079) — this line
+        // used to read `→   ▏   grand`.
         assert_eq!(rendered_line_text(&output, 0), "→   child");
-        assert_eq!(rendered_line_text(&output, 1), "→   ▏   grand");
+        assert_eq!(rendered_line_text(&output, 1), "→   ▏→  grand");
     }
 
     #[test]
@@ -1241,7 +1203,13 @@ mod tests {
         let start = state.buffer.line_start_offset(1).unwrap();
         let end = state.buffer.line_start_offset(3).unwrap();
         let mut folds = FoldManager::new();
-        folds.add(&mut state.marker_list, start, end, Some("...".to_string()));
+        folds.add(
+            &state.buffer,
+            &mut state.marker_list,
+            start,
+            end,
+            Some("...".to_string()),
+        );
 
         let viewport = Viewport::new(40, 6);
         let gutter_width = state.margins.left_total_width();
@@ -1249,7 +1217,6 @@ mod tests {
         let view_data = build_view_data(
             &mut state,
             &viewport,
-            None,
             content.len().max(1),
             viewport.visible_line_count(),
             false,
@@ -1259,6 +1226,9 @@ mod tests {
             &folds,
             &theme,
             &[],
+            // These façade helpers render from the viewport's own top_byte;
+            // there is no resolved anchor to start from.
+            None,
         );
 
         let lines: Vec<String> = view_data.lines.iter().map(|l| l.text.clone()).collect();
@@ -1288,7 +1258,6 @@ mod tests {
         let view_data = build_view_data(
             &mut state,
             &viewport,
-            None,
             content.len().max(1),
             viewport.visible_line_count(),
             false,
@@ -1298,6 +1267,9 @@ mod tests {
             &folds,
             &theme,
             &[],
+            // These façade helpers render from the viewport's own top_byte;
+            // there is no resolved anchor to start from.
+            None,
         );
 
         let indicators = fold_indicators_for_viewport(&state, &folds, &view_data.lines);
@@ -1345,7 +1317,7 @@ mod tests {
         let start = state.buffer.line_start_offset(1).unwrap();
         let end = state.buffer.line_start_offset(2).unwrap();
         let mut folds = FoldManager::new();
-        folds.add(&mut state.marker_list, start, end, None);
+        folds.add(&state.buffer, &mut state.marker_list, start, end, None);
 
         let line1_byte = state.buffer.line_start_offset(1).unwrap();
         let view_lines = vec![ViewLine {
@@ -1984,6 +1956,102 @@ mod tests {
 
     /// Test tokenization of CRLF content with a single line.
     /// Verifies that Newline token is at \r position and \n is skipped.
+    /// An anchored build — starting at the viewport's own row instead of the
+    /// logical line's first row — produces exactly the rows the unanchored
+    /// build produces at that offset.
+    ///
+    /// This is the property the whole O(viewport) renderer rests on. It fails
+    /// loudly if `RowCarry` ever stops being complete, or if the anchor resolves
+    /// to a row the wrap cannot be resumed at.
+    #[test]
+    fn anchored_build_matches_the_unanchored_window() {
+        use crate::view::wrap_index::{WrapIndex, WrapIndexGeometry};
+        use crate::view::wrap_machine::WrapRule;
+
+        let content: String = (0..200)
+            .map(|i| format!("word{i}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let width = 24usize;
+
+        let mut state = EditorState::new(width as u16, 8, 1024, test_fs());
+        state.buffer = Buffer::from_str(&content, 1024, test_fs());
+        let theme = Theme::load_builtin(theme::THEME_DARK).unwrap();
+        let empty_folds = FoldManager::new();
+
+        let geometry = WrapIndexGeometry {
+            fold_signature: 0,
+            rule: WrapRule::Word {
+                content_width: width - 1,
+                gutter_width: 0,
+                hanging_indent: false,
+            },
+            view_mode: crate::view::line_wrap_cache::CacheViewMode::Source,
+        };
+        let mut index = WrapIndex::default();
+        index.ensure_built(
+            &mut state.buffer,
+            geometry,
+            Default::default(),
+            crate::model::buffer::LineEnding::LF,
+            &Default::default(),
+        );
+
+        let build = |state: &mut EditorState,
+                     viewport: &Viewport,
+                     anchor: Option<crate::view::ui::split_rendering::view_data::BuildAnchor>|
+         -> Vec<String> {
+            let view_data = build_view_data(
+                state,
+                viewport,
+                80,
+                viewport.visible_line_count(),
+                true,
+                width,
+                0,
+                &ViewMode::Source,
+                &empty_folds,
+                &theme,
+                &[],
+                anchor,
+            );
+            let first = view_data.first_drawn.min(view_data.lines.len());
+            view_data.lines[first..]
+                .iter()
+                .take(viewport.visible_line_count())
+                .map(|l| l.text.clone())
+                .collect()
+        };
+
+        for offset in [1usize, 5, 17, 40] {
+            if offset as u32 >= index.total_rows() {
+                continue;
+            }
+            let mut viewport = Viewport::new(width as u16, 8);
+            viewport.line_wrap_enabled = true;
+            viewport.set_top_byte(0);
+            viewport.set_top_view_line_offset(offset);
+
+            let unanchored = build(&mut state, &viewport, None);
+
+            let addr = index.byte_of_row(&state.buffer, offset as u32);
+            let anchored = build(
+                &mut state,
+                &viewport,
+                Some(crate::view::ui::split_rendering::view_data::BuildAnchor {
+                    byte: addr.byte,
+                    carry: addr.carry,
+                    skip: 0,
+                }),
+            );
+
+            assert_eq!(
+                anchored, unanchored,
+                "anchored build diverged at row offset {offset}"
+            );
+        }
+    }
+
     #[test]
     fn test_build_base_tokens_crlf_single_line() {
         // Content: "abc\r\n" (5 bytes: a=0, b=1, c=2, \r=3, \n=4)
@@ -3128,7 +3196,6 @@ mod tests {
         let view_data = build_view_data(
             &mut state,
             &viewport,
-            None,
             content.len().max(1),
             visible_count,
             false,
@@ -3138,6 +3205,9 @@ mod tests {
             &empty_folds,
             &theme,
             &[],
+            // These façade helpers render from the viewport's own top_byte;
+            // there is no resolved anchor to start from.
+            None,
         );
         let view_anchor = calculate_view_anchor(&view_data.lines, 0);
 
@@ -3148,8 +3218,8 @@ mod tests {
         let selection = selection_context(&state, &cursors);
         let _ = state
             .buffer
-            .populate_line_cache(viewport.top_byte, visible_count);
-        let viewport_start = viewport.top_byte;
+            .populate_line_cache(viewport.top_byte(), visible_count);
+        let viewport_start = viewport.top_byte();
         let viewport_end = calculate_viewport_end(
             &mut state,
             viewport_start,
@@ -3163,16 +3233,20 @@ mod tests {
             viewport_start,
             viewport_end,
             selection.primary_cursor_position,
+            selection.primary_selection.clone(),
             &empty_folds,
             &theme,
             100_000,
             &ViewMode::Source,
             false,
+            BracketHighlightSettings::default(),
             &[],
+            true, // auxiliary render paths have no per-split fold pin
         );
 
         render_view_lines(LineRenderInput {
             state: &state,
+            margin: &state.margins.left_config,
             theme: &theme,
             view_lines: &view_data.lines,
             view_anchor,
@@ -3192,6 +3266,7 @@ mod tests {
             show_line_numbers: false,
             byte_offset_mode: false,
             show_tilde: true,
+            effective_editor_bg: theme.editor_bg,
             highlight_current_line,
             indentation_guide: IndentationGuideMode::None,
             indentation_guide_glyph: "▏",
@@ -3260,12 +3335,12 @@ mod tests {
         );
     }
 
-    /// Agreement test: the standalone `wrap_str_to_width` helper used by
-    /// the virtual-line path must produce the same chunk boundaries as
-    /// `apply_wrapping_transform` does for a single Text token starting
-    /// on a fresh row (no tabs, no ANSI, no hanging indent).  This
-    /// pins the two implementations together so the doc-comment claim
-    /// "virtual lines wrap like source lines" stays honest.
+    /// `wrap_str_to_width` reports the machine's rows as byte *ranges*,
+    /// projected from each row's first source byte.  Both it and
+    /// `apply_wrapping_transform` now drive the same `WrapMachine`, so what
+    /// this pins is the projection: the ranges must tile the input exactly
+    /// as the machine's Text chunks do, with nothing dropped or duplicated
+    /// at a row boundary.
     #[test]
     fn wrap_str_to_width_matches_apply_wrapping_transform() {
         use crate::primitives::visual_layout::wrap_str_to_width;

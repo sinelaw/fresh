@@ -277,22 +277,41 @@ fn test_diagnostics_panel_cursor_move_scrolls_editor() {
         })
         .unwrap();
 
+    // The editor viewport (top split) should have scrolled to show the
+    // diagnostic location (line 1 of the file → "line 0 content here").
+    //
+    // Waited for rather than asserted on the next frame: moving the panel
+    // cursor now *previews* the entry's file (an ephemeral tab, so stepping
+    // through twenty diagnostics doesn't open twenty permanent ones), and a
+    // preview settles a moment after the selection stops moving instead of
+    // opening a file per keystroke.
+    harness
+        .wait_until(|h| h.screen_to_string().contains("line 0 content here"))
+        .expect(
+            "editor viewport should scroll to the diagnostic location when the \
+             panel cursor moves onto its entry",
+        );
+
     let screen = harness.screen_to_string();
     eprintln!("[TEST] Screen after cursor move to item:\n{}", screen);
-
-    // The editor viewport (top split) should have scrolled to show the
-    // diagnostic location (line 1 of the file → "line 0 content here")
-    assert!(
-        screen.contains("line 0 content here"),
-        "Editor viewport should have scrolled to show the diagnostic location \
-         when cursor moved to a diagnostic entry in the panel.\nScreen:\n{}",
-        screen
-    );
 
     // Verify focus is still in the diagnostics panel (not the editor)
     assert!(
         screen.contains("Item 1/"),
         "Focus should still be in the diagnostics panel.\nScreen:\n{}",
+        screen
+    );
+
+    // Panel navigation browses through the preview tab now, so stepping
+    // over a list of diagnostics in twenty files leaves one ephemeral tab
+    // rather than twenty permanent ones (issue #3196). The file here is the
+    // one the user already had open, which is the case that must NOT be
+    // touched: a browse switches to their tab and never demotes it to a
+    // preview, so it keeps its plain label.
+    assert!(
+        !screen.contains("(preview)"),
+        "a file the user already had open must not be demoted to a preview \
+         tab by panel navigation.\nScreen:\n{}",
         screen
     );
 }

@@ -18,6 +18,7 @@
 use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness};
 use crate::common::tracing::init_tracing_from_env;
 use crossterm::event::{KeyCode, KeyModifiers};
+use fresh::config::{Config, PluginConfig};
 use std::fs;
 use std::path::PathBuf;
 
@@ -72,6 +73,23 @@ fn row_of(h: &EditorTestHarness, needle: &str) -> usize {
         .unwrap_or_else(|| panic!("screen missing '{needle}':\n{screen}"))
 }
 
+/// A config that opens the dock in **card** density. The dock's own default
+/// is compact — it is a switcher first — so a test about the card layout
+/// says so here instead of clicking the toolbar for it, which would also
+/// move keyboard focus onto that button.
+fn card_config() -> Config {
+    let mut config = Config::default();
+    config.plugins.insert(
+        "orchestrator".to_string(),
+        PluginConfig {
+            enabled: true,
+            path: None,
+            settings: serde_json::json!({ "defaultView": "card" }),
+        },
+    );
+    config
+}
+
 /// Expand the dock's collapsible "Filters" section so the density /
 /// project / worktree / trivial controls and the "Manage" button — which
 /// the redesigned toolbar tucks away by default — become visible.
@@ -79,6 +97,33 @@ fn expand_filters(h: &mut EditorTestHarness) {
     let frow = row_of(h, "Filters") as u16;
     h.mouse_click(3, frow).unwrap();
     h.wait_until(|h| h.screen_to_string().contains("Manage"))
+        .unwrap();
+}
+
+/// Put the dock in `want` ("card" or "compact") density by clicking the
+/// toolbar's `view:` button, which sits beside "Filters" rather than inside
+/// it — flipping how the list is laid out is not a filter, and shouldn't
+/// need a section disclosed first. Idempotent: a dock already in `want`
+/// is left alone, so a test states the density it needs without having to
+/// know the default.
+fn set_view(h: &mut EditorTestHarness, want: &str) {
+    let target = format!("view: {want}");
+    if h.screen_to_string().contains(&target) {
+        return;
+    }
+    // Click the button itself, not the start of its row — the density button
+    // shares the toolbar row with "Filters", which owns the left edge.
+    let screen = h.screen_to_string();
+    let (vrow, vcol) = screen
+        .lines()
+        .enumerate()
+        .find_map(|(r, l)| {
+            l.find("view:")
+                .map(|b| (r as u16, l[..b].chars().count() as u16))
+        })
+        .unwrap_or_else(|| panic!("screen missing the density button:\n{screen}"));
+    h.mouse_click(vcol + 1, vrow).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains(&target))
         .unwrap();
 }
 
@@ -123,6 +168,53 @@ fn ctrl_p_opens_palette_while_dock_focused_and_dock_stays() {
         .unwrap();
     h.assert_screen_contains("Open File");
     h.assert_screen_contains("Orchestrator");
+}
+
+/// Opening the palette from the dock hands the keyboard back to the editor, so
+/// the palette is the *editor's* — commands that act on the focused buffer are
+/// offered and run.
+///
+/// This is the dock's answer to the rule that keeps buffer commands out of the
+/// palette while the file explorer or a terminal has focus: the dock never
+/// holds focus while the palette is open. Every route in blurs it first — the
+/// key path (an unhandled Ctrl/Alt chord on a left dock blurs and falls
+/// through) and the mouse path (a click outside the dock blurs it), so a
+/// menu-driven open is no different. If that ever changes, this test fails and
+/// the dock needs `Dock` on the focus-independent commands the way the explorer
+/// got `FileExplorer`.
+#[test]
+fn palette_opened_from_dock_serves_the_editor_buffer() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+    open_dock(&mut h);
+
+    // Distinctive content in the editor buffer, so "the command ran" is
+    // something visible rather than the mere absence of a refusal.
+    h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.wait_for_prompt().unwrap();
+    h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    h.render().unwrap();
+    h.type_text("UNIQUELINE").unwrap();
+    h.render().unwrap();
+
+    h.run_palette_command("Duplicate Line").unwrap();
+    h.render().unwrap();
+
+    let screen = h.screen_to_string();
+    assert!(
+        !screen.contains("not available in current context"),
+        "Ctrl+P blurs the dock, so the palette belongs to the editor and its \
+         buffer commands must run\nScreen:\n{screen}"
+    );
+    assert_eq!(
+        screen.matches("UNIQUELINE").count(),
+        2,
+        "Duplicate Line should have acted on the editor's buffer\nScreen:\n{screen}"
+    );
 }
 
 /// Alt+O toggles keyboard focus between the editor and the dock, and the
@@ -209,15 +301,24 @@ fn editor_click_blurs_dock_when_a_filter_widget_is_focused() {
     let focused_fg = divider_fg(&h);
 
     // Reveal the Filters section and move keyboard focus off the list onto a
-    // filter widget (Tab from the list lands on the view toggle).
+    // toolbar widget (Tab from the Filters header lands on the density
+    // toggle, its immediate neighbour).
     expand_filters(&mut h);
     h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     h.render().unwrap();
     // Press Enter to flip the toggle (view: card ↔ compact) — the user's exact
     // sequence. The flip re-renders the dock; focus must stay put, and the
-    // subsequent editor click must still blur.
+    // subsequent editor click must still blur. Which way it flips is not the
+    // point, so wait on the density *changing* rather than on either name —
+    // a test that named one would pass vacuously in the density that already
+    // shows it.
+    let before = if h.screen_to_string().contains("view: card") {
+        "view: card"
+    } else {
+        "view: compact"
+    };
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("view: compact"))
+    h.wait_until(|h| !h.screen_to_string().contains(before))
         .unwrap();
     // Still focused (on a filter widget): the divider keeps its accent colour.
     assert_eq!(
@@ -263,6 +364,11 @@ fn dock_list_order_is_stable_across_active_window_switch() {
     let mut h =
         EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root_a.clone())
             .unwrap();
+    // Give the launch window a file so the two sessions' editor panes are
+    // told apart by their tab bars: aaa shows `readme.txt`, zzz (a fresh
+    // window, empty scratch buffer) shows `[No Name]`. That is what makes
+    // the live switch below observable — see the wait after Down.
+    h.open_file(&root_a.join("readme.txt")).unwrap();
     // Second session in the other project (launch session is aaa_project).
     h.editor_mut()
         .create_window_at(root_b.clone(), "zzz_project".to_string());
@@ -287,19 +393,23 @@ fn dock_list_order_is_stable_across_active_window_switch() {
     // Arrow down to the second row, which live-switches the active window
     // to the zzz project.
     //
-    // Snapshot the pre-Down screen so we can wait on a *screen-observable*
-    // post-switch signal — the dock's PROJECT column tag visibly swaps
-    // when the active session changes. Before Down: aaa is current
-    // (no project tag), zzz is not (tag = "zzz_project's basename"); after
-    // the switch: zzz is current (no tag), aaa shows its tag. This lets us
-    // detect the switch without an accessor wait (CONTRIBUTING §2) AND
-    // without false matches on mid-render snapshots — the post-Down
-    // highlight-move is a style-only change that doesn't enter
-    // `screen_to_string`, so the first diff that does is the tag swap
-    // after `scheduleDockSwitch`'s 30 ms debounce lands.
-    let pre = h.screen_to_string();
+    // The switch is observed on the *editor pane*, which renders whichever
+    // window is active: aaa holds readme.txt, zzz is an empty window, so
+    // `[No Name]` appearing in the tab bar is the switch landing (after
+    // `scheduleDockSwitch`'s 30 ms debounce). The dock rows themselves say
+    // nothing observable about it — in the dock's default compact density
+    // `renderPillSpec` marks the current session by colouring its label,
+    // and a style-only change doesn't enter `screen_to_string`.
+    assert!(
+        !h.screen_to_string().contains("[No Name]"),
+        "precondition: only aaa (readme.txt) is rendered before the switch, \
+         so `[No Name]` is the zzz window arriving and not something already \
+         on screen. Full screen for diagnosis:\n{}",
+        h.screen_to_string(),
+    );
     h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| h.screen_to_string() != pre).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("[No Name]"))
+        .unwrap();
     h.wait_until_stable(|_| true).unwrap();
 
     // Order must be unchanged — aaa still above zzz (the bug floated the
@@ -478,10 +588,10 @@ fn next_window_cycles_only_dock_visible_sessions() {
     }
 }
 
-/// Rows a dock card occupies below its name row in card view: the two
-/// remaining content rows (branch, PR/spacer) plus the bottom border.
-/// Mirrors the plugin's `DOCK_CARD_HEIGHT` (3 content rows).
-const DOCK_CARD_ROWS_BELOW_NAME: u16 = 3;
+/// Rows a dock card occupies below its name row in card view: the
+/// remaining content row (branch/project + PR) plus the bottom border.
+/// Mirrors the plugin's `DOCK_CARD_HEIGHT` (2 content rows).
+const DOCK_CARD_ROWS_BELOW_NAME: u16 = 2;
 
 /// Column of the dock's right-edge divider (the "wall") on the title row.
 fn dock_wall_col(h: &EditorTestHarness) -> u16 {
@@ -556,7 +666,7 @@ fn active_session_card_is_a_seamless_tab_and_follows_focus() {
         .success());
 
     let mut h =
-        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root_a.clone())
+        EditorTestHarness::with_config_and_working_dir(120, 32, card_config(), root_a.clone())
             .unwrap();
     h.editor_mut()
         .create_window_at(root_b.clone(), "zzz_project".to_string());
@@ -634,9 +744,11 @@ fn dock_list_scrollbar_shows_only_on_hover() {
             .find(|&c| h.get_cell(c, 0).as_deref() == Some("│"))
             .expect("dock right-edge divider should be present on the toolbar row")
     };
-    // The dock nudges its scrollbar into the gutter, one column left of the
-    // divider (adjacent to the edge).
-    let sb_col = wall_col.saturating_sub(1);
+    // The dock's bar is an overlay — it floats over the last column of the
+    // list rather than carving a gutter out of it — and the list is as wide
+    // as the panel wraps, which is two columns short of the divider: one for
+    // the divider, one for the slack column the runtime wraps against.
+    let sb_col = wall_col.saturating_sub(2);
     // Styles of the scrollbar column across the list rows; the bar's presence
     // shows up as a change here (it paints background-coloured cells).
     let snapshot = |h: &EditorTestHarness| -> Vec<Option<ratatui::style::Style>> {
@@ -704,9 +816,11 @@ fn dock_scrollbar_ignores_stale_per_window_cursor_when_blurred() {
             .find(|&c| h.get_cell(c, 0).as_deref() == Some("│"))
             .expect("dock right-edge divider should be present on the toolbar row")
     };
-    // The dock nudges its scrollbar into the gutter, one column left of the
-    // divider (adjacent to the edge).
-    let sb_col = wall_col.saturating_sub(1);
+    // The dock's bar is an overlay — it floats over the last column of the
+    // list rather than carving a gutter out of it — and the list is as wide
+    // as the panel wraps, which is two columns short of the divider: one for
+    // the divider, one for the slack column the runtime wraps against.
+    let sb_col = wall_col.saturating_sub(2);
     let snapshot = |h: &EditorTestHarness| -> Vec<Option<ratatui::style::Style>> {
         (8u16..30).map(|y| h.get_cell_style(sb_col, y)).collect()
     };
@@ -820,18 +934,19 @@ fn dock_enter_on_focused_button_runs_button_action() {
     h.wait_until(|h| !h.screen_to_string().contains("New Folder"))
         .unwrap();
 
-    // Tab to the "Filters" header button and Enter it: the section
-    // expands (its "view:" control appears), proving Enter activated the
-    // focused button rather than diving the tree. Tab order from the tree
-    // is new-session → filter → filters-toggle.
-    h.assert_screen_not_contains("view: card");
+    // Tab to the "Filters" header button and Enter it: the section expands
+    // (its "Manage" button appears), proving Enter activated the focused
+    // button rather than diving the tree. The density control is NOT the
+    // tell here — it sits on the toolbar beside "Filters", visible whether
+    // or not the section is open.
+    h.assert_screen_not_contains("Manage");
     h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("view: card"))
+    h.wait_until(|h| h.screen_to_string().contains("Manage"))
         .unwrap();
-    h.assert_screen_contains("view: card");
+    h.assert_screen_contains("Manage");
 }
 
 #[test]
@@ -1353,12 +1468,11 @@ fn settings_dialog_does_not_overlap_dock() {
     // palette. The settings dialog must render fully inside
     // `chrome_area` (right of the dock) — the dialog's top-left
     // rounded corner glyph `╭` must be visible on the screen, NOT
-    // clipped by the dock's right border. With the bug,
-    // `render_settings` computes the modal x/y as *relative* offsets
-    // (line 146-147 of view/settings/render.rs) and uses them as
-    // *absolute* `Rect::new` coordinates — so the modal is placed
-    // ~6 columns from the FRAME left edge (inside the dock), and the
-    // dock then over-draws its left side, hiding the title bar.
+    // clipped by the dock's right border. With the bug, the settings
+    // painter computed the modal x/y as *relative* offsets and used
+    // them as *absolute* `Rect::new` coordinates — so the modal was
+    // placed ~6 columns from the FRAME left edge (inside the dock),
+    // and the dock then over-drew its left side, hiding the title bar.
     //
     // Observable signal: with the bug, the full "Settings" title
     // never paints in one piece — the leading characters are clipped
@@ -1767,6 +1881,88 @@ fn dock_filter_clears_when_focus_leaves_so_reentry_shows_all() {
     h.assert_screen_contains("Search Tasks");
 }
 
+/// The F5 clear-on-leave must NOT fire when the user *picks* a workspace
+/// out of the filtered list. Enter on a row (and a click on one) blurs the
+/// dock to hand the keyboard to the chosen session — a dive, not a
+/// departure — so the search that produced the row has to survive it.
+/// Wiping it there meant retyping the needle for every workspace opened
+/// out of one search, which is the common case with a long list.
+#[test]
+fn dock_filter_survives_diving_into_a_filtered_workspace() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    h.editor_mut()
+        .create_window_at(root.join("wt-beta"), "beta".to_string());
+    h.editor_mut()
+        .create_window_at(root.join("wt-gamma"), "gamma".to_string());
+    h.render().unwrap();
+    open_dock(&mut h);
+    h.wait_until(|h| {
+        let s = h.screen_to_string();
+        s.contains("beta") && s.contains("gamma")
+    })
+    .unwrap();
+
+    // Filter to "gamma"; "beta" drops out of the list.
+    h.send_key(KeyCode::Char('/'), KeyModifiers::NONE).unwrap();
+    h.type_text("gamma").unwrap();
+    h.wait_until(|h| !h.screen_to_string().contains("beta"))
+        .unwrap();
+
+    // Enter returns to the list, a second Enter dives into the highlighted
+    // "gamma" row — the dock blurs, handing the keyboard to that session.
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| !h.editor().is_dock_focused()).unwrap();
+
+    // The dive must leave the filter alone: "beta" stays hidden and the
+    // box still reads "gamma" (an emptied box shows the "Search Tasks"
+    // placeholder instead).
+    let after_dive = h.screen_to_string();
+    assert!(
+        !after_dive.contains("beta"),
+        "diving into a filtered workspace must keep the filter applied, but the \
+         filtered-out 'beta' row came back:\n{after_dive}"
+    );
+    assert!(
+        !after_dive.contains("Search Tasks"),
+        "diving into a filtered workspace must keep the search text, but the box \
+         fell back to its placeholder:\n{after_dive}"
+    );
+
+    // Re-focusing the dock finds the same filtered list, so the next
+    // workspace can be picked out of the search without retyping it.
+    h.send_key(KeyCode::Char('o'), KeyModifiers::ALT).unwrap();
+    h.wait_until(|h| h.editor().is_dock_focused()).unwrap();
+    let refocused = h.screen_to_string();
+    assert!(
+        !refocused.contains("beta"),
+        "re-entering the dock after a dive must show the still-filtered list:\n{refocused}"
+    );
+
+    // A click on a row is the same gesture as Enter, and keeps the filter
+    // for the same reason. (The row's own line, not the filter box, which
+    // also spells the needle — that one shares its row with "New Task".)
+    let gamma_row =
+        h.screen_to_string()
+            .lines()
+            .position(|l| l.contains("gamma") && !l.contains("New Task"))
+            .unwrap_or_else(|| panic!("no 'gamma' row:\n{}", h.screen_to_string())) as u16;
+    h.mouse_click(3, gamma_row).unwrap();
+    h.wait_until(|h| !h.editor().is_dock_focused()).unwrap();
+    let after_click = h.screen_to_string();
+    assert!(
+        !after_click.contains("beta"),
+        "clicking a filtered workspace must keep the filter applied:\n{after_click}"
+    );
+    assert!(
+        !after_click.contains("Search Tasks"),
+        "clicking a filtered workspace must keep the search text:\n{after_click}"
+    );
+}
+
 /// F6: the auto-generated session name is rooted in the project
 /// (`<project>-N`) rather than a bare `session-N`, so a dock row tells
 /// you which project a session belongs to.
@@ -2121,12 +2317,9 @@ fn dock_right_click_opens_context_menu_in_compact_mode() {
     h.render().unwrap();
     open_dock(&mut h);
 
-    // Flip the density to compact.
-    expand_filters(&mut h);
-    let vrow = row_of(&h, "view: card") as u16;
-    h.mouse_click(3, vrow).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("view: compact"))
-        .unwrap();
+    // Compact density (the dock's default — stated anyway so the test
+    // doesn't ride on it).
+    set_view(&mut h, "compact");
 
     // Right-click the session's (single-line) row PAST the end of its
     // short text — where most of a compact row's width is empty and
@@ -2151,7 +2344,8 @@ fn dock_right_click_opens_context_menu_in_compact_mode() {
 /// `dock_right_click_opens_context_menu_in_compact_mode`: the left-click
 /// path stayed byte-exact after the right-click path grew its row-wide
 /// fallback, so compact left-clicks past the label were silently dropped.
-/// Both now share `hit_test_row_aware`, so the two paths can't drift.
+/// Both are the row node's now (`view::shell::widgets::row_pieces` extends
+/// the row to its full width), so the two paths can't drift.
 #[test]
 fn dock_left_click_past_text_dives_in_compact_mode() {
     init_tracing_from_env();
@@ -2169,12 +2363,9 @@ fn dock_left_click_past_text_dives_in_compact_mode() {
     })
     .unwrap();
 
-    // Flip the density to compact.
-    expand_filters(&mut h);
-    let vrow = row_of(&h, "view: card") as u16;
-    h.mouse_click(3, vrow).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("view: compact"))
-        .unwrap();
+    // Compact density (the dock's default — stated anyway so the test
+    // doesn't ride on it).
+    set_view(&mut h, "compact");
     assert!(
         h.editor().is_dock_focused(),
         "precondition: the dock holds keyboard focus"
@@ -2422,7 +2613,7 @@ fn dock_card_tree_wheel_scrolls_when_overflowing() {
     init_tracing_from_env();
     let (_tmp, root) = setup_project("aaaproj");
     let mut h =
-        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+        EditorTestHarness::with_config_and_working_dir(120, 32, card_config(), root.clone())
             .unwrap();
     // Enough sessions that the bordered 5-row cards overflow a 32-row
     // screen (~5 visible cards): 13 nodes total.
@@ -2524,13 +2715,13 @@ fn dock_menu_key_opens_context_menu_and_arrows_navigate() {
 fn dock_card_view_draws_card_borders() {
     let (_tmp, root) = setup_project("alphaproj");
     let mut h =
-        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+        EditorTestHarness::with_config_and_working_dir(120, 32, card_config(), root.clone())
             .unwrap();
     h.render().unwrap();
     open_dock(&mut h);
 
-    // The default density is "card": the session's card wears a rounded
-    // border, with the session name on the row below the top border.
+    // In card density the session's card wears a rounded border, with the
+    // session name on the row below the top border.
     h.wait_until(|h| {
         let s = h.screen_to_string();
         s.contains('╭') && s.contains('╰')
@@ -2553,11 +2744,7 @@ fn dock_card_view_draws_card_borders() {
     );
 
     // Toggle to compact density: the borders disappear.
-    expand_filters(&mut h);
-    let vrow = row_of(&h, "view: card") as u16;
-    h.mouse_click(3, vrow).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("view: compact"))
-        .unwrap();
+    set_view(&mut h, "compact");
     h.wait_until(|h| !h.screen_to_string().contains('╭'))
         .unwrap();
 }
@@ -2761,7 +2948,7 @@ fn dock_hint_bar_not_padded_when_tree_overflows() {
 fn dock_hint_bar_stays_pinned_after_folder_collapse() {
     let (_tmp, root) = setup_project("alphaproj");
     let mut h =
-        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+        EditorTestHarness::with_config_and_working_dir(120, 32, card_config(), root.clone())
             .unwrap();
     h.render().unwrap();
     open_dock(&mut h);
@@ -2817,7 +3004,7 @@ fn dock_hint_bar_stays_pinned_after_folder_collapse() {
 fn dock_compact_rows_drop_branch_name() {
     let (_tmp, root) = setup_project("alphaproj");
     let mut h =
-        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+        EditorTestHarness::with_config_and_working_dir(120, 32, card_config(), root.clone())
             .unwrap();
     h.render().unwrap();
     open_dock(&mut h);
@@ -2829,10 +3016,8 @@ fn dock_compact_rows_drop_branch_name() {
     h.wait_until(|h| h.screen_to_string().contains("clean"))
         .unwrap();
 
-    // Flip the density to compact.
-    expand_filters(&mut h);
-    let vrow = row_of(&h, "view: card") as u16;
-    h.mouse_click(3, vrow).unwrap();
+    // Now flip to compact — the density under test.
+    set_view(&mut h, "compact");
 
     // Final steady state, waited on semantically: compact density active
     // AND the session row (dock column, left of the wall) carries the
@@ -2853,10 +3038,11 @@ fn dock_compact_rows_drop_branch_name() {
     .unwrap();
 }
 
-/// Card density right-aligns the whole branch + git-summary group on
-/// the card's second content line: the summary's last glyph sits flush
-/// against the card's right border instead of trailing the branch on
-/// the left.
+/// Card density right-aligns the git summary against the card's right
+/// border — it sits on the *name* row now, so the status of every
+/// workspace lines up in one column down the dock, and the branch row
+/// below starts at the card's left edge instead of being dragged along
+/// in the same right-aligned group.
 #[test]
 fn dock_card_git_line_right_aligned_to_card_border() {
     let (_tmp, root) = setup_project("alphaproj");
@@ -2873,7 +3059,7 @@ fn dock_card_git_line_right_aligned_to_card_border() {
         .success());
 
     let mut h =
-        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+        EditorTestHarness::with_config_and_working_dir(120, 32, card_config(), root.clone())
             .unwrap();
     h.editor_mut()
         .create_window_at(other.clone(), "zzz_other".to_string());
@@ -2883,29 +3069,24 @@ fn dock_card_git_line_right_aligned_to_card_border() {
     // inactive, fully-bordered card.
     assert_eq!(h.editor().active_window().label, "alphaproj");
 
-    // Wait for the git probe to land zzz_other's summary line ("clean" —
-    // fresh repo, nothing to diff), rendered flush against the card's
-    // right border: the summary is IMMEDIATELY followed by the rounded
-    // `│` side border, with no interior padding after the group, and the
-    // branch marker rides in the same right-aligned group before it.
-    // Waiting for the final flush state directly (instead of asserting
-    // after a stability settle) keeps the check semantic: intermediate
-    // frames where the probe result exists but a refresh is mid-flight
-    // are simply waited through.
+    // Wait for the git probe to land zzz_other's summary ("clean" —
+    // fresh repo, nothing to diff) on its name row, flush against the
+    // card's right border: the summary is IMMEDIATELY followed by the
+    // rounded `│` side border, with no interior padding after it, while
+    // the name still leads the row from the left. Waiting for the final
+    // flush state directly (instead of asserting after a stability
+    // settle) keeps the check semantic: intermediate frames where the
+    // probe result exists but a refresh is mid-flight are simply waited
+    // through.
     h.wait_until(|h| {
         let screen = h.screen_to_string();
-        let zzz_row = match screen.lines().position(|l| l.contains("zzz_other")) {
-            Some(r) => r,
-            None => return false,
-        };
-        // The git line is the card row right below the name row.
-        let Some(line) = screen.lines().nth(zzz_row + 1) else {
+        let Some(line) = screen.lines().find(|l| l.contains("zzz_other")) else {
             return false;
         };
         let Some(b) = line.find("clean") else {
             return false;
         };
-        line[b + "clean".len()..].starts_with('│') && line[..b].contains('▸')
+        line[b + "clean".len()..].starts_with('│') && line[..b].contains("zzz_other")
     })
     .unwrap();
 }
@@ -2946,8 +3127,14 @@ fn dock_list_scrollbar_flashes_on_keyboard_nav_and_expires() {
             .find(|&c| h.get_cell(c, 0).as_deref() == Some("│"))
             .expect("dock right-edge divider should be present on the toolbar row")
     };
-    // The dock nudges its scrollbar into the gutter, one column left of the
-    // divider (adjacent to the edge).
+    // The dock's bar is an overlay — it floats over the last column of the
+    // list rather than carving a gutter out of it — and the list is laid out
+    // one column short of the divider. It was two: the runtime's
+    // `floating_panel_inner_width` took the divider and a column of slack it
+    // wrapped against, leaving the bar inboard of the wall with an empty
+    // column beside it. The described column takes only the painter's own
+    // divider — `view::shell::dock::DIVIDER_COLS`, which argues the number —
+    // so the bar is against the wall now.
     let sb_col = wall_col.saturating_sub(1);
     let snapshot = |h: &EditorTestHarness| -> Vec<Option<ratatui::style::Style>> {
         (8u16..30).map(|y| h.get_cell_style(sb_col, y)).collect()
@@ -3288,7 +3475,7 @@ fn dock_git_summary_survives_transient_probe_failure() {
     let (_tmp_a, root_a) = setup_committed_project("gitproj");
     fs::write(root_a.join("readme.txt"), "a\nb\nc\nd\ne\n").unwrap();
     let mut h =
-        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root_a.clone())
+        EditorTestHarness::with_config_and_working_dir(120, 32, card_config(), root_a.clone())
             .unwrap();
 
     // Witness session: a second committed repo, used only to prove a re-probe
@@ -3322,4 +3509,1049 @@ fn dock_git_summary_survives_transient_probe_failure() {
 
     // The target's failed re-probe must NOT have wiped its last-known summary.
     h.assert_screen_contains("+2");
+}
+
+/// The card view's two rows, each a left group and a status flush
+/// against the card's right border:
+///
+///   ╭──────────────────────────╮
+///   │ · beta              clean│
+///   │ ▸ master                 │
+///   ╰──────────────────────────╯
+///
+/// It used to be three rows, and the middle one carried the branch and
+/// the git summary as a *single right-aligned group* — so the branch
+/// floated in the middle of the card instead of starting at its left
+/// edge, and the third row stood empty on every session without a PR.
+#[test]
+fn dock_card_starts_the_branch_at_the_left_edge_and_ends_after_it() {
+    let (_tmp, root) = setup_committed_project("alphaproj");
+    // The measured workspace lives in its own repo, so its card can be
+    // read without the launch project's own status bleeding in. It stays
+    // *inactive*, keeping the right border the active card scoops away
+    // for the seamless tab.
+    let (_tmp_b, beta_root) = setup_committed_project("betaproj");
+    let branch = git_head_branch(&beta_root);
+
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, card_config(), root.clone())
+            .unwrap();
+    h.editor_mut()
+        .create_window_at(beta_root.clone(), "beta".to_string());
+    h.render().unwrap();
+    open_dock(&mut h);
+
+    // Steady state: the git probe has landed beta's summary on its name
+    // row and the branch on the row below.
+    h.wait_until(|h| {
+        let screen = h.screen_to_string();
+        let Some(r) = screen.lines().position(|l| l.contains("beta")) else {
+            return false;
+        };
+        screen.lines().nth(r).is_some_and(|l| l.contains("clean"))
+            && screen
+                .lines()
+                .nth(r + 1)
+                .is_some_and(|l| l.contains(&branch))
+    })
+    .unwrap();
+
+    let screen = h.screen_to_string();
+    let name_row = screen.lines().position(|l| l.contains("beta")).unwrap();
+    let inner = |r: usize| -> String {
+        screen
+            .lines()
+            .nth(r)
+            .unwrap_or_default()
+            .split('│')
+            .nth(1)
+            .unwrap_or_else(|| panic!("row {r} is not a bordered card row:\n{screen}"))
+            .to_string()
+    };
+
+    // Row 1: the name leads from the left border, the git summary is
+    // flush against the right one, and the project no longer rides
+    // along beside the name.
+    let row1 = inner(name_row);
+    assert!(
+        row1.trim_start().starts_with("· beta") || row1.trim_start().starts_with("* beta"),
+        "the name leads the card's first row, got {row1:?}"
+    );
+    assert!(
+        row1.ends_with("clean"),
+        "the git summary sits flush against the card's right border, got {row1:?}"
+    );
+    assert!(
+        !row1.contains('▣'),
+        "the project tag no longer doubles up beside the name, got {row1:?}"
+    );
+
+    // Row 2: the branch, starting at the card's left edge — not floating
+    // mid-card in a right-aligned group.
+    let row2 = inner(name_row + 1);
+    assert!(
+        row2.starts_with(&format!("▸ {branch}")),
+        "the branch starts at the card's left edge, got {row2:?}"
+    );
+
+    // ...and that is the last content row: the card is two rows tall, so
+    // the next line is its bottom border.
+    let after = screen.lines().nth(name_row + 2).unwrap_or_default();
+    assert!(
+        after.trim_start().starts_with('╰'),
+        "the card ends after the branch row, got {after:?}"
+    );
+}
+
+/// A worktree's branch is usually named after the workspace itself, and
+/// printing both spent one of the card's two rows saying the same thing
+/// twice. When they match, the row carries the project instead — the
+/// context the name genuinely doesn't have.
+#[test]
+fn dock_card_shows_the_project_when_the_branch_just_repeats_the_name() {
+    let (_tmp, root) = setup_committed_project("alphaproj");
+    let (_tmp_b, twin_root) = setup_committed_project("twinproj");
+    // A branch that shares nothing with the launch project's, so the
+    // card under test is the only row spelling it.
+    assert!(std::process::Command::new("git")
+        .args(["checkout", "-q", "-b", "feature-x"])
+        .current_dir(&twin_root)
+        .status()
+        .unwrap()
+        .success());
+
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, card_config(), root.clone())
+            .unwrap();
+    // The workspace is named exactly after the branch it sits on.
+    h.editor_mut()
+        .create_window_at(twin_root.clone(), "feature-x".to_string());
+    h.render().unwrap();
+    open_dock(&mut h);
+
+    // The row below the name is the project, not a second copy of the
+    // name. Waiting on it directly rides out the git probe: before it
+    // lands the row already reads "▣ twinproj" (no branch known yet),
+    // and it must still read that once the branch *is* known.
+    h.wait_until(|h| {
+        let screen = h.screen_to_string();
+        let Some(r) = screen.lines().position(|l| l.contains("feature-x")) else {
+            return false;
+        };
+        screen.lines().nth(r).is_some_and(|l| l.contains("clean"))
+    })
+    .unwrap();
+
+    let screen = h.screen_to_string();
+    let name_row = screen
+        .lines()
+        .position(|l| l.contains("feature-x"))
+        .unwrap();
+    let row2 = screen
+        .lines()
+        .nth(name_row + 1)
+        .unwrap_or_default()
+        .split('│')
+        .nth(1)
+        .unwrap_or_else(|| panic!("the twin card's second row is not bordered:\n{screen}"))
+        .to_string();
+    assert!(
+        row2.starts_with("▣ twinproj"),
+        "the project takes the row when the branch only repeats the name, got {row2:?}"
+    );
+    assert!(
+        !row2.contains("feature-x"),
+        "the name is not repeated as a branch on the row below it, got {row2:?}"
+    );
+}
+
+/// The branch `HEAD` points at in `root` (`master` or `main`, depending
+/// on the git that created it).
+fn git_head_branch(root: &std::path::Path) -> String {
+    String::from_utf8(
+        std::process::Command::new("git")
+            .args(["rev-parse", "--abbrev-ref", "HEAD"])
+            .current_dir(root)
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap()
+    .trim()
+    .to_string()
+}
+
+/// The same rule one step further: a plain folder opened as its own
+/// workspace has a project name identical to the workspace name, so the
+/// second row has nothing left to add — it stays empty instead of
+/// echoing the line above it.
+#[test]
+fn dock_card_leaves_the_second_row_empty_rather_than_echo_the_name() {
+    let (_tmp, root) = setup_committed_project("alphaproj");
+    // A plain, non-git folder outside the project: no branch, and its
+    // project *is* the folder the workspace is named after.
+    let loose = root.parent().unwrap().join("loose");
+    fs::create_dir(&loose).unwrap();
+
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, card_config(), root.clone())
+            .unwrap();
+    h.editor_mut()
+        .create_window_at(loose.clone(), "loose".to_string());
+    h.render().unwrap();
+    open_dock(&mut h);
+
+    // The card is up, and its second row is blank between the borders.
+    h.wait_until(|h| {
+        let screen = h.screen_to_string();
+        let Some(r) = screen.lines().position(|l| l.contains("loose")) else {
+            return false;
+        };
+        let Some(row2) = screen.lines().nth(r + 1) else {
+            return false;
+        };
+        row2.split('│').nth(1).is_some_and(|s| s.trim().is_empty())
+    })
+    .unwrap();
+
+    // ...and it is still a two-row card, closed by its bottom border.
+    let screen = h.screen_to_string();
+    let name_row = screen.lines().position(|l| l.contains("loose")).unwrap();
+    let after = screen.lines().nth(name_row + 2).unwrap_or_default();
+    assert!(
+        after.trim_start().starts_with('╰'),
+        "the card still ends after its second row, got {after:?}"
+    );
+}
+
+/// The Settings modal is a *full-screen* modal: with the dock open it must
+/// centre in the whole window — painting over the dock column — and dim the
+/// dock along with the rest of the frame.
+///
+/// It used to be laid into the chrome region right of the dock (the dock's
+/// later paint pass would otherwise overpaint the modal's left edge), which
+/// squeezed the dialog into the remaining columns and left the dock at full
+/// brightness beside it, reading as live even though the modal had already
+/// swallowed every key and click bound for it.
+#[test]
+fn settings_modal_covers_the_full_screen_and_dims_the_dock() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+    open_dock(&mut h);
+
+    // The dock's right border on the toolbar row (row 0) marks the width of
+    // its column; row 0 sits above the modal, so it survives it.
+    let cols = h.screen_row_text(0).chars().count() as u16;
+    let dock_border_col = (0..cols)
+        .find(|&c| h.get_cell(c, 0).as_deref() == Some("│"))
+        .expect("dock right border (│) should be present on the toolbar row");
+
+    // Sample a dock cell before the modal opens: its title, which the
+    // modal does not cover.
+    let (title_col, title_row) = h
+        .find_text_on_screen("Orchestrator")
+        .expect("dock title should be on screen");
+    let undimmed_fg = h.get_cell_style(title_col, title_row).unwrap().fg;
+
+    h.open_settings().unwrap();
+
+    // The modal's top-left corner lands *inside* the dock column, i.e. it
+    // is centred on the full frame rather than on the chrome beside the
+    // dock.
+    let (modal_left, modal_row) = h
+        .find_text_on_screen("Settings [")
+        .expect("settings modal title should be on screen");
+    let corner_col = (0..modal_left)
+        .rev()
+        .find(|&c| h.get_cell(c, modal_row).as_deref() == Some("╭"))
+        .expect("settings modal should draw its rounded top-left corner");
+    assert!(
+        corner_col < dock_border_col,
+        "the settings modal must start inside the dock column (corner at {corner_col}, \
+         dock border at {dock_border_col}):\n{}",
+        h.screen_to_string()
+    );
+
+    // ...and the dock is dimmed behind it rather than left looking live.
+    let dimmed_fg = h.get_cell_style(title_col, title_row).unwrap().fg;
+    assert_ne!(
+        undimmed_fg, dimmed_fg,
+        "the dock must dim while the settings modal is up"
+    );
+}
+
+/// The dock's title bar carries a `[ × ]` hide button at its right edge —
+/// the affordance the file explorer beside it has always had — and clicking
+/// it tears the dock down.
+///
+/// Before this, the only way to put the dock away was the "Orchestrator:
+/// Toggle Dock" command or its accelerator, so the panel read as permanent
+/// furniture to anyone who reaches for a close button first.
+///
+/// The button is right-*aligned*, not padded to a guessed width: the title
+/// row is a Row with a flex spacer the host sizes against the dock's real
+/// column count. The assertion below therefore checks the glyph sits on the
+/// dock's last content column, which is what the previous "pad past the
+/// screen width and let the host clip the tail" title row could never
+/// express — the clipped tail was exactly where the button belongs.
+///
+/// It renders as the bare glyph (`bare: true`), not a framed `[ × ]`, and
+/// lights up under the pointer the way the tab and file explorer `×` do.
+#[test]
+fn dock_title_bar_close_button_hides_the_dock() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+    open_dock(&mut h);
+
+    // The glyph shares the dock's title row, and wears no `[ ]` frame.
+    let title_row = row_of(&h, "Orchestrator") as u16;
+    let title_text = h.screen_row_text(title_row);
+    assert!(
+        title_text.contains('×'),
+        "dock title bar should carry a × hide button:\n{}",
+        h.screen_to_string()
+    );
+    assert!(
+        !title_text.contains("[ × ]") && !title_text.contains("[×]"),
+        "the × is a bare icon affordance, not a framed button:\n{}",
+        h.screen_to_string()
+    );
+    let close_col = title_text
+        .chars()
+        .position(|c| c == '×')
+        .expect("× just asserted present") as u16;
+
+    // It sits on the dock's last content column. The header rule under the
+    // toolbar is drawn by the host (`divider()`) across the panel's real
+    // inner width, so its final `─` *is* that column — comparing against it
+    // asserts the right-alignment without the test re-deriving the dock's
+    // geometry (width fraction, border, gutter) and without pinning the dock
+    // to any particular width.
+    let rule_row = h
+        .screen_to_string()
+        .lines()
+        .position(|l| l.starts_with("────"))
+        .expect("dock header rule should be on screen") as u16;
+    let cols = h.screen_row_text(rule_row).chars().count() as u16;
+    let content_last_col = (0..cols)
+        .take_while(|&c| h.get_cell(c, rule_row).as_deref() == Some("─"))
+        .last()
+        .expect("dock header rule should span the panel's inner width");
+    assert_eq!(
+        close_col,
+        content_last_col,
+        "the × must sit on the dock's last content column (glyph at \
+         {close_col}, content ends at {content_last_col}):\n{}",
+        h.screen_to_string()
+    );
+
+    // Pointing at it recolours it, so it reads as live before you commit to
+    // the click — the affordance the tab and explorer `×` already have.
+    let idle_fg = h.get_cell_style(close_col, title_row).unwrap().fg;
+    h.mouse_move(close_col, title_row).unwrap();
+    h.wait_until(|h| h.get_cell_style(close_col, title_row).unwrap().fg != idle_fg)
+        .unwrap();
+
+    // ...and moving off it puts the idle colour back, so the highlight
+    // tracks the pointer rather than latching on first contact.
+    h.mouse_move(0, title_row).unwrap();
+    h.wait_until(|h| h.get_cell_style(close_col, title_row).unwrap().fg == idle_fg)
+        .unwrap();
+
+    // Clicking it runs the same teardown as Esc / the toggle command: the
+    // whole dock column goes away, not just the title row.
+    h.mouse_click(close_col, title_row).unwrap();
+    h.wait_until(|h| !h.screen_to_string().contains("New Task"))
+        .unwrap();
+    h.assert_screen_not_contains("Filters");
+    h.assert_screen_not_contains("Search Tasks");
+}
+
+/// View ▸ Orchestrator Dock toggles the dock, sits directly under the file
+/// explorer's own toggle, and carries a checkbox that tracks whether the dock
+/// is actually up.
+///
+/// The row is contributed by the plugin (`editor.addMenuItem`), anchored by
+/// stable ids — the menu's `id` ("View") and the neighbouring row's action
+/// ("toggle_file_explorer") — rather than by translated labels, and its
+/// checkmark reads the host-computed `dock` menu-context key. Driving it from
+/// the menu bar exercises all three: the row exists, it landed in the right
+/// place, and the mark follows the panel.
+#[test]
+fn view_menu_row_toggles_the_dock_with_a_live_checkbox() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+
+    // With the dock down, the row reads unchecked — and sits on the row
+    // immediately below the file explorer's toggle. (Both labels are matched
+    // together with their checkbox glyph so the *menu* rows are found, not
+    // the file explorer panel's own "File Explorer" title bar.)
+    h.send_key(KeyCode::Char('v'), KeyModifiers::ALT).unwrap();
+    h.render().unwrap();
+    h.assert_screen_contains("☐ Orchestrator Dock");
+    let explorer_row = row_of(&h, "File Explorer");
+    assert_eq!(
+        row_of(&h, "Orchestrator Dock"),
+        explorer_row + 1,
+        "the dock row belongs directly under the file explorer toggle:\n{}",
+        h.screen_to_string()
+    );
+
+    // Down lands on it (it was inserted at index 1, ahead of the separator);
+    // Enter dispatches the plugin action behind it and the dock comes up.
+    h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("New Task"))
+        .unwrap();
+
+    // Re-opening the menu now shows the box ticked, because the checkbox
+    // reads the live "a dock panel is mounted" context key rather than
+    // anything the plugin remembers.
+    h.send_key(KeyCode::Char('v'), KeyModifiers::ALT).unwrap();
+    h.render().unwrap();
+    h.assert_screen_contains("☑ Orchestrator Dock");
+
+    // ...and the same row puts it away again.
+    h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| !h.screen_to_string().contains("New Task"))
+        .unwrap();
+}
+
+// ── workspace rename stays per-workspace across co-tenants ─────────────────
+
+/// Renaming a workspace extracted from a tab ("Extract Tab to New
+/// Workspace") must rename ONLY that workspace. The extracted co-tenant
+/// shares the source's project root, and manual names used to be persisted
+/// per root — so renaming the new workspace silently renamed the original
+/// too (and vice versa). Names are now keyed by the window's durable
+/// stable id; the root key survives only as a legacy / windowless
+/// fallback.
+#[test]
+fn renaming_extracted_co_tenant_workspace_leaves_original_name_alone() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(160, 45, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+
+    // A file-backed tab is required for extraction.
+    h.open_file(&root.join("readme.txt")).unwrap();
+    h.render().unwrap();
+
+    // Extract the tab into a co-tenant workspace over the same root.
+    run_palette_command(&mut h, "Extract Tab to New Workspace");
+    h.wait_until(|h| {
+        h.screen_to_string()
+            .contains("Extracted readme.txt into workspace alphaproj (2)")
+    })
+    .unwrap();
+
+    // The dock lists both co-tenants.
+    open_dock(&mut h);
+    h.wait_until(|h| h.screen_to_string().contains("alphaproj (2)"))
+        .unwrap();
+
+    // Right-click the extracted workspace's row → "Rename…" → the centered
+    // Rename Workspace dialog, pre-filled with "alphaproj (2)".
+    let row = row_of(&h, "alphaproj (2)") as u16;
+    h.mouse_right_click(4, row).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Rename…"))
+        .unwrap();
+    let (rcol, rrow) = pos_of(&h, "Rename…");
+    h.mouse_click(rcol, rrow).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Rename Workspace"))
+        .unwrap();
+    h.assert_screen_contains("Workspace name");
+
+    // Replace the pre-filled name wholesale with a distinct one.
+    for _ in 0.."alphaproj (2)".len() {
+        h.send_key(KeyCode::Backspace, KeyModifiers::NONE).unwrap();
+    }
+    h.type_text("extracted-ws").unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| {
+        let s = h.screen_to_string();
+        !s.contains("Rename Workspace") && s.contains("extracted-ws")
+    })
+    .unwrap();
+
+    // Only the extracted workspace carries the new name...
+    let screen = h.screen_to_string();
+    let renamed_rows = screen
+        .lines()
+        .filter(|l| l.contains("extracted-ws"))
+        .count();
+    assert_eq!(
+        renamed_rows, 1,
+        "exactly one dock row should carry the new name (renaming the \
+         extracted co-tenant must not rename the original), got screen:\n{screen}"
+    );
+    // ...and the original workspace still shows its own label on a row of
+    // its own (a row naming it WITHOUT the new name).
+    assert!(
+        screen
+            .lines()
+            .any(|l| l.contains("alphaproj") && !l.contains("extracted-ws")),
+        "the original workspace should keep its 'alphaproj' label, got screen:\n{screen}"
+    );
+}
+
+/// Filing a workspace extracted from a tab ("Extract Tab to New
+/// Workspace") into a folder must move ONLY that workspace. Folder
+/// assignments used to be keyed per root — and the extracted co-tenant
+/// shares the original's project root, so moving either filed both. Like
+/// manual names, assignments are now keyed by the window's durable
+/// stable id, the root key surviving only as a legacy / windowless
+/// fallback.
+#[test]
+fn moving_extracted_co_tenant_workspace_to_folder_leaves_original_unfiled() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(160, 45, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+
+    // Extract a file tab into a co-tenant workspace over the same root.
+    h.open_file(&root.join("readme.txt")).unwrap();
+    h.render().unwrap();
+    run_palette_command(&mut h, "Extract Tab to New Workspace");
+    h.wait_until(|h| {
+        h.screen_to_string()
+            .contains("Extracted readme.txt into workspace alphaproj (2)")
+    })
+    .unwrap();
+
+    open_dock(&mut h);
+    h.wait_until(|h| h.screen_to_string().contains("alphaproj (2)"))
+        .unwrap();
+
+    // Create an empty folder "Docs" (organize checkbox off).
+    let new_row = row_of(&h, "New Task") as u16;
+    h.mouse_click(4, new_row).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("New Folder"))
+        .unwrap();
+    h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Folder name"))
+        .unwrap();
+    h.type_text("Docs").unwrap();
+    h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::Char(' '), KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| {
+        let s = h.screen_to_string();
+        !s.contains("Folder name") && s.contains("Docs")
+    })
+    .unwrap();
+
+    // Right-click the EXTRACTED workspace's row → "Move to Folder…" →
+    // pick "Docs" (cursor starts on "Top level"; ↓ lands on the folder).
+    let session_row = row_of(&h, "alphaproj (2)") as u16;
+    h.mouse_right_click(4, session_row).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Move to Folder"))
+        .unwrap();
+    let (mcol, mrow) = pos_of(&h, "Move to Folder");
+    h.mouse_click(mcol, mrow).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Top level"))
+        .unwrap();
+    h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+
+    // The move landed once the folder header reports a member count at
+    // all (an empty folder shows none). Waiting on the bare "(" keeps
+    // this settle-wait bug-agnostic, so the count assertion below fails
+    // fast instead of hanging a broken build in `wait_until`.
+    h.wait_until(|h| {
+        h.screen_to_string()
+            .lines()
+            .any(|l| l.contains("Docs") && l.contains("("))
+    })
+    .unwrap();
+    // Exactly ONE member — the extracted workspace. Per-root assignment
+    // used to file the original co-tenant too, reading "Docs (2)".
+    let screen = h.screen_to_string();
+    assert!(
+        screen
+            .lines()
+            .any(|l| l.contains("Docs") && l.contains("(1)")),
+        "the folder should hold only the extracted workspace (the original \
+         co-tenant must not be filed with it), got screen:\n{screen}"
+    );
+    // The original workspace still renders on a row of its own, outside
+    // the folder (its title row names it without the co-tenant counter).
+    assert!(
+        screen
+            .lines()
+            .any(|l| l.contains("alphaproj") && !l.contains("(2)") && !l.contains("Docs")),
+        "the original workspace should still render as its own top-level row, \
+         got screen:\n{screen}"
+    );
+}
+
+// ---------------------------------------------------------------------
+// Highlight band width.
+//
+// The dock's hover / selection highlight is a background band, so these
+// read cell backgrounds off the rendered screen. None of them names a
+// theme colour: each snapshots a row's backgrounds with the pointer
+// parked elsewhere, drives the pointer (or the keyboard) onto the row,
+// and diffs — the columns that changed ARE the band the user sees,
+// whatever the active theme paints it with.
+// ---------------------------------------------------------------------
+
+/// Background colour of every column on one screen row.
+fn row_bgs(h: &EditorTestHarness, row: u16) -> Vec<Option<ratatui::style::Color>> {
+    let cols = h.screen_row_text(row).chars().count() as u16;
+    (0..cols)
+        .map(|c| h.get_cell_style(c, row).and_then(|s| s.bg))
+        .collect()
+}
+
+/// Inclusive column span whose background differs between two snapshots
+/// of one row — the band the highlight painted. `None` when nothing
+/// changed (no band at all).
+fn band_span(
+    before: &[Option<ratatui::style::Color>],
+    after: &[Option<ratatui::style::Color>],
+) -> Option<(u16, u16)> {
+    let changed: Vec<u16> = before
+        .iter()
+        .zip(after.iter())
+        .enumerate()
+        .filter(|(_, (b, a))| b != a)
+        .map(|(i, _)| i as u16)
+        .collect();
+    Some((*changed.first()?, *changed.last()?))
+}
+
+/// Park the pointer over the editor buffer, far right of the dock, for a
+/// clean un-hovered baseline.
+fn park_pointer(h: &mut EditorTestHarness) {
+    h.mouse_move(110, 20).unwrap();
+}
+
+/// Hover each of `rows` in turn, returning `(row, first, last)` for the
+/// rows that answered the pointer.
+///
+/// The dock's *selected* row keeps its own, stronger highlight and hover
+/// deliberately leaves it alone, so it contributes nothing here. Which
+/// row that is depends on which workspace is active, and the screen is
+/// the only place a test may learn that from — so rather than assume,
+/// sweep both rows and assert on whichever ones lit up.
+fn hover_bands(h: &mut EditorTestHarness, rows: &[u16]) -> Vec<(u16, u16, u16)> {
+    let mut lit = Vec::new();
+    for &row in rows {
+        park_pointer(h);
+        let idle = row_bgs(h, row);
+        // Nothing crosses the plugin bridge on a hover — the host
+        // repaints from its own hover state — so the screen is settled
+        // by the time `mouse_move` returns.
+        h.mouse_move(4, row).unwrap();
+        let hovered = row_bgs(h, row);
+        if let Some((first, last)) = band_span(&idle, &hovered) {
+            lit.push((row, first, last));
+        }
+    }
+    lit
+}
+
+/// The dock's right-edge divider column, found on the toolbar row.
+fn dock_edge_col(h: &EditorTestHarness) -> u16 {
+    let cols = h.screen_row_text(0).chars().count() as u16;
+    (0..cols)
+        .find(|&c| h.get_cell(c, 0).as_deref() == Some("│"))
+        .expect("the dock's right-edge divider should be present on the toolbar row")
+}
+
+/// Columns of the first two `│` glyphs on `row` — the box a dropdown /
+/// card draws around that row.
+fn box_border_cols(h: &EditorTestHarness, row: u16) -> (u16, u16) {
+    let borders: Vec<u16> = (0..h.screen_row_text(row).chars().count() as u16)
+        .filter(|&c| h.get_cell(c, row).as_deref() == Some("│"))
+        .collect();
+    assert!(
+        borders.len() >= 2,
+        "row {row} should be framed by a box, got:\n{}",
+        h.screen_to_string()
+    );
+    (borders[0], borders[1])
+}
+
+/// Open the dock's "New Task… ▾" create dropdown (entries "New Task…"
+/// and "New Folder…") and return the screen row of its second entry.
+fn open_create_dropdown(h: &mut EditorTestHarness) -> u16 {
+    let new_row = row_of(h, "New Task") as u16;
+    h.mouse_click(4, new_row).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("New Folder"))
+        .unwrap();
+    row_of(h, "New Folder") as u16
+}
+
+/// A dock dropdown's hover band must span the menu row, not a band sized
+/// to the longest label.
+///
+/// The menu's entries are bare buttons, and hover paints a button's OWN
+/// cells — so the band stopped at the widest label (~15 columns) while
+/// the enclosing section padded every row out to the dock width, leaving
+/// most of the row visibly unhighlighted. Both entries lit exactly the
+/// same 15 columns despite labels of different lengths, which is the
+/// tell: the band tracked the label set, not the row.
+#[test]
+fn dock_dropdown_hover_band_spans_the_menu_row() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+    open_dock(&mut h);
+
+    // "New Folder…" is the entry to hover: "New Task…" is the keyboard
+    // cursor and already carries the focus band.
+    let menu_row = open_create_dropdown(&mut h);
+    let (left, right) = box_border_cols(&h, menu_row);
+
+    park_pointer(&mut h);
+    let idle = row_bgs(&h, menu_row);
+    h.mouse_move(left + 4, menu_row).unwrap();
+    let hovered = row_bgs(&h, menu_row);
+
+    let (start, end) = band_span(&idle, &hovered).unwrap_or_else(|| {
+        panic!(
+            "hovering a dropdown entry must repaint it; row {menu_row} was unchanged:\n{}",
+            h.screen_to_string()
+        )
+    });
+    // The row runs from just inside the left border to just inside the
+    // right one, the section keeping one column of padding at each end.
+    // Before the fix the band ended ~15 columns in, far short of `right`.
+    assert!(
+        start <= left + 2 && end >= right - 2,
+        "the hover band must span the menu row (borders at cols {left}/{right}), \
+         got cols {start}..{end}:\n{}",
+        h.screen_to_string()
+    );
+}
+
+/// The same band, driven by the keyboard cursor rather than the pointer:
+/// the highlighted entry of an open dropdown must read as a full-width
+/// bar so the menu looks like a menu.
+#[test]
+fn dock_dropdown_cursor_band_spans_the_menu_row() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    h.render().unwrap();
+    open_dock(&mut h);
+
+    let menu_row = open_create_dropdown(&mut h);
+    park_pointer(&mut h);
+    let (left, right) = box_border_cols(&h, menu_row);
+    let idle = row_bgs(&h, menu_row);
+
+    // ↓ moves the dropdown cursor onto "New Folder…".
+    h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| row_bgs(h, menu_row) != idle).unwrap();
+    let selected = row_bgs(&h, menu_row);
+
+    let (start, end) = band_span(&idle, &selected).expect("the cursor row must repaint");
+    assert!(
+        start <= left + 2 && end >= right - 2,
+        "the dropdown cursor band must span the menu row (borders at cols \
+         {left}/{right}), got cols {start}..{end}:\n{}",
+        h.screen_to_string()
+    );
+}
+
+/// A workspace with a sibling, so the dock has one row that is NOT the
+/// selected one and can therefore show a distinct hover state.
+fn dock_with_two_workspaces(config: Config) -> (tempfile::TempDir, EditorTestHarness) {
+    let (tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, config, root.clone()).unwrap();
+    let sibling = root.parent().unwrap().join("zzz_project");
+    fs::create_dir(&sibling).unwrap();
+    h.editor_mut()
+        .create_window_at(sibling, "zzz_project".to_string());
+    h.render().unwrap();
+    open_dock(&mut h);
+    h.wait_until(|h| h.screen_to_string().contains("zzz_project"))
+        .unwrap();
+    (tmp, h)
+}
+
+/// Compact workspace rows: hovering one must light the row across the
+/// whole dock, the way the selected row already does.
+///
+/// The hover band declares `extend_to_line_end`, but the panel renderer
+/// filled a row's trailing cells from the row-level style alone and
+/// dropped the flag off inline overlays — so the selection band ran to
+/// the dock edge while the hover band stopped dead at the end of the
+/// workspace name.
+#[test]
+fn dock_compact_row_hover_band_spans_the_dock() {
+    let (_tmp, mut h) = dock_with_two_workspaces(Default::default());
+
+    let edge = dock_edge_col(&h);
+    let rows = [
+        row_of(&h, "alphaproj") as u16,
+        row_of(&h, "zzz_project") as u16,
+    ];
+    let lit = hover_bands(&mut h, &rows);
+
+    assert!(
+        !lit.is_empty(),
+        "hovering a workspace row must repaint it:\n{}",
+        h.screen_to_string()
+    );
+    for (row, start, end) in lit {
+        assert!(
+            start == 0 && end >= edge - 1,
+            "the hover band on row {row} must span the dock (right edge at col \
+             {edge}), got cols {start}..{end}:\n{}",
+            h.screen_to_string()
+        );
+    }
+}
+
+/// Card density: the same row-wide band, this time over a bordered card,
+/// where "the row" is the card and the band has to reach its borders.
+#[test]
+fn dock_card_row_hover_band_spans_the_card() {
+    let (_tmp, mut h) = dock_with_two_workspaces(card_config());
+
+    let rows = [
+        row_of(&h, "alphaproj") as u16,
+        row_of(&h, "zzz_project") as u16,
+    ];
+    let lit = hover_bands(&mut h, &rows);
+
+    assert!(
+        !lit.is_empty(),
+        "hovering a workspace card must repaint it:\n{}",
+        h.screen_to_string()
+    );
+    for (row, start, end) in lit {
+        // Read the card's own borders — the active workspace's card is
+        // drawn as a seamless tab with no right border, so the frame
+        // can't be assumed; only rows that answered the pointer (never
+        // the selected one) are measured.
+        let (left, right) = box_border_cols(&h, row);
+        assert!(
+            start <= left && end >= right,
+            "the hover band on card row {row} must span the card (borders at cols \
+             {left}/{right}), got cols {start}..{end}:\n{}",
+            h.screen_to_string()
+        );
+    }
+}
+
+/// Hovering a dock workspace row must **ask for a frame**.
+///
+/// The two hover-band tests above assert what the frame *contains*, and could
+/// not have caught the bug that actually shipped, because every harness input
+/// helper renders unconditionally: `mouse_move` is `send_mouse` followed by
+/// `render()`. In the real editor nothing calls `render()` for you — the main
+/// loop repaints only when `Editor::handle_mouse` returns `true` — so a
+/// surface that changes its own state and answers `false` looks perfect under
+/// test and is frozen on screen.
+///
+/// This is the shipped bug it pins: *a described panel's hover changed state
+/// but no frame was requested.* The hover band the two tests above measure was
+/// only ever on screen because the harness drew it — `handle_mouse` answered
+/// "nothing to draw", and in the terminal the row stayed dead under the
+/// pointer.
+///
+/// **What it does not pin, honestly.** The dock's row hover travels back as a
+/// message, so this test still passes against the *other* shipped variant —
+/// `Dispatched::changed` computed from `!result.msgs.is_empty()` alone, which
+/// missed a `widgets::List`'s message-free hover write. That one is pinned by
+/// `command_palette::test_palette_row_hover_requests_a_frame`, whose list
+/// keeps its hover in list state and emits nothing. Verified both ways by
+/// reintroducing each bug: this test fails when the shell reports no change at
+/// all, and survives the msgs-only computation.
+///
+/// Both rows are swept rather than assuming which workspace is active: the
+/// pointer reaching a row is what has to be answered, selected or not.
+#[test]
+fn dock_row_hover_requests_a_frame() {
+    let (_tmp, mut h) = dock_with_two_workspaces(Default::default());
+
+    for needle in ["alphaproj", "zzz_project"] {
+        let row = row_of(&h, needle) as u16;
+        // Park the pointer off the row and draw, so the tree is settled and
+        // the only thing left to change is the hover this move writes.
+        park_pointer(&mut h);
+        h.render().unwrap();
+
+        let asked = h.mouse_move_reporting_render(4, row).unwrap();
+        assert!(
+            asked,
+            "hovering the '{needle}' row at row {row} wrote the list's hover state, so \
+             handle_mouse had to report needs_render — it reported false, which in the \
+             real editor is a hover band that never gets drawn:\n{}",
+            h.screen_to_string()
+        );
+    }
+}
+
+/// The negative half: with the pointer already resting on a dock row, another
+/// motion event onto the same cell must **not** ask for a frame.
+///
+/// Without this, `dock_row_hover_requests_a_frame` is vacuous — a `changed`
+/// hardcoded to `true` satisfies it, and every motion event the terminal
+/// delivers (one per pointer sample) would repaint the whole editor. The move
+/// asserted on here crosses no element boundary, so the list emits no Enter or
+/// Leave, queues no mutation, and leaves `Ui::needs_frame` false.
+#[test]
+fn dock_pointer_at_rest_requests_no_frame() {
+    let (_tmp, mut h) = dock_with_two_workspaces(Default::default());
+
+    let row = row_of(&h, "alphaproj") as u16;
+    // `mouse_move` renders, so the hover this writes is on screen and the
+    // scheduler is drained before the assertion.
+    h.mouse_move(4, row).unwrap();
+    h.render().unwrap();
+
+    let asked = h.mouse_move_reporting_render(4, row).unwrap();
+    assert!(
+        !asked,
+        "a motion onto the cell the pointer already rests on changes nothing and must \
+         not request a frame:\n{}",
+        h.screen_to_string()
+    );
+}
+
+/// **The dock stands on its own ground.** Every cell of the column is
+/// painted in the panel's background: the slack after a toolbar button, the
+/// gap a `flexSpacer` opens between two of them, and the whole band below
+/// the last session row.
+///
+/// Regression: `dock::column` laid the plugin's rows straight onto the
+/// frame, and a cell no row wrote kept whatever the terminal's own ground
+/// is — `Color::Reset`. On a dark terminal running the `light` theme that
+/// read as black gaps around the toolbar and a black band under the
+/// session list, in a column that is otherwise white. The floating panel
+/// never had it (`panel::frame_box` fills the ring) and neither does a
+/// sidebar section (`sidebar::walls` fills the body); the dock was the one
+/// surface with no ground of its own.
+///
+/// Asserted on the *style* rather than the glyph: an unpainted cell holds a
+/// space, exactly as a painted one does, so only its background tells them
+/// apart.
+#[test]
+fn dock_column_is_painted_to_its_edges() {
+    let (_tmp, root) = setup_project("groundproj");
+    let config = Config {
+        theme: "light".into(),
+        ..Default::default()
+    };
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, config, root.clone()).unwrap();
+    h.render().unwrap();
+    open_dock(&mut h);
+
+    // Left of the divider is the dock's; the divider itself is the grip's.
+    let wall = dock_wall_col(&h);
+    let rows = h.buffer().area.height;
+    let bare: Vec<(u16, u16)> = (0..rows)
+        .flat_map(|y| (0..wall).map(move |x| (x, y)))
+        .filter(|&(x, y)| {
+            !matches!(
+                h.get_cell_style(x, y).and_then(|s| s.bg),
+                Some(bg) if bg != ratatui::style::Color::Reset
+            )
+        })
+        .collect();
+    assert!(
+        bare.is_empty(),
+        "dock cells left on the terminal's default ground at {bare:?}\n{}",
+        h.screen_to_string()
+    );
+}
+
+/// **A click on a dock widget takes the keyboard with it.** Pressing the
+/// filter field focuses it *and* moves keyboard focus into the dock, so the
+/// next keystroke narrows the list instead of being typed into the buffer
+/// behind the dock.
+///
+/// Regression: a widget's own node answers the press and calls `e.stop()`, so
+/// the column's pointer surface — the one that raises `UiFact::DockFocus` —
+/// never saw it. The plugin got the hit and moved its own focus key, which is
+/// why the field visibly lit up; the host's `focused` flag stayed false, and
+/// everything typed afterwards went to the editor. The `Slot::Pane` arm of
+/// `apply_ui_fact` had already been taught to take that focus half itself
+/// ("a `hit_node` press calls `e.stop()`, so the pane's own surface never
+/// sees it"); the dock's arm had not.
+///
+/// Driven with the mouse and asserted on rendered output: `/` reaches the
+/// same field through a host-level key (`dock_slash_filters_and_enter_...`)
+/// and would pass with the bug still in place.
+#[test]
+fn mouse_click_on_dock_filter_moves_the_keyboard_into_the_dock() {
+    let (_tmp, root) = setup_project("alphaproj");
+    let mut h =
+        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
+            .unwrap();
+    h.editor_mut()
+        .create_window_at(root.join("wt-beta"), "beta".to_string());
+    h.editor_mut()
+        .create_window_at(root.join("wt-gamma"), "gamma".to_string());
+    h.render().unwrap();
+    open_dock(&mut h);
+    h.wait_until(|h| {
+        let s = h.screen_to_string();
+        s.contains("beta") && s.contains("gamma")
+    })
+    .unwrap();
+
+    // **Start with the keyboard in the editor**, which is the whole case:
+    // the dock mounts focused, so a click that only has to *keep* focus
+    // proves nothing.
+    let wall = dock_wall_col(&h);
+    h.mouse_click(wall + 20, 3).unwrap();
+    h.render().unwrap();
+    assert!(
+        !h.editor().is_dock_focused(),
+        "the editor click should have blurred the dock"
+    );
+
+    // The filter field, reached with the mouse rather than with "/".
+    let row = row_of(&h, "Search") as u16;
+    let col = col_in_row(&h, row, "Search") as u16;
+    h.mouse_click(col + 1, row).unwrap();
+    h.render().unwrap();
+    // Asserted before a key is sent, and deliberately: with the keyboard
+    // still in the editor, `type_text` goes to the buffer and the
+    // `wait_until` below waits forever on a dock response that never comes
+    // (the hazard `open_dock` documents). A hang is a worse failure than an
+    // assertion.
+    assert!(
+        h.editor().is_dock_focused(),
+        "clicking a dock widget must move keyboard focus into the dock"
+    );
+
+    h.type_text("gamma").unwrap();
+    h.wait_until(|h| {
+        let s = h.screen_to_string();
+        s.contains("gamma") && !s.contains("beta")
+    })
+    .unwrap();
+
+    // ...and nothing was typed into the buffer the dock is standing beside.
+    assert_eq!(
+        h.get_buffer_content().unwrap_or_default().trim(),
+        "",
+        "the keystrokes belonged to the dock's filter, not to the editor"
+    );
 }

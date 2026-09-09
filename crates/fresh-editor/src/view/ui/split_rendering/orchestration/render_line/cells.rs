@@ -22,6 +22,7 @@ use super::super::selection_sweep::SelectionActiveSet;
 use super::{cursor_indicator_style, CursorTracker, SpanCursors};
 use crate::app::types::CellThemeInfo;
 use crate::config::IndentationGuideMode;
+use crate::model::buffer::LineEnding;
 use crate::primitives::ansi::AnsiParser;
 use crate::primitives::display_width::char_width;
 use crate::state::EditorState;
@@ -29,7 +30,7 @@ use crate::view::overlay::Overlay;
 use crate::view::theme::Theme;
 use crate::view::ui::view_pipeline::{LineStart, ViewLine};
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Style};
+use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Span;
 use std::ops::ControlFlow;
 
@@ -42,6 +43,12 @@ pub(super) struct CellPassInput<'a, 'c> {
     pub decorations: &'a DecorationContext,
     /// Gutter display number for this line (for the block-selection sweep).
     pub gutter_num: usize,
+    /// Byte offset of the logical source line this row belongs to, when a
+    /// block selection is on screen. Cells convert their source byte into a
+    /// column in that line for the block-rect test — the unit the rectangle
+    /// is stated in (issue #3148). `None` when no block rect exists, or when
+    /// the row carries no source bytes to measure from.
+    pub block_line_start_byte: Option<usize>,
     /// Screen row this line will occupy (rows already pushed).
     pub current_row: u16,
     pub render_area: Rect,
@@ -84,6 +91,10 @@ pub(super) struct CellPassOutput {
     /// Changed). Picked up by the tail-fill pass so the bg wash
     /// continues past the scoped text to the viewport's right edge.
     pub syntax_extend_bg: Option<Color>,
+    /// Screen cells the newline's line-ending indicator occupied (0 when
+    /// none rendered). The cursor-on-newline placement subtracts these so
+    /// the cursor lands on the indicator, not past it.
+    pub newline_indicator_cols: usize,
 }
 
 /// Render one line's characters into `line_spans` / `line_view_map`.
@@ -119,8 +130,13 @@ pub(super) fn render_line_cells<'a, 'c>(
 
     // Reset the per-row touched set. Wrap continuations inherit overlays
     // still active from the previous row of the same source line; new
-    // source lines do not (see OverlayActiveSet).
-    overlay_sweep.enter_row(matches!(input.view_line.line_start, LineStart::AfterBreak));
+    // source lines seed from the overlays covering their first byte, so
+    // a range-wide overlay tail-fills every row it spans (see
+    // OverlayActiveSet::enter_row).
+    overlay_sweep.enter_row(
+        matches!(input.view_line.line_start, LineStart::AfterBreak),
+        input.view_line.source_start_byte,
+    );
 
     let mut pass = CellPass {
         // ANSI parser threaded from the caller across wrapped rows.
@@ -150,6 +166,7 @@ pub(super) fn render_line_cells<'a, 'c>(
         first_line_byte_pos: None,
         last_line_byte_pos: None,
         syntax_extend_bg: None,
+        newline_indicator_cols: 0,
     };
 
     for ch in line_content.chars() {
@@ -195,6 +212,11 @@ struct CellPass<'a, 'b, 'c> {
     first_line_byte_pos: Option<usize>,
     last_line_byte_pos: Option<usize>,
     syntax_extend_bg: Option<Color>,
+    /// Screen cells emitted for the newline's line-ending indicator (0 when
+    /// none rendered). The view pipeline gives `\n` visual width 1 but the
+    /// indicator may occupy one or two cells (`↵` / `␍↵`), so the rendered
+    /// column count is tracked separately from the pipeline width.
+    newline_indicator_cols: usize,
 }
 
 /// Resolved style and theme-inspector metadata for one cell.
@@ -269,6 +291,9 @@ impl CellPass<'_, '_, '_> {
     fn render_visible_cell(&mut self, ch: char, byte_pos: Option<usize>, ansi_style: Style) {
         // Is this view position the START of a tab expansion?
         let is_tab_start = self.input.view_line.tab_starts.contains(&self.col_offset);
+        // A padding column of a tab expansion — a space the file does not
+        // contain (issue #3077).
+        let is_tab_padding = self.is_tab_padding(ch, byte_pos);
         let is_cursor = self.cursor_hits_cell(byte_pos);
 
         // Refresh the block-rect active set for this row.
@@ -283,17 +308,51 @@ impl CellPass<'_, '_, '_> {
         let is_primary_cursor =
             is_cursor && byte_pos == Some(self.input.selection.primary_cursor_position);
         let exclude_from_selection = is_cursor && !(self.input.is_active && is_primary_cursor);
-        let is_selected =
-            !exclude_from_selection && self.selection_sweep.contains(byte_pos, self.byte_index);
+        let is_selected = !exclude_from_selection
+            && self
+                .selection_sweep
+                .contains(byte_pos, self.block_line_column(byte_pos));
 
-        let resolved = self.resolve_cell_style(byte_pos, ansi_style, is_cursor, is_selected);
+        // A virtual-space cursor "at" the newline byte sits visually past the
+        // content end — its indicator is drawn at the virtual column by
+        // `place_cell_cursor`, so the newline cell itself (which may render a
+        // line-ending indicator) must not be styled as the cursor.
+        let newline_virtual_cursor = is_cursor
+            && ch == '\n'
+            && byte_pos.is_some_and(|bp| self.input.selection.virtual_cols_at.contains_key(&bp));
+        let style_as_cursor = is_cursor && !newline_virtual_cursor;
+
+        let resolved = self.resolve_cell_style(byte_pos, ansi_style, style_as_cursor, is_selected);
         self.record_cell_theme(&resolved);
 
         // `indicator_buf` holds the UTF-8 bytes of a single fallback indicator
         // char on the stack — no heap allocation per cell.
         let mut indicator_buf = [0u8; 4];
         let is_lsp_cursor = is_cursor && self.input.lsp_waiting && self.input.is_active;
-        let is_indentation_guide = !is_lsp_cursor && self.is_indentation_guide_cell(ch, byte_pos);
+
+        // A guide and a tab marker both want the tab's first column, and the
+        // guide used to simply overwrite the marker — with guides on there was
+        // then no way to tell tab indentation from space indentation at any
+        // level (issue #3079). They share the expansion instead: the guide
+        // keeps the tab stop it belongs to and the marker moves one column
+        // right, onto the expansion's second column. A one-column expansion
+        // has nowhere to shift to, so there the marker keeps the column: the
+        // tab is the fact that would otherwise be unrecoverable, while the
+        // guide's column is still marked by every other row.
+        let guide_cell = self.is_indentation_guide_cell(ch, byte_pos);
+        let marker_due = self.tab_marker_due(is_selected);
+        // A marker this expansion's first column handed to this one.
+        let shifted_marker = marker_due && self.tab_marker_shifted_here(ch, byte_pos);
+        // The guide yields the column when the marker has nowhere to shift to.
+        let marker_needs_column = is_tab_start && marker_due && !self.tab_run_continues();
+        // A guide column can be *inside* an expansion (guide columns follow
+        // the enclosing block's indent, not only tab stops), so the column a
+        // marker was shifted onto can want a guide too. The marker wins there
+        // for the same reason it wins a one-column expansion.
+        let guide_here = guide_cell && !marker_needs_column && !shifted_marker;
+        let is_indentation_guide = !is_lsp_cursor && guide_here;
+        let draw_tab_marker = shifted_marker || (marker_due && is_tab_start && !guide_here);
+
         let (display_char, is_whitespace_indicator) = if is_indentation_guide {
             let guide_char = self
                 .input
@@ -309,8 +368,39 @@ impl CellPass<'_, '_, '_> {
             };
             (guide_glyph, false)
         } else {
-            self.display_cell_text(ch, is_cursor, is_tab_start, &mut indicator_buf)
+            self.display_cell_text(
+                ch,
+                byte_pos,
+                is_cursor,
+                is_tab_start,
+                is_tab_padding,
+                draw_tab_marker,
+                is_selected,
+                &mut indicator_buf,
+            )
         };
+        // A selected line break has nothing of its own to draw, which left a
+        // selection over empty lines invisible (issue #2797). Paint the one
+        // column the break occupies — column 0 on an empty line, just past the
+        // text otherwise — carrying the selection background from
+        // `resolve_cell_style`.
+        let selected_break_column = ch == '\n'
+            && display_char.is_empty()
+            && is_selected
+            && byte_pos.is_some_and(|bp| self.selection_sweep.contains_linear(bp));
+        let display_char = if selected_break_column {
+            " "
+        } else {
+            display_char
+        };
+
+        // A newline cell normally renders as nothing; when it renders a
+        // line-ending indicator (or the selected-break column) instead,
+        // remember how many cells landed so position bookkeeping
+        // (rendered_cols, the cursor-on-newline indicator) accounts for them.
+        if ch == '\n' && (is_whitespace_indicator || selected_break_column) {
+            self.newline_indicator_cols = display_char.chars().count();
+        }
 
         // Apply subdued indicator colors from theme. Cursor styling keeps
         // precedence (so guides do not obscure the caret), but selection does
@@ -318,19 +408,130 @@ impl CellPass<'_, '_, '_> {
         // layered over the selection background carried by `resolved.style`.
         // This stops the guide glyph from lighting up to full-contrast text
         // (which read as a literal glyph) when the leading whitespace is
-        // selected. Whitespace indicators still defer to selection styling.
+        // selected. Whitespace indicators are subdued inside a selection too,
+        // via their own theme color: selected cells keep their syntax
+        // foreground, which made every `·` and `→` in a selection read as
+        // full-contrast text — louder than the code it sits between.
         let mut style = resolved.style;
         if is_indentation_guide && !is_cursor {
             style = style.fg(self.indentation_guide_color());
-        } else if is_whitespace_indicator && !is_cursor && !is_selected {
-            style = style.fg(self.input.theme.whitespace_indicator_fg);
+        } else if is_whitespace_indicator && !style_as_cursor {
+            if !is_selected {
+                style = style.fg(self.input.theme.whitespace_indicator_fg);
+            } else if !self
+                .input
+                .theme
+                .selection_modifier
+                .contains(Modifier::REVERSED)
+            {
+                // A theme that draws its selection by REVERSED swaps fg and
+                // bg, so a subdued foreground there would dim the selection
+                // block rather than the glyph. Those keep the swap intact.
+                style = style.fg(self.input.theme.whitespace_indicator_selected_fg);
+            }
         }
 
         if !display_char.is_empty() {
             self.emit_cell(display_char, style, byte_pos, ch);
         }
 
-        self.place_cell_cursor(ch, byte_pos, is_cursor, resolved.is_secondary_cursor);
+        // Recover the secondary-cursor flag for virtual-space cursors whose
+        // styling was suppressed above — the indicator span they rely on is
+        // still placed by `place_cell_cursor`.
+        let is_secondary_cursor = resolved.is_secondary_cursor
+            || (newline_virtual_cursor
+                && byte_pos != Some(self.input.selection.primary_cursor_position));
+        self.place_cell_cursor(ch, byte_pos, is_cursor, is_secondary_cursor);
+    }
+
+    /// This cell's byte column within its logical source line, for the
+    /// block-rect test. `None` when the cell maps to no source byte (ANSI,
+    /// wrap padding, injected content) or the row has no line start to
+    /// measure from — nothing a rectangle can cover.
+    fn block_line_column(&self, byte_pos: Option<usize>) -> Option<usize> {
+        let start = self.input.block_line_start_byte?;
+        byte_pos?.checked_sub(start)
+    }
+
+    /// Whether this cell is a padding column of an expanded tab — a space
+    /// the file does not contain.
+    ///
+    /// The view pipeline expands a tab into `tab_size` spaces that all map to
+    /// the tab's single source byte, so a space sharing its byte with the cell
+    /// before it is padding rather than a real space. Nothing else maps two
+    /// cells to one byte and renders as a space (the `<XX>` escapes do, but
+    /// none of their glyphs is a space), which makes the byte the reliable
+    /// test — more so than the column, since `tab_starts` is keyed by
+    /// character index.
+    ///
+    /// Painting the space marker on these columns is issue #3077: a line
+    /// indented with one tab rendered `→···`, three dots for columns holding
+    /// no spaces, and `\t    ` rendered `→·······`, which is exactly the
+    /// tab/space mix the reporter turned the markers on to find.
+    fn is_tab_padding(&self, ch: char, byte_pos: Option<usize>) -> bool {
+        if ch != ' ' || self.display_char_idx == 0 {
+            return false;
+        }
+        let Some(bp) = byte_pos else {
+            return false;
+        };
+        self.source_byte_at(self.display_char_idx - 1) == Some(bp)
+    }
+
+    /// Source byte of a character index in this view line.
+    fn source_byte_at(&self, char_idx: usize) -> Option<usize> {
+        self.input
+            .view_line
+            .char_source_bytes
+            .get(char_idx)
+            .copied()
+            .flatten()
+    }
+
+    /// Whether the tab expansion starting at this cell has a second column to
+    /// hand a displaced marker (issue #3079). A tab landing one column short
+    /// of its tab stop expands to a single cell and has none.
+    fn tab_run_continues(&self) -> bool {
+        let Some(bp) = self.source_byte_at(self.display_char_idx) else {
+            return false;
+        };
+        self.source_byte_at(self.display_char_idx + 1) == Some(bp)
+    }
+
+    /// Whether this cell is the *second* column of a tab expansion — the one
+    /// a marker displaced by an indentation guide lands on.
+    fn is_second_tab_column(&self, ch: char, byte_pos: Option<usize>) -> bool {
+        if !self.is_tab_padding(ch, byte_pos) {
+            return false;
+        }
+        // The cell before this one is the expansion's first column exactly
+        // when it does not itself share a byte with its predecessor.
+        self.display_char_idx < 2 || self.source_byte_at(self.display_char_idx - 2) != byte_pos
+    }
+
+    /// Whether the tab marker for this cell's expansion was displaced onto it
+    /// by an indentation guide holding the expansion's first column.
+    fn tab_marker_shifted_here(&self, ch: char, byte_pos: Option<usize>) -> bool {
+        self.is_second_tab_column(ch, byte_pos)
+            && self.indentation_guide_eligible(ch, byte_pos)
+            && self.guide_at_column(self.col_offset.saturating_sub(1))
+    }
+
+    /// Whether the whitespace settings ask for a tab marker at this position.
+    ///
+    /// Independent of *which* column of the expansion is being drawn, so the
+    /// answer is the same for the tab's first column and for the second one a
+    /// displaced marker moves to.
+    fn tab_marker_due(&self, is_selected: bool) -> bool {
+        let ws = &self.input.state.buffer_settings.whitespace;
+        (is_selected && self.input.state.buffer_settings.whitespace_in_selection)
+            || ws_indicator_visible(
+                self.display_char_idx,
+                self.non_ws,
+                ws.tabs_leading,
+                ws.tabs_inner,
+                ws.tabs_trailing,
+            )
     }
 
     /// Whether the current leading-whitespace cell should render as an
@@ -341,6 +542,14 @@ impl CellPass<'_, '_, '_> {
     /// padding (which maps to no source byte), so guides keep running through the
     /// padding and the staircase stays unbroken across the wrap.
     fn is_indentation_guide_cell(&self, ch: char, byte_pos: Option<usize>) -> bool {
+        self.indentation_guide_eligible(ch, byte_pos) && self.guide_at_column(self.col_offset)
+    }
+
+    /// Everything [`is_indentation_guide_cell`](Self::is_indentation_guide_cell)
+    /// asks that does not depend on *which* column is being tested. Split out
+    /// so a tab marker displaced onto the next column can ask the same
+    /// questions about the guide column it yielded to (issue #3079).
+    fn indentation_guide_eligible(&self, ch: char, byte_pos: Option<usize>) -> bool {
         if matches!(self.input.indentation_guide, IndentationGuideMode::None) || ch != ' ' {
             return false;
         }
@@ -366,19 +575,15 @@ impl CellPass<'_, '_, '_> {
             return false;
         }
 
-        if !self.is_leading_indent_cell() {
-            return false;
-        }
+        self.is_leading_indent_cell()
+    }
 
+    /// Whether a guide is drawn at `col` on this row.
+    fn guide_at_column(&self, col: usize) -> bool {
         match self.input.indentation_guide {
             IndentationGuideMode::None => false,
-            IndentationGuideMode::All => self
-                .input
-                .indentation_guide_columns
-                .contains(&self.col_offset),
-            IndentationGuideMode::Active => {
-                self.input.active_indentation_guide_col == Some(self.col_offset)
-            }
+            IndentationGuideMode::All => self.input.indentation_guide_columns.contains(&col),
+            IndentationGuideMode::Active => self.input.active_indentation_guide_col == Some(col),
         }
     }
 
@@ -539,8 +744,21 @@ impl CellPass<'_, '_, '_> {
         if self.input.screen_width == 0 {
             return;
         }
-        let screen_col = self.input.render_area.x + self.cell_screen_x();
-        let screen_row = self.input.render_area.y + self.input.current_row;
+        let area = self.input.render_area;
+        let screen_col = area.x + self.cell_screen_x();
+        let screen_row = area.y + self.input.current_row;
+        // **A cell outside the painter's own area is not on the screen, so it
+        // has no provenance to record.** The buffer write for one is clipped
+        // by `ratatui`; this map is not, so a cell the pass walked past the
+        // right edge or below the last row was filed under the painter at a
+        // position somebody else owns — the pane's scrollbar corner, most
+        // often, which is the tree's and kept clear. The theme inspector read
+        // that as "Editor Content", and so did the provenance gate.
+        if screen_col >= area.x.saturating_add(area.width)
+            || screen_row >= area.y.saturating_add(area.height)
+        {
+            return;
+        }
         let idx = screen_row as usize * self.input.screen_width as usize + screen_col as usize;
         if let Some(cell) = self.cell_theme_map.get_mut(idx) {
             *cell = CellThemeInfo {
@@ -553,33 +771,46 @@ impl CellPass<'_, '_, '_> {
     }
 
     /// What to draw for this character: the char itself, a whitespace
-    /// indicator (→ / ·), an LSP-waiting marker, a debug escape, or
-    /// nothing (newline). Tabs are already expanded by ViewLineIterator.
+    /// indicator (→ / · / ↵ / ␍), an LSP-waiting marker, a debug escape,
+    /// or nothing (newline with line-ending indicators disabled). Tabs are
+    /// already expanded by ViewLineIterator.
+    #[allow(clippy::too_many_arguments)]
     fn display_cell_text<'buf>(
         &self,
         ch: char,
+        byte_pos: Option<usize>,
         is_cursor: bool,
         is_tab_start: bool,
+        is_tab_padding: bool,
+        ws_show_tab: bool,
+        is_selected: bool,
         indicator_buf: &'buf mut [u8; 4],
     ) -> (&'buf str, bool) {
         let ws = &self.input.state.buffer_settings.whitespace;
-        let ws_show_tab = is_tab_start
-            && ws_indicator_visible(
-                self.display_char_idx,
-                self.non_ws,
-                ws.tabs_leading,
-                ws.tabs_inner,
-                ws.tabs_trailing,
-            );
+        // Selected whitespace draws its indicator regardless of the
+        // per-position settings (issue #2797): a selection over blank
+        // stretches is otherwise invisible. Line-ending indicators stay out of
+        // it — the selected line break gets its own highlighted column in
+        // `render_visible_cell`.
+        let ws_in_selection =
+            is_selected && self.input.state.buffer_settings.whitespace_in_selection;
+        // A tab's padding columns are not spaces (issue #3077): the file holds
+        // one tab there, so they carry no space marker — under the leading /
+        // inner / trailing settings or inside a selection. What is left is a
+        // marker per whitespace *character*, which is what makes a tab
+        // followed by four real spaces read as `→   ····` rather than as eight
+        // indistinguishable dots.
         let ws_show_space = ch == ' '
             && !is_tab_start
-            && ws_indicator_visible(
-                self.display_char_idx,
-                self.non_ws,
-                ws.spaces_leading,
-                ws.spaces_inner,
-                ws.spaces_trailing,
-            );
+            && !is_tab_padding
+            && (ws_in_selection
+                || ws_indicator_visible(
+                    self.display_char_idx,
+                    self.non_ws,
+                    ws.spaces_leading,
+                    ws.spaces_inner,
+                    ws.spaces_trailing,
+                ));
 
         if is_cursor && self.input.lsp_waiting && self.input.is_active {
             ("⋯", false)
@@ -590,7 +821,8 @@ impl CellPass<'_, '_, '_> {
             // Debug mode: show LF explicitly
             ("\\n", false)
         } else if ch == '\n' {
-            ("", false)
+            let indicator = self.newline_indicator(byte_pos);
+            (indicator, !indicator.is_empty())
         } else if ws_show_tab {
             // Visual indicator for tab: show → at the first position
             ('→'.encode_utf8(indicator_buf), true)
@@ -599,6 +831,41 @@ impl CellPass<'_, '_, '_> {
             ('·'.encode_utf8(indicator_buf), true)
         } else {
             (ch.encode_utf8(indicator_buf), false)
+        }
+    }
+
+    /// Line-ending indicator glyphs for the newline cell ("" when disabled).
+    ///
+    /// The buffer's newline token covers the whole line break — in a CRLF
+    /// buffer it spans the `\r\n` pair (the `\n` half is skipped by the view
+    /// pipeline) — so this one cell carries both the CR and newline
+    /// indicators. Classic-Mac CR buffers store their breaks as `\n` in
+    /// memory but save them as `\r`, so their indicator reflects the on-disk
+    /// ending. Only source newlines qualify: plugin-injected line breaks
+    /// (`byte_pos == None`) are not part of the file's content.
+    fn newline_indicator(&self, byte_pos: Option<usize>) -> &'static str {
+        if byte_pos.is_none() {
+            return "";
+        }
+        let ws = &self.input.state.buffer_settings.whitespace;
+        if !ws.newlines && !ws.carriage_returns {
+            return "";
+        }
+        match self.input.state.buffer.line_ending() {
+            LineEnding::CRLF => match (ws.carriage_returns, ws.newlines) {
+                (true, true) => "␍↵",
+                (true, false) => "␍",
+                (false, true) => "↵",
+                (false, false) => "",
+            },
+            LineEnding::CR if ws.carriage_returns => "␍",
+            LineEnding::CR | LineEnding::LF => {
+                if ws.newlines {
+                    "↵"
+                } else {
+                    ""
+                }
+            }
         }
     }
 
@@ -663,16 +930,21 @@ impl CellPass<'_, '_, '_> {
             } else {
                 true
             };
-            if should_add_indicator {
+            // A virtual-space cursor sits past the content end: pad the
+            // indicator out to its on-screen column. Cells already emitted
+            // for a line-ending indicator occupy the start of that gap.
+            let virtual_pad = byte_pos
+                .and_then(|bp| self.input.selection.virtual_cols_at.get(&bp))
+                .copied()
+                .unwrap_or(0)
+                .saturating_sub(self.newline_indicator_cols);
+            // When the newline rendered a line-ending indicator, that cell
+            // already carries the cursor styling from resolve_cell_style —
+            // an extra indicator cell would land one column too far right.
+            if should_add_indicator && (self.newline_indicator_cols == 0 || virtual_pad > 0) {
                 // Flush accumulated text before adding the cursor indicator
                 // so the indicator appears after the line content, not before
                 self.span_acc.flush(self.line_spans, self.line_view_map);
-                // A virtual-space cursor sits past the content end: pad the
-                // indicator out to its on-screen column.
-                let virtual_pad = byte_pos
-                    .and_then(|bp| self.input.selection.virtual_cols_at.get(&bp))
-                    .copied()
-                    .unwrap_or(0);
                 if virtual_pad > 0 {
                     push_span_with_map(
                         self.line_spans,
@@ -715,12 +987,16 @@ impl CellPass<'_, '_, '_> {
             .unwrap_or(self.line_total_visual_width);
         let ch_width = next_col_for_char.saturating_sub(self.col_offset);
         // `\n` gets visual width 1 from the view pipeline but renders as
-        // empty — don't count it as an on-screen cell.
+        // empty — don't count it as an on-screen cell. When it rendered a
+        // line-ending indicator instead, count the indicator's actual cells
+        // (which may exceed the pipeline width: `␍↵` is two cells).
         let was_rendered = self.col_offset >= self.input.left_col && ch != '\n';
         self.col_offset = next_col_for_char;
         self.visible_char_count += ch_width;
         if was_rendered {
             self.rendered_cols += ch_width;
+        } else if ch == '\n' {
+            self.rendered_cols += self.newline_indicator_cols;
         }
     }
 
@@ -747,6 +1023,7 @@ impl CellPass<'_, '_, '_> {
             first_line_byte_pos: self.first_line_byte_pos,
             last_line_byte_pos: self.last_line_byte_pos,
             syntax_extend_bg: self.syntax_extend_bg,
+            newline_indicator_cols: self.newline_indicator_cols,
         }
     }
 }

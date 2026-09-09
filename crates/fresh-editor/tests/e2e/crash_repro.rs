@@ -788,7 +788,13 @@ fn test_review_diff_typing_after_open_does_not_panic() {
         .unwrap();
     harness.wait_for_prompt_closed().unwrap();
     harness
-        .wait_until(|h| h.screen_to_string().contains("next hunk"))
+        // The toolbar renders before the stream body: also wait for the
+        // "Generating Review Diff Stream..." status to clear, so what follows
+        // acts on a settled review rather than a half-drawn one.
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("next hunk") && !s.contains("Generating Review")
+        })
         .unwrap();
 
     // Switch back to the regular file tab (Ctrl+PageUp = prev buffer)

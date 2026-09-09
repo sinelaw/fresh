@@ -205,6 +205,22 @@ impl<'a> ViewLineIterator<'a> {
         self
     }
 
+    /// Declare how the first emitted line begins.
+    ///
+    /// `LineStart::Beginning` — the default — means "no preceding token", which
+    /// for the gutter reads as "start of a logical line, print its number". That
+    /// is only true when the token stream starts at one. An anchored build
+    /// starts at the viewport's own row, which on a wrapped line is a
+    /// continuation: without this the first drawn row of a scrolled-into long
+    /// line gets a line number that the same row does not have when reached by
+    /// scrolling one row at a time.
+    ///
+    /// The caller knows because `RowCarry.on_continuation` says so.
+    pub fn starting_at(mut self, line_start: LineStart) -> Self {
+        self.next_line_start = line_start;
+        self
+    }
+
     /// Expand a tab to spaces based on current column and configured tab_size
     #[inline]
     fn tab_expansion_width(&self, col: usize) -> usize {
@@ -314,7 +330,42 @@ impl<'a> ViewLineIterator<'a> {
             // clicks, and cursor arithmetic. But `col` advances exactly
             // once per grapheme: the first codepoint of a cluster carries
             // the full width, the rest carry 0.
+            // Plain-ASCII fast path. Every byte is its own grapheme, one column
+            // wide, so the whole UAX #29 segmentation is skippable — and it is
+            // not cheap: `InCB_Extend`, the Indic-conjunct-break table lookup
+            // it runs per character, was the single hottest symbol in the
+            // profile at 7.81% self, on text that is almost always ASCII.
+            //
+            // Excludes control bytes (so tab, ESC and the unprintables still
+            // take the general path), binary mode, and a run the ANSI parser
+            // is part-way through.
+            //
+            // The parser's presence is not itself a reason to segment. It is
+            // constructed whenever the pipeline is `ansi_aware`, which every
+            // production caller sets to `!is_binary` — so testing it for
+            // `is_none()` here meant "binary mode", which the first condition
+            // already excludes, and the fast path never ran outside its own
+            // unit tests. What the parser actually needs is the bytes of an
+            // escape sequence: an ESC is a control byte and already excluded,
+            // and a sequence *opened by an earlier token* is the only way
+            // plain bytes can still belong to one. `parse_char` returns the
+            // current style unchanged for every other character, so skipping
+            // it over a run with no ESC in it is exactly equivalent.
+            let mid_escape = ansi_parser.as_ref().is_some_and(|p| p.in_escape());
+            let ascii_fast = !self.binary_mode
+                && !mid_escape
+                && valid.is_ascii()
+                && !valid.bytes().any(|b| b < 0x20 || b == 0x7f);
+            if ascii_fast {
+                for (i, ch) in valid.chars().enumerate() {
+                    acc.push_char(ch, base.map(|s| s + byte_idx + i), token_style.clone(), 1);
+                }
+                byte_idx += valid.len();
+                continue;
+            }
+
             let mut segmented_bytes = 0usize;
+            fresh_editor_core::counters::work::add_text_bytes_segmented(valid.len() as u64);
             for (g_byte_offset, grapheme) in valid.grapheme_indices(true) {
                 segmented_bytes = g_byte_offset + grapheme.len();
 
@@ -443,14 +494,21 @@ struct LineAccumulator {
     col: usize,
 }
 
+/// Rows are a viewport wide, so every one of the five per-row buffers grows
+/// through the whole realloc ladder from zero. One allocation each at a typical
+/// row width instead: `realloc` was ~5% of a frame, and its `grow_amortized` /
+/// `finish_grow` callers about as much again. Rows wider than this still grow,
+/// they just start further along.
+const TYPICAL_ROW_CHARS: usize = 128;
+
 impl LineAccumulator {
     fn new() -> Self {
         Self {
-            text: String::new(),
-            char_source_bytes: Vec::new(),
-            char_styles: Vec::new(),
-            char_visual_cols: Vec::new(),
-            visual_to_char: Vec::new(),
+            text: String::with_capacity(TYPICAL_ROW_CHARS),
+            char_source_bytes: Vec::with_capacity(TYPICAL_ROW_CHARS),
+            char_styles: Vec::with_capacity(TYPICAL_ROW_CHARS),
+            char_visual_cols: Vec::with_capacity(TYPICAL_ROW_CHARS),
+            visual_to_char: Vec::with_capacity(TYPICAL_ROW_CHARS),
             tab_starts: HashSet::new(),
             col: 0,
         }
@@ -709,17 +767,18 @@ pub fn should_show_line_number(line: &ViewLine) -> bool {
 // Layout: The computed display state for a view
 // ============================================================================
 
-use std::collections::BTreeMap;
-
 /// The Layout represents the computed display state for a view.
 ///
 /// This is **View state**, not Buffer state. Each split has its own Layout
-/// computed from its view_transform (or base tokens if no transform).
+/// computed from its base tokens.
 ///
-/// The Layout provides:
-/// - ViewLines for the current viewport region
-/// - Bidirectional mapping between source bytes and view positions
-/// - Scroll limit information
+/// **Nothing reads one.** The only `Layout` in the editor is
+/// `SplitView::layout`, written by `SplitView::ensure_layout` and read by
+/// `SplitView::get_layout` — neither of which has a caller. Its query
+/// methods (`source_byte_to_view_position`, `view_position_to_source_byte`,
+/// `get_source_byte_for_line`, `find_nearest_view_line`, `max_top_line`,
+/// `has_content_below`) and the `byte_to_line` index they walked are gone;
+/// the type itself should follow once `view::split` can be touched.
 #[derive(Debug, Clone)]
 pub struct Layout {
     /// Display lines for the current viewport region
@@ -733,24 +792,11 @@ pub struct Layout {
 
     /// Total injected lines in entire document (from view transform)
     pub total_injected_lines: usize,
-
-    /// Fast lookup: source byte → view line index
-    byte_to_line: BTreeMap<usize, usize>,
 }
 
 impl Layout {
     /// Create a new Layout from ViewLines
     pub fn new(lines: Vec<ViewLine>, source_range: Range<usize>) -> Self {
-        let mut byte_to_line = BTreeMap::new();
-
-        // Build the byte→line index from char_source_bytes
-        for (line_idx, line) in lines.iter().enumerate() {
-            // Find the first source byte in this line
-            if let Some(first_byte) = line.char_source_bytes.iter().find_map(|m| *m) {
-                byte_to_line.insert(first_byte, line_idx);
-            }
-        }
-
         // Estimate total view lines (for now, just use what we have)
         let total_view_lines = lines.len();
         let total_injected_lines = lines.iter().filter(|l| !should_show_line_number(l)).count();
@@ -760,7 +806,6 @@ impl Layout {
             source_range,
             total_view_lines,
             total_injected_lines,
-            byte_to_line,
         }
     }
 
@@ -774,78 +819,12 @@ impl Layout {
             ViewLineIterator::new(tokens, false, false, tab_size, false).collect();
         Self::new(lines, source_range)
     }
-
-    /// Find the view position (line, visual column) for a source byte
-    pub fn source_byte_to_view_position(&self, byte: usize) -> Option<(usize, usize)> {
-        // Find the view line containing this byte
-        if let Some((&_line_start_byte, &line_idx)) = self.byte_to_line.range(..=byte).last() {
-            if line_idx < self.lines.len() {
-                let line = &self.lines[line_idx];
-                // Find the character with this source byte, then get its visual column
-                for (char_idx, mapping) in line.char_source_bytes.iter().enumerate() {
-                    if *mapping == Some(byte) {
-                        return Some((line_idx, line.visual_col_at_char(char_idx)));
-                    }
-                }
-                // Byte is in this line's range but not at a character boundary
-                // Return end of line (visual width)
-                return Some((line_idx, line.visual_width()));
-            }
-        }
-        None
-    }
-
-    /// Find the source byte for a view position (line, visual column)
-    pub fn view_position_to_source_byte(&self, line_idx: usize, col: usize) -> Option<usize> {
-        if line_idx >= self.lines.len() {
-            return None;
-        }
-        let line = &self.lines[line_idx];
-        if col < line.visual_width() {
-            // Use O(1) lookup via visual_to_char -> char_source_bytes
-            line.source_byte_at_visual_col(col)
-        } else if !line.char_source_bytes.is_empty() {
-            // Past end of line, return last valid byte
-            line.char_source_bytes.iter().rev().find_map(|m| *m)
-        } else {
-            None
-        }
-    }
-
-    /// Get the source byte for the start of a view line
-    pub fn get_source_byte_for_line(&self, line_idx: usize) -> Option<usize> {
-        if line_idx >= self.lines.len() {
-            return None;
-        }
-        self.lines[line_idx]
-            .char_source_bytes
-            .iter()
-            .find_map(|m| *m)
-    }
-
-    /// Find the nearest view line for a source byte (for stabilization)
-    pub fn find_nearest_view_line(&self, byte: usize) -> usize {
-        if let Some((&_line_start_byte, &line_idx)) = self.byte_to_line.range(..=byte).last() {
-            line_idx.min(self.lines.len().saturating_sub(1))
-        } else {
-            0
-        }
-    }
-
-    /// Calculate the maximum top line for scrolling
-    pub fn max_top_line(&self, viewport_height: usize) -> usize {
-        self.lines.len().saturating_sub(viewport_height)
-    }
-
-    /// Check if there's content below the current layout
-    pub fn has_content_below(&self, buffer_len: usize) -> bool {
-        self.source_range.end < buffer_len
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fresh_editor_core::counters::work;
 
     fn make_text_token(text: &str, source_offset: Option<usize>) -> ViewTokenWire {
         ViewTokenWire {
@@ -1417,6 +1396,78 @@ mod tests {
             lines[1].source_byte_at_visual_col(2),
             Some(6),
             "Line 2 col 2 (newline)"
+        );
+    }
+
+    /// The ASCII fast path has to be reachable in the configuration the
+    /// editor actually renders in.
+    ///
+    /// Every production caller builds the pipeline with `ansi_aware =
+    /// !is_binary`, so the parser exists for all text buffers. Gating the fast
+    /// path on the parser being *absent* therefore meant "binary mode", which
+    /// the same condition excludes — the path ran only in its own unit tests,
+    /// which passed `ansi_aware = false`, while real frames put every
+    /// character of every row through UAX #29 segmentation (12% of a frame's
+    /// self time on a minified-JSON buffer).
+    #[test]
+    fn plain_ascii_skips_segmentation_when_ansi_aware() {
+        let tokens = vec![make_text_token("plain ascii, no escapes here", Some(0))];
+
+        work::reset();
+        let lines: Vec<_> = ViewLineIterator::new(&tokens, false, true, 4, false).collect();
+        let segmented = work::text_bytes_segmented();
+
+        assert_eq!(
+            segmented, 0,
+            "plain ASCII was segmented ({segmented} bytes) with an ANSI parser \
+             present — the fast path is unreachable in the production config"
+        );
+        assert_eq!(lines[0].text, "plain ascii, no escapes here");
+    }
+
+    /// And it produces exactly what the general path produces.
+    #[test]
+    fn ascii_fast_path_matches_the_general_path() {
+        let tokens = vec![
+            make_text_token("abc", Some(0)),
+            make_newline_token(Some(3)),
+            make_text_token("de", Some(4)),
+        ];
+
+        let fast: Vec<_> = ViewLineIterator::new(&tokens, false, true, 4, false).collect();
+        let general: Vec<_> = ViewLineIterator::new(&tokens, true, true, 4, false).collect();
+
+        assert_eq!(fast.len(), general.len());
+        for (f, g) in fast.iter().zip(general.iter()) {
+            assert_eq!(f.text, g.text);
+            assert_eq!(f.char_source_bytes, g.char_source_bytes);
+            assert_eq!(f.char_visual_cols, g.char_visual_cols);
+            assert_eq!(f.visual_to_char, g.visual_to_char);
+        }
+    }
+
+    /// An escape sequence split across two tokens still hides its tail.
+    ///
+    /// The second token is plain ASCII, so it is exactly what the fast path
+    /// would claim — but its bytes are the body of a sequence the first token
+    /// opened, and they must stay invisible and zero-width. This is why the
+    /// fast path asks whether the parser is *part-way through* a sequence
+    /// rather than whether it exists.
+    #[test]
+    fn a_split_escape_sequence_stays_invisible() {
+        let tokens = vec![
+            make_text_token("\x1b[", Some(0)),
+            make_text_token("31mhello", Some(2)),
+        ];
+
+        let lines: Vec<_> = ViewLineIterator::new(&tokens, false, true, 4, false).collect();
+
+        assert_eq!(
+            lines[0].visual_width(),
+            "hello".len(),
+            "only `hello` is visible; `31m` completes the sequence opened by \
+             the previous token, got {:?}",
+            lines[0].text
         );
     }
 }

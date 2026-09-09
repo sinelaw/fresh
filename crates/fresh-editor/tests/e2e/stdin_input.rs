@@ -1,13 +1,13 @@
 use crate::common::harness::EditorTestHarness;
-use std::io::Write;
-use tempfile::NamedTempFile;
+use fresh::services::stdin_spool::StdinSpool;
+use std::sync::Arc;
 
-/// Helper to create a temp file with content (simulates stdin temp file)
-fn create_stdin_temp_file(content: &str) -> NamedTempFile {
-    let mut file = NamedTempFile::new().unwrap();
-    file.write_all(content.as_bytes()).unwrap();
-    file.flush().unwrap();
-    file
+/// A spool already holding `content`, as if stdin had been fully drained.
+///
+/// The real thing has no name, so these tests go through the same nameless
+/// spool the editor uses rather than standing in a temp file for it.
+fn stdin_spool(content: &str) -> Arc<StdinSpool> {
+    Arc::new(StdinSpool::with_contents(content.as_bytes()).unwrap())
 }
 
 /// Test opening a buffer from stdin temp file
@@ -17,11 +17,11 @@ fn test_open_stdin_buffer() {
 
     // Create temp file with stdin content
     let content = "Hello from stdin!\nLine 2\nLine 3";
-    let temp_file = create_stdin_temp_file(content);
+    let spool = stdin_spool(content);
 
     harness
         .editor_mut()
-        .open_stdin_buffer(temp_file.path(), None)
+        .open_stdin_buffer(Arc::clone(&spool), None)
         .unwrap();
 
     // Verify the buffer contains the stdin content
@@ -38,11 +38,11 @@ fn test_stdin_buffer_not_modified_initially() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
     let content = "Some content from stdin";
-    let temp_file = create_stdin_temp_file(content);
+    let spool = stdin_spool(content);
 
     harness
         .editor_mut()
-        .open_stdin_buffer(temp_file.path(), None)
+        .open_stdin_buffer(Arc::clone(&spool), None)
         .unwrap();
 
     // The buffer should not be modified (it's fresh from stdin)
@@ -58,11 +58,11 @@ fn test_stdin_buffer_not_modified_initially() {
 fn test_open_empty_stdin_buffer() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
-    let temp_file = create_stdin_temp_file("");
+    let spool = stdin_spool("");
 
     harness
         .editor_mut()
-        .open_stdin_buffer(temp_file.path(), None)
+        .open_stdin_buffer(Arc::clone(&spool), None)
         .unwrap();
 
     // Empty buffer should still work
@@ -81,11 +81,11 @@ fn test_stdin_replaces_empty_buffer() {
 
     // Open stdin buffer - it should replace the empty initial buffer
     let content = "Stdin content";
-    let temp_file = create_stdin_temp_file(content);
+    let spool = stdin_spool(content);
 
     harness
         .editor_mut()
-        .open_stdin_buffer(temp_file.path(), None)
+        .open_stdin_buffer(Arc::clone(&spool), None)
         .unwrap();
 
     // Verify the content is there
@@ -108,11 +108,11 @@ fn test_stdin_multiline_content() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
     let content = "Line 1\nLine 2\nLine 3\nLine 4\nLine 5";
-    let temp_file = create_stdin_temp_file(content);
+    let spool = stdin_spool(content);
 
     harness
         .editor_mut()
-        .open_stdin_buffer(temp_file.path(), None)
+        .open_stdin_buffer(Arc::clone(&spool), None)
         .unwrap();
 
     harness.assert_buffer_content(content);
@@ -129,11 +129,11 @@ fn test_stdin_special_characters() {
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
     let content = "Tab:\there\nUnicode: 你好 🎉\nSpecial: <>&\"'";
-    let temp_file = create_stdin_temp_file(content);
+    let spool = stdin_spool(content);
 
     harness
         .editor_mut()
-        .open_stdin_buffer(temp_file.path(), None)
+        .open_stdin_buffer(Arc::clone(&spool), None)
         .unwrap();
 
     harness.assert_buffer_content(content);
@@ -142,7 +142,7 @@ fn test_stdin_special_characters() {
 /// Test stdin streaming with background thread updates buffer progressively
 #[test]
 fn test_stdin_streaming_progress() {
-    use std::fs::OpenOptions;
+    use std::io::Write;
     use std::sync::{
         atomic::{AtomicBool, Ordering},
         Arc,
@@ -152,19 +152,17 @@ fn test_stdin_streaming_progress() {
 
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
-    // Create temp file that will be written to by a "streaming" thread
-    let temp_file = NamedTempFile::new().unwrap();
-    let temp_path = temp_file.path().to_path_buf();
+    // The spool plus its write side, exactly as `start_stdin_streaming`
+    // hands them out: the thread below stands in for the pipe drain.
+    let (spool, mut file) = StdinSpool::create().unwrap();
+    let spool = Arc::new(spool);
 
     // Signal to stop the streaming thread
     let stop_signal = Arc::new(AtomicBool::new(false));
     let stop_signal_clone = stop_signal.clone();
-    let temp_path_clone = temp_path.clone();
 
     // Spawn background thread that writes data progressively
     let thread_handle = thread::spawn(move || -> anyhow::Result<()> {
-        let mut file = OpenOptions::new().append(true).open(&temp_path_clone)?;
-
         let mut count = 0;
         while !stop_signal_clone.load(Ordering::Relaxed) && count < 10 {
             writeln!(file, "Line {}", count)?;
@@ -178,7 +176,7 @@ fn test_stdin_streaming_progress() {
     // Open stdin buffer with the background thread handle
     harness
         .editor_mut()
-        .open_stdin_buffer(&temp_path, Some(thread_handle))
+        .open_stdin_buffer(Arc::clone(&spool), Some(thread_handle))
         .unwrap();
 
     // Initially empty or nearly empty
@@ -237,11 +235,11 @@ fn test_stdin_large_file_lazy_loading() {
 
     // Create content larger than the threshold
     let content = "X".repeat(2048); // 2KB of X's
-    let temp_file = create_stdin_temp_file(&content);
+    let spool = stdin_spool(&content);
 
     harness
         .editor_mut()
-        .open_stdin_buffer(temp_file.path(), None)
+        .open_stdin_buffer(Arc::clone(&spool), None)
         .unwrap();
 
     // Verify the buffer is in large file mode

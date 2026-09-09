@@ -1,8 +1,7 @@
 //! Data types for the keybinding editor.
 
-use crate::config::Keybinding;
+use crate::config::{KeyPress, Keybinding};
 use crossterm::event::{KeyCode, KeyModifiers};
-use ratatui::layout::Rect;
 
 /// Where a binding comes from
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22,8 +21,11 @@ pub enum BindingSource {
 pub enum DeleteResult {
     /// A custom binding was removed
     CustomRemoved,
-    /// A keymap binding was overridden with a noop custom binding
-    KeymapOverridden,
+    /// A keymap or plugin binding was removed with an `unbind` entry
+    KeymapRemoved,
+    /// The binding was disabled with a `noop` override (a real binding that
+    /// makes the key do nothing in that context)
+    Disabled,
     /// Cannot delete (e.g. unbound entry)
     CannotDelete,
     /// Nothing was selected
@@ -49,6 +51,11 @@ pub struct ResolvedBinding {
     pub modifiers: KeyModifiers,
     /// Whether this is a chord (multi-key) binding
     pub is_chord: bool,
+    /// The key sequence, for chord bindings (empty otherwise). Kept so the
+    /// editor can write a chord back to config: a chord has no single
+    /// `key_code`/`modifiers` to reconstruct it from, and dropping this is
+    /// what made "delete" and "edit" silently destroy chord bindings.
+    pub chord_keys: Vec<KeyPress>,
     /// Plugin name this binding belongs to (None = builtin)
     pub plugin_name: Option<String>,
     /// Human-friendly command name from the CommandRegistry (e.g., "Titlecase").
@@ -112,19 +119,28 @@ pub struct EditBindingState {
     /// When true, the next keypress in the key field is captured raw
     /// (including Esc, Tab, Enter). Resets to false after one capture.
     pub capturing_special: bool,
+    /// Key sequence of the chord being edited, empty when the dialog holds a
+    /// single-key binding. Cleared as soon as the user records a new key, so
+    /// saving without re-recording keeps the chord intact instead of writing
+    /// a keyless binding.
+    pub chord_keys: Vec<KeyPress>,
 }
 
 impl EditBindingState {
-    fn base_context_options() -> Vec<String> {
+    pub(crate) fn base_context_options() -> Vec<String> {
         vec![
             "global".to_string(),
             "normal".to_string(),
             "prompt".to_string(),
+            "searchPrompt".to_string(),
             "popup".to_string(),
             "completion".to_string(),
-            "file_explorer".to_string(),
+            "fileExplorer".to_string(),
+            "dock".to_string(),
             "menu".to_string(),
             "terminal".to_string(),
+            "settings".to_string(),
+            "compositeBuffer".to_string(),
         ]
     }
 
@@ -155,6 +171,7 @@ impl EditBindingState {
             autocomplete_visible: false,
             action_error: None,
             capturing_special: false,
+            chord_keys: Vec::new(),
         }
     }
 
@@ -176,7 +193,14 @@ impl EditBindingState {
 
         Self {
             mode: EditMode::RecordingKey,
-            key_code: Some(binding.key_code),
+            // A chord has no single key code to seed the field with; keep the
+            // sequence in `chord_keys` instead and leave `key_code` empty so
+            // saving without re-recording round-trips the chord unchanged.
+            key_code: if binding.is_chord {
+                None
+            } else {
+                Some(binding.key_code)
+            },
             modifiers: binding.modifiers,
             key_display: binding.key_display.clone(),
             action_text: binding.action.clone(),
@@ -194,6 +218,7 @@ impl EditBindingState {
             autocomplete_visible: false,
             action_error: None,
             capturing_special: false,
+            chord_keys: binding.chord_keys.clone(),
         }
     }
 }
@@ -237,29 +262,4 @@ pub enum DisplayRow {
     },
     /// A binding row (index into `bindings`)
     Binding(usize),
-}
-
-/// Layout information for mouse hit testing
-#[derive(Debug, Clone, Default)]
-pub struct KeybindingEditorLayout {
-    /// The full modal area (all mouse events inside are captured)
-    pub modal_area: Rect,
-    /// The table area (for scroll and click)
-    pub table_area: Rect,
-    /// The y-offset of the first visible row in the table
-    pub table_first_row_y: u16,
-    /// Edit dialog button areas: (save_rect, cancel_rect)
-    pub dialog_buttons: Option<(Rect, Rect)>,
-    /// Edit dialog key field area
-    pub dialog_key_field: Option<Rect>,
-    /// Edit dialog action field area
-    pub dialog_action_field: Option<Rect>,
-    /// Edit dialog context field area
-    pub dialog_context_field: Option<Rect>,
-    /// Confirm dialog button areas: (save, discard, cancel)
-    pub confirm_buttons: Option<(Rect, Rect, Rect)>,
-    /// Search bar area (for clicking to focus)
-    pub search_bar: Option<Rect>,
-    /// Vertical scrollbar area for the table (1 column wide), if rendered
-    pub table_scrollbar: Option<Rect>,
 }

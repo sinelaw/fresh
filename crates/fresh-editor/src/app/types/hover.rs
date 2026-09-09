@@ -1,4 +1,4 @@
-use crate::app::file_open::SortMode;
+use crate::app::file_open::BrowserPart;
 use crate::model::event::{ContainerId, LeafId, SplitDirection};
 
 /// Types of UI elements that can be hovered over
@@ -16,24 +16,21 @@ pub enum HoverTarget {
     MenuDropdownItem(usize, usize),
     /// Hovering over a submenu item (depth, item_index) - depth 1+ for nested submenus
     SubmenuItem(usize, usize),
-    /// Hovering over a popup list item (popup_index in stack, item_index)
-    PopupListItem(usize, usize),
-    /// Hovering over a suggestion item (item_index)
-    SuggestionItem(usize),
     /// Hovering over the file explorer border (for resize)
     FileExplorerBorder,
-    /// Hovering over a file browser navigation shortcut
-    FileBrowserNavShortcut(usize),
-    /// Hovering over a file browser file/directory entry
-    FileBrowserEntry(usize),
-    /// Hovering over a file browser column header
-    FileBrowserHeader(SortMode),
-    /// Hovering over the file browser scrollbar
-    FileBrowserScrollbar,
-    /// Hovering over the file browser "Show Hidden" checkbox
-    FileBrowserShowHiddenCheckbox,
-    /// Hovering over the file browser "Detect Encoding" checkbox
-    FileBrowserDetectEncodingCheckbox,
+    /// Hovering over the orchestrator dock's right border (for resize)
+    DockBorder,
+    /// Hovering over the `×` of sidebar section `index`'s header row.
+    SidebarSectionClose(usize),
+    /// Hovering over one of the file-open dialog's own controls: a checkbox,
+    /// a navigation shortcut or a column header. The dialog's description
+    /// reads it back to paint the hover; its entry rows and scrollbar are the
+    /// list's own state and are not here.
+    FileBrowser(BrowserPart),
+    /// Hovering over the theme-info popup's "Open in Theme Editor"
+    /// button row (Ctrl+Right-Click inspector). Paint derives the
+    /// button highlight from this target.
+    ThemeInfoButton,
     /// Hovering over a tab name (target, split_id) - for non-active tabs
     TabName(crate::view::split::TabTarget, LeafId),
     /// Hovering over a tab close button (target, split_id)
@@ -48,9 +45,11 @@ pub enum HoverTarget {
     FileExplorerStatusIndicator(std::path::PathBuf),
     /// Hovering over a clickable status-bar segment (LSP / encoding / line
     /// ending / language / warnings / messages / remote / trust / read-only).
-    /// One generic variant carrying the segment's identity — the renderer
-    /// styles it and `handle_click_status_bar` dispatches it via a single
-    /// hit-test over `StatusBarChrome::clickable`.
+    /// One generic variant carrying the segment's identity. The element that
+    /// carries it is a keyed node in the shell's tree and answers its own
+    /// press, so there is no hit-test here and no cache behind it: both the
+    /// paint-recorded `clickable` list and the `StatusBarChrome` capture that
+    /// replaced it are gone.
     StatusBarClickable(crate::view::ui::status_bar::StatusBarClickable),
     /// Hovering over the search options "Case Sensitive" checkbox
     SearchOptionCaseSensitive,
@@ -60,10 +59,4 @@ pub enum HoverTarget {
     SearchOptionRegex,
     /// Hovering over the search options "Confirm Each" checkbox
     SearchOptionConfirmEach,
-    /// Hovering over an item (by index) in whichever native context menu is
-    /// open — the tab context menu, the "+" new-tab popup, or the
-    /// file-explorer context menu. Only one is ever open at a time, so a
-    /// single variant suffices; the hover handler updates the open menu's
-    /// shared highlight via `Window::context_menu_core_mut`.
-    ContextMenuItem(usize),
 }

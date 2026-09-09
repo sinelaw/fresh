@@ -75,15 +75,34 @@ impl<'a> OverlayActiveSet<'a> {
     /// Begin a new visual row. `wrap_continuation` is true when the
     /// current view line is `LineStart::AfterBreak`; on those rows
     /// inherited overlays (still in `active` from the previous row)
-    /// must paint the tail fill. On new source lines we don't seed:
-    /// an overlay whose `range.end` was bumped past the newline
-    /// (e.g. live_diff's empty-line `end = start + 1`) can still be
-    /// in `active`, and seeding it would bleed bg onto the next line.
-    pub(super) fn enter_row(&mut self, wrap_continuation: bool) {
+    /// must paint the tail fill.
+    ///
+    /// `row_start_byte` is the row's first source byte (when it has
+    /// one). A multi-row overlay is admitted into `active` on the row
+    /// its range *starts* on and stays active thereafter — so on later
+    /// rows nothing re-admits it and, without seeding, `row_touched`
+    /// never saw it again: a range-wide `extend_to_line_end` overlay
+    /// tail-filled only its first line. Seed from the overlays whose
+    /// range strictly covers the row's start byte. The strict
+    /// `range.end > start` bound keeps the historical guard intact: an
+    /// overlay whose `end` was bumped exactly to the next line's start
+    /// (live_diff's empty-line `end = start + 1`) does not bleed onto
+    /// that line.
+    pub(super) fn enter_row(&mut self, wrap_continuation: bool, row_start_byte: Option<usize>) {
         self.row_touched.clear();
         if wrap_continuation {
             self.row_touched
                 .extend(self.active.iter().map(|(_, idx, _)| *idx));
+        } else if let Some(start) = row_start_byte {
+            self.row_touched.extend(
+                self.active
+                    .iter()
+                    .filter(|(_, idx, _)| {
+                        let range = &self.overlays[*idx].1;
+                        range.start <= start && range.end > start
+                    })
+                    .map(|(_, idx, _)| *idx),
+            );
         }
     }
 

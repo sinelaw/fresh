@@ -1,4 +1,9 @@
 {
+  "bg": {
+    "status.detecting_branch": "Откриване на клон ...",
+    "status.not_in_git": "Не е в git",
+    "status.git_branch": "Git: клон"
+  },
   "cs": {
     "status.detecting_branch": "Detekuji větev ...",
     "status.not_in_git": "Není v git",

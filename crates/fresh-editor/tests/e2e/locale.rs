@@ -1,21 +1,27 @@
 // E2E tests for the locale/i18n system
 //
-// These tests mutate global locale state (rust_i18n::set_locale) and MUST run
-// sequentially. The lock lives in `common::locale_lock` so non-locale tests
+// These tests mutate global locale state (fresh_i18n::set_locale) and MUST run
+// sequentially. The pin lives in `common::global_state` so non-locale tests
 // that pin a non-English locale (`tests/e2e/lsp_completion_french_locale.rs`,
 // devcontainer fixture tests that call `fresh::i18n::set_locale`) can share
 // it — without that, this module's tests race against them and observe a
 // stale non-English locale, producing flaky failures like
 // `Expected screen to contain 'cancelada'` against a French screen.
+//
+// The pin also excludes *harness construction*, which is the other writer of
+// the global locale: every `EditorTestHarness` calls
+// `i18n::init_with_config` with its own config's locale, so before the pin
+// covered it any unrelated test building an editor reset the locale to `en`
+// mid-test — the same `'cancelada'` failure, from the opposite direction.
 
+use crate::common::global_state::pin_config_globals;
 use crate::common::harness::EditorTestHarness;
-use crate::common::locale_lock::lock_locale;
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::{Config, LocaleName};
 
 #[test]
 fn test_default_locale_shows_english_search_options() {
-    let _lock = lock_locale();
+    let _lock = pin_config_globals();
     let mut harness = EditorTestHarness::new(100, 24).unwrap();
     harness.render().unwrap();
 
@@ -33,7 +39,7 @@ fn test_default_locale_shows_english_search_options() {
 
 #[test]
 fn test_locale_from_config_spanish_search_options() {
-    let _lock = lock_locale();
+    let _lock = pin_config_globals();
     let config = Config {
         locale: LocaleName(Some("es".to_string())),
         ..Default::default()
@@ -55,7 +61,7 @@ fn test_locale_from_config_spanish_search_options() {
 
 #[test]
 fn test_locale_from_config_german_search_options() {
-    let _lock = lock_locale();
+    let _lock = pin_config_globals();
     let config = Config {
         locale: LocaleName(Some("de".to_string())),
         ..Default::default()
@@ -76,7 +82,7 @@ fn test_locale_from_config_german_search_options() {
 
 #[test]
 fn test_locale_from_config_french_search_options() {
-    let _lock = lock_locale();
+    let _lock = pin_config_globals();
     let config = Config {
         locale: LocaleName(Some("fr".to_string())),
         ..Default::default()
@@ -97,7 +103,7 @@ fn test_locale_from_config_french_search_options() {
 
 #[test]
 fn test_locale_from_config_japanese_buffer_name() {
-    let _lock = lock_locale();
+    let _lock = pin_config_globals();
     let config = Config {
         locale: LocaleName(Some("ja".to_string())),
         ..Default::default()
@@ -113,7 +119,7 @@ fn test_locale_from_config_japanese_buffer_name() {
 
 #[test]
 fn test_locale_from_config_chinese_buffer_name() {
-    let _lock = lock_locale();
+    let _lock = pin_config_globals();
     let config = Config {
         locale: LocaleName(Some("zh-CN".to_string())),
         ..Default::default()
@@ -129,7 +135,7 @@ fn test_locale_from_config_chinese_buffer_name() {
 
 #[test]
 fn test_locale_switch_via_command_palette() {
-    let _lock = lock_locale();
+    let _lock = pin_config_globals();
     let mut harness = EditorTestHarness::new(100, 24).unwrap();
     harness.render().unwrap();
 
@@ -144,27 +150,24 @@ fn test_locale_switch_via_command_palette() {
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
-    // Open command palette with Ctrl+P
-    harness
-        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
-
-    // Type to filter for locale command
-    harness.type_text("Select Locale").unwrap();
-    harness.render().unwrap();
-
-    // Execute the command
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
-    harness.render().unwrap();
+    // Open the locale picker. Via `run_palette_command` so Enter fires on the
+    // filtered row rather than on whatever happened to be selected when the
+    // last keystroke landed — Quick Open re-filters on input change only.
+    harness.run_palette_command("Select Locale").unwrap();
 
     // Should show locale selection prompt
-    harness.assert_screen_contains("Select locale:");
+    harness.wait_for_screen_contains("Select locale:").unwrap();
 
-    // Navigate to Spanish - the prompt starts with "en" selected
-    // Type to filter
+    // Navigate to Spanish. The picker opens with an *empty* query and the
+    // current locale's row selected (`start_select_locale_prompt` ends in
+    // `set_input_plain("")`), and Enter confirms the selected row's value
+    // rather than the typed text — so what has to happen here is that
+    // typing re-filters the list and lands the selection on the `es` row.
+    // The backspaces are no-ops on the empty query, kept because they also
+    // re-run the filter from a known state. Filtering is synchronous with
+    // the keystroke (`filter_suggestions` runs off the prompt's
+    // input-changed path, not off a tick), so `type_text` returning is
+    // already the gate.
     harness
         .send_key(KeyCode::Backspace, KeyModifiers::NONE)
         .unwrap();
@@ -182,7 +185,12 @@ fn test_locale_switch_via_command_palette() {
 
     // Verify locale changed status message (shown in the new locale)
     // After switching to Spanish, the message is shown in Spanish: "Idioma cambiado a"
-    harness.assert_screen_contains("Idioma cambiado");
+    //
+    // Waited for, not sampled: confirming the picker re-inits i18n and
+    // repaints, and a wrong row would leave this message absent — so the wait
+    // is a real gate on the switch having happened, and its periodic screen
+    // dumps name the problem if it didn't.
+    harness.wait_for_screen_contains("Idioma cambiado").unwrap();
 
     // Open search again to verify Spanish is now active
     harness
@@ -191,13 +199,13 @@ fn test_locale_switch_via_command_palette() {
     harness.render().unwrap();
 
     // Search UI should now show Spanish labels
-    harness.assert_screen_contains("Distinguir");
+    harness.wait_for_screen_contains("Distinguir").unwrap();
     harness.assert_screen_not_contains("Case Sensitive");
 }
 
 #[test]
 fn test_invalid_locale_falls_back_to_english() {
-    let _lock = lock_locale();
+    let _lock = pin_config_globals();
     let config = Config {
         locale: LocaleName(Some("nonexistent-locale".to_string())),
         ..Default::default()
@@ -218,7 +226,7 @@ fn test_invalid_locale_falls_back_to_english() {
 
 #[test]
 fn test_locale_switch_updates_search_cancelled_message() {
-    let _lock = lock_locale();
+    let _lock = pin_config_globals();
     let config = Config {
         locale: LocaleName(Some("es".to_string())),
         ..Default::default()
@@ -235,15 +243,22 @@ fn test_locale_switch_updates_search_cancelled_message() {
 
     // Cancel search with Escape
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
-    harness.render().unwrap();
 
-    // Should show Spanish cancelled message
-    harness.assert_screen_contains("cancelada");
+    // Should show Spanish cancelled message.
+    //
+    // Waited for, not sampled off a single `render()`: Escape is dispatched
+    // as a mode binding, so the status line it sets lands through the async
+    // drain rather than inside `handle_key`, and the status bar competes for
+    // its row with whatever the plugins have posted by then. A wait resolves
+    // on the first frame that carries the message instead of on the first
+    // frame after the key — and if the message never arrives, the periodic
+    // screen dumps name the problem.
+    harness.wait_for_screen_contains("cancelada").unwrap();
 }
 
 #[test]
 fn test_locale_switch_updates_menu_labels() {
-    let _lock = lock_locale();
+    let _lock = pin_config_globals();
     let mut harness = EditorTestHarness::new(100, 24).unwrap();
     harness.render().unwrap();
 
@@ -310,7 +325,7 @@ fn test_locale_switch_updates_menu_labels() {
 
 #[test]
 fn test_multiple_locales_can_be_loaded() {
-    let _lock = lock_locale();
+    let _lock = pin_config_globals();
     // Test a few key locales with search UI elements
     // For CJK locales, we test for a single character since wide chars may have spaces
     let locales_and_expected = vec![
@@ -323,21 +338,33 @@ fn test_multiple_locales_can_be_loaded() {
         ("ko", "전"),
         ("ru", "Слово"),
         ("pt-BR", "Palavra"),
+        ("bg", "Цяла дума"),
     ];
 
+    // One editor, ten locales. The search option labels are translated by
+    // `t!` inside the status bar's render (`view/ui/status_bar.rs`), not
+    // captured when the search bar opens, so re-initialising i18n and
+    // rendering again is the same code path a per-locale harness would
+    // exercise — `init_with_config` is verbatim what the harness calls with
+    // `config.locale`, so the locale-code matching ("zh-CN", "pt-BR") is
+    // still covered.
+    //
+    // Building ten full editors instead cost ten plugin-runtime startups in
+    // a single test body, which is what made this the one locale test at
+    // real risk of nextest's slow-timeout on a loaded runner: ten
+    // independent chances to be caught behind a slow start, in a test whose
+    // own subject is a table of strings.
+    let mut harness = EditorTestHarness::new(100, 24).unwrap();
+    harness.render().unwrap();
+
+    // Open search once; it stays open across the locale switches below.
+    harness
+        .send_key(KeyCode::Char('f'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+
     for (locale, expected_text) in locales_and_expected {
-        let config = Config {
-            locale: LocaleName(Some(locale.to_string())),
-            ..Default::default()
-        };
-
-        let mut harness = EditorTestHarness::with_config(100, 24, config).unwrap();
-        harness.render().unwrap();
-
-        // Open search
-        harness
-            .send_key(KeyCode::Char('f'), KeyModifiers::CONTROL)
-            .unwrap();
+        fresh::i18n::init_with_config(Some(locale));
         harness.render().unwrap();
 
         harness.assert_screen_contains(expected_text);
@@ -346,21 +373,13 @@ fn test_multiple_locales_can_be_loaded() {
 
 /// Helper function to switch locale via command palette
 fn switch_locale(harness: &mut EditorTestHarness, locale: &str, search_command: &str) {
-    // Open command palette with Ctrl+P
-    harness
-        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.render().unwrap();
-
-    // Type to filter for locale command
-    harness.type_text(search_command).unwrap();
-    harness.render().unwrap();
-
-    // Execute the command
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
-    harness.render().unwrap();
+    // Open the picker through `run_palette_command`, which waits for the
+    // command to be listed as a *result* before confirming. Typing the name
+    // and pressing Enter blind fires on whichever row was selected when the
+    // last keystroke was processed — Quick Open re-filters on input change,
+    // not per frame — so on a loaded runner this could run some other command
+    // and leave the locale untouched.
+    harness.run_palette_command(search_command).unwrap();
 
     // Clear the default "en" and type the new locale code (matching existing test pattern)
     harness
@@ -381,7 +400,7 @@ fn switch_locale(harness: &mut EditorTestHarness, locale: &str, search_command: 
 
 #[test]
 fn test_locale_switch_affects_file_browser_columns() {
-    let _lock = lock_locale();
+    let _lock = pin_config_globals();
     // Test that file browser column headers are properly localized when switching locales
     // on a live editor instance
     let mut harness = EditorTestHarness::new(100, 24).unwrap();
@@ -426,7 +445,7 @@ fn test_locale_switch_affects_file_browser_columns() {
 
 #[test]
 fn test_locale_switch_affects_clipboard_messages() {
-    let _lock = lock_locale();
+    let _lock = pin_config_globals();
     // Test that clipboard status messages are properly localized when switching locales
     let mut harness = EditorTestHarness::new(100, 24).unwrap();
     harness.render().unwrap();
@@ -477,7 +496,7 @@ fn test_locale_switch_affects_clipboard_messages() {
 
 #[test]
 fn test_locale_switch_affects_file_browser_show_hidden() {
-    let _lock = lock_locale();
+    let _lock = pin_config_globals();
     // Test that "Show Hidden" checkbox label is properly localized when switching locales
     let mut harness = EditorTestHarness::new(100, 24).unwrap();
     harness.render().unwrap();
@@ -504,7 +523,7 @@ fn test_locale_switch_affects_file_browser_show_hidden() {
 
 #[test]
 fn test_locale_switch_affects_command_palette_commands() {
-    let _lock = lock_locale();
+    let _lock = pin_config_globals();
     let mut harness = EditorTestHarness::new(100, 24).unwrap();
     harness.render().unwrap();
 

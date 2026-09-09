@@ -359,7 +359,7 @@ REVERSED caret cell for modal surfaces), `Number` (form value cell
 host-owned scroll/selection), `Tree` (disclosure + optional per-row
 checkboxes), and `Raw` (pre-rendered text-property escape hatch). The `Number`,
 `Dropdown`, and `DualList` kinds were added for the Settings↔widget unification
-(see `settings-widget-unification-plan.md`), which maps every scalar Settings
+(see `retained-mode-ui.md` §3.6), which maps every scalar Settings
 control onto a widget kind. PLANNED per the design: `Table`, tabs/group, and a
 layer/prompt compositor for modals/tooltips — though the existing overlay-layer
 stack + floating-widget panels already cover most modal/popup needs (the

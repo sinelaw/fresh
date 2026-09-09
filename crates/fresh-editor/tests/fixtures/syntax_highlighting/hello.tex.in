@@ -1,0 +1,11 @@
+\documentclass{@DOCUMENT_CLASS@}
+\usepackage{hello}
+
+\title{@PROJECT_NAME@}
+\author{@PROJECT_AUTHOR@}
+
+\begin{document}
+\maketitle
+\section{Version @PROJECT_VERSION@}
+\hello{World}
+\end{document}

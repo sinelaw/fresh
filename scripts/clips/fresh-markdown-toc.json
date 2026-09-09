@@ -1,0 +1,482 @@
+{
+  "name": "fresh-markdown-toc",
+  "capture": {
+    "geometry": "147x46",
+    "font": "JetBrains Mono 17",
+    "screen": "2400x1900x24",
+    "display": ":99",
+    "settle": 18,
+    "copy_files": [
+      {
+        "src": "~/repos/fresh/docs/configuration/index.md",
+        "as": "configuration.md"
+      },
+      {
+        "src": "~/repos/fresh/docs/configuration/keyboard.md",
+        "as": "keybindings.md"
+      },
+      {
+        "src": "~/repos/fresh/docs/features/session-persistence.md",
+        "as": "daemon-mode.md"
+      },
+      "~/repos/fresh/docs/features/lsp.md",
+      "~/repos/fresh/docs/features/editing.md",
+      "~/repos/fresh/docs/architecture.md",
+      "~/repos/fresh/docs/troubleshooting.md",
+      "~/repos/fresh/docs/i18n.md",
+      "~/repos/fresh/README.md",
+      "~/repos/fresh/CONTRIBUTING.md"
+    ],
+    "copy_dirs": {
+      "~/repos/fresh/scripts/clips/assets/fresh-markdown-toc/fresh": "{scratch}/config/fresh"
+    },
+    "env": {
+      "XDG_CONFIG_HOME": "{scratch}/config",
+      "XDG_DATA_HOME": "{scratch}/data-{pane}",
+      "XDG_STATE_HOME": "{scratch}/state-{pane}",
+      "XDG_RUNTIME_DIR": "{scratch}/run"
+    },
+    "keys": [
+      {
+        "key": "ctrl+e"
+      },
+      {
+        "sleep": 2
+      },
+      {
+        "key": "Escape"
+      },
+      {
+        "sleep": 1
+      },
+      {
+        "key": "ctrl+p"
+      },
+      {
+        "sleep": 1
+      },
+      {
+        "type": "toggle compose"
+      },
+      {
+        "sleep": 1.5
+      },
+      {
+        "key": "Return"
+      },
+      {
+        "sleep": 3
+      },
+      {
+        "shot": "rest"
+      },
+      {
+        "key": "Down",
+        "repeat": 5
+      },
+      {
+        "shot": "s1"
+      },
+      {
+        "key": "Down",
+        "repeat": 5
+      },
+      {
+        "shot": "s2"
+      },
+      {
+        "key": "Down",
+        "repeat": 5
+      },
+      {
+        "shot": "s3"
+      },
+      {
+        "key": "Down",
+        "repeat": 5
+      },
+      {
+        "shot": "s4"
+      },
+      {
+        "key": "Down",
+        "repeat": 5
+      },
+      {
+        "shot": "s5"
+      },
+      {
+        "key": "Down",
+        "repeat": 5
+      },
+      {
+        "shot": "s6"
+      },
+      {
+        "key": "Down",
+        "repeat": 5
+      },
+      {
+        "shot": "s7"
+      },
+      {
+        "key": "Down",
+        "repeat": 5
+      },
+      {
+        "shot": "s8"
+      },
+      {
+        "key": "Down",
+        "repeat": 5
+      },
+      {
+        "shot": "s9"
+      },
+      {
+        "key": "Down",
+        "repeat": 5
+      },
+      {
+        "shot": "s10"
+      },
+      {
+        "key": "Down",
+        "repeat": 5
+      },
+      {
+        "shot": "s11"
+      },
+      {
+        "key": "Down",
+        "repeat": 5
+      },
+      {
+        "shot": "s12"
+      },
+      {
+        "key": "Down",
+        "repeat": 5
+      },
+      {
+        "shot": "s13"
+      },
+      {
+        "key": "Down",
+        "repeat": 5
+      },
+      {
+        "shot": "s14"
+      },
+      {
+        "key": "Down",
+        "repeat": 5
+      },
+      {
+        "shot": "s15"
+      },
+      {
+        "key": "Down",
+        "repeat": 5
+      },
+      {
+        "shot": "s16"
+      },
+      {
+        "key": "Down",
+        "repeat": 5
+      },
+      {
+        "shot": "s17"
+      },
+      {
+        "key": "Down",
+        "repeat": 5
+      },
+      {
+        "shot": "s18"
+      },
+      {
+        "key": "Down",
+        "repeat": 5
+      },
+      {
+        "shot": "s19"
+      },
+      {
+        "key": "Down",
+        "repeat": 5
+      },
+      {
+        "shot": "s20"
+      },
+      {
+        "key": "Down",
+        "repeat": 5
+      },
+      {
+        "shot": "s21"
+      },
+      {
+        "key": "Down",
+        "repeat": 5
+      },
+      {
+        "shot": "s22"
+      },
+      {
+        "key": "Down",
+        "repeat": 5
+      },
+      {
+        "shot": "s23"
+      },
+      {
+        "key": "Down",
+        "repeat": 5
+      },
+      {
+        "shot": "s24"
+      },
+      {
+        "key": "Down",
+        "repeat": 5
+      },
+      {
+        "shot": "s25"
+      },
+      {
+        "key": "Down",
+        "repeat": 5
+      },
+      {
+        "shot": "s26"
+      },
+      {
+        "key": "Down",
+        "repeat": 5
+      },
+      {
+        "shot": "s27"
+      },
+      {
+        "key": "Down",
+        "repeat": 5
+      },
+      {
+        "shot": "s28"
+      },
+      {
+        "key": "Down",
+        "repeat": 5
+      },
+      {
+        "shot": "s29"
+      },
+      {
+        "key": "Down",
+        "repeat": 5
+      },
+      {
+        "shot": "s30"
+      },
+      {
+        "key": "Down",
+        "repeat": 5
+      },
+      {
+        "shot": "s31"
+      },
+      {
+        "key": "Down",
+        "repeat": 5
+      },
+      {
+        "shot": "s32"
+      },
+      {
+        "key": "Down",
+        "repeat": 5
+      },
+      {
+        "shot": "s33"
+      },
+      {
+        "key": "Down",
+        "repeat": 5
+      },
+      {
+        "shot": "s34"
+      },
+      {
+        "key": "Down",
+        "repeat": 5
+      },
+      {
+        "shot": "s35"
+      },
+      {
+        "key": "Down",
+        "repeat": 5
+      },
+      {
+        "shot": "s36"
+      },
+      {
+        "sleep": 1
+      }
+    ],
+    "panes": {
+      "toc": {
+        "argv": [
+          "~/repos/fresh/target/debug/fresh",
+          "--no-restore",
+          "--no-upgrade-check",
+          "configuration.md:37:1"
+        ]
+      }
+    }
+  },
+  "render": {
+    "size": [
+      1920,
+      1080
+    ],
+    "fps": 60,
+    "rows": 46,
+    "cols": 147,
+    "title": "fresh \u00b7 markdown contents",
+    "labels": {
+      "solo": "NEW"
+    },
+    "intro_caption": [
+      "Contents, in the sidebar",
+      "the Markdown outline, following your caret"
+    ],
+    "outro_caption": [
+      "fresh",
+      "github.com/sinelaw/fresh"
+    ],
+    "timing": {
+      "intro": 1.0,
+      "zoom": 0.45,
+      "hold": 1.1,
+      "pan": 0.275,
+      "outro": 0.6
+    },
+    "theme": {
+      "bg": [
+        18,
+        19,
+        26
+      ],
+      "caption_bg": [
+        28,
+        29,
+        40
+      ],
+      "panel_border": [
+        68,
+        71,
+        90
+      ],
+      "muted": [
+        150,
+        157,
+        192
+      ],
+      "fg": [
+        248,
+        248,
+        242
+      ],
+      "after": [
+        80,
+        250,
+        123
+      ]
+    },
+    "annotations": [
+      {
+        "shot": "rest",
+        "rows": [
+          7.4,
+          44.8
+        ],
+        "cols": [
+          35.6,
+          146.6
+        ],
+        "head": "Markdown, laid out as markdown",
+        "sub": "compose mode: code framed, tables drawn, notes railed"
+      },
+      {
+        "shot": "rest",
+        "rows": [
+          17,
+          44
+        ],
+        "cols": [
+          0.25,
+          35
+        ],
+        "camera": "fit",
+        "head": "A Contents section",
+        "sub": "every heading of the buffer, as a tree, under the file explorer"
+      },
+      {
+        "shots": [
+          "rest",
+          "s1",
+          "s2",
+          "s3",
+          "s4",
+          "s5",
+          "s6",
+          "s7",
+          "s8",
+          "s9",
+          "s10",
+          "s11",
+          "s12",
+          "s13",
+          "s14",
+          "s15",
+          "s16",
+          "s17",
+          "s18",
+          "s19",
+          "s20",
+          "s21",
+          "s22",
+          "s23",
+          "s24",
+          "s25",
+          "s26",
+          "s27",
+          "s28",
+          "s29",
+          "s30",
+          "s31",
+          "s32",
+          "s33",
+          "s34",
+          "s35",
+          "s36"
+        ],
+        "band": false,
+        "hold": 2.2,
+        "rows": [
+          19,
+          42
+        ],
+        "head": "The outline follows the caret",
+        "sub": "hold Down, and the lit row walks the outline with you"
+      }
+    ]
+  },
+  "encode": {
+    "crf": 18,
+    "preset": "slow"
+  }
+}

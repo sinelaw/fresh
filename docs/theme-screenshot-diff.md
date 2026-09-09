@@ -29,13 +29,13 @@ that touched seven themes).
 
 ## How "before" and "after" are obtained
 
-Themes ship as JSON under `crates/fresh-editor/themes/*.json` and are embedded
+Themes ship as JSON under `crates/fresh-editor-core/themes/*.json` and are embedded
 at compile time, but the editor also loads themes at runtime from a
 `themes_dir`. The test exploits this:
 
 - **After** = the theme JSON in the working tree (what the PR proposes).
 - **Before** = the same path at the base ref, read via
-  `git show <base-ref>:crates/fresh-editor/themes/<name>.json`.
+  `git show <base-ref>:crates/fresh-editor-core/themes/<name>.json`.
 
 Each version is written into a throw-away `themes_dir` under a unique name and
 selected through `config.theme`, so one process can render both versions with
@@ -103,7 +103,7 @@ The test is `theme_diff_gallery`
 `.github/workflows/theme-screenshots.yml`:
 
 - Triggers on `pull_request` events whose changes touch
-  `crates/fresh-editor/themes/**`.
+  `crates/fresh-editor-core/themes/**`.
 - Fetches the PR base, exports `FRESH_THEME_BASE_REF`, then runs the test with
   `--run-ignored ignored-only`.
 - Uploads `docs/blog/theme-diff/` as an artifact and writes a short summary

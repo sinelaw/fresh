@@ -13,10 +13,16 @@
 //!   columns in per-line byte indices. Sorted by `start_line`. We
 //!   maintain an active set of rects whose `[start_line, end_line]`
 //!   includes the current visible line, refreshed once per row as
-//!   `gutter_num` advances; each cell tests `byte_index` against
-//!   the rect's column span.
+//!   `gutter_num` advances; each cell tests its own byte column in the
+//!   line against the rect's column span.
 //!
-//! Net: the cell loop just calls `contains(byte_pos, byte_index)`.
+//!   The line span is closed (`start_line..=end_line`: both the anchor's
+//!   row and the cursor's row are in the block), the column span is
+//!   half-open (`start_col..end_col`). That asymmetry is not an
+//!   oversight — it is what the rest of the block machinery means by a
+//!   rectangle, see [`SelectionActiveSet::contains`].
+//!
+//! Net: the cell loop just calls `contains(byte_pos, line_column)`.
 
 use std::ops::Range;
 
@@ -76,30 +82,88 @@ impl<'a> SelectionActiveSet<'a> {
         self.block_last_line = Some(gutter_num);
     }
 
+    /// Is this cell inside a *linear* selection range (block rects
+    /// excluded)?
+    ///
+    /// The selected-line-break column keys off this rather than
+    /// [`contains`](Self::contains): a block selection's rect can cover the
+    /// column a newline sits in without the line break itself being part of
+    /// the selection — copying the block wouldn't take it.
+    ///
+    /// Safe to call after [`contains`](Self::contains) for the same cell:
+    /// `range_cursor` only ever advances past ranges that ended before `bp`.
+    pub(super) fn contains_linear(&mut self, buffer_byte: usize) -> bool {
+        self.advance_ranges_to(buffer_byte);
+        self.ranges[self.range_cursor..]
+            .iter()
+            .take_while(|r| r.start <= buffer_byte)
+            .any(|r| r.end > buffer_byte)
+    }
+
+    /// Drop ranges that ended before `bp` — the cell loop scans the buffer
+    /// monotonically, so they can never match again.
+    fn advance_ranges_to(&mut self, bp: usize) {
+        while self.range_cursor < self.ranges.len() && self.ranges[self.range_cursor].end <= bp {
+            self.range_cursor += 1;
+        }
+    }
+
     /// Is this cell inside any selection?
     ///
     /// `buffer_byte` is the absolute byte position (used by the
     /// linear-range sweep). `None` for cells with no source byte
-    /// (ANSI / virtual cells) — those still get block-rect checks
-    /// but no linear-range coverage, matching the existing logic.
+    /// (ANSI / virtual cells), which are in no selection of either
+    /// kind: such a cell has no column in the file, so `line_column`
+    /// is `None` too and the block test below declines it.
     ///
-    /// `cell_byte_index` is the cell's per-line byte index (used by
-    /// the block-rect column-span check, matching how
-    /// `block_rects` stores its column bounds).
-    pub(super) fn contains(&mut self, buffer_byte: Option<usize>, cell_byte_index: usize) -> bool {
-        let linear = buffer_byte.is_some_and(|bp| {
-            while self.range_cursor < self.ranges.len() && self.ranges[self.range_cursor].end <= bp
-            {
-                self.range_cursor += 1;
-            }
-            self.ranges[self.range_cursor..]
-                .iter()
-                .take_while(|r| r.start <= bp)
-                .any(|r| r.end > bp)
-        });
-        let block = self.active_block.iter().any(|&i| {
-            let (_, start_col, _, end_col) = self.blocks[i];
-            cell_byte_index >= start_col && cell_byte_index <= end_col
+    /// That last part is a deliberate change, not only a narrower
+    /// spelling: soft-wrap indent padding, fold placeholders and
+    /// plugin-injected inline text used to be swept into a block rect
+    /// whose column span happened to reach their *view-row* index. A
+    /// rectangle cannot cover a cell that is not in the file — a block
+    /// copy takes none of it — so they are outside it now.
+    ///
+    /// `line_column` is the cell's byte offset **within its logical
+    /// source line** — the unit `block_rects` states its column bounds
+    /// in (`cursor.position - line_start`). `None` for a cell that maps
+    /// to no source byte, which no rectangle can cover.
+    ///
+    /// It used to be the cell's index into the *view* row, which counts a
+    /// tab as its whole expansion: with one leading tab and `tab_size 4`
+    /// the rectangle painted four cells where the cursor stood at column
+    /// 3, i.e. `tab_size - 1` cells to its left (issue #3148). The cursor
+    /// is the one telling the truth about what a block copy takes, and a
+    /// column in the line is what both of them now count.
+    ///
+    /// The column span is **half-open** — `start_col..end_col`, the
+    /// cursor's own column excluded. Every other consumer of a block
+    /// rectangle already reads it that way: `copy_block_selection_text`
+    /// takes `max_col - min_col` characters per line, and
+    /// `convert_block_selection_to_cursors` gives each line the selection
+    /// `min_col..max_col`. Testing `col <= end_col` here painted one
+    /// column more than either of them touched, so a block copy silently
+    /// transferred something narrower than the highlight (issue #3150).
+    ///
+    /// Two things follow, both of them wanted. Extending the block to the
+    /// right leaves the cursor just past the rectangle's right edge, which
+    /// is how a one-column block reads as one column rather than two. And
+    /// a zero-width block (`start_col == end_col`, e.g. Alt+Shift+Down with
+    /// no horizontal movement) paints nothing at all: it is a column of
+    /// cursors, not a selection, and a copy of it takes no text.
+    pub(super) fn contains(
+        &mut self,
+        buffer_byte: Option<usize>,
+        line_column: Option<usize>,
+    ) -> bool {
+        let linear = match buffer_byte {
+            Some(bp) => self.contains_linear(bp),
+            None => false,
+        };
+        let block = line_column.is_some_and(|col| {
+            self.active_block.iter().any(|&i| {
+                let (_, start_col, _, end_col) = self.blocks[i];
+                col >= start_col && col < end_col
+            })
         });
         linear || block
     }

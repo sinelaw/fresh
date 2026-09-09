@@ -1,20 +1,20 @@
 {
-  "en": {
-    "cmd.project_setup": "Clangd: Project Setup",
-    "cmd.project_setup_desc": "Analyze C/C++ clangd readiness (compile_commands.json, .clangd)",
-    "cmd.switch_source_header": "Clangd: Switch Source/Header",
-    "cmd.switch_source_header_desc": "Jump to header/source pair using clangd",
-    "cmd.open_project_config": "Clangd: Open Project Config",
-    "cmd.open_project_config_desc": "Open the nearest .clangd file",
-    "status.plugin_loaded": "Clangd support plugin loaded (switch header + config commands)",
-    "status.no_active_file": "Clangd: there is no active file to switch",
-    "status.unsupported_file_type": "Clangd: unsupported file type for switch header",
-    "status.opened_corresponding_file": "Clangd: opened corresponding file",
-    "status.no_matching_found": "Clangd: no matching header/source found",
-    "status.switch_failed": "Clangd switch source/header failed: %{error}",
-    "status.opened_config": "Opened .clangd configuration",
-    "status.config_not_found": "Could not find .clangd configuration in workspace",
-    "status.file_status": "Clangd file status: %{status}"
+  "bg": {
+    "cmd.project_setup": "Clangd: Настройка на проекта",
+    "cmd.project_setup_desc": "Анализиране на готовността на C/C++ clangd (compile_commands.json, .clangd)",
+    "cmd.switch_source_header": "Clangd: Превключване Изходен/Заглавен файл",
+    "cmd.switch_source_header_desc": "Преминаване към header/source pair using clangd",
+    "cmd.open_project_config": "Clangd: Отваряне на Project Config",
+    "cmd.open_project_config_desc": "Отваряне на най-близкия .clangd файл",
+    "status.plugin_loaded": "Плъгин за поддръжка на Clangd е зареден (команди за смяна на заглавие и конфигурация)",
+    "status.no_active_file": "Clangd: няма активен файл за обработка",
+    "status.unsupported_file_type": "Clangd: неподдържан тип фаил за превключвател",
+    "status.opened_corresponding_file": "Clangd: съответният файл е отворен",
+    "status.no_matching_found": "Clangd: не е намерен съответен заглавен файл",
+    "status.switch_failed": "Clangd: неуспешно превключване на заглавен файл: %{error}",
+    "status.opened_config": "Отворена .clangd конфигурация",
+    "status.config_not_found": "В работната област не може да се намери .clangd конфигурация",
+    "status.file_status": "Clangd файл статус: %{status}"
   },
   "cs": {
     "cmd.project_setup": "Clangd: Nastaveni projektu",
@@ -49,6 +49,23 @@
     "status.opened_config": ".clangd-Konfiguration geoffnet",
     "status.config_not_found": "Konnte .clangd-Konfiguration im Arbeitsbereich nicht finden",
     "status.file_status": "Clangd Dateistatus: %{status}"
+  },
+  "en": {
+    "cmd.project_setup": "Clangd: Project Setup",
+    "cmd.project_setup_desc": "Analyze C/C++ clangd readiness (compile_commands.json, .clangd)",
+    "cmd.switch_source_header": "Clangd: Switch Source/Header",
+    "cmd.switch_source_header_desc": "Jump to header/source pair using clangd",
+    "cmd.open_project_config": "Clangd: Open Project Config",
+    "cmd.open_project_config_desc": "Open the nearest .clangd file",
+    "status.plugin_loaded": "Clangd support plugin loaded (switch header + config commands)",
+    "status.no_active_file": "Clangd: there is no active file to switch",
+    "status.unsupported_file_type": "Clangd: unsupported file type for switch header",
+    "status.opened_corresponding_file": "Clangd: opened corresponding file",
+    "status.no_matching_found": "Clangd: no matching header/source found",
+    "status.switch_failed": "Clangd switch source/header failed: %{error}",
+    "status.opened_config": "Opened .clangd configuration",
+    "status.config_not_found": "Could not find .clangd configuration in workspace",
+    "status.file_status": "Clangd file status: %{status}"
   },
   "es": {
     "cmd.project_setup": "Clangd: Configuracion del Proyecto",

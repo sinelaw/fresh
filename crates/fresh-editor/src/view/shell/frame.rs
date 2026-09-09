@@ -1,0 +1,1568 @@
+//! The editor frame as a `fresh-ui` description.
+//!
+//! Every region is native: the tree owns the layout and the content of the
+//! menu bar, the explorer, the status bar, the prompt row, the dock and the
+//! split grid alike. The cells the editor still paints itself are inside
+//! host leaves — a pane's content, an embedded window — resolved by id
+//! ([`HostTarget`]); a region's name is a key on its node ([`region_key`]),
+//! which is how its rectangle is found.
+//!
+//! The rectangles this produces are asserted equal to the ones
+//! `Editor::render`'s ratatui `Layout` calls produce, over a sweep of sizes and
+//! visibility combinations, in `tests/ui_shell_frame_parity.rs`.
+
+use fresh_ui::{col, row, HostId, Node, Sizing};
+
+use super::msg::UiMsg;
+
+/// A named region of the frame: what [`region_key`] names, and what
+/// [`regions_of`] reads a rectangle for.
+///
+/// The discriminants are the keys' numbers; no region is a `Host` any more,
+/// so none of them is a `HostId`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[repr(u64)]
+pub enum HostRegion {
+    Dock = 1,
+    MenuBar = 2,
+    Explorer = 3,
+    /// The split grid: its panes are the host leaves the frame paints
+    /// cells into.
+    Body = 4,
+    StatusBar = 5,
+    SearchOptions = 6,
+    PromptLine = 7,
+}
+
+impl HostRegion {
+    pub const ALL: [HostRegion; 7] = [
+        HostRegion::Dock,
+        HostRegion::MenuBar,
+        HostRegion::Explorer,
+        HostRegion::Body,
+        HostRegion::StatusBar,
+        HostRegion::SearchOptions,
+        HostRegion::PromptLine,
+    ];
+
+    pub fn id(self) -> u64 {
+        self as u64
+    }
+}
+
+/// What a `Draw::Host` in this frame addresses: a leaf, by id.
+///
+/// A **pane** is one per visible leaf; they come and go as the user splits
+/// and closes, and each paints only its own buffer. An **embed** is an editor
+/// window inside a plugin panel, painted as its own grid. A **card band** is
+/// the overlay prompt's preview. Each id space carries its own tag bit, so an
+/// id resolves to exactly one of them — which is what lets the fold keep its
+/// "a host id that names nothing" assertion honest: such an id is a painter
+/// that would draw nothing, in silence.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HostTarget {
+    /// One pane's content, by the leaf showing it.
+    Pane(crate::model::event::LeafId),
+    /// An editor window embedded in a plugin panel, by its window id.
+    ///
+    /// **This is what `WindowEmbed` is**: a real editor window inside a
+    /// panel — cells, and permanently so — which is precisely what a `Host`
+    /// leaf *is*. The panel is described, the embed is a leaf in it, and the
+    /// fold hands the painter the rectangle layout worked out; the painter
+    /// lays that window's own grid out in a tree of its own at that size and
+    /// folds it the way the frame folds the active window's
+    /// (`shell_host::paint_embed`, design §3.7.8).
+    Embed(u32),
+    /// One band of the overlay prompt's card, by which band. The preview
+    /// band is the card's one host — a buffer the text pipeline renders into
+    /// the band's rectangle, or another window's grid as an embed paints it.
+    Card(super::overlay_prompt::CardRegion),
+}
+
+/// The bit that names a pane's id. `LeafId`s are dense small integers from
+/// a per-window counter.
+const PANE_TAG: u64 = 1 << 32;
+
+/// The same, for an embedded window. Window ids come from another counter
+/// that collides with leaf ids, so each id space gets its own bit rather than
+/// a range.
+const EMBED_TAG: u64 = 1 << 33;
+
+/// The same, for the overlay prompt's card bands, whose discriminants are
+/// 1..=5.
+const CARD_TAG: u64 = 1 << 34;
+
+/// The `HostId` a pane's content leaf carries.
+pub fn pane_host_id(id: crate::model::event::LeafId) -> HostId {
+    HostId(PANE_TAG | id.0 .0 as u64)
+}
+
+/// The `HostId` an embedded editor window carries.
+pub fn embed_host_id(window_id: u32) -> HostId {
+    HostId(EMBED_TAG | window_id as u64)
+}
+
+/// The `HostId` one band of the overlay prompt's card carries.
+/// The chrome column below the menu bar: the body, the status bar, the search
+/// options and the prompt line. Where a menu dropdown may be placed.
+pub fn below_bar_key() -> fresh_ui::Key {
+    fresh_ui::Key::Str("chrome_below_bar".into())
+}
+
+pub fn card_host_id(region: super::overlay_prompt::CardRegion) -> HostId {
+    HostId(CARD_TAG | region.id())
+}
+
+impl HostTarget {
+    /// Which leaf this id names, or `None` when it names none — which is
+    /// the fold's assertion, not a case to handle.
+    pub fn from_host_id(id: HostId) -> Option<HostTarget> {
+        if id.0 & CARD_TAG != 0 {
+            return super::overlay_prompt::CardRegion::from_id(id.0 & (CARD_TAG - 1))
+                .map(HostTarget::Card);
+        }
+        if id.0 & EMBED_TAG != 0 {
+            return Some(HostTarget::Embed((id.0 & (EMBED_TAG - 1)) as u32));
+        }
+        if id.0 & PANE_TAG != 0 {
+            let leaf = (id.0 & (PANE_TAG - 1)) as usize;
+            return Some(HostTarget::Pane(crate::model::event::LeafId(
+                fresh_core::SplitId(leaf),
+            )));
+        }
+        None
+    }
+}
+
+/// Which regions are visible, and how wide the sized ones are.
+///
+/// Every field here is *app state*: `build()` cannot read geometry, so
+/// decisions that today read `size` at the top of `render` — the dock's
+/// bail-out, the explorer's column count — are resolved from state before the
+/// description is built. See [`Frame::resolve_dock`].
+// Neither `Eq` nor `PartialEq`. Nothing compared frames — the doc comment here
+// said so while the derive stayed — and now something cannot: a mounted plugin
+// panel carries its `WidgetSpec`, which is `Clone + Debug` and not comparable,
+// because comparing two of them is not a question anything asks. A frame is
+// built fresh and handed to `frame_tree`, every frame, root and all — and
+// nothing short-circuits on identity anywhere below it either. `Node::shared()`
+// and `shared_rc` exist in the library and have no call site outside
+// `fresh-ui`'s own reconciler tests; the migration doc scores the same thing
+// from the other end ("`.shared()` / `shared_rc` — **0** hoisted subtrees").
+// So 0.1 is an unclaimed item, not a division of labour this type is standing
+// aside for: whole-description comparison is the wrong shape for the reason
+// above, and the subtree hoist that would make the point moot has not been
+// written.
+#[derive(Clone, Debug)]
+pub struct Frame {
+    /// A page the body shows instead of the grid, for a window with nothing
+    /// to show yet (`Editor::placeholder_page`). `splits` is `None` then.
+    pub placeholder: Option<Placeholder>,
+    pub menu_bar: bool,
+    pub status_bar: bool,
+    /// The search-options row's toggles, or `None` when the row is hidden.
+    ///
+    /// Content, not a flag: this row is measured by the tree, so what it says
+    /// is what decides how wide each toggle is. The row's *existence* is
+    /// `is_some`.
+    pub search_options: Option<super::search_options::SearchOptions>,
+    /// The status bar's elements, when it has any.
+    ///
+    /// Content, not visibility — the same split as `menu_bar` /
+    /// `menu_bar_items` above: `status_bar` decides whether the row exists,
+    /// this decides what it says. `None` with `status_bar: true` is a row the
+    /// legacy painter fills as a `Host`; it does not hide anything. (The
+    /// comment here used to claim this field replaced `status_bar: false`,
+    /// which `frame_tree` never did — both arms take their height from the
+    /// bool.)
+    pub status_bar_items: Option<super::status_bar::StatusBar>,
+    pub prompt_line: bool,
+    /// What the prompt row shows, when a prompt is up in it: its message,
+    /// its query and the query's caret. `None` with `prompt_line: true` is
+    /// the row reserved and empty. See [`super::prompt_line`].
+    pub prompt_row: Option<super::prompt_line::PromptRow>,
+    /// Whether a prompt is up, and so whether the keyboard's owner is the
+    /// prompt. Separate from `prompt_line` — the overlay form of the prompt
+    /// draws no row and still owns the keyboard. See
+    /// [`super::prompt::keys_layer`].
+    pub prompt_keys: bool,
+    /// The prompt is a search prompt: its keyboard owns the match-mode
+    /// toggles on top of the prompt's own keys. See [`key_context_of`].
+    pub search_prompt: bool,
+    /// Whether the dock has keyboard focus, and so whether its layer is the
+    /// keyboard's owner. `chrome::Dock::layers`' `owns_keyboard`, said where
+    /// the precedence is now derived. See [`super::panel::keys_layer`].
+    pub dock_keys: bool,
+    /// The same for the centred plugin panel.
+    pub panel_keys: bool,
+    /// The active pane, when the panel mounted in it is described: its
+    /// keyboard layer confines the ring to that panel while nothing above
+    /// it holds the keyboard. Declared first among the keyboard layers, so
+    /// every other one outranks it. See [`super::panel::pane_keys_key`].
+    pub pane_keys: Option<crate::model::event::LeafId>,
+    /// Column width, already resolved against the frame width.
+    pub dock: Option<u16>,
+    /// The dock's content as a description, when the adapter covers every
+    /// variant of the orchestrator's spec. `None` leaves the `Host` leaf the
+    /// painter fills.
+    pub dock_interior: Option<super::panel::Interior>,
+    /// Whether the pointer is on the dock's resize grip; the grip paints its
+    /// own `│` from this, the way the file explorer's does.
+    pub dock_grip_hovered: bool,
+    /// Whether the dock has keyboard focus; its divider wears the accent then,
+    /// the way the file explorer's border does.
+    pub dock_focused: bool,
+    /// The sidebar's content, or `None` when it is hidden. Like the
+    /// search-options row, content rather than a flag: the tree measures the
+    /// panel's rows and reads their rectangles back. A column of sections,
+    /// of which the explorer is the first — see `super::sidebar`.
+    pub sidebar: Option<super::sidebar::Sidebar>,
+    /// The open context menu, if any. An overlay is an ordinary child of the
+    /// tree rather than a separately-ranked surface — which is the whole point
+    /// of moving them here.
+    pub menu: Option<super::context_menu::Menu>,
+    /// The open menu-bar dropdown chain, outermost level first. Empty when no
+    /// menu is open.
+    pub dropdowns: Vec<super::menu::DropdownLevel>,
+    /// The `menu` section of the keymap, as shortcuts on the open chain.
+    pub menu_keys: Vec<super::menu::MenuShortcut>,
+    /// The menu bar's labels. Content, not visibility: `menu_bar` above says
+    /// whether the row exists at all, and an existing row with no labels is a
+    /// blank row of the bar's own colour.
+    pub menu_bar_items: super::menu::MenuBar,
+    /// The prompt's suggestion list, or `None` when no prompt is offering one.
+    /// Content rather than a flag, like the other migrated surfaces: the rows
+    /// are what the tree measures, and the layer's presence is `is_some`.
+    pub suggestions: Option<super::prompt::Suggestions>,
+    /// Every popup on screen, in paint order: the buffer's stack, then the
+    /// top of the global one over it — the order `render_buffer_popups` and
+    /// `render_top_global_popup` already run in.
+    pub popups: Vec<super::popup::Placed>,
+    /// The floating-overlay prompt's card, or `None` when no overlay prompt is
+    /// open. Its input line, preview pane and footer are still `Host` leaves
+    /// the painter fills; the plugin's toolbar is described in its header
+    /// band, and the card is the prompt's keyboard scope (`prompt::keys_layer`).
+    pub card: Option<super::overlay_prompt::Card>,
+    /// The theme inspector's popup, when Ctrl+Right-Click has opened one. Over
+    /// everything: it inspects the cell under *any* chrome, so it has to be
+    /// visible over that chrome too.
+    pub theme_info: Option<super::theme_info::ThemeInfo>,
+    /// The file-open dialog, when one is open: its directory, toggles,
+    /// shortcuts, sort and entries. The tree lays out all of it; the list's
+    /// window is the viewport's and the web reads the rectangles back by key.
+    pub browser: Option<super::file_browser::Browser>,
+    /// The workspace-trust prompt. A blocking modal: it dims the whole frame
+    /// and nothing outside it is interactive.
+    pub trust: Option<super::trust::Trust>,
+    /// The split grid, when there is one. Its *content* is the body's `Host`
+    /// leaf still; what the tree carries is the panes' geometry and the
+    /// dividers, which answer their own presses.
+    pub splits: Option<super::splits::Splits>,
+    /// Whether the settings dialog is open. As `keybinding`: the tree carries
+    /// the box its twenty-odd recorded rectangles are measured from, and
+    /// nothing else of it yet.
+    /// The settings dialog, when it is open: its title and its search row.
+    /// The body between them is still the painter's.
+    pub settings: Option<super::settings::Chrome>,
+    /// Its open dialog, when it has one. Three of them are here — the
+    /// unsaved-changes prompt, the reset prompt and the help overlay — and the
+    /// entry-dialog stack is not.
+    pub settings_dialog: Option<super::settings::Dialog>,
+    /// The entry-edit dialogs open over it, innermost last. A settings map
+    /// opens one to edit an entry, and an entry can open another.
+    pub settings_entry: Vec<super::entry::Dialog>,
+    /// Whether the keybinding editor is open. Its *interior* is still a
+    /// painter's — a table with its own scrollbar and ten recorded
+    /// rectangles — so what the tree carries is the box those rectangles are
+    /// measured from, and the claim.
+    /// The keybinding editor, when it is open: its title, its three header
+    /// rows and its footer. The whole modal is the tree's now — box, chrome,
+    /// table and dialogs — so the flag became the content.
+    pub keybinding: Option<super::keybinding::Chrome>,
+    /// Its table, when no dialog covers it. `None` while one does: a dialog is
+    /// a layer over this one, so the table would be under it and building it
+    /// would be work for cells nobody sees.
+    pub keybinding_table: Option<super::keybinding::Table>,
+    /// The keybinding editor's open dialog, when it has one. **These are the
+    /// tree's and the rest of the interior is not**, which is a statement
+    /// about paint order rather than about how far the migration got: the
+    /// overlay band is folded after every legacy painter, so a described
+    /// dialog lands on top of the table the painter drew — where it belongs —
+    /// and a described *table* would have covered the painter's dialogs.
+    pub keybinding_dialog: Option<super::keybinding::Dialog>,
+    /// The event-debug dialog. Like the calibration wizard, its interior is
+    /// here too: no mouse, no recorded rectangles.
+    pub event_debug: Option<super::event_debug::EventDebug>,
+    /// The input calibration wizard. Unlike the other three modals its
+    /// *interior* is here too — it has no mouse and no recorded rectangles,
+    /// so there was nothing left behind the seam once the box moved.
+    pub calibration: Option<super::calibration::Calibration>,
+    /// **Which window the window-owned half of this frame belongs to.**
+    ///
+    /// The editor is N independent workspaces and there is one retained tree,
+    /// reconciled each frame against whichever is active. Nothing in the
+    /// description named a window, so two workspaces' subtrees matched each
+    /// other: reconciliation is by `(type, key)` at a position, and
+    /// `SplitManager::next_split_id` starts at 1 in every window — window A's
+    /// first pane and window B's first pane carry the *same* key.
+    ///
+    /// This is the key that bounds identity and the persistence scope that
+    /// lets a window's incidental view state survive being switched away
+    /// from. `fresh_ui::scope` is one node for both, because declaring only
+    /// one of them is silently wrong in either direction.
+    ///
+    /// `None` is "one unnamed window", which is what every test that does not
+    /// care about workspaces gets from `Frame::default`.
+    pub window: Option<u64>,
+    /// The floating plugin panel's frame, when one is mounted. Its *interior*
+    /// is still the widget runtime's; what the tree owns is the box — where it
+    /// goes, its ring, its title and its `[×]`.
+    pub panel: Option<super::panel::Panel>,
+}
+
+impl Default for Frame {
+    fn default() -> Self {
+        Frame {
+            placeholder: None,
+            menu_bar: true,
+            status_bar: true,
+            search_options: None,
+            status_bar_items: None,
+            prompt_line: false,
+            prompt_row: None,
+            prompt_keys: false,
+            search_prompt: false,
+            dock_keys: false,
+            panel_keys: false,
+            pane_keys: None,
+            dock: None,
+            dock_interior: None,
+            dock_grip_hovered: false,
+            dock_focused: false,
+            sidebar: None,
+            menu: None,
+            dropdowns: Vec::new(),
+            menu_keys: Vec::new(),
+            menu_bar_items: super::menu::MenuBar::default(),
+            suggestions: None,
+            popups: Vec::new(),
+            card: None,
+            theme_info: None,
+            browser: None,
+            trust: None,
+            settings: None,
+            settings_dialog: None,
+            settings_entry: Vec::new(),
+            keybinding: None,
+            keybinding_table: None,
+            keybinding_dialog: None,
+            event_debug: None,
+            calibration: None,
+            splits: None,
+            window: None,
+            panel: None,
+        }
+    }
+}
+
+/// How many one-cell rows the chrome column spends, given which are visible.
+///
+/// The free form exists because `render` needs this number *before* it has a
+/// `Frame` — the explorer's viewport row count is model state, and the
+/// description cannot be built without it. It was written out there as a sum
+/// of the same four bools, next to a comment pointing at `Frame::fixed_rows`
+/// as the rule; now it is the rule, and [`Frame::fixed_rows`] is the form for
+/// callers that already hold a description.
+pub fn fixed_rows(menu_bar: bool, status_bar: bool, search_options: bool, prompt: bool) -> u16 {
+    menu_bar as u16 + status_bar as u16 + search_options as u16 + prompt as u16
+}
+
+/// Columns the editor keeps for itself, whatever the dock asks for.
+pub const EDITOR_MIN: u16 = 20;
+/// Narrower than this and a dock is not worth showing at all.
+pub const DOCK_MIN: u16 = 24;
+
+/// How wide the dock actually gets, or `None` when it does not fit.
+///
+/// **The one copy of the rule.** It lived here *and* in `compute_dock_split`,
+/// each with its own `EDITOR_MIN`/`DOCK_MIN`, and the frame-parity test
+/// exercised this copy while the editor painted from the other — so the test
+/// could stay green through a divergence in the very geometry it exists to
+/// pin. `compute_dock_split` now carves its rectangles from this answer.
+pub fn dock_width(requested: Option<u16>, frame_width: u16) -> Option<u16> {
+    let requested = requested?;
+    let max_dock = frame_width.saturating_sub(EDITOR_MIN);
+    (max_dock >= DOCK_MIN).then(|| requested.min(max_dock).max(1))
+}
+
+impl Frame {
+    /// The dock's bail-out rule, applied to this description.
+    ///
+    /// This is **app logic keyed on the frame width**, not a layout
+    /// constraint — it decides whether a dock exists at all. `build()` cannot
+    /// read geometry, so it is resolved here, from the last known frame width,
+    /// before the description is built.
+    pub fn resolve_dock(mut self, frame_width: u16) -> Frame {
+        self.dock = dock_width(self.dock, frame_width);
+        self
+    }
+
+    /// Rows whose height is fixed at one cell when visible.
+    ///
+    /// When the frame is shorter than this, `fresh-ui` and ratatui starve
+    /// *different* rows (pinned by `squeeze_band_starves_a_different_row_than_ratatui`).
+    /// Callers that care decide which rows to drop themselves rather than
+    /// inheriting either engine's starvation order.
+    pub fn fixed_rows(&self) -> u16 {
+        fixed_rows(
+            self.menu_bar,
+            self.status_bar,
+            self.search_options.is_some(),
+            self.prompt_line,
+        )
+    }
+}
+
+/// The chrome column: everything right of the dock.
+///
+/// Named so a layer can be confined to it. The painter said "beside the dock"
+/// by being handed `chrome_area` instead of the whole frame; a layer says it
+/// with `within`, which puts the statement where the placing happens.
+pub fn chrome_key() -> fresh_ui::Key {
+    fresh_ui::Key::Str("chrome_column".into())
+}
+
+/// The name of a window's identity key and persistence scope.
+///
+/// One function because two callers have to agree and neither can check the
+/// other: `frame_tree` writes the scope into the tree, and
+/// `Editor::forget_window_ui_state` drops it when the window closes. Spelled
+/// apart, a rename in one place leaks every closed window's values forever and
+/// nothing fails.
+pub fn window_scope(id: u64) -> String {
+    format!("window:{id}")
+}
+
+/// The frame description: one `Host` per region.
+///
+/// **Every** region is present, hidden ones at zero size, mirroring the
+/// `Length(0)` constraints the ratatui layout uses. A hidden row still has a
+/// position and callers use it — the suggestions popup anchors to the prompt
+/// row whether or not that row is drawn — so omitting it would silently move
+/// whatever hangs off it.
+pub fn frame_tree(f: Frame) -> Node<UiMsg> {
+    let cells = |on: bool| Sizing::Cells(on as u16);
+    // Native: the column paints itself and answers its own pointer. It keeps
+    // the region key, so every caller that asks for `HostRegion::Explorer`'s
+    // rectangle still gets one — the whole column, of which the explorer is
+    // the first section.
+    let sidebar = |s: &super::sidebar::Sidebar| {
+        named(HostRegion::Explorer, super::sidebar::sidebar(s)).w(Sizing::Cells(s.cols))
+    };
+    // The body: the grid. Every pane's content and bars are leaves of its
+    // own (see `splits::live_pane`), and the dividers between the panes draw
+    // their own lines, so nothing here is a `Host` any more — the region is
+    // named for the readers that ask where the body is. It is named on a
+    // node of its own: with one pane the grid *is* that pane, and naming it
+    // directly would replace the pane's key with the region's.
+    let body_region = |f: &Frame| -> Node<UiMsg> {
+        match (&f.placeholder, &f.splits) {
+            // On a node of its own, like the grid: the page carries the
+            // pane's content key, and the region's name must not rename it.
+            (Some(p), _) => named(
+                HostRegion::Body,
+                fresh_ui::stack().child(placeholder_page(p)),
+            ),
+            (None, Some(s)) => named(
+                HostRegion::Body,
+                fresh_ui::stack().child(super::splits::overlay(s)),
+            ),
+            (None, None) => region(HostRegion::Body),
+        }
+    };
+    let body: Node<UiMsg> = match &f.sidebar {
+        Some(s) if s.on_left => row()
+            .flex(1)
+            .children([sidebar(s), body_region(&f).flex(1)]),
+        Some(s) => row()
+            .flex(1)
+            .children([body_region(&f).flex(1), sidebar(s)]),
+        // No sidebar: the explorer is still in the tree taking nothing, so it
+        // has a rectangle to report and the body's own is unaffected.
+        None => row().flex(1).children([
+            body_region(&f).flex(1),
+            region(HostRegion::Explorer).w(Sizing::Cells(0)),
+        ]),
+    };
+    let chrome = col().flex(1).key(chrome_key()).children([
+        // Native: the bar's own row. It keeps the region key so every caller
+        // that asks for `HostRegion::MenuBar`'s rectangle still gets one — a
+        // region that has gone native is still a region.
+        named(
+            HostRegion::MenuBar,
+            super::menu::menu_bar(&f.menu_bar_items),
+        )
+        .h(cells(f.menu_bar)),
+        // **Everything under the bar, as one region**: the room a menu
+        // dropdown may occupy (`menu::dropdown` names it as `within`), so a
+        // long menu is measured against it and clamped inside it rather
+        // than pushed up over the bar.
+        col().flex(1).key(below_bar_key()).children([
+            body,
+            // Native: the tree measures the bar from its own elements. The row
+            // keeps its region key, so every caller that asks for
+            // `HostRegion::StatusBar`'s rectangle still gets one.
+            match &f.status_bar_items {
+                Some(bar) => named(HostRegion::StatusBar, super::status_bar::status_bar(bar))
+                    .h(cells(f.status_bar)),
+                None => region(HostRegion::StatusBar).h(cells(f.status_bar)),
+            },
+            // Native: the tree measures this row from its own text. See
+            // `shell::search_options`.
+            named(
+                HostRegion::SearchOptions,
+                super::search_options::search_options(
+                    f.search_options.as_ref().unwrap_or(&Default::default()),
+                ),
+            )
+            .h(cells(f.search_options.is_some())),
+            // Native: the prompt row is runs, with the query's caret stated
+            // as a byte of the input run (`prompt_line`). Named so every
+            // reader that asks where the row is still gets a rectangle,
+            // reserved or not.
+            named(
+                HostRegion::PromptLine,
+                match &f.prompt_row {
+                    Some(p) => super::prompt_line::prompt_line(p),
+                    None => row(),
+                },
+            )
+            .h(cells(f.prompt_line)),
+        ]),
+    ]);
+    // Overlays, in paint order — which is declaration order, and is decided
+    // here and nowhere else. Menu-bar dropdowns first, then a context menu
+    // over them: a menu row's right-click menu has to paint on top of the
+    // dropdown it was opened from.
+    //
+    // **Not `layer_rank`, which says the opposite** (`MENU` 860 above
+    // `CONTEXT_MENU` 830) and is right to: that table ranks who owns the
+    // KEYBOARD, and an open menu owns it over a context menu even while the
+    // context menu is drawn over the menu. The two orders are independent by
+    // design — see the note on `chrome::layer_rank`.
+    //
+    // **The two panel keyboards lead, because they are the floor of the
+    // routable band.** `DOCK` was the lowest rank and `FLOATING_MODAL` the
+    // next, both under `POPUP` — the R1 rank-inversion fix, which says a
+    // prompt, a popup or a menu takes a key before a focused dock or centred
+    // modal does. Declared first, they are exactly that: `Modality::Focus`
+    // confines the keyboard to the topmost such layer, and the topmost is the
+    // one declared last.
+    //
+    // They carry no state, which is why the window scope around this column
+    // is not the problem it would be for the dock's *content*: a keyboard
+    // seam has nothing to lose when a workspace switch rebuilds it, and it
+    // re-autofocuses on the next frame.
+    // **The scope, when there is one.** A described interior is where this
+    // layer confines traversal — with or without Tab stops inside it, since
+    // an interior with none holds focus itself; a panel the adapter could
+    // not describe keeps the layer's own sink. See `panel::keys_layer`.
+    let scope_of =
+        |i: Option<&super::panel::Interior>, slot| i.map(|_| super::panel::interior_key(slot));
+    // **The active pane's panel, first: the floor under every other keyboard
+    // layer.** It is the base's own keyboard said as a layer — the ring
+    // inside a mounted panel is confined to it the way the dock's is, and a
+    // focused dock, a prompt or a modal declared after it takes the keyboard
+    // away from it by declaration order alone.
+    let chrome = match f.pane_keys {
+        Some(leaf) => chrome.child(super::panel::keys_layer(
+            super::widgets::Slot::Pane(leaf),
+            scope_of(
+                f.splits.as_ref().and_then(|s| s.interiors.get(&leaf)),
+                super::widgets::Slot::Pane(leaf),
+            ),
+        )),
+        None => chrome,
+    };
+    let chrome = match f.dock_keys {
+        true => chrome.child(super::panel::keys_layer(
+            super::widgets::Slot::Dock,
+            scope_of(f.dock_interior.as_ref(), super::widgets::Slot::Dock),
+        )),
+        false => chrome,
+    };
+    // A collapsed sidebar section that has the keyboard: its header is the
+    // whole of it, and Enter or Space there re-opens it. Under the centred
+    // panel's layer, which is modal, and over the dock's, which cannot be
+    // focused at the same time as a sidebar section.
+    let chrome = match f.sidebar.as_ref().and_then(|s| {
+        s.sections
+            .iter()
+            .enumerate()
+            .find(|(_, sec)| super::sidebar::header_holds_keyboard(sec))
+    }) {
+        Some((i, sec)) => chrome.child(super::sidebar::keys_layer(sec, i)),
+        None => chrome,
+    };
+    // A focused plugin section: the dock's case with a different slot, and
+    // raised exactly the way the dock's is. Under the centred panel's layer
+    // for the reason the dock's is.
+    let chrome = match f.sidebar.as_ref().and_then(|s| s.focused_panel()) {
+        Some((i, interior)) => chrome.child(super::panel::keys_layer(
+            super::widgets::Slot::Sidebar(i),
+            scope_of(Some(interior), super::widgets::Slot::Sidebar(i)),
+        )),
+        None => chrome,
+    };
+    let chrome = match f.panel_keys {
+        true => chrome.child(super::panel::keys_layer(
+            super::widgets::Slot::Floating,
+            scope_of(
+                f.panel.as_ref().and_then(|p| p.interior.as_ref()),
+                super::widgets::Slot::Floating,
+            ),
+        )),
+        false => chrome,
+    };
+    // The overlay prompt's card, over everything the frame holds and under the
+    // menus — a context menu opened from inside it still paints on top, the
+    // same declaration-order rule the dropdowns follow.
+    //
+    // **Before the suggestion list, because the list can be anchored to one of
+    // its bands.** A layer is placed against a rectangle the layout has
+    // already produced, and the overlay form of the list names the card's
+    // results band as that rectangle (`prompt::Place::InCard`). Declared the
+    // other way round the anchor names a node that has not been laid out yet,
+    // and the list lands nowhere — with the card's own paint on top of it,
+    // which is how it went unnoticed. Paint order agrees: the list belongs
+    // over the card it sits in.
+    let chrome = match &f.card {
+        Some(c) => chrome.child(super::overlay_prompt::card(c)),
+        None => chrome,
+    };
+    // The suggestion list, above the prompt row it belongs to. Declared before
+    // the menus so a context menu opened over it still paints on top — the
+    // same "order of declaration is paint order" rule the dropdowns follow.
+    let chrome = match &f.suggestions {
+        Some(s) => chrome.child(super::prompt::suggestions_layer(s)),
+        None => chrome,
+    };
+    // Popups sit over the frame and over the prompt's list, and under the
+    // menus — a context menu opened from a popup row still paints on top, the
+    // same declaration-order rule everything else here follows.
+    let chrome = chrome.children(super::popup::placed_layers(&f.popups));
+    // **The prompt's keyboard, over the popups and under the menus.** This is
+    // `layer_rank`'s `MENU > PROMPT > POPUP` said as declaration order instead
+    // of as three integers: a `Modality::Focus` layer confines the keyboard to
+    // itself, and `topmost_modal` picks the one declared last, so the ordering
+    // *is* the precedence. It paints nothing — the prompt's row, card and
+    // suggestion list are described above and elsewhere.
+    // With a card up, the layer confines the ring to the card: the query
+    // input's focus holder and the plugin's toolbar controls are both in it.
+    let chrome = match f.prompt_keys {
+        true => chrome.child(super::prompt::keys_layer(f.search_prompt, f.card.is_some())),
+        false => chrome,
+    };
+    let chrome = match super::menu::dropdown_chain(&f.dropdowns, &f.menu_keys) {
+        Some(chain) => chrome.child(chain),
+        None => chrome,
+    };
+    let chrome = match &f.menu {
+        Some(menu) => chrome.child(super::context_menu::context_menu(menu)),
+        None => chrome,
+    };
+    // The file-open dialog, over the frame and under the inspector — the
+    // order `chrome:file_browser`'s `z = 130` and `chrome:theme_inspect`'s
+    // 190 had.
+    let chrome = match &f.browser {
+        Some(b) => chrome.child(super::file_browser::layer(b)),
+        None => chrome,
+    };
+    // **The window's half of the frame, under one key and one persistence
+    // scope.** Everything above belongs to the active workspace: its chrome
+    // column, its splits, its explorer, and the overlays that hang off them.
+    // A layer is out of flow, so carrying them on the column rather than on
+    // the row moves no rectangle — what it moves is which scope they are in
+    // and which key bounds their identity.
+    //
+    // Without this the tree names no window at all, and two workspaces'
+    // subtrees match each other: `SplitManager::next_split_id` starts at 1 in
+    // every window, so window A's first pane and window B's first pane carry
+    // the same `(type, key)` at the same position. `fresh_ui::scope` is one
+    // node for the key and the `PersistenceScope`, because a subtree that
+    // declares only one of them is silently wrong in either direction.
+    let window_area = match f.window {
+        Some(id) => fresh_ui::scope(window_scope(id), chrome),
+        None => chrome,
+    };
+    // Native all the way down when a panel is mounted: the column answers its
+    // own pointer and carries its width grip, and `dock_interior` — passed on
+    // the next line — is the panel's spec as nodes. The `Host` leaf is what an
+    // *empty* dock falls back to, not what its widgets are. A hidden dock is
+    // still in the tree at zero width, like every other region.
+    //
+    // **Outside the window scope, deliberately.** The dock is editor-global —
+    // its state is `Editor.dock`, it lists and switches between *all* windows,
+    // and it is meant to survive a workspace switch. Inside the window key its
+    // element state would follow whichever window is active, and its sessions
+    // list would lose its scroll on every switch.
+    let frame = row().children([
+        match f.dock {
+            Some(w) => named(
+                HostRegion::Dock,
+                super::dock::dock(f.dock_interior.clone(), f.dock_grip_hovered, f.dock_focused),
+            )
+            .w(Sizing::Cells(w)),
+            None => region(HostRegion::Dock).w(Sizing::Cells(0)),
+        },
+        window_area,
+    ]);
+    // From here down: editor-scoped, like the dock. Each covers or dims the
+    // *whole* frame, each is state on the `Editor` rather than on a `Window`,
+    // and none of them should be discarded because the active workspace
+    // changed.
+    // The inspector, over everything — the trigger that opens it fires under
+    // any chrome, so the answer has to be visible over that chrome. This is
+    // what `chrome:theme_inspect`'s `z = 190` said.
+    let frame = match &f.theme_info {
+        Some(t) => frame.child(super::theme_info::layer(t)),
+        None => frame,
+    };
+    // The settings dialog: exclusive, dimming, and drawn by the tree from the
+    // ring in.
+    let frame = match &f.settings {
+        Some(c) => frame.child(super::settings::layer(Some(c))),
+        None => frame,
+    };
+    // The entry-edit stack, over the box and under the prompts: each level
+    // dims what is below it, which is one `Scrim` per layer rather than the
+    // painter's `apply_dimming` once around the loop.
+    let mut frame = frame;
+    for d in &f.settings_entry {
+        frame = frame.child(super::entry::layer(d));
+    }
+    // Its open dialog, **after** the box for the same reason the keybinding
+    // editor's is: layers are offered the pointer in reverse declaration
+    // order, so a dialog declared first would be covered by the box. And
+    // after the entry stack, because the two prompts it opens sit over it.
+    let frame = match &f.settings_dialog {
+        Some(d) => frame.child(super::settings::dialog_layer(d)),
+        None => frame,
+    };
+    // The keybinding editor's box.
+    let frame = match &f.keybinding {
+        Some(c) => frame.child(super::keybinding::layer(c, f.keybinding_table.as_ref())),
+        None => frame,
+    };
+    // Its open dialog, **after** the box: layers are offered the pointer in
+    // reverse declaration order, so a dialog declared before the box would be
+    // covered by it and its fields would never see a press.
+    let frame = match &f.keybinding_dialog {
+        Some(d) => frame.child(super::keybinding::dialog_layer(d)),
+        None => frame,
+    };
+    // The event-debug dialog, which like the wizard below carries its own
+    // exclusivity and its own scrim.
+    let frame = match &f.event_debug {
+        Some(d) => frame.child(super::event_debug::sized(d)),
+        None => frame,
+    };
+    // The calibration wizard, with its own exclusivity and its own scrim.
+    let frame = match &f.calibration {
+        Some(c) => frame.child(super::calibration::sized(c)),
+        None => frame,
+    };
+    // The floating plugin panel's frame, which claims its own pointer
+    // (`panel::layer_for`).
+    let frame = match &f.panel {
+        Some(p) => frame.child(super::panel::layer_for(p)),
+        None => frame,
+    };
+    // The trust prompt, over everything the frame holds. It is drawn dead last
+    // today for the same reason — it dims the *entire* frame, the dock
+    // included, and centres in the whole window rather than beside the dock.
+    let frame = match &f.trust {
+        Some(t) => frame.child(super::trust::layer(t)),
+        None => frame,
+    };
+    // Two capture-phase observers, outermost and last: each sees the press
+    // before anything below it. The inspector's trigger is inside the dock's
+    // blur observer, which is the order their `z` values had (190 under 195),
+    // and it is the one that stops the flow — Ctrl+Right-Click *is* the
+    // gesture, where the blur is a side effect of one aimed elsewhere.
+    let frame = super::theme_info::inspect_trigger(frame);
+    // Outermost observer of the right-click channel: it clears the two
+    // left-click-only menus and lets the click continue, so it must see the
+    // click before the surface it is aimed at claims it.
+    let frame = super::splits::tab_menu_guard(frame);
+    // The sidebar's blur observer, only while a plugin section has the
+    // keyboard: it has nothing to do otherwise, and a listener that fires
+    // on every press for nothing is noise in every dispatch's message list.
+    let frame = match f.sidebar.as_ref().filter(|s| s.focused_panel().is_some()) {
+        Some(s) => super::sidebar::blur_observer(s, frame),
+        None => frame,
+    };
+    match f.dock {
+        Some(w) => super::dock::blur_observer(w, frame),
+        None => frame,
+    }
+}
+
+/// What the body shows instead of the grid for a window with nothing to
+/// show yet: a few centred lines on the editor's ground.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Placeholder {
+    /// The window's name, with its kind's glyph.
+    pub detail: String,
+    /// What it is doing — connecting, building, or why it could not.
+    pub state: String,
+    pub hint: String,
+    /// What to do about it, when there is something; empty otherwise.
+    pub retry: String,
+    /// The window's active pane, whose content this page stands in for: the
+    /// page is the base's focus holder and hands its keys to the editor as
+    /// that pane's, so the keyboard still reaches the editor's own bindings
+    /// over a window that cannot be edited.
+    pub pane: Option<crate::model::event::LeafId>,
+}
+
+/// The placeholder page as nodes: the lines centred on the ground, the
+/// page focusable in the pane's stead.
+fn placeholder_page(p: &Placeholder) -> Node<UiMsg> {
+    use crate::app::shell_host::shell_theme::{attrs, pair};
+    use fresh_ui::{text, Align};
+    let plain = pair("editor.fg", "editor.bg");
+    let dim = pair("editor.line_number_fg", "editor.bg");
+    let line = |s: &str, theme: String| -> Node<UiMsg> {
+        match s.is_empty() {
+            true => row().h(Sizing::Cells(1)),
+            false => text(s).theme(theme),
+        }
+    };
+    let page = col().theme(plain.clone()).align(Align::Center).children([
+        row().flex(1),
+        line(&p.detail, attrs("editor.fg", "editor.bg", &["bold"])),
+        row().h(Sizing::Cells(1)),
+        line(&p.state, plain),
+        row().h(Sizing::Cells(1)),
+        line(&p.hint, dim.clone()),
+        line(&p.retry, dim),
+        row().flex(1),
+    ]);
+    match p.pane {
+        Some(pane) => fresh_ui::focusable(page)
+            .key(super::splits::content_key(pane))
+            .skip_traversal()
+            .autofocus()
+            .on_key(move |e: &fresh_ui::Event| {
+                e.stop();
+                Some(UiMsg::Ui(super::msg::UiFact::PaneKey { pane }))
+            }),
+        None => page,
+    }
+}
+
+/// A region with nothing in it — a hidden row, an empty column — as a named
+/// node with no content, so its rectangle is still a layout query.
+fn region(r: HostRegion) -> Node<UiMsg> {
+    named(r, row())
+}
+
+/// Tag a region's node with the region's name.
+///
+/// The name is what [`regions_of`] looks up: a region's rectangle is a
+/// layout query, and a region that paints nothing at all — a hidden row, a
+/// bar with no labels — still has one.
+fn named(r: HostRegion, n: Node<UiMsg>) -> Node<UiMsg> {
+    n.key(region_key(r))
+}
+
+/// The display-list key a native region carries.
+pub fn region_key(r: HostRegion) -> fresh_ui::Key {
+    fresh_ui::Key::Pair("region".into(), r.id())
+}
+
+/// The rectangle the shell assigns each visible region, for a frame of `size`.
+///
+/// This is the shell's answer to the question `Editor::render` currently
+/// answers with `compute_dock_split` + a vertical `Layout` +
+/// `split_file_explorer_area`. Running both and comparing is how the frame
+/// migrates onto `fresh-ui` without a flag day: see
+/// [`assert_parity`].
+/// Every region's rectangle, read off a tree the caller already laid out.
+///
+/// A layout query, not a paint one: `Ui::rect_of` is the rectangle layout
+/// assigned, so a region reports it whether it paints a cell or not. Reading
+/// the display list instead would lose exactly the regions that paint nothing
+/// — a hidden row, a menu bar with no labels — and lose them silently.
+///
+/// [`region_rects`] is the standalone form, for tests and for callers with no
+/// `Ui` of their own; this is the form `render` uses, so the frame is laid out
+/// once and both the rectangles and the painted output come from it.
+pub fn regions_of(
+    ui: &fresh_ui::Ui<UiMsg>,
+    size: ratatui::layout::Rect,
+) -> Vec<(HostRegion, ratatui::layout::Rect)> {
+    HostRegion::ALL
+        .into_iter()
+        .filter_map(|r| {
+            let e = ui.find_by_key(&region_key(r))?;
+            let rect = ui.rect_of(e);
+            Some((r, super::screen_rect(rect, size)))
+        })
+        .collect()
+}
+
+pub fn region_rects(
+    f: Frame,
+    size: ratatui::layout::Rect,
+) -> Vec<(HostRegion, ratatui::layout::Rect)> {
+    use fresh_ui::{Size, Ui};
+
+    let mut ui: Ui<UiMsg> = Ui::new();
+    ui.frame(frame_tree(f), Size::new(size.width, size.height));
+    regions_of(&ui, size)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::model::event::BufferId;
+    use crate::view::shell::msg::{UiFact, UiMsg};
+    use crate::view::shell::splits::{leaf_key, PaneControls, Splits};
+    use crate::view::shell::widgets::Slot;
+    use crate::view::split::SplitNode;
+    use fresh_core::SplitId;
+    use fresh_ui::{Size, Ui};
+
+    /// One pane, so the two windows collide at the *first* split id — which is
+    /// the case that matters: `SplitManager::next_split_id` starts at 1 in
+    /// every window, so this is the default layout of two workspaces rather
+    /// than a contrived one.
+    fn one_pane_in(window: Option<u64>) -> Frame {
+        Frame {
+            window,
+            splits: Some(Splits {
+                root: SplitNode::leaf(BufferId(1), SplitId(1)),
+                maximized: None,
+                active: None,
+                chrome: Default::default(),
+                controls: PaneControls {
+                    maximize: false,
+                    close: false,
+                },
+                groups: Default::default(),
+                interiors: Default::default(),
+                strips: Default::default(),
+                hover: None,
+                drop_zone: None,
+                hosts: Default::default(),
+            }),
+            ..Frame::default()
+        }
+    }
+
+    /// The element the first pane is reconciled onto, across two frames.
+    fn pane_across(
+        a: Frame,
+        b: Frame,
+    ) -> (Option<fresh_ui::ElementId>, Option<fresh_ui::ElementId>) {
+        let key = leaf_key(crate::model::event::LeafId(SplitId(1)));
+        let mut ui: Ui<UiMsg> = Ui::new();
+        ui.frame(frame_tree(a), Size::new(80, 24));
+        let first = ui.find_by_key(&key);
+        ui.frame(frame_tree(b), Size::new(80, 24));
+        (first, ui.find_by_key(&key))
+    }
+
+    /// **The bug the window scope exists to prevent.** Reconciliation is by
+    /// `(type, key)` at a position; two windows' first panes carry the same
+    /// key at the same position, so without something naming the window the
+    /// tree matches them and window B's pane inherits window A's element —
+    /// and, once panes own state, its scroll offset.
+    #[test]
+    fn two_windows_first_panes_are_not_one_element() {
+        let (a, b) = pane_across(one_pane_in(Some(1)), one_pane_in(Some(2)));
+        assert!(a.is_some() && b.is_some(), "both frames describe a pane");
+        assert_ne!(
+            a, b,
+            "window 2's pane must not be reconciled onto window 1's element"
+        );
+    }
+
+    /// The control, and the reason the assertion above is not vacuous: with no
+    /// window named, the two frames *do* land on one element. This is what the
+    /// tree did before the scope, spelled out so a future change that quietly
+    /// stops keying the window fails the test above instead of passing it for
+    /// the wrong reason.
+    #[test]
+    fn with_no_window_named_the_two_frames_share_the_element() {
+        let (a, b) = pane_across(one_pane_in(None), one_pane_in(None));
+        assert!(a.is_some());
+        assert_eq!(a, b, "nothing distinguishes the two frames");
+    }
+
+    /// Rebuilding the *same* window is not a switch: the pane keeps its
+    /// element, so nothing a component owns is thrown away on an ordinary
+    /// frame. A scope that discarded every frame would be worse than none.
+    #[test]
+    fn the_same_window_keeps_its_pane_across_frames() {
+        let (a, b) = pane_across(one_pane_in(Some(1)), one_pane_in(Some(1)));
+        assert!(a.is_some());
+        assert_eq!(a, b, "same window, same element");
+    }
+
+    /// The tree's scope name and the editor's `forget_window_ui_state` have to
+    /// agree, and neither can check the other — so the shared spelling is
+    /// pinned here. If this changes, every closed window's values leak and
+    /// nothing else fails.
+    #[test]
+    fn a_windows_scope_is_named_after_its_id() {
+        assert_eq!(window_scope(7), "window:7");
+        assert_ne!(window_scope(1), window_scope(10));
+    }
+
+    /// **This is `layer_rank` now**, and the order below is the whole of it
+    /// for the surfaces that used to be dispatched by integer. Each is a
+    /// `Modality::Focus` layer, so `topmost_modal` picks the one declared
+    /// last, and declaration order *is* keyboard precedence.
+    ///
+    /// The case pinned here is the one that broke: a focused dock with a
+    /// plugin panel over it — the orchestrator's right-click context menu.
+    /// `FLOATING_MODAL > DOCK` said the panel takes the key, and it has to,
+    /// because the dock's own `widget_panel_key` answers Escape by blurring
+    /// and would eat the key the menu needs to close on.
+    #[test]
+    fn a_panels_keyboard_outranks_a_focused_docks() {
+        let mut ui: Ui<UiMsg> = Ui::new();
+        ui.frame(
+            frame_tree(Frame {
+                dock: Some(30),
+                dock_keys: true,
+                panel_keys: true,
+                menu_bar: false,
+                status_bar: false,
+                ..Frame::default()
+            }),
+            Size::new(120, 40),
+        );
+        let got = ui.dispatch(fresh_ui::Input::Key(fresh_ui::KeyPress {
+            code: fresh_ui::KeyCode::Esc,
+            mods: fresh_ui::Mods::NONE,
+        }));
+        assert!(
+            got.msgs
+                .iter()
+                .any(|m| matches!(m, UiMsg::Ui(UiFact::PanelKey(Slot::Floating)))),
+            "the panel's layer is the one containment finds: {:?}",
+            got.msgs
+        );
+        assert!(
+            !got.msgs
+                .iter()
+                .any(|m| matches!(m, UiMsg::Ui(UiFact::PanelKey(Slot::Dock)))),
+            "and the dock's does not also get it: {:?}",
+            got.msgs
+        );
+    }
+
+    /// **The base key dispatcher is reached only through the tree.** With
+    /// nothing above it, the active pane's content is the focus holder, and
+    /// every key that reaches it — Tab, which is the buffer's indent, as
+    /// much as a letter — is claimed as `PaneKey` for the editor to resolve.
+    /// **The first layout of a two-pane frame holds focus on the active
+    /// pane, whichever it is.** A restored session's first frame is exactly
+    /// this: two panes, the second active, no frame before it.
+    #[test]
+    fn the_first_layout_focuses_the_active_pane_even_when_it_is_not_the_first() {
+        use fresh_core::SplitDirection;
+        for active in [1u64, 3] {
+            let mut f = one_pane_in(Some(1));
+            let s = f.splits.as_mut().unwrap();
+            s.root = SplitNode::split(
+                SplitDirection::Vertical,
+                SplitNode::leaf(BufferId(1), SplitId(1)),
+                SplitNode::leaf(BufferId(2), SplitId(3)),
+                0.5,
+                SplitId(2),
+            );
+            let leaf = crate::model::event::LeafId(SplitId(active as usize));
+            s.active = Some(leaf);
+            let mut ui: Ui<UiMsg> = Ui::new();
+            ui.frame(frame_tree(f), Size::new(80, 24));
+            let focused = ui.focused().and_then(|e| ui.key_of(e));
+            assert_eq!(
+                focused,
+                Some(crate::view::shell::splits::content_key(leaf)),
+                "active pane {active} holds focus on the first layout"
+            );
+        }
+    }
+
+    /// **A terminal pane's context is its leaf's settled fact, and it takes
+    /// raw input.** The handle says which context the pane's content resolves
+    /// keys in and whether it takes the keyboard raw; the chain names the
+    /// content and nothing above it names a mode, so `Ui::raw_input` — the
+    /// PTY gate — is true exactly when that pane holds the keyboard with
+    /// nothing exclusive above it, and the leaf's element is the same in
+    /// every mode.
+    #[test]
+    fn a_terminal_pane_names_its_context_and_takes_raw_input() {
+        use crate::input::keybindings::KeyContext;
+        let leaf = crate::model::event::LeafId(SplitId(1));
+        let handle = crate::view::shell::buffer_host::PaneHandle::new(leaf);
+        let content = crate::view::shell::splits::content_key(leaf);
+        let framed = |handle: &crate::view::shell::buffer_host::PaneHandle| {
+            let mut f = one_pane_in(Some(1));
+            let s = f.splits.as_mut().unwrap();
+            s.active = Some(leaf);
+            s.hosts.insert(leaf, handle.clone());
+            let mut ui: Ui<UiMsg> = Ui::new();
+            ui.frame(frame_tree(f), Size::new(80, 24));
+            ui
+        };
+
+        let ui = framed(&handle);
+        assert_eq!(handle.context(), KeyContext::Normal, "a plain pane");
+        assert!(!ui.raw_input(), "and takes nothing raw");
+        let plain = ui.find_by_key(&content).expect("the content");
+        assert_eq!(ui.focused(), Some(plain), "focus rests on the content");
+
+        handle.set_raw_input(true);
+        handle.set_context(KeyContext::Terminal);
+        let ui = framed(&handle);
+        assert_eq!(handle.context(), KeyContext::Terminal);
+        assert!(ui.raw_input(), "the terminal's leaf takes raw input");
+        let chain: Vec<_> = ui
+            .focused()
+            .map(|f| {
+                ui.path_to(f)
+                    .into_iter()
+                    .filter_map(|e| ui.key_of(e))
+                    .filter_map(|k| key_context_of(&k))
+                    .collect()
+            })
+            .unwrap_or_default();
+        assert!(
+            chain.is_empty(),
+            "no node on the chain names a mode; the handle does: {chain:?}"
+        );
+    }
+
+    /// **A placeholder page stands in for the grid, and for the pane.** A
+    /// window with nothing to show yet describes a page in the body instead
+    /// of its grid: no pane host reaches a painter, the page is the base's
+    /// focus holder in the active pane's stead, and a key it takes is handed
+    /// on as that pane's — so the editor's own bindings still work over a
+    /// window that cannot be edited.
+    #[test]
+    fn a_placeholder_page_stands_in_for_the_grid_and_the_pane() {
+        let pane = crate::model::event::LeafId(SplitId(1));
+        let f = Frame {
+            placeholder: Some(Placeholder {
+                detail: "⇅ remote".into(),
+                state: "Not connected".into(),
+                hint: "The workspace will open as soon as the connection is established.".into(),
+                retry: String::new(),
+                pane: Some(pane),
+            }),
+            splits: None,
+            ..Frame::default()
+        };
+        let mut ui: Ui<UiMsg> = Ui::new();
+        ui.frame(frame_tree(f), Size::new(80, 24));
+        let body = ui
+            .find_by_key(&region_key(HostRegion::Body))
+            .expect("the body");
+        assert!(
+            ui.rect_of(body).h > 20,
+            "the page fills the body: {:?}",
+            ui.rect_of(body)
+        );
+        assert!(
+            !ui.spec()
+                .items
+                .iter()
+                .any(|i| matches!(i.draw, fresh_ui::Draw::Host(_))),
+            "nothing reaches a painter"
+        );
+        let content = crate::view::shell::splits::content_key(pane);
+        let page = ui
+            .find_by_key(&content)
+            .expect("the page, as the pane's content");
+        assert_eq!(ui.focused(), Some(page), "the page holds the keyboard");
+        let got = ui.dispatch(fresh_ui::Input::Key(fresh_ui::KeyPress {
+            code: fresh_ui::KeyCode::Char('p'),
+            mods: fresh_ui::Mods::CTRL,
+        }));
+        assert!(got.claimed, "a key is the page's to hand on");
+        assert!(
+            got.msgs
+                .iter()
+                .any(|m| matches!(m, UiMsg::Ui(UiFact::PaneKey { pane: p }) if *p == pane)),
+            "and it is handed on as the pane's: {:?}",
+            got.msgs
+        );
+    }
+
+    /// **A pane's leaf keeps its element across a mode change.** A drag on a
+    /// live terminal parks it in scroll-back mid-gesture; the leaf that took
+    /// the capture must be the leaf the next frame mounts, or the rest of
+    /// the drag goes nowhere.
+    #[test]
+    fn a_panes_leaf_keeps_its_element_across_a_mode_change() {
+        use crate::input::keybindings::KeyContext;
+        let leaf = crate::model::event::LeafId(SplitId(1));
+        let handle = crate::view::shell::buffer_host::PaneHandle::new(leaf);
+        let content = crate::view::shell::splits::content_key(leaf);
+        let frame_with = |handle: &crate::view::shell::buffer_host::PaneHandle| {
+            let mut f = one_pane_in(Some(1));
+            let s = f.splits.as_mut().unwrap();
+            s.active = Some(leaf);
+            s.hosts.insert(leaf, handle.clone());
+            f
+        };
+        let mut ui: Ui<UiMsg> = Ui::new();
+        handle.set_raw_input(true);
+        handle.set_context(KeyContext::Terminal);
+        ui.frame(frame_tree(frame_with(&handle)), Size::new(80, 24));
+        let live = ui.find_by_key(&content).expect("the content");
+
+        handle.set_raw_input(false);
+        handle.set_context(KeyContext::Normal);
+        ui.frame(frame_tree(frame_with(&handle)), Size::new(80, 24));
+        let parked = ui.find_by_key(&content).expect("the content");
+        assert_eq!(live, parked, "the same leaf, live and in scroll-back");
+        assert!(!ui.raw_input());
+    }
+
+    #[test]
+    fn a_key_with_no_chrome_up_is_the_active_panes_to_hand_on() {
+        let mut ui: Ui<UiMsg> = Ui::new();
+        let mut f = one_pane_in(Some(1));
+        f.splits.as_mut().unwrap().active = Some(crate::model::event::LeafId(SplitId(1)));
+        ui.frame(frame_tree(f), Size::new(80, 24));
+        for code in [
+            fresh_ui::KeyCode::Char('a'),
+            fresh_ui::KeyCode::Tab,
+            fresh_ui::KeyCode::Esc,
+        ] {
+            let got = ui.dispatch(fresh_ui::Input::Key(fresh_ui::KeyPress {
+                code,
+                mods: fresh_ui::Mods::NONE,
+            }));
+            assert!(got.claimed, "{code:?} is claimed");
+            let facts: Vec<UiFact> = got
+                .msgs
+                .into_iter()
+                .filter_map(|m| match m {
+                    UiMsg::Ui(f) => Some(f),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(
+                facts,
+                vec![UiFact::PaneKey {
+                    pane: crate::model::event::LeafId(SplitId(1))
+                }],
+                "{code:?}"
+            );
+        }
+    }
+
+    /// The partner: with no panel up, the focused dock's layer is the one
+    /// that answers. Without this the test above would pass on a frame that
+    /// had stopped declaring the dock's layer at all.
+    #[test]
+    fn a_focused_dock_answers_when_no_panel_is_over_it() {
+        let mut ui: Ui<UiMsg> = Ui::new();
+        ui.frame(
+            frame_tree(Frame {
+                dock: Some(30),
+                dock_keys: true,
+                menu_bar: false,
+                status_bar: false,
+                ..Frame::default()
+            }),
+            Size::new(120, 40),
+        );
+        let got = ui.dispatch(fresh_ui::Input::Key(fresh_ui::KeyPress {
+            code: fresh_ui::KeyCode::Esc,
+            mods: fresh_ui::Mods::NONE,
+        }));
+        assert!(
+            got.msgs
+                .iter()
+                .any(|m| matches!(m, UiMsg::Ui(UiFact::PanelKey(Slot::Dock)))),
+            "the dock's layer answers: {:?}",
+            got.msgs
+        );
+    }
+
+    /// And the prompt beats both, which is `PROMPT > FLOATING_MODAL > DOCK`
+    /// — the R1 rank-inversion fix, kept as declaration order.
+    #[test]
+    fn a_prompt_outranks_both_panels() {
+        let mut ui: Ui<UiMsg> = Ui::new();
+        ui.frame(
+            frame_tree(Frame {
+                dock: Some(30),
+                dock_keys: true,
+                panel_keys: true,
+                prompt_keys: true,
+                menu_bar: false,
+                status_bar: false,
+                ..Frame::default()
+            }),
+            Size::new(120, 40),
+        );
+        let got = ui.dispatch(fresh_ui::Input::Key(fresh_ui::KeyPress {
+            code: fresh_ui::KeyCode::Esc,
+            mods: fresh_ui::Mods::NONE,
+        }));
+        assert!(
+            got.msgs
+                .iter()
+                .any(|m| matches!(m, UiMsg::Ui(UiFact::PromptKey))),
+            "the prompt's layer is the topmost: {:?}",
+            got.msgs
+        );
+        assert!(
+            !got.msgs
+                .iter()
+                .any(|m| matches!(m, UiMsg::Ui(UiFact::PanelKey(_)))),
+            "and neither panel also gets it: {:?}",
+            got.msgs
+        );
+    }
+
+    /// **A pointer claim must not steal the keyboard from the layer that
+    /// wants it.** The floating panel's pointer is its own layer's
+    /// (`panel::layer_for`, `Modality::Pointer`); an exclusive claim there
+    /// made it the focus scope, and with nothing focusable inside it focus
+    /// was dropped and the panel's own keyboard layer stopped being found.
+    /// This is the frame that proves the keys still land.
+    #[test]
+    fn the_panels_pointer_claim_leaves_its_keyboard_layer_alone() {
+        let mut ui: Ui<UiMsg> = Ui::new();
+        ui.frame(
+            frame_tree(Frame {
+                dock: Some(30),
+                dock_keys: true,
+                panel_keys: true,
+                menu_bar: false,
+                status_bar: false,
+                ..Frame::default()
+            }),
+            Size::new(120, 40),
+        );
+        let got = ui.dispatch(fresh_ui::Input::Key(fresh_ui::KeyPress {
+            code: fresh_ui::KeyCode::Esc,
+            mods: fresh_ui::Mods::NONE,
+        }));
+        assert!(
+            got.msgs
+                .iter()
+                .any(|m| matches!(m, UiMsg::Ui(UiFact::PanelKey(Slot::Floating)))),
+            "the slot's pointer claim did not take the keyboard: {:?}",
+            got.msgs
+        );
+    }
+
+    /// A card band's id is its own, and not a region's.
+    ///
+    /// The bands' discriminants are 1..=5, which are exactly `Dock`,
+    /// `MenuBar`, `Explorer`, `Body` and `StatusBar`. Untagged, a band folded
+    /// in a hosts-painting band would have handed the *buffer* painter the
+    /// prompt's results rectangle — silently, because `from_host_id` answered
+    /// `Some` for every one of them and the fold's assertion only catches
+    /// `None`.
+    #[test]
+    fn a_card_band_never_resolves_to_a_region() {
+        use crate::view::shell::overlay_prompt::CardRegion;
+        for r in CardRegion::ALL {
+            assert_eq!(
+                HostTarget::from_host_id(card_host_id(r)),
+                Some(HostTarget::Card(r)),
+                "{r:?} does not round-trip"
+            );
+        }
+    }
+
+    /// **Escape reaches a described floating panel.** The New Workspace dialog
+    /// is a plugin panel with a form in it, and closing it on Escape goes
+    /// through `UiFact::PanelKey`: the fact says only *which* panel, and the
+    /// host reads the key itself. So the fact has to be emitted for every key
+    /// the panel's widgets do not take, Escape included.
+    ///
+    /// The sink that used to hold the layer emitted it for every key. S2
+    /// replaced the sink with a named scope whose root is the fallback, and
+    /// this pins that the fallback still answers — with a focusable widget in
+    /// the interior holding focus, which is the configuration the dialog is
+    /// actually in and the one the sink-based test above does not cover.
+    #[test]
+    fn escape_reaches_a_described_floating_panel() {
+        use crate::view::shell::panel::Interior;
+        use fresh_core::api::WidgetSpec;
+        let spec = WidgetSpec::Button {
+            label: "Create".into(),
+            focused: false,
+            intent: Default::default(),
+            key: Some("create".into()),
+            disabled: false,
+            focusable: true,
+            bare: false,
+            full_width: false,
+            hover_style: None,
+            style: None,
+        };
+        let mut p = crate::view::shell::panel::Panel {
+            spot: crate::view::shell::panel::Spot::Centered {
+                width_pct: 60,
+                content_rows: 6,
+            },
+            title: None,
+            closable: true,
+            focused: true,
+            fullscreen: false,
+            interior: None,
+        };
+        p.interior = Some(Interior {
+            spec: std::rc::Rc::new(spec),
+            states: Default::default(),
+            h_pan: Default::default(),
+            focus_key: "create".into(),
+            keyboard: true,
+
+            page: None,
+            reading: None,
+            selection: Vec::new(),
+            compose: None,
+            hovered_key: None,
+            hovered_item_key: String::new(),
+            hovered_popup_row: String::new(),
+            marker_gutter: false,
+            avail_height: None,
+            scrollbar_reveal: None,
+            keymap: None,
+            markdown: None,
+        });
+        let mut ui: Ui<UiMsg> = Ui::new();
+        ui.frame(
+            frame_tree(Frame {
+                panel: Some(p),
+                panel_keys: true,
+                // **With a dock open beside it, which is the real case.** The
+                // New Workspace dialog is raised *from* the orchestrator dock,
+                // so both keyboard layers are declared and the panel's — being
+                // declared last — has to win. Without this the frame has only
+                // one keyboard layer and the test cannot see it lose.
+                dock: Some(30),
+                dock_keys: true,
+                menu_bar: false,
+                status_bar: false,
+                ..Frame::default()
+            }),
+            Size::new(120, 40),
+        );
+        let got = ui.dispatch(fresh_ui::Input::Key(fresh_ui::KeyPress {
+            code: fresh_ui::KeyCode::Esc,
+            mods: fresh_ui::Mods::NONE,
+        }));
+        assert!(
+            got.msgs
+                .iter()
+                .any(|m| matches!(m, UiMsg::Ui(UiFact::PanelKey(Slot::Floating)))),
+            "Escape did not reach the panel: {:?}",
+            got.msgs
+        );
+        // **And the tree must not claim it.** This is the assertion whose
+        // absence let the regression ship: the version of this test that
+        // landed with the bug checked *which message* and dropped
+        // `got.claimed` on the floor. A `Modality::Focus` seam confines the
+        // keyboard without swallowing it — the host decides, in
+        // `dispatch_floating_widget_key`, and a key the router declines has to
+        // continue to the mode bindings a plugin declared. `panel::interior`
+        // `stop()`s as it emits, so the tree does report a claim here; what
+        // makes that safe is that the host's answer replaces it rather than
+        // being OR-ed into it. Assert the whole contract at the seam that
+        // owns it.
+        assert!(
+            got.claimed,
+            "the seam stops as it emits, so the tree reports the claim;              it is the host's `Option<bool>` verdict that overrides it"
+        );
+    }
+}
+
+/// **Which keyboard vocabulary a focused element is under**, read off a
+/// key on its focus chain.
+///
+/// Every surface with a key section of its own puts a key on the node that
+/// holds focus while it has the keyboard — the settings box, a modal's seam,
+/// a popup's keyboard seam, the prompt's sink, a panel's interior or sink —
+/// and this is the one table from those keys to the `KeyContext` the keymap
+/// resolves against. `Editor::get_key_context` walks the chain from the
+/// focused element outward and takes the first answer; a chain with none is
+/// the editor's own content, whose context is the window's.
+///
+/// This replaced a ranked stack of layer declarations (`app::overlay`'s
+/// `Layer`, `LayerKind` and `chrome::layer_rank`) that each surface had to
+/// keep in step with the tree by hand: which surface has the keyboard is
+/// where focus is, and the tree already knows.
+///
+/// A surface with a custom dispatcher — the keybinding editor, the
+/// calibration wizard, the workspace-trust prompt, event debug — answers
+/// nothing and the walk continues outward, exactly as its `key_context:
+/// None` layer was skipped. A pane-mounted panel is the buffer's, and
+/// answers nothing for the same reason its keys are the buffer's mode's.
+pub fn key_context_of(k: &fresh_ui::Key) -> Option<crate::input::keybindings::KeyContext> {
+    use crate::input::keybindings::KeyContext as C;
+    use fresh_ui::Key;
+    let named = |s: &str| match s {
+        "keys:settings" => Some(C::Settings),
+        "keys:prompt" => Some(C::Prompt),
+        "keys:search_prompt" => Some(C::SearchPrompt),
+        "keys:popup" => Some(C::Popup),
+        "keys:completion" => Some(C::Completion),
+        "keys:dock" => Some(C::Dock),
+        "keys:floating_panel" => Some(C::Normal),
+        _ => None,
+    };
+    match k {
+        Key::Str(s) => {
+            if let Some(c) = named(s) {
+                return Some(c);
+            }
+            if *k == super::settings::key() || *k == super::settings::dialog_key() {
+                return Some(C::Settings);
+            }
+            None
+        }
+        Key::Pair(name, _) => match &**name {
+            "settings_entry" => Some(C::Settings),
+            "menu_dropdown" => Some(C::Menu),
+            "explorer_header" => Some(C::FileExplorer),
+            "keys:sidebar" | "sidebar_header" => Some(C::Dock),
+            "panel_interior" => {
+                if *k == super::panel::interior_key(super::widgets::Slot::Dock) {
+                    Some(C::Dock)
+                } else if *k == super::panel::interior_key(super::widgets::Slot::Floating) {
+                    Some(C::Normal)
+                } else if *k == super::panel::interior_key(super::widgets::Slot::Settings)
+                    || *k == super::panel::interior_key(super::widgets::Slot::SettingsEntry)
+                {
+                    Some(C::Settings)
+                } else if *k == super::panel::interior_key(super::widgets::Slot::PromptToolbar) {
+                    // A focused toolbar control is still the prompt's
+                    // keyboard: the toolbar sits on the prompt's ring.
+                    Some(C::Prompt)
+                } else {
+                    // A sidebar section's interior.
+                    Some(C::Dock)
+                }
+            }
+            _ => None,
+        },
+        Key::Int(_) => None,
+    }
+}

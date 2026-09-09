@@ -18,24 +18,25 @@ impl Editor {
         self.expanded_menus_cache.invalidate();
     }
 
-    /// Find a built-in or plugin menu by `label`, mutate it via `f`, and
+    /// Find a built-in or plugin menu by its stable `id` ("View", "File",
+    /// …) or, failing that, its display `label`, mutate it via `f`, and
     /// invalidate the expanded-menu cache. Returns `None` if no matching
     /// menu was found (in which case the cache is left alone).
+    ///
+    /// The id is tried first because labels are translated: a plugin
+    /// contributing a row to the View menu (`add_menu_item`) would
+    /// otherwise silently miss on every non-English locale.
     pub fn with_menu_by_label<F, R>(&mut self, label: &str, f: F) -> Option<R>
     where
         F: FnOnce(&mut Menu) -> R,
     {
-        if let Some(idx) = self.menus.menus.iter().position(|m| m.label == label) {
+        let matches = |m: &Menu| m.id.as_deref() == Some(label) || m.label == label;
+        if let Some(idx) = self.menus.menus.iter().position(matches) {
             let r = f(&mut self.menus.menus[idx]);
             self.expanded_menus_cache.invalidate();
             return Some(r);
         }
-        if let Some(idx) = self
-            .menu_state
-            .plugin_menus
-            .iter()
-            .position(|m| m.label == label)
-        {
+        if let Some(idx) = self.menu_state.plugin_menus.iter().position(matches) {
             let r = f(&mut self.menu_state.plugin_menus[idx]);
             self.expanded_menus_cache.invalidate();
             return Some(r);
@@ -179,54 +180,149 @@ impl Editor {
         }
     }
 
-    /// Compute hover target for menu dropdown chain (main dropdown and submenus).
-    /// Uses the cached menu layout from the previous render frame.
-    pub(crate) fn compute_menu_dropdown_hover(
-        &self,
-        col: u16,
-        row: u16,
-        menu_index: usize,
-    ) -> Option<HoverTarget> {
-        let menu_layout = self.active_chrome().menu_layout.as_ref()?;
-
-        // Check submenu items first (they're rendered on top)
-        if let Some((depth, item_idx)) = menu_layout.submenu_item_at(col, row) {
-            return Some(HoverTarget::SubmenuItem(depth, item_idx));
+    /// The menu's hover REACTION: an open menu follows the pointer —
+    /// bar hover switches the open menu, dropdown hover opens/closes
+    /// submenus and moves the highlight. Moved verbatim from the
+    /// central hover ladder; called from
+    /// `chrome::Menu::on_hover_change`. Returns true when menu state
+    /// changed (needs a re-render beyond the target diff).
+    pub(crate) fn menu_hover_reaction(&mut self, new_target: Option<&HoverTarget>) -> bool {
+        let Some(active_menu_idx) = self.menu_state.active_menu else {
+            return false;
+        };
+        let all_menus: Vec<crate::config::Menu> = self
+            .menus
+            .menus
+            .iter()
+            .chain(self.menu_state.plugin_menus.iter())
+            .cloned()
+            .collect();
+        if let Some(HoverTarget::MenuBarItem(hovered_menu_idx)) = new_target {
+            if *hovered_menu_idx != active_menu_idx {
+                self.menu_state.open_menu(*hovered_menu_idx);
+                return true; // Force re-render since menu changed
+            }
         }
 
-        // Check main dropdown items
-        if let Some(item_idx) = menu_layout.item_at(col, row) {
-            return Some(HoverTarget::MenuDropdownItem(menu_index, item_idx));
+        // If hovering over a menu dropdown item, check if it's a submenu and open it
+        if let Some(HoverTarget::MenuDropdownItem(_, item_idx)) = new_target {
+            let item_idx = *item_idx;
+            // If this item is the parent of the currently open submenu, keep it open.
+            // This prevents blinking when hovering over the parent item of an open submenu.
+            if self.menu_state.submenu_path.first() == Some(&item_idx) {
+                tracing::trace!(
+                    "menu hover: staying on submenu parent item_idx={}, submenu_path={:?}",
+                    item_idx,
+                    self.menu_state.submenu_path
+                );
+                return false;
+            }
+
+            // Clear any open submenus since we're at a different item in the main dropdown
+            if !self.menu_state.submenu_path.is_empty() {
+                tracing::trace!(
+                    "menu hover: clearing submenu_path={:?} for different item_idx={}",
+                    self.menu_state.submenu_path,
+                    item_idx
+                );
+                self.menu_state.submenu_path.clear();
+                self.menu_state.highlighted_item = Some(item_idx);
+                return true;
+            }
+
+            // Check if the hovered item is a submenu
+            if let Some(menu) = all_menus.get(active_menu_idx) {
+                if let Some(crate::config::MenuItem::Submenu { items, .. }) =
+                    menu.items.get(item_idx)
+                {
+                    if !items.is_empty() {
+                        tracing::trace!("menu hover: opening submenu at item_idx={}", item_idx);
+                        self.menu_state.submenu_path.push(item_idx);
+                        self.menu_state.highlighted_item = Some(0);
+                        return true;
+                    }
+                }
+            }
+            // Update highlighted item for non-submenu items too
+            if self.menu_state.highlighted_item != Some(item_idx) {
+                self.menu_state.highlighted_item = Some(item_idx);
+                return true;
+            }
         }
 
-        None
+        // If hovering over a submenu item, handle submenu navigation
+        if let Some(HoverTarget::SubmenuItem(depth, item_idx)) = new_target {
+            let (depth, item_idx) = (*depth, *item_idx);
+            // If this item is the parent of a currently open nested submenu, keep it open.
+            // This prevents blinking when hovering over the parent item of an open nested submenu.
+            // submenu_path[depth] stores the index of the nested submenu opened from this level.
+            if self.menu_state.submenu_path.len() > depth
+                && self.menu_state.submenu_path.get(depth) == Some(&item_idx)
+            {
+                tracing::trace!(
+                    "menu hover: staying on nested submenu parent depth={}, item_idx={}, submenu_path={:?}",
+                    depth,
+                    item_idx,
+                    self.menu_state.submenu_path
+                );
+                return false;
+            }
+
+            // Truncate submenu path to this depth (close any deeper submenus)
+            if self.menu_state.submenu_path.len() > depth {
+                tracing::trace!(
+                    "menu hover: truncating submenu_path={:?} to depth={} for item_idx={}",
+                    self.menu_state.submenu_path,
+                    depth,
+                    item_idx
+                );
+                self.menu_state.submenu_path.truncate(depth);
+            }
+
+            // Get the items at this depth
+            if let Some(items) = self
+                .menu_state
+                .get_current_items(&all_menus, active_menu_idx)
+            {
+                // Check if hovered item is a submenu - if so, open it
+                if let Some(crate::config::MenuItem::Submenu {
+                    items: sub_items, ..
+                }) = items.get(item_idx)
+                {
+                    if !sub_items.is_empty() && !self.menu_state.submenu_path.contains(&item_idx) {
+                        tracing::trace!(
+                            "menu hover: opening nested submenu at depth={}, item_idx={}",
+                            depth,
+                            item_idx
+                        );
+                        self.menu_state.submenu_path.push(item_idx);
+                        self.menu_state.highlighted_item = Some(0);
+                        return true;
+                    }
+                }
+                // Update highlighted item
+                if self.menu_state.highlighted_item != Some(item_idx) {
+                    self.menu_state.highlighted_item = Some(item_idx);
+                    return true;
+                }
+            }
+        }
+        false
     }
 
-    /// Handle click on menu dropdown chain (main dropdown and any open submenus).
-    /// Returns Some(Ok(())) if click was handled, None if click was outside all dropdowns.
-    /// Uses the cached menu layout from the previous render frame for hit testing.
-    pub(crate) fn handle_menu_dropdown_click(
+    /// Act on one dropdown row, named by the level it is on and its position
+    /// there.
+    ///
+    /// Split out of the coordinate-driven form above: a migrated dropdown row
+    /// answers its own click and already knows which row it is, so it should
+    /// not have to hand back a cell for the hit-test to turn into the index it
+    /// started from.
+    pub(crate) fn activate_menu_item(
         &mut self,
-        col: u16,
-        row: u16,
+        depth: usize,
+        item_idx: usize,
         menu: &Menu,
-    ) -> AnyhowResult<Option<AnyhowResult<()>>> {
-        use crate::view::ui::menu::MenuHit;
-
-        let menu_layout = match &self.active_chrome().menu_layout {
-            Some(layout) => layout.clone(),
-            None => return Ok(None),
-        };
-
-        // Use the layout to determine what was clicked
-        let hit = match menu_layout.hit_test(col, row) {
-            Some(MenuHit::DropdownItem(item_idx)) => (0, item_idx),
-            Some(MenuHit::SubmenuItem { depth, index }) => (depth, index),
-            _ => return Ok(None), // Click outside dropdown areas
-        };
-
-        let (depth, item_idx) = hit;
-
+    ) -> AnyhowResult<AnyhowResult<()>> {
         // Navigate to the clicked item in the menu structure
         let items = if depth == 0 {
             // Main dropdown items
@@ -245,24 +341,24 @@ impl Editor {
                             current_items =
                                 generate_dynamic_items(source, &self.menu_state.themes_dir);
                         }
-                        _ => return Ok(Some(Ok(()))),
+                        _ => return Ok(Ok(())),
                     }
                 } else {
-                    return Ok(Some(Ok(())));
+                    return Ok(Ok(()));
                 }
             }
             current_items
         };
 
         let Some(item) = items.get(item_idx) else {
-            return Ok(Some(Ok(())));
+            return Ok(Ok(()));
         };
 
         // Handle the clicked item
         match item {
             MenuItem::Separator { .. } | MenuItem::Label { .. } => {
                 // Clicked on separator or label - do nothing but consume the click
-                Ok(Some(Ok(())))
+                Ok(Ok(()))
             }
             MenuItem::Submenu {
                 items: submenu_items,
@@ -274,7 +370,7 @@ impl Editor {
                     self.menu_state.submenu_path.push(item_idx);
                     self.menu_state.highlighted_item = Some(0);
                 }
-                Ok(Some(Ok(())))
+                Ok(Ok(()))
             }
             MenuItem::DynamicSubmenu { source, .. } => {
                 // Clicked on dynamic submenu - open it
@@ -284,7 +380,7 @@ impl Editor {
                     self.menu_state.submenu_path.push(item_idx);
                     self.menu_state.highlighted_item = Some(0);
                 }
-                Ok(Some(Ok(())))
+                Ok(Ok(()))
             }
             MenuItem::Action { action, args, .. } => {
                 // Clicked on action - execute it
@@ -294,9 +390,9 @@ impl Editor {
                 self.close_menu_with_auto_hide();
 
                 if let Some(action) = Action::from_str(&action_name, &action_args) {
-                    return Ok(Some(self.handle_action(action)));
+                    return Ok(self.handle_action(action));
                 }
-                Ok(Some(Ok(())))
+                Ok(Ok(()))
             }
         }
     }

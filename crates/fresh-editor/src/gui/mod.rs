@@ -12,6 +12,7 @@ use anyhow::{Context, Result as AnyhowResult};
 use crossterm::event::{
     KeyEvent as CtKeyEvent, KeyEventKind, KeyEventState, MouseEvent as CtMouseEvent,
 };
+use fresh_input_parser::Event;
 
 use crate::app::Editor;
 use crate::config;
@@ -40,7 +41,7 @@ pub fn run_gui(
     log_file: Option<&PathBuf>,
 ) -> AnyhowResult<()> {
     if let Some(loc) = locale {
-        rust_i18n::set_locale(loc);
+        crate::i18n::set_locale(loc);
     }
 
     // Set up tracing subscriber (same as terminal path)
@@ -100,6 +101,17 @@ pub fn run_gui(
         cfg
     };
 
+    // Bind this process's in-process control socket so a `fresh` run inside an
+    // embedded terminal forwards opens *and* drives the command channel
+    // (`ListCommands` / `RunCommand`) back to this editor — same as the TUI
+    // path (main.rs) and the web path (webui::run). GUI mode used to bind it
+    // only lazily, when an agent terminal minted a `FRESH_CMD_TOKEN`; a plain
+    // terminal therefore never advertised `FRESH_SESSION` at all. Best-effort:
+    // on failure the editor still runs and nested launches open inline.
+    if let Err(e) = crate::server::local_control::start() {
+        tracing::warn!("Local control socket unavailable: {}", e);
+    }
+
     // Move all captured state into the closure that creates the editor app.
     fresh_gui::run(gui_config, move |cols, rows| {
         // For GUI, we always have true color.
@@ -126,6 +138,10 @@ pub fn run_gui(
         editor.set_software_cursor_only(true);
 
         let workspace_enabled = !no_session_flag && file_locations.is_empty();
+        // Writes hang off `--no-session` alone, as in the TUI path: a GUI run
+        // that merely opened files is still an ordinary session whose
+        // checkpoints must work. `workspace_enabled` only gates restore (#2735).
+        editor.set_workspace_persistence(!no_session_flag);
 
         if !file_locations.is_empty() {
             for (path, line, col) in &file_locations {
@@ -183,6 +199,19 @@ impl GuiApplication for EditorApp {
             key_event.modifiers
         );
 
+        // The interactive wave animation runs until the reader does something:
+        // the first key press dismisses it and is CONSUMED (it only stops the
+        // show, it doesn't also act on the editor). Parity with the TUI loops
+        // in `main.rs` and the daemon server, and with the web bridge — this
+        // window used to be the one frontend where the wave could not be
+        // stopped at all, so it ran to its 600-second safety cap.
+        if self
+            .editor
+            .maybe_dismiss_wave_animation(&Event::key(key_event))
+        {
+            return Ok(());
+        }
+
         // Event debug dialog intercepts ALL key events before normal processing.
         if self.editor.active_window().is_event_debug_active() {
             let raw_event = crossterm::event::KeyEvent {
@@ -203,6 +232,17 @@ impl GuiApplication for EditorApp {
     }
 
     fn on_mouse(&mut self, mouse: CtMouseEvent) -> AnyhowResult<bool> {
+        // Same rule as the key path above: any mouse activity — a move, a
+        // click, a wheel notch — ends the wave and is consumed. The window
+        // reports pointer motion the moment the pointer is over it, so this
+        // is the dismissal a reader coming back to the screensaver reaches
+        // for first.
+        if self
+            .editor
+            .maybe_dismiss_wave_animation(&Event::Mouse(mouse))
+        {
+            return Ok(true);
+        }
         self.editor.handle_mouse(mouse)
     }
 
@@ -211,7 +251,17 @@ impl GuiApplication for EditorApp {
     }
 
     fn tick(&mut self) -> AnyhowResult<bool> {
-        crate::app::editor_tick(&mut self.editor, || Ok(()))
+        // Drain nested-forward requests (file/dir opens from a `fresh` run in an
+        // embedded terminal, and the `fresh --cmd` command channel) before the
+        // tick, exactly like the TUI loop (main.rs) and the web loop
+        // (webui::run), so queued work is applied on this same pass. Without
+        // this, a request reaches the editor thread's queue and is never drained:
+        // the handler thread parks on its reply forever and `fresh --cmd cmd
+        // list` hangs in the agent's terminal. Cheap no-op until `start()` has
+        // bound the socket; never blocks.
+        let control_changed = crate::server::local_control::pump(&mut self.editor);
+        let ticked = crate::app::editor_tick(&mut self.editor, || Ok(()))?;
+        Ok(control_changed || ticked)
     }
 
     fn should_quit(&self) -> bool {

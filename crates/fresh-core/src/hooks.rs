@@ -7,7 +7,6 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use crate::action::Action;
-use crate::api::ViewTokenWire;
 use crate::{BufferId, CursorId, SplitId};
 
 /// Arguments passed to hook callbacks
@@ -25,6 +24,14 @@ pub enum HookArgs {
 
     /// After a buffer is successfully saved
     AfterFileSave { buffer_id: BufferId, path: PathBuf },
+
+    /// A buffer was reloaded from disk — auto-revert picked up an external
+    /// change (e.g. `git checkout <ref> -- <file>` run in another terminal)
+    /// or the user ran an explicit revert. Fires after the new content is
+    /// live. Reloads don't go through `AfterFileSave`, so plugins that
+    /// surface disk-derived state (git gutter, etc.) must subscribe to this
+    /// too or their decorations go stale on every external reset.
+    AfterFileRevert { buffer_id: BufferId, path: PathBuf },
 
     /// The file explorer mutated the filesystem (paste, duplicate, ...)
     /// without going through a buffer save. Plugins that surface
@@ -158,6 +165,24 @@ pub enum HookArgs {
     /// hook, *not* an editor rebuild (which would reset other sessions).
     TrustChanged { level: String },
 
+    /// The effective configuration changed: the user saved from the
+    /// Settings UI, or the config was reloaded from disk. Fires after
+    /// the new config is live *and* the plugin state snapshot has been
+    /// refreshed, so a handler that re-reads `editor.getConfig()` /
+    /// `editor.getPluginConfig()` sees the new values, not the old ones.
+    ///
+    /// Deliberately payload-free. Config is a pull API — the host says
+    /// "something changed" and each plugin re-reads exactly the keys it
+    /// cares about. Naming the changed keys here would have to lie for
+    /// the reload-from-disk path, which replaces the whole tree without
+    /// computing a diff.
+    ///
+    /// Does *not* fire for `editor.setSetting(...)`, a plugin's own
+    /// write into its session-scoped runtime layer: a plugin that
+    /// re-configures itself from this handler would otherwise wake
+    /// itself (and every other plugin) right back up.
+    ConfigChanged {},
+
     /// Rendering is starting for a buffer (called once per buffer before render_line hooks)
     RenderStart { buffer_id: BufferId },
 
@@ -181,6 +206,22 @@ pub enum HookArgs {
         /// (see `coordMap`-backed decoration commands). Surfaced to JS as
         /// `data.epoch`.
         epoch: u64,
+        /// Whether any split is showing this buffer in compose/preview mode,
+        /// read from the live view states while this batch was being built.
+        ///
+        /// A decoration plugin must gate on *this*, never on the same flag
+        /// read back from `getBufferInfo()`. The editor marks every line in
+        /// this batch as seen the moment it hands the batch over, so the batch
+        /// is the only offer those lines ever get; `getBufferInfo()`, however,
+        /// is served from `state_snapshot`, which is refreshed at editor-thread
+        /// checkpoints and so can still describe the buffer as it was *before*
+        /// the commands that turned compose on. A plugin gating on the snapshot
+        /// drops its own first paint whenever it happens to read inside that
+        /// window, and the document then stays literal until an edit or a
+        /// scroll produces another batch (issue #2968). This field is derived
+        /// from the same live state, in the same frame, as `lines`, so it
+        /// cannot disagree with them.
+        is_composing_in_any_split: bool,
     },
 
     /// Prompt input changed (user typed/edited)
@@ -241,20 +282,6 @@ pub enum HookArgs {
         language: String,
         /// The server that produced the target (e.g. `slangd`).
         server_name: String,
-    },
-
-    /// View transform request
-    ViewTransformRequest {
-        buffer_id: BufferId,
-        split_id: SplitId,
-        /// Byte offset of the viewport start
-        viewport_start: usize,
-        /// Byte offset of the viewport end
-        viewport_end: usize,
-        /// Base tokens (Text, Newline, Space) from the source
-        tokens: Vec<ViewTokenWire>,
-        /// Byte positions of all cursors in this buffer
-        cursor_positions: Vec<usize>,
     },
 
     /// Mouse click event
@@ -540,6 +567,69 @@ pub enum HookArgs {
     },
 }
 
+/// A line's role in an embedded-language region — the classification the
+/// highlighting engine already makes per line while parsing (see
+/// `docs/internal/embedded-language-highlighting.md`). Markdown fenced code
+/// blocks and Vue `<script>`/`<style>` blocks are the current hosts.
+///
+/// This is the *only* answer to "am I inside a fence" that a plugin can trust:
+/// it is not derivable from a line's own text (a bare ``` is an opener or a
+/// closer depending on every fence above it), and a plugin cannot read the
+/// buffer above its batch synchronously.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RegionLine {
+    /// The region's opening delimiter (Markdown: ```` ```rust ````). Its
+    /// info string, if any, is in the line's own `content`.
+    Open,
+    /// A content line strictly inside the region.
+    Body,
+    /// The region's closing delimiter.
+    Close,
+}
+
+/// A line's role in a table the buffer's grammar recognizes.
+///
+/// Companion to [`RegionLine`], and the same idea one step generalized:
+/// a per-line structural classification the highlighting engine already
+/// makes while parsing, exported so a decoration plugin needs no block
+/// model of its own. `open`/`body`/`close` is the wrong vocabulary for a
+/// table — a table has a header row, a delimiter row and data rows, and
+/// its *last* line is not a delimiter of any kind — so this is a
+/// separate type rather than a reuse of that one.
+///
+/// Unlike region membership, "is this a table row" *is* derivable from a
+/// line's own text, which is why absence here is recoverable: a consumer
+/// may fall back to its own text rule (see `markdown_compose`). What is
+/// not derivable line-locally is everything else in this struct — where
+/// the table starts and ends — because that needs the neighbouring lines,
+/// and a `lines_changed` batch holds only the lines a scroll or an edit
+/// touched.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum TableRole {
+    /// The column-name row, above the delimiter row.
+    Header,
+    /// The `|---|---|` row separating the header from the body.
+    Delimiter,
+    /// A data row.
+    Row,
+}
+
+/// Where a line sits in its table. See [`TableRole`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub struct TableLine {
+    pub role: TableRole,
+    /// The first data row — the one directly below the delimiter row.
+    /// Only ever true for [`TableRole::Row`].
+    pub first_row: bool,
+    /// The table's final line. Reported only when the engine could see
+    /// the line *after* the table; when it could not, this stays false,
+    /// which is the conservative answer (no closing edge drawn) rather
+    /// than a confidently wrong one.
+    pub last: bool,
+}
+
 /// Information about a single line for the LinesChanged hook
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct LineInfo {
@@ -551,6 +641,20 @@ pub struct LineInfo {
     pub byte_end: usize,
     /// The content of the line
     pub content: String,
+    /// This line's role in an embedded-language region, when the buffer's
+    /// grammar hosts them and the engine could resolve the line's region
+    /// state. Absent both for ordinary lines and when the state is
+    /// *unknown* — see `TextMateEngine::region_lines_in` for when that
+    /// happens — so consumers must treat absence as "no framing decision",
+    /// never as "outside a region".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub region: Option<RegionLine>,
+    /// This line's place in a table, when the buffer's grammar scopes
+    /// tables and the engine could resolve the line's table state.
+    /// Absent for ordinary lines and when the state is *unknown* — see
+    /// `TextMateEngine::structure_lines_in`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub table: Option<TableLine>,
 }
 
 /// Location information for LSP references
@@ -737,6 +841,7 @@ mod tests {
             HookArgs::PluginsLoaded {},
             HookArgs::Ready {},
             HookArgs::FocusGained {},
+            HookArgs::ConfigChanged {},
         ] {
             let json = hook_args_to_json(&args).unwrap();
             assert_eq!(

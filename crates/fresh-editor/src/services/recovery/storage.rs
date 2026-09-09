@@ -41,12 +41,6 @@ impl RecoveryStorage {
     /// Session lock file name
     const SESSION_LOCK: &'static str = "session.lock";
 
-    /// Create a new recovery storage manager (legacy flat layout)
-    pub fn new() -> io::Result<Self> {
-        let recovery_dir = Self::get_recovery_dir()?;
-        Ok(Self { recovery_dir })
-    }
-
     /// Create a recovery storage with a custom directory (for testing)
     pub fn with_dir(recovery_dir: PathBuf) -> Self {
         Self { recovery_dir }
@@ -292,6 +286,33 @@ impl RecoveryStorage {
         original_file_size: usize,
         final_size: usize,
     ) -> io::Result<RecoveryMetadata> {
+        self.save_recovery_owned(
+            id,
+            chunks,
+            original_path,
+            buffer_name,
+            line_count,
+            original_file_size,
+            final_size,
+            None,
+        )
+    }
+
+    /// [`Self::save_recovery`], stamping the owning workspace. One store is
+    /// shared by every workspace, so an unstamped entry can only be restored
+    /// into whichever one is in front (issue #3189).
+    #[allow(clippy::too_many_arguments)]
+    pub fn save_recovery_owned(
+        &self,
+        id: &str,
+        chunks: Vec<RecoveryChunk>,
+        original_path: Option<&Path>,
+        buffer_name: Option<&str>,
+        line_count: Option<usize>,
+        original_file_size: usize,
+        final_size: usize,
+        workspace_id: Option<&str>,
+    ) -> io::Result<RecoveryMetadata> {
         self.ensure_dir()?;
 
         let (meta_path, _content_path) = self.recovery_paths(id);
@@ -333,6 +354,7 @@ impl RecoveryStorage {
                     original_mtime,
                     chunked_data.chunks.len(),
                     original_file_size,
+                    workspace_id.map(|w| w.to_string()),
                 )
             })
         } else {
@@ -344,11 +366,18 @@ impl RecoveryStorage {
                 original_mtime,
                 chunked_data.chunks.len(),
                 original_file_size,
+                workspace_id.map(|w| w.to_string()),
             )
         };
 
         // Update metadata fields
         metadata.original_file_size = original_file_size;
+        // Re-stamped every save so an entry follows a buffer moved between
+        // workspaces (Extract Tab to New Workspace). A caller with no
+        // workspace context leaves the previous stamp rather than erasing it.
+        if let Some(workspace_id) = workspace_id {
+            metadata.workspace_id = Some(workspace_id.to_string());
+        }
         metadata.update(total_chunk_bytes, line_count, chunked_data.chunks.len());
 
         // Create combined metadata with embedded chunk index
@@ -654,33 +683,6 @@ impl RecoveryStorage {
         Ok(cleaned)
     }
 
-    /// Clean up all recovery files (after successful recovery or user dismissal)
-    pub fn cleanup_all(&self) -> io::Result<usize> {
-        if !self.recovery_dir.exists() {
-            return Ok(0);
-        }
-
-        let mut cleaned = 0;
-
-        for entry in fs::read_dir(&self.recovery_dir)? {
-            let entry = entry?;
-            let path = entry.path();
-
-            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                // Don't delete the session lock
-                if name == Self::SESSION_LOCK {
-                    continue;
-                }
-
-                if fs::remove_file(&path).is_ok() {
-                    cleaned += 1;
-                }
-            }
-        }
-
-        Ok(cleaned)
-    }
-
     // ========================================================================
     // In-place write recovery
     // ========================================================================
@@ -778,10 +780,12 @@ impl RecoveryStorage {
 }
 
 impl Default for RecoveryStorage {
+    /// The legacy unscoped flat layout, kept for tests that just need
+    /// somewhere to write. Production uses the scoped constructors.
     fn default() -> Self {
-        Self::new().unwrap_or_else(|_| Self {
-            recovery_dir: std::env::temp_dir().join("fresh-recovery"),
-        })
+        let recovery_dir = Self::get_recovery_dir()
+            .unwrap_or_else(|_| std::env::temp_dir().join("fresh-recovery"));
+        Self { recovery_dir }
     }
 }
 

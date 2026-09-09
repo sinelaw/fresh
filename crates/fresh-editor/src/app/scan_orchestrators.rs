@@ -6,7 +6,7 @@
 //! runtime (for concurrent filesystem I/O), and the status message
 //! (for progress reporting).
 
-use rust_i18n::t;
+use fresh_i18n::t;
 
 use crate::model::event::BufferId;
 use crate::view::prompt::PromptType;

@@ -731,9 +731,8 @@ fn completion_popup_scrolls_with_mouse_wheel() {
     // Locate a row owned by the popup so the wheel lands on its
     // hit-test target. `alpha_00/` is the top candidate row when
     // the popup just opened; find its on-screen row and scroll
-    // there. Column is irrelevant for the host's wheel routing
-    // (it only checks `last_inner_rect` containment), but pick
-    // a column inside the panel for realism.
+    // there. The wheel is the popup's own viewport's, so the
+    // column only has to be inside the panel.
     let (col, row) = harness
         .find_text_on_screen("alpha_00/")
         .expect("`alpha_00/` should be visible before scrolling");
@@ -860,6 +859,89 @@ fn bracketed_paste_ignored_when_non_text_widget_focused() {
     assert!(
         !harness.screen_to_string().contains("IGNORED_PASTE"),
         "an ignored paste must not leak into the buffer behind the dialog. Screen:\n{}",
+        harness.screen_to_string(),
+    );
+}
+
+/// `Ctrl+V` must paste the editor clipboard into the focused dialog
+/// field — same destination as a terminal bracketed paste, different
+/// entry path (a key event resolved through the keybinding table, not
+/// an `Event::Paste`).
+///
+/// Regression: the centered modal's key dispatcher swallowed every
+/// Ctrl-chord that had no mode binding, so Ctrl+V (and Ctrl+A / Ctrl+C /
+/// Ctrl+X) died before reaching the focused Text widget. Text copied
+/// from a buffer with Ctrl+C could not be pasted into the New-Workspace
+/// or Run-Agent dialogs at all.
+#[test]
+fn ctrl_v_pastes_into_focused_dialog_field() {
+    let (_temp, workspace) = set_up_workspace();
+    let mut harness = EditorTestHarness::with_working_dir(160, 50, workspace.clone()).unwrap();
+    harness.tick_and_render().unwrap();
+    wait_for_new_session_command(&mut harness);
+
+    harness
+        .editor_mut()
+        .set_clipboard_for_test("CTRLV_MARKER".to_string());
+
+    open_new_session_form(&mut harness);
+
+    // The Project Path text field is focused on open.
+    harness
+        .send_key(KeyCode::Char('v'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .wait_until(|h| project_path_field_value(&h.screen_to_string()).contains("CTRLV_MARKER"))
+        .unwrap();
+
+    // And it must not have leaked into the buffer underneath.
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness
+        .wait_until(|h| {
+            !h.screen_to_string()
+                .contains("ORCHESTRATOR :: New Workspace")
+        })
+        .unwrap();
+    assert!(
+        !harness.screen_to_string().contains("CTRLV_MARKER"),
+        "Ctrl+V must not leak into the buffer behind the dialog. Screen:\n{}",
+        harness.screen_to_string(),
+    );
+}
+
+/// `Ctrl+A` selects the focused field's text, so a following paste
+/// replaces it instead of appending — the standard select-all-then-paste
+/// gesture. Same regression class as `ctrl_v_pastes_into_focused_dialog_field`:
+/// the modal swallowed the chord, the selection never happened, and the
+/// paste appended after the old text.
+#[test]
+fn ctrl_a_selects_field_text_so_paste_replaces_it() {
+    let (_temp, workspace) = set_up_workspace();
+    let mut harness = EditorTestHarness::with_working_dir(160, 50, workspace.clone()).unwrap();
+    harness.tick_and_render().unwrap();
+    wait_for_new_session_command(&mut harness);
+
+    open_new_session_form(&mut harness);
+
+    harness.type_text("OLDTEXT").unwrap();
+    harness
+        .wait_until(|h| project_path_field_value(&h.screen_to_string()).contains("OLDTEXT"))
+        .unwrap();
+
+    harness
+        .send_key(KeyCode::Char('a'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.send_paste("NEWTEXT").unwrap();
+    harness
+        .wait_until(|h| project_path_field_value(&h.screen_to_string()).contains("NEWTEXT"))
+        .unwrap();
+
+    let value = project_path_field_value(&harness.screen_to_string());
+    assert!(
+        !value.contains("OLDTEXT"),
+        "paste after Ctrl+A must replace the selected field text, not append. \
+         Field value: {:?}. Screen:\n{}",
+        value,
         harness.screen_to_string(),
     );
 }
@@ -1232,26 +1314,14 @@ fn agent_dropdown_opens_as_floating_popover() {
          at once); before={closed_before}, open={open_count}. Screen:\n{open_screen}",
     );
 
-    // Web-scene parity: the projection the web frontend renders from (the
-    // `/state` route → `widgets_view`) must report the dropdown as OPEN, so
-    // the web floats its own native option pop-over from the same state.
-    {
-        let surfaces = harness.editor().widgets_view();
-        let modal = surfaces
-            .iter()
-            .find(|s| s.kind == "floatingModal")
-            .expect("the New-Workspace form must appear as a floatingModal in the web scene");
-        let inst = modal
-            .instances
-            .get("agent_dropdown")
-            .expect("the web scene must carry the agent_dropdown instance state");
-        assert_eq!(
-            inst.dropdown_open,
-            Some(true),
-            "the web scene must report the agent dropdown as open (so the web \
-             frontend renders the floating option list)",
-        );
-    }
+    // **Web-scene parity, removed with the web's plugin-panel path.** This
+    // asserted that `widgets_view` reported `agent_dropdown` as open, so the
+    // web frontend could float its own native option list from the same state.
+    // That projection is deleted deliberately (see the plan's "the web's
+    // plugin panels, and what bringing them back takes"); the TUI assertion
+    // above still covers the behaviour this test is named for. Restore this
+    // block when the web renders plugin panels from the display list, and note
+    // what it wanted: open/closed, and the committed selection index.
 
     // Esc closes the pop-over, back to the single-value trigger.
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
@@ -1284,32 +1354,11 @@ fn agent_dropdown_opens_as_floating_popover() {
         "clicking the `claude` option must select it as the Agent value. Screen:\n{after_click}",
     );
 
-    // Web-scene parity again: after the click the projection must show the
-    // pop-over closed and the newly-selected index committed — the same
-    // state the web `/state` route would report so selection round-trips.
-    {
-        let surfaces = harness.editor().widgets_view();
-        let modal = surfaces
-            .iter()
-            .find(|s| s.kind == "floatingModal")
-            .expect("form surface in web scene after selection");
-        let inst = modal
-            .instances
-            .get("agent_dropdown")
-            .expect("agent_dropdown instance in web scene after selection");
-        assert_eq!(
-            inst.dropdown_open,
-            Some(false),
-            "picking an option must close the pop-over in the web scene too",
-        );
-        // `claude` is index 1 in the prioritised preset order (terminal, claude,
-        // codex, …), so a successful click committed that selection.
-        assert_eq!(
-            inst.selected_index,
-            Some(1),
-            "the clicked `claude` option must be the committed selection in the web scene",
-        );
-    }
+    // **Web-scene parity, removed with the web's plugin-panel path** — the
+    // partner of the block above. It asserted the pop-over closed *and* that
+    // `selected_index` committed to 1 (`claude`, index 1 in the prioritised
+    // preset order), so selection round-tripped through the projection. The
+    // two screen assertions above cover the same behaviour for the TUI.
 }
 
 /// Clicking the *closed* `Agent: [<value> ▼]` trigger opens the option
@@ -1556,4 +1605,249 @@ fn teach_fresh_cli_toggle_shown_for_agent_hidden_for_terminal() {
          the expanded Advanced fold. Screen:\n{}",
         harness.screen_to_string(),
     );
+}
+
+/// True when the focus marker sits on the value row of the box titled
+/// `title` (a boxed field renders its label as the box's top border and
+/// the marker one row below, inside the brackets).
+fn boxed_field_focused(screen: &str, title: &str) -> bool {
+    let lines: Vec<&str> = screen.lines().collect();
+    match lines.iter().position(|l| l.contains(title)) {
+        Some(i) => lines.get(i + 1).is_some_and(|l| l.contains('▸')),
+        None => false,
+    }
+}
+
+/// Type `text` one settled keystroke at a time. `type_text` pushes the
+/// whole string through without draining the panel's async work in
+/// between, and a field in this form can then lose a leading character —
+/// a separate bug this test doesn't want to trip over.
+fn type_settled(harness: &mut EditorTestHarness, text: &str) {
+    for ch in text.chars() {
+        harness
+            .send_key(KeyCode::Char(ch), KeyModifiers::NONE)
+            .unwrap();
+    }
+}
+
+/// A value longer than the field can show must still be navigable to its
+/// start: the field paints a window over the value that follows the
+/// caret, so Home (or a walk of Left) brings the head back on screen and
+/// what you then type lands where you can see it.
+///
+/// It didn't. The field was pinned to the value's *tail* — `…` then the
+/// last N chars — and a caret in the hidden head was clamped to the first
+/// visible char, so Home moved the caret but nothing on screen moved with
+/// it: the beginning of a long workspace name, path or agent command
+/// could not be seen or visually edited at all.
+#[test]
+fn long_value_can_be_navigated_back_to_its_start() {
+    let (_temp, workspace) = set_up_workspace();
+    // A narrow screen keeps the form's fields narrow, so a modest value
+    // already outgrows them.
+    let mut harness = EditorTestHarness::with_working_dir(100, 40, workspace.clone()).unwrap();
+    harness.tick_and_render().unwrap();
+    wait_for_new_session_command(&mut harness);
+    open_new_session_form(&mut harness);
+
+    // Walk to Workspace Name (a plain text field — Project Path opens a
+    // completion popup as it fills, which is a different test's subject).
+    let mut guard = 0;
+    while !boxed_field_focused(&harness.screen_to_string(), "Workspace Name") {
+        harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+        harness.tick_and_render().unwrap();
+        guard += 1;
+        assert!(
+            guard < 20,
+            "Tab never reached the Workspace Name field. Screen:\n{}",
+            harness.screen_to_string(),
+        );
+    }
+
+    // Clear the suggested name (End, then backspace it away) and type a
+    // value wider than the field.
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    for _ in 0..40 {
+        harness
+            .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+            .unwrap();
+    }
+    type_settled(&mut harness, &format!("QQQ{}ZZZ", "-abcdefghij".repeat(5)));
+    harness
+        .wait_until(|h| h.screen_to_string().contains("ZZZ"))
+        .unwrap();
+
+    // Typing keeps the caret end in view, so the head is off screen.
+    harness.assert_screen_not_contains("QQQ");
+
+    // Home brings the window home with the caret.
+    harness.send_key(KeyCode::Home, KeyModifiers::NONE).unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("QQQ"))
+        .unwrap();
+
+    // And the caret is really where the screen says it is: what we type
+    // now lands at the value's start, in view.
+    type_settled(&mut harness, "YY");
+    harness
+        .wait_until(|h| h.screen_to_string().contains("YYQQQ"))
+        .unwrap();
+
+    // Walking back to the tail brings the window with it, too.
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("ZZZ"))
+        .unwrap();
+    harness.assert_screen_not_contains("YYQQQ");
+}
+
+/// "Run Agent…" and "New Workspace" are one dialog, distinguished only by
+/// where its "Launch in" switch starts — and flipping that switch reshapes the
+/// form in place rather than opening a different one.
+///
+/// This is the structural guard on the unification: two dialogs with two submit
+/// paths is what let the current-workspace path silently drop the agent-resume
+/// argv, so an agent started there restarted as a bare shell.
+///
+/// Driven from the New-Workspace entry point (the reliable one — confirming a
+/// quick-open entry re-computes the suggestion list and indexes it by row while
+/// plugin commands are still registering, so opening by palette twice in one
+/// test is racy). That the *Run Agent* entry point opens this same form
+/// pre-switched is asserted through the frame title, which follows the switch.
+#[test]
+fn run_agent_and_new_workspace_are_one_dialog() {
+    let (_temp, workspace) = set_up_workspace();
+    let mut harness = open_form_on(&workspace);
+
+    // Opened as "New Workspace": the workspace-creation fields are all here.
+    harness.assert_screen_contains("Launch in:");
+    harness.assert_screen_contains("New workspace");
+    harness.assert_screen_contains("Project Path");
+    harness.assert_screen_contains("Workspace Name");
+    harness.assert_screen_contains("Advanced");
+    harness.assert_screen_contains("Run in:");
+    harness.assert_screen_contains("Agent:");
+
+    // Flip "Launch in" to the current workspace. The form opens focused on
+    // Project Path, so Shift+Tab twice reaches the switch (via the backend
+    // tab group, which is a single stop).
+    harness
+        .send_key(KeyCode::BackTab, KeyModifiers::NONE)
+        .unwrap();
+    harness.tick_and_render().unwrap();
+    harness
+        .send_key(KeyCode::BackTab, KeyModifiers::NONE)
+        .unwrap();
+    harness.tick_and_render().unwrap();
+    assert!(
+        focused_line(&harness.screen_to_string()).contains("Launch in:"),
+        "Shift+Tab should reach the Launch-in switch. Screen:\n{}",
+        harness.screen_to_string(),
+    );
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+
+    // Everything workspace-shaped is gone — this is exactly what the separate
+    // Run-Agent dialog used to show — and the frame now says so.
+    harness
+        .wait_until(|h| h.screen_to_string().contains("ORCHESTRATOR :: Run Agent"))
+        .unwrap();
+    harness.assert_screen_contains("Current workspace");
+    harness.assert_screen_not_contains("Project Path");
+    harness.assert_screen_not_contains("Workspace Name");
+    harness.assert_screen_not_contains("Advanced");
+    harness.assert_screen_not_contains("Run in:");
+    // The agent selector is shared by both shapes, so it stays.
+    harness.assert_screen_contains("Agent:");
+
+    // Focus stayed on the switch, so flipping back is one key — the form
+    // must not fling focus elsewhere when its shape changes under the user.
+    assert!(
+        focused_line(&harness.screen_to_string()).contains("Launch in:"),
+        "flipping the switch must leave focus on it. Screen:\n{}",
+        harness.screen_to_string(),
+    );
+
+    // And back again: same dialog, more of it.
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Project Path"))
+        .unwrap();
+    harness.assert_screen_contains("ORCHESTRATOR :: New Workspace");
+    harness.assert_screen_contains("Run in:");
+}
+
+/// The agent list ends in "custom…", whose whole purpose is to let the user
+/// type an arbitrary command — so the Agent Command field has to be present,
+/// and focusable, in the current-workspace shape too.
+///
+/// It wasn't. On a local *new workspace* that field lives under the Advanced
+/// fold, and both the fold and the inline fallback were gated on "creating",
+/// so running in the current workspace rendered no command box at all. Picking
+/// "custom…" then left the form claiming an agent the user had no way to name,
+/// and — because the preset hands focus to a `cmd` field that wasn't in the
+/// focus cycle — dropped focus back to the top of the form, where the next
+/// arrow key silently flipped "Launch in" to "New workspace".
+#[test]
+fn custom_agent_is_typable_when_running_in_the_current_workspace() {
+    let (_temp, workspace) = set_up_workspace();
+    let mut harness = open_form_on(&workspace);
+
+    // Flip "Launch in" to the current workspace (as `Run Agent…` opens it).
+    harness
+        .send_key(KeyCode::BackTab, KeyModifiers::NONE)
+        .unwrap();
+    harness.tick_and_render().unwrap();
+    harness
+        .send_key(KeyCode::BackTab, KeyModifiers::NONE)
+        .unwrap();
+    harness.tick_and_render().unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("ORCHESTRATOR :: Run Agent"))
+        .unwrap();
+
+    // The command box is here even though the workspace-shaped Advanced fold
+    // that normally holds it is not.
+    harness.assert_screen_contains("Agent Command");
+    harness.assert_screen_not_contains("Advanced");
+
+    // Walk to the agent selector and step left, which wraps the list around to
+    // "custom…" — the shortest route, and the one that used to strand focus.
+    let mut guard = 0;
+    while !focused_line(&harness.screen_to_string()).contains("Agent:") {
+        harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+        harness.tick_and_render().unwrap();
+        guard += 1;
+        assert!(
+            guard < 20,
+            "Tab never reached the agent selector. Screen:\n{}",
+            harness.screen_to_string(),
+        );
+    }
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("custom"))
+        .unwrap();
+
+    // Focus followed the preset onto the command field, so the user can just
+    // type — and, critically, is not sitting on the "Launch in" switch.
+    let focused = focused_line(&harness.screen_to_string());
+    assert!(
+        !focused.contains("Launch in:"),
+        "picking 'custom…' must not drop focus onto the Launch-in switch — the \
+         next arrow key would change the workspace target. Screen:\n{}",
+        harness.screen_to_string(),
+    );
+
+    // And what gets typed lands in the command box rather than nowhere.
+    for ch in "zzcustomcmd".chars() {
+        harness
+            .send_key(KeyCode::Char(ch), KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness
+        .wait_until(|h| h.screen_to_string().contains("zzcustomcmd"))
+        .unwrap();
 }

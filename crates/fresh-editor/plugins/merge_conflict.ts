@@ -1761,6 +1761,15 @@ editor.on("after_file_open", async (data) => {
     editor.t("status.detected_file", { path: data.path }),
   );
 });
+editor.on("after_file_revert", async (data) => {
+  // The buffer was reloaded because the file changed on disk while open
+  // (e.g. `git merge` / `git checkout` ran in another terminal) — conflict
+  // markers may have appeared or vanished. Same TTL bypass as file-open.
+  detectionLastCheck.delete(data.path);
+  await detectMergeConflictFor(data.path, () =>
+    editor.t("status.detected_file", { path: data.path }),
+  );
+});
 
 // =============================================================================
 // Command Registration - Dynamic based on merge mode state

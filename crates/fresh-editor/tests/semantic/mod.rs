@@ -96,6 +96,7 @@ pub mod regressions;
 pub mod reset_isolation;
 pub mod save_state;
 pub mod scenario_shapes;
+pub mod scroll_edges;
 pub mod select_to_paragraph;
 pub mod selection;
 pub mod selftest;

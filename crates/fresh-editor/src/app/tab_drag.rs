@@ -9,9 +9,8 @@
 use super::types::TabDropZone;
 use super::Editor;
 use crate::model::event::{BufferId, LeafId, SplitDirection};
-use crate::view::ui::tabs::TabHit;
 use anyhow::Result as AnyhowResult;
-use rust_i18n::t;
+use fresh_i18n::t;
 
 impl Editor {
     /// Handle tab drag - update position and compute drop zone
@@ -26,124 +25,156 @@ impl Editor {
             };
 
         // Only compute drop zone if we've moved past threshold
-        if !is_dragging {
-            if let Some(ref mut drag_state) = self.active_window_mut().mouse_state.dragging_tab {
-                drag_state.drop_zone = None;
-            }
-            return Ok(());
-        }
-
-        // Compute the drop zone based on mouse position
-        let drop_zone = self.compute_tab_drop_zone(col, row, source_split_id);
+        let drop_zone = match is_dragging {
+            true => self.compute_tab_drop_zone(col, row, source_split_id),
+            false => None,
+        };
+        // The zone is the description's (a wash over the target pane's
+        // content, `splits::drop_zone_node`): a drag move is a
+        // pointer-transient fact, so the move that changes where the tab
+        // would land is the one that marks the description stale.
         if let Some(ref mut drag_state) = self.active_window_mut().mouse_state.dragging_tab {
-            drag_state.drop_zone = drop_zone;
+            if drag_state.drop_zone != drop_zone {
+                drag_state.drop_zone = drop_zone;
+                self.shell_description_stale = true;
+            }
         }
 
         Ok(())
     }
 
-    /// Compute the drop zone for a tab being dragged
+    /// Where a dragged tab would land: on a strip, or against an edge of a
+    /// pane's content.
+    ///
+    /// **Three questions, each asked of the node that owns it.** Which tab
+    /// the pointer is on is the tab's own rectangle (`tab_rects`); which
+    /// strip it is on is `tabs_key(pane)`; which content it is over is
+    /// `pane_content_at`. All three are reads of the tree that laid them
+    /// out.
+    ///
+    /// The middle question used to be answered by
+    /// `content_rect.y.saturating_sub(1)` — "the tab row is *typically* at
+    /// content_rect.y - 1 (assuming 1 row for tabs)". `PaneChrome::resolve`
+    /// made "does this pane have a strip at all" an explicit answer, and the
+    /// guess was wrong for every pane that has none: it named the row above
+    /// the content, which belongs to whatever is above the pane.
     pub(super) fn compute_tab_drop_zone(
         &self,
         col: u16,
         row: u16,
         source_split_id: LeafId,
     ) -> Option<TabDropZone> {
-        // First check if we're over a tab bar (for reordering/moving to another split)
-        for (split_id, tab_layout) in &self.active_layout().tab_layouts {
-            if matches!(
-                tab_layout.hit_test(col, row),
-                Some(TabHit::TabName(_) | TabHit::CloseButton(_))
-            ) {
-                // Find the index where this tab would be inserted
-                let insert_idx = self.find_tab_insert_index(*split_id, col);
-                return Some(TabDropZone::TabBar(*split_id, insert_idx));
+        // On a tab, in a strip: reorder, or move to that pane.
+        let panes: Vec<LeafId> = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.splits())
+            .map(|(mgr, _)| mgr.visible_leaves().into_iter().map(|(p, _)| p).collect())
+            .unwrap_or_default();
+        for pane in panes {
+            let tabs = self.tab_rects(pane);
+            let on_a_tab = tabs.iter().any(|t| {
+                crate::app::chrome::in_rect(col, row, t.name)
+                    || crate::app::chrome::in_rect(col, row, t.close)
+            });
+            if on_a_tab {
+                let insert_idx = Self::tab_insert_index(&tabs, col);
+                return Some(TabDropZone::TabBar(pane, insert_idx));
             }
         }
 
-        // Check if we're in the tab row area of any split (for moving to end of tab bar)
-        for (split_id, _buffer_id, content_rect, _scrollbar_rect, _thumb_start, _thumb_end) in
-            &self.active_layout().split_areas
-        {
-            // The tab row is typically at content_rect.y - 1 (assuming 1 row for tabs)
-            let tab_row = content_rect.y.saturating_sub(1);
-            if row == tab_row && col >= content_rect.x && col < content_rect.x + content_rect.width
-            {
-                return Some(TabDropZone::TabBar(*split_id, None));
-            }
+        // On a strip but not on a tab: the end of that pane's bar.
+        if let Some(pane) = self.pane_strip_at(col, row) {
+            return Some(TabDropZone::TabBar(pane, None));
         }
 
-        // Check if we're over a split content area for edge-based splitting
-        for (split_id, _buffer_id, content_rect, _scrollbar_rect, _thumb_start, _thumb_end) in
-            &self.active_layout().split_areas
-        {
-            if col >= content_rect.x
-                && col < content_rect.x + content_rect.width
-                && row >= content_rect.y
-                && row < content_rect.y + content_rect.height
-            {
-                // Calculate the edge zones (each edge takes 25% of the dimension)
-                let width = content_rect.width as f32;
-                let height = content_rect.height as f32;
-                let edge_threshold_x = (width * 0.25).max(3.0) as u16;
-                let edge_threshold_y = (height * 0.25).max(2.0) as u16;
+        // Over a pane's content: which edge, or the centre.
+        let (split_id, content_rect) = self.pane_content_at(col, row)?;
 
-                let rel_x = col - content_rect.x;
-                let rel_y = row - content_rect.y;
+        // Each edge takes 25% of the dimension.
+        let width = content_rect.width as f32;
+        let height = content_rect.height as f32;
+        let edge_threshold_x = (width * 0.25).max(3.0) as u16;
+        let edge_threshold_y = (height * 0.25).max(2.0) as u16;
 
-                // Determine which zone we're in (priority: edges, then center)
-                // Left edge
-                if rel_x < edge_threshold_x {
-                    return Some(TabDropZone::SplitLeft(*split_id));
-                }
-                // Right edge
-                if rel_x >= content_rect.width - edge_threshold_x {
-                    return Some(TabDropZone::SplitRight(*split_id));
-                }
-                // Top edge
-                if rel_y < edge_threshold_y {
-                    return Some(TabDropZone::SplitTop(*split_id));
-                }
-                // Bottom edge
-                if rel_y >= content_rect.height - edge_threshold_y {
-                    return Some(TabDropZone::SplitBottom(*split_id));
-                }
+        let rel_x = col - content_rect.x;
+        let rel_y = row - content_rect.y;
 
-                // Center - only allow if different from source split
-                if *split_id != source_split_id {
-                    return Some(TabDropZone::SplitCenter(*split_id));
-                }
-            }
+        // Edges first, then the centre.
+        if rel_x < edge_threshold_x {
+            return Some(TabDropZone::SplitLeft(split_id));
+        }
+        if rel_x >= content_rect.width - edge_threshold_x {
+            return Some(TabDropZone::SplitRight(split_id));
+        }
+        if rel_y < edge_threshold_y {
+            return Some(TabDropZone::SplitTop(split_id));
+        }
+        if rel_y >= content_rect.height - edge_threshold_y {
+            return Some(TabDropZone::SplitBottom(split_id));
         }
 
-        None
+        // The centre means "move here", which is a no-op for the pane the tab
+        // came from.
+        (split_id != source_split_id).then_some(TabDropZone::SplitCenter(split_id))
     }
 
-    /// Find the index where a tab should be inserted based on mouse x position
-    fn find_tab_insert_index(&self, split_id: LeafId, col: u16) -> Option<usize> {
-        // Get the tab layout for this split
-        let tab_layout = self.active_layout().tab_layouts.get(&split_id)?;
+    /// The view state a dragged tab takes with it: the source split's entry
+    /// for *that buffer*, not the split's active one.
+    ///
+    /// A tab carries how it was being viewed. Dropping a composing markdown tab
+    /// into another pane used to hand it a freshly defaulted state, so the
+    /// document snapped back to source mode — with the compose plugin none the
+    /// wiser, since nothing told it the mode had changed. `BufferViewState`'s
+    /// `Clone` already carries `view_mode` and the compose settings for exactly
+    /// this reason (and resets `folds`, which are markers this split owns).
+    fn carried_view_state(
+        &self,
+        source_split_id: LeafId,
+        buffer_id: BufferId,
+    ) -> Option<crate::view::split::BufferViewState> {
+        self.windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.splits())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
+            .get(&source_split_id)?
+            .keyed_states
+            .get(&buffer_id)
+            .cloned()
+    }
 
-        if tab_layout.tabs.is_empty() {
+    /// Where among `tabs` a tab dropped at `col` goes: before the tab whose
+    /// left half it is over, after the one whose right half, at the end past
+    /// them all.
+    fn tab_insert_index(tabs: &[crate::view::shell::tabs::TabRect], col: u16) -> Option<usize> {
+        if tabs.is_empty() {
             return Some(0);
         }
-
-        // Find the tab we're over and determine if we're in the left or right half
-        for (idx, tab_hit) in tab_layout.tabs.iter().enumerate() {
-            let start_col = tab_hit.tab_area.x;
-            let end_col = start_col + tab_hit.tab_area.width;
+        for (idx, t) in tabs.iter().enumerate() {
+            let start_col = t.name.x;
+            let end_col = t.close.x + t.close.width;
             if col >= start_col && col < end_col {
                 let mid = (start_col + end_col) / 2;
-                if col < mid {
-                    return Some(idx);
-                } else {
-                    return Some(idx + 1);
-                }
+                return Some(if col < mid { idx } else { idx + 1 });
             }
         }
+        Some(tabs.len())
+    }
 
-        // If past all tabs, insert at end
-        Some(tab_layout.tabs.len())
+    /// The pointer was released on a dragged tab: drop it where the drag
+    /// said, if the drag ever passed its threshold. A press that never moved
+    /// that far was a click, and the tab's press already activated it.
+    pub(crate) fn finish_tab_drag(&mut self) {
+        let Some(drag) = self.active_window_mut().mouse_state.dragging_tab.take() else {
+            return;
+        };
+        if !drag.is_dragging() {
+            return;
+        }
+        if let Some(drop_zone) = drag.drop_zone {
+            self.execute_tab_drop(drag.buffer_id, drag.source_split_id, drop_zone);
+        }
     }
 
     /// Execute a tab drop action
@@ -210,6 +241,15 @@ impl Editor {
                 self.move_tab_to_split(buffer_id, source_split_id, target_split_id, None);
             }
         }
+
+        // Every drop outcome above can change pane geometry: the four
+        // `Split*` zones create a split, and a move can empty (and close)
+        // the source one. Reflow through the single layout funnel here —
+        // the one fork all of them pass through — so a dropped terminal's
+        // PTY is SIGWINCHed to its new pane instead of keeping the size it
+        // had before the drag. Redundant for a same-split reorder, which
+        // `relayout` is explicitly cheap enough to absorb.
+        self.relayout();
     }
 
     /// Reorder a tab within the same split
@@ -290,6 +330,18 @@ impl Editor {
         let active_id = self.active_window;
         let source_showed_buffer =
             self.split_manager().get_buffer_id(source_split_id.into()) == Some(buffer_id);
+        // The tab's own view state travels with it (see `carried_view_state`),
+        // unless the destination already has an opinion about this buffer.
+        let carried_state = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.splits())
+            .map(|(_, vs)| vs)
+            .expect("active window must have a populated split layout")
+            .get(&target_split_id)
+            .is_none_or(|target| !target.keyed_states.contains_key(&buffer_id))
+            .then(|| self.carried_view_state(source_split_id, buffer_id))
+            .flatten();
         let mut next_buffer_for_source: Option<BufferId> = None;
         // Remove from source split's tab bar
         if let Some((mgr, vs)) = self
@@ -343,6 +395,20 @@ impl Editor {
         // `apply_event_to_state` on `keyed_states.get_mut(...).unwrap()`.
         self.active_window_mut()
             .set_pane_buffer(target_split_id, buffer_id);
+        // `set_pane_buffer` seeds a default entry for the buffer; overwrite it
+        // with the state the tab was carrying, so a composing tab keeps
+        // composing after the move.
+        if let Some(carried) = carried_state {
+            if let Some(target_view_state) = self
+                .windows
+                .get_mut(&self.active_window)
+                .and_then(|w| w.split_view_states_mut())
+                .expect("active window must have a populated split layout")
+                .get_mut(&target_split_id)
+            {
+                target_view_state.keyed_states.insert(buffer_id, carried);
+            }
+        }
         self.windows
             .get_mut(&self.active_window)
             .and_then(|w| w.split_manager_mut())
@@ -423,6 +489,7 @@ impl Editor {
         let active_id = self.active_window;
         let source_showed_buffer =
             self.split_manager().get_buffer_id(source_split_id.into()) == Some(buffer_id);
+        let carried_state = self.carried_view_state(source_split_id, buffer_id);
         let mut next_buffer_for_source: Option<BufferId> = None;
         let source_had_buffer = if let Some((mgr, vs)) = self
             .windows
@@ -497,16 +564,11 @@ impl Editor {
                     scroll_offset: self.config.editor.scroll_offset,
                 });
 
-                // Copy cursor position from source split's view state
-                if let Some(source_vs) = self
-                    .windows
-                    .get(&self.active_window)
-                    .and_then(|w| w.buffers.splits())
-                    .map(|(_, vs)| vs)
-                    .expect("active window must have a populated split layout")
-                    .get(&source_split_id)
-                {
-                    new_view_state.cursors = source_vs.cursors.clone();
+                // The dragged tab's own view state, cursors included — not the
+                // source split's *active* buffer's, which is a different tab
+                // whenever the drag started from an unfocused one.
+                if let Some(carried) = carried_state {
+                    new_view_state.keyed_states.insert(buffer_id, carried);
                 }
 
                 self.windows

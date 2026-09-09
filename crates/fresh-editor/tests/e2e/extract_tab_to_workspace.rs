@@ -40,15 +40,15 @@ fn wide_temp_project_harness() -> EditorTestHarness {
 /// rather than empty header space.
 fn active_tab_position(harness: &EditorTestHarness) -> (u16, u16) {
     let active = harness.editor().active_buffer();
-    for tab_layout in harness.editor().get_tab_layouts().values() {
-        for tab in &tab_layout.tabs {
-            if tab.buffer_id() == Some(active) {
-                let center_col = tab.tab_area.x + tab.tab_area.width / 2;
-                return (center_col, tab.tab_area.y);
+    for (pane, ..) in harness.editor().get_split_areas() {
+        for tab in harness.editor().tab_rects(pane) {
+            if tab.target.as_buffer() == Some(active) {
+                let center_col = tab.name.x + tab.name.width / 2;
+                return (center_col, tab.name.y);
             }
         }
     }
-    panic!("active tab not found in tab layouts");
+    panic!("active tab not found on any strip");
 }
 
 /// Set up a project with `keep.txt` at the root (so the source window keeps

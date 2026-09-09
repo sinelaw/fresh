@@ -32,6 +32,26 @@ fn set_fold_range_with_text(
         .set_from_lsp(&state.buffer, &mut state.marker_list, ranges);
 }
 
+/// Install several LSP folding ranges at once — [`set_fold_range`] replaces
+/// whatever was there before, so it can't build a multi-fold document.
+fn set_fold_ranges(harness: &mut EditorTestHarness, ranges: &[(usize, usize)]) {
+    let state = harness.editor_mut().active_state_mut();
+    let ranges: Vec<FoldingRange> = ranges
+        .iter()
+        .map(|&(start_line, end_line)| FoldingRange {
+            start_line: start_line as u32,
+            end_line: end_line as u32,
+            start_character: None,
+            end_character: None,
+            kind: None,
+            collapsed_text: None,
+        })
+        .collect();
+    state
+        .folding_ranges
+        .set_from_lsp(&state.buffer, &mut state.marker_list, ranges);
+}
+
 fn set_top_line(harness: &mut EditorTestHarness, line: usize) {
     let top_byte = {
         let buffer = &mut harness.editor_mut().active_state_mut().buffer;
@@ -40,8 +60,8 @@ fn set_top_line(harness: &mut EditorTestHarness, line: usize) {
             .unwrap_or_else(|| buffer.len())
     };
     let viewport = harness.editor_mut().active_viewport_mut();
-    viewport.top_byte = top_byte;
-    viewport.top_view_line_offset = 0;
+    viewport.set_top_byte(top_byte);
+    viewport.set_top_view_line_offset(0);
 
     let cursors = harness.editor_mut().active_cursors_mut();
     cursors.primary_mut().position = top_byte;
@@ -416,8 +436,8 @@ fn test_folded_viewport_inside_range_fills_lines() {
                 .unwrap_or_else(|| buffer.len())
         };
         let viewport = harness.editor_mut().active_viewport_mut();
-        viewport.top_byte = top_byte;
-        viewport.top_view_line_offset = 0;
+        viewport.set_top_byte(top_byte);
+        viewport.set_top_view_line_offset(0);
         viewport.set_skip_ensure_visible();
     }
     {
@@ -1114,8 +1134,8 @@ fn test_gutter_highlight_correct_at_end_of_large_file() {
     cursors.primary_mut().position = target_byte;
     cursors.primary_mut().anchor = None;
     let viewport = harness.editor_mut().active_viewport_mut();
-    viewport.top_byte = target_byte;
-    viewport.top_view_line_offset = 0;
+    viewport.set_top_byte(target_byte);
+    viewport.set_top_view_line_offset(0);
 
     harness.render().unwrap();
 
@@ -1597,4 +1617,92 @@ fn test_fold_unfold_at_end_of_large_file_gutter_click() {
 
     harness.assert_screen_contains("b_body_1");
     harness.assert_screen_contains("b_body_3");
+}
+
+/// PageDown must advance the viewport by one page of *rendered* rows.
+///
+/// A collapsed region draws a single header row, so crossing it costs one
+/// row. Counting its hidden lines instead spends the page budget off-screen:
+/// the viewport stalls while the cursor runs ahead into text nobody can see,
+/// and consecutive presses stop moving the screen at all.
+#[test]
+fn test_page_down_advances_a_full_page_across_collapsed_folds() {
+    /// Rows of file content currently on screen, top-down.
+    fn visible_rows(harness: &EditorTestHarness) -> Vec<String> {
+        let (first, last) = harness.content_area_rows();
+        (first..=last)
+            .map(|row| harness.get_row_text(row as u16).trim_end().to_string())
+            .collect()
+    }
+
+    /// How far one PageDown moved the screen, in rendered rows, read only
+    /// from the screen: where the new top row sat on the previous screen.
+    fn page_advance(harness: &mut EditorTestHarness) -> usize {
+        let before = visible_rows(harness);
+        harness
+            .send_key(KeyCode::PageDown, KeyModifiers::NONE)
+            .unwrap();
+        harness.render().unwrap();
+        let after = visible_rows(harness);
+        before
+            .iter()
+            .position(|row| *row == after[0])
+            .unwrap_or_else(|| {
+                panic!(
+                    "PageDown left no overlap with the previous screen.\n\
+                     previous top: {:?}\nnew top:      {:?}",
+                    before[0], after[0]
+                )
+            })
+    }
+
+    let content: String = (0..500).map(|i| format!("line {i}\n")).collect();
+
+    // Control run on the same file with nothing folded. Measuring the page
+    // here keeps the assertion free of the viewport height and the
+    // page-overlap constant.
+    let mut plain = EditorTestHarness::new(80, 24).unwrap();
+    let plain_fixture = TestFixture::new("page_plain.py", &content).unwrap();
+    plain.open_file(&plain_fixture.path).unwrap();
+    plain.render().unwrap();
+    let page = page_advance(&mut plain);
+    assert!(
+        page > 1,
+        "control PageDown should advance a page, got {page}"
+    );
+
+    // Same file, two collapsed regions: lines 11..=100 and 131..=180.
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let fixture = TestFixture::new("page_folded.py", &content).unwrap();
+    harness.open_file(&fixture.path).unwrap();
+    set_fold_ranges(&mut harness, &[(10, 100), (130, 180)]);
+    harness.render().unwrap();
+    let buffer_id = harness.editor().active_buffer();
+    for header_line in [10usize, 130] {
+        harness
+            .editor_mut()
+            .active_window_mut()
+            .toggle_fold_at_line(buffer_id, header_line);
+    }
+    harness.render().unwrap();
+    let collapsed = visible_rows(&harness);
+    assert!(
+        collapsed.iter().any(|row| row.contains("line 101")),
+        "fold should be collapsed before paging.\nScreen:\n{}",
+        collapsed.join("\n")
+    );
+
+    // Each press must cover the same ground as the unfolded control. Press 1
+    // crosses the first collapsed region and press 3 the second; counting
+    // hidden lines makes press 1 fall short, after which the screen stops
+    // moving while the cursor walks the hidden lines.
+    for press in 1..=4 {
+        let advance = page_advance(&mut harness);
+        assert_eq!(
+            advance,
+            page,
+            "PageDown #{press} moved {advance} rendered rows, expected {page}\nScreen:\n{}",
+            visible_rows(&harness).join("\n")
+        );
+    }
 }

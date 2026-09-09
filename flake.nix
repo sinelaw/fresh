@@ -64,13 +64,23 @@
               (lib.fileset.fileFilter (file: file.hasExt "ttf") unfilteredRoot)
               # Icon files (used by include_bytes! in fresh-gui)
               (lib.fileset.fileFilter (file: file.hasExt "png") unfilteredRoot)
+              # Web UI assets assembled by crates/fresh-editor/build.rs
+              # (shell.html + css/*.css + js/*.js concatenated into the
+              # embedded webui-index.html). The .js filter above already
+              # catches web-ui/js, but shell.html and the css/ parts are
+              # not covered by any extension filter, so include the tree.
+              ./crates/fresh-editor/web-ui
               # Runtime assets in crates/fresh-editor
               ./crates/fresh-editor/docs
-              ./crates/fresh-editor/keymaps
-              ./crates/fresh-editor/locales
               ./crates/fresh-editor/plugins
-              ./crates/fresh-editor/themes
               ./crates/fresh-editor/types
+              # Runtime assets in crates/fresh-editor-core, which owns config,
+              # the theme types and their build-script generators. Enumerated
+              # as trees because they are .json, and unlike .sublime-syntax and
+              # .scm there is no repo-wide extension filter for that.
+              ./crates/fresh-editor-core/keymaps
+              ./crates/fresh-editor-core/locales
+              ./crates/fresh-editor-core/themes
               # Test files
               ./crates/fresh-editor/tests
               # Documentation
@@ -103,13 +113,22 @@
             // {
               inherit cargoArtifacts;
 
+              # Bake the install channel into the binary (compile-time provenance).
+              FRESH_BUILD_CHANNEL = "nix";
+
               # Include runtime assets that aren't already embedded in the binary.
               # Plugins (embed-plugins feature) and themes (build.rs BUILTIN_THEMES)
               # are compiled in, so they don't need a disk copy.
               postInstall = ''
                 mkdir -p $out/share/fresh-editor
-                cp -r crates/fresh-editor/queries $out/share/fresh-editor/
-                cp -r crates/fresh-editor/keymaps $out/share/fresh-editor/
+                cp -r crates/fresh-editor-core/queries $out/share/fresh-editor/
+                cp -r crates/fresh-editor-core/keymaps $out/share/fresh-editor/
+
+                # Provenance receipt (belt-and-suspenders alongside the embedded
+                # channel); <prefix>/share/fresh resolves from $out/bin/fresh.
+                mkdir -p $out/share/fresh
+                printf 'schema = 1\nchannel = "nix"\npackage_name = "fresh-editor"\nmanaged = true\nself_update = false\n' \
+                  > $out/share/fresh/install-receipt.toml
               '';
 
               meta.mainProgram = "fresh";

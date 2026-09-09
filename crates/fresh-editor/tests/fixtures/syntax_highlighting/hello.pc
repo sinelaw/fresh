@@ -1,0 +1,11 @@
+# pkg-config metadata for libhello
+prefix=/usr/local
+libdir=${prefix}/lib
+includedir=${prefix}/include
+
+Name: libhello
+Description: Example greeting library
+Version: 1.2.3
+Requires.private: zlib >= 1.2.11
+Libs: -L${libdir} -lhello
+Cflags: -I${includedir}

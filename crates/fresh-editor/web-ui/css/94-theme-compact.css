@@ -1,0 +1,141 @@
+  /* Web theme: Compact — a dense, chrome-light IDE.
+     (web-ui/css — concatenated in filename order into the page's single
+     <style> block by crates/fresh-editor/build.rs; order is load-bearing:
+     later files deliberately override earlier ones.) */
+  /* ======================================================================
+     Gated on body.theme-compact (set by js/15-theme.js). Maximises editor real
+     estate: no wallpaper margin, no hardware bezel (both off), a ~8% smaller
+     grid (webThemeScale), tight paddings, hairline dividers and small radii.
+     COLOURS come from applyWebTheme()'s inline tokens (a flat, quiet dark);
+     this file owns the DENSITY and the flat, glass-free surfaces.
+     ====================================================================== */
+
+  /* Full-bleed: reclaim the Cosmos wallpaper margin + bezel for the editor. */
+  body.theme-compact:not(.mobile) #app{left:0;top:0;right:0;bottom:0}
+  body.theme-compact:not(.mobile) .menubar{clip-path:none}
+
+  /* ---- flatten the frame: quiet bars, hairline rules, no heavy fills ---- */
+  body.theme-compact .menubar{background:var(--shell);border-bottom:1px solid var(--hairline);padding:0 2px}
+  body.theme-compact .menu{padding:0 8px}
+  body.theme-compact .tabbar{background:var(--shell)}
+  body.theme-compact .tab{padding:0 9px}
+  body.theme-compact .tab.active::after{height:1px}
+  body.theme-compact .statusbar{background:var(--shell);padding:0 8px}
+  body.theme-compact .fileexplorer{background:var(--shell);border-right:1px solid var(--hairline)}
+
+  /* ---- density: tight rows and padding across every native list ---- */
+  body.theme-compact .fileexplorer .fx-title{padding:3px 8px 2px;letter-spacing:.03em}
+  body.theme-compact .fileexplorer .fx-list{padding:2px 4px}
+  body.theme-compact .fileexplorer .fx-row{line-height:1.28;margin:0;padding:0 5px}
+  body.theme-compact .palette .plist{padding:3px 4px}
+  body.theme-compact .palette .prow{padding:2px 10px}
+  body.theme-compact .palette .pinput{padding:5px 12px}
+  body.theme-compact .palette .ptitle{padding:6px 12px 1px}
+  body.theme-compact .popup .popup-body{padding:2px 4px}
+  body.theme-compact .popup .popup-row{padding:1px 9px}
+  body.theme-compact .ctxmenu{padding:3px 4px}
+  body.theme-compact .ctxmenu .ctxitem{padding:2px 10px}
+  body.theme-compact .mitem{gap:12px;padding:0 10px}
+  body.theme-compact .settings-modal .set-cats{padding:4px 4px}
+  body.theme-compact .settings-modal .set-items{padding:4px 6px}
+  body.theme-compact .settings-modal .set-cat{padding:2px 10px}
+  body.theme-compact .settings-modal .set-item{padding:3px 10px;margin:0}
+
+  /* Flat floating surfaces: keep the frosted-glass blur off so panels read as
+     crisp dense cards (the skin's backdrop-filter is neutralised). */
+  body.theme-compact .dropdown,body.theme-compact .popup,body.theme-compact .ctxmenu,
+  body.theme-compact .palette,body.theme-compact .m-sheet{
+    -webkit-backdrop-filter:none;backdrop-filter:none;background:var(--bg2)}
+  body.theme-compact .dropdown{background:var(--bg3)}
+
+  /* ---- flat dock: a plain panel that matches the frame -------------------
+     Folded from the display list (72-tree.js); the skin re-maps the theme keys
+     its items name and inherits the fold's answer for the rest. */
+  body.theme-compact:not(.mobile) .tree-surface.dock{
+    background:var(--shell);box-shadow:inset -1px 0 0 var(--hairline)}
+  /* `:not([data-layer])` throughout: a pop-over the dock raises names the same
+     ground key the dock's body does, and a menu you can see the list through
+     is not a menu. A theme's ground rules are about the surface's own flow. */
+  body.theme-compact:not(.mobile) .tree-item[data-surface-kind="dock"]:not([data-layer]):not([data-bg]),
+  body.theme-compact:not(.mobile) .tree-item[data-surface-kind="dock"]:not([data-layer])[data-bg="ui.suggestion_bg"],
+  body.theme-compact:not(.mobile) .tree-item[data-surface-kind="dock"]:not([data-layer])[data-bg="ui.menu_bg"],
+  body.theme-compact:not(.mobile) .tree-item[data-surface-kind="dock"]:not([data-layer])[data-bg="editor.bg"]{
+    --ink-bg:transparent}
+  body.theme-compact:not(.mobile) .tree-item[data-surface-kind="dock"][data-fg="ui.suggestion_fg"],
+  body.theme-compact:not(.mobile) .tree-item[data-surface-kind="dock"][data-fg="ui.menu_fg"]{
+    --ink-fg:var(--fg)}
+  body.theme-compact:not(.mobile) .tree-item[data-surface-kind="dock"][data-fg="ui.menu_disabled_fg"]{
+    --ink-fg:var(--muted)}
+  body.theme-compact:not(.mobile) .tree-item[data-surface-kind="dock"][data-fg="ui.help_key_fg"]{
+    --ink-fg:var(--ui-accent)}
+  /* A subtle tinted selection instead of the terminal's saturated fill. */
+  body.theme-compact:not(.mobile) .tree-item[data-surface-kind="dock"][data-bg="ui.popup_selection_bg"]{
+    --ink-bg:color-mix(in srgb,var(--ui-accent) 22%,transparent);--ink-fg:var(--fg)}
+  body.theme-compact:not(.mobile) .tree-item[data-surface-kind="dock"][data-bg="editor.current_line_bg"]{
+    --ink-bg:var(--bg2)}
+  body.theme-compact:not(.mobile) .tree-item[data-surface-kind="dock"][data-fg="editor.whitespace_indicator_fg"]{
+    --ink-fg:var(--muted)}
+  body.theme-compact:not(.mobile) .tree-item[data-surface-kind="dock"][data-fg="editor.cursor"]{
+    --ink-fg:var(--hairline-strong)}
+
+  /* ---- pop-overs the dock raises: a flat menu card ----------------------
+     A menu is a LAYER over the panel's own flow and arrives as ordinary items;
+     `[data-layer]` tells them from the list beneath, and the frame rides on the
+     `border` item, whose rectangle is the card's. Flat, as the theme is. */
+  body.theme-compact:not(.mobile) .tree-item[data-layer][data-bg="ui.suggestion_bg"]{
+    --ink-bg:var(--bg3)}
+  body.theme-compact:not(.mobile) .tree-item.k-border[data-layer]{
+    --ink-fg:transparent;border-radius:4px;
+    box-shadow:inset 0 0 0 1px var(--hairline-strong),0 8px 20px rgba(0,0,0,.35)}
+  body.theme-compact:not(.mobile) .tree-item[data-layer][data-fg="ui.suggestion_fg"]{
+    --ink-fg:var(--fg)}
+  body.theme-compact:not(.mobile) .tree-item[data-layer][data-fg="ui.menu_disabled_fg"]{
+    --ink-fg:var(--muted)}
+  body.theme-compact:not(.mobile) .tree-item[data-layer][data-bg="ui.popup_selection_bg"]{
+    --ink-bg:color-mix(in srgb,var(--ui-accent) 30%,transparent);--ink-fg:var(--fg)}
+
+  /* ---- controls: hairline chips, in keeping with the density -------------
+     A button arrives as TWO items wearing one class — a `fill` for the box and
+     a `lines` run for the naked label — so match kind AND class, never the
+     class alone. Compact keeps its controls to an outline and a tint: no
+     bevel, no lift, and a tighter squash than the other themes so a row of
+     them still reads as one dense strip.
+
+     `[data-surface]` is in every selector for weight, not for matching — every
+     tree item carries it. A focused button names `ui.popup_selection_bg`, and
+     the selection rule counts one attribute more than a bare class selector
+     would; with it these tie, and being written later these win. */
+  body.theme-compact:not(.mobile) .tree-item.k-fill[data-surface][data-class~="button"]{
+    background:var(--bg2);border-radius:3px;transform:scaleY(.82);clip-path:none;
+    box-shadow:inset 0 0 0 1px var(--hairline-strong)}
+  body.theme-compact:not(.mobile) .tree-item.k-fill[data-surface][data-class~="button.primary"]{
+    background:color-mix(in srgb,var(--ui-accent) 20%,transparent);
+    box-shadow:inset 0 0 0 1px color-mix(in srgb,var(--ui-accent) 55%,transparent)}
+  body.theme-compact:not(.mobile) .tree-item.k-fill[data-surface][data-class~="button.hover"]{
+    background:color-mix(in srgb,var(--fg) 12%,var(--bg2))}
+  body.theme-compact:not(.mobile) .tree-item.k-fill[data-surface][data-class~="button.focused"]{
+    box-shadow:inset 0 0 0 1px var(--ui-accent)}
+  body.theme-compact:not(.mobile) .tree-item.k-fill[data-surface][data-class~="button.disabled"]{
+    background:transparent;box-shadow:inset 0 0 0 1px var(--hairline)}
+  body.theme-compact:not(.mobile) .tree-item.k-lines[data-surface][data-class~="button.disabled"]{
+    --ink-fg:var(--muted)}
+
+  /* Slimmer scrollbars to match the density. */
+  body.theme-compact *::-webkit-scrollbar{width:8px;height:8px}
+
+  /* The panel's close affordance answers the pointer; `button.bare` draws no
+     box of its own, so hover is the whole cue. */
+  body.theme-compact:not(.mobile) .tree-item.k-fill[data-surface][data-class~="button.bare"][data-class~="button.hover"]{
+    background:color-mix(in srgb,var(--fg) 14%,transparent);border-radius:3px}
+
+  /* ---- the theme switcher, at the theme's density -----------------------
+     `#themeswitch` is frontend furniture (js/15-theme.js) with a token-only
+     base; flattened here to match, with the pill's radius brought down to the
+     theme's own. */
+  body.theme-compact #themebtn{background:var(--bg2);border:1px solid var(--hairline-strong);
+    border-radius:4px;box-shadow:none;padding:4px 10px}
+  body.theme-compact #themebtn:hover{background:var(--bg3)}
+  body.theme-compact #thememenu{background:var(--bg2);border:1px solid var(--hairline-strong);
+    border-radius:4px;box-shadow:0 8px 20px rgba(0,0,0,.35);padding:4px}
+  body.theme-compact .ts-row{border-radius:3px;padding:5px 8px}
+  body.theme-compact .ts-row.on{background:color-mix(in srgb,var(--ui-accent) 22%,transparent)}

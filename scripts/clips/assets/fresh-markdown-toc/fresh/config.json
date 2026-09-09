@@ -1,0 +1,37 @@
+{
+  "theme": "builtin://dracula",
+  "check_for_updates": false,
+  "file_explorer": {
+    "width": "36"
+  },
+  "languages": {
+    "markdown": {
+      "page_width": 104
+    }
+  },
+  "plugins": {
+    "markdown_compose": {
+      "enabled": true
+    },
+    "markdown_toc": {
+      "enabled": true,
+      "settings": {
+        "rows": 26,
+        "follow": "cursor",
+        "autoOpen": true
+      }
+    },
+    "dashboard": {
+      "enabled": false
+    },
+    "git_heatmap": {
+      "enabled": false
+    },
+    "orchestrator": {
+      "enabled": false
+    },
+    "vi_mode": {
+      "enabled": false
+    }
+  }
+}

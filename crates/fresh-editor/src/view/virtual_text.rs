@@ -56,6 +56,35 @@ impl VirtualTextPosition {
     }
 }
 
+/// Which way a virtual-text marker moves when text is inserted at exactly
+/// its position.
+///
+/// Only insertions *at* the marker are affected; everything else shifts the
+/// same way either way.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MarkerGravity {
+    /// Text inserted at the marker pushes it along, so the entry stays with
+    /// the character it was anchored to. The default, and what an
+    /// `AfterChar` entry needs — the #1572 end-of-line hint anchoring
+    /// relies on travelling with its glyph.
+    Right,
+    /// Text inserted at the marker leaves it where it is, so the entry stays
+    /// in front of what was typed. What a `BeforeChar` inlay hint needs:
+    /// pressing Enter on the anchor of a `let d: Duration` hint used to drag
+    /// the hint onto the next line until the debounced refresh corrected it
+    /// (issue #722).
+    Left,
+}
+
+impl MarkerGravity {
+    fn create(self, marker_list: &mut MarkerList, position: usize) -> MarkerId {
+        match self {
+            MarkerGravity::Right => marker_list.create(position),
+            MarkerGravity::Left => marker_list.create_left_gravity(position),
+        }
+    }
+}
+
 /// Namespace for grouping virtual texts (for efficient bulk removal).
 /// Similar to OverlayNamespace - plugins create a namespace once and use it for all their virtual texts.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -78,6 +107,14 @@ impl VirtualTextNamespace {
 pub struct VirtualText {
     /// Marker tracking the position (auto-adjusts on edits)
     pub marker_id: MarkerId,
+    /// The gravity the marker was created with.
+    ///
+    /// Kept alongside the id because the wrap index mirrors marker movement
+    /// on its own snapshot of these anchors (`IndexDecorations::shift_for_edit`)
+    /// and has to model each anchor the way the tree actually moves it — a
+    /// snapshot that drifts from the live marker makes the index describe a
+    /// line the renderer never draws.
+    pub gravity: MarkerGravity,
     /// Text to display (for LineAbove/LineBelow, this is the full line content)
     pub text: String,
     /// Fallback styling, used when the theme-key fields below are unset OR
@@ -154,7 +191,7 @@ pub struct VirtualTextManager {
     /// Monotonic version, bumped on every mutation.  Folded into
     /// `pipeline_inputs_version` so that adding / removing virtual
     /// lines (e.g. markdown_compose's table borders) invalidates
-    /// `LineWrapCache` / `VisualRowIndex` entries — same mechanism
+    /// `LineWrapCache` / `WrapIndex` entries — same mechanism
     /// `SoftBreakManager` and `ConcealManager` use.
     version: u32,
 }
@@ -212,9 +249,7 @@ impl VirtualTextManager {
         vtext_position: VirtualTextPosition,
         priority: i32,
     ) -> VirtualTextId {
-        // Create marker at position
-        // Use right affinity (false) so the marker stays with the following character
-        let marker_id = marker_list.create(position, false);
+        let marker_id = marker_list.create(position);
 
         let id = VirtualTextId(self.next_id);
         self.next_id += 1;
@@ -223,6 +258,7 @@ impl VirtualTextManager {
             id,
             VirtualText {
                 marker_id,
+                gravity: MarkerGravity::Right,
                 text,
                 style,
                 fg_theme_key: None,
@@ -248,6 +284,14 @@ impl VirtualTextManager {
     /// `style` is the fallback used when a theme key fails to resolve;
     /// `fg_theme_key` / `bg_theme_key` are the keys passed to
     /// `Theme::resolve_theme_key` (e.g. `"editor.line_number_fg"`).
+    ///
+    /// `gravity` decides what an insertion *at* the entry's own position
+    /// does to it — see [`MarkerGravity`]. It is a parameter rather than a
+    /// property of `vtext_position` because the two are not the same
+    /// question: entries whose position survives edits (the async-paste
+    /// placeholder, whose marker *is* the eventual insertion point) want to
+    /// travel with the text, while an inlay hint rendered in front of its
+    /// anchor wants to stay in front of what is typed there.
     #[allow(clippy::too_many_arguments)]
     pub fn add_with_theme_keys(
         &mut self,
@@ -259,13 +303,14 @@ impl VirtualTextManager {
         bg_theme_key: Option<String>,
         vtext_position: VirtualTextPosition,
         priority: i32,
+        gravity: MarkerGravity,
     ) -> VirtualTextId {
         debug_assert!(
             vtext_position.is_inline(),
             "add_with_theme_keys requires BeforeChar or AfterChar"
         );
 
-        let marker_id = marker_list.create(position, false);
+        let marker_id = gravity.create(marker_list, position);
 
         let id = VirtualTextId(self.next_id);
         self.next_id += 1;
@@ -274,6 +319,7 @@ impl VirtualTextManager {
             id,
             VirtualText {
                 marker_id,
+                gravity,
                 text,
                 style,
                 fg_theme_key,
@@ -306,7 +352,7 @@ impl VirtualTextManager {
         priority: i32,
         string_id: String,
     ) -> VirtualTextId {
-        let marker_id = marker_list.create(position, false);
+        let marker_id = marker_list.create(position);
 
         let id = VirtualTextId(self.next_id);
         self.next_id += 1;
@@ -315,6 +361,7 @@ impl VirtualTextManager {
             id,
             VirtualText {
                 marker_id,
+                gravity: MarkerGravity::Right,
                 text,
                 style,
                 fg_theme_key: None,
@@ -353,7 +400,7 @@ impl VirtualTextManager {
             "add_with_id_and_theme_keys requires BeforeChar or AfterChar"
         );
 
-        let marker_id = marker_list.create(position, false);
+        let marker_id = marker_list.create(position);
 
         let id = VirtualTextId(self.next_id);
         self.next_id += 1;
@@ -362,6 +409,7 @@ impl VirtualTextManager {
             id,
             VirtualText {
                 marker_id,
+                gravity: MarkerGravity::Right,
                 text,
                 style,
                 fg_theme_key,
@@ -446,7 +494,7 @@ impl VirtualTextManager {
             "add_line requires LineAbove or LineBelow"
         );
 
-        let marker_id = marker_list.create(position, false);
+        let marker_id = marker_list.create(position);
 
         let id = VirtualTextId(self.next_id);
         self.next_id += 1;
@@ -455,6 +503,7 @@ impl VirtualTextManager {
             id,
             VirtualText {
                 marker_id,
+                gravity: MarkerGravity::Right,
                 text,
                 style,
                 fg_theme_key,
@@ -740,6 +789,66 @@ impl VirtualTextManager {
         }
     }
 
+    /// Remove INLINE virtual texts (BeforeChar/AfterChar) whose string id
+    /// starts with `id_prefix` and whose anchor falls in `[start, end)`.
+    ///
+    /// The inline counterpart of [`clear_lines_in_range`], and it exists for
+    /// the same reason: a plugin rebuilding one line's decorations needs to
+    /// drop that line's — and only that line's — previous ones, in the same
+    /// command batch as the re-add, or the decoration strobes for a frame.
+    /// Neither of the existing inline removals can do that: `remove_by_id`
+    /// needs the exact id, which a plugin can only reconstruct from the
+    /// position the decoration was *last* placed at, and `remove_by_prefix`
+    /// takes the whole set, dropping the lines outside the current batch.
+    ///
+    /// Matching is by id prefix rather than namespace because the inline add
+    /// path stores no namespace (only virtual *lines* carry one); the string
+    /// id plugins already supply serves the same grouping purpose.
+    ///
+    /// Anchors are resolved live from the marker list, so a line that has
+    /// shifted since the decoration was placed is matched at its current
+    /// position — which is what makes the clear tolerant of the lag between a
+    /// `lines_changed` hook and the plugin's reply.
+    pub fn clear_inline_in_range(
+        &mut self,
+        marker_list: &mut MarkerList,
+        id_prefix: &str,
+        start: usize,
+        end: usize,
+    ) {
+        if start >= end {
+            return;
+        }
+        let to_remove: Vec<VirtualTextId> = self
+            .texts
+            .iter()
+            .filter_map(|(id, vtext)| {
+                if !vtext.position.is_inline() {
+                    return None;
+                }
+                if !vtext
+                    .string_id
+                    .as_ref()
+                    .is_some_and(|s| s.starts_with(id_prefix))
+                {
+                    return None;
+                }
+                let pos = marker_list.get_position(vtext.marker_id)?;
+                (pos >= start && pos < end).then_some(*id)
+            })
+            .collect();
+
+        let removed = !to_remove.is_empty();
+        for id in to_remove {
+            if let Some(vtext) = self.texts.remove(&id) {
+                marker_list.delete(vtext.marker_id);
+            }
+        }
+        if removed {
+            self.bump_version();
+        }
+    }
+
     /// Query only virtual LINES (LineAbove/LineBelow) in a byte range
     ///
     /// Used by the render pipeline to inject header/footer lines.
@@ -844,6 +953,58 @@ mod tests {
 
     fn hint_style() -> Style {
         Style::default().fg(Color::DarkGray)
+    }
+
+    /// Gravity is a per-entry choice, not something inferred from which
+    /// side the entry renders on: an insertion at the entry's own position
+    /// pushes a right-gravity entry along and leaves a left-gravity one
+    /// where it is. Inlay hints ask for the left variant so an edit at a
+    /// hint's anchor cannot drag the hint off its line (issue #722).
+    #[test]
+    fn gravity_decides_what_an_insertion_at_the_marker_does() {
+        let mut markers = MarkerList::new();
+        markers.adjust_for_insert(0, 20);
+        let mut manager = VirtualTextManager::new();
+
+        let right = manager.add_with_theme_keys(
+            &mut markers,
+            6,
+            "R".to_string(),
+            hint_style(),
+            None,
+            None,
+            VirtualTextPosition::BeforeChar,
+            0,
+            MarkerGravity::Right,
+        );
+        let left = manager.add_with_theme_keys(
+            &mut markers,
+            6,
+            "L".to_string(),
+            hint_style(),
+            None,
+            None,
+            VirtualTextPosition::BeforeChar,
+            0,
+            MarkerGravity::Left,
+        );
+
+        // Ten bytes inserted at exactly byte 6 — the position both entries
+        // are anchored to.
+        markers.adjust_for_insert(6, 10);
+
+        let right_marker = manager.texts.get(&right).expect("right entry").marker_id;
+        let left_marker = manager.texts.get(&left).expect("left entry").marker_id;
+        assert_eq!(
+            markers.get_position(right_marker),
+            Some(16),
+            "right gravity travels with the text inserted at it",
+        );
+        assert_eq!(
+            markers.get_position(left_marker),
+            Some(6),
+            "left gravity stays in front of the text inserted at it",
+        );
     }
 
     #[test]

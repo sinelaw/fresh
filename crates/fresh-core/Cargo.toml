@@ -9,7 +9,12 @@ homepage.workspace = true
 description = "Core types and utilities for the Fresh editor"
 
 [dependencies]
-serde.workspace = true
+# `rc` teaches serde to (de)serialize `Arc<T>`. `EditorStateSnapshot` shares
+# each buffer's text properties as `Arc<[TextProperty]>` rather than copying
+# them per tick, and the snapshot derives Serialize/Deserialize — without
+# this feature the crate only builds when something else in the graph turns
+# `rc` on, which is why building `fresh-core` on its own broke.
+serde = { workspace = true, features = ["rc"] }
 serde_json.workspace = true
 schemars.workspace = true
 anyhow.workspace = true

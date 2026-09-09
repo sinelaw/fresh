@@ -1,0 +1,19 @@
+[package]
+name = "fresh-i18n"
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Runtime translation store with %{name} interpolation and locale fallback: lazily parses JSON catalogs the application registers at startup, and ships no locale data of its own"
+keywords = ["i18n", "internationalization", "localization", "translation"]
+categories = ["internationalization", "localization"]
+
+[lib]
+name = "fresh_i18n"
+path = "src/lib.rs"
+
+[dependencies]
+once_cell.workspace = true
+serde_json.workspace = true

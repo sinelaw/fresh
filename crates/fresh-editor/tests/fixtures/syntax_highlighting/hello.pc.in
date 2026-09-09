@@ -1,0 +1,10 @@
+prefix=@CMAKE_INSTALL_PREFIX@
+libdir=${prefix}/@CMAKE_INSTALL_LIBDIR@
+includedir=${prefix}/@CMAKE_INSTALL_INCLUDEDIR@
+
+Name: libhello
+Description: Example greeting library
+Version: @PROJECT_VERSION@
+Requires.private: zlib >= 1.2.11
+Libs: -L${libdir} -lhello
+Cflags: -I${includedir}

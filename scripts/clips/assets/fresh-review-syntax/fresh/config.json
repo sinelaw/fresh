@@ -1,0 +1,19 @@
+{
+  "theme": "builtin://dracula",
+  "check_for_updates": false,
+  "keybindings": [
+    {
+      "key": "F9",
+      "modifiers": [],
+      "action": "dump_ui_tree",
+      "when": "normal"
+    }
+  ],
+  "plugins": {
+    "audit_mode": { "enabled": true },
+    "dashboard": { "enabled": false },
+    "git_heatmap": { "enabled": false },
+    "orchestrator": { "enabled": false },
+    "vi_mode": { "enabled": false }
+  }
+}

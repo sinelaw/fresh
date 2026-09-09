@@ -10,7 +10,7 @@
 
 use crate::input::key_translator::{KeyEventKey, KeyTranslator};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use rust_i18n::t;
+use fresh_i18n::t;
 use std::collections::{HashMap, HashSet};
 
 /// What the user's key SHOULD produce (the expected/normalized key)

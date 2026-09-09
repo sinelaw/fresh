@@ -7,6 +7,10 @@ use crate::model::filesystem::DirEntry;
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
+/// Match VS Code's default upper bound for explorer sticky-scroll rows while
+/// always leaving at least one row for the scrolled contents.
+const MAX_STICKY_ANCESTORS: usize = 7;
+
 /// View state for file tree navigation and filtering
 #[derive(Debug)]
 pub struct FileTreeView {
@@ -189,6 +193,10 @@ impl FileTreeView {
         if let Some(sel) = self.selected_node {
             self.selected_node = Some(self.promote_to_anchor(sel));
         }
+        // A sticky ancestor can be toggled directly with the mouse. Collapsing
+        // it removes the scrolled descendants, so reconcile the old offset
+        // immediately or the selected parent could disappear from the screen.
+        self.update_scroll_for_selection();
         Ok(())
     }
 
@@ -282,6 +290,108 @@ impl FileTreeView {
                 (id, depth.saturating_sub(absorbed))
             })
             .collect()
+    }
+
+    /// Indices into [`Self::get_display_nodes`] in the order they should be
+    /// painted in the viewport.
+    ///
+    /// Once the tree is scrolled, expanded ancestors of the first ordinary
+    /// row are prepended as sticky context. The ancestor cap is also bounded
+    /// by the viewport so scrolling can never hide every ordinary row.
+    pub fn viewport_display_indices(&self) -> Vec<usize> {
+        let visible = self.filtered_visible_nodes();
+        self.viewport_display_indices_with_nodes(&visible, self.scroll_offset, self.viewport_height)
+    }
+
+    /// Resolve a screen row in the explorer body to the displayed tree node.
+    /// Sticky ancestor rows and ordinary scrolled rows deliberately share this
+    /// mapping so render, click, hover, and context-menu targeting cannot drift.
+    pub fn get_display_node_at_viewport_row(&self, row: usize) -> Option<(NodeId, usize)> {
+        let display = self.get_display_nodes();
+        let display_index = self.viewport_display_indices().get(row).copied()?;
+        display.get(display_index).copied()
+    }
+
+    fn viewport_display_indices_with_nodes(
+        &self,
+        visible: &[NodeId],
+        scroll_offset: usize,
+        viewport_height: usize,
+    ) -> Vec<usize> {
+        if visible.is_empty() || viewport_height == 0 {
+            return Vec::new();
+        }
+
+        let scroll_offset = scroll_offset.min(visible.len() - 1);
+        let sticky = self.sticky_indices(visible, scroll_offset, viewport_height);
+        let ordinary_rows = viewport_height.saturating_sub(sticky.len());
+        let ordinary_end = (scroll_offset + ordinary_rows).min(visible.len());
+
+        let mut indices = Vec::with_capacity(viewport_height);
+        indices.extend(sticky);
+        indices.extend(scroll_offset..ordinary_end);
+        indices
+    }
+
+    fn sticky_indices(
+        &self,
+        visible: &[NodeId],
+        scroll_offset: usize,
+        viewport_height: usize,
+    ) -> Vec<usize> {
+        if scroll_offset == 0 || scroll_offset >= visible.len() || viewport_height < 2 {
+            return Vec::new();
+        }
+
+        let max_sticky = MAX_STICKY_ANCESTORS.min(viewport_height - 1);
+        let mut ancestors = Vec::new();
+        let mut current = self
+            .tree
+            .get_node(visible[scroll_offset])
+            .and_then(|node| node.parent);
+
+        while let Some(ancestor) = current {
+            // Absorbed compact-directory nodes do not own a display row, so
+            // only pin ancestors found in the flattened visible list.
+            if let Some(index) = visible[..scroll_offset]
+                .iter()
+                .position(|&id| id == ancestor)
+            {
+                ancestors.push(index);
+            }
+            current = self.tree.get_node(ancestor).and_then(|node| node.parent);
+        }
+
+        ancestors.reverse();
+        if ancestors.len() > max_sticky {
+            // In a path deeper than the cap, the immediate parents carry
+            // more useful context than the outermost workspace levels.
+            ancestors.drain(..ancestors.len() - max_sticky);
+        }
+        ancestors
+    }
+
+    /// Largest scroll offset that still fills the viewport as far as the
+    /// sticky ancestor rows allow. Deep trees may need a slightly larger
+    /// offset than `visible_count - viewport_height`, because pinned parents
+    /// consume part of the viewport.
+    pub fn max_scroll_offset(&self) -> usize {
+        let visible = self.filtered_visible_nodes();
+        if visible.is_empty() || self.viewport_height == 0 {
+            return 0;
+        }
+
+        let first_candidate = visible.len().saturating_sub(self.viewport_height);
+        for offset in first_candidate..visible.len() {
+            let sticky = self
+                .sticky_indices(&visible, offset, self.viewport_height)
+                .len();
+            let ordinary_rows = self.viewport_height.saturating_sub(sticky);
+            if offset + ordinary_rows >= visible.len() {
+                return offset;
+            }
+        }
+        visible.len() - 1
     }
 
     /// Count ancestors of `id` whose row is folded into a deeper anchor's
@@ -431,8 +541,22 @@ impl FileTreeView {
             if let Some(pos) = visible.iter().position(|&id| id == selected) {
                 if pos < self.scroll_offset {
                     self.scroll_offset = pos;
-                } else if pos >= self.scroll_offset + self.viewport_height {
-                    self.scroll_offset = pos - self.viewport_height + 1;
+                } else {
+                    // Sticky ancestors reduce the number of ordinary rows in
+                    // the viewport. Advance only far enough to expose the
+                    // selection under the current ancestor stack, then repeat
+                    // if crossing a tree boundary changes that stack.
+                    loop {
+                        let sticky = self
+                            .sticky_indices(visible, self.scroll_offset, self.viewport_height)
+                            .len();
+                        let ordinary_rows = self.viewport_height.saturating_sub(sticky).max(1);
+                        let ordinary_end = self.scroll_offset + ordinary_rows;
+                        if pos < ordinary_end {
+                            break;
+                        }
+                        self.scroll_offset += pos - ordinary_end + 1;
+                    }
                 }
             }
         }
@@ -631,8 +755,18 @@ impl FileTreeView {
                     self.scroll_offset = pos;
                 }
                 // If selection is below viewport, scroll down
-                else if pos >= self.scroll_offset + viewport_height {
-                    self.scroll_offset = pos - viewport_height + 1;
+                else {
+                    loop {
+                        let sticky = self
+                            .sticky_indices(&visible, self.scroll_offset, viewport_height)
+                            .len();
+                        let ordinary_rows = viewport_height.saturating_sub(sticky).max(1);
+                        let ordinary_end = self.scroll_offset + ordinary_rows;
+                        if pos < ordinary_end {
+                            break;
+                        }
+                        self.scroll_offset += pos - ordinary_end + 1;
+                    }
                 }
             }
         }
@@ -949,6 +1083,35 @@ mod tests {
         (temp_dir, view)
     }
 
+    async fn create_sticky_scroll_view() -> (TempDir, FileTreeView) {
+        let temp_dir = TempDir::new().unwrap();
+        let root = temp_dir.path();
+        let leaf_dir = root.join("a/b/c");
+        std_fs::create_dir_all(&leaf_dir).unwrap();
+        for i in 0..6 {
+            std_fs::write(leaf_dir.join(format!("file{i}.txt")), "content").unwrap();
+        }
+
+        let manager = Arc::new(FsManager::new(Arc::new(StdFileSystem)));
+        let mut tree = FileTree::new(root.to_path_buf(), manager).await.unwrap();
+        for path in [
+            root.to_path_buf(),
+            root.join("a"),
+            root.join("a/b"),
+            leaf_dir,
+        ] {
+            let id = tree.get_node_by_path(&path).unwrap().id;
+            tree.expand_node(id).await.unwrap();
+        }
+
+        let mut view = FileTreeView::new(tree);
+        // Keep every ancestor on its own row so this fixture exercises the
+        // sticky stack rather than compact-directory folding.
+        view.set_compact_directories(false);
+        view.set_viewport_height(5);
+        (temp_dir, view)
+    }
+
     #[tokio::test]
     async fn test_view_creation() {
         let (_temp_dir, view) = create_test_view().await;
@@ -1050,6 +1213,57 @@ mod tests {
 
         // Scroll offset should be 0
         assert_eq!(view.get_scroll_offset(), 0);
+    }
+
+    #[tokio::test]
+    async fn sticky_ancestors_share_the_viewport_and_hit_mapping() {
+        let (_temp_dir, mut view) = create_sticky_scroll_view().await;
+        let display = view.get_display_nodes();
+        let ids: Vec<NodeId> = display.iter().map(|&(id, _)| id).collect();
+        assert_eq!(ids.len(), 10); // root + a/b/c + six files
+
+        view.set_scroll_offset(4);
+        assert_eq!(view.viewport_display_indices(), vec![0, 1, 2, 3, 4]);
+        for (row, &display_index) in [0usize, 1, 2, 3, 4].iter().enumerate() {
+            assert_eq!(
+                view.get_display_node_at_viewport_row(row).map(|(id, _)| id),
+                Some(ids[display_index])
+            );
+        }
+
+        // Four pinned parents leave one ordinary row, so reaching the last
+        // child requires a larger maximum than `count - viewport_height`.
+        assert_eq!(view.max_scroll_offset(), 9);
+        view.set_scroll_offset(view.max_scroll_offset());
+        assert_eq!(view.viewport_display_indices(), vec![0, 1, 2, 3, 9]);
+    }
+
+    #[tokio::test]
+    async fn selection_auto_scroll_accounts_for_sticky_ancestors() {
+        let (_temp_dir, mut view) = create_sticky_scroll_view().await;
+        view.select_last();
+        view.update_scroll_for_selection();
+
+        let selected = view.get_selected_index().unwrap();
+        assert_eq!(selected, 9);
+        assert_eq!(view.get_scroll_offset(), view.max_scroll_offset());
+        assert!(view.viewport_display_indices().contains(&selected));
+    }
+
+    #[tokio::test]
+    async fn collapsing_a_sticky_ancestor_keeps_it_selected_and_visible() {
+        let (_temp_dir, mut view) = create_sticky_scroll_view().await;
+        let display = view.get_display_nodes();
+        let sticky_parent = display[1].0;
+        view.set_scroll_offset(6);
+        view.set_selected(Some(sticky_parent));
+
+        view.toggle_with_chain(sticky_parent).await.unwrap();
+
+        assert_eq!(view.get_selected(), Some(sticky_parent));
+        assert_eq!(view.get_scroll_offset(), 1);
+        let selected = view.get_selected_index().unwrap();
+        assert!(view.viewport_display_indices().contains(&selected));
     }
 
     #[tokio::test]

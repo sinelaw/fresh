@@ -14,11 +14,43 @@ import {
   buildCommitDetailEntries,
   buildCommitLogEntries,
   buildDetailPlaceholderEntries,
+  commitDetailSyntaxRegions,
   fetchCommitShow,
   fetchGitLog,
 } from "./lib/git_history.ts";
-import { type GitRepo, resolveGitRepo } from "./lib/git_repo.ts";
+import { type GitRepo, diffArgs, resolveGitRepo, withDiffArgs } from "./lib/git_repo.ts";
+import type { HintEntry, TreeNode, WidgetSpec } from "./lib/widgets.ts";
+import {
+  WidgetPanel,
+  button,
+  col,
+  flexSpacer,
+  hintBar,
+  key,
+  list,
+  raw,
+  row,
+  spacer,
+  styledRow,
+  text,
+  textInputChar,
+  textInputKey,
+  tree,
+  treeNode,
+} from "./lib/widgets.ts";
 const VirtualBufferFactory = createVirtualBufferFactory(editor);
+
+/**
+ * `editor.t` returns the key itself when a string is missing, so the common
+ * `editor.t(key) || fallback` idiom never reaches the fallback — the user sees
+ * `status.loading` on screen instead. `tr` does the check the idiom meant to.
+ */
+function tr(key: string, args?: Record<string, string>): string | null {
+    const raw = args ? editor.t(key, args) : editor.t(key);
+    if (!raw || raw === key) return null;
+    return raw;
+}
+
 
 
 
@@ -46,6 +78,21 @@ interface ReviewComment {
 }
 
 /**
+ * One file's block of `git diff` output, kept as git wrote it. The stream
+ * shows these bytes verbatim: the host's diff grammar colours them (file
+ * by file, in each file's own language) and its diff gutter numbers them
+ * from the hunk headers, so nothing here is laid out per row.
+ */
+interface RawFile {
+  path: string;
+  gitStatus: 'staged' | 'unstaged' | 'untracked';
+  /** `diff --git` through the end of the last hunk, newline-terminated.
+   *  The `diff --git` row is what retargets the highlighter to this
+   *  file's language; the stream shows it as the file's header. */
+  text: string;
+}
+
+/**
  * A diff hunk (block of changes)
  */
 interface Hunk {
@@ -57,8 +104,33 @@ interface Hunk {
   lines: string[];
   status?: string;
   contextHeader: string;
-  byteOffset: number; // Position in the virtual buffer
   gitStatus?: 'staged' | 'unstaged' | 'untracked';
+  /** The block this hunk came from, and where in it (offsets into
+   *  `raw.text`): its `@@` row, its first body row, and the end of its
+   *  last one, past the newline. */
+  raw: RawFile;
+  headerStart: number;
+  bodyStart: number;
+  end: number;
+}
+
+/** A note box spliced into a hunk's body: it follows `hunk.lines[afterLine]`
+ *  and takes `rows` rows. */
+interface StreamNote {
+  afterLine: number;
+  rows: number;
+  commentId: string;
+}
+
+/** A hunk as laid out in the stream. */
+interface StreamHunk {
+  hunk: Hunk;
+  /** 1-indexed row of the `@@` line. */
+  headerRow: number;
+  /** Rows the hunk spans, header and note boxes included. */
+  rowCount: number;
+  /** Note boxes in body order. */
+  notes: StreamNote[];
 }
 
 /**
@@ -138,6 +210,15 @@ interface ReviewState {
   // Files with changes (used for section grouping + headers in the
   // unified stream). Order matches the order they appear in the diff.
   files: FileEntry[];
+  /**
+   * Paths git reported as `Binary files ... differ` rather than as a patch —
+   * an actual binary, or a text file over `diffArgs`' size threshold. They
+   * have no hunks, so without this the stream could only say "(no diff
+   * available)", which reads as a bug rather than as the deliberate
+   * omission it is. Keyed by path alone: the message is the same whichever
+   * section the file sits in.
+   */
+  binaryPaths: Set<string>;
   emptyState: EmptyStateReason;
   viewportWidth: number;
   viewportHeight: number;
@@ -184,11 +265,22 @@ interface ReviewState {
   // attached to (not the comment-display row itself). Lets the comments
   // panel jump the cursor straight to the source line.
   diffLineRowByCommentId: Record<string, number>;
-  // Maps 1-indexed row -> the entry's properties. Lets handlers look up
-  // type / hunkId / fileKey / etc. by cursor row directly, bypassing
-  // editor.getTextPropertiesAtCursor (which can return the previous
-  // row's props when the cursor sits at a row-boundary byte).
-  entryPropsByRow: Record<number, Record<string, unknown>>;
+  // The stream's hunks in order, with where each one's rows are. What a
+  // row is — which hunk, which line of it, which note — is answered from
+  // this and `Hunk.lines` when asked (`streamRowAt`), not from a record
+  // built for every row up front.
+  streamHunks: StreamHunk[];
+  streamHunkById: Map<string, StreamHunk>;
+  // The chrome rows, by 1-indexed row: section headers to their category,
+  // file headers to their file key.
+  sectionByRow: Map<number, string>;
+  fileByRow: Map<number, string>;
+  // Per file key, the byte range of its `diff --git` row and the label
+  // `applyFolds` conceals over it (with the file's collapse glyph).
+  fileHeaderConceals: Map<string, { start: number; end: number; label: string }>;
+  // The buffer whose language and gutter are already set up for the
+  // stream, so the mount does that once per buffer, not per rebuild.
+  streamBufferPrepared: number | null;
   // Byte ranges of collapsible bodies, captured at build time. Tab /
   // mouse / z a / z r register these as host folds (see applyFolds)
   // — no buffer rebuild on collapse / expand.
@@ -198,17 +290,12 @@ interface ReviewState {
   // Maps a category name (`'staged'` etc.) -> 1-indexed row of its
   // section-header row in the unified stream. Used by Tab toggle.
   sectionHeaderRows: Record<string, number>;
-  // Maps a 1-indexed row in the comments panel -> comment id
-  commentsByRow: Record<number, string>;
   // Maps a 1-indexed row in the files sidebar -> file key. Lets clicks in
   // the sidebar resolve back to a FileEntry.
   filesPanelByRow: Record<number, string>;
   // Maps a sidebar row to a directory-group key (`${category} ${dir}`) so
   // clicking a directory header toggles its collapse.
   filesPanelDirByRow: Record<number, string>;
-  // Byte offset of each file's row in the files panel buffer, so the panel
-  // can be scrolled to keep the selected file visible (B2).
-  filesPanelByteByKey: Record<string, number>;
   // File key currently highlighted in the sidebar (tracks the diff
   // viewport's top file). Lets the scroll handler skip a sidebar repaint
   // when the current file hasn't changed.
@@ -219,17 +306,31 @@ interface ReviewState {
   showComments: boolean;
   // Active file-filter query (the `/` filter). Empty = show all files.
   fileFilter: string;
-  // When true (default), the center panel renders only the focused file
-  // (`filesCurrentKey`) instead of every file's hunks. The sidebar is the
-  // multi-file navigator; this keeps the center buffer small and fast even
-  // on huge changesets. `,`/`.` move the focus between files.
+  // When true, the center panel renders only the focused file
+  // (`filesCurrentKey`) instead of every file's hunks. Derived, not a
+  // user setting — see `syncFocusMode`: it is the side-by-side composite
+  // (per-file by construction) that renders one file. The unified stream
+  // lays out the whole changeset, however big.
   focusOnly: boolean;
-  // When true, the focused file renders as a two-column side-by-side
-  // (OLD | NEW) in the center panel instead of the unified stream. The
-  // `1`/`2` keys toggle it; the sidebar and other panels stay put.
-  splitView: boolean;
-  // Current selection in the comments panel (1-indexed row, 0 means none)
-  commentsSelectedRow: number;
+  // Which of the two optional side panels are on screen. Both start
+  // hidden so the diff owns the full width — the reading surface is what
+  // a review is about. `F` / `C` (or the toolbar buttons, or the `✕` in a
+  // panel header) toggle them; the choice sticks for the editor session.
+  panelsVisible: { files: boolean; comments: boolean };
+  // Last width in columns the host reported for each panel, keyed by
+  // panel name. Used to right-align the `✕` close button in a panel
+  // header; falls back to a ratio-derived estimate until the first
+  // viewport_changed for that panel arrives.
+  panelWidths: Record<string, number>;
+  // Last height in rows the host reported for each panel. The panels'
+  // own list/tree windows are sized by the host; this is what
+  // `refreshViewportDimensions` reads for the diff pane's geometry, and
+  // what makes the side panels' relayout fire once per settled size.
+  panelHeights: Record<string, number>;
+  // Which comment the rail has selected (null = none). The rail is a
+  // List widget: the host owns the selected *row*, the plugin owns which
+  // comment that row belongs to.
+  commentsSelectedId: string | null;
   // Comment-id the diff cursor is sitting on / attached to. Drives the
   // `>` follow-cursor marker in the comments panel.
   commentsHighlightId: string | null;
@@ -258,8 +359,38 @@ interface ReviewState {
     isUntracked: boolean;
     hunkLineMap: Array<{ oldStart: number; newStart: number }>;
   } | null;
+  // The composite for the file the reader left when they switched to the
+  // unified stream, kept alive instead of destroyed. Switching back is
+  // then a panel swap rather than two `git show` calls, two whole-file
+  // buffers over the IPC boundary and an alignment pass. `signature`
+  // records what it was built from (see `compositeSignature`), so a
+  // review that has changed underneath it rebuilds rather than showing
+  // the reader a stale file.
+  parkedComposite: {
+    fileKey: string;
+    compositeBufId: number;
+    oldBufId: number;
+    newBufId: number;
+    absPath: string;
+    isUntracked: boolean;
+    hunkLineMap: Array<{ oldStart: number; newStart: number }>;
+    signature: string;
+  } | null;
   // Monotonic token guarding async center rebuilds (file-nav spam / watch).
   centerBuildToken: number;
+  // Bumped whenever anything the unified stream is built from changes.
+  // The stream costs a second to lay out on a big review, and re-emitting
+  // an identical one is not free-but-invisible: the panel swaps to the
+  // stream buffer immediately and the content lands a beat later, so the
+  // reader watches the old scroll position sit there and then jump.
+  streamRevision: number;
+  // `streamSignature()` as of the content currently in the stream buffer,
+  // or null when nothing has been emitted into it yet.
+  streamMountedSignature: string | null;
+  // Bumped by `refreshMagitData` — i.e. when the underlying git data is
+  // re-read, which is the one thing a hunk-range signature cannot see
+  // (a file can change without moving any hunk boundary).
+  dataRevision: number;
 }
 
 const state: ReviewState = {
@@ -272,6 +403,7 @@ const state: ReviewState = {
   repo: null,
   reviewKey: 'worktree',
   files: [],
+  binaryPaths: new Set(),
   emptyState: null,
   viewportWidth: 80,
   viewportHeight: 24,
@@ -290,38 +422,55 @@ const state: ReviewState = {
   collapsedHunks: new Set(),
   hunkRowByHunkId: {},
   diffLineRowByCommentId: {},
-  entryPropsByRow: {},
+  streamHunks: [],
+  streamHunkById: new Map(),
+  sectionByRow: new Map(),
+  fileByRow: new Map(),
+  fileHeaderConceals: new Map(),
+  streamBufferPrepared: null,
   sectionBodyRange: {},
   fileBodyRange: {},
   hunkBodyRange: {},
   sectionHeaderRows: {},
-  commentsByRow: {},
   filesPanelByRow: {},
   filesPanelDirByRow: {},
-  filesPanelByteByKey: {},
   filesCurrentKey: null,
   showComments: true,
   fileFilter: "",
+  panelsVisible: { files: false, comments: false },
+  panelWidths: {},
+  panelHeights: {},
   focusOnly: true,
-  splitView: false,
-  commentsSelectedRow: 0,
+  commentsSelectedId: null,
   commentsHighlightId: null,
   stickyCurrentFile: null,
   diffViewportTopRow: 0,
   lineSelection: null,
   reviewLayout: 'unified',
   centerComposite: null,
+  parkedComposite: null,
   centerBuildToken: 0,
+  streamRevision: 0,
+  streamMountedSignature: null,
+  dataRevision: 0,
 };
 
 function fileKey(f: FileEntry): string { return `${f.path}\0${f.category}`; }
 function fileKeyOf(path: string, category: string): string { return `${path}\0${category}`; }
 
-// Theme colour for the synthetic "cursor line" highlight in the panel
-// buffers. Reintroduced after the per-line bg overlay was deleted from the
-// builders — `applyCursorLineOverlay` writes it on every cursor_moved event.
+// Theme colour for the "cursor line" bar in the panel buffers. The bar
+// itself is declared once (`setCursorLineOverlay`) and placed by the host
+// from the cursor of the frame being drawn; painting it here from
+// `cursor_moved` left it a row behind a held arrow key, because the hook
+// only fires after the frame that already moved the caret.
 const STYLE_SELECTED_BG: OverlayColorSpec = "editor.selection_bg";
-const CURSOR_LINE_NS = "review-cursor-line";
+
+/** Mode carried by the buffers the editor's own cursor moves in — the
+ *  unified stream and the side-by-side composite. Same keymap as
+ *  `review-mode`, except that cursor motion is bound straight to the
+ *  built-in actions instead of taking a round trip through this plugin
+ *  (see `DIFF_NATIVE_MOTION`). */
+const REVIEW_DIFF_MODE = "review-diff";
 
 // --- Refresh State ---
 
@@ -344,7 +493,6 @@ const STYLE_COMMENT: OverlayColorSpec = "diagnostic.warning_fg";
 // Dracula). selection_bg is reserved for the cursor-line overlay so
 // using it here would blend the two highlights.
 const STYLE_FILE_HEADER_BG: OverlayColorSpec = "editor.current_line_bg";
-const STYLE_HUNK_HEADER_BG: OverlayColorSpec = "editor.current_line_bg";
 // File-header foreground: brightest reliable foreground in any theme.
 // `editor.fg` is white-ish on dark themes and black-ish on light, so it
 // always reads as the most prominent text color. Bolded for extra weight.
@@ -355,30 +503,24 @@ const STYLE_FILE_HEADER_FG: OverlayColorSpec = "editor.fg";
 // bg in dark themes, light text on dark bg in light themes.
 const STYLE_INVERSE_FG: OverlayColorSpec = "editor.bg";
 const STYLE_INVERSE_BG: OverlayColorSpec = "editor.fg";
-// Dim foreground for the per-row old/new line-number gutter. Same key
-// the editor uses for its own gutter — already chosen per-theme to be
-// readable but visibly subordinate to content fg.
-const STYLE_LINE_NUM_FG: OverlayColorSpec = "editor.line_number_fg";
-
-// Width of each line-number column. 4 chars fits up to 9999 lines —
-// past that we just let the number overflow rather than expanding the
-// gutter (extremely rare in review-diff context).
-const LINE_NUM_W = 4;
-
-/** Format the per-row "OLD  NEW " prefix (with trailing space). Either
- *  side passes `undefined` for blank — removed lines blank the new
- *  column, added lines blank the old column. */
-function lineNumPrefix(oldNum: number | undefined, newNum: number | undefined): string {
-    const o = oldNum !== undefined ? String(oldNum).padStart(LINE_NUM_W) : ' '.repeat(LINE_NUM_W);
-    const n = newNum !== undefined ? String(newNum).padStart(LINE_NUM_W) : ' '.repeat(LINE_NUM_W);
-    return ` ${o} ${n} `;
-}
-
-
 /**
- * Calculate UTF-8 byte length of a string manually since TextEncoder is not available
+ * Calculate UTF-8 byte length of a string manually since TextEncoder is not
+ * available.
+ *
+ * The values are byte offsets the host places overlays at, so the slow path
+ * has to stay exact — including the surrogate pair, which is one code point
+ * and four bytes, not two characters of three.
+ *
+ * An all-ASCII string has a byte length equal to its character length, and
+ * diff text is overwhelmingly ASCII, so the interpreted per-character loop
+ * is skipped whenever a single engine-level regex scan says it can be. The
+ * regex is non-global on purpose: a `/g/` one carries `lastIndex` between
+ * calls and would start half its scans in the middle of the string.
  */
+const NON_ASCII = /[^\x00-\x7F]/;
+
 function getByteLength(str: string): number {
+    if (!NON_ASCII.test(str)) return str.length;
     let s = 0;
     for (let i = 0; i < str.length; i++) {
         const code = str.charCodeAt(i);
@@ -390,6 +532,19 @@ function getByteLength(str: string): number {
     }
     return s;
 }
+
+/** Disclosure triangles for collapsible headers. Collapsing never
+ *  rewrites the buffer; `applyFolds` shows the state with conceals. A
+ *  section header (and a file header the plugin wrote itself) starts
+ *  with `GLYPH_EXPANDED`, replaced by `GLYPH_COLLAPSED` while folded —
+ *  both one column and `TRIANGLE_BYTES` long, so the conceal targets a
+ *  fixed range at the head of the row. A file with a diff has git's
+ *  `diff --git` row for a header, concealed under its label and the
+ *  glyph; a hunk header is git's `@@` row, concealed as `▸ @@` while
+ *  folded. */
+const GLYPH_EXPANDED = '▾';
+const GLYPH_COLLAPSED = '▸';
+const TRIANGLE_BYTES = getByteLength(GLYPH_EXPANDED);
 
 // --- Persistence ---
 //
@@ -571,6 +726,19 @@ function diffStrings(oldStr: string, newStr: string): DiffPart[] {
         suf++;
     }
 
+    // Both walks count UTF-16 units, so a boundary can land between the
+    // halves of a surrogate pair — two lines differing only in the low
+    // half of an emoji share its high half, and the prefix swallows it.
+    // That leaves a lone surrogate at the end of one part and another at
+    // the start of the next, and `getByteLength` charges four bytes for
+    // each: every offset built from these parts is then a whole character
+    // out, and the highlight lands past the end of its row. Pull either
+    // boundary back onto a code-point boundary.
+    const isHigh = (c: number) => c >= 0xd800 && c <= 0xdbff;
+    const isLow = (c: number) => c >= 0xdc00 && c <= 0xdfff;
+    if (pre > 0 && isHigh(oldStr.charCodeAt(pre - 1)) && isLow(oldStr.charCodeAt(pre))) pre--;
+    if (suf > 0 && isHigh(oldStr.charCodeAt(n - suf - 1)) && isLow(oldStr.charCodeAt(n - suf))) suf--;
+
     const parts: DiffPart[] = [];
     if (pre > 0) parts.push({ text: oldStr.slice(0, pre), type: 'unchanged' });
     if (pre < n - suf) parts.push({ text: oldStr.slice(pre, n - suf), type: 'removed' });
@@ -579,50 +747,135 @@ function diffStrings(oldStr: string, newStr: string): DiffPart[] {
     return parts;
 }
 
-function parseDiffOutput(stdout: string, gitStatus: 'staged' | 'unstaged' | 'untracked'): Hunk[] {
-    const lines = stdout.split('\n');
-    const hunks: Hunk[] = [];
-    let currentFile = "";
-    let currentHunk: Hunk | null = null;
+/**
+ * The `diff --git` blocks in `stdout`, in git's own order, each flagged for
+ * whether git wrote `Binary files ... differ` in place of a patch.
+ *
+ * Git says that for a real binary *and* for anything over
+ * `core.bigFileThreshold` (pinned by `diffArgs`), and either way the file
+ * reaches `parseDiffOutput` with no hunks — indistinguishable, from the
+ * stream's side, from a file git had nothing to say about. Callers need the
+ * distinction to say so, and the range review needs the order to list files
+ * git never emitted a hunk for.
+ *
+ * Scanned separately rather than folded into `parseDiffOutput` so the hot
+ * parse stays a first-byte test per row: this walks only the `diff --git`
+ * headers, of which there is one per file.
+ */
+function diffFileBlocks(stdout: string): { path: string; binary: boolean }[] {
+    const blocks: { path: string; binary: boolean }[] = [];
+    let pos = 0;
+    while (pos < stdout.length) {
+        const at = stdout.indexOf('diff --git ', pos);
+        if (at < 0) break;
+        // Only at the start of a row — the same string inside a `+` row of a
+        // diff of a patch file is content, not a header.
+        if (at > 0 && stdout.charCodeAt(at - 1) !== 0x0a) {
+            pos = at + 1;
+            continue;
+        }
+        let nl = stdout.indexOf('\n', at);
+        if (nl < 0) nl = stdout.length;
+        const match = stdout.slice(at, nl).match(/diff --git a\/(.+) b\/(.+)/);
+        let next = stdout.indexOf('\ndiff --git ', nl);
+        if (next < 0) next = stdout.length;
+        if (match) blocks.push({ path: match[2], binary: isBinaryBlock(stdout, nl + 1, next) });
+        pos = next + 1;
+    }
+    return blocks;
+}
 
-    for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
-        if (line.startsWith('diff --git')) {
-            const match = line.match(/diff --git a\/(.+) b\/(.+)/);
+/**
+ * Whether the block body at `[from, end)` is git's `Binary files ... differ`
+ * summary rather than a patch.
+ *
+ * Only the block's own header rows are read — `index`, `new file mode`,
+ * `rename from`, and the handful of others — because that is where the
+ * summary sits, and the first `@@` or `---` row proves a patch follows. The
+ * bound matters: the alternative, testing the whole body, is a second pass
+ * over every byte of a review that may already be hundreds of files long.
+ */
+function isBinaryBlock(stdout: string, from: number, end: number): boolean {
+    let pos = from;
+    // Generous for the longest header run (a rename with two long paths),
+    // and still a fixed cost per file.
+    for (let row = 0; row < 12 && pos < end; row++) {
+        if (stdout.startsWith('Binary files ', pos)) return true;
+        // A patch body has started; nothing after this is a header.
+        if (stdout.startsWith('@@ ', pos) || stdout.startsWith('--- ', pos)) return false;
+        let nl = stdout.indexOf('\n', pos);
+        if (nl < 0 || nl >= end) return false;
+        pos = nl + 1;
+    }
+    return false;
+}
+
+/**
+ * Split `git diff` output into hunks without taking it apart: each hunk
+ * records where it sits in its file's block, and the block is what the
+ * stream shows. The pass is an `indexOf` per row and a first-byte test;
+ * only `Hunk.lines`, which staging and note anchoring read, is split out.
+ */
+function parseDiffOutput(stdout: string, gitStatus: 'staged' | 'unstaged' | 'untracked'): Hunk[] {
+    if (stdout.length > 0 && !stdout.endsWith('\n')) stdout += '\n';
+    const hunks: Hunk[] = [];
+    let file: RawFile | null = null;
+    let fileStart = 0;
+    let hunk: Hunk | null = null;
+    const closeHunk = (at: number) => {
+        if (hunk === null) return;
+        hunk.end = at - fileStart;
+        const lines = stdout.slice(fileStart + hunk.bodyStart, at).split('\n');
+        lines.pop(); // the terminating newline leaves an empty tail
+        hunk.lines = lines;
+        hunk = null;
+    };
+    const closeFile = (at: number) => {
+        closeHunk(at);
+        if (file === null) return;
+        file.text = stdout.slice(fileStart, at);
+        file = null;
+    };
+    const n = stdout.length;
+    let pos = 0;
+    while (pos < n) {
+        let nl = stdout.indexOf('\n', pos);
+        if (nl < 0) nl = n;
+        const c = stdout.charCodeAt(pos);
+        if (c === 0x64 /* d */ && stdout.startsWith('diff --git ', pos)) {
+            closeFile(pos);
+            const match = stdout.slice(pos, nl).match(/diff --git a\/(.+) b\/(.+)/);
             if (match) {
-                currentFile = match[2];
-                currentHunk = null;
+                fileStart = pos;
+                file = { path: match[2], gitStatus, text: '' };
             }
-        } else if (line.startsWith('@@')) {
-            const match = line.match(/@@ -(\d+),?\d* \+(\d+),?\d* @@(.*)/);
-            if (match && currentFile) {
+        } else if (c === 0x40 /* @ */ && file !== null && stdout.startsWith('@@ ', pos)) {
+            closeHunk(pos);
+            const match = stdout.slice(pos, nl).match(/@@ -(\d+),?\d* \+(\d+),?\d* @@(.*)/);
+            if (match) {
                 const oldStart = parseInt(match[1]);
                 const newStart = parseInt(match[2]);
-                currentHunk = {
-                    id: `${currentFile}:${newStart}:${gitStatus}`,
-                    file: currentFile,
+                hunk = {
+                    id: `${file.path}:${newStart}:${gitStatus}`,
+                    file: file.path,
                     range: { start: newStart, end: newStart },
                     oldRange: { start: oldStart, end: oldStart },
                     type: 'modify',
                     lines: [],
                     status: 'pending',
                     contextHeader: match[3]?.trim() || "",
-                    byteOffset: 0,
-                    gitStatus
+                    gitStatus,
+                    raw: file,
+                    headerStart: pos - fileStart,
+                    bodyStart: nl + 1 - fileStart,
+                    end: nl + 1 - fileStart,
                 };
-                hunks.push(currentHunk);
-            }
-        } else if (currentHunk && (line.startsWith('+') || line.startsWith('-') || line.startsWith(' ') || line.startsWith('\\'))) {
-            // Keep the "\ No newline at end of file" marker (starts with
-            // a backslash) so buildHunkPatch can reproduce the exact
-            // end-of-file newline state; without it git refuses to apply
-            // the reconstructed patch (e.g. discarding a hunk that adds an
-            // unterminated final line).
-            if (!line.startsWith('---') && !line.startsWith('+++')) {
-                 currentHunk.lines.push(line);
+                hunks.push(hunk);
             }
         }
+        pos = nl + 1;
     }
+    closeFile(n);
     return hunks;
 }
 
@@ -722,7 +975,16 @@ interface GitStatusResult {
 
 async function getGitStatus(): Promise<GitStatusResult> {
     const cwd = gitCwd();
-    const result = await editor.spawnProcess("git", ["status", "--porcelain", "-z", "-uall"], cwd);
+    // `--no-optional-locks`: plain `git status` refreshes the index and takes
+    // `.git/index.lock` to write it back. This runs on a timer while a review
+    // is open (#3126), so without it the panel would periodically lose a
+    // `git commit` or `git add` in the user's own terminal the race for that
+    // lock.
+    const result = await editor.spawnProcess(
+        "git",
+        ["--no-optional-locks", "status", "--porcelain", "-z", "-uall"],
+        cwd,
+    );
     if (result.exit_code !== 0) {
         return { files: [], emptyReason: 'not_git' };
     }
@@ -732,6 +994,10 @@ async function getGitStatus(): Promise<GitStatusResult> {
         emptyReason: files.length === 0 ? 'clean' : null,
     };
 }
+
+// `diffArgs` / `withDiffArgs` — the argv that pins git's patch output to the
+// shape `parseDiffOutput` and `buildHunkPatch` expect — are shared with the
+// git log plugin and live in `./lib/git_repo.ts`.
 
 /**
  * Fetch unified diffs for the given file entries.
@@ -745,37 +1011,50 @@ async function fetchDiffsForFiles(files: FileEntry[]): Promise<Hunk[]> {
     const hasUnstaged = files.some(f => f.category === 'unstaged');
     const untrackedFiles = files.filter(f => f.category === 'untracked');
 
+    const binaryPaths = new Set<string>();
+
     // Staged diffs
     if (hasStaged) {
-        const result = await editor.spawnProcess("git", ["diff", "--cached", "--unified=3"], cwd);
+        const result = await editor.spawnProcess("git", diffArgs(["diff"], "--cached", "--unified=3"), cwd);
         if (result.exit_code === 0 && result.stdout.trim()) {
             allHunks.push(...parseDiffOutput(result.stdout, 'staged'));
+            for (const b of diffFileBlocks(result.stdout)) if (b.binary) binaryPaths.add(b.path);
         }
     }
 
     // Unstaged diffs
     if (hasUnstaged) {
-        const result = await editor.spawnProcess("git", ["diff", "--unified=3"], cwd);
+        const result = await editor.spawnProcess("git", diffArgs(["diff"], "--unified=3"), cwd);
         if (result.exit_code === 0 && result.stdout.trim()) {
             allHunks.push(...parseDiffOutput(result.stdout, 'unstaged'));
+            for (const b of diffFileBlocks(result.stdout)) if (b.binary) binaryPaths.add(b.path);
         }
     }
 
     // Untracked file diffs
     for (const f of untrackedFiles) {
-        const result = await editor.spawnProcess("git", [
-            "diff", "--no-index", "--unified=3", "/dev/null", f.path
-        ], cwd);
+        const result = await editor.spawnProcess(
+            "git",
+            diffArgs(["diff"], "--no-index", "--unified=3", "/dev/null", f.path),
+            cwd,
+        );
         if (result.stdout.trim()) {
             const hunks = parseDiffOutput(result.stdout, 'untracked');
             for (const h of hunks) {
                 h.file = f.path;
+                h.raw.path = f.path;
                 h.id = `${f.path}:${h.range.start}:untracked`;
                 h.type = 'add';
             }
             allHunks.push(...hunks);
+            // Read back off git's own output rather than assumed from
+            // `f.path`: only the files git actually declined to patch — the
+            // real binaries and the oversized ones — belong in the set.
+            for (const b of diffFileBlocks(result.stdout)) if (b.binary) binaryPaths.add(b.path);
         }
     }
+
+    state.binaryPaths = binaryPaths;
 
     // Sort: staged → unstaged → untracked, then by filename
     const statusOrder: Record<string, number> = { staged: 0, unstaged: 1, untracked: 2 };
@@ -789,51 +1068,100 @@ async function fetchDiffsForFiles(files: FileEntry[]): Promise<Hunk[]> {
     return allHunks;
 }
 
-// --- New magit-style rendering (Step 2 of rewrite) ---
+// --- Derived views of `state.hunks` ---
+//
+// Everything that needs "the hunks for this file" or "how many lines this
+// file changes" used to answer it by scanning every hunk in the review.
+// Per file that is O(files x hunks) and, once the line counts are wanted
+// too, O(files x total diff lines) — on a large changeset the scans cost
+// more than parsing the diff did.
+//
+// So the answers are derived once, in a single pass, and keyed by
+// `fileKey`. The cache is guarded by identity of the array it was built
+// from: `state.hunks` is only ever replaced wholesale (hunk objects are
+// filled in during parsing, before the array is installed), so a new
+// array is exactly the event that invalidates the derivation.
 
-const STYLE_DIVIDER: OverlayColorSpec = "ui.split_separator_fg";
-const STYLE_FOOTER: OverlayColorSpec = "ui.status_bar_fg";
-const STYLE_HUNK_HEADER: OverlayColorSpec = "syntax.keyword";
-
-interface ListLine {
-    text: string;
-    type: 'section-header' | 'file';
-    fileIndex?: number;     // index into state.files[]
-    style?: Partial<OverlayOptions>;
-    inlineOverlays?: InlineOverlay[];
+interface HunkIndex {
+    /** Hunks per `fileKey`, in `state.hunks` order. */
+    byFileKey: Map<string, Hunk[]>;
+    /** +added / -removed line counts per `fileKey`. */
+    countsByFileKey: Map<string, { added: number; removed: number }>;
+    /** The git output block per `fileKey`. */
+    rawByFileKey: Map<string, RawFile>;
+    /** The largest line number any hunk reaches, on either side. */
+    maxLine: number;
 }
 
-interface DiffLine {
-    text: string;
-    type: 'hunk-header' | 'add' | 'remove' | 'context' | 'empty' | 'comment' | 'file-header' | 'section-header';
-    filePath?: string;   // for file-header rows
-    fileKey?: string;    // for file-header rows
-    fileIndex?: number;  // for file-header rows
-    style?: Partial<OverlayOptions>;
-    inlineOverlays?: InlineOverlay[];
-    // Line metadata for comment attachment
-    hunkId?: string;
-    file?: string;
-    lineType?: 'add' | 'remove' | 'context';
-    oldLine?: number;
-    newLine?: number;
-    lineContent?: string;
-    commentId?: string;
+const NO_HUNKS: readonly Hunk[] = [];
+const NO_CHANGES: Readonly<{ added: number; removed: number }> = { added: 0, removed: 0 };
+
+let hunkIndexCache: { source: Hunk[]; index: HunkIndex } | null = null;
+
+function hunkIndex(): HunkIndex {
+    const source = state.hunks;
+    if (hunkIndexCache !== null && hunkIndexCache.source === source) {
+        return hunkIndexCache.index;
+    }
+    const byFileKey = new Map<string, Hunk[]>();
+    const countsByFileKey = new Map<string, { added: number; removed: number }>();
+    const rawByFileKey = new Map<string, RawFile>();
+    let maxLine = 1;
+    for (const h of source) {
+        const key = fileKeyOf(h.file, h.gitStatus || 'unstaged');
+        let group = byFileKey.get(key);
+        let counts = countsByFileKey.get(key);
+        if (group === undefined || counts === undefined) {
+            group = [];
+            counts = { added: 0, removed: 0 };
+            byFileKey.set(key, group);
+            countsByFileKey.set(key, counts);
+            rawByFileKey.set(key, h.raw);
+        }
+        group.push(h);
+        // `counts` runs over the whole file; the reach of *this* hunk is
+        // its own lines, so the two are counted apart. Adding the file's
+        // running total to one hunk's start overstates the last line by
+        // everything changed above it, and sizes the gutter too wide.
+        let context = 0;
+        let added = 0;
+        let removed = 0;
+        for (const line of h.lines) {
+            if (line[0] === '+') { counts.added++; added++; }
+            else if (line[0] === '-') { counts.removed++; removed++; }
+            else if (line[0] !== '\\') context++;
+        }
+        maxLine = Math.max(maxLine, h.oldRange.start + removed + context, h.range.start + added + context);
+    }
+    const index: HunkIndex = { byFileKey, countsByFileKey, rawByFileKey, maxLine };
+    hunkIndexCache = { source, index };
+    return index;
+}
+
+// The index owns these arrays and count records, so both accessors hand
+// back read-only views: a caller that mutated one would corrupt every
+// later reader of the same file.
+
+/** The hunks belonging to `key` (a `fileKey`), in review order. */
+function hunksForKey(key: string): readonly Hunk[] {
+    return hunkIndex().byFileKey.get(key) || NO_HUNKS;
+}
+
+/** The hunks belonging to `file`, in review order. */
+function hunksForFile(file: FileEntry): readonly Hunk[] {
+    return hunksForKey(fileKey(file));
 }
 
 /** Compute +N / -M line counts for a file. */
-function fileChangeCounts(file: FileEntry): { added: number; removed: number } {
-    let added = 0;
-    let removed = 0;
-    for (const h of state.hunks) {
-        if (h.file === file.path && h.gitStatus === file.category) {
-            for (const line of h.lines) {
-                if (line[0] === '+') added++;
-                else if (line[0] === '-') removed++;
-            }
-        }
-    }
-    return { added, removed };
+function fileChangeCounts(file: FileEntry): Readonly<{ added: number; removed: number }> {
+    return hunkIndex().countsByFileKey.get(fileKey(file)) || NO_CHANGES;
+}
+
+/** Columns the host's diff gutter puts in front of every stream row: the
+ *  indicator slot, the two line-number columns, and the separator. */
+function diffGutterColumns(): number {
+    const digits = String(hunkIndex().maxLine).length;
+    return 1 + (2 * digits + 1) + 3;
 }
 
 // Inline review-note box sizing. The note renders as a bordered, wrapped
@@ -879,436 +1207,82 @@ function wrapText(text: string, width: number): string[] {
     return out.length > 0 ? out : [''];
 }
 
-/**
- * Push inline comment box rows for a given diff line into the lines array.
- * Each comment becomes a bordered, word-wrapped callout whose border title
- * is the line reference. Every row carries the same `commentId` so cursor
- * hit-testing, deletion, and comment navigation resolve from any box row.
- */
-function pushLineComments(
-    lines: DiffLine[], hunk: Hunk,
-    lineType: 'add' | 'remove' | 'context',
-    oldLine: number | undefined, newLine: number | undefined
-) {
-    if (!state.showComments) return;
-    const lineComments = state.comments.filter(c =>
-        c.hunk_id === hunk.id && (
-            (c.line_type === 'add' && c.new_line === newLine) ||
-            (c.line_type === 'remove' && c.old_line === oldLine) ||
-            (c.line_type === 'context' && c.new_line === newLine)
-        )
-    );
-    if (lineComments.length === 0) return;
-    // Indent the box so its left border aligns with the diff content
-    // column (just past the OLD/NEW number gutter and the +/- indicator).
-    const commentIndent = ' '.repeat(LINE_NUM_W + 1 + LINE_NUM_W + 1 + 1 + 1);
-    // Box outer width, clamped to the visible content area.
-    const boxW = Math.max(
-        COMMENT_BOX_MIN_W,
-        Math.min(COMMENT_BOX_MAX_W, state.viewportWidth - commentIndent.length - 1)
-    );
-    const innerW = boxW - 4; // "| " + content + " |"
-    for (const comment of lineComments) {
-        const lineRef = comment.line_type === 'add'
-            ? `+${comment.new_line}`
-            : comment.line_type === 'remove'
-            ? `-${comment.old_line}`
-            : `${comment.new_line}`;
-        const pushRow = (text: string, italic: boolean) => lines.push({
-            text: commentIndent + text,
-            type: 'comment',
-            commentId: comment.id,
-            style: { fg: STYLE_COMMENT, italic },
-        });
-        // Top border carries the line reference as its title.
-        const titleSeg = `\u256d\u2500 ${lineRef} `;
-        const topFill = '\u2500'.repeat(Math.max(0, boxW - titleSeg.length - 1));
-        pushRow(`${titleSeg}${topFill}\u256e`, false);
-        for (const wl of wrapText(comment.text, innerW)) {
-            pushRow(`\u2502 ${wl.padEnd(innerW)} \u2502`, true);
-        }
-        pushRow(`\u2570${'\u2500'.repeat(Math.max(0, boxW - 2))}\u256f`, false);
-    }
+/** Width in columns of the center diff panel — the host's last reported
+ *  viewport width for it, falling back to the terminal width before the
+ *  first `viewport_changed` arrives. */
+function diffPanelWidth(): number {
+    const known = state.panelWidths["diff"];
+    return known && known > 0 ? known : state.viewportWidth;
 }
 
 /**
- * Render a single hunk as two side-by-side columns (OLD | NEW) into
- * `lines`. Removed lines sit on the left, added on the right, aligned
- * row-by-row; context lines appear on both sides. Per-column add/remove
- * backgrounds are applied via inline overlays so each side keeps its own
- * tint around the central separator. Used when `state.splitView` is on.
+ * The rows of one inline note box: a bordered, word-wrapped callout whose
+ * border title is the line reference. The host's gutter sits in front of
+ * every row, so the box needs no indent of its own — and none of its rows
+ * may start with a space, `+` or `-`, which the diff grammar would read
+ * as a diff row.
  */
-function pushSideBySideHunk(lines: DiffLine[], hunk: Hunk) {
-    const centerW = Math.max(40, Math.floor(state.viewportWidth * 0.6));
-    const colW = Math.max(12, Math.floor((centerW - 3) / 2));
-    const SEP = ' │ ';
-    const gutterLen = LINE_NUM_W + 1;
+/** Outer width of a note box, clamped to the visible content area. The
+ *  diff panel's own width (not the terminal's) is what the box has to fit
+ *  in — with a side panel open they differ, and nothing soft-wraps a box
+ *  that overshoots any more; it just gets clipped. */
+function noteBoxWidth(): number {
+    return Math.max(
+        COMMENT_BOX_MIN_W,
+        Math.min(COMMENT_BOX_MAX_W, diffPanelWidth() - diffGutterColumns() - 1)
+    );
+}
 
-    const cell = (num: number | undefined, text: string): string => {
-        const g = num !== undefined ? String(num).padStart(LINE_NUM_W) : ' '.repeat(LINE_NUM_W);
-        let body = `${g} ${text}`;
-        body = body.length > colW ? body.slice(0, colW) : body.padEnd(colW);
-        return body;
-    };
+function noteBoxRows(comment: ReviewComment): string[] {
+    const boxW = noteBoxWidth();
+    const innerW = boxW - 4; // "| " + content + " |"
+    const lineRef = comment.line_type === 'add'
+        ? `+${comment.new_line}`
+        : comment.line_type === 'remove'
+        ? `-${comment.old_line}`
+        : `${comment.new_line}`;
+    const rows: string[] = [];
+    // Top border carries the line reference as its title.
+    const titleSeg = `\u256d\u2500 ${lineRef} `;
+    const topFill = '\u2500'.repeat(Math.max(0, boxW - titleSeg.length - 1));
+    rows.push(`${titleSeg}${topFill}\u256e`);
+    for (const wl of wrapText(comment.text, innerW)) {
+        rows.push(`\u2502 ${wl.padEnd(innerW)} \u2502`);
+    }
+    rows.push(`\u2570${'\u2500'.repeat(Math.max(0, boxW - 2))}\u256f`);
+    return rows;
+}
 
+/** Whether `c` is attached to the diff row with these line numbers. */
+function commentAnchorsAt(
+    c: ReviewComment,
+    lineType: 'add' | 'remove' | 'context',
+    oldLine: number | undefined,
+    newLine: number | undefined,
+): boolean {
+    return c.line_type === lineType && (
+        lineType === 'remove' ? c.old_line === oldLine : c.new_line === newLine
+    );
+}
+
+/** Where each of `comments` attaches in `hunk`: the index into
+ *  `hunk.lines` of its anchor row, in body order. Comments whose row is
+ *  not in the hunk are left out. */
+function noteAnchors(hunk: Hunk, comments: ReviewComment[]): Array<{ comment: ReviewComment; afterLine: number }> {
+    const out: Array<{ comment: ReviewComment; afterLine: number }> = [];
     let oldN = hunk.oldRange.start;
     let newN = hunk.range.start;
-    let rem: { n: number; t: string }[] = [];
-    let add: { n: number; t: string }[] = [];
-
-    const pushRow = (
-        left: string, right: string,
-        leftFilled: boolean, rightFilled: boolean,
-        oldLine: number | undefined, newLine: number | undefined,
-    ) => {
-        const text = left + SEP + right;
-        const rightStart = getByteLength(left + SEP);
-        const overlays: InlineOverlay[] = [
-            { start: 0, end: gutterLen, style: { fg: STYLE_LINE_NUM_FG } },
-            { start: rightStart, end: rightStart + gutterLen, style: { fg: STYLE_LINE_NUM_FG } },
-        ];
-        if (leftFilled && oldLine !== undefined && newLine === undefined) {
-            overlays.push({ start: 0, end: getByteLength(left), style: { bg: STYLE_REMOVE_BG } });
+    for (let i = 0; i < hunk.lines.length; i++) {
+        const c = hunk.lines[i][0];
+        if (c === '\\') continue;
+        const lineType = c === '+' ? 'add' : c === '-' ? 'remove' : 'context';
+        for (const comment of comments) {
+            if (commentAnchorsAt(comment, lineType, oldN, newN)) out.push({ comment, afterLine: i });
         }
-        if (rightFilled && newLine !== undefined && oldLine === undefined) {
-            overlays.push({ start: rightStart, end: rightStart + getByteLength(right), style: { bg: STYLE_ADD_BG } });
-        }
-        const type: DiffLine['type'] = leftFilled && !rightFilled ? 'remove'
-            : rightFilled && !leftFilled ? 'add' : 'context';
-        lines.push({
-            text, type,
-            hunkId: hunk.id, file: hunk.file,
-            lineType: type === 'add' ? 'add' : type === 'remove' ? 'remove' : 'context',
-            oldLine, newLine,
-            inlineOverlays: overlays,
-        });
-    };
-
-    const flush = () => {
-        const n = Math.max(rem.length, add.length);
-        for (let i = 0; i < n; i++) {
-            const l = rem[i];
-            const r = add[i];
-            const left = l ? cell(l.n, l.t) : ' '.repeat(colW);
-            const right = r ? cell(r.n, r.t) : ' '.repeat(colW);
-            pushRow(left, right, !!l, !!r, l ? l.n : undefined, r ? r.n : undefined);
-            if (r) pushLineComments(lines, hunk, 'add', undefined, r.n);
-            else if (l) pushLineComments(lines, hunk, 'remove', l.n, undefined);
-        }
-        rem = [];
-        add = [];
-    };
-
-    for (const raw of hunk.lines) {
-        const p = raw[0];
-        const content = raw.substring(1);
-        if (p === '-') {
-            rem.push({ n: oldN++, t: content });
-        } else if (p === '+') {
-            add.push({ n: newN++, t: content });
-        } else if (p === '\\') {
-            // "\ No newline at end of file" — not a real line.
-        } else {
-            flush();
-            pushRow(cell(oldN, content), cell(newN, content), true, true, oldN, newN);
-            pushLineComments(lines, hunk, 'context', oldN, newN);
-            oldN++;
-            newN++;
-        }
+        if (c !== '+') oldN++;
+        if (c !== '-') newN++;
     }
-    flush();
-}
-
-/**
- * Build the diff lines for the unified stream.
- * Emits one file-header row per file, followed by its hunks inline.
- * When the file is collapsed, only the header is emitted.
- */
-function buildDiffLines(_rightWidth: number): DiffLine[] {
-    const lines: DiffLine[] = [];
-    if (state.files.length === 0) {
-        if (state.emptyState === 'not_git') {
-            lines.push({
-                text: editor.t("status.not_git_repo") || "Not a git repository",
-                type: 'empty',
-                style: { fg: STYLE_SECTION_HEADER, italic: true },
-            });
-        } else if (state.emptyState === 'clean') {
-            lines.push({
-                text: editor.t("panel.no_changes") || "No changes to review.",
-                type: 'empty',
-                style: { fg: STYLE_SECTION_HEADER, italic: true },
-            });
-        }
-        return lines;
-    }
-
-    let lastCategory: string | undefined;
-    for (let fi = 0; fi < state.files.length; fi++) {
-        const file = state.files[fi];
-
-        // Honor the active `/` filter — skip non-matching files entirely so
-        // the center matches the sidebar.
-        if (!fileMatchesFilter(file)) continue;
-
-        // Section header — full-line-wide INVERSE band, uppercase, bold.
-        // The strong inverse coloring (editor.bg as fg / editor.fg as bg)
-        // makes the band read as a hard divider between Staged /
-        // Unstaged / Untracked sections regardless of theme.
-        if (file.category !== lastCategory) {
-            lastCategory = file.category;
-            let label: string = file.category;
-            // Range mode reuses the `unstaged` bucket for every hunk as
-            // an impl shortcut — surface the range label so the user
-            // isn't told their commit review is "Unstaged".
-            if (state.mode === 'range' && state.range) {
-                label = state.range.label;
-            } else if (file.category === 'staged') label = editor.t("section.staged") || "Staged";
-            else if (file.category === 'unstaged') label = editor.t("section.unstaged") || "Unstaged";
-            else if (file.category === 'untracked') label = editor.t("section.untracked") || "Untracked";
-            const sectionCount = state.files.filter(f => f.category === file.category && fileMatchesFilter(f)).length;
-            // Always render expanded triangle (▾). Collapse state is
-            // shown by overlaying a `▸` replacement-conceal on the
-            // triangle byte range — the buffer text never changes, so
-            // toggling collapse never has to rebuild.
-            // Range labels (e.g. `main..HEAD`) carry case already — don't
-            // mangle them with the section uppercase; worktree category
-            // names are lowercase words and need the uppercase.
-            const displayLabel = state.mode === 'range' ? label : label.toUpperCase();
-            lines.push({
-                text: ` ▾ ${displayLabel}  (${sectionCount})`,
-                type: 'section-header',
-                file: file.category, // store category in 'file' field for reuse
-                filePath: file.category,
-                style: {
-                    fg: STYLE_INVERSE_FG,
-                    bg: STYLE_INVERSE_BG,
-                    bold: true,
-                    extendToLineEnd: true,
-                },
-            });
-        }
-
-        // File header — always emit the expanded triangle; conceal
-        // overlays handle the collapsed view.
-        const counts = fileChangeCounts(file);
-        const key = fileKey(file);
-        const filename = file.origPath ? `${file.origPath} → ${file.path}` : file.path;
-        const headerText = ` ▾ ${filename}   +${counts.added} / -${counts.removed}`;
-        lines.push({
-            text: headerText,
-            type: 'file-header',
-            file: file.path,
-            filePath: file.path,
-            fileKey: key,
-            fileIndex: fi,
-            style: {
-                fg: STYLE_FILE_HEADER_FG,
-                bg: STYLE_FILE_HEADER_BG,
-                bold: true,
-                extendToLineEnd: true,
-            },
-        });
-
-        // Focus mode: emit the header for every file (so the stream stays
-        // a navigable overview) but build the hunk body only for the
-        // focused file. This keeps the center buffer small — and thus
-        // responsive — on large changesets without losing the file list.
-        if (state.focusOnly && state.filesCurrentKey && key !== state.filesCurrentKey) {
-            lines.push({ text: '', type: 'empty' });
-            continue;
-        }
-
-        // Find hunks for this file
-        const fileHunks = state.hunks.filter(
-            h => h.file === file.path && h.gitStatus === file.category
-        );
-
-        if (fileHunks.length === 0) {
-            if (file.status === 'R' && file.origPath) {
-                lines.push({ text: `  Renamed from ${file.origPath}`, type: 'empty', style: { fg: STYLE_SECTION_HEADER } });
-            } else if (file.status === 'D') {
-                lines.push({ text: "  (file deleted)", type: 'empty' });
-            } else if (file.status === 'T') {
-                lines.push({ text: "  (type change: file ↔ symlink)", type: 'empty', style: { fg: STYLE_SECTION_HEADER } });
-            } else if (file.status === '?' && file.path.endsWith('/')) {
-                lines.push({ text: "  (untracked directory)", type: 'empty' });
-            } else {
-                lines.push({ text: "  (no diff available)", type: 'empty' });
-            }
-            lines.push({ text: '', type: 'empty' });
-            continue;
-        }
-
-        for (const hunk of fileHunks) {
-        // Hunk header — always emit expanded triangle; collapse
-        // overlays a `▸` replacement-conceal.
-        const headerInner = hunk.contextHeader
-            ? `@@ ${hunk.contextHeader} @@`
-            : `@@ -${hunk.oldRange.start} +${hunk.range.start} @@`;
-        const header = ` ▾ ${headerInner}`;
-
-        lines.push({
-            text: header,
-            type: 'hunk-header',
-            hunkId: hunk.id,
-            file: hunk.file,
-            style: {
-                fg: STYLE_HUNK_HEADER,
-                bg: STYLE_HUNK_HEADER_BG,
-                bold: true,
-                extendToLineEnd: true,
-            },
-        });
-
-        // (Body always emitted — collapse is handled by overlay
-        // conceals on the body's byte range.)
-
-        // (Comments are line-based — they appear under their attached
-        // diff line via pushLineComments below, never as hunk-level.)
-
-        // Side-by-side layout: render this hunk as two columns and skip
-        // the unified per-line emission below.
-        if (state.splitView) {
-            pushSideBySideHunk(lines, hunk);
-            continue;
-        }
-
-        // Track actual file line numbers as we iterate
-        let oldLineNum = hunk.oldRange.start;
-        let newLineNum = hunk.range.start;
-
-        // Diff content lines with word-level highlighting for adjacent -/+ pairs
-        for (let li = 0; li < hunk.lines.length; li++) {
-            const line = hunk.lines[li];
-            if (line[0] === '\\') {
-                // "\ No newline at end of file": informational marker, not a
-                // real line. Render it dim with no line numbers and don't
-                // advance the line counters. It still occupies exactly one
-                // row so hunk.lines stays 1:1 with displayed rows (which
-                // selectionLineRange relies on).
-                lines.push({
-                    text: line, type: 'context',
-                    hunkId: hunk.id, file: hunk.file,
-                    lineType: 'context', oldLine: undefined, newLine: undefined,
-                    lineContent: line,
-                    style: { fg: STYLE_LINE_NUM_FG },
-                });
-                continue;
-            }
-            const nextLine = hunk.lines[li + 1];
-            const prefix = line[0];
-            const lineType: 'add' | 'remove' | 'context' =
-                prefix === '+' ? 'add' : prefix === '-' ? 'remove' : 'context';
-            const curOldLine = lineType !== 'add' ? oldLineNum : undefined;
-            const curNewLine = lineType !== 'remove' ? newLineNum : undefined;
-
-            // Detect adjacent -/+ pair for word-level diff
-            if (prefix === '-' && nextLine && nextLine[0] === '+') {
-                const oldContent = line.substring(1);
-                const newContent = nextLine.substring(1);
-                const parts = diffStrings(oldContent, newContent);
-
-                // Removed-side line: " OLD       -content"
-                const removePrefix = lineNumPrefix(curOldLine, undefined);
-                const removeText = removePrefix + line;
-                const removePrefixLen = getByteLength(removePrefix);
-                const removeOverlays: InlineOverlay[] = [
-                    { start: 0, end: removePrefixLen, style: { fg: STYLE_LINE_NUM_FG } },
-                ];
-                let rOffset = removePrefixLen + getByteLength(line[0]); // skip diff prefix
-                for (const part of parts) {
-                    const pLen = getByteLength(part.text);
-                    if (part.type === 'removed') {
-                        removeOverlays.push({ start: rOffset, end: rOffset + pLen, style: { fg: STYLE_REMOVE_TEXT, bg: STYLE_REMOVE_BG, bold: true } });
-                    }
-                    if (part.type !== 'added') rOffset += pLen;
-                }
-                lines.push({
-                    text: removeText, type: 'remove',
-                    style: { bg: STYLE_REMOVE_BG, extendToLineEnd: true },
-                    hunkId: hunk.id, file: hunk.file,
-                    lineType: 'remove', oldLine: curOldLine, newLine: undefined, lineContent: line,
-                    inlineOverlays: removeOverlays,
-                });
-                // Inline comments for the removed line
-                pushLineComments(lines, hunk, 'remove', curOldLine, undefined);
-                oldLineNum++;
-
-                // Added-side line: "      NEW +content"
-                const addPrefix = lineNumPrefix(undefined, newLineNum);
-                const addText = addPrefix + nextLine;
-                const addPrefixLen = getByteLength(addPrefix);
-                const addOverlays: InlineOverlay[] = [
-                    { start: 0, end: addPrefixLen, style: { fg: STYLE_LINE_NUM_FG } },
-                ];
-                let aOffset = addPrefixLen + getByteLength(nextLine[0]);
-                for (const part of parts) {
-                    const pLen = getByteLength(part.text);
-                    if (part.type === 'added') {
-                        addOverlays.push({ start: aOffset, end: aOffset + pLen, style: { fg: STYLE_ADD_TEXT, bg: STYLE_ADD_BG, bold: true } });
-                    }
-                    if (part.type !== 'removed') aOffset += pLen;
-                }
-                lines.push({
-                    text: addText, type: 'add',
-                    style: { bg: STYLE_ADD_BG, extendToLineEnd: true },
-                    hunkId: hunk.id, file: hunk.file,
-                    lineType: 'add', oldLine: undefined, newLine: newLineNum, lineContent: nextLine,
-                    inlineOverlays: addOverlays,
-                });
-                pushLineComments(lines, hunk, 'add', undefined, newLineNum);
-                newLineNum++;
-                li++; // skip the + line we already processed
-                continue;
-            }
-
-            const numPrefix = lineNumPrefix(curOldLine, curNewLine);
-            const decoratedText = numPrefix + line;
-            const numPrefixLen = getByteLength(numPrefix);
-            const dimNumOverlay: InlineOverlay = {
-                start: 0, end: numPrefixLen, style: { fg: STYLE_LINE_NUM_FG },
-            };
-
-            if (prefix === '+') {
-                lines.push({
-                    text: decoratedText, type: 'add',
-                    style: { bg: STYLE_ADD_BG, extendToLineEnd: true },
-                    hunkId: hunk.id, file: hunk.file,
-                    lineType, oldLine: curOldLine, newLine: curNewLine, lineContent: line,
-                    inlineOverlays: [dimNumOverlay],
-                });
-                newLineNum++;
-            } else if (prefix === '-') {
-                lines.push({
-                    text: decoratedText, type: 'remove',
-                    style: { bg: STYLE_REMOVE_BG, extendToLineEnd: true },
-                    hunkId: hunk.id, file: hunk.file,
-                    lineType, oldLine: curOldLine, newLine: curNewLine, lineContent: line,
-                    inlineOverlays: [dimNumOverlay],
-                });
-                oldLineNum++;
-            } else {
-                lines.push({
-                    text: decoratedText, type: 'context',
-                    hunkId: hunk.id, file: hunk.file,
-                    lineType, oldLine: curOldLine, newLine: curNewLine, lineContent: line,
-                    inlineOverlays: [dimNumOverlay],
-                });
-                oldLineNum++;
-                newLineNum++;
-            }
-
-            // Render inline comments attached to this line
-            pushLineComments(lines, hunk, lineType, curOldLine, curNewLine);
-        }
-        }
-
-        // Blank separator between files
-        lines.push({ text: '', type: 'empty' });
-    }
-
-    return lines;
+    return out;
 }
 
 /**
@@ -1337,74 +1311,11 @@ interface HintItem {
 }
 
 /**
- * Build a styled toolbar entry with highlighted key hints.
- * Keys get bold + keyword color; labels get dim text; groups separated by │.
- */
-function buildToolbarRow(W: number, groups: HintItem[][]): TextPropertyEntry {
-    const overlays: InlineOverlay[] = [];
-    let text = " ";
-    let bytePos = getByteLength(" ");
-    let done = false;
-
-    for (let g = 0; g < groups.length && !done; g++) {
-        if (g > 0) {
-            const sep = " │ ";
-            if (text.length + sep.length > W) { done = true; break; }
-            overlays.push({ start: bytePos, end: bytePos + getByteLength(sep), style: { fg: STYLE_TOOLBAR_SEP } });
-            text += sep;
-            bytePos += getByteLength(sep);
-        }
-        for (let h = 0; h < groups[g].length && !done; h++) {
-            const item = groups[g][h];
-            const gap = h > 0 ? "  " : "";
-            // Bracket-style key hint: "[key] label" — the brackets make
-            // the keys legible without a saturated bg, which works in
-            // every theme (no Dracula hot-pink toolbar problem). When
-            // the key itself is `[` or `]`, drop the brackets so we
-            // don't render `[[]` / `[]]`.
-            const isBracket = item.key === '[' || item.key === ']';
-            const keyDisplay = isBracket ? item.key : `[${item.key}]`;
-            const fullLen = gap.length + keyDisplay.length + 1 + item.label.length;
-            const keyOnlyLen = gap.length + keyDisplay.length;
-
-            if (text.length + fullLen <= W) {
-                if (gap) { text += gap; bytePos += getByteLength(gap); }
-                const keyLen = getByteLength(keyDisplay);
-                overlays.push({ start: bytePos, end: bytePos + keyLen, style: { fg: STYLE_KEY_FG, bold: true } });
-                text += keyDisplay;
-                bytePos += keyLen;
-                const labelText = " " + item.label;
-                const labelLen = getByteLength(labelText);
-                overlays.push({ start: bytePos, end: bytePos + labelLen, style: { fg: STYLE_HINT_FG } });
-                text += labelText;
-                bytePos += labelLen;
-            } else if (text.length + keyOnlyLen <= W) {
-                if (gap) { text += gap; bytePos += getByteLength(gap); }
-                const keyLen = getByteLength(keyDisplay);
-                overlays.push({ start: bytePos, end: bytePos + keyLen, style: { fg: STYLE_KEY_FG, bold: true } });
-                text += keyDisplay;
-                bytePos += keyLen;
-            } else {
-                done = true;
-            }
-        }
-    }
-
-    const padded = text.padEnd(W) + "\n";
-    return {
-        text: padded,
-        properties: { type: "toolbar" },
-        style: { bg: STYLE_TOOLBAR_BG, extendToLineEnd: true },
-        inlineOverlays: overlays,
-    };
-}
-
-/**
  * Build the (two-row) toolbar with all review-diff shortcuts.
  * Row 1 — navigation; row 2 — actions. Identical regardless of which
  * panel currently has focus (no more files-pane vs diff-pane variants).
  */
-function buildToolbar(W: number): TextPropertyEntry[] {
+function buildToolbar(): HintEntry[][] {
     // In range mode, stage / unstage / discard are meaningless (there is
     // no working tree to mutate), so hide them from the hint bar to keep
     // the toolbar honest. The key-bindings themselves are harmless if
@@ -1425,7 +1336,7 @@ function buildToolbar(W: number): TextPropertyEntry[] {
                { key: "c", label: "comment" }],
     ];
     const row2: HintItem[][] = [
-        [{ key: "1 2", label: "split/stack" }, { key: "↑↓", label: "move in panel" },
+        [{ key: "1 2", label: "unified/split" }, { key: "↑↓", label: "move in panel" },
          { key: "Enter", label: "jump" }, { key: "Alt+o", label: "open file" }],
         inRange
             ? [{ key: "/", label: "filter" }, { key: "?", label: "help" },
@@ -1433,148 +1344,542 @@ function buildToolbar(W: number): TextPropertyEntry[] {
             : [{ key: "S U D", label: "file-level" }, { key: "/", label: "filter" },
                { key: "?", label: "help" }, { key: "q", label: "close" }],
     ];
-    return [buildToolbarRow(W, row1), buildToolbarRow(W, row2)];
+    return [row1, row2].map(groups => groups.flat().map(
+        (item): HintEntry => ({ keys: item.key, label: item.label }),
+    ));
 }
 
 // --- Buffer Group panel content builders ---
 
-function buildToolbarPanelEntries(): TextPropertyEntry[] {
-    // Two-row toolbar: navigation hints on row 1, actions on row 2.
-    return buildToolbar(state.viewportWidth);
+// The toolbar is a widget panel: two hint rows (still built as styled
+// text entries and wrapped in `raw`) plus the two panel buttons pinned to
+// the right of the second row by a `flexSpacer`. The buttons are real
+// `Button` widgets, so the host owns their hit-testing, hover styling and
+// keyboard activation and the plugin only handles `widget_event`.
+const PANEL_BUTTON_KEYS = {
+    files: "toolbar.files",
+    comments: "toolbar.comments",
+} as const;
+
+function panelButtonLabel(panel: 'files' | 'comments'): string {
+    const name = panel === 'files'
+        ? (editor.t("panel.files") || "Files")
+        : (editor.t("panel.comments") || "Comments");
+    return `${state.panelsVisible[panel] ? '▾' : '▸'} ${name}`;
+}
+
+function panelButton(panel: 'files' | 'comments'): WidgetSpec {
+    return button(panelButtonLabel(panel), {
+        key: PANEL_BUTTON_KEYS[panel],
+        // Mouse-first affordance: the review mode's Tab cycle belongs to
+        // the three content panels, and `F` / `C` already drive these
+        // from the keyboard.
+        focusable: false,
+    });
+}
+
+/** Render the toolbar panel: hint rows plus the panel buttons. */
+function renderToolbar(): void {
+    if (toolbarPanel === null) return;
+    const rows = buildToolbar();
+    toolbarPanel.set(col(
+        hintBar(rows[0]),
+        row(hintBar(rows[1]), flexSpacer(), panelButton('files'), spacer(1), panelButton('comments')),
+    ));
 }
 
 /**
- * Build the unified-diff stream entries. Emits one row per file header
- * followed by all of that file's hunks inline, plus inline comments and
- * a blank separator between files. As a side effect, populates
- * `state.hunkHeaderRows`, `state.diffLineByteOffsets`, and
- * `state.fileHeaderRows` so the rest of the plugin can map cursor rows
- * back to hunks/files.
+ * Build the unified stream: git's own output, file by file, with the
+ * plugin's rows — section headers, note boxes, placeholders — spliced in
+ * between. A file's `diff --git` row is its header: the host's diff
+ * grammar reads the language off it, and the reader sees the file's
+ * label concealed over it (see `applyFolds`). The `index` / `---` / `+++`
+ * rows that follow it in git's output say nothing the grammar needs and
+ * are left out.
+ *
+ * A row of the plugin's own never starts with a space, `+` or `-`; the
+ * grammar would take it for a diff row and the gutter would number it.
+ *
+ * Populates the row and byte maps the rest of the plugin navigates by:
+ * the hunk layout (`streamHunks`), header rows, fold ranges, and one byte
+ * offset per row. The offsets come from a newline scan per block — a
+ * block that is all ASCII (nearly every one) needs no per-row measuring.
  */
-function buildDiffPanelEntries(): TextPropertyEntry[] {
+function buildStreamContent(): TextPropertyEntry[] {
     const entries: TextPropertyEntry[] = [];
-
+    const offsets: number[] = [];
     const hunkHeaderRows: number[] = [];
-    const diffLineByteOffsets: number[] = [];
     const fileHeaderRows: Record<string, number> = {};
     const sectionHeaderRows: Record<string, number> = {};
     const hunkRowByHunkId: Record<string, number> = {};
     const diffLineRowByCommentId: Record<string, number> = {};
-    const entryPropsByRow: Record<number, Record<string, unknown>> = {};
-    // Byte ranges of collapsible bodies, captured in this same single
-    // pass so collapse later just registers a host fold (no rebuild).
-    // The "body" of an entity is the byte range from the byte after
-    // its header's newline up to the byte before the next header that
-    // ends it.
     const sectionBodyRange: Record<string, { start: number; end: number }> = {};
     const fileBodyRange: Record<string, { start: number; end: number }> = {};
     const hunkBodyRange: Record<string, { start: number; end: number }> = {};
-    let curSection: string | null = null;
-    let curFile: string | null = null;
-    let curHunk: string | null = null;
-    let sectionBodyStart = 0;
-    let fileBodyStart = 0;
-    let hunkBodyStart = 0;
+    const fileHeaderConceals = new Map<string, { start: number; end: number; label: string }>();
+    const streamHunks: StreamHunk[] = [];
+    const streamHunkById = new Map<string, StreamHunk>();
+    const sectionByRow = new Map<number, string>();
+    const fileByRow = new Map<number, string>();
 
-    let runningByte = 0;
-    let row = 0; // 0-indexed counter; row + 1 is the 1-indexed line number
-    let lastDiffLineRow = 0; // 1-indexed row of the most recent +/-/context line
-
-    const pushEntry = (entry: TextPropertyEntry) => {
-        diffLineByteOffsets.push(runningByte);
-        runningByte += getByteLength(entry.text);
-        entries.push(entry);
+    let row = 0;  // rows emitted so far; the last one is row `row`
+    let byte = 0; // bytes emitted so far
+    // Unstyled text is held back and handed over as one entry, so the
+    // host gets an entry per styled row, not per row.
+    let plain: string[] = [];
+    const flushPlain = () => {
+        if (plain.length > 0) {
+            entries.push({ text: plain.join('') });
+            plain = [];
+        }
+    };
+    const pushRow = (text: string, style?: Partial<OverlayOptions>) => {
+        const t = text + '\n';
+        offsets.push(byte);
         row++;
+        byte += getByteLength(t);
+        if (style) {
+            flushPlain();
+            entries.push({ text: t, style });
+        } else {
+            plain.push(t);
+        }
+    };
+    // Newline-terminated rows of git output, verbatim.
+    const pushRaw = (text: string) => {
+        if (text.length === 0) return;
+        if (!NON_ASCII.test(text)) {
+            let pos = 0;
+            while (pos < text.length) {
+                offsets.push(byte + pos);
+                row++;
+                pos = text.indexOf('\n', pos) + 1;
+                if (pos === 0) break;
+            }
+            byte += text.length;
+        } else {
+            let pos = 0;
+            while (pos < text.length) {
+                let nl = text.indexOf('\n', pos);
+                if (nl < 0) nl = text.length - 1;
+                offsets.push(byte);
+                row++;
+                byte += getByteLength(text.slice(pos, nl + 1));
+                pos = nl + 1;
+            }
+        }
+        plain.push(text);
     };
 
-    const lines = buildDiffLines(state.viewportWidth);
-    for (const line of lines) {
-        const props: Record<string, unknown> = { type: line.type };
-        if (line.hunkId !== undefined) props.hunkId = line.hunkId;
-        if (line.file !== undefined) props.file = line.file;
-        if (line.lineType !== undefined) props.lineType = line.lineType;
-        if (line.oldLine !== undefined) props.oldLine = line.oldLine;
-        if (line.newLine !== undefined) props.newLine = line.newLine;
-        if (line.lineContent !== undefined) props.lineContent = line.lineContent;
-        if (line.commentId !== undefined) props.commentId = line.commentId;
-        if (line.filePath !== undefined) props.filePath = line.filePath;
-        if (line.fileKey !== undefined) props.fileKey = line.fileKey;
-        if (line.fileIndex !== undefined) props.fileIndex = line.fileIndex;
-
-        const entryStart = runningByte;
-
-        // Header bookkeeping — close any in-progress body for the
-        // entities about to be replaced, then open a new body range.
-        if (line.type === 'section-header' && line.filePath) {
-            if (curHunk) hunkBodyRange[curHunk] = { start: hunkBodyStart, end: entryStart };
-            if (curFile) fileBodyRange[curFile] = { start: fileBodyStart, end: entryStart };
-            if (curSection) sectionBodyRange[curSection] = { start: sectionBodyStart, end: entryStart };
-            curSection = line.filePath;
-            curFile = null;
-            curHunk = null;
+    if (state.files.length === 0) {
+        if (state.emptyState === 'not_git') {
+            pushRow(editor.t("status.not_git_repo") || "Not a git repository",
+                { fg: STYLE_SECTION_HEADER, italic: true });
+        } else if (state.emptyState === 'clean') {
+            pushRow(editor.t("panel.no_changes") || "No changes to review.",
+                { fg: STYLE_SECTION_HEADER, italic: true });
         }
-        if (line.type === 'file-header' && line.fileKey) {
-            if (curHunk) hunkBodyRange[curHunk] = { start: hunkBodyStart, end: entryStart };
-            if (curFile) fileBodyRange[curFile] = { start: fileBodyStart, end: entryStart };
-            curFile = line.fileKey;
-            curHunk = null;
-        }
-        if (line.type === 'hunk-header' && line.hunkId) {
-            if (curHunk) hunkBodyRange[curHunk] = { start: hunkBodyStart, end: entryStart };
-            curHunk = line.hunkId;
-        }
-
-        if (line.type === 'hunk-header') {
-            hunkHeaderRows.push(row + 1);
-            if (line.hunkId) hunkRowByHunkId[line.hunkId] = row + 1;
-        }
-        if (line.type === 'file-header' && line.fileKey) {
-            fileHeaderRows[line.fileKey] = row + 1;
-        }
-        if (line.type === 'section-header' && line.filePath) {
-            sectionHeaderRows[line.filePath] = row + 1;
-        }
-        if (line.type === 'add' || line.type === 'remove' || line.type === 'context') {
-            lastDiffLineRow = row + 1;
-        }
-        if (line.type === 'comment' && line.commentId) {
-            diffLineRowByCommentId[line.commentId] = lastDiffLineRow || (row + 1);
-        }
-
-        entryPropsByRow[row + 1] = props;
-
-        pushEntry({
-            text: (line.text || "") + "\n",
-            style: line.style,
-            inlineOverlays: line.inlineOverlays,
-            properties: props,
-        });
-
-        // After the header is pushed, runningByte points to the first
-        // byte of the body that follows.
-        if (line.type === 'section-header') sectionBodyStart = runningByte;
-        if (line.type === 'file-header') fileBodyStart = runningByte;
-        if (line.type === 'hunk-header') hunkBodyStart = runningByte;
     }
 
-    // Close trailing bodies.
-    if (curHunk) hunkBodyRange[curHunk] = { start: hunkBodyStart, end: runningByte };
-    if (curFile) fileBodyRange[curFile] = { start: fileBodyStart, end: runningByte };
-    if (curSection) sectionBodyRange[curSection] = { start: sectionBodyStart, end: runningByte };
+    const commentsByHunk = new Map<string, ReviewComment[]>();
+    if (state.showComments) {
+        for (const c of state.comments) {
+            const list = commentsByHunk.get(c.hunk_id);
+            if (list === undefined) commentsByHunk.set(c.hunk_id, [c]);
+            else list.push(c);
+        }
+    }
 
-    diffLineByteOffsets.push(runningByte);
+    // The "body" of a section or file is the byte range from the byte
+    // after its header's newline up to the byte before the next header
+    // that ends it.
+    let curSection: string | null = null;
+    let curFile: string | null = null;
+    let sectionBodyStart = 0;
+    let fileBodyStart = 0;
+    const closeFile = () => {
+        if (curFile !== null) fileBodyRange[curFile] = { start: fileBodyStart, end: byte };
+        curFile = null;
+    };
+    const closeSection = () => {
+        closeFile();
+        if (curSection !== null) sectionBodyRange[curSection] = { start: sectionBodyStart, end: byte };
+        curSection = null;
+    };
+
+    let lastCategory: string | undefined;
+    const ordered = filesInDisplayOrder();
+    for (let fi = 0; fi < ordered.length; fi++) {
+        const file = ordered[fi];
+
+        // Honor the active `/` filter — skip non-matching files entirely so
+        // the center matches the sidebar.
+        if (!fileMatchesFilter(file)) continue;
+
+        // Section header — full-line-wide INVERSE band, uppercase, bold.
+        // The strong inverse coloring (editor.bg as fg / editor.fg as bg)
+        // makes the band read as a hard divider between Staged /
+        // Unstaged / Untracked sections regardless of theme.
+        if (file.category !== lastCategory) {
+            lastCategory = file.category;
+            closeSection();
+            let label: string = file.category;
+            // Range mode reuses the `unstaged` bucket for every hunk as
+            // an impl shortcut — surface the range label so the user
+            // isn't told their commit review is "Unstaged".
+            if (state.mode === 'range' && state.range) {
+                label = state.range.label;
+            } else if (file.category === 'staged') label = editor.t("section.staged") || "Staged";
+            else if (file.category === 'unstaged') label = editor.t("section.unstaged") || "Unstaged";
+            else if (file.category === 'untracked') label = editor.t("section.untracked") || "Untracked";
+            const sectionCount = state.files.filter(f => f.category === file.category && fileMatchesFilter(f)).length;
+            // Always render the expanded triangle. Collapse state is
+            // shown by overlaying a `▸` replacement-conceal on the
+            // triangle byte range (see `applyFolds`) — the buffer text
+            // never changes, so toggling collapse never has to rebuild.
+            // Range labels (e.g. `main..HEAD`) carry case already — don't
+            // mangle them with the section uppercase; worktree category
+            // names are lowercase words and need the uppercase.
+            const displayLabel = state.mode === 'range' ? label : label.toUpperCase();
+            pushRow(`${GLYPH_EXPANDED} ${displayLabel}  (${sectionCount})`, {
+                fg: STYLE_INVERSE_FG,
+                bg: STYLE_INVERSE_BG,
+                bold: true,
+                extendToLineEnd: true,
+            });
+            sectionHeaderRows[file.category] = row;
+            sectionByRow.set(row, file.category);
+            curSection = file.category;
+            sectionBodyStart = byte;
+        }
+
+        closeFile();
+        const counts = fileChangeCounts(file);
+        const key = fileKey(file);
+        const filename = file.origPath ? `${file.origPath} → ${file.path}` : file.path;
+        const label = `${filename}   +${counts.added} / -${counts.removed}`;
+        const headerStyle: Partial<OverlayOptions> = {
+            fg: STYLE_FILE_HEADER_FG,
+            bg: STYLE_FILE_HEADER_BG,
+            bold: true,
+            extendToLineEnd: true,
+        };
+        const fileHunks = hunksForKey(key);
+        const raw = hunkIndex().rawByFileKey.get(key);
+        const hasBlock = fileHunks.length > 0 && raw !== undefined;
+
+        if (hasBlock) {
+            // git's own `diff --git` row, with the label concealed over it.
+            const headerLine = raw.text.slice(0, raw.text.indexOf('\n'));
+            const start = byte;
+            pushRow(headerLine, headerStyle);
+            fileHeaderConceals.set(key, { start, end: byte - 1, label });
+        } else {
+            // Nothing for the grammar to read: a row of the plugin's own,
+            // whose triangle `applyFolds` conceals when collapsed.
+            pushRow(`${GLYPH_EXPANDED} ${label}`, headerStyle);
+        }
+        fileHeaderRows[key] = row;
+        fileByRow.set(row, key);
+        curFile = key;
+        fileBodyStart = byte;
+
+        // The composite draws one file, so while it is up the stream
+        // carries headers only. The unified stream renders every file.
+        if (!fileBodyRendered(key)) {
+            pushRow('');
+            continue;
+        }
+
+        if (!hasBlock) {
+            if (file.status === 'R' && file.origPath) {
+                pushRow(`Renamed from ${file.origPath}`, { fg: STYLE_SECTION_HEADER });
+            } else if (file.status === 'D') {
+                pushRow("(file deleted)");
+            } else if (file.status === 'T') {
+                pushRow("(type change: file ↔ symlink)", { fg: STYLE_SECTION_HEADER });
+            } else if (file.status === '?' && file.path.endsWith('/')) {
+                pushRow("(untracked directory)");
+            } else if (state.binaryPaths.has(file.path)) {
+                // git summarised the file instead of patching it: it is
+                // binary, or larger than `diffArgs` will expand. Either way
+                // the change is real and the omission is ours, so say that
+                // rather than "(no diff available)", which reads as a
+                // failure to find anything.
+                pushRow(editor.t("stream.binary_file") || "(binary or too large to diff)");
+            } else {
+                pushRow("(no diff available)");
+            }
+            pushRow('');
+            continue;
+        }
+
+        for (const hunk of fileHunks) {
+            const headerRow = row + 1;
+            hunkHeaderRows.push(headerRow);
+            hunkRowByHunkId[hunk.id] = headerRow;
+            pushRaw(raw.text.slice(hunk.headerStart, hunk.bodyStart));
+            const bodyStart = byte;
+            const notes: StreamNote[] = [];
+            const hunkComments = commentsByHunk.get(hunk.id);
+            if (hunkComments === undefined) {
+                pushRaw(raw.text.slice(hunk.bodyStart, hunk.end));
+            } else {
+                // Cut the body after each annotated row and splice the
+                // note box in. `from` and `cut` are offsets into
+                // `raw.text`; `lineIdx` is the line starting at `cut`.
+                let from = hunk.bodyStart;
+                let cut = hunk.bodyStart;
+                let lineIdx = 0;
+                let anchorRow = row;
+                for (const { comment, afterLine } of noteAnchors(hunk, hunkComments)) {
+                    while (lineIdx <= afterLine) {
+                        cut += hunk.lines[lineIdx].length + 1;
+                        lineIdx++;
+                    }
+                    if (cut > from) {
+                        pushRaw(raw.text.slice(from, cut));
+                        from = cut;
+                        anchorRow = row;
+                    }
+                    diffLineRowByCommentId[comment.id] = anchorRow;
+                    const box = noteBoxRows(comment);
+                    for (let i = 0; i < box.length; i++) {
+                        pushRow(box[i], { fg: STYLE_COMMENT, italic: i > 0 && i < box.length - 1 });
+                    }
+                    notes.push({ afterLine, rows: box.length, commentId: comment.id });
+                }
+                if (hunk.end > from) pushRaw(raw.text.slice(from, hunk.end));
+            }
+            hunkBodyRange[hunk.id] = { start: bodyStart, end: byte };
+            const sh: StreamHunk = { hunk, headerRow, rowCount: row + 1 - headerRow, notes };
+            streamHunks.push(sh);
+            streamHunkById.set(hunk.id, sh);
+        }
+
+        // Blank separator between files
+        pushRow('');
+    }
+    closeSection();
+    flushPlain();
+    offsets.push(byte);
 
     state.hunkHeaderRows = hunkHeaderRows;
-    state.diffLineByteOffsets = diffLineByteOffsets;
+    state.diffLineByteOffsets = offsets;
     state.fileHeaderRows = fileHeaderRows;
     state.sectionHeaderRows = sectionHeaderRows;
     state.hunkRowByHunkId = hunkRowByHunkId;
     state.diffLineRowByCommentId = diffLineRowByCommentId;
-    state.entryPropsByRow = entryPropsByRow;
     state.sectionBodyRange = sectionBodyRange;
     state.fileBodyRange = fileBodyRange;
     state.hunkBodyRange = hunkBodyRange;
+    state.fileHeaderConceals = fileHeaderConceals;
+    state.streamHunks = streamHunks;
+    state.streamHunkById = streamHunkById;
+    state.sectionByRow = sectionByRow;
+    state.fileByRow = fileByRow;
     return entries;
+}
+
+// --- Reading the stream back by row ---
+//
+// A row is identified on demand from the hunk layout: which hunk starts
+// at or before it (a binary search), then which of that hunk's rows it
+// is, note boxes accounted for. Line numbers come from counting the hunk's
+// lines up to it. Nothing is stored per row.
+
+type StreamRow =
+    | { kind: 'section'; category: string }
+    | { kind: 'file'; key: string }
+    | { kind: 'hunk-header'; sh: StreamHunk }
+    | { kind: 'line'; sh: StreamHunk; lineIdx: number }
+    | { kind: 'note'; sh: StreamHunk; commentId: string; afterLine: number };
+
+/** Index into `state.streamHunks` of the last hunk whose header is at or
+ *  before `row`, or -1. */
+function streamHunkIndexAtRow(row: number): number {
+    const shs = state.streamHunks;
+    let lo = 0;
+    let hi = shs.length - 1;
+    let best = -1;
+    while (lo <= hi) {
+        const mid = (lo + hi) >> 1;
+        if (shs[mid].headerRow <= row) {
+            best = mid;
+            lo = mid + 1;
+        } else {
+            hi = mid - 1;
+        }
+    }
+    return best;
+}
+
+/** What body row `bodyIdx` (0 = the row after the header) of `sh` is. */
+function bodyRowOf(sh: StreamHunk, bodyIdx: number): { lineIdx: number } | { note: StreamNote } {
+    let shift = 0;
+    for (const note of sh.notes) {
+        const noteStart = note.afterLine + 1 + shift;
+        if (bodyIdx < noteStart) break;
+        if (bodyIdx < noteStart + note.rows) return { note };
+        shift += note.rows;
+    }
+    return { lineIdx: bodyIdx - shift };
+}
+
+/** 1-indexed stream row of `sh.hunk.lines[lineIdx]`. */
+function rowOfLine(sh: StreamHunk, lineIdx: number): number {
+    let shift = 0;
+    for (const note of sh.notes) {
+        if (note.afterLine >= lineIdx) break;
+        shift += note.rows;
+    }
+    return sh.headerRow + 1 + lineIdx + shift;
+}
+
+function streamRowAt(row: number): StreamRow | null {
+    const category = state.sectionByRow.get(row);
+    if (category !== undefined) return { kind: 'section', category };
+    const key = state.fileByRow.get(row);
+    if (key !== undefined) return { kind: 'file', key };
+    const i = streamHunkIndexAtRow(row);
+    if (i < 0) return null;
+    const sh = state.streamHunks[i];
+    if (row >= sh.headerRow + sh.rowCount) return null;
+    if (row === sh.headerRow) return { kind: 'hunk-header', sh };
+    const body = bodyRowOf(sh, row - sh.headerRow - 1);
+    if ('note' in body) {
+        return { kind: 'note', sh, commentId: body.note.commentId, afterLine: body.note.afterLine };
+    }
+    return { kind: 'line', sh, lineIdx: body.lineIdx };
+}
+
+/** Kind and line numbers of `hunk.lines[lineIdx]`; the side a row is
+ *  absent from is undefined. A `\ No newline at end of file` marker is
+ *  a context row with no numbers. */
+function lineNumbersAt(hunk: Hunk, lineIdx: number): {
+    lineType: 'add' | 'remove' | 'context'; oldLine?: number; newLine?: number;
+} {
+    let oldN = hunk.oldRange.start;
+    let newN = hunk.range.start;
+    for (let i = 0; i < lineIdx; i++) {
+        const c = hunk.lines[i][0];
+        if (c === '\\') continue;
+        if (c !== '+') oldN++;
+        if (c !== '-') newN++;
+    }
+    const c = hunk.lines[lineIdx][0];
+    if (c === '\\') return { lineType: 'context' };
+    if (c === '+') return { lineType: 'add', newLine: newN };
+    if (c === '-') return { lineType: 'remove', oldLine: oldN };
+    return { lineType: 'context', oldLine: oldN, newLine: newN };
+}
+
+/** The properties of a stream row — type, hunk, file, line numbers —
+ *  derived when asked. */
+function propsAtRow(row: number): Record<string, unknown> | null {
+    const r = streamRowAt(row);
+    if (r === null) return null;
+    switch (r.kind) {
+        case 'section':
+            return { type: 'section-header', file: r.category, filePath: r.category };
+        case 'file': {
+            const fileIndex = state.files.findIndex(f => fileKey(f) === r.key);
+            const path = fileIndex >= 0 ? state.files[fileIndex].path : undefined;
+            return { type: 'file-header', file: path, filePath: path, fileKey: r.key, fileIndex };
+        }
+        case 'hunk-header':
+            return { type: 'hunk-header', hunkId: r.sh.hunk.id, file: r.sh.hunk.file };
+        case 'note':
+            return { type: 'comment', commentId: r.commentId, hunkId: r.sh.hunk.id, file: r.sh.hunk.file };
+        case 'line': {
+            const hunk = r.sh.hunk;
+            const n = lineNumbersAt(hunk, r.lineIdx);
+            return {
+                type: n.lineType, hunkId: hunk.id, file: hunk.file,
+                lineType: n.lineType, oldLine: n.oldLine, newLine: n.newLine,
+                lineContent: hunk.lines[r.lineIdx],
+            };
+        }
+    }
+}
+
+/** Stream row of the diff line an anchor names, if the stream carries it. */
+function rowOfAnchorLine(anchor: ReviewAnchor): number | undefined {
+    if (anchor.lineType === undefined) return undefined;
+    for (const h of hunksForKey(anchor.fileKey)) {
+        const sh = state.streamHunkById.get(h.id);
+        if (sh === undefined) continue;
+        let oldN = h.oldRange.start;
+        let newN = h.range.start;
+        for (let i = 0; i < h.lines.length; i++) {
+            const c = h.lines[i][0];
+            if (c === '\\') continue;
+            const lineType = c === '+' ? 'add' : c === '-' ? 'remove' : 'context';
+            if (lineType === anchor.lineType
+                && (lineType === 'remove' ? oldN === anchor.oldLine : newN === anchor.newLine)) {
+                return rowOfLine(sh, i);
+            }
+            if (c !== '+') oldN++;
+            if (c !== '-') newN++;
+        }
+    }
+    return undefined;
+}
+
+const NS_WORD_DIFF = "review-word-diff";
+
+/** Rows `[first, last]` the word-level highlights currently cover. */
+let wordDiffWindow: { first: number; last: number } | null = null;
+
+/**
+ * Word-level highlights for the `-`/`+` pairs around `aroundRow` (a
+ * 0-indexed viewport row). Painted for the rows on screen and a few
+ * screens past them, not for the whole stream: the pairs are found by
+ * walking only the hunks that reach into that window, and a move that
+ * leaves the window repaints it.
+ */
+function paintWordDiff(aroundRow: number): void {
+    wordDiffWindow = null;
+    if (state.groupId === null || state.centerComposite) return;
+    const diffId = state.panelBuffers["diff"];
+    if (diffId === undefined) return;
+    editor.clearNamespace(diffId, NS_WORD_DIFF);
+    const height = Math.max(1, state.panelHeights["diff"] ?? state.viewportHeight);
+    const first = Math.max(1, aroundRow + 1 - height);
+    const last = aroundRow + 1 + 3 * height;
+    const shs = state.streamHunks;
+    const offsets = state.diffLineByteOffsets;
+    for (let i = Math.max(0, streamHunkIndexAtRow(first)); i < shs.length && shs[i].headerRow <= last; i++) {
+        const sh = shs[i];
+        const lines = sh.hunk.lines;
+        for (let li = 0; li + 1 < lines.length; li++) {
+            if (lines[li][0] !== '-' || lines[li + 1][0] !== '+') continue;
+            const removeRow = rowOfLine(sh, li);
+            const addRow = rowOfLine(sh, li + 1);
+            if (addRow < first) continue;
+            if (removeRow > last) break;
+            const parts = diffStrings(lines[li].substring(1), lines[li + 1].substring(1));
+            // Past each row's diff marker.
+            let rOffset = offsets[removeRow - 1] + 1;
+            let aOffset = offsets[addRow - 1] + 1;
+            for (const part of parts) {
+                const len = getByteLength(part.text);
+                if (part.type === 'removed') {
+                    editor.addOverlay(diffId, NS_WORD_DIFF, rOffset, rOffset + len,
+                        { fg: STYLE_REMOVE_TEXT, bg: STYLE_REMOVE_BG, bold: true });
+                    rOffset += len;
+                } else if (part.type === 'added') {
+                    editor.addOverlay(diffId, NS_WORD_DIFF, aOffset, aOffset + len,
+                        { fg: STYLE_ADD_TEXT, bg: STYLE_ADD_BG, bold: true });
+                    aOffset += len;
+                } else {
+                    rOffset += len;
+                    aOffset += len;
+                }
+            }
+        }
+    }
+    wordDiffWindow = { first, last };
 }
 
 /**
@@ -1599,6 +1904,85 @@ function buildDiffPanelEntries(): TextPropertyEntry[] {
  *  where input will land. */
 function focusMark(panel: 'files' | 'diff' | 'comments'): string {
     return state.focusPanel === panel ? '▸' : ' ';
+}
+
+// The toolbar and the two side panels are widget panels: the host owns
+// their buttons' hit-testing, hover styling and activation, and the
+// plugin only reacts to `widget_event`. Their bodies are still
+// entry-based text, wrapped in `raw`.
+let toolbarPanel: WidgetPanel | null = null;
+let filesPanel: WidgetPanel | null = null;
+let commentsPanel: WidgetPanel | null = null;
+
+/** Width in columns of a side panel: the host's reported width for it, or
+ *  the share `REVIEW_LAYOUT` gives it — only for paints issued before that
+ *  report arrives.
+ *
+ *  The share is of the *group's* width (the toolbar spans it) rather than
+ *  of `state.viewportWidth`, which is seeded from `getViewport()` — the
+ *  focused split, and so a few dozen columns when the review is opened
+ *  from a narrow pane. */
+function panelWidthOf(panel: 'files' | 'comments'): number {
+    const known = state.panelWidths[panel];
+    if (known && known > 0) return known;
+    const group = state.panelWidths["toolbar"];
+    const basis = group && group > 0 ? group : state.viewportWidth;
+    const share = Math.floor(basis * (panel === 'files' ? FILES_PANEL_RATIO : 0.15));
+    // Overshooting is the direction that hurts: rows built wider than the
+    // panel are clipped by the host, `…` and status letter included.
+    return Math.min(Math.max(12, share), Math.max(4, basis));
+}
+
+/** `text` clipped to `width` columns, dropping characters from the left
+ *  and marking the cut with `…`. Used for paths, where the tail (the
+ *  directory you are in) carries more than the root. */
+function elideLeft(text: string, width: number): string {
+    if (width <= 1) return text.slice(0, Math.max(0, width));
+    return text.length <= width ? text : '…' + text.slice(text.length - (width - 1));
+}
+
+/** `text` clipped to `width` columns, marking the cut with `…`. */
+function elideRight(text: string, width: number): string {
+    if (width <= 1) return text.slice(0, Math.max(0, width));
+    return text.length <= width ? text : text.slice(0, width - 1) + '…';
+}
+
+/** The close button at the right edge of an open side panel's header.
+ *  Clicking it hides that panel (same as `F` / `C`). */
+const PANEL_CLOSE_GLYPH = '✕';
+
+const PANEL_CLOSE_KEYS = {
+    files: "files.close",
+    comments: "comments.close",
+} as const;
+
+/**
+ * Header row for a side panel: the focus marker and label on the left, a
+ * `✕` hard against the right edge. A `flexSpacer` between them is sized
+ * by the host against the panel's real width, so the button stays pinned
+ * to the edge without the plugin measuring anything — and the `✕` is a
+ * real `Button`, so the host owns its hit-testing and hover styling.
+ */
+function panelHeaderSpec(panel: 'files' | 'comments', label: string): WidgetSpec {
+    const base: Partial<OverlayOptions> = {
+        fg: STYLE_INVERSE_FG,
+        bg: STYLE_INVERSE_BG,
+        bold: true,
+        extendToLineEnd: true,
+    };
+    return row(
+        raw([styledRow([{ text: `${focusMark(panel)}${label}`, style: base }], { style: base })]),
+        flexSpacer(),
+        button(PANEL_CLOSE_GLYPH, {
+            key: PANEL_CLOSE_KEYS[panel],
+            // Mouse-only, like the file explorer's and the orchestrator
+            // dock's `✕`: the keyboard has `F` / `C`, and this panel's Tab
+            // stop belongs to its list.
+            focusable: false,
+            bare: true,
+            hoverStyle: { fg: "ui.tab_close_hover_fg" },
+        }),
+    );
 }
 
 /** Parent directory of a path (with trailing slash; `./` for repo root). */
@@ -1651,220 +2035,714 @@ function fileGroups(): FileGroup[] {
     return groups;
 }
 
-function buildFilesPanelEntries(): TextPropertyEntry[] {
-    const entries: TextPropertyEntry[] = [];
-    state.filesPanelByRow = {};
-    state.filesPanelDirByRow = {};
+/** The FILES panel's header label (the panel's `✕` and the focus marker
+ *  are drawn by `panelHeaderSpec`). */
+function filesHeaderLabel(): string {
+    return (editor.t("panel.files") || "Files").toUpperCase();
+}
 
-    const headerLabel = (editor.t("panel.files") || "Files").toUpperCase()
-        + (state.fileFilter ? `  /${state.fileFilter}` : "");
-    entries.push({
-        text: `${focusMark('files')}${headerLabel}\n`,
-        style: { fg: STYLE_INVERSE_FG, bg: STYLE_INVERSE_BG, bold: true, extendToLineEnd: true },
-        properties: { type: "header" },
-    });
+// --- FILES sidebar: a host-owned Tree -------------------------------------
+//
+// The sidebar is a `Tree` widget, not plugin-drawn rows. The host owns
+// what a file list keeps getting wrong when a plugin hand-rolls it:
+// selection, expand/collapse, scrolling the selection into view, clipping
+// rows to the panel, and routing clicks. The plugin's job is to emit the
+// hierarchy (category → directory → file) and to react to `select` /
+// `activate` / `expand` events.
 
-    if (state.files.length === 0) {
-        entries.push({
-            text: ` ${editor.t("panel.no_changes") || "No changes."}\n`,
-            style: { fg: STYLE_SECTION_HEADER, italic: true },
-            properties: { type: "empty" },
-        });
-        return entries;
+const FILES_TREE_KEY = "files-tree";
+const FILES_FILTER_KEY = "files-filter";
+
+/** Share of the review's width the FILES sidebar opens at.
+ *
+ *  Read by both `REVIEW_LAYOUT` (the host's initial split) and
+ *  `panelWidthOf` (the plugin's own laying-out before the first
+ *  `viewport_changed` arrives) — they describe the same panel, so they
+ *  have to agree or the first paint is laid out to a width the panel
+ *  does not have. Once the user drags the divider the host's reported
+ *  width wins and this is no longer consulted.
+ *
+ *  Paths are long and the tree nests, so the old 0.16 left filenames
+ *  elided to a few characters on a typical terminal. */
+const FILES_PANEL_RATIO = 0.22;
+
+/** Columns of indent per tree level in the FILES sidebar.
+ *
+ *  One, not the host's default of two: this tree nests a directory chain
+ *  several levels deep in a panel only a couple of dozen columns wide, so
+ *  every column spent on indent comes straight off the filenames. One
+ *  column still reads as a level because each row also carries a
+ *  disclosure glyph (or the two spaces standing in for one). */
+const FILES_TREE_INDENT = 1;
+
+interface FilesTree {
+    nodes: TreeNode[];
+    keys: string[];
+    /** The files, in the order their rows appear top to bottom. */
+    orderedFiles: FileEntry[];
+    /** Node key → file key, for the file rows only. */
+    fileByNodeKey: Record<string, string>;
+    /** Index in `nodes` of each file row, so the selection can be
+     *  restored from `state.filesCurrentKey` on every rebuild. */
+    indexByFileKey: Record<string, number>;
+    /** Every category / directory key, the initial expanded set. */
+    groupKeys: string[];
+}
+
+/** Build the sidebar's node list: one row per category, per directory,
+ *  and per file, depth-first. The tree draws its own disclosure glyphs
+ *  and indents by depth, so the rows carry text only. */
+/** One directory in the sidebar's hierarchy. Built per category from the
+ *  changed files' paths, so the panel shows `crates` → `fresh-editor` →
+ *  `src` as nested rows carrying short names — the file explorer's shape —
+ *  rather than one row repeating the whole path per group. */
+interface DirNode {
+    /** Path segment shown on the row (empty for a category's root). */
+    name: string;
+    /** Full path from the repo root, with a trailing slash. */
+    path: string;
+    children: Map<string, DirNode>;
+    files: FileEntry[];
+    /** Added / removed across everything beneath, so an ancestor row
+     *  totals its subtree the way its own files' rows total themselves. */
+    added: number;
+    removed: number;
+}
+
+function newDirNode(name: string, path: string): DirNode {
+    return { name, path, children: new Map(), files: [], added: 0, removed: 0 };
+}
+
+/** Insert `file` under its directory chain, creating the ancestors it
+ *  needs and adding its counts to each of them. */
+function insertIntoDirTree(root: DirNode, file: FileEntry): void {
+    const counts = fileChangeCounts(file);
+    const dir = fileDirOf(file.path);
+    let node = root;
+    node.added += counts.added;
+    node.removed += counts.removed;
+    if (dir !== './') {
+        let prefix = '';
+        for (const segment of dir.split('/')) {
+            if (segment === '') continue;
+            prefix += `${segment}/`;
+            let child = node.children.get(segment);
+            if (!child) {
+                child = newDirNode(segment, prefix);
+                node.children.set(segment, child);
+            }
+            child.added += counts.added;
+            child.removed += counts.removed;
+            node = child;
+        }
     }
+    node.files.push(file);
+}
 
-    // Per-file comment counts drive the `*N` badge.
+/**
+ * Collapse runs of directories that only ever contain one another into a
+ * single row, the way the file explorer does: `crates/fresh-editor/src/app`
+ * is one row rather than four, because none of the intermediate levels has
+ * a file or a second child of its own to show. A level earns its own row as
+ * soon as it holds a file or branches.
+ *
+ * Counts need no fixing up — every level of a chain totals the same
+ * subtree — and the surviving node keeps the deepest `path`, so its key and
+ * its expand state stay stable as long as the chain does.
+ */
+function compressDirChains(node: DirNode): void {
+    for (const [key, child] of [...node.children]) {
+        let merged = child;
+        while (merged.files.length === 0 && merged.children.size === 1) {
+            const only = [...merged.children.values()][0];
+            merged = {
+                name: `${merged.name}/${only.name}`,
+                path: only.path,
+                children: only.children,
+                files: only.files,
+                added: only.added,
+                removed: only.removed,
+            };
+        }
+        if (merged !== child) node.children.set(key, merged);
+        compressDirChains(merged);
+    }
+}
+
+function buildFilesTree(): FilesTree {
+    const out: FilesTree = {
+        nodes: [], keys: [], orderedFiles: [], fileByNodeKey: {}, indexByFileKey: {}, groupKeys: [],
+    };
     const commentCounts: Record<string, number> = {};
     for (const c of state.comments) commentCounts[c.file] = (commentCounts[c.file] || 0) + 1;
 
-    // Render straight from the shared grouping so the list and arrow-key
-    // navigation (visibleFiles) traverse the same order.
+    // `fileGroups()` stays the ordering authority (category order, then
+    // directory, then file) — this only re-shapes it into a hierarchy.
     const groups = fileGroups();
     const catCounts: Record<string, number> = {};
-    for (const g of groups) catCounts[g.category] = (catCounts[g.category] || 0) + g.files.length;
-
-    let row1 = 1; // header occupied row 1
-    let shownAny = false;
-    let lastCategory: string | undefined;
-    for (const group of groups) {
-        shownAny = true;
-        if (group.category !== lastCategory) {
-            lastCategory = group.category;
-            let label: string = group.category;
-            if (state.mode === 'range' && state.range) label = state.range.label;
-            else if (group.category === 'staged') label = editor.t("section.staged") || "Staged";
-            else if (group.category === 'unstaged') label = editor.t("section.unstaged") || "Changes";
-            else if (group.category === 'untracked') label = editor.t("section.untracked") || "Untracked";
-            const display = state.mode === 'range' ? label : label.toUpperCase();
-            row1++;
-            entries.push({
-                text: ` ${display} (${catCounts[group.category]})\n`,
-                style: { fg: STYLE_SECTION_HEADER, bold: true },
-                properties: { type: "files-section" },
-            });
+    const roots: Array<{ category: string; root: DirNode }> = [];
+    for (const g of groups) {
+        catCounts[g.category] = (catCounts[g.category] || 0) + g.files.length;
+        let entry = roots.find(r => r.category === g.category);
+        if (!entry) {
+            entry = { category: g.category, root: newDirNode('', '') };
+            roots.push(entry);
         }
+        for (const f of g.files) insertIntoDirTree(entry.root, f);
+    }
+    for (const r of roots) compressDirChains(r.root);
+    // With one category (the usual worktree review: everything unstaged)
+    // a category row would be a header over the whole tree and one wasted
+    // indent level in a panel that has ~24 columns to work with.
+    const showCategories = roots.length > 1;
+    const baseDepth = showCategories ? 1 : 0;
+    const W = panelWidthOf('files');
 
-        const dirFiles = group.files;
-        const collapsed = state.collapsedDirs.has(group.dirKey);
-        let added = 0, removed = 0;
-        for (const f of dirFiles) {
-            const c = fileChangeCounts(f);
-            added += c.added; removed += c.removed;
-        }
-        const tri = collapsed ? '▸' : '▾';
-        const countNote = collapsed
-            ? `  ${dirFiles.length} file${dirFiles.length === 1 ? '' : 's'}` : '';
-        row1++;
-        state.filesPanelDirByRow[row1] = group.dirKey;
-        entries.push({
-            text: ` ${tri} ${group.dir}${countNote}  +${added} -${removed}\n`,
-            style: { fg: STYLE_SECTION_HEADER },
-            properties: { type: "files-dir", dirKey: group.dirKey },
-        });
-        if (collapsed) continue;
+    const pushDir = (category: string, node: DirNode, depth: number): void => {
+        const key = `dir:${category} ${node.path}`;
+        out.groupKeys.push(key);
+        out.keys.push(key);
+        // The host indents `FILES_TREE_INDENT` columns per depth level and
+        // draws a disclosure glyph; a segment is short, so this only bites
+        // on a deeply nested path in a narrow panel.
+        const room = Math.max(4, W - depth * FILES_TREE_INDENT - 2);
+        out.nodes.push(treeNode(
+            { text: elideRight(node.name, room), style: { fg: STYLE_SECTION_HEADER } },
+            { depth, hasChildren: true },
+        ));
+    };
 
-        for (const file of dirFiles) {
-            const counts = fileChangeCounts(file);
-            const key = fileKey(file);
-            const glyph = file.status || ' ';
-            const badge = commentCounts[file.path] ? ` *${commentCounts[file.path]}` : '';
-            const stats = `  +${counts.added} -${counts.removed}${badge}`;
-            row1++;
-            const selected = key === state.filesCurrentKey;
-            const style: Partial<OverlayOptions> = selected
-                ? { bg: STYLE_SELECTED_BG, bold: true, extendToLineEnd: true }
-                : {};
-            state.filesPanelByRow[row1] = key;
-            // Basename only — the directory header carries the path.
-            entries.push({
-                text: `   ${glyph} ${fileBaseOf(file.path)}${stats}\n`,
-                style,
+    const pushFile = (file: FileEntry, depth: number): void => {
+        const key = fileKey(file);
+        out.orderedFiles.push(file);
+        const badge = commentCounts[file.path] ? ` *${commentCounts[file.path]}` : '';
+        const nodeKey = `file:${key}`;
+        out.fileByNodeKey[nodeKey] = key;
+        out.indexByFileKey[key] = out.nodes.length;
+        out.keys.push(nodeKey);
+        // The status letter rides on the right with the counts, not in
+        // front of the name. The host already aligns a leaf's text with
+        // its sibling directories' *names* (a leaf gets two spaces where
+        // the disclosure glyph would be), so a leading `M ` pushed every
+        // filename two columns past its siblings — and a file following a
+        // collapsed directory then read as that directory's contents. The
+        // file explorer this sidebar mirrors right-aligns status for the
+        // same reason.
+        const status = file.status ? ` ${file.status}` : '';
+        const stats = `${badge}${status}`;
+        const room = Math.max(4, W - depth * FILES_TREE_INDENT - 2 - stats.length);
+        out.nodes.push(treeNode(
+            {
+                text: `${elideRight(fileBaseOf(file.path), room)}${stats}`,
                 properties: { type: "file", fileKey: key, filePath: file.path },
-            });
+            },
+            { depth },
+        ));
+    };
+
+    /** Depth-first: a directory's own rows, then its children, then its
+     *  files — the file explorer's order. */
+    const emit = (category: string, node: DirNode, depth: number): void => {
+        const childNames = [...node.children.keys()].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+        for (const name of childNames) {
+            const child = node.children.get(name)!;
+            pushDir(category, child, depth);
+            emit(category, child, depth + 1);
         }
+        for (const file of node.files) pushFile(file, depth);
+    };
+
+    for (const { category, root } of roots) {
+        if (showCategories) {
+            let label: string = category;
+            if (state.mode === 'range' && state.range) label = state.range.label;
+            else if (category === 'staged') label = editor.t("section.staged") || "Staged";
+            else if (category === 'unstaged') label = editor.t("section.unstaged") || "Changes";
+            else if (category === 'untracked') label = editor.t("section.untracked") || "Untracked";
+            const display = state.mode === 'range' ? label : label.toUpperCase();
+            const key = `cat:${category}`;
+            out.groupKeys.push(key);
+            out.keys.push(key);
+            out.nodes.push(treeNode(
+                {
+                    text: `${display} (${catCounts[category]})`,
+                    style: { fg: STYLE_SECTION_HEADER, bold: true },
+                },
+                { depth: 0, hasChildren: true },
+            ));
+        }
+        emit(category, root, baseDepth);
     }
-    if (!shownAny && state.fileFilter) {
-        entries.push({
-            text: ` ${editor.t("status.filter_no_match") || "No files match"}\n`,
-            style: { fg: STYLE_SECTION_HEADER, italic: true },
-            properties: { type: "empty" },
-        });
-    }
-    // Record each file row's byte offset so the panel can be scrolled to keep
-    // the selected file visible (B2).
-    state.filesPanelByteByKey = {};
-    let acc = 0;
-    for (const e of entries) {
-        const fk = e.properties && (e.properties as Record<string, unknown>)["fileKey"];
-        if (typeof fk === 'string') state.filesPanelByteByKey[fk] = acc;
-        acc += getByteLength(e.text);
-    }
-    return entries;
+    return out;
 }
 
-/** Scroll the FILES panel so the currently-selected file row stays visible.
- *  Uses setBufferCursor (which runs ensure_cursor_visible) so the panel only
- *  scrolls when the selection would otherwise be off-screen — no jumpy
- *  re-centering when it is already in view. */
-function scrollFilesToSelected(): void {
-    if (state.groupId === null || !state.filesCurrentKey) return;
-    const filesId = state.panelBuffers["files"];
-    if (filesId === undefined) return;
-    const byte = state.filesPanelByteByKey[state.filesCurrentKey];
-    if (byte !== undefined) editor.setBufferCursor(filesId, byte);
+/** The changed files in the order the sidebar lists them: by category,
+ *  then the directory tree depth-first, subdirectories before the files
+ *  beside them. The unified stream lays its files out in this order too,
+ *  so the sidebar's top-to-bottom order and the stream's are the same
+ *  sequence — scrolling the diff walks the sidebar. The tree is what
+ *  decides it, so there is one traversal rather than two that can drift.
+ *  Honours the `/` filter, since the tree does. */
+function filesInDisplayOrder(): FileEntry[] {
+    return buildFilesTree().orderedFiles;
 }
 
-function buildCommentsPanelEntries(): TextPropertyEntry[] {
-    const entries: TextPropertyEntry[] = [];
-    state.commentsByRow = {};
+/** The node the sidebar tree has selected — `file:…`, `dir:…` or
+ *  `cat:…`. Mirrored from the host's `select` events so Enter knows what
+ *  it is acting on. */
+let filesSelectedNodeKey = "";
 
-    const headerLabel = (editor.t("panel.comments") || "Comments").toUpperCase();
-    entries.push({
-        text: `${focusMark('comments')}${headerLabel}\n`,
-        style: {
-            fg: STYLE_INVERSE_FG,
-            bg: STYLE_INVERSE_BG,
-            bold: true,
-            extendToLineEnd: true,
-        },
-        properties: { type: "header" },
-    });
+/** The sidebar tree as last built — the map from a `select` event's node
+ *  key back to a file. */
+let filesTree: FilesTree = {
+    nodes: [], keys: [], orderedFiles: [], fileByNodeKey: {}, indexByFileKey: {}, groupKeys: [],
+};
 
-    if (state.comments.length === 0) {
-        entries.push({
-            text: ` ${editor.t("panel.no_comments") || "No comments yet."}\n`,
+/** The FILES panel spec: header, the filter field while `/` is open, and
+ *  the file tree. */
+function buildFilesPanelSpec(): WidgetSpec {
+    filesTree = buildFilesTree();
+    // A seed: the host's stored selection wins once anything has set one.
+    // It still has to agree with where the host's own navigation left the
+    // selection, or a freshly mounted tree starts on the current file and
+    // folding a directory (which selects a directory row first) never gets
+    // to happen.
+    const fileNodeKey = state.filesCurrentKey !== null ? `file:${state.filesCurrentKey}` : "";
+    const trackedKey = filesSelectedNodeKey.startsWith("file:")
+        ? fileNodeKey                       // a file row: the review's current file wins
+        : filesSelectedNodeKey;             // a directory / category row: keep it
+    let selected = trackedKey ? filesTree.keys.indexOf(trackedKey) : -1;
+    if (selected < 0 && fileNodeKey) selected = filesTree.keys.indexOf(fileNodeKey);
+    const parts: WidgetSpec[] = [
+        panelHeaderSpec('files', filesHeaderLabel()),
+        // Always present, whether or not it holds focus: a filter you
+        // cannot see is a filter you forget is on. `/` focuses it, and so
+        // does clicking it.
+        text({
+            value: state.fileFilter,
+            cursorByte: filterCursor,
+            placeholder: editor.t("prompt.filter_files") || "Filter files",
+            fullWidth: true,
+            key: FILES_FILTER_KEY,
+        }),
+    ];
+    if (filesTree.nodes.length === 0) {
+        parts.push(raw([{
+            text: ` ${(state.fileFilter
+                ? editor.t("status.filter_no_match") || "No files match"
+                : editor.t("panel.no_changes") || "No changes.")}\n`,
             style: { fg: STYLE_SECTION_HEADER, italic: true },
-            properties: { type: "empty" },
-        });
-        return entries;
+        }]));
+    } else {
+        parts.push(tree({
+            nodes: filesTree.nodes,
+            itemKeys: filesTree.keys,
+            selectedIndex: selected,
+            // No `visibleRows`: the host sizes the tree to the panel's
+            // live height minus the rows its siblings occupy, and re-runs
+            // that on every resize. A plugin-side budget was a copy of the
+            // height taken from the last `viewport_changed`, and a grown
+            // panel kept the old, shorter window until some unrelated
+            // event happened to repaint it — the rows below the window
+            // stayed blank with files still to show.
+            expandedKeys: filesTree.groupKeys,
+            indentCols: FILES_TREE_INDENT,
+            key: FILES_TREE_KEY,
+        }));
     }
+    return col(...parts);
+}
 
-    // Order comments by their position in the unified stream. We approximate
-    // by sorting by (file index, line number, removed/added preference).
-    const fileIndex = (file: string, category: string | undefined): number => {
-        for (let i = 0; i < state.files.length; i++) {
-            const f = state.files[i];
-            if (f.path === file) return i;
+/** The COMMENTS panel's header label. */
+function commentsHeaderLabel(): string {
+    return (editor.t("panel.comments") || "Comments").toUpperCase();
+}
+
+// --- COMMENTS rail: a host-owned List ------------------------------------
+//
+// One list item per rendered row — a comment's location row plus the rows
+// its note wraps onto — all keyed back to the same comment. The host owns
+// selection, scrolling and click routing; the plugin maps the selected
+// item back to a comment and snaps the selection to that comment's
+// location row, so stepping with ↑↓ moves comment by comment while the
+// note still renders in full.
+
+const COMMENTS_LIST_KEY = "comments-list";
+
+interface CommentsList {
+    items: TextPropertyEntry[];
+    keys: string[];
+    /** Item index of each comment's location row. */
+    indexById: Record<string, number>;
+}
+
+/** Comments in stream order: by file, then by line. */
+function commentsInStreamOrder(): ReviewComment[] {
+    // Down the stream, which is the sidebar's order (`filesInDisplayOrder`).
+    const ordered = filesInDisplayOrder();
+    const fileIndex = (file: string): number => {
+        for (let i = 0; i < ordered.length; i++) {
+            if (ordered[i].path === file) return i;
         }
         return Number.MAX_SAFE_INTEGER;
     };
-
-    const sortedComments = [...state.comments].sort((a, b) => {
-        // Look up via hunk's file
-        const hunkA = state.hunks.find(h => h.id === a.hunk_id);
-        const hunkB = state.hunks.find(h => h.id === b.hunk_id);
-        const fa = fileIndex(a.file, hunkA?.gitStatus);
-        const fb = fileIndex(b.file, hunkB?.gitStatus);
+    return [...state.comments].sort((a, b) => {
+        const fa = fileIndex(a.file);
+        const fb = fileIndex(b.file);
         if (fa !== fb) return fa - fb;
-        const la = a.new_line ?? a.old_line ?? 0;
-        const lb = b.new_line ?? b.old_line ?? 0;
-        return la - lb;
+        return (a.new_line ?? a.old_line ?? 0) - (b.new_line ?? b.old_line ?? 0);
     });
+}
 
-    // Each comment renders as a block: a "path:line" location row followed
-    // by the note text wrapped over as many rows as needed (no truncation).
-    // Every row maps back to the comment id, so clicking or selecting any
-    // row of the block jumps to that comment.
-    const panelWidth = Math.max(20, Math.floor(state.viewportWidth * 0.25) - 2);
-    let rowIdx = 1; // header is row 0 (0-indexed); comments start at row 1
-    for (const c of sortedComments) {
+function buildCommentsList(): CommentsList {
+    const out: CommentsList = { items: [], keys: [], indexById: {} };
+    const width = Math.max(12, panelWidthOf('comments') - 1);
+    for (const c of commentsInStreamOrder()) {
         const lineRef = c.new_line ?? c.old_line ?? 0;
         const path = c.file.split('/').pop() || c.file;
         const isCurrent = c.id === state.commentsHighlightId;
         const marker = isCurrent ? '>' : ' ';
-
-        // Location row.
-        rowIdx++;
         const locText = `${marker} ${path}:${lineRef}`;
-        const locSelected = rowIdx === state.commentsSelectedRow && state.focusPanel === 'comments';
-        const locDisplay = locText.length > panelWidth ? locText.slice(0, panelWidth - 1) + '…' : locText;
-        state.commentsByRow[rowIdx] = c.id;
-        entries.push({
-            text: locDisplay + "\n",
-            style: locSelected
-                ? { bg: STYLE_SELECTED_BG, bold: true, extendToLineEnd: true }
-                : { bold: true },
-            inlineOverlays: [{ start: 2, end: getByteLength(locText), style: { fg: STYLE_KEY_FG } }],
+        out.indexById[c.id] = out.items.length;
+        out.keys.push(`c:${c.id}#loc`);
+        out.items.push({
+            text: elideRight(locText, width),
+            style: { bold: true },
+            inlineOverlays: [{ start: 2, end: getByteLength(elideRight(locText, width)), style: { fg: STYLE_KEY_FG } }],
             properties: { type: "comment-nav", commentId: c.id, file: c.file, line: lineRef },
         });
-
-        // Body rows: the full note text, wrapped and indented.
         const body = c.text.replace(/\s+/g, ' ').trim();
-        for (const wl of wrapText(body, panelWidth - 3)) {
-            rowIdx++;
-            const bodySelected = rowIdx === state.commentsSelectedRow && state.focusPanel === 'comments';
-            state.commentsByRow[rowIdx] = c.id;
-            entries.push({
-                text: `   ${wl}\n`,
-                style: bodySelected
-                    ? { bg: STYLE_SELECTED_BG, extendToLineEnd: true }
-                    : (isCurrent ? undefined : { fg: STYLE_COMMENT }),
+        const lines = wrapText(body, Math.max(4, width - 3));
+        for (let i = 0; i < lines.length; i++) {
+            out.keys.push(`c:${c.id}#${i}`);
+            out.items.push({
+                text: `   ${lines[i]}`,
+                style: isCurrent ? undefined : { fg: STYLE_COMMENT },
                 properties: { type: "comment-nav", commentId: c.id, file: c.file, line: lineRef },
             });
         }
     }
+    return out;
+}
 
-    return entries;
+/** The rail as last built, for mapping a selection back to a comment. */
+let commentsList: CommentsList = { items: [], keys: [], indexById: {} };
+
+/** The COMMENTS panel spec: header plus the comment list. */
+function buildCommentsPanelSpec(): WidgetSpec {
+    commentsList = buildCommentsList();
+    if (commentsList.items.length === 0) {
+        return col(
+            panelHeaderSpec('comments', commentsHeaderLabel()),
+            raw([{
+                text: ` ${editor.t("panel.no_comments") || "No comments yet."}\n`,
+                style: { fg: STYLE_SECTION_HEADER, italic: true },
+            }]),
+        );
+    }
+    const selected = state.commentsSelectedId !== null
+        ? (commentsList.indexById[state.commentsSelectedId] ?? -1)
+        : -1;
+    return col(
+        panelHeaderSpec('comments', commentsHeaderLabel()),
+        list({
+            items: commentsList.items,
+            itemKeys: commentsList.keys,
+            selectedIndex: selected,
+            // Host-auto-sized, like the FILES tree above.
+            focusable: true,
+            key: COMMENTS_LIST_KEY,
+        }),
+    );
+}
+
+/**
+ * Decide whether the center renders one file or a stream of them.
+ *
+ * Side-by-side builds a composite of one file's OLD/NEW buffers and is
+ * per-file by construction. Unified is a single scrollable stream and
+ * lays out the whole changeset — a 100-commit range included.
+ *
+ * There used to be a line budget here, above which the stream rendered
+ * one file at a time and marked the rest "not loaded". It was
+ * compensating for per-frame work in the host that grew with the buffer's
+ * decorations; with that fixed (the plugin state snapshot deep-copied
+ * every text property on every tick, and rainbow brackets republished
+ * across the whole buffer on every frame) a fully laid-out 100k-line diff
+ * costs what a 20k-line one does per keystroke, so the budget bought
+ * nothing but a confusing review.
+ */
+function syncFocusMode(): void {
+    state.focusOnly = state.reviewLayout === 'side-by-side';
+}
+
+/** Whether the center carries this file's hunk rows: everything in the
+ *  unified stream, and only the focused file while the composite is up. */
+function fileBodyRendered(key: string): boolean {
+    return !state.focusOnly || key === state.filesCurrentKey;
+}
+
+/** Whether `panel` is currently on screen. The diff and its sticky header
+ *  are never hidden; the two side panels are. */
+function panelVisible(panel: 'files' | 'diff' | 'comments'): boolean {
+    if (panel === 'diff') return true;
+    return state.panelsVisible[panel];
+}
+
+/** Repaint the FILES sidebar, if it is on screen. Hidden panels are not
+ *  rendered, so rebuilding their content is work nobody sees —
+ *  `setReviewPanelVisible` repaints on the way back in. */
+function renderFilesPanel(): void {
+    if (filesPanel === null || !panelVisible('files')) return;
+    filesPanel.set(buildFilesPanelSpec());
+    pointSidebarAtCurrentFile();
+}
+
+/** Move the sidebar's selection onto the review's current file.
+ *
+ *  A tree's selected row is host state once anything has set it, and the
+ *  `selectedIndex` in a rebuilt spec is a seed the host ignores from then
+ *  on — so repainting alone left the highlight where the sidebar's own
+ *  navigation had put it, and reading down the stream walked the cursor
+ *  through file after file with the sidebar still on the first. This is
+ *  the host-side setter, so the row actually moves (and scrolls into
+ *  view).
+ *
+ *  A directory or section row the user selected stays put: those are the
+ *  sidebar's own navigation, and folding one is a gesture the diff cursor
+ *  has no opinion about. */
+function pointSidebarAtCurrentFile(): void {
+    if (filesPanel === null || !panelVisible('files')) return;
+    if (state.filesCurrentKey === null) return;
+    if (filesSelectedNodeKey.startsWith("dir:") || filesSelectedNodeKey.startsWith("cat:")) return;
+    const nodeKey = `file:${state.filesCurrentKey}`;
+    const idx = filesTree.keys.indexOf(nodeKey);
+    if (idx < 0) return;
+    filesSelectedNodeKey = nodeKey;
+    // Unconditionally, because the host stores an *absolute* index into a
+    // node list this tree rebuilds whenever the changeset moves: a file
+    // appearing above the current one would slide the highlight onto its
+    // neighbour. It also puts the band back after the host clears a blurred
+    // tree's selection (`Tree::on_focus_change`), which clicking the filter
+    // field does. Re-pinning an unchanged index preserves a user scroll.
+    filesPanel.setSelectedIndex(FILES_TREE_KEY, idx);
+}
+
+/** Repaint the COMMENTS rail, if it is on screen. */
+function renderCommentsPanel(): void {
+    if (commentsPanel === null || !panelVisible('comments')) return;
+    commentsPanel.set(buildCommentsPanelSpec());
+    if (state.focusPanel === 'comments') commentsPanel.setFocusKey(COMMENTS_LIST_KEY);
+}
+
+/** Push the plugin's visibility state into the host's group layout. */
+function applyPanelVisibility(): void {
+    if (state.groupId === null) return;
+    for (const panel of ['files', 'comments'] as const) {
+        editor.setBufferGroupPanelVisible(state.groupId, panel, state.panelsVisible[panel]);
+    }
+}
+
+/**
+ * Show or hide one of the side panels. Hiding the panel that holds
+ * keyboard focus hands focus back to the diff (the host refuses to focus
+ * an unrendered panel, so leaving `focusPanel` pointing at it would
+ * strand the arrow keys).
+ */
+function setReviewPanelVisible(panel: 'files' | 'comments', visible: boolean): void {
+    if (state.groupId === null) return;
+    if (state.panelsVisible[panel] === visible) return;
+    state.panelsVisible[panel] = visible;
+    editor.setBufferGroupPanelVisible(state.groupId, panel, visible);
+    if (visible) {
+        if (panel === 'files') {
+            renderFilesPanel();
+        } else {
+            renderCommentsPanel();
+        }
+        // You asked for the panel; the keys go there.
+        reviewSetFocus(panel);
+    } else if (state.focusPanel === panel) {
+        // Focus cannot stay on a panel that is no longer drawn.
+        reviewSetFocus('diff');
+    }
+    if (!visible && state.focusPanel === panel) state.focusPanel = 'diff';
+    // The panel appearing or vanishing is its own feedback — no status
+    // message — but the toolbar button carries the open/closed marker.
+    renderToolbar();
+}
+
+function review_toggle_files_panel(): void {
+    setReviewPanelVisible('files', !state.panelsVisible.files);
+}
+registerHandler("review_toggle_files_panel", review_toggle_files_panel);
+
+function review_toggle_comments_panel(): void {
+    setReviewPanelVisible('comments', !state.panelsVisible.comments);
+}
+registerHandler("review_toggle_comments_panel", review_toggle_comments_panel);
+
+/** The pointer put the keys in `panel`. A click that lands on a widget is
+ *  routed straight to it: no `mouse_click` for the panel's buffer and no
+ *  `buffer_activated`, so a widget event is the only word the plugin gets
+ *  that focus moved. Without adopting it the plugin went on routing arrows
+ *  to the panel it last knew about — they did nothing, and Enter toggled a
+ *  fold in the diff instead of opening the file that was clicked.
+ *
+ *  Widget focus is the host's and is left alone: it already sits on
+ *  whatever the click landed on. */
+function adoptPanelFocusFromWidget(panel: 'files' | 'comments'): void {
+    if (state.groupId === null || state.focusPanel === panel) return;
+    if (!panelVisible(panel)) return;
+    state.focusPanel = panel;
+    editor.focusBufferGroupPanel(state.groupId, panel);
+    refreshFocusIndicators();
+}
+
+/** Buttons in the toolbar and in the two panel headers. The host does the
+ *  hit-testing and hands us the widget key. */
+editor.on("widget_event", (data) => {
+    if (state.groupId === null) return;
+
+    // --- FILES tree: selection, activation, and the filter field --------
+    if (data.widget_key === FILES_TREE_KEY) {
+        // Focus moved off the field and onto the tree — back to the
+        // panel's command keys.
+        if (data.event_type === "focus") {
+            leaveFilterMode();
+            adoptPanelFocusFromWidget('files');
+            return;
+        }
+        const nodeKey = String((data.payload as Record<string, unknown>)?.["key"] ?? "");
+        if (data.event_type === "select") {
+            // The event first, the focus after: adopting repaints the
+            // panel, and a repaint before the selection is known re-pins
+            // the highlight to the file the review was on.
+            onFilesTreeSelect(nodeKey);
+            adoptPanelFocusFromWidget('files');
+            return;
+        }
+        if (data.event_type === "activate") {
+            // Double-click on a file row: same as Enter — go to it, and
+            // the keys go with it.
+            if (nodeKey.startsWith("file:")) {
+                filesSelectedNodeKey = nodeKey;
+                onFilesTreeSelect(nodeKey);
+                reviewSetFocus('diff');
+            }
+            return;
+        }
+        adoptPanelFocusFromWidget('files');
+        return; // `expand` is host-owned; nothing else to mirror.
+    }
+    if (data.widget_key === FILES_FILTER_KEY) {
+        if (data.event_type === "focus") {
+            enterFilterMode();
+            adoptPanelFocusFromWidget('files');
+            return;
+        }
+        if (data.event_type === "change") {
+            const payload = (data.payload ?? {}) as Record<string, unknown>;
+            if (typeof payload["value"] === "string") state.fileFilter = payload["value"];
+            if (typeof payload["cursorByte"] === "number") filterCursor = payload["cursorByte"];
+            scheduleFileFilter();
+            return;
+        }
+        if (data.event_type === "activate" || data.event_type === "cancel") {
+            closeFileFilter(data.event_type === "cancel");
+            return;
+        }
+        return;
+    }
+    // --- COMMENTS list --------------------------------------------------
+    if (data.widget_key === COMMENTS_LIST_KEY) {
+        adoptPanelFocusFromWidget('comments');
+        const itemKey = String((data.payload as Record<string, unknown>)?.["key"] ?? "");
+        const commentId = itemKey.startsWith("c:") ? itemKey.slice(2).split("#")[0] : "";
+        if (!commentId) return;
+        if (data.event_type === "select") {
+            state.commentsSelectedId = commentId;
+            renderCommentsPanel();
+            return;
+        }
+        if (data.event_type === "activate") {
+            state.commentsSelectedId = commentId;
+            jumpToComment(commentId);
+            renderCommentsPanel();
+            return;
+        }
+        return;
+    }
+
+    if (data.event_type !== "activate") return;
+    switch (data.widget_key) {
+        case PANEL_BUTTON_KEYS.files:
+            review_toggle_files_panel();
+            return;
+        case PANEL_BUTTON_KEYS.comments:
+            review_toggle_comments_panel();
+            return;
+        case PANEL_CLOSE_KEYS.files:
+            setReviewPanelVisible('files', false);
+            return;
+        case PANEL_CLOSE_KEYS.comments:
+            setReviewPanelVisible('comments', false);
+            return;
+    }
+});
+
+/** A row of the FILES tree became the selection — by arrow key or click.
+ *  Selecting a file moves the review to it; selecting a category or
+ *  directory row is just navigation. */
+function onFilesTreeSelect(nodeKey: string): void {
+    filesSelectedNodeKey = nodeKey;
+    const key = filesTree.fileByNodeKey[nodeKey];
+    if (key === undefined || key === state.filesCurrentKey) return;
+    // Asked before the assignment: in side-by-side `fileBodyRendered` is
+    // `filesCurrentKey` itself, so the answer changes as we assign.
+    const needsLayout = !fileBodyRendered(key);
+    state.filesCurrentKey = key;
+    if (needsLayout) {
+        // Side-by-side: the composite draws one file, so it has to be
+        // rebuilt around this one.
+        refreshFocusedFile();
+        return;
+    }
+    // The stream already holds this file — just go there. No rebuild, so
+    // walking the sidebar with ↑↓ stays instant on a big diff.
+    const headerRow = state.fileHeaderRows[key];
+    if (headerRow !== undefined) jumpDiffCursorToRow(headerRow);
+}
+
+/** Declare that the unified stream's content is out of date: the next
+ *  render of the stream has to lay it out again.
+ *
+ *  Every caller that changes what the stream says goes through
+ *  `updateMagitDisplay` or `applyFileFilter`, so those two mark it — a
+ *  layout flip, which changes only *which* view is mounted, does not. */
+function markStreamDirty(): void {
+    state.streamRevision++;
+}
+
+/** What the content currently in the stream buffer was built from. The
+ *  focused file is part of it because the composite's stand-in stream
+ *  carries only that file's body (`fileBodyRendered`).
+ *
+ *  The panel's width counts only while notes are on screen: comment boxes
+ *  are the one thing wrapped to it (`noteBoxWidth`), and the host
+ *  reports the panel's real width a moment after the stream is first laid
+ *  out — so treating every width as significant put a full relayout in
+ *  the reader's way seconds into a review that had no notes in it. */
+function streamSignature(): string {
+    const widthShapesTheStream = state.showComments && state.comments.length > 0;
+    return [
+        state.streamRevision,
+        state.focusOnly ? state.filesCurrentKey : '*',
+        // The width the boxes were actually laid out to, not the panel's:
+        // a wide panel clamps them to the same width whatever it reports,
+        // and a relayout of the whole stream is not free.
+        widthShapesTheStream ? noteBoxWidth() : '*',
+    ].join('|');
 }
 
 /**
@@ -1873,16 +2751,34 @@ function buildCommentsPanelEntries(): TextPropertyEntry[] {
  * scroll: scrolling is handled natively by the editor in the panel buffers.
  */
 function updateMagitDisplay(): void {
+    markStreamDirty();
     refreshViewportDimensions();
     if (state.groupId === null) return;
+    syncFocusMode();
     ensureFocusFile();
-    editor.setPanelContent(state.groupId, "toolbar", buildToolbarPanelEntries());
+    renderToolbar();
     renderCenter();
-    editor.setPanelContent(state.groupId, "comments", buildCommentsPanelEntries());
-    if (state.panelBuffers["files"] !== undefined) {
-        editor.setPanelContent(state.groupId, "files", buildFilesPanelEntries());
-    }
+    renderCommentsPanel();
+    renderFilesPanel();
     refreshStickyHeader(0);
+}
+
+/** Conceal namespace owning the collapsed-header triangles, so
+ *  `applyFolds` can drop the whole set in one host call. */
+const NS_COLLAPSE_TRIANGLE = "review-collapse-triangle";
+/** Conceal namespace of the file labels drawn over `diff --git` rows. */
+const NS_FILE_HEADER = "review-file-header";
+
+/** Byte range of the `▾` in a section header row, or a file header row
+ *  of the plugin's own, given its 1-indexed row. Every such header is
+ *  emitted as `"▾ …"`, so the glyph is the row's first `TRIANGLE_BYTES`
+ *  bytes. Returns null when the row
+ *  index has no recorded offset (stale state between rebuilds). */
+function headerTriangleRange(row1: number | undefined): { start: number; end: number } | null {
+    if (row1 === undefined) return null;
+    const start = state.diffLineByteOffsets[row1 - 1];
+    if (start === undefined) return null;
+    return { start, end: start + TRIANGLE_BYTES };
 }
 
 /**
@@ -1890,31 +2786,62 @@ function updateMagitDisplay(): void {
  * are designed exactly for "header line stays visible, body lines
  * skipped by the renderer". A fold range covers `[bodyStart, bodyEnd)`
  * — the line containing `bodyStart - 1` (the header) stays visible,
- * everything inside the range gets elided. The host renders its own
- * "..." indicator on the collapsed header line, which is sufficient
- * visual feedback (no need for a triangle swap).
+ * everything inside the range gets elided.
  *
- * Toggling collapse on a 5000-line diff is now O(collapsed_set_size)
- * `addFold` calls. `clearFolds` drops the entire set in one host call
- * so re-applying after a state change is also cheap.
+ * The header keeps its `▾` in the buffer text and a replacement conceal
+ * turns it into `▸` while collapsed, so the triangle agrees with the
+ * fold instead of pointing open over a closed body — the sidebar's
+ * directory rows rotate theirs, and a row that says "expanded" while
+ * showing nothing is a contradiction the host's `…` marker doesn't
+ * resolve. Conceals are rendering-only: the buffer text never changes,
+ * so this keeps collapse a rebuild-free operation.
+ *
+ * Toggling collapse costs one `addConceal` per file with a diff (the
+ * header labels are re-issued whole, collapsed or not) plus one
+ * `addFold` + `addConceal` per collapsed item. `clearFolds` /
+ * `clearConcealNamespace` each drop a whole set in one host call.
  */
 function applyFolds(): void {
     if (state.groupId === null) return;
     const diffId = state.panelBuffers["diff"];
     if (diffId === undefined) return;
     editor.clearFolds(diffId);
+    editor.clearConcealNamespace(diffId, NS_COLLAPSE_TRIANGLE);
+    editor.clearConcealNamespace(diffId, NS_FILE_HEADER);
+    // A file header is git's `diff --git` row wearing the file's label.
+    for (const [key, header] of state.fileHeaderConceals) {
+        const glyph = state.collapsedFiles.has(key) ? GLYPH_COLLAPSED : GLYPH_EXPANDED;
+        editor.addConceal(diffId, NS_FILE_HEADER, header.start, header.end, `${glyph} ${header.label}`);
+    }
+    const collapseTriangle = (row1: number | undefined): void => {
+        const range = headerTriangleRange(row1);
+        if (range) {
+            editor.addConceal(diffId, NS_COLLAPSE_TRIANGLE, range.start, range.end, GLYPH_COLLAPSED);
+        }
+    };
     for (const cat of state.collapsedSections) {
         const body = state.sectionBodyRange[cat];
         if (body && body.end > body.start) editor.addFold(diffId, body.start, body.end);
+        collapseTriangle(state.sectionHeaderRows[cat]);
     }
     for (const key of state.collapsedFiles) {
         const body = state.fileBodyRange[key];
         if (body && body.end > body.start) editor.addFold(diffId, body.start, body.end);
+        if (!state.fileHeaderConceals.has(key)) collapseTriangle(state.fileHeaderRows[key]);
     }
     for (const id of state.collapsedHunks) {
         const body = state.hunkBodyRange[id];
         if (body && body.end > body.start) editor.addFold(diffId, body.start, body.end);
+        // A hunk header is git's `@@ … @@` row: its leading `@@` reads as
+        // `▸ @@` while the body is folded.
+        const row = state.hunkRowByHunkId[id];
+        const start = row !== undefined ? state.diffLineByteOffsets[row - 1] : undefined;
+        if (start !== undefined) {
+            editor.addConceal(diffId, NS_COLLAPSE_TRIANGLE, start, start + 2, `${GLYPH_COLLAPSED} @@`);
+        }
     }
+    // Folding changes which rows are on screen without a scroll.
+    paintWordDiff(state.diffViewportTopRow);
 }
 
 /**
@@ -1928,7 +2855,10 @@ function refreshStickyHeader(topVisibleRow: number): void {
     const stickyId = state.panelBuffers["sticky"];
     if (stickyId === undefined) return;
 
-    const W = state.viewportWidth;
+    // The sticky row spans the diff pane, so it is clipped to the diff
+    // pane's width — not the review's overall viewport, which is the
+    // focused split's and may be a side panel.
+    const W = diffPanelWidth();
     let text: string;
     let style: Partial<OverlayOptions> = { fg: STYLE_HEADER, bold: true };
 
@@ -2001,19 +2931,23 @@ function refreshStickyHeader(topVisibleRow: number): void {
         properties: { type: "sticky-header" },
     }]);
 
-    // Legacy multi-file-stream mode only: keep the sidebar's highlighted
-    // file in sync with the diff's top file. In focus mode the current file
-    // is driven by explicit navigation, so we must NOT re-derive it here.
+    // Expanded (multi-file) stream: the sidebar highlight follows the
+    // *cursor's* file, not the top-visible one. Deriving it from the scroll
+    // fought navigation — `.` jumped the cursor into the next file, the
+    // resulting scroll put a different file at the top, and the highlight
+    // (and with it the next `.`) snapped back to that one. In focus mode
+    // the current file is explicit navigation, so it isn't re-derived at all.
     if (!state.focusOnly) {
-        const curKey = bestFile ? fileKey(bestFile) : null;
+        const cursorFile = currentFileFromCursor();
+        const curKey = cursorFile ? fileKey(cursorFile) : state.filesCurrentKey;
         if (curKey !== state.filesCurrentKey) {
             state.filesCurrentKey = curKey;
-            if (state.panelBuffers["files"] !== undefined) {
-                editor.setPanelContent(state.groupId, "files", buildFilesPanelEntries());
-            }
+            renderFilesPanel();
         }
     }
 }
+
+
 
 /**
  * Helper: jump the diff cursor to the file's first hunk (or its file
@@ -2021,30 +2955,18 @@ function refreshStickyHeader(topVisibleRow: number): void {
  */
 function jumpToFile(file: FileEntry): void {
     const key = fileKey(file);
-    if (state.collapsedFiles.has(key)) {
-        state.collapsedFiles.delete(key);
-        updateMagitDisplay();
-    }
-    // Prefer first hunk row; fall back to the file-header row.
-    const fileIdx = state.files.indexOf(file);
-    if (fileIdx >= 0) {
-        // Compute visible hunk index of the first hunk for this file.
-        let visibleIdx = 0;
-        let foundGlobal = -1;
-        for (let i = 0; i < state.hunks.length; i++) {
-            const h = state.hunks[i];
-            const hKey = fileKeyOf(h.file, h.gitStatus || 'unstaged');
-            if (state.collapsedFiles.has(hKey)) continue;
-            if (h.file === file.path && h.gitStatus === file.category) {
-                foundGlobal = i;
-                break;
-            }
-            visibleIdx++;
-        }
-        if (foundGlobal >= 0) {
-            const row = state.hunkHeaderRows[visibleIdx];
-            if (row !== undefined) { jumpDiffCursorToRow(row); return; }
-        }
+    // Collapse is a fold, so revealing the file is one too — no relayout.
+    if (state.collapsedFiles.delete(key)) applyFolds();
+    // Prefer this file's first hunk row; fall back to the file header.
+    // Read the row from the build's own map rather than counting hunks:
+    // the count used to skip collapsed files, but collapse is a conceal
+    // (see `applyFolds`) and their hunk headers are still in the stream,
+    // so the Nth counted hunk was not the Nth row — clicking the sticky
+    // header with a collapsed file above landed inside that file instead.
+    const firstHunk = hunksForKey(key)[0];
+    if (firstHunk) {
+        const row = state.hunkRowByHunkId[firstHunk.id];
+        if (row !== undefined) { jumpDiffCursorToRow(row); return; }
     }
     const headerRow = state.fileHeaderRows[key];
     if (headerRow !== undefined) jumpDiffCursorToRow(headerRow);
@@ -2069,6 +2991,24 @@ function on_review_mouse_click(data: {
     const stickyId = state.panelBuffers["sticky"];
     const commentsId = state.panelBuffers["comments"];
 
+    // Clicks on the toolbar's and the panel headers' buttons arrive as
+    // `widget_event`, not here.
+
+    // A click is a focus gesture: the panel you clicked takes the keys.
+    // The host moves its own focus to the clicked buffer; mirroring it
+    // here keeps `state.focusPanel` — which decides where ↑↓ / ←→ /
+    // Home / End go — from pointing at the panel you just left.
+    const clickedPanel: 'files' | 'diff' | 'comments' | null =
+        data.buffer_id === state.panelBuffers["files"] ? 'files'
+            : data.buffer_id === commentsId ? 'comments'
+                : (data.buffer_id === diffId || data.buffer_id === stickyId
+                    || (state.centerComposite
+                        && data.buffer_id === state.centerComposite.compositeBufId)) ? 'diff'
+                    : null;
+    if (clickedPanel && clickedPanel !== state.focusPanel && panelVisible(clickedPanel)) {
+        reviewSetFocus(clickedPanel);
+    }
+
     // Click in the diff buffer: section headers and file headers are
     // both interactive — clicking either toggles its fold state.
     if (data.buffer_id === diffId) {
@@ -2088,16 +3028,6 @@ function on_review_mouse_click(data: {
         for (const f of state.files) {
             if (state.fileHeaderRows[fileKey(f)] === targetRow1) {
                 const key = fileKey(f);
-                // Focus mode: only the focused file's body is shown, so
-                // clicking a *different* file's header should switch the
-                // center to that file (show its diff) rather than toggle a
-                // fold the user can't see. Clicking the focused file's own
-                // header still toggles its fold.
-                if (state.focusOnly && key !== state.filesCurrentKey) {
-                    state.filesCurrentKey = key;
-                    refreshFocusedFile();
-                    return;
-                }
                 if (state.collapsedFiles.has(key)) state.collapsedFiles.delete(key);
                 else state.collapsedFiles.add(key);
                 applyFolds();
@@ -2137,48 +3067,16 @@ function on_review_mouse_click(data: {
         return;
     }
 
-    // Click in the file sidebar: jump to that file and hand focus to the
-    // diff so the user can immediately keep navigating.
-    if (data.buffer_id === state.panelBuffers["files"]) {
-        // Directory header click: toggle that group's collapse.
-        const dirKey = state.filesPanelDirByRow[data.buffer_row + 1];
-        if (dirKey) {
-            if (state.collapsedDirs.has(dirKey)) state.collapsedDirs.delete(dirKey);
-            else state.collapsedDirs.add(dirKey);
-            editor.setPanelContent(state.groupId, "files", buildFilesPanelEntries());
-            return;
-        }
-        const key = state.filesPanelByRow[data.buffer_row + 1];
-        if (key) {
-            const file = state.files.find(f => fileKey(f) === key);
-            if (file) {
-                if (state.focusOnly) {
-                    // Focus mode: switch the center to the clicked file
-                    // (light refresh — center + sidebar + sticky only).
-                    state.filesCurrentKey = key;
-                    refreshFocusedFile();
-                } else {
-                    jumpToFile(file);
-                }
-                editor.focusBufferGroupPanel(state.groupId, "diff");
-            }
-        }
-        return;
-    }
+    // The FILES sidebar is a Tree widget: its rows, disclosure glyphs and
+    // header button all report through `widget_event`, so a raw click in
+    // that buffer has nothing left to do here.
+    if (data.buffer_id === state.panelBuffers["files"]) return;
 
     // Click in the comments panel: jump to the comment's location and
     // hand focus to the diff so the user can immediately keep navigating.
-    if (data.buffer_id === commentsId) {
-        const targetRow1 = data.buffer_row + 1;
-        const commentId = state.commentsByRow[targetRow1];
-        if (commentId) {
-            state.commentsSelectedRow = targetRow1;
-            jumpToComment(commentId);
-            editor.focusBufferGroupPanel(state.groupId, "diff");
-            editor.setPanelContent(state.groupId, "comments", buildCommentsPanelEntries());
-        }
-        return;
-    }
+    // The COMMENTS rail is a List widget: its rows report through
+    // `widget_event`, so a raw click there has nothing left to do here.
+    if (data.buffer_id === commentsId) return;
 }
 registerHandler("on_review_mouse_click", on_review_mouse_click);
 
@@ -2197,51 +3095,44 @@ function jumpToComment(commentId: string): void {
     // jumpDiffCursorToRow path is inert when the composite is showing). Switch
     // to the comment's file if needed and rebuild focused on that hunk.
     if (state.centerComposite && cFile) {
-        const fileHunks = state.hunks.filter(
-            h => h.file === hunk.file && (h.gitStatus || 'unstaged') === hunk.gitStatus
-        );
+        const fileHunks = hunksForKey(fileKeyOf(hunk.file, hunk.gitStatus || 'unstaged'));
         const idx = Math.max(0, fileHunks.findIndex(h => h.id === hunk.id));
         state.filesCurrentKey = fileKey(cFile);
         state.commentsHighlightId = commentId;
         void (async () => {
             await buildCenterComposite(idx);
             if (state.groupId !== null && state.panelBuffers["files"] !== undefined) {
-                editor.setPanelContent(state.groupId, "files", buildFilesPanelEntries());
-                scrollFilesToSelected();
+                renderFilesPanel();
             }
             if (state.groupId !== null) {
-                editor.setPanelContent(state.groupId, "comments", buildCommentsPanelEntries());
+                renderCommentsPanel();
             }
             refreshStickyHeader(0);
         })();
         return;
     }
 
-    // Auto-expand whatever's between the cursor and this comment.
+    // Auto-expand whatever's between the cursor and this comment. Two
+    // different costs hide here: revealing a collapse is a fold change,
+    // while changing which file the centre carries is a real relayout.
+    let revealed = false;
     let needRebuild = false;
-    if (hunk.gitStatus && state.collapsedSections.has(hunk.gitStatus)) {
-        state.collapsedSections.delete(hunk.gitStatus);
-        needRebuild = true;
-    }
+    if (hunk.gitStatus) revealed = state.collapsedSections.delete(hunk.gitStatus) || revealed;
     const file = state.files.find(f => f.path === hunk.file && f.category === hunk.gitStatus);
     if (file) {
         const key = fileKey(file);
-        // Focus mode: the comment may live in a file other than the one
-        // shown in the center. Switch focus so the anchor row exists.
-        if (state.focusOnly && key !== state.filesCurrentKey) {
+        // The comment may live in a file the center isn't carrying — the
+        // composite draws one file. Make it the current file so the anchor
+        // row exists after the rebuild.
+        if (!fileBodyRendered(key)) {
             state.filesCurrentKey = key;
             needRebuild = true;
         }
-        if (state.collapsedFiles.has(key)) {
-            state.collapsedFiles.delete(key);
-            needRebuild = true;
-        }
+        revealed = state.collapsedFiles.delete(key) || revealed;
     }
-    if (state.collapsedHunks.has(hunk.id)) {
-        state.collapsedHunks.delete(hunk.id);
-        needRebuild = true;
-    }
+    revealed = state.collapsedHunks.delete(hunk.id) || revealed;
     if (needRebuild) updateMagitDisplay();
+    else if (revealed) applyFolds();
     // Pin this comment as the highlighted one BEFORE jumping. Any
     // subsequent cursor_moved event that re-derives the highlight
     // will recompute the same id; doing it eagerly avoids a flicker
@@ -2250,7 +3141,7 @@ function jumpToComment(commentId: string): void {
     const prevHighlight = state.commentsHighlightId;
     state.commentsHighlightId = commentId;
     if (state.groupId !== null && prevHighlight !== commentId) {
-        editor.setPanelContent(state.groupId, "comments", buildCommentsPanelEntries());
+        renderCommentsPanel();
     }
     // Prefer the diff line the comment is anchored to (line-based);
     // fall back to the hunk header if the lookup hasn't seen the
@@ -2261,15 +3152,118 @@ function jumpToComment(commentId: string): void {
     if (hunkRow !== undefined) jumpDiffCursorToRow(hunkRow);
 }
 
+/** Milliseconds of quiet before a resized side panel is repainted.
+ *
+ *  A divider drag delivers a `viewport_changed` per column crossed. The
+ *  host has already re-laid the panes out by then — this only defers the
+ *  panel's *content* rebuild, so the drag itself stays smooth and the
+ *  content catches up the moment the pointer settles. */
+const PANEL_RELAYOUT_DEBOUNCE_MS = 60;
+
+const panelRelayoutTimers: { files: number | null; comments: number | null; diff: number | null } = {
+    files: null,
+    comments: null,
+    diff: null,
+};
+
+const RELAYOUT_HANDLERS: Record<'files' | 'comments' | 'diff', string> = {
+    files: "review_relayout_files",
+    comments: "review_relayout_comments",
+    diff: "review_relayout_diff",
+};
+
+/** Repaint `panel` once its size stops changing. */
+function schedulePanelRelayout(panel: 'files' | 'comments' | 'diff'): void {
+    const pending = panelRelayoutTimers[panel];
+    if (pending !== null) editor.clearInterval(pending);
+    panelRelayoutTimers[panel] = editor.setTimeout(
+        PANEL_RELAYOUT_DEBOUNCE_MS,
+        RELAYOUT_HANDLERS[panel],
+    );
+}
+
+function review_relayout_files(): void {
+    panelRelayoutTimers.files = null;
+    if (state.groupId === null) return;
+    renderFilesPanel();
+}
+registerHandler("review_relayout_files", review_relayout_files);
+
+function review_relayout_comments(): void {
+    panelRelayoutTimers.comments = null;
+    if (state.groupId === null) return;
+    renderCommentsPanel();
+}
+registerHandler("review_relayout_comments", review_relayout_comments);
+
+/** The stream's inline comment boxes are wrapped to the diff panel's
+ *  width, so a width the layout did not know about leaves them the wrong
+ *  shape. Re-emit the content once the width settles — and *only* the
+ *  content: this runs off a timer, at a moment nobody asked for, so it
+ *  must not swap which buffer the panel shows or move focus the way a
+ *  full `renderCenter` does. Firing that in the middle of a drill-down
+ *  would pull the reader out of the composite they just opened. The
+ *  signature check inside `mountStreamContent` makes it a no-op when the
+ *  width is what the content was already built to. */
+function review_relayout_diff(): void {
+    panelRelayoutTimers.diff = null;
+    if (state.groupId === null || state.reviewLayout === 'side-by-side') return;
+    if (state.centerComposite !== null) return;
+    mountStreamContent();
+}
+registerHandler("review_relayout_diff", review_relayout_diff);
+
 function on_review_viewport_changed(data: { split_id: number; buffer_id: number; top_byte: number; top_line: number | null; width: number; height: number }): void {
     if (state.groupId === null) return;
+    // The toolbar spans the group, so its width is the group's — the basis
+    // `panelWidthOf` takes a share of for a panel not yet reported. Nothing
+    // else to do with it: the host lays the toolbar's own row out.
+    if (data.buffer_id === state.panelBuffers["toolbar"]) {
+        state.panelWidths["toolbar"] = data.width;
+        return;
+    }
+    // Side panels: remember how wide the host actually made them, and
+    // repaint once when that changes so the header's `✕` lands on the
+    // right edge instead of a guessed column.
+    for (const panel of ['files', 'comments'] as const) {
+        if (data.buffer_id !== state.panelBuffers[panel]) continue;
+        if (state.panelWidths[panel] === data.width
+            && state.panelHeights[panel] === data.height) return;
+        state.panelWidths[panel] = data.width;
+        state.panelHeights[panel] = data.height;
+        // Record the size synchronously — everything laid out against it
+        // (`panelWidthOf`, the header's `✕` column) must see the new width
+        // at once — but coalesce the repaint. Dragging the divider walks
+        // through every intervening width, and each one would otherwise
+        // rebuild the whole tree and ship it across the IPC boundary; the
+        // intermediate widths are never worth painting, only the one the
+        // user stops on.
+        schedulePanelRelayout(panel);
+        return;
+    }
     if (data.buffer_id !== state.panelBuffers["diff"]) return;
+    // Inline comment boxes are laid out to this width (see
+    // `diffPanelWidth`), so it is part of the stream's signature: record
+    // it synchronously, then re-render once the width settles. Dragging a
+    // divider walks through every intervening width and none of them is
+    // worth a layout of the whole stream.
+    const widthChanged = state.panelWidths["diff"] !== data.width;
+    state.panelWidths["diff"] = data.width;
+    if (widthChanged) schedulePanelRelayout('diff');
+    // Height too, so `refreshViewportDimensions` has an authoritative
+    // size for the diff pane and never has to trust whichever split
+    // happens to hold focus.
+    state.panelHeights["diff"] = data.height;
     // Prefer top_line when the host provides it. Virtual buffers may not
     // have line metadata, in which case top_line is null — fall back to
     // converting top_byte using our own row-byte index.
     const topRow = data.top_line ?? rowFromByte(data.top_byte);
     state.diffViewportTopRow = topRow;
     refreshStickyHeader(topRow);
+    if (wordDiffWindow === null || topRow + 1 < wordDiffWindow.first
+        || topRow + data.height > wordDiffWindow.last) {
+        paintWordDiff(topRow);
+    }
 }
 registerHandler("on_review_viewport_changed", on_review_viewport_changed);
 
@@ -2291,24 +3285,23 @@ function rowFromByte(topByte: number): number {
 }
 
 /**
- * Repaint the synthetic "cursor line" highlight in the diff panel.
+ * Ask the host for the "cursor line" bar in the diff panel.
  *
- * The diff panel buffer is created with show_cursors=true so the editor
- * moves the cursor natively, but a single-line bg overlay on the cursor row
- * gives a much more visible "you are here" indicator than the bare caret —
- * which matches the magit-style aesthetic and is what the user expects.
+ * The panel buffer is created with show_cursors=true so the editor moves
+ * the cursor natively, but a single-line bg bar on the cursor row gives a
+ * much more visible "you are here" indicator than the bare caret — which
+ * matches the magit-style aesthetic and is what the user expects.
+ *
+ * Declared once, not repainted: the host re-derives the bar's row from the
+ * cursor of the frame it is drawing. Painting it here from `cursor_moved`
+ * instead left it one row behind for as long as an arrow key repeated —
+ * the hook only fires after the frame that already moved the caret, so
+ * every repaint answered the previous frame's cursor.
  */
-function applyCursorLineOverlay(panel: 'diff'): void {
-    const bufId = state.panelBuffers[panel];
+function declareCursorLineBar(): void {
+    const bufId = state.panelBuffers["diff"];
     if (bufId === undefined) return;
-    editor.clearNamespace(bufId, CURSOR_LINE_NS);
-    const offsets = state.diffLineByteOffsets;
-    if (offsets.length < 2) return;
-    const idx = Math.max(0, Math.min(state.diffCursorRow - 1, offsets.length - 2));
-    const start = offsets[idx];
-    const end = offsets[idx + 1];
-    if (end <= start) return;
-    editor.addOverlay(bufId, CURSOR_LINE_NS, start, end, {
+    editor.setCursorLineOverlay(bufId, {
         bg: STYLE_SELECTED_BG,
         extendToLineEnd: true,
     });
@@ -2367,12 +3360,12 @@ function currentFileFromCursor(): FileEntry | null {
     return bestFile;
 }
 
-/** Look up the entry's properties for the cursor's current row. Uses
- *  the per-row props map populated during build, which is exact —
- *  unlike `editor.getTextPropertiesAtCursor`, which can return the
- *  previous row's properties when the cursor sits at a row boundary. */
+/** The properties of the cursor's current row, derived from the hunk
+ *  layout (`propsAtRow`) — exact, unlike `editor.getTextPropertiesAtCursor`,
+ *  which can return the previous row's properties when the cursor sits at
+ *  a row boundary. */
 function propsAtCursorRow(): Record<string, unknown> | null {
-    return state.entryPropsByRow[state.diffCursorRow] || null;
+    return propsAtRow(state.diffCursorRow);
 }
 
 function sectionUnderCursor(): string | null {
@@ -2457,8 +3450,9 @@ registerHandler("review_toggle_file_collapse", review_toggle_file_collapse);
  * linear scan of state.files for every comment in the sort comparator.
  */
 function commentsInPanelOrder(): ReviewComment[] {
+    const ordered = filesInDisplayOrder();
     const fileIdx: Record<string, number> = {};
-    for (let i = 0; i < state.files.length; i++) fileIdx[state.files[i].path] = i;
+    for (let i = 0; i < ordered.length; i++) fileIdx[ordered[i].path] = i;
     return [...state.comments].sort((a, b) => {
         const fa = fileIdx[a.file] ?? Number.MAX_SAFE_INTEGER;
         const fb = fileIdx[b.file] ?? Number.MAX_SAFE_INTEGER;
@@ -2470,13 +3464,14 @@ function commentsInPanelOrder(): ReviewComment[] {
 function selectAndJumpToComment(c: ReviewComment) {
     if (state.groupId === null) return;
     jumpToComment(c.id);
-    // Find the comment's row in the panel (header is row 1, comments start at 2).
-    const sorted = commentsInPanelOrder();
-    const idx = sorted.findIndex(x => x.id === c.id);
-    if (idx >= 0) {
-        state.commentsSelectedRow = idx + 2;
-        editor.setPanelContent(state.groupId, "comments", buildCommentsPanelEntries());
-    }
+    state.commentsSelectedId = c.id;
+    renderCommentsPanel();
+}
+
+/** Index of the selected comment among the comments, or -1. */
+function selectedCommentIndex(): number {
+    if (state.commentsSelectedId === null) return -1;
+    return commentsInPanelOrder().findIndex(c => c.id === state.commentsSelectedId);
 }
 
 function review_next_comment() {
@@ -2485,9 +3480,7 @@ function review_next_comment() {
         return;
     }
     const sorted = commentsInPanelOrder();
-    // Determine the comment-id currently under the diff cursor (if any).
-    const currentRow = state.commentsSelectedRow;
-    const currentIdx = currentRow >= 2 ? currentRow - 2 : -1;
+    const currentIdx = selectedCommentIndex();
     const nextIdx = Math.min(sorted.length - 1, currentIdx + 1);
     if (nextIdx === currentIdx && currentIdx >= 0) return;
     selectAndJumpToComment(sorted[nextIdx >= 0 ? nextIdx : 0]);
@@ -2500,9 +3493,8 @@ function review_prev_comment() {
         return;
     }
     const sorted = commentsInPanelOrder();
-    const currentRow = state.commentsSelectedRow;
-    const currentIdx = currentRow >= 2 ? currentRow - 2 : sorted.length;
-    const prevIdx = Math.max(0, currentIdx - 1);
+    const cur = selectedCommentIndex();
+    const prevIdx = Math.max(0, (cur < 0 ? sorted.length : cur) - 1);
     selectAndJumpToComment(sorted[prevIdx]);
 }
 registerHandler("review_prev_comment", review_prev_comment);
@@ -2514,20 +3506,26 @@ registerHandler("review_prev_comment", review_prev_comment);
  */
 function review_focus_comments() {
     if (state.groupId === null) return;
+    // Asking for the comments panel is asking to see it.
+    setReviewPanelVisible('comments', true);
     reviewSetFocus('comments');
     // Ensure the selection highlight shows immediately.
-    if (state.commentsSelectedRow < 2 && state.comments.length > 0) {
-        state.commentsSelectedRow = 2;
+    if (state.commentsSelectedId === null && state.comments.length > 0) {
+        state.commentsSelectedId = commentsInPanelOrder()[0].id;
     }
-    editor.setPanelContent(state.groupId, "comments", buildCommentsPanelEntries());
+    renderCommentsPanel();
 }
 registerHandler("review_focus_comments", review_focus_comments);
 
 /** The Tab/BackTab focus ring: file list → diff → comments → (wrap).
- *  Comments join the ring only when there are comments to step through. */
+ *  A hidden panel is not in the ring — there is nothing on screen to move
+ *  a cursor into. Comments join it only when there are comments to step
+ *  through. */
 function reviewFocusOrder(): Array<'files' | 'diff' | 'comments'> {
-    const order: Array<'files' | 'diff' | 'comments'> = ['files', 'diff'];
-    if (state.comments.length > 0) order.push('comments');
+    const order: Array<'files' | 'diff' | 'comments'> = [];
+    if (panelVisible('files')) order.push('files');
+    order.push('diff');
+    if (panelVisible('comments') && state.comments.length > 0) order.push('comments');
     return order;
 }
 
@@ -2540,10 +3538,15 @@ function reviewSetFocus(panel: 'files' | 'diff' | 'comments'): void {
     // async, but a key handler firing immediately after must see the new
     // focus to route the next arrow correctly.
     state.focusPanel = panel;
-    // Pin the FILES cursor to the start of the selected row. Without this the
-    // panel keeps whatever column the hidden cursor last had, and focusing it
-    // can scroll the sidebar horizontally to a long path's end-of-line.
-    if (panel === 'files') scrollFilesToSelected();
+    // A freshly focused sidebar needs a selected row for its keys to act
+    // on, and the row scrolled into view.
+    if (panel === 'files') {
+        selectedSidebarFile();
+        renderFilesPanel();
+        if (filesPanel !== null) {
+            filesPanel.setFocusKey(filterEditing ? FILES_FILTER_KEY : FILES_TREE_KEY);
+        }
+    }
     refreshFocusIndicators();
 }
 
@@ -2599,27 +3602,33 @@ registerHandler("review_focus_prev", review_focus_prev);
  * jump the diff cursor to it (auto-expanding the file if collapsed).
  */
 function review_open_selected_comment() {
-    if (state.commentsSelectedRow < 2) return;
-    const commentId = state.commentsByRow[state.commentsSelectedRow];
-    if (!commentId) return;
-    jumpToComment(commentId);
+    if (state.commentsSelectedId === null) return;
+    jumpToComment(state.commentsSelectedId);
 }
 registerHandler("review_open_selected_comment", review_open_selected_comment);
 
 function review_comments_select_next() {
-    if (state.groupId === null) return;
-    if (state.comments.length === 0) return;
-    const total = state.comments.length;
-    const currentIdx = Math.max(0, state.commentsSelectedRow - 2);
-    const nextIdx = Math.min(total - 1, currentIdx + 1);
-    state.commentsSelectedRow = nextIdx + 2;
-    editor.setPanelContent(state.groupId, "comments", buildCommentsPanelEntries());
+    if (state.groupId === null || state.comments.length === 0) return;
+    const sorted = commentsInPanelOrder();
+    const next = Math.min(sorted.length - 1, selectedCommentIndex() + 1);
+    state.commentsSelectedId = sorted[Math.max(0, next)].id;
+    renderCommentsPanel();
 }
 registerHandler("review_comments_select_next", review_comments_select_next);
 
 function review_enter_dispatch() {
     if (state.focusPanel === 'comments') {
         review_open_selected_comment();
+        return;
+    }
+    // FILES: Enter is "take me there". The selection already moved the
+    // diff to that file, so Enter hands focus to it — the same place Tab
+    // would put you, without the keystroke reaching the diff buffer (where
+    // it used to land on the file header and fold it). On a directory row
+    // it goes to the tree, which folds or unfolds it.
+    if (state.focusPanel === 'files') {
+        if (filesSelectedNodeKey.startsWith("file:")) reviewSetFocus('diff');
+        else filesKey("Enter");
         return;
     }
     // Side-by-side center: Enter opens the file version under the cursor
@@ -2669,24 +3678,23 @@ function review_open_working_file() {
         editor.setStatus(editor.t("status.file_deleted_no_open") || "File was deleted — no working copy to open");
         return;
     }
-    const props = propsAtCursorRow();
+    const r = streamRowAt(state.diffCursorRow);
     let line: number | undefined;
-    if (props) {
-        const t = props["type"];
-        if (t === 'add' || t === 'remove' || t === 'context') {
-            const nl = props["newLine"];
-            if (typeof nl === 'number') {
-                line = nl;
-            } else {
-                // Pure-removed row: scan forward to the next row carrying a
-                // newLine, so we land where the deletion happened. Stop at the
-                // end of the stream or when we leave this file's diff body.
-                const maxRow = state.diffLineByteOffsets.length - 1;
-                for (let r = state.diffCursorRow + 1; r <= maxRow; r++) {
-                    const p = state.entryPropsByRow[r];
-                    if (!p) continue;
-                    if (typeof p["newLine"] === 'number') { line = p["newLine"] as number; break; }
-                    if (p["type"] === 'file-header' || p["type"] === 'section-header') break;
+    if (r !== null && r.kind === 'line') {
+        line = lineNumbersAt(r.sh.hunk, r.lineIdx).newLine;
+        if (line === undefined) {
+            // Pure-removed row: the deletion happened where the next row
+            // the working file still has sits — in this hunk, or in a
+            // later hunk of the same file.
+            const shs = state.streamHunks;
+            let li = r.lineIdx + 1;
+            for (let i = streamHunkIndexAtRow(state.diffCursorRow);
+                line === undefined && i < shs.length && shs[i].hunk.raw === r.sh.hunk.raw;
+                i++, li = 0) {
+                const h = shs[i].hunk;
+                for (; li < h.lines.length; li++) {
+                    const c = h.lines[li][0];
+                    if (c === ' ' || c === '+') { line = lineNumbersAt(h, li).newLine; break; }
                 }
             }
         }
@@ -2697,14 +3705,27 @@ function review_open_working_file() {
 registerHandler("review_open_working_file", review_open_working_file);
 
 function review_comments_select_prev() {
-    if (state.groupId === null) return;
-    if (state.comments.length === 0) return;
-    const currentIdx = Math.max(0, state.commentsSelectedRow - 2);
-    const prevIdx = Math.max(0, currentIdx - 1);
-    state.commentsSelectedRow = prevIdx + 2;
-    editor.setPanelContent(state.groupId, "comments", buildCommentsPanelEntries());
+    if (state.groupId === null || state.comments.length === 0) return;
+    const sorted = commentsInPanelOrder();
+    const cur = selectedCommentIndex();
+    state.commentsSelectedId = sorted[Math.max(0, (cur < 0 ? sorted.length : cur) - 1)].id;
+    renderCommentsPanel();
 }
 registerHandler("review_comments_select_prev", review_comments_select_prev);
+
+/** Home / End in the COMMENTS rail: first / last comment. */
+function review_comments_select_first() {
+    if (state.groupId === null || state.comments.length === 0) return;
+    state.commentsSelectedId = commentsInPanelOrder()[0].id;
+    renderCommentsPanel();
+}
+
+function review_comments_select_last() {
+    if (state.groupId === null || state.comments.length === 0) return;
+    const sorted = commentsInPanelOrder();
+    state.commentsSelectedId = sorted[sorted.length - 1].id;
+    renderCommentsPanel();
+}
 
 /**
  * Visual line-selection mode. Activates a multi-row selection rooted
@@ -2737,7 +3758,6 @@ function review_visual_cancel() {
         const diffId = state.panelBuffers["diff"];
         if (diffId !== undefined) editor.clearNamespace(diffId, "review-line-selection");
     }
-    applyCursorLineOverlay('diff');
 }
 registerHandler("review_visual_cancel", review_visual_cancel);
 
@@ -2788,14 +3808,22 @@ function selectionLineRange(): { hunk: Hunk; range: { start: number; end: number
     // `hunkHeaderRows`, which overshot whenever the focused hunk wasn't the
     // first one rendered (e.g. a line in the second file), yielding a null
     // range and the spurious "no add/remove lines" error.
-    const headerRow = state.hunkRowByHunkId[hunk.id];
-    if (headerRow === undefined) return null;
+    const sh = state.streamHunkById.get(hunk.id);
+    if (sh === undefined) return null;
 
     const lo = Math.min(sel.startRow, sel.endRow);
     const hi = Math.max(sel.startRow, sel.endRow);
-    const startInHunk = lo - headerRow - 1; // -1 because the header row itself is not in hunk.lines
-    const endInHunk = hi - headerRow - 1;
-    if (startInHunk < 0 || endInHunk >= hunk.lines.length) return null;
+    // A selection edge on a note box takes the line next to it, inward.
+    const lineAt = (row: number, roundDown: boolean): number | null => {
+        if (row <= sh.headerRow || row >= sh.headerRow + sh.rowCount) return null;
+        const body = bodyRowOf(sh, row - sh.headerRow - 1);
+        if ('lineIdx' in body) return body.lineIdx;
+        return roundDown ? body.note.afterLine : body.note.afterLine + 1;
+    };
+    const startInHunk = lineAt(lo, false);
+    const endInHunk = lineAt(hi, true);
+    if (startInHunk === null || endInHunk === null) return null;
+    if (startInHunk > endInHunk || endInHunk >= hunk.lines.length) return null;
 
     // Reject context-only selections.
     let hasChange = false;
@@ -2834,8 +3862,8 @@ async function applyLineSelection(action: 'stage' | 'unstage' | 'discard') {
         discard: "discarded",
     };
     const past = pastTense[action];
-    editor.setStatus(editor.t(`status.lines_${past}`) || `Lines ${past}`);
     await refreshMagitData();
+    setReviewConfirmation(editor.t(`status.lines_${past}`) || `Lines ${past}`);
 }
 
 function review_collapse_all() {
@@ -2866,41 +3894,91 @@ function review_expand_all() {
 }
 registerHandler("review_expand_all", review_expand_all);
 
+// The diff panel's own mode binds ↑/↓ straight to the built-in motions
+// (see `DIFF_NATIVE_MOTION`), so these two run only for a keystroke that
+// arrived while a side panel held focus. The line-selection follow-up that
+// used to live here now hangs off `cursor_moved`, which sees every motion
+// including the native ones.
 function review_nav_up() {
     if (state.focusPanel === 'comments') { review_comments_select_prev(); return; }
-    if (state.focusPanel === 'files') { review_goto_file(-1); return; }
+    if (state.focusPanel === 'files') { filesKey("Up"); return; }
     editor.executeAction("move_up");
-    if (state.lineSelection) {
-        // executeAction has already moved the cursor; sync the selection.
-        // Ensure we don't extend out of the hunk.
-        const newRow = Math.max(1, state.lineSelection.endRow - 1);
-        state.lineSelection.endRow = newRow;
-        paintLineSelectionOverlay();
-    }
 }
 registerHandler("review_nav_up", review_nav_up);
 
 function review_nav_down() {
     if (state.focusPanel === 'comments') { review_comments_select_next(); return; }
-    if (state.focusPanel === 'files') { review_goto_file(1); return; }
+    if (state.focusPanel === 'files') { filesKey("Down"); return; }
     editor.executeAction("move_down");
-    if (state.lineSelection) {
-        state.lineSelection.endRow = state.lineSelection.endRow + 1;
-        paintLineSelectionOverlay();
-    }
 }
 registerHandler("review_nav_down", review_nav_down);
 
+/** Left / Right belong to whichever panel has focus. In the diff they pan
+ *  the (unwrapped) stream horizontally; in the FILES sidebar the host's
+ *  tree folds and unfolds with them — a sidebar keystroke must never
+ *  reach through and scroll the diff behind it. */
+function review_nav_left() {
+    if (state.focusPanel === 'files') { filesKey("Left"); return; }
+    if (state.focusPanel === 'comments') return;
+    editor.executeAction("move_left");
+}
+registerHandler("review_nav_left", review_nav_left);
+
+function review_nav_right() {
+    if (state.focusPanel === 'files') { filesKey("Right"); return; }
+    if (state.focusPanel === 'comments') return;
+    editor.executeAction("move_right");
+}
+registerHandler("review_nav_right", review_nav_right);
+
+/** Hand a keystroke to the FILES panel's focused widget. The host's
+ *  smart-key dispatch does the rest: Up/Down move the tree's selection,
+ *  Left/Right fold and unfold, PageUp/PageDown page it, Enter activates —
+ *  and it scrolls the selection into view itself. */
+function filesKey(name: string): void {
+    if (filesPanel === null) return;
+    filesPanel.command(key(name));
+}
+
+/** The file the sidebar points at, falling back to the first visible one.
+ *  In the expanded stream the selection tracks the diff cursor, which sits
+ *  on a section header at startup — with no fallback the sidebar's own keys
+ *  would have nothing to act on until you scrolled into a file. */
+function selectedSidebarFile(): FileEntry | null {
+    const current = state.files.find(f => fileKey(f) === state.filesCurrentKey);
+    if (current) return current;
+    const vis = visibleFiles();
+    if (vis.length === 0) return null;
+    state.filesCurrentKey = fileKey(vis[0]);
+    return vis[0];
+}
+
+/** Home / End in a side panel jump to its first / last row; in the diff
+ *  they keep the editor's start-of-line / end-of-line meaning. */
+function review_nav_home() {
+    if (state.focusPanel === 'files') { filesKey("Home"); return; }
+    if (state.focusPanel === 'comments') { review_comments_select_first(); return; }
+    editor.executeAction("move_line_start");
+}
+registerHandler("review_nav_home", review_nav_home);
+
+function review_nav_end() {
+    if (state.focusPanel === 'files') { filesKey("End"); return; }
+    if (state.focusPanel === 'comments') { review_comments_select_last(); return; }
+    editor.executeAction("move_line_end");
+}
+registerHandler("review_nav_end", review_nav_end);
+
 function review_page_up() {
     if (state.focusPanel === 'comments') { review_comments_select_prev(); return; }
-    if (state.focusPanel === 'files') { review_goto_file(-1); return; }
+    if (state.focusPanel === 'files') { filesKey("PageUp"); return; }
     editor.executeAction("move_page_up");
 }
 registerHandler("review_page_up", review_page_up);
 
 function review_page_down() {
     if (state.focusPanel === 'comments') { review_comments_select_next(); return; }
-    if (state.focusPanel === 'files') { review_goto_file(1); return; }
+    if (state.focusPanel === 'files') { filesKey("PageDown"); return; }
     editor.executeAction("move_page_down");
 }
 registerHandler("review_page_down", review_page_down);
@@ -3002,24 +4080,9 @@ async function applyHunkPatch(patch: string, flags: string[]): Promise<boolean> 
 }
 
 /**
- * Merge all text-property records at the cursor of the given panel buffer
- * into a single object. There's typically only one record covering each
- * cursor position; merging keeps callers simple.
- */
-function readPropsAtCursor(panel: 'files' | 'diff'): Record<string, unknown> | null {
-    const bufId = state.panelBuffers[panel];
-    if (bufId === undefined) return null;
-    const records = editor.getTextPropertiesAtCursor(bufId);
-    if (!records || records.length === 0) return null;
-    const merged: Record<string, unknown> = {};
-    for (const r of records) Object.assign(merged, r);
-    return merged;
-}
-
-/**
  * Get the hunk under the cursor in the diff panel, or null.
  *
- * Reads the `hunkId` text property embedded by `buildDiffPanelEntries`. Falls
+ * Reads the row's `hunkId` (see `propsAtRow`). Falls
  * back to the first hunk of the selected file when the cursor is somewhere
  * without a hunkId (e.g. the panel header) so commands like `s` still do
  * something useful.
@@ -3037,9 +4100,7 @@ async function getHunkAtCursor(): Promise<Hunk | null> {
         // Fallback: the focused file's first hunk.
         const file = state.files.find(f => fileKey(f) === cc.fileKey);
         if (file) {
-            return state.hunks.find(
-                h => h.file === file.path && (h.gitStatus || 'unstaged') === file.category
-            ) || null;
+            return hunksForFile(file)[0] || null;
         }
         return null;
     }
@@ -3056,9 +4117,7 @@ function getHunkAtDiffCursor(): Hunk | null {
     // Fallback: first hunk for the file under the cursor (if any).
     const cur = currentFileFromCursor();
     if (!cur) return null;
-    return state.hunks.find(
-        h => h.file === cur.path && h.gitStatus === cur.category
-    ) || null;
+    return hunksForFile(cur)[0] || null;
 }
 
 /**
@@ -3155,8 +4214,8 @@ async function stageHunk(hunk: Hunk | null) {
         const ok = await applyHunkPatch(patch, ["--cached"]);
         if (!ok) return;
     }
-    editor.setStatus(editor.t("status.hunk_staged") || "Hunk staged");
     await refreshMagitData();
+    setReviewConfirmation(editor.t("status.hunk_staged") || "Hunk staged");
 }
 
 async function unstageHunk(hunk: Hunk | null) {
@@ -3168,8 +4227,8 @@ async function unstageHunk(hunk: Hunk | null) {
     const patch = buildHunkPatch(hunk.file, hunk);
     const ok = await applyHunkPatch(patch, ["--cached", "--reverse"]);
     if (!ok) return;
-    editor.setStatus(editor.t("status.hunk_unstaged") || "Hunk unstaged");
     await refreshMagitData();
+    setReviewConfirmation(editor.t("status.hunk_unstaged") || "Hunk unstaged");
 }
 
 /**
@@ -3189,20 +4248,135 @@ function rememberPendingHunkAnchor(hunkId: string | null) {
 
 let pendingDiscardFile: FileEntry | null = null;
 
+/**
+ * Every path a file-level discard has to put back: the file itself, plus
+ * the pre-rename path when git reports the change as a rename (`R`). A
+ * staged rename is one change spread over two pathspecs, and restoring
+ * only the new one leaves the old one deleted in the index.
+ */
+function discardPathsOf(f: FileEntry): string[] {
+    return f.origPath && f.origPath !== f.path ? [f.path, f.origPath] : [f.path];
+}
+
+/** First line of a git/`rm` stderr, for a one-line status message. */
+function firstErrorLine(raw: string): string {
+    const line = (raw || "").split("\n").map(s => s.trim()).find(s => s.length > 0);
+    return line ?? "";
+}
+
+/**
+ * Does this file still have changes git knows about? Asked *after* a
+ * discard, of git rather than of our own state, because the whole point
+ * of #2318 is that the plugin used to announce a destructive action it
+ * had not performed.
+ */
+async function fileIsClean(paths: string[]): Promise<boolean | null> {
+    const res = await editor.spawnProcess(
+        "git",
+        ["--no-optional-locks", "status", "--porcelain", "-z", "-uall", "--", ...paths],
+        gitCwd(),
+    );
+    if (res.exit_code !== 0) return null;
+    return res.stdout.split('\0').every(entry => entry.trim() === '');
+}
+
+/**
+ * File-level discard: put the file back to HEAD — index *and* working
+ * tree — and report only what actually happened.
+ *
+ * The old implementation ran `git checkout -- <path>`, which rewrites the
+ * working tree *from the index*. For a fully-staged change the two already
+ * agree, so it was a no-op — and the caller announced `Discarded: <file>`
+ * regardless (#2318). `git restore --source=HEAD --staged --worktree`
+ * covers every shape the panel can show: a plain modification, a staged
+ * add (which `git checkout HEAD -- <path>` cannot touch, the path not
+ * being in HEAD at all), a staged delete, and a rename's two paths.
+ *
+ * The result is then verified against `git status` rather than against the
+ * command's exit code alone, so a discard that silently changes nothing
+ * can never again be reported as success.
+ */
+async function discardFileToHead(f: FileEntry): Promise<{ ok: boolean; detail: string }> {
+    const cwd = gitCwd();
+    const paths = discardPathsOf(f);
+
+    if (f.category === 'untracked') {
+        const rm = await editor.spawnProcess("rm", ["--", ...paths], cwd);
+        if (rm.exit_code !== 0) return { ok: false, detail: firstErrorLine(rm.stderr) };
+    } else {
+        const res = await editor.spawnProcess(
+            "git",
+            ["restore", "--source=HEAD", "--staged", "--worktree", "--", ...paths],
+            cwd,
+        );
+        if (res.exit_code !== 0) return { ok: false, detail: firstErrorLine(res.stderr) };
+    }
+
+    const clean = await fileIsClean(paths);
+    if (clean === null) return { ok: false, detail: tr("status.discard_unverified") ?? "could not verify" };
+    if (!clean) return { ok: false, detail: tr("status.discard_still_changed") ?? "the change is still there" };
+    return { ok: true, detail: "" };
+}
+
+/**
+ * The prompt for `D`.
+ *
+ * The wording ("Discard changes in <file>", "Permanently lose changes",
+ * "This cannot be undone") describes a discard of the *file*, and that is
+ * now what the action does — index and working tree both go back to HEAD.
+ * When the file also has staged content the description spells that out,
+ * because a file can be listed under UNSTAGED while carrying a staged
+ * change the user would not expect this key to touch.
+ */
+function startDiscardFilePrompt(f: FileEntry): void {
+    pendingDiscardFile = f;
+    // A file the repo has never had — untracked, or added to the index —
+    // is not restored by this, it is removed. `git restore --source=HEAD`
+    // on a path HEAD does not carry deletes it, so the prompt has to say
+    // "Delete": "discard changes in" describes an edit surviving as a
+    // file, which is not what happens.
+    //
+    // Asked of the *path*, not of the row under the cursor. `git status`
+    // reports an added-then-edited file (`AM`) as two entries, and the
+    // unstaged one carries `M` — so a row-local test called `D` on it a
+    // discard of changes and then deleted the file, which is the same
+    // dialog/action mismatch #2318 is about, one row over.
+    const removesFile = f.category === 'untracked'
+        || state.files.some(o => o.path === f.path && o.category === 'staged'
+            && (o.status === 'A' || o.status === 'C'));
+    const action = removesFile ? "Delete" : "Discard changes in";
+    // `git status` reports a file changed on both sides as two entries, so
+    // the same path can sit under STAGED and under UNSTAGED. Whichever row
+    // the cursor is on, the discard takes both — so the warning has to name
+    // the *other* row, the one the user is not looking at. (Comparing
+    // against `f.category` rather than a fixed 'staged' also stops the
+    // staged row matching itself and warning about what the user just
+    // asked for.)
+    const collateral = f.category === 'untracked'
+        ? null
+        : state.files.find(o => o.path === f.path && o.category !== f.category
+            && o.category !== 'untracked')?.category ?? null;
+    const description = collateral === 'staged'
+        ? (tr("prompt.discard_file_scope") ?? "Discards the staged changes too — back to HEAD")
+        : collateral === 'unstaged'
+            ? (tr("prompt.discard_file_scope_unstaged")
+                ?? "Discards the unstaged changes too — back to HEAD")
+            : (tr("prompt.discard_file_lose") ?? "Permanently lose changes");
+    editor.startPrompt(`${action} "${f.path}"? This cannot be undone.`, "review-discard-confirm");
+    const suggestions: PromptSuggestion[] = [
+        { text: `${action} file`, description, value: "discard" },
+        { text: "Cancel", description: "Keep the file as-is", value: "cancel" },
+    ];
+    editor.setPromptSuggestions(suggestions);
+}
+
 /** Always-file-level discard (D). Acts on the file the cursor is in. */
 function review_discard_file_only() {
     if (state.files.length === 0) return;
     const f = fileHeaderUnderCursor() ?? currentFileFromCursor();
     if (!f) return;
-    pendingDiscardFile = f;
     rememberPendingHunkAnchor(null);
-    const action = f.category === 'untracked' ? "Delete" : "Discard changes in";
-    editor.startPrompt(`${action} "${f.path}"? This cannot be undone.`, "review-discard-confirm");
-    const suggestions: PromptSuggestion[] = [
-        { text: `${action} file`, description: "Permanently lose changes", value: "discard" },
-        { text: "Cancel", description: "Keep the file as-is", value: "cancel" },
-    ];
-    editor.setPromptSuggestions(suggestions);
+    startDiscardFilePrompt(f);
 }
 registerHandler("review_discard_file_only", review_discard_file_only);
 
@@ -3231,15 +4405,8 @@ function review_discard_file() {
     if (!f) return;
 
     // Show confirmation prompt — discard is destructive and irreversible
-    pendingDiscardFile = f;
     rememberPendingHunkAnchor(null);
-    const action = f.category === 'untracked' ? "Delete" : "Discard changes in";
-    editor.startPrompt(`${action} "${f.path}"? This cannot be undone.`, "review-discard-confirm");
-    const suggestions: PromptSuggestion[] = [
-        { text: `${action} file`, description: "Permanently lose changes", value: "discard" },
-        { text: "Cancel", description: "Keep the file as-is", value: "cancel" },
-    ];
-    editor.setPromptSuggestions(suggestions);
+    startDiscardFilePrompt(f);
 }
 registerHandler("review_discard_file", review_discard_file);
 
@@ -3248,24 +4415,160 @@ registerHandler("review_discard_file", review_discard_file);
 
 
 /**
- * Refresh file list and diffs using the new git status approach, then re-render.
+ * A confirmation the status bar holds until the user moves on ("Lines
+ * discarded", "Hunk staged", …).
+ *
+ * Every stage/unstage/discard used to emit its confirmation and then `await
+ * refreshMagitData()`, whose tail calls `updateReviewStatus()` — so the
+ * summary overwrote the confirmation within the same burst and the user saw
+ * it for at most a frame, or not at all (#2420). Holding it here instead of
+ * racing the refresh means `updateReviewStatus` re-renders the confirmation
+ * rather than clobbering it, and there is exactly one place that decides when
+ * it expires.
+ *
+ * `row` anchors the confirmation to the diff row it was issued on. The cursor
+ * restore inside the refresh emits its own `cursor_moved` *after* the
+ * confirmation is set; that echo carries the same row, so it doesn't count as
+ * the user moving on. A real navigation keystroke carries a different row and
+ * clears it.
  */
-async function refreshMagitData() {
+let reviewConfirmation: { text: string; row: number } | null = null;
+
+/** Emit a confirmation and hold it. Call *after* the refresh that follows the
+ * action, so the rebuild's own status update can't land on top of it. */
+function setReviewConfirmation(text: string): void {
+    reviewConfirmation = { text, row: state.diffCursorRow };
+    editor.setStatus(text);
+}
+
+/**
+ * An incremental djb2 over a sequence of fields, with a separator mixed in
+ * after each so `["ab","c"]` and `["a","bc"]` don't collide. Values are only
+ * ever compared against other values from the same builder.
+ */
+function makeHasher(): { field(s: string): void; value(): string } {
+    let h = 5381;
+    return {
+        field(s: string): void {
+            for (let i = 0; i < s.length; i++) h = ((h * 33) ^ s.charCodeAt(i)) >>> 0;
+            h = ((h * 33) ^ 0x1f) >>> 0;
+        },
+        value(): string { return String(h); },
+    };
+}
+
+/**
+ * A fingerprint of everything the stream draws from: which files are in
+ * which section, and the exact text of every hunk line.
+ *
+ * The auto-refresh poll re-reads git on a timer and has to decide whether
+ * anything actually moved. File paths and `+N / -M` counts are not enough
+ * — an external edit can rewrite a line without changing either — so the
+ * hunk bodies go into the hash as well. A hash rather than the strings
+ * themselves because this is held across ticks for the lifetime of the
+ * session.
+ */
+function worktreeDataSignature(
+    files: FileEntry[],
+    hunks: Hunk[],
+    emptyState: EmptyStateReason,
+): string {
+    const h = makeHasher();
+    h.field(emptyState ?? '');
+    for (const f of files) {
+        h.field(f.path); h.field(f.category); h.field(f.status); h.field(f.origPath ?? '');
+    }
+    for (const hk of hunks) {
+        h.field(hk.id); h.field(hk.file); h.field(hk.gitStatus ?? '');
+        for (const line of hk.lines) h.field(line);
+    }
+    return h.value();
+}
+
+/** Signature of the data the stream currently shows; see `worktreeDataSignature`. */
+let lastDataSignature: string | null = null;
+
+/**
+ * The refresh queue.
+ *
+ * Every refresh re-reads git, then assigns `state.files`/`state.hunks`
+ * wholesale, rebuilds, and consumes the single `pendingHunkAnchor`. Two
+ * overlapping ones therefore interleave badly whichever way round they
+ * start: the one that finishes last repaints from *its* snapshot, so a
+ * poll that began before a stage can put the pre-stage diff back on screen
+ * and record its signature as current, and the first to finish eats the
+ * anchor, dropping the other's cursor at hunk 0.
+ *
+ * A flag that only the poll consulted could not fix that — the poll
+ * yielded to a keystroke, but a keystroke never yielded to an in-flight
+ * poll. So the runs are serialized instead: every caller chains onto the
+ * last, and only one `refreshMagitDataInner` is ever in progress.
+ * `refreshPending` counts callers rather than tracking a single run, so a
+ * refresh finishing cannot clear the flag out from under another that is
+ * still queued behind it.
+ */
+let refreshQueue: Promise<unknown> = Promise.resolve();
+let refreshPending = 0;
+
+/**
+ * Refresh file list and diffs using the new git status approach, then re-render.
+ *
+ * `onlyIfChanged` is for the auto-refresh poll: it still re-reads git (that
+ * is the only way to find out), but leaves the panel — and the reader's
+ * cursor, folds and status line — completely alone when the answer is the
+ * same as last time. Returns whether the display was rebuilt.
+ */
+async function refreshMagitData(opts?: { onlyIfChanged?: boolean }): Promise<boolean> {
+    refreshPending++;
+    const run = refreshQueue.then(
+        () => refreshMagitDataInner(opts),
+        // A predecessor that threw must not cancel the refreshes behind it.
+        () => refreshMagitDataInner(opts),
+    );
+    refreshQueue = run.then(() => undefined, () => undefined);
+    try {
+        return await run;
+    } finally {
+        refreshPending--;
+    }
+}
+
+async function refreshMagitDataInner(opts?: { onlyIfChanged?: boolean }): Promise<boolean> {
+    let files: FileEntry[];
+    let hunks: Hunk[];
+    let emptyState: EmptyStateReason;
     if (state.mode === 'range' && state.range) {
-        const { hunks, files } = await fetchRangeDiff(state.range);
-        state.hunks = hunks;
-        state.files = files;
-        state.emptyState = null;
+        const range = await fetchRangeDiff(state.range);
+        files = range.files;
+        hunks = range.hunks;
+        emptyState = null;
     } else {
         const status = await getGitStatus();
-        state.files = status.files;
-        state.emptyState = status.emptyReason;
-        state.hunks = await fetchDiffsForFiles(status.files);
+        files = status.files;
+        emptyState = status.emptyReason;
+        hunks = await fetchDiffsForFiles(status.files);
     }
+    const signature = worktreeDataSignature(files, hunks, emptyState);
+    if (opts?.onlyIfChanged && signature === lastDataSignature) return false;
+    lastDataSignature = signature;
+
+    // A rebuild supersedes whatever the last action confirmed: `r` and the
+    // watch-driven refreshes should land on the summary, not on a stale
+    // "Lines discarded" from several actions ago.
+    reviewConfirmation = null;
+    state.files = files;
+    state.hunks = hunks;
+    state.emptyState = emptyState;
     state.diffCursorRow = 1;
+    // The hunks and files under every cached view have just been replaced.
+    // A hunk-range signature can miss a file whose content changed without
+    // moving a boundary, so re-reading the data is itself the invalidation.
+    state.dataRevision++;
+    discardParkedComposite();
     updateMagitDisplay();
     restoreCursorAfterRebuild();
     updateReviewStatus();
+    return true;
 }
 
 /**
@@ -3306,7 +4609,19 @@ function restoreCursorAfterRebuild() {
  * unlike the terminal-level resize event which reports full terminal size.
  */
 function refreshViewportDimensions(): boolean {
-    const viewport = editor.getViewport();
+    // `getViewport()` reports the *focused* split only. With a side panel
+    // focused — which is exactly where `r` leaves you after picking a file
+    // — that is the sidebar's geometry, and recording it as the review's
+    // viewport shrinks everything laid out against `viewportWidth` (the
+    // sticky header was being sliced to the sidebar's width). The host
+    // reports each panel's real rect through `on_review_viewport_changed`,
+    // so prefer the diff pane's own recorded size and fall back to the
+    // focused split only before the group has been laid out once.
+    const width = state.panelWidths["diff"];
+    const height = state.panelHeights["diff"];
+    const viewport = width && height && width > 0 && height > 0
+        ? { width, height }
+        : editor.getViewport();
     if (viewport) {
         const changed = viewport.width !== state.viewportWidth || viewport.height !== state.viewportHeight;
         state.viewportWidth = viewport.width;
@@ -3751,19 +5066,21 @@ function contentToLines(content: string): string[] {
     return lines;
 }
 
-/** Build composite source-buffer entries from file content. The last line
- *  gets no trailing newline so the buffer's line count matches the number of
- *  real lines — otherwise a trailing '\n' adds a phantom empty line with no
+/** Build a composite source buffer's content from a file's text. Entries
+ *  are spans, not lines, so the whole file is one of them: the composite
+ *  reads its line numbers from the buffer itself (`getCompositeCursorInfo`)
+ *  and never from per-line properties, and shipping one span instead of
+ *  one per line is what a large file's side-by-side switch was paying for.
+ *
+ *  The trailing newline is dropped so the buffer's line count matches the
+ *  number of real lines — otherwise it adds a phantom empty line with no
  *  ViewLine, which logs "ViewLine missing" when scrolled to the bottom. */
 function contentToEntries(content: string): TextPropertyEntry[] {
-    const lines = contentToLines(content);
-    return lines.map((line, idx) => ({
-        text: idx < lines.length - 1 ? line + '\n' : line,
-        properties: { type: 'line', lineNum: idx + 1 },
-    }));
+    const text = contentToLines(content).join('\n');
+    return text.length > 0 ? [{ text }] : [];
 }
 
-function compositeHunksForFile(fileHunks: Hunk[]): TsCompositeHunk[] {
+function compositeHunksForFile(fileHunks: readonly Hunk[]): TsCompositeHunk[] {
     return fileHunks.map(fh => {
         let oldCount = 0, newCount = 0;
         for (const line of fh.lines) {
@@ -3782,38 +5099,104 @@ function compositeHunksForFile(fileHunks: Hunk[]): TsCompositeHunk[] {
 }
 
 function teardownCenterComposite(): void {
-    const cc = state.centerComposite;
+    closeComposite(state.centerComposite);
+    state.centerComposite = null;
+}
+
+/** Close a composite and the two file buffers behind it. */
+function closeComposite(cc: { compositeBufId: number; oldBufId: number; newBufId: number } | null): void {
     if (!cc) return;
     try {
         editor.closeCompositeBuffer(cc.compositeBufId);
         editor.closeBuffer(cc.oldBufId);
         editor.closeBuffer(cc.newBufId);
     } catch { /* already gone */ }
-    state.centerComposite = null;
 }
 
+/** What a composite for `file` was built from. Two `git show` calls, two
+ *  whole-file buffers and an alignment pass are worth skipping when none
+ *  of this has moved — and worth redoing the moment any of it has. */
+function compositeSignature(file: FileEntry): string {
+    const ranges = hunksForFile(file)
+        .map(h => `${h.oldRange.start}-${h.oldRange.end}:${h.range.start}-${h.range.end}`)
+        .join(',');
+    // The comment count is in the pane label, so it is part of what was built.
+    return `${state.dataRevision}|${fileKey(file)}|${commentCountForFile(file)}|${ranges}`;
+}
+
+/** Keep the current composite alive off-screen so a flip back to
+ *  side-by-side is a panel swap. Only one is parked: the reader has one
+ *  place they left. */
+function parkCenterComposite(): void {
+    const cc = state.centerComposite;
+    state.centerComposite = null;
+    if (!cc) return;
+    const file = state.files.find(f => fileKey(f) === cc.fileKey);
+    if (!file) {
+        closeComposite(cc);
+        return;
+    }
+    if (state.parkedComposite && state.parkedComposite.compositeBufId !== cc.compositeBufId) {
+        closeComposite(state.parkedComposite);
+    }
+    state.parkedComposite = { ...cc, signature: compositeSignature(file) };
+}
+
+/** Drop the parked composite (if any). Called when the review data is
+ *  replaced or the session ends — anything holding buffers open past the
+ *  thing they render is a leak. */
+function discardParkedComposite(): void {
+    closeComposite(state.parkedComposite);
+    state.parkedComposite = null;
+}
+
+/** Read both sides of `file`. The two reads are independent, so they run
+ *  together: fetching one version at a time made opening side-by-side
+ *  wait out two full `git show` round trips back to back, and that pair
+ *  is the largest single cost of the switch. */
 async function fetchFileVersions(file: FileEntry): Promise<{ oldContent: string; newContent: string; absPath: string }> {
     const root = state.repo ? state.repo.root : (editor.getCwd() || "");
     const absPath = root ? editor.pathJoin(root, file.path) : file.path;
     const cwd = root || editor.getCwd();
-    let oldContent = "";
-    let newContent = "";
+    const gitShow = async (rev: string): Promise<string> => {
+        const shown = await editor.spawnProcess("git", ["show", `${rev}:${file.path}`], cwd);
+        return shown.exit_code === 0 ? shown.stdout : "";
+    };
     if (state.mode === 'range' && state.range) {
-        const showOld = await editor.spawnProcess("git", ["show", `${state.range.from}:${file.path}`], cwd);
-        if (showOld.exit_code === 0) oldContent = showOld.stdout;
-        const showNew = await editor.spawnProcess("git", ["show", `${state.range.to}:${file.path}`], cwd);
-        if (showNew.exit_code === 0) newContent = showNew.stdout;
+        const [oldContent, newContent] = await Promise.all([
+            gitShow(state.range.from),
+            gitShow(state.range.to),
+        ]);
         return { oldContent, newContent, absPath };
     }
-    if (file.category !== 'untracked' && file.status !== 'A') {
-        const show = await editor.spawnProcess("git", ["show", `HEAD:${file.path}`], cwd);
-        if (show.exit_code === 0) oldContent = show.stdout;
-    }
-    if (file.status !== 'D') {
-        const read = await editor.readFile(editor.authorityPath(absPath));
-        if (read !== null) newContent = read;
-    }
+    // Only the `git show` is a round trip; reading the working file is a
+    // synchronous host call, so there is nothing to overlap it with.
+    const oldContent = file.category !== 'untracked' && file.status !== 'A'
+        ? await gitShow("HEAD")
+        : "";
+    const newContent = file.status !== 'D'
+        ? (editor.readFile(editor.authorityPath(absPath)) ?? "")
+        : "";
     return { oldContent, newContent, absPath };
+}
+
+/** How many review comments are anchored in `file`. Shown in the
+ *  side-by-side pane labels: the composite renders two real file buffers
+ *  with nowhere to put an inline comment box, so the label says the
+ *  comments are there and the COMMENTS rail (opened by
+ *  `review_set_layout` on the way in) carries the text. */
+function commentCountForFile(file: FileEntry): number {
+    let n = 0;
+    for (const c of state.comments) if (c.file === file.path) n++;
+    return n;
+}
+
+/** `label` with a `· N comments` suffix when the file carries any, and a
+ *  pointer at the rail while the rail is closed. */
+function paneLabelWithComments(label: string, count: number): string {
+    if (count === 0) return label;
+    const where = panelVisible('comments') ? '' : ' — see COMMENTS (C)';
+    return `${label}  ·  ${count} comment${count === 1 ? '' : 's'}${where}`;
 }
 
 async function buildCenterComposite(focusHunkIdx: number = 0): Promise<void> {
@@ -3825,19 +5208,43 @@ async function buildCenterComposite(focusHunkIdx: number = 0): Promise<void> {
     const file = key ? state.files.find(f => fileKey(f) === key) : undefined;
     if (!file) {
         teardownCenterComposite();
+        discardParkedComposite();
         if (state.panelBuffers["diff"] !== undefined) {
             editor.setBufferGroupPanelBuffer(state.groupId, "diff", state.panelBuffers["diff"]);
-            editor.setPanelContent(state.groupId, "diff", buildDiffPanelEntries());
+            mountStreamContent();
         }
         return;
     }
 
+    // The composite the reader left behind, still describing this file as
+    // it stands: mount it instead of rebuilding it. Rebuilding costs two
+    // `git show` calls, two whole files across the IPC boundary and an
+    // alignment pass — seconds on a large file, every single flip.
+    const parked = state.parkedComposite;
+    if (parked && parked.fileKey === key && parked.signature === compositeSignature(file)) {
+        state.parkedComposite = null;
+        teardownCenterComposite();
+        const { signature: _signature, ...composite } = parked;
+        state.centerComposite = composite;
+        state.compositePane = 0;
+        editor.setBufferGroupPanelBuffer(state.groupId, "diff", composite.compositeBufId);
+        if (reviewGroupIsActive()) {
+            editor.focusBufferGroupPanel(state.groupId, "diff");
+            if (state.focusPanel !== 'diff' && panelVisible(state.focusPanel)) {
+                editor.focusBufferGroupPanel(state.groupId, state.focusPanel);
+            }
+        }
+        editor.flushLayout();
+        return;
+    }
+    // Not reusable — and only one composite is ever parked, so whatever is
+    // sitting there is now dead weight.
+    discardParkedComposite();
+
     const { oldContent, newContent, absPath } = await fetchFileVersions(file);
     if (token !== state.centerBuildToken || state.groupId === null) return;
 
-    const fileHunks = state.hunks.filter(
-        h => h.file === file.path && (h.gitStatus || 'unstaged') === file.category
-    );
+    const fileHunks = hunksForFile(file);
     const compositeHunks = compositeHunksForFile(fileHunks);
 
     const oldEntries: TextPropertyEntry[] = contentToEntries(oldContent);
@@ -3862,11 +5269,16 @@ async function buildCenterComposite(focusHunkIdx: number = 0): Promise<void> {
 
     const compositeBufId = await editor.createCompositeBuffer({
         name: `*Review: ${file.path}*`,
-        mode: "review-mode",
+        mode: REVIEW_DIFF_MODE,
         layout: layoutCfg as never,
         sources: [
             { bufferId: oldRes.bufferId, label: "OLD (HEAD)", editable: false, style: { gutterStyle: "diff-markers" } },
-            { bufferId: newRes.bufferId, label: "NEW (Working)", editable: false, style: { gutterStyle: "diff-markers" } },
+            {
+                bufferId: newRes.bufferId,
+                label: paneLabelWithComments("NEW (Working)", commentCountForFile(file)),
+                editable: false,
+                style: { gutterStyle: "diff-markers" },
+            },
         ],
         hunks: compositeHunks.length > 0 ? compositeHunks : null,
         initialFocusHunk: compositeHunks.length > 0
@@ -3904,8 +5316,16 @@ async function buildCenterComposite(focusHunkIdx: number = 0): Promise<void> {
     editor.setBufferGroupPanelBuffer(state.groupId, "diff", compositeBufId);
     // createCompositeBuffer registers the composite as the active buffer of
     // the host split; re-focus the group panel so the review group stays the
-    // active tab and the sidebar/comments/toolbar remain visible.
-    editor.focusBufferGroupPanel(state.groupId, "diff");
+    // active tab and the sidebar/comments/toolbar remain visible — then hand
+    // focus back to whichever panel the user was actually in. (Which is
+    // also why no refresh the user did not ask for is allowed to reach
+    // here while a composite is up — see the watch handlers.)
+    if (reviewGroupIsActive()) {
+        editor.focusBufferGroupPanel(state.groupId, "diff");
+        if (state.focusPanel !== 'diff' && panelVisible(state.focusPanel)) {
+            editor.focusBufferGroupPanel(state.groupId, state.focusPanel);
+        }
+    }
     if (prev) {
         try {
             editor.closeCompositeBuffer(prev.compositeBufId);
@@ -3921,8 +5341,33 @@ async function buildCenterComposite(focusHunkIdx: number = 0): Promise<void> {
  *  file text buffer (interleaved, syntax-highlighted, inline comment boxes).
  *  Comment-add / staging dispatch on `state.centerComposite` (set iff the
  *  composite is showing). */
+/**
+ * Is the review the thing the user is looking at right now?
+ *
+ * `state.focusPanel` says which of the review's own panels holds the keys
+ * *within* the review; it knows nothing about whether the review's tab is
+ * the active one. Claiming focus for the diff panel while the user is in
+ * another buffer activates the review's tab — which is how a refresh that
+ * fires on every save (the watch is on by default) yanked people out of
+ * the file they had just saved. So before any refresh-driven focus call,
+ * ask the host which buffer is active and only proceed if it is one of
+ * ours.
+ */
+function reviewGroupIsActive(): boolean {
+    const active = editor.getActiveBufferId();
+    for (const id of Object.values(state.panelBuffers)) {
+        if (id === active) return true;
+    }
+    const cc = state.centerComposite;
+    if (cc && (active === cc.compositeBufId || active === cc.oldBufId || active === cc.newBufId)) {
+        return true;
+    }
+    return false;
+}
+
 function renderCenter(): void {
     if (state.groupId === null) return;
+    syncFocusMode();
     if (state.reviewLayout === 'side-by-side') {
         void buildCenterComposite();
         return;
@@ -3931,14 +5376,47 @@ function renderCenter(): void {
     // Bump the build token so any in-flight side-by-side build is superseded
     // and won't swap a composite back in after we switch to unified.
     state.centerBuildToken++;
-    teardownCenterComposite();
+    parkCenterComposite();
     if (state.panelBuffers["diff"] !== undefined) {
         editor.setBufferGroupPanelBuffer(state.groupId, "diff", state.panelBuffers["diff"]);
-        editor.setPanelContent(state.groupId, "diff", buildDiffPanelEntries());
-        editor.focusBufferGroupPanel(state.groupId, "diff");
-        applyFolds();
-        applyCursorLineOverlay('diff');
+        mountStreamContent();
+        // Only claim focus when the diff is where focus belongs. Rebuilding
+        // the centre happens for reasons that have nothing to do with focus
+        // — a filter keystroke in the sidebar, a comment added, a save in
+        // some other buffer that the watch noticed — and stealing it there
+        // sends the next keystroke to the wrong panel, or to the wrong tab.
+        if (state.focusPanel === 'diff' && reviewGroupIsActive()) {
+            editor.focusBufferGroupPanel(state.groupId, "diff");
+        }
     }
+}
+
+/** Put the unified stream's content into the diff panel buffer — unless
+ *  the content already there was built from the same state, in which case
+ *  the buffer is exactly what a rebuild would produce.
+ *
+ *  Laying out a large review takes a noticeable beat, and it lands as one
+ *  host command *after* the panel has already swapped to the stream. The
+ *  reader therefore sees the stream at its old scroll position, waits,
+ *  and then watches it jump — for a rebuild that changed nothing. Flipping
+ *  between the two layouts is exactly that case. */
+function mountStreamContent(): void {
+    if (state.groupId === null) return;
+    const signature = streamSignature();
+    if (state.streamMountedSignature === signature) return;
+    const diffId = state.panelBuffers["diff"];
+    if (diffId !== undefined && state.streamBufferPrepared !== diffId) {
+        // The stream is git's own output: the host's diff grammar colours
+        // it, file by file, and its diff gutter numbers the rows from the
+        // hunk headers. Both are set before the first content lands.
+        editor.setBufferLanguage(diffId, "review.diff");
+        editor.setBufferDiffGutter(diffId, true);
+        state.streamBufferPrepared = diffId;
+    }
+    editor.setPanelContent(state.groupId, "diff", buildStreamContent());
+    state.streamMountedSignature = signature;
+    // Fresh content, so the host's folds went with the old rows.
+    applyFolds();
 }
 
 /** Light refresh after the focused file changes (nav / sidebar click):
@@ -3953,8 +5431,7 @@ function refreshFocusedFile(): void {
     const keepFocus = state.focusPanel;
     renderCenter();
     if (state.panelBuffers["files"] !== undefined) {
-        editor.setPanelContent(state.groupId, "files", buildFilesPanelEntries());
-        scrollFilesToSelected();
+        renderFilesPanel();
     }
     // Unified: scroll the newly-focused file into position and put the cursor
     // on it, so navigating files actually moves the view to that file's diff
@@ -4166,10 +5643,210 @@ registerHandler("review_drill_down", review_drill_down);
 // See docs/internal/REVIEW_DIFF_HUNK_PARITY_UX_DESIGN.md §5.1.
 const AUTO_SPLIT_MIN_WIDTH = 140;
 
-function review_set_layout(layout: 'unified' | 'side-by-side'): void {
+/** Where the reader is: the file and the file-line under the cursor, in
+ *  whichever layout is showing. Carried across a layout switch so the
+ *  other view opens on the same line rather than at the top of the file. */
+interface ReviewAnchor {
+    fileKey: string;
+    /** Absent when the cursor was not on a diff line — a hunk header, a
+     *  file header, a comment box. Those rows are where `n` and `,`/`.`
+     *  leave you, so they are exactly where a layout switch is likely to
+     *  happen from. */
+    lineType?: 'add' | 'remove' | 'context';
+    oldLine?: number;
+    newLine?: number;
+    /** The hunk the row belongs to, when it belongs to one. Carries a
+     *  header row across the switch on its own: it is enough to open the
+     *  other layout on that hunk and to find the row again coming back. */
+    hunkId?: string;
+}
+
+/** The anchor for the current cursor position. Reads the composite's
+ *  cursor in side-by-side and the unified stream's row properties
+ *  otherwise.
+ *
+ *  A row that is not a diff line still anchors: pressing `n` leaves the
+ *  cursor on a hunk header, and requiring a `+`/`-`/context line meant
+ *  flipping the layout from there threw the reader's place away and
+ *  reopened the file at the top. */
+async function currentReviewAnchor(): Promise<ReviewAnchor | null> {
+    const info = state.centerComposite
+        ? await getCompositeLineInfo()
+        : getCurrentLineInfo();
+    if (info && info.lineType) {
+        const file = state.files.find(f => f.path === info.file);
+        if (file) {
+            return {
+                fileKey: fileKey(file),
+                lineType: info.lineType,
+                oldLine: info.oldLine,
+                newLine: info.newLine,
+                hunkId: info.hunkId,
+            };
+        }
+    }
+    // Not on a diff line. In the stream the row still says which hunk (or
+    // at least which file) it belongs to.
+    if (state.centerComposite) return null;
+    const props = propsAtCursorRow();
+    if (!props) return null;
+    const path = typeof props["file"] === 'string' ? props["file"] as string : null;
+    const file = path !== null
+        ? state.files.find(f => f.path === path)
+        : state.files.find(f => fileKey(f) === state.filesCurrentKey);
+    if (!file) return null;
+    const hunkId = typeof props["hunkId"] === 'string' ? props["hunkId"] as string : undefined;
+    return { fileKey: fileKey(file), hunkId };
+}
+
+/** The hunk an anchor names, if it names one. */
+function anchorHunk(anchor: ReviewAnchor): Hunk | undefined {
+    return anchor.hunkId !== undefined
+        ? state.hunks.find(h => h.id === anchor.hunkId)
+        : undefined;
+}
+
+/** Index, within its file's hunks, of the hunk holding the anchor's line —
+ *  what `buildCenterComposite` wants as its initial focus. 0 when the line
+ *  sits outside every hunk. */
+function anchorHunkIndex(anchor: ReviewAnchor): number {
+    const file = state.files.find(f => fileKey(f) === anchor.fileKey);
+    if (!file) return 0;
+    const fileHunks = hunksForFile(file);
+    // The hunk the anchor names outright wins: a header row has no line
+    // to place inside a range.
+    if (anchor.hunkId !== undefined) {
+        const named = fileHunks.findIndex(h => h.id === anchor.hunkId);
+        if (named >= 0) return named;
+    }
+    const idx = fileHunks.findIndex(h =>
+        (anchor.newLine !== undefined
+            && anchor.newLine >= h.range.start && anchor.newLine <= h.range.end)
+        || (anchor.oldLine !== undefined
+            && anchor.oldLine >= h.oldRange.start && anchor.oldLine <= h.oldRange.end)
+    );
+    return idx < 0 ? 0 : idx;
+}
+
+/** Put the freshly-built center on `anchor`. In unified that is the stream
+ *  row carrying the same file + line; in side-by-side it is the composite
+ *  row showing that line of OLD (pane 0) or NEW (pane 1). */
+function restoreReviewAnchor(anchor: ReviewAnchor): void {
+    if (state.reviewLayout === 'side-by-side') {
+        const cc = state.centerComposite;
+        if (!cc) return;
+        const hunk = anchorHunk(anchor);
+        // A header row names a hunk but no line: open on where that hunk
+        // starts. Its NEW side exists for everything but a pure deletion.
+        const pane = anchor.lineType === 'remove'
+            || (anchor.lineType === undefined && hunk !== undefined && hunk.range.start === 0)
+            ? 0 : 1;
+        const line = anchor.lineType === 'remove'
+            ? anchor.oldLine
+            : anchor.lineType !== undefined
+                ? anchor.newLine
+                : (pane === 0 ? hunk?.oldRange.start : hunk?.range.start);
+        if (line === undefined) return;
+        editor.setCompositeCursorLine(cc.compositeBufId, pane, line - 1);
+        return;
+    }
+    if (anchor.lineType === undefined) {
+        // Came from a header row: its own row in the stream is the place
+        // to land, not some line inside the hunk.
+        const hunkRow = anchor.hunkId !== undefined
+            ? state.hunkRowByHunkId[anchor.hunkId]
+            : undefined;
+        if (hunkRow !== undefined) {
+            jumpDiffCursorToRow(hunkRow);
+            return;
+        }
+        const fileRow = state.fileHeaderRows[anchor.fileKey];
+        if (fileRow !== undefined) jumpDiffCursorToRow(fileRow);
+        return;
+    }
+    const lineRow = rowOfAnchorLine(anchor);
+    if (lineRow !== undefined) {
+        jumpDiffCursorToRow(lineRow);
+        return;
+    }
+    // The line isn't in the stream at all. Side-by-side shows the whole
+    // file, so the cursor can sit a long way from any change; unified
+    // only carries the hunks and their context. Land on the change
+    // nearest that line — the one just above it, or the one just below
+    // when there is nothing above — instead of falling back to the file
+    // header, which reads as "jumped somewhere random".
+    const hunkRow = nearestHunkRowToAnchor(anchor);
+    if (hunkRow !== undefined) {
+        jumpDiffCursorToRow(hunkRow);
+        return;
+    }
+    const headerRow = state.fileHeaderRows[anchor.fileKey];
+    if (headerRow !== undefined) jumpDiffCursorToRow(headerRow);
+}
+
+/** Row of the hunk closest to `anchor`'s line within its file: the last
+ *  one ending at or before it, else the first one starting after it.
+ *  `undefined` when the file has no hunks in the stream. */
+function nearestHunkRowToAnchor(anchor: ReviewAnchor): number | undefined {
+    const file = state.files.find(f => fileKey(f) === anchor.fileKey);
+    if (!file) return undefined;
+    const line = anchor.lineType === 'remove' ? anchor.oldLine : anchor.newLine;
+    if (line === undefined) return undefined;
+    const useOld = anchor.lineType === 'remove';
+    let before: Hunk | undefined;
+    let after: Hunk | undefined;
+    for (const h of hunksForFile(file)) {
+        const start = useOld ? h.oldRange.start : h.range.start;
+        const end = useOld ? h.oldRange.end : h.range.end;
+        if (end <= line) before = h;              // hunks come in file order
+        else if (start >= line && !after) after = h;
+    }
+    const pick = before && after
+        ? ((line - (useOld ? before.oldRange.end : before.range.end))
+            <= ((useOld ? after.oldRange.start : after.range.start) - line) ? before : after)
+        : (before ?? after);
+    return pick ? state.hunkRowByHunkId[pick.id] : undefined;
+}
+
+async function review_set_layout(layout: 'unified' | 'side-by-side'): Promise<void> {
     if (state.reviewLayout !== layout) {
+        // Read where the reader is *before* the center is rebuilt. On the
+        // way back from a side-by-side the reader never moved in, the row
+        // they left the stream on is a better answer than anything the
+        // composite's cursor can say: the composite has no header rows, so
+        // a hunk header becomes "the hunk's first line" on the round trip.
+        const anchor = (layout === 'unified' && await composedCursorUnmoved())
+            ? layoutReturn!.anchor
+            : await currentReviewAnchor();
+        layoutReturn = null;
         state.reviewLayout = layout;
-        renderCenter();
+        // Unified expands every file, side-by-side renders one — the
+        // center rebuild below has to see the new mode.
+        syncFocusMode();
+        if (anchor) state.filesCurrentKey = anchor.fileKey;
+        if (layout === 'side-by-side') {
+            // Await the build (renderCenter fires it off unawaited) so the
+            // composite exists before the cursor is placed on it, and open
+            // it on the anchor's hunk so the exact-line move below is a
+            // nudge rather than a jump.
+            await buildCenterComposite(anchor ? anchorHunkIndex(anchor) : 0);
+        } else {
+            renderCenter();
+        }
+        if (anchor) restoreReviewAnchor(anchor);
+        if (layout === 'side-by-side' && anchor) {
+            const placed = await editor.getCompositeCursorInfo();
+            if (placed) {
+                layoutReturn = {
+                    anchor,
+                    pane: placed.focusedPane,
+                    line: placed.lines[placed.focusedPane] ?? null,
+                };
+            }
+        }
+        // The sticky names the current file in side-by-side and the
+        // top-of-view file in unified — either way it has just changed.
+        refreshStickyHeader(state.diffViewportTopRow);
     }
     editor.setStatus(
         layout === 'side-by-side'
@@ -4177,10 +5854,25 @@ function review_set_layout(layout: 'unified' | 'side-by-side'): void {
             : (editor.t("status.unified_view") || "Unified view")
     );
 }
-function review_layout_split() { review_set_layout('side-by-side'); }
+/** Where the switch into side-by-side put the composite's cursor, and the
+ *  stream row it came from. Cleared as soon as it is used or superseded. */
+let layoutReturn: { anchor: ReviewAnchor; pane: number; line: number | null } | null = null;
+
+/** True when the composite's cursor is still exactly where switching into
+ *  side-by-side put it — i.e. the reader looked and came back without
+ *  moving, so the row they left is still the row they mean. */
+async function composedCursorUnmoved(): Promise<boolean> {
+    if (layoutReturn === null || state.centerComposite === null) return false;
+    const info = await editor.getCompositeCursorInfo();
+    if (!info) return false;
+    return info.focusedPane === layoutReturn.pane
+        && (info.lines[info.focusedPane] ?? null) === layoutReturn.line;
+}
+
+async function review_layout_split() { await review_set_layout('side-by-side'); }
 registerHandler("review_layout_split", review_layout_split);
 
-function review_layout_stack() { review_set_layout('unified'); }
+async function review_layout_stack() { await review_set_layout('unified'); }
 registerHandler("review_layout_stack", review_layout_stack);
 
 function review_layout_auto() {
@@ -4210,14 +5902,18 @@ async function review_help() {
         "",
         " Focus       Tab / S-Tab cycle focus: files → diff → comments",
         "             ↑ ↓        move within the focused panel (j / k too)",
+        "             ← →        pan the diff / fold a directory in FILES",
+        "             Home End   line ends in the diff, first / last row in a panel",
         " Navigate    n / p      next / prev hunk",
         "             , / .      prev / next file",
         "             ] / [      next / prev comment",
         "             z a / z r  fold all / unfold all (Enter folds one)",
-        " Layout      1 / 2 / 0  split (side-by-side) / stack (unified) / auto",
+        " Layout      1 / 2 / 0  stack (unified) / split (side-by-side) / auto",
+        " Panels      F / C      show / hide the files sidebar / comments rail",
+        "                        (both start hidden; ✕ in a header closes it)",
         " View        a          show / hide inline notes",
         "             /          filter files (empty to clear)",
-        "             W          watch: auto-reload when a file is saved",
+        "             W          watch: auto-refresh on changes (on by default)",
         " Review      c          add comment        x   delete comment",
         "             s / u / d  stage / unstage / discard (hunk or file)",
         "             S / U / D  stage / unstage / discard the whole file",
@@ -4254,10 +5950,9 @@ function fileMatchesFilter(file: FileEntry): boolean {
 
 /** Files visible under the active filter, in display order. */
 function visibleFiles(): FileEntry[] {
-    // Flatten the shared grouping so navigation order == the rendered order.
-    const out: FileEntry[] = [];
-    for (const g of fileGroups()) for (const f of g.files) out.push(f);
-    return out;
+    // The sidebar's order, which is also the stream's — so `,` / `.` step
+    // down the list the reader is looking at rather than a second one.
+    return filesInDisplayOrder();
 }
 
 /** Nearest diff row (add/remove/context) to the cursor, or null if the
@@ -4266,13 +5961,27 @@ function visibleFiles(): FileEntry[] {
  *  commands. */
 function nearestDiffRow(): number | null {
     const cur = state.diffCursorRow;
+    const r = streamRowAt(cur);
+    if (r !== null && r.kind === 'line') return cur;
+    // Off a diff line, the nearest one is at the edge of the hunk the
+    // cursor is in or next to — or, on a note box, the line it follows.
+    const shs = state.streamHunks;
+    const i = streamHunkIndexAtRow(cur);
+    const candidates: number[] = [];
+    const edges = (sh: StreamHunk) => {
+        if (sh.hunk.lines.length === 0) return;
+        candidates.push(rowOfLine(sh, 0), rowOfLine(sh, sh.hunk.lines.length - 1));
+    };
+    if (r !== null && r.kind === 'note') {
+        candidates.push(rowOfLine(r.sh, r.afterLine));
+        if (r.afterLine + 1 < r.sh.hunk.lines.length) candidates.push(rowOfLine(r.sh, r.afterLine + 1));
+    }
+    if (i >= 0) edges(shs[i]);
+    if (i > 0) edges(shs[i - 1]);
+    if (i + 1 < shs.length) edges(shs[i + 1]);
     let best: number | null = null;
-    for (const k of Object.keys(state.entryPropsByRow)) {
-        const r = Number(k);
-        const t = state.entryPropsByRow[r]?.["type"];
-        if (t === 'add' || t === 'remove' || t === 'context') {
-            if (best === null || Math.abs(r - cur) < Math.abs(best - cur)) best = r;
-        }
+    for (const row of candidates) {
+        if (best === null || Math.abs(row - cur) < Math.abs(best - cur)) best = row;
     }
     return best;
 }
@@ -4296,8 +6005,10 @@ function review_goto_file(delta: number) {
     if (vis.length === 0) return;
     let idx = vis.findIndex(f => fileKey(f) === state.filesCurrentKey);
     if (idx < 0) idx = 0;
-    const next = idx + delta;
-    if (next < 0 || next >= vis.length) return;
+    // Clamped, not bailed: `,`/`.` still stop at the ends, and Home / End
+    // can ask for "as far as it goes" with one big delta.
+    const next = Math.max(0, Math.min(vis.length - 1, idx + delta));
+    if (next === idx) return;
     state.filesCurrentKey = fileKey(vis[next]);
     // Light refresh: only the center + sidebar highlight + sticky change on a
     // file switch — rebuilding the toolbar/comments panels too would add
@@ -4309,19 +6020,106 @@ function review_goto_prev_file() { review_goto_file(-1); }
 registerHandler("review_goto_next_file", review_goto_next_file);
 registerHandler("review_goto_prev_file", review_goto_prev_file);
 
-// --- File filter (hunk-style `/`) ---
+// --- File filter: a field in the FILES panel -----------------------------
+//
+// `/` opens the sidebar with a Text widget under its header and puts the
+// panel into `review-filter` mode, where every printable key is text
+// rather than a review command. The host owns the field — caret,
+// selection, editing — and reports each edit as a `change` event; the
+// plugin only re-filters the tree. ↑↓ still walk the tree while the field
+// holds focus (the host forwards them), so you can type and pick without
+// leaving the panel.
+
+/** True while the filter field is open. */
+let filterEditing = false;
+/** Caret byte offset inside the field, mirrored from the host. */
+let filterCursor = 0;
+/** The filter as it was when the field opened, so Esc can put it back. */
+let filterBeforeEdit = "";
+
+const REVIEW_FILTER_MODE = "review-filter";
+
+/** Put the panel into text-entry mode: while the filter field holds
+ *  focus its single-key commands (`s`, `c`, `n`, …) are letters, not
+ *  commands, so the FILES buffer switches to a mode that says so. */
+function enterFilterMode(): void {
+    if (filterEditing) return;
+    filterEditing = true;
+    filterBeforeEdit = state.fileFilter;
+    const filesBuf = state.panelBuffers["files"];
+    if (filesBuf !== undefined) editor.setBufferMode(filesBuf, REVIEW_FILTER_MODE);
+}
+
+/** Focus has left the field — the panel's command keys are back. */
+function leaveFilterMode(): void {
+    if (!filterEditing) return;
+    filterEditing = false;
+    const filesBuf = state.panelBuffers["files"];
+    if (filesBuf !== undefined) editor.setBufferMode(filesBuf, "review-mode");
+}
+
 function review_filter_files() {
-    const label = editor.t("prompt.filter_files") || "Filter files: ";
-    editor.startPromptWithInitial(label, "review-filter", state.fileFilter);
+    if (state.groupId === null) return;
+    setReviewPanelVisible('files', true);
+    filterCursor = getByteLength(state.fileFilter);
+    enterFilterMode();
+    reviewSetFocus('files');
+    if (filesPanel !== null) filesPanel.setFocusKey(FILES_FILTER_KEY);
 }
 registerHandler("review_filter_files", review_filter_files);
 
-editor.on("prompt_confirmed", (args) => {
-    if (args.prompt_type !== "review-filter") return true;
-    state.fileFilter = (args.input || "").trim();
+/** Milliseconds of quiet before a typed filter is actually applied.
+ *
+ *  Long enough that a burst of typing costs one rebuild instead of one
+ *  per character, short enough to feel immediate after the last key. */
+const FILTER_DEBOUNCE_MS = 90;
+
+let filterApplyTimer: number | null = null;
+
+/** Apply the current filter, coalescing bursts of typing into one pass.
+ *
+ *  `applyFileFilter` rebuilds the whole unified diff — the stream renders
+ *  only matching files, so the centre genuinely changes — and on a large
+ *  review that is far too much to do between keystrokes. The field itself
+ *  stays responsive regardless: the host owns its text and echoes each
+ *  character immediately, so debouncing only defers the tree and centre.
+ *
+ *  Every keystroke cancels the pending pass, so intermediate queries are
+ *  never rendered at all — the abandoned work is dropped rather than
+ *  raced. Only the final query is applied. */
+function scheduleFileFilter(): void {
+    if (filterApplyTimer !== null) editor.clearInterval(filterApplyTimer);
+    filterApplyTimer = editor.setTimeout(FILTER_DEBOUNCE_MS, "review_apply_file_filter");
+}
+
+/** Timer target for `scheduleFileFilter`. */
+function review_apply_file_filter(): void {
+    filterApplyTimer = null;
+    if (state.groupId === null) return;
+    applyFileFilter();
+}
+registerHandler("review_apply_file_filter", review_apply_file_filter);
+
+/** Run a debounced filter pass now, if one is pending.
+ *
+ *  Anything that depends on the filter having been applied — closing the
+ *  field, navigating off it — flushes first so it never observes a tree
+ *  built from a stale query. */
+function flushPendingFileFilter(): void {
+    if (filterApplyTimer === null) return;
+    editor.clearInterval(filterApplyTimer);
+    filterApplyTimer = null;
+    applyFileFilter();
+}
+
+/** Re-filter after an edit: the tree, the centre (the stream renders only
+ *  matching files) and the status line. */
+function applyFileFilter(): void {
+    // The stream renders only matching files, so the filter changes it.
+    markStreamDirty();
     ensureFocusFile();
-    updateMagitDisplay();
-    jumpDiffCursorToRow(1, { recenter: false });
+    renderFilesPanel();
+    renderCenter();
     const vis = visibleFiles().length;
     editor.setStatus(
         state.fileFilter
@@ -4329,21 +6127,150 @@ editor.on("prompt_confirmed", (args) => {
                 || `Filter "${state.fileFilter}" — ${vis} file(s)`)
             : (editor.t("status.filter_cleared") || "Filter cleared")
     );
-    return true;
-});
+}
 
-// --- Watch / auto-reload (hunk-style `--watch`, opt-in via `W`) ---
-// When enabled, saving any file in the editor re-runs the diff and rebuilds,
-// preserving focus, comments, and folds. Saves are debounced via a
-// generation counter (QuickJS has no setTimeout). This keys off the editor's
-// own `after_file_save` event rather than a filesystem watch, so it tracks
-// edits made in Fresh (the common review-while-editing loop).
-let reviewWatchEnabled = false;
+/** Close the field. `revert` puts the query back to what it was when the
+ *  field opened (Esc); otherwise the typed query stands (Enter). */
+function closeFileFilter(revert: boolean): void {
+    if (!filterEditing) return;
+    if (revert && state.fileFilter !== filterBeforeEdit) {
+        // Drop any pass still owed to the abandoned query — it would rebuild
+        // to the query being reverted away from, and then land *after* this
+        // one.
+        if (filterApplyTimer !== null) {
+            editor.clearInterval(filterApplyTimer);
+            filterApplyTimer = null;
+        }
+        state.fileFilter = filterBeforeEdit;
+        filterCursor = filterBeforeEdit.length;
+        applyFileFilter();
+        // The host owns the field's text, and a plain re-render carries the
+        // widget's own value forward — so the restored query has to be
+        // pushed back explicitly, or Esc leaves the box reading the
+        // abandoned text over a tree that already reverted.
+        filesPanel?.setValue(FILES_FILTER_KEY, filterBeforeEdit, filterCursor);
+    }
+    // Enter: the typed query stands, so anything still owed has to land
+    // before the field closes — otherwise the tree behind it is one
+    // keystroke stale until the timer happens to fire.
+    flushPendingFileFilter();
+    leaveFilterMode();
+    // Focus lands on the tree — you filtered to pick a file.
+    if (filesPanel !== null) filesPanel.setFocusKey(FILES_TREE_KEY);
+    renderFilesPanel();
+}
+
+function review_filter_accept() { closeFileFilter(false); }
+registerHandler("review_filter_accept", review_filter_accept);
+
+function review_filter_cancel() { closeFileFilter(true); }
+registerHandler("review_filter_cancel", review_filter_cancel);
+
+/** Printable keys while the field is open. The host applies them to the
+ *  focused Text widget and reports the new value back as a `change`. */
+function review_filter_text_input(args: { text: string }): void {
+    if (!filterEditing || filesPanel === null || !args?.text) return;
+    filesPanel.command(textInputChar(args.text));
+}
+// The host dispatches unbound printable keys in an `allowTextInput` mode
+// as the `mode_text_input` action, qualified by the mode name so it
+// reaches the plugin that defined the mode — here, only while
+// `REVIEW_FILTER_MODE` is active. The `filterEditing` guard covers the
+// unqualified legacy dispatch, which other plugins also answer to.
+registerHandler("mode_text_input", review_filter_text_input);
+
+/** Editing keys (Backspace, arrows, …) and the tree-walking keys, both
+ *  handed to the host's smart-key dispatch for the focused field. */
+function review_filter_key(name: string): void {
+    if (filesPanel === null) return;
+    filesPanel.command(name === "Backspace" || name === "Delete"
+        ? textInputKey(name)
+        : key(name));
+}
+registerHandler("review_filter_backspace", () => review_filter_key("Backspace"));
+registerHandler("review_filter_delete", () => review_filter_key("Delete"));
+/** ↑ / ↓ from the field step into the results: focus moves to the tree
+ *  (which puts the panel back in command mode) and the key walks it. */
+function review_filter_step(name: "Up" | "Down"): void {
+    if (filesPanel === null) return;
+    filesPanel.setFocusKey(FILES_TREE_KEY);
+    leaveFilterMode();
+    filesPanel.command(key(name));
+}
+registerHandler("review_filter_up", () => review_filter_step("Up"));
+registerHandler("review_filter_down", () => review_filter_step("Down"));
+registerHandler("review_filter_left", () => review_filter_key("Left"));
+registerHandler("review_filter_right", () => review_filter_key("Right"));
+
+editor.defineMode(REVIEW_FILTER_MODE, [
+    ["Esc", "review_filter_cancel"],
+    ["Enter", "review_filter_accept"],
+    ["Backspace", "review_filter_backspace"],
+    ["Delete", "review_filter_delete"],
+    ["Up", "review_filter_up"],
+    ["Down", "review_filter_down"],
+    ["Left", "review_filter_left"],
+    ["Right", "review_filter_right"],
+    ["Tab", "review_filter_accept"],
+], true, true, false);
+
+// --- Watch / auto-refresh (on by default, toggled with `W`) ---
+//
+// A review of the working tree is a view of state nothing in the editor
+// owns: the change under review can come from a save in Fresh, from a
+// `git` command, or from an agent editing files in another terminal
+// (#3126). So the panel watches on two channels, both gated by the same
+// `W` toggle:
+//
+//   * The editor's own `after_file_save` / `after_file_revert` events —
+//     immediate (debounced by a generation counter), free, and covering
+//     the common review-while-editing loop.
+//   * A `git status` poll on a timer, for everything that happens outside
+//     Fresh. There is no cheaper signal: a filesystem watch over the
+//     worktree would have to be recursive over the whole repo and would
+//     still need the same `git` calls to say what changed. The tick only
+//     re-renders when the data actually differs (see `refreshMagitData`'s
+//     `onlyIfChanged`), so the steady-state cost of a quiet repo is the
+//     three `git` invocations a manual `r` would run, once per interval.
+//
+// It starts on, because a stale diff is not a neutral default — it is a
+// panel quietly disagreeing with the repository. `W` turns both channels
+// off for anyone who would rather not pay for the poll.
+let reviewWatchEnabled = true;
 let reviewWatchGen = 0;
 const WATCH_DEBOUNCE_MS = 200;
 
+/** How often an open worktree review re-reads git looking for outside changes. */
+const WATCH_POLL_MS = 2000;
+
+/**
+ * The share of wall-clock time the watch is allowed to spend inside `git`.
+ *
+ * A tick is not a fixed cost. `fetchDiffsForFiles` batches the staged and
+ * unstaged diffs into one process each, but an untracked file gets its own
+ * `git diff --no-index` — and `git status -uall` lists every untracked file
+ * individually, so an un-ignored `node_modules` or `target/` turns one tick
+ * into hundreds of sequential processes. At a fixed period, once a tick
+ * outlasts its interval the next starts the moment it ends and the editor
+ * sits in a permanent spawn loop, with nothing on screen saying why.
+ *
+ * So the next tick is scheduled from the last one's measured duration
+ * rather than from a constant: a tick that took `d` waits at least
+ * `d * WATCH_POLL_DUTY_DIVISOR`. A normal repo (a few milliseconds a tick)
+ * keeps the 2s cadence; a pathological one degrades to refreshing rarely
+ * instead of to occupying the machine.
+ */
+const WATCH_POLL_DUTY_DIVISOR = 4;
+/** Never back off past this, however slow the repo is. */
+const WATCH_POLL_MAX_MS = 60_000;
+
+let watchPollTimer: number | null = null;
+/** A tick can outlast its period on a big repo; ticks are not queued. */
+let watchPollInFlight = false;
+
 function review_toggle_watch() {
     reviewWatchEnabled = !reviewWatchEnabled;
+    if (reviewWatchEnabled) startWatchPoll(); else stopWatchPoll();
     editor.setStatus(
         reviewWatchEnabled
             ? (editor.t("status.watch_on") || "Watching for changes")
@@ -4352,19 +6279,120 @@ function review_toggle_watch() {
 }
 registerHandler("review_toggle_watch", review_toggle_watch);
 
-editor.on("after_file_save", () => {
-    if (!reviewWatchEnabled || state.groupId === null) return true;
-    // Range reviews are ref-to-ref; working-tree saves don't change them.
-    if (state.mode === 'range') return true;
-    const myGen = ++reviewWatchGen;
-    void editor.delay(WATCH_DEBOUNCE_MS).then(() => {
-        // Superseded by a later save, or the review closed / watch turned
-        // off while we waited.
-        if (myGen !== reviewWatchGen || !reviewWatchEnabled || state.groupId === null) return;
-        void refreshMagitData();
+/**
+ * One poll tick: re-read git, and rebuild only if what came back differs
+ * from what the panel is showing.
+ *
+ * Skipped while the reader is in the middle of something a rebuild would
+ * yank out from under them — a line selection, the filter field, or the
+ * discard confirmation.
+ */
+async function review_watch_poll(): Promise<void> {
+    watchPollTimer = null;
+    // Whatever this tick decides to do — including deciding to do nothing —
+    // it owes the next one a slot, or the watch stops for good.
+    const startedAt = Date.now();
+    const rearm = (): void => {
+        if (!reviewWatchEnabled || state.groupId === null || state.mode === 'range') return;
+        const spent = Math.max(0, Date.now() - startedAt);
+        scheduleWatchPoll(Math.min(
+            WATCH_POLL_MAX_MS,
+            Math.max(WATCH_POLL_MS, spent * WATCH_POLL_DUTY_DIVISOR),
+        ));
+    };
+    try {
+        await review_watch_tick();
+    } finally {
+        rearm();
+    }
+}
+registerHandler("review_watch_poll", review_watch_poll);
+
+async function review_watch_tick(): Promise<void> {
+    if (!reviewWatchEnabled || state.groupId === null) return;
+    // Range reviews are ref-to-ref; the working tree doesn't affect them.
+    if (state.mode === 'range') return;
+    if (watchPollInFlight || refreshPending > 0) return;
+    // Anything the reader is in the middle of that a rebuild would yank out
+    // from under them: a line selection, the filter field, an open comment,
+    // or the discard confirmation.
+    if (state.lineSelection !== null || filterEditing
+        || pendingDiscardFile !== null || pendingCommentInfo !== null) return;
+    // A composite is the strongest form of "in the middle of something".
+    // A rebuild bumps `dataRevision`, which `compositeSignature` embeds, so
+    // the composite cannot be reused: it is torn down and rebuilt from two
+    // `git show` calls and dropped back at its first hunk — losing the
+    // reader's place in a file that a change elsewhere never touched.
+    // `review_relayout_diff` already refuses to run here for this reason;
+    // a tick nobody asked for has even less claim. The next refresh the
+    // reader *does* ask for (`r`, a stage, leaving the composite) picks the
+    // change up.
+    if (state.centerComposite !== null) return;
+    watchPollInFlight = true;
+    try {
+        // Keep the reader where they were: the rebuild's cursor restore
+        // uses this anchor, so an external change three files away does
+        // not scroll the panel back to the top.
+        //
+        // Only when there *is* a hunk under the cursor. An anchor with no
+        // hunk id and no section — which is what every header, summary and
+        // filler row produces — falls through `restoreCursorAfterRebuild`
+        // to `jumpToGlobalHunk(0)`, so parking on a file header and letting
+        // an agent touch any file would scroll the reader to the top of the
+        // review. No anchor means no jump.
+        const atCursor = getHunkAtDiffCursor();
+        if (atCursor) rememberPendingHunkAnchor(atCursor.id);
+        const rebuilt = await refreshMagitData({ onlyIfChanged: true });
+        if (!rebuilt) pendingHunkAnchor = null;
+    } finally {
+        watchPollInFlight = false;
+    }
+}
+
+function startWatchPoll(): void {
+    if (watchPollTimer !== null || !reviewWatchEnabled) return;
+    if (state.groupId === null || state.mode === 'range') return;
+    scheduleWatchPoll(WATCH_POLL_MS);
+}
+
+/** Arm the next tick. One-shot, re-armed by the tick itself, so the delay
+ *  can answer to what the last one cost. */
+function scheduleWatchPoll(delayMs: number): void {
+    if (watchPollTimer !== null) editor.clearInterval(watchPollTimer);
+    watchPollTimer = editor.setTimeout(delayMs, "review_watch_poll");
+}
+
+function stopWatchPoll(): void {
+    if (watchPollTimer === null) return;
+    editor.clearInterval(watchPollTimer);
+    watchPollTimer = null;
+}
+
+// A save and an external reset (auto-revert reload, e.g. `git checkout
+// <ref> -- <file>` in another terminal) both change the working tree the
+// review diffs against, so they share one refresh handler. This is the
+// low-latency channel; the poll above is the one that catches everything
+// that never passes through the editor at all.
+for (const event of ["after_file_save", "after_file_revert"] as const) {
+    editor.on(event, () => {
+        if (!reviewWatchEnabled || state.groupId === null) return true;
+        // Range reviews are ref-to-ref; working-tree changes don't affect them.
+        if (state.mode === 'range') return true;
+        const myGen = ++reviewWatchGen;
+        void editor.delay(WATCH_DEBOUNCE_MS).then(() => {
+            // Superseded by a later change, or the review closed / watch
+            // turned off while we waited.
+            if (myGen !== reviewWatchGen || !reviewWatchEnabled || state.groupId === null) return;
+            // A composite is rebuilt from scratch by a refresh, and the host
+            // makes the new one the active buffer — so a save in another
+            // tab would land the user back in the review. Same stand-down
+            // as the poll; `r` or leaving the composite picks the change up.
+            if (state.centerComposite !== null) return;
+            void refreshMagitData({ onlyIfChanged: true });
+        });
+        return true;
     });
-    return true;
-});
+}
 
 // --- Hunk navigation for side-by-side diff view ---
 
@@ -4399,8 +6427,9 @@ function jumpDiffCursorToRow(row: number, options?: { recenter?: boolean }): voi
         editor.scrollBufferToLine(diffId, idx);
     }
     state.diffCursorRow = row;
-    applyCursorLineOverlay('diff');
-    refreshStickyHeader(idx);
+    // The scroll this jump triggers reports back through
+    // `viewport_changed`, which is what re-derives the sticky header.
+    refreshStickyHeader(state.diffViewportTopRow);
     updateReviewStatus();
 }
 
@@ -4425,6 +6454,12 @@ function currentGlobalHunkIndex(): number | null {
  */
 function updateReviewStatus(): void {
     if (state.groupId === null) return;
+    // A held confirmation outranks the summary until the user moves off the
+    // row it was issued on — see `reviewConfirmation`.
+    if (reviewConfirmation !== null) {
+        editor.setStatus(reviewConfirmation.text);
+        return;
+    }
     const total = state.hunkHeaderRows.length;
     const current = currentGlobalHunkIndex();
     // Range reviews fundamentally don't include working-tree edits; the
@@ -4446,26 +6481,23 @@ function updateReviewStatus(): void {
 }
 
 /**
- * Find the global index in `state.hunks` of the hunk currently visible
- * at the cursor row, scanning the *visible* hunks (i.e. hunks whose
- * file is not collapsed). Returns -1 if no hunk is at or before cursor.
+ * Find the global index in `state.hunks` of the hunk the cursor is on or
+ * below. Reads the build's own row map rather than counting rendered
+ * hunks: a collapsed file still emits its hunk headers, so the Nth
+ * rendered hunk is not the Nth hunk of `state.hunks`.
+ * Returns -1 if no rendered hunk is at or before the cursor.
  */
 function visibleHunkIndexAtCursor(): number {
-    let visibleIdx = -1;
-    for (let i = 0; i < state.hunkHeaderRows.length; i++) {
-        if (state.hunkHeaderRows[i] <= state.diffCursorRow) visibleIdx = i;
-        else break;
-    }
-    if (visibleIdx < 0) return -1;
-    // Map back to the global state.hunks index.
-    let visited = 0;
+    let best = -1;
+    let bestRow = 0;
     for (let i = 0; i < state.hunks.length; i++) {
-        const h = state.hunks[i];
-        if (state.collapsedFiles.has(fileKeyOf(h.file, h.gitStatus || 'unstaged'))) continue;
-        if (visited === visibleIdx) return i;
-        visited++;
+        const row = state.hunkRowByHunkId[state.hunks[i].id];
+        if (row !== undefined && row <= state.diffCursorRow && row >= bestRow) {
+            bestRow = row;
+            best = i;
+        }
     }
-    return -1;
+    return best;
 }
 
 function jumpToGlobalHunk(globalIdx: number) {
@@ -4473,19 +6505,23 @@ function jumpToGlobalHunk(globalIdx: number) {
     const target = state.hunks[globalIdx];
     const targetFileKey = fileKeyOf(target.file, target.gitStatus || 'unstaged');
     // Always expand any collapse on the target's section / file / hunk so
-    // n/p never silently lands on an invisible row.
-    if (target.gitStatus) state.collapsedSections.delete(target.gitStatus);
-    state.collapsedFiles.delete(targetFileKey);
-    state.collapsedHunks.delete(target.id);
-    if (state.focusOnly && targetFileKey !== state.filesCurrentKey) {
-        // Focus-only mode renders just one file's body, so the target file
-        // must become the focused file before its hunk row exists. This is
-        // how `n`/`p` cross file boundaries in focus mode.
+    // n/p never silently lands on an invisible row. Collapsing is a host
+    // fold over rows the stream already carries (see `applyFolds`), so
+    // revealing them is a fold change — re-laying-out the stream for it
+    // put a second of work behind every `n` on a large review, most of
+    // them for a target that was not collapsed in the first place.
+    let revealed = false;
+    if (target.gitStatus) revealed = state.collapsedSections.delete(target.gitStatus) || revealed;
+    revealed = state.collapsedFiles.delete(targetFileKey) || revealed;
+    revealed = state.collapsedHunks.delete(target.id) || revealed;
+    if (!fileBodyRendered(targetFileKey)) {
+        // Side-by-side: the composite draws one file, so the target has to
+        // become the current file before its hunk row exists. This is how
+        // `n`/`p` cross file boundaries there.
         state.filesCurrentKey = targetFileKey;
         refreshFocusedFile();
-    } else {
-        // Same (or non-focus) file: rebuild so the just-expanded rows render.
-        updateMagitDisplay();
+    } else if (revealed) {
+        applyFolds();
     }
     // Look up the target hunk's row directly — much simpler than counting.
     const row = state.hunkRowByHunkId[target.id];
@@ -4736,9 +6772,7 @@ async function compositeHunkNav(dir: 1 | -1): Promise<void> {
     const cc = state.centerComposite;
     if (cc) {
         const file = state.files.find(f => fileKey(f) === cc.fileKey);
-        const fileHunks = file ? state.hunks.filter(
-            h => h.file === file.path && (h.gitStatus || 'unstaged') === file.category
-        ) : [];
+        const fileHunks = file ? hunksForFile(file) : NO_HUNKS;
         const target = state.compositeHunkIdx + dir;
         if (target >= 0 && target < fileHunks.length) {
             // Within the focused file: step the composite hunk cursor and
@@ -4762,8 +6796,7 @@ async function compositeHunkNav(dir: 1 | -1): Promise<void> {
     state.filesCurrentKey = fileKey(vis[next]);
     await buildCenterComposite(); // rebuilds the composite, resets compositeHunkIdx = 0
     if (state.groupId !== null && state.panelBuffers["files"] !== undefined) {
-        editor.setPanelContent(state.groupId, "files", buildFilesPanelEntries());
-        scrollFilesToSelected();
+        renderFilesPanel();
     }
     refreshStickyHeader(0);
 }
@@ -4829,9 +6862,7 @@ async function getCompositeLineInfo(): Promise<PendingCommentInfo | null> {
         (newLine !== undefined && oldLine === undefined) ? 'add'
             : (oldLine !== undefined && newLine === undefined) ? 'remove'
                 : 'context';
-    const fileHunks = state.hunks.filter(
-        h => h.file === file.path && (h.gitStatus || 'unstaged') === file.category
-    );
+    const fileHunks = hunksForFile(file);
     let hunk = fileHunks.find(h =>
         (newLine !== undefined && newLine >= h.range.start && newLine <= h.range.end) ||
         (oldLine !== undefined && oldLine >= h.oldRange.start && oldLine <= h.oldRange.end)
@@ -5109,14 +7140,20 @@ editor.on("prompt_confirmed", async (args) => {
     if (response === "discard" || args.selected_index === 0) {
         const f = pendingDiscardFile;
         if (f) {
-            const cwd = gitCwd();
-            if (f.category === 'untracked') {
-                await editor.spawnProcess("rm", ["--", f.path], cwd);
-            } else {
-                await editor.spawnProcess("git", ["checkout", "--", f.path], cwd);
-            }
+            const outcome = await discardFileToHead(f);
             await refreshMagitData();
-            editor.setStatus(`Discarded: ${f.path}`);
+            // Report what git actually did. A failed discard says so —
+            // and says why — instead of the blanket "Discarded" that
+            // used to follow a no-op (#2318).
+            if (outcome.ok) {
+                setReviewConfirmation(
+                    tr("status.file_discarded", { file: f.path }) ?? `Discarded: ${f.path}`,
+                );
+            } else {
+                const failed = tr("status.discard_failed", { file: f.path })
+                    ?? `Discard failed: ${f.path}`;
+                setReviewConfirmation(outcome.detail ? `${failed} — ${outcome.detail}` : failed);
+            }
         }
     } else {
         editor.setStatus("Discard cancelled");
@@ -5133,8 +7170,8 @@ editor.on("prompt_confirmed", async (args) => {
             const patch = buildHunkPatch(hunk.file, hunk);
             const ok = await applyHunkPatch(patch, ["--reverse"]);
             if (ok) {
-                editor.setStatus(editor.t("status.hunk_discarded") || "Hunk discarded");
                 await refreshMagitData();
+                setReviewConfirmation(editor.t("status.hunk_discarded") || "Hunk discarded");
             }
         }
     } else {
@@ -5180,6 +7217,15 @@ editor.on("prompt_cancelled", (args) => {
         pendingCommentInfo = null;
         editingCommentId = null;
         editor.setStatus(editor.t("status.comment_cancelled"));
+    }
+    // Escape on the discard dialog has to clear the pending file too. The
+    // auto-refresh poll stands down while it is set (a rebuild would move
+    // the ground under an open confirmation), so leaving it set after a
+    // cancel silently stops the panel following the working tree for the
+    // rest of the session — the #3126 symptom, reintroduced.
+    if (args.prompt_type === "review-discard-confirm") {
+        pendingDiscardFile = null;
+        editor.setStatus("Discard cancelled");
     }
     return true;
 });
@@ -5289,12 +7335,16 @@ function resetPerSessionState(): void {
     state.diffCursorRow = 1;
     state.hunkHeaderRows = [];
     state.diffLineByteOffsets = [];
+    state.streamHunks = [];
+    state.streamHunkById = new Map();
+    state.sectionByRow = new Map();
+    state.fileByRow = new Map();
+    state.fileHeaderConceals = new Map();
     state.fileHeaderRows = {};
     state.collapsedFiles = new Set();
     state.collapsedSections = new Set();
     state.collapsedHunks = new Set();
-    state.commentsByRow = {};
-    state.commentsSelectedRow = 0;
+    state.commentsSelectedId = null;
     state.focusPanel = 'diff';
     state.commentsHighlightId = null;
     state.stickyCurrentFile = null;
@@ -5311,8 +7361,15 @@ const REVIEW_LAYOUT = JSON.stringify({
     second: {
         type: "split",
         direction: "h",
-        ratio: 0.16,
-        first: { type: "scrollable", id: "files" },
+        ratio: FILES_PANEL_RATIO,
+        // Both side panels are widget panels whose list/tree owns its
+        // own scroll window, so the buffer under them is pinned
+        // (`scrollable: false`, as search_replace.ts does for the same
+        // reason). Left user-scrollable, a wheel that walked off the end
+        // of the tree fell through to the pane and scrolled the panel
+        // itself: the header slid off the top and a blank row appeared at
+        // the bottom, with no way to scroll it back.
+        first: { type: "scrollable", id: "files", scrollable: false },
         second: {
             type: "split",
             direction: "h",
@@ -5326,7 +7383,7 @@ const REVIEW_LAYOUT = JSON.stringify({
                 first: { type: "fixed", id: "sticky", height: 1 },
                 second: { type: "scrollable", id: "diff" },
             },
-            second: { type: "scrollable", id: "comments" },
+            second: { type: "scrollable", id: "comments", scrollable: false },
         },
     },
 });
@@ -5347,10 +7404,43 @@ async function openReviewPanels(groupName: string): Promise<boolean> {
     state.groupId = groupResult.groupId;
     state.panelBuffers = groupResult.panels;
     state.reviewBufferId = groupResult.panels["diff"];
+    // A brand-new stream buffer holds nothing yet, whatever the last
+    // session left recorded.
+    state.streamMountedSignature = null;
 
     if (state.panelBuffers["diff"] !== undefined) {
         (editor as any).setBufferShowCursors(state.panelBuffers["diff"], true);
+        // The stream is where the editor's cursor lives, so it takes the
+        // motion-native copy of the keymap; the side panels keep
+        // `review-mode`, whose ↑/↓ drive their widgets instead.
+        editor.setBufferMode(state.panelBuffers["diff"], REVIEW_DIFF_MODE);
+        declareCursorLineBar();
     }
+
+    // Mount the widget panels over the group's toolbar / sidebar / rail
+    // buffers. Everything with a button on it goes through the widget
+    // runtime; the diff and its sticky header stay plain text panels.
+    toolbarPanel = state.panelBuffers["toolbar"] !== undefined
+        ? new WidgetPanel(state.panelBuffers["toolbar"]) : null;
+    filesPanel = state.panelBuffers["files"] !== undefined
+        ? new WidgetPanel(state.panelBuffers["files"]) : null;
+    commentsPanel = state.panelBuffers["comments"] !== undefined
+        ? new WidgetPanel(state.panelBuffers["comments"]) : null;
+
+    // Both of these describe the data the caller fetched, and both have to
+    // be in place *before* the first render:
+    //   - the signature, or the first watch tick reads "no signature yet",
+    //     takes that for a change, and rebuilds a panel nobody touched;
+    //   - the revision, because per-session memos key off it, so a reopened
+    //     review must not read the previous session's entry for the same
+    //     file.
+    lastDataSignature = worktreeDataSignature(state.files, state.hunks, state.emptyState);
+    state.dataRevision++;
+
+    // The group is created with every panel in its layout; the two side
+    // panels are then hidden (the session default) before anything is
+    // drawn, so the diff opens at full width without a visible reflow.
+    applyPanelVisibility();
 
     updateMagitDisplay();
 
@@ -5358,6 +7448,9 @@ async function openReviewPanels(groupName: string): Promise<boolean> {
 
     editor.on("resize", onReviewDiffResize);
     updateReviewStatus();
+    // Worktree reviews watch git for changes made outside the editor
+    // (#3126); range reviews are ref-to-ref and have nothing to watch.
+    startWatchPoll();
     editor.on("buffer_activated", on_review_buffer_activated);
     editor.on("buffer_closed", on_review_buffer_closed);
     editor.on("cursor_moved", on_review_cursor_moved);
@@ -5405,6 +7498,20 @@ function pruneOrphanComments(comments: ReviewComment[], hunks: Hunk[]): ReviewCo
 }
 
 async function start_review_diff() {
+    // Already reviewing the working tree: refresh that panel and focus it.
+    // Opening a second one left the first orphaned — the plugin tracks a
+    // single session, so the old group's tab stayed in the tab bar with
+    // nothing driving it, and repeating the command piled up
+    // `*Review Diff* 1`, `*Review Diff* 2`, … (#3126).
+    if (state.groupId !== null && state.mode === 'worktree') {
+        editor.focusBufferGroupPanel(state.groupId, 'diff');
+        review_refresh();
+        return;
+    }
+    // A *different* review (a range or a stash) is open: that session ends
+    // here rather than leaking, for the same one-session-at-a-time reason.
+    if (state.groupId !== null) stop_review_diff();
+
     editor.setStatus(editor.t("status.generating"));
 
     // Resolve the repo *before* any git call: getGitStatus/fetchDiffsForFiles
@@ -5435,13 +7542,28 @@ registerHandler("start_review_diff", start_review_diff);
 
 function stop_review_diff() {
     teardownCenterComposite();
+    discardParkedComposite();
+    state.streamMountedSignature = null;
+    state.streamBufferPrepared = null;
+    // Unmount before the buffers go away, so the host drops the panels'
+    // widget state instead of holding it against dead buffer ids.
+    for (const panel of [toolbarPanel, filesPanel, commentsPanel]) panel?.unmount();
+    toolbarPanel = null;
+    filesPanel = null;
+    commentsPanel = null;
     if (state.groupId !== null) {
         editor.closeBufferGroup(state.groupId);
         state.groupId = null;
         state.panelBuffers = {};
     }
     state.reviewBufferId = null;
-    reviewWatchEnabled = false;
+    // Keyed by panel name, so the next session would inherit these — its
+    // panels are different buffers in a differently sized group.
+    state.panelWidths = {};
+    state.panelHeights = {};
+    stopWatchPoll();
+    reviewWatchEnabled = true;
+    lastDataSignature = null;
     editor.setContext("review-mode", false);
     editor.off("resize", onReviewDiffResize);
     editor.off("buffer_activated", on_review_buffer_activated);
@@ -5467,11 +7589,11 @@ registerHandler("stop_review_diff", stop_review_diff);
 // Alternatives considered for the picker UI:
 //   - A dedicated two-panel picker (from / to). Clean but adds a big new
 //     UI surface for a small benefit.
-//   - The existing `start_review_branch` commit list (inline, Enter-to-
+//   - The existing `start_branch_log` commit list (inline, Enter-to-
 //     select). Rejected because that view is commit-by-commit and we
 //     specifically want a *flattened* diff for batch commenting.
 //   - Single prompt with a small suggestion list. Chosen — matches the
-//     tone of the existing `start_review_branch` prompt and lets power
+//     tone of the existing branch-log prompt and lets power
 //     users type arbitrary revspecs without a multi-step UI.
 
 /**
@@ -5509,10 +7631,14 @@ function parseRangeInput(input: string): ReviewRange | null {
  * still works; untracked / staged categories are meaningless here.
  */
 async function fetchRangeDiff(range: ReviewRange): Promise<{ hunks: Hunk[]; files: FileEntry[] }> {
-    const args = range.command || ["diff", "--unified=3", `${range.from}..${range.to}`];
+    // The pinning flags go on *after* the override so every `range.command`
+    // inherits them; a source that spells out its own argv (the stash review)
+    // otherwise has to remember the whole list for itself.
+    const args = withDiffArgs(range.command || ["diff", "--unified=3", `${range.from}..${range.to}`]);
     const cwd = gitCwd();
     const result = await editor.spawnProcess("git", args, cwd);
     if (result.exit_code !== 0) {
+        state.binaryPaths = new Set();
         return { hunks: [], files: [] };
     }
     const hunks = parseDiffOutput(result.stdout, 'unstaged');
@@ -5521,15 +7647,21 @@ async function fetchRangeDiff(range: ReviewRange): Promise<{ hunks: Hunk[]; file
     for (const h of hunks) {
         h.id = `${range.label}|${h.file}:${h.range.start}`;
     }
-    // Derive a FileEntry list from the hunks, preserving first-seen order.
+    // Derive a FileEntry list from git's own file blocks rather than from the
+    // hunks: a file git summarised as `Binary files ... differ` — a real
+    // binary, or one over `diffArgs`' size threshold — produces no hunk, and
+    // reading the list off the hunks dropped it from the review entirely
+    // instead of listing it with nothing to show.
+    const binaryPaths = new Set<string>();
     const seen = new Set<string>();
     const files: FileEntry[] = [];
-    for (const h of hunks) {
-        if (!seen.has(h.file)) {
-            seen.add(h.file);
-            files.push({ path: h.file, status: 'M', category: 'unstaged' });
-        }
+    for (const block of diffFileBlocks(result.stdout)) {
+        if (block.binary) binaryPaths.add(block.path);
+        if (seen.has(block.path)) continue;
+        seen.add(block.path);
+        files.push({ path: block.path, status: 'M', category: 'unstaged' });
     }
+    state.binaryPaths = binaryPaths;
     return { hunks, files };
 }
 
@@ -5600,7 +7732,7 @@ editor.on("prompt_confirmed", (args) => {
     if (args.prompt_type !== "review-range") return true;
     const range = parseRangeInput(args.input);
     if (!range) {
-        editor.setStatus(editor.t("status.cancelled") || "Cancelled");
+        editor.setStatus(tr("status.cancelled") ?? "Cancelled");
         return true;
     }
     // Kick off the async bootstrap; the prompt is already dismissed so we
@@ -5614,13 +7746,21 @@ async function bootstrapRangeReview(range: ReviewRange): Promise<void> {
     // Resolve the repo before fetchRangeDiff, which reads gitCwd().
     state.repo = await resolveGitRepo(editor);
     const { hunks, files } = await fetchRangeDiff(range);
-    if (hunks.length === 0) {
+    // On `files`, not `hunks`: a commit that only touches a binary — or a
+    // file over `diffArgs`' size threshold — has no hunk to show and is
+    // still not "no changes".
+    if (files.length === 0) {
         editor.setStatus(
             editor.t("status.review_range_empty", { range: range.label }) ||
                 `No changes in ${range.label}`,
         );
         return;
     }
+    // One review session at a time — see `start_review_diff`. Done after
+    // the empty-range check above so a typo'd range doesn't close the
+    // review the user is in the middle of.
+    if (state.groupId !== null) stop_review_diff();
+
     state.mode = 'range';
     state.range = range;
     state.hunks = hunks;
@@ -5697,12 +7837,12 @@ function on_review_buffer_activated(data: { buffer_id: number }): void {
     if (data.buffer_id === diffId || data.buffer_id === compositeId) newPanel = 'diff';
     else if (data.buffer_id === commentsId) newPanel = 'comments';
     else if (data.buffer_id === filesId) newPanel = 'files';
+    // A hidden panel's buffer can still be "activated" (repainting it
+    // touches the buffer). It is not on screen, so it must not take the
+    // arrow keys — that stranded `j` / `Down` on an invisible file list.
+    if (newPanel !== null && !panelVisible(newPanel)) return;
     if (newPanel === null || newPanel === state.focusPanel) return;
     state.focusPanel = newPanel;
-    // Pin the FILES cursor to the selected row's start on *any* focus path
-    // (mouse included), so the panel never lands horizontally scrolled to a
-    // long row's end.
-    if (newPanel === 'files') scrollFilesToSelected();
     refreshFocusIndicators();
 }
 registerHandler("on_review_buffer_activated", on_review_buffer_activated);
@@ -5712,13 +7852,16 @@ registerHandler("on_review_buffer_activated", on_review_buffer_activated);
 function refreshFocusIndicators(): void {
     if (state.groupId === null) return;
     if (state.panelBuffers["files"] !== undefined) {
-        editor.setPanelContent(state.groupId, "files", buildFilesPanelEntries());
+        renderFilesPanel();
     }
     if (state.panelBuffers["comments"] !== undefined) {
-        editor.setPanelContent(state.groupId, "comments", buildCommentsPanelEntries());
+        renderCommentsPanel();
     }
-    // The diff's "header" is the sticky bar; refresh it in place.
-    refreshStickyHeader(Math.max(0, state.diffCursorRow - 1));
+    // The diff's "header" is the sticky bar; refresh it in place. It
+    // names what sits at the *top of the view*, so it is driven by the
+    // viewport, never by the cursor — feeding it the cursor row made it
+    // name a file that wasn't on screen.
+    refreshStickyHeader(state.diffViewportTopRow);
 }
 
 /**
@@ -5773,13 +7916,32 @@ function on_review_cursor_moved(data: {
     // Diff panel: track cursor row + repaint the cursor-line overlay.
     if (data.buffer_id === state.panelBuffers["diff"]) {
         const prevHighlight = state.commentsHighlightId;
+        // Moving to a different row is the user moving on from the last
+        // action's confirmation. Same-row events are the echo of our own
+        // post-action cursor restore, which must not expire it.
+        if (reviewConfirmation !== null && data.line !== reviewConfirmation.row) {
+            reviewConfirmation = null;
+        }
         state.diffCursorRow = data.line;
-        applyCursorLineOverlay('diff');
+        // A visual line selection follows the cursor wherever it goes.
+        // Extending it from the ↑/↓ handlers only covered the keys those
+        // handlers still see; the cursor's own move event covers every
+        // motion, native ones included.
+        if (state.lineSelection && state.lineSelection.endRow !== data.line) {
+            state.lineSelection.endRow = Math.max(1, data.line);
+            paintLineSelectionOverlay();
+        }
         // Use the cursor row as a sticky-header anchor too — viewport_changed
         // doesn't always fire reliably for plugin-managed virtual buffers
         // (top_line can be null). Tracking the cursor row gives a snappy
         // "what file am I in" indicator regardless.
         refreshStickyHeader(Math.max(0, data.line - 1));
+        // The viewport event is the usual trigger; a jump the host reports
+        // late (or not at all, for a virtual buffer) still gets its rows
+        // painted from here.
+        if (wordDiffWindow === null || data.line < wordDiffWindow.first || data.line > wordDiffWindow.last) {
+            paintWordDiff(Math.max(0, data.line - 1));
+        }
         updateReviewStatus();
         // Re-render the comments panel only when the highlighted comment
         // actually changes — avoids re-emitting the panel on every
@@ -5787,7 +7949,7 @@ function on_review_cursor_moved(data: {
         const newHighlight = currentCommentIdAtCursor();
         if (newHighlight !== prevHighlight) {
             state.commentsHighlightId = newHighlight;
-            editor.setPanelContent(state.groupId, "comments", buildCommentsPanelEntries());
+            renderCommentsPanel();
         }
         return;
     }
@@ -5824,10 +7986,13 @@ async function side_by_side_diff_current_file() {
     const gitRoot = gitRootResult.stdout.trim();
 
     // Get relative path from git root using git itself (handles Windows paths correctly)
-    const relPathResult = await editor.spawnProcess("git", ["-C", fileDir, "ls-files", "--full-name", fileName]);
+    // `-z`: without it a path with non-ASCII (or `"`, `\`) bytes comes back
+    // quoted and octal-escaped, and no later git call would match it.
+    const relPathResult = await editor.spawnProcess("git", ["-C", fileDir, "ls-files", "-z", "--full-name", fileName]);
+    const relPath = relPathResult.stdout.split("\0")[0] ?? "";
     let filePath: string;
-    if (relPathResult.exit_code === 0 && relPathResult.stdout.trim()) {
-        filePath = relPathResult.stdout.trim();
+    if (relPathResult.exit_code === 0 && relPath) {
+        filePath = relPath;
     } else {
         // File might be untracked, compute relative path manually
         // Normalize paths: replace backslashes with forward slashes for comparison
@@ -5849,12 +8014,12 @@ async function side_by_side_diff_current_file() {
     let diffOutput: string;
     if (isUntracked) {
         // For untracked files, use --no-index to diff against /dev/null
-        const result = await editor.spawnProcess("git", ["-C", gitRoot, "diff", "--no-index", "--unified=3", "--", "/dev/null", filePath]);
+        const result = await editor.spawnProcess("git", ["-C", gitRoot, ...diffArgs(["diff"], "--no-index", "--unified=3", "--", "/dev/null", filePath)]);
         // git diff --no-index exits with 1 when there are differences, which is expected
         diffOutput = result.stdout || "";
     } else {
         // For tracked files, use normal diff against HEAD
-        const result = await editor.spawnProcess("git", ["-C", gitRoot, "diff", "HEAD", "--unified=3", "--", filePath]);
+        const result = await editor.spawnProcess("git", ["-C", gitRoot, ...diffArgs(["diff"], "HEAD", "--unified=3", "--", filePath)]);
         if (result.exit_code !== 0) {
             editor.setStatus(editor.t("status.failed_git_diff"));
             return;
@@ -5862,41 +8027,34 @@ async function side_by_side_diff_current_file() {
         diffOutput = result.stdout;
     }
 
-    // Parse hunks from diff output
-    const lines = diffOutput.split('\n');
-    const fileHunks: Hunk[] = [];
-    let currentHunk: Hunk | null = null;
-
-    for (const line of lines) {
-        if (line.startsWith('@@')) {
-            const match = line.match(/@@ -(\d+),?(\d*) \+(\d+),?(\d*) @@(.*)/);
-            if (match) {
-                const oldStart = parseInt(match[1]);
-                const oldCount = match[2] ? parseInt(match[2]) : 1;
-                const newStart = parseInt(match[3]);
-                const newCount = match[4] ? parseInt(match[4]) : 1;
-                currentHunk = {
-                    id: `${filePath}:${newStart}`,
-                    file: filePath,
-                    range: { start: newStart, end: newStart + newCount - 1 },
-                    oldRange: { start: oldStart, end: oldStart + oldCount - 1 },
-                    type: isUntracked ? 'add' : 'modify',
-                    lines: [],
-                    status: 'pending',
-                    contextHeader: match[5]?.trim() || "",
-                    byteOffset: 0
-                };
-                fileHunks.push(currentHunk);
-            }
-        } else if (currentHunk && (line.startsWith('+') || line.startsWith('-') || line.startsWith(' '))) {
-            if (!line.startsWith('---') && !line.startsWith('+++')) {
-                currentHunk.lines.push(line);
-            }
+    // Parse hunks from diff output. This view aligns whole files, so it
+    // wants each hunk's real extent on both sides.
+    const fileHunks = parseDiffOutput(diffOutput, 'unstaged');
+    for (const h of fileHunks) {
+        h.id = `${filePath}:${h.range.start}`;
+        h.file = filePath;
+        h.type = isUntracked ? 'add' : 'modify';
+        h.lines = h.lines.filter(l => l[0] !== '\\');
+        let oldCount = 0;
+        let newCount = 0;
+        for (const l of h.lines) {
+            if (l[0] !== '+') oldCount++;
+            if (l[0] !== '-') newCount++;
         }
+        h.oldRange.end = h.oldRange.start + oldCount - 1;
+        h.range.end = h.range.start + newCount - 1;
     }
 
     if (fileHunks.length === 0) {
-        editor.setStatus(editor.t("status.no_changes"));
+        // No hunks because git summarised the file rather than patching it —
+        // a binary, or one over `diffArgs`' size threshold — is not the same
+        // as no change, and the side-by-side has nothing to align either way.
+        const summarised = diffFileBlocks(diffOutput).some(b => b.binary);
+        editor.setStatus(
+            summarised
+                ? (editor.t("status.binary_or_too_large") || "File is binary or too large to diff")
+                : editor.t("status.no_changes"),
+        );
         return;
     }
 
@@ -6039,18 +8197,25 @@ async function side_by_side_diff_current_file() {
 registerHandler("side_by_side_diff_current_file", side_by_side_diff_current_file);
 
 // =============================================================================
-// Review PR Branch
+// Git Log: PR Branch
 //
-// A companion view to `start_review_diff` for reviewing the full set of
-// commits on a PR branch (rather than just the working-tree changes). It
-// opens a buffer group with the commit history on the left (rendered by
-// the shared `lib/git_history.ts` helpers the git_log plugin uses) and a
-// live-updating `git show` of the selected commit on the right. This reuses
-// the same rendering pipeline so both plugins stay visually consistent and
-// respect theme keys in one place.
+// A git-log view scoped to a PR branch: the commits in `base..HEAD` rather
+// than the working-tree changes `start_review_diff` shows. It is named into
+// the git_log plugin's `Git Log: …` family because that is what it is; the
+// `Review Diff: …` family is the review tool. It opens a buffer
+// group with the commit history on the left (rendered by the shared
+// `lib/git_history.ts` helpers the git_log plugin uses) and a live-updating
+// `git show` of the selected commit on the right. This reuses the same
+// rendering pipeline so both plugins stay visually consistent and respect
+// theme keys in one place.
+//
+// This is a *browser*, not a review session: it opens no review buffers and
+// takes no comments. To code-review the same commits, use `Review Diff:
+// Range` with `base..HEAD`, which flattens them into a single reviewable
+// diff.
 // =============================================================================
 
-interface ReviewBranchState {
+interface BranchLogState {
     isOpen: boolean;
     groupId: number | null;
     logBufferId: number | null;
@@ -6064,14 +8229,14 @@ interface ReviewBranchState {
     logRowByteOffsets: number[];
 }
 
-const branchState: ReviewBranchState = {
+const branchState: BranchLogState = {
     isOpen: false,
     groupId: null,
     logBufferId: null,
     detailBufferId: null,
     commits: [],
     selectedIndex: 0,
-    // Empty means "not yet detected"; start_review_branch fills this in
+    // Empty means "not yet detected"; start_branch_log fills this in
     // from the repo's actual default branch (main, master, or whatever
     // origin/HEAD points at) before showing the prompt.
     baseRef: "",
@@ -6150,10 +8315,10 @@ function branchIndexFromCursor(bytePos: number): number {
 
 function branchRenderLog(): void {
     if (branchState.groupId === null) return;
-    const rawHeader = editor.t("panel.review_branch_header", { base: branchState.baseRef });
-    const header = (rawHeader && !rawHeader.startsWith("panel.")) ? rawHeader : `Commits (${branchState.baseRef}..HEAD)`;
-    const rawFooter = editor.t("panel.review_branch_footer");
-    const footer = (rawFooter && !rawFooter.startsWith("panel.")) ? rawFooter : "j/k: navigate · Enter: focus detail · r: refresh · q: close";
+    const header = tr("panel.branch_log_header", { base: branchState.baseRef })
+        ?? `Commits (${branchState.baseRef}..HEAD)`;
+    const footer = tr("panel.branch_log_footer")
+        ?? "j/k: navigate · Enter: focus detail · r: refresh · q: close";
     const entries = buildCommitLogEntries(branchState.commits, {
         selectedIndex: branchState.selectedIndex,
         header,
@@ -6175,10 +8340,18 @@ function branchByteOffsetOfFirstCommit(): number {
     return branchState.logRowByteOffsets.length > 1 ? branchState.logRowByteOffsets[1] : 0;
 }
 
+/** Tell the host where the detail panel's rows are code, and in what
+ *  (#2871): the `+` / `-` / context rows of each hunk, in the language
+ *  of the file the hunk belongs to. */
+function branchDeclareDetailSyntax(entries: TextPropertyEntry[]): void {
+    if (branchState.detailBufferId === null) return;
+    editor.setSyntaxRegions(branchState.detailBufferId, commitDetailSyntaxRegions(entries));
+}
+
 async function branchRefreshDetail(): Promise<void> {
     if (branchState.groupId === null) return;
     if (branchState.commits.length === 0) {
-        const msg = editor.t("status.review_branch_empty") || "No commits in the selected range.";
+        const msg = tr("status.branch_log_empty") ?? "No commits in the selected range.";
         editor.setPanelContent(
             branchState.groupId,
             "detail",
@@ -6193,6 +8366,7 @@ async function branchRefreshDetail(): Promise<void> {
     if (branchState.detailCache && branchState.detailCache.hash === commit.hash) {
         const entries = buildCommitDetailEntries(commit, branchState.detailCache.output, {});
         editor.setPanelContent(branchState.groupId, "detail", entries);
+        branchDeclareDetailSyntax(entries);
         return;
     }
     const myId = ++branchState.pendingDetailId;
@@ -6200,23 +8374,21 @@ async function branchRefreshDetail(): Promise<void> {
         branchState.groupId,
         "detail",
         buildDetailPlaceholderEntries(
-            editor.t("status.loading_commit", { hash: commit.shortHash }) || `Loading ${commit.shortHash}…`,
+            tr("status.loading_commit", { hash: commit.shortHash }) ?? `Loading ${commit.shortHash}…`,
         ),
     );
     const output = await fetchCommitShow(editor, commit.hash, gitCwd());
     if (myId !== branchState.pendingDetailId) return;
     if (branchState.groupId === null) return;
     branchState.detailCache = { hash: commit.hash, output };
-    editor.setPanelContent(
-        branchState.groupId,
-        "detail",
-        buildCommitDetailEntries(commit, output, {}),
-    );
+    const entries = buildCommitDetailEntries(commit, output, {});
+    editor.setPanelContent(branchState.groupId, "detail", entries);
+    branchDeclareDetailSyntax(entries);
 }
 
-async function start_review_branch(): Promise<void> {
+async function start_branch_log(): Promise<void> {
     if (branchState.isOpen) {
-        editor.setStatus(editor.t("status.already_open") || "Review branch already open");
+        editor.setStatus(tr("status.branch_log_already_open") ?? "Branch log already open");
         return;
     }
     // Prompt for the base ref so the user can review any PR, not just
@@ -6232,18 +8404,17 @@ async function start_review_branch(): Promise<void> {
         : `Base ref to compare against (default: ${suggested}):`;
     const input = await editor.prompt(promptText + " ", suggested);
     if (input === null) {
-        editor.setStatus(editor.t("status.cancelled") || "Cancelled");
+        editor.setStatus(tr("status.cancelled") ?? "Cancelled");
         return;
     }
     const base = input.trim() || suggested;
     branchState.baseRef = base;
 
-    editor.setStatus(editor.t("status.loading") || "Loading commits…");
+    editor.setStatus(tr("status.branch_log_loading") ?? "Loading commits…");
     branchState.commits = await fetchGitLog(editor, { range: `${base}..HEAD`, maxCommits: 500, cwd: gitCwd() });
     if (branchState.commits.length === 0) {
         editor.setStatus(
-            editor.t("status.review_branch_empty", { base }) ||
-                `No commits in ${base}..HEAD — nothing to review.`,
+            tr("status.branch_log_empty", { base }) ?? `No commits in ${base}..HEAD`,
         );
         return;
     }
@@ -6258,8 +8429,8 @@ async function start_review_branch(): Promise<void> {
     // `createBufferGroup` is a runtime-only binding (not in the generated
     // EditorAPI type); cast to `any` so the type-checker doesn't complain.
     const group = await (editor as any).createBufferGroup(
-        `*Review Branch ${base}..HEAD*`,
-        "review-branch",
+        `*Git Log: ${base}..HEAD*`,
+        "branch-log",
         layout,
     );
     branchState.groupId = group.groupId as number;
@@ -6285,21 +8456,21 @@ async function start_review_branch(): Promise<void> {
     if (branchState.groupId !== null) {
         editor.focusBufferGroupPanel(branchState.groupId, "log");
     }
-    editor.on("cursor_moved", on_review_branch_cursor_moved);
+    editor.on("cursor_moved", on_branch_log_cursor_moved);
 
     editor.setStatus(
-        editor.t("status.review_branch_ready", {
+        tr("status.branch_log_ready", {
             count: String(branchState.commits.length),
             base,
-        }) || `Reviewing ${branchState.commits.length} commits in ${base}..HEAD`,
+        }) ?? `${branchState.commits.length} commits in ${base}..HEAD`,
     );
 }
-registerHandler("start_review_branch", start_review_branch);
+registerHandler("start_branch_log", start_branch_log);
 
-function stop_review_branch(): void {
+function stop_branch_log(): void {
     if (!branchState.isOpen) return;
     if (branchState.groupId !== null) editor.closeBufferGroup(branchState.groupId);
-    editor.off("cursor_moved", on_review_branch_cursor_moved);
+    editor.off("cursor_moved", on_branch_log_cursor_moved);
     branchState.isOpen = false;
     branchState.groupId = null;
     branchState.logBufferId = null;
@@ -6307,11 +8478,11 @@ function stop_review_branch(): void {
     branchState.commits = [];
     branchState.selectedIndex = 0;
     branchState.detailCache = null;
-    editor.setStatus(editor.t("status.closed") || "Review branch closed");
+    editor.setStatus(tr("status.branch_log_closed") ?? "Branch log closed");
 }
-registerHandler("stop_review_branch", stop_review_branch);
+registerHandler("stop_branch_log", stop_branch_log);
 
-async function review_branch_refresh(): Promise<void> {
+async function branch_log_refresh(): Promise<void> {
     if (!branchState.isOpen) return;
     const base = branchState.baseRef;
     branchState.commits = await fetchGitLog(editor, { range: `${base}..HEAD`, maxCommits: 500, cwd: gitCwd() });
@@ -6322,10 +8493,10 @@ async function review_branch_refresh(): Promise<void> {
     branchRenderLog();
     await branchRefreshDetail();
 }
-registerHandler("review_branch_refresh", review_branch_refresh);
+registerHandler("branch_log_refresh", branch_log_refresh);
 
 /** Is the detail panel the currently-focused buffer? */
-function isReviewBranchDetailFocused(): boolean {
+function isBranchLogDetailFocused(): boolean {
     return (
         branchState.detailBufferId !== null &&
         editor.getActiveBufferId() === branchState.detailBufferId
@@ -6333,7 +8504,7 @@ function isReviewBranchDetailFocused(): boolean {
 }
 
 /** The currently-selected commit in the log panel, or null. */
-function selectedReviewBranchCommit(): GitCommit | null {
+function selectedBranchLogCommit(): GitCommit | null {
     if (branchState.commits.length === 0) return null;
     const i = Math.max(
         0,
@@ -6346,25 +8517,25 @@ function selectedReviewBranchCommit(): GitCommit | null {
  * Enter: on the log panel jumps focus into the detail panel; on the detail
  * panel opens the file at the cursor position at the selected commit (if any).
  */
-function review_branch_enter(): void {
+function branch_log_enter(): void {
     if (branchState.groupId === null) return;
-    if (isReviewBranchDetailFocused()) {
-        void review_branch_detail_open_file();
+    if (isBranchLogDetailFocused()) {
+        void branch_log_detail_open_file();
         return;
     }
     editor.focusBufferGroupPanel(branchState.groupId, "detail");
 }
-registerHandler("review_branch_enter", review_branch_enter);
+registerHandler("branch_log_enter", branch_log_enter);
 
 /**
  * Open the file at the cursor's `(file, line)` text-properties at the
  * currently-selected commit, in a read-only virtual buffer. Mirrors the
  * git-log plugin's `git_log_detail_open_file` so users get the same
- * drill-down from the review-branch detail panel.
+ * drill-down from the branch-log detail panel.
  */
-async function review_branch_detail_open_file(): Promise<void> {
+async function branch_log_detail_open_file(): Promise<void> {
     if (branchState.detailBufferId === null) return;
-    const commit = selectedReviewBranchCommit();
+    const commit = selectedBranchLogCommit();
     if (!commit) return;
 
     const props = editor.getTextPropertiesAtCursor(branchState.detailBufferId);
@@ -6404,7 +8575,7 @@ async function review_branch_detail_open_file(): Promise<void> {
     const name = `*${commit.shortHash}:${file}*`;
     const view = await editor.createVirtualBuffer({
         name,
-        mode: "review-branch-file-view",
+        mode: "branch-log-file-view",
         readOnly: true,
         editingDisabled: true,
         showLineNumbers: true,
@@ -6425,33 +8596,33 @@ async function review_branch_detail_open_file(): Promise<void> {
     }
 }
 registerHandler(
-    "review_branch_detail_open_file",
-    review_branch_detail_open_file,
+    "branch_log_detail_open_file",
+    branch_log_detail_open_file,
 );
 
 /** Tab: toggle focus between the log and detail panels. */
-function review_branch_tab(): void {
+function branch_log_tab(): void {
     if (branchState.groupId === null) return;
     editor.focusBufferGroupPanel(
         branchState.groupId,
-        isReviewBranchDetailFocused() ? "log" : "detail",
+        isBranchLogDetailFocused() ? "log" : "detail",
     );
 }
-registerHandler("review_branch_tab", review_branch_tab);
+registerHandler("branch_log_tab", branch_log_tab);
 
 /** q/Escape: focus-back from detail, or close when already on log. */
-function review_branch_close_or_back(): void {
+function branch_log_close_or_back(): void {
     if (branchState.groupId === null) return;
     const active = editor.getActiveBufferId();
     if (branchState.detailBufferId !== null && active === branchState.detailBufferId) {
         editor.focusBufferGroupPanel(branchState.groupId, "log");
         return;
     }
-    stop_review_branch();
+    stop_branch_log();
 }
-registerHandler("review_branch_close_or_back", review_branch_close_or_back);
+registerHandler("branch_log_close_or_back", branch_log_close_or_back);
 
-function on_review_branch_cursor_moved(data: {
+function on_branch_log_cursor_moved(data: {
     buffer_id: number;
     cursor_id: number;
     old_position: number;
@@ -6465,10 +8636,10 @@ function on_review_branch_cursor_moved(data: {
     branchRenderLog();
     branchRefreshDetail();
 }
-registerHandler("on_review_branch_cursor_moved", on_review_branch_cursor_moved);
+registerHandler("on_branch_log_cursor_moved", on_branch_log_cursor_moved);
 
 editor.defineMode(
-    "review-branch",
+    "branch-log",
     [
         // vi-style aliases for Up/Down. Everything else (arrows,
         // Page{Up,Down}, Home/End, selection motion, …) is inherited
@@ -6477,38 +8648,38 @@ editor.defineMode(
         ["j", "move_down"],
         // Enter: from the log, focus the detail panel; from the detail
         // panel, open the file at the cursor at the selected commit.
-        ["Return", "review_branch_enter"],
+        ["Return", "branch_log_enter"],
         // Tab: toggle focus between the log and detail panels.
-        ["Tab", "review_branch_tab"],
-        ["r", "review_branch_refresh"],
-        ["q", "review_branch_close_or_back"],
-        ["Escape", "review_branch_close_or_back"],
+        ["Tab", "branch_log_tab"],
+        ["r", "branch_log_refresh"],
+        ["q", "branch_log_close_or_back"],
+        ["Escape", "branch_log_close_or_back"],
     ],
     true, // readOnly
     false, // allowTextInput — keeps plain letters from inserting into the RO buffer
     true, // inheritNormalBindings — PageUp/PageDown/arrows/Home/End come from Normal
 );
 
-/** Close the file-view virtual buffer opened from the review-branch detail panel. */
-function review_branch_file_view_close(): void {
+/** Close the file-view virtual buffer opened from the branch-log detail panel. */
+function branch_log_file_view_close(): void {
     const id = editor.getActiveBufferId();
     if (id) editor.closeBuffer(id);
 }
-registerHandler("review_branch_file_view_close", review_branch_file_view_close);
+registerHandler("branch_log_file_view_close", branch_log_file_view_close);
 
 // Mode for the read-only "git show <hash>:<file>" buffer opened from the
-// review-branch detail panel. Mirrors git-log's `git-log-file-view`:
+// branch-log detail panel. Mirrors git-log's `git-log-file-view`:
 // q/Escape close the view, j/k alias Up/Down, and all other Normal
 // bindings (arrows, PageUp/Down, Home/End, Ctrl+C copy) are inherited so
 // unbound keys don't fall through to edit actions and trip the
 // `editing_disabled` status message (see #566).
 editor.defineMode(
-    "review-branch-file-view",
+    "branch-log-file-view",
     [
         ["k", "move_up"],
         ["j", "move_down"],
-        ["q", "review_branch_file_view_close"],
-        ["Escape", "review_branch_file_view_close"],
+        ["q", "branch_log_file_view_close"],
+        ["Escape", "branch_log_file_view_close"],
     ],
     true, // read-only
     false, // allow_text_input
@@ -6516,13 +8687,21 @@ editor.defineMode(
 );
 
 // Register Modes and Commands
+//
+// Two families, each under one prefix. `Review Diff: …` is the code review
+// tool — the working tree (`Review Diff` itself), a range or branch flattened
+// into one diff, a stash entry, and the commands that act on an open review
+// session. `Git Log: …` is the commit browser the git_log plugin owns; the PR
+// branch log below joins that family because that is what it is.
 editor.registerCommand("%cmd.review_diff", "%cmd.review_diff_desc", "start_review_diff", null);
-editor.registerCommand("%cmd.review_branch", "%cmd.review_branch_desc", "start_review_branch", null);
-editor.registerCommand("%cmd.stop_review_branch", "%cmd.stop_review_branch_desc", "stop_review_branch", "review-branch");
-editor.registerCommand("%cmd.refresh_review_branch", "%cmd.refresh_review_branch_desc", "review_branch_refresh", "review-branch");
 editor.registerCommand("%cmd.stop_review_diff", "%cmd.stop_review_diff_desc", "stop_review_diff", "review-mode");
 editor.registerCommand("%cmd.refresh_review_diff", "%cmd.refresh_review_diff_desc", "review_refresh", "review-mode");
 editor.registerCommand("%cmd.side_by_side_diff", "%cmd.side_by_side_diff_desc", "side_by_side_diff_current_file", null);
+
+// Git Log: PR Branch (a git log scoped to `base..HEAD`, not a review session)
+editor.registerCommand("%cmd.branch_log", "%cmd.branch_log_desc", "start_branch_log", null);
+editor.registerCommand("%cmd.branch_log_close", "%cmd.branch_log_close_desc", "stop_branch_log", "branch-log");
+editor.registerCommand("%cmd.branch_log_refresh", "%cmd.branch_log_refresh_desc", "branch_log_refresh", "branch-log");
 
 // Review Comment Commands
 editor.registerCommand("%cmd.add_comment", "%cmd.add_comment_desc", "review_add_comment", "review-mode");
@@ -6562,25 +8741,36 @@ editor.on("buffer_closed", (data) => {
     }
 });
 
-editor.defineMode("review-mode", [
+const REVIEW_MODE_BINDINGS: string[][] = [
     // Native cursor motion in the unified diff stream.
     ["Up", "review_nav_up"], ["Down", "review_nav_down"],
     ["k", "review_nav_up"], ["j", "review_nav_down"],
     ["PageUp", "review_page_up"], ["PageDown", "review_page_down"],
-    // Home / End — match the editor's normal-mode defaults so users
-    // get the same start-of-line / end-of-line behavior they're used
-    // to. Mode bindings replace globals, so we must bind these
-    // explicitly even though the actions are built-in.
-    ["Home", "move_line_start"], ["End", "move_line_end"],
+    // Home / End — start / end of line in the diff (the editor's normal
+    // meaning), first / last row in a focused side panel. Mode bindings
+    // replace globals, so these are bound explicitly.
+    ["Home", "review_nav_home"], ["End", "review_nav_end"],
+    // Left / Right pan the unified stream horizontally. Nothing wraps
+    // in the diff panel, so a long line runs past the right edge; the
+    // cursor walking off it is what scrolls the viewport across, the
+    // same way it does in a normal buffer (Shift+wheel pans too). In the
+    // FILES sidebar they fold / unfold the selected directory instead.
+    ["Left", "review_nav_left"], ["Right", "review_nav_right"],
     // Hunk navigation across the unified stream.
     ["n", "review_next_hunk"], ["p", "review_prev_hunk"],
     // File navigation (hunk-style): focus the prev / next file.
     [",", "review_goto_prev_file"], [".", "review_goto_next_file"],
-    // Layout toggle (hunk-style): 1 = split (side-by-side of the file
-    // under the cursor), 2 = stack (unified), 0 = auto by terminal width.
-    ["1", "review_layout_split"],
-    ["2", "review_layout_stack"],
+    // Layout toggle: 1 = stack (the unified stream), 2 = split
+    // (side-by-side of the file under the cursor — two columns, two
+    // sides), 0 = auto by terminal width.
+    // 1 = one column (the unified stream), 2 = two columns (side-by-side).
+    ["1", "review_layout_stack"],
+    ["2", "review_layout_split"],
     ["0", "review_layout_auto"],
+    // Show / hide the two side panels (both start hidden, so the diff
+    // gets the full width until you ask for them).
+    ["F", "review_toggle_files_panel"],
+    ["C", "review_toggle_comments_panel"],
     // Toggle inline review-note visibility; filter files; watch; help.
     ["a", "review_toggle_agent_notes"],
     ["/", "review_filter_files"],
@@ -6625,6 +8815,40 @@ editor.defineMode("review-mode", [
     // Close & export
     ["q", "close"],
     ["e", "review_export_session"],
-], true);
+];
+
+/** Motion handlers that exist only to forward to a built-in action once
+ *  the diff panel has focus. In the diff's own mode they *are* the
+ *  built-in action.
+ *
+ *  A plugin action is a round trip: the host hands the key to the plugin
+ *  thread, the handler asks for `move_down`, and only a later frame moves
+ *  the caret. That is a whole frame of lag on every repeat of a held
+ *  arrow key — for a keystroke whose entire job is to move the cursor one
+ *  row. Bound directly, the move lands in the frame the key arrived in.
+ *
+ *  The side panels keep the plugin handlers: there ↑/↓ drive a widget's
+ *  selection, which the editor's own cursor motion cannot do. */
+const DIFF_NATIVE_MOTION: Record<string, string> = {
+    review_nav_up: "move_up",
+    review_nav_down: "move_down",
+    review_page_up: "move_page_up",
+    review_page_down: "move_page_down",
+    review_nav_home: "move_line_start",
+    review_nav_end: "move_line_end",
+    review_nav_left: "move_left",
+    review_nav_right: "move_right",
+};
+
+editor.defineMode("review-mode", REVIEW_MODE_BINDINGS, true);
+/** The diff panel's copy of the map. Same keys, same commands — only the
+ *  motions differ (see `DIFF_NATIVE_MOTION`). The buffer carrying this
+ *  mode is the one the editor's cursor lives in: the unified stream, and
+ *  the side-by-side composite. */
+editor.defineMode(
+    REVIEW_DIFF_MODE,
+    REVIEW_MODE_BINDINGS.map(([key, action]) => [key, DIFF_NATIVE_MOTION[action] ?? action]),
+    true,
+);
 
 editor.debug("Review Diff plugin loaded with review comments support");

@@ -1,0 +1,1967 @@
+{
+  "inherits": null,
+  "bindings": [
+    {
+      "comment": "Quick Open - files, commands (>), buffers (#), go to line (:)",
+      "key": "p",
+      "modifiers": ["ctrl"],
+      "action": "quick_open",
+      "args": {},
+      "when": "global"
+    },
+    {
+      "comment": "Quick Open files - find files in project",
+      "key": "'",
+      "modifiers": ["ctrl"],
+      "action": "quick_open_files",
+      "args": {},
+      "when": "global"
+    },
+    {
+      "comment": "Quick Open buffers - switch between open tabs",
+      "key": ";",
+      "modifiers": ["ctrl"],
+      "action": "quick_open_buffers",
+      "args": {},
+      "when": "global"
+    },
+    {
+      "key": "F10",
+      "modifiers": [],
+      "action": "menu_activate",
+      "args": {},
+      "when": "global"
+    },
+    {
+      "key": "f",
+      "modifiers": ["alt"],
+      "action": "menu_open",
+      "args": {"name": "File"},
+      "when": "global"
+    },
+    {
+      "key": "e",
+      "modifiers": ["alt"],
+      "action": "menu_open",
+      "args": {"name": "Edit"},
+      "when": "global"
+    },
+    {
+      "comment": "Ctrl+E -> Focus file explorer (switch focus between explorer and editor)",
+      "key": "e",
+      "modifiers": ["ctrl"],
+      "action": "focus_file_explorer",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "v",
+      "modifiers": ["alt"],
+      "action": "menu_open",
+      "args": {"name": "View"},
+      "when": "global"
+    },
+    {
+      "key": "s",
+      "modifiers": ["alt"],
+      "action": "menu_open",
+      "args": {"name": "Selection"},
+      "when": "global"
+    },
+    {
+      "key": "g",
+      "modifiers": ["alt"],
+      "action": "menu_open",
+      "args": {"name": "Go"},
+      "when": "global"
+    },
+    {
+      "key": "h",
+      "modifiers": ["alt"],
+      "action": "menu_open",
+      "args": {"name": "Help"},
+      "when": "global"
+    },
+    {
+      "key": "x",
+      "modifiers": ["alt"],
+      "action": "menu_open",
+      "args": {"name": "Explorer"},
+      "when": "global"
+    },
+    {
+      "comment": "Normal context - Close tab",
+      "key": "w",
+      "modifiers": ["alt"],
+      "action": "close_tab",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Normal context - Basic movement",
+      "key": "Left",
+      "modifiers": [],
+      "action": "move_left",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "Right",
+      "modifiers": [],
+      "action": "move_right",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "Up",
+      "modifiers": [],
+      "action": "move_up",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "Down",
+      "modifiers": [],
+      "action": "move_down",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Normal context - Move line/selection up/down",
+      "key": "Up",
+      "modifiers": ["alt"],
+      "action": "move_line_up",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "Down",
+      "modifiers": ["alt"],
+      "action": "move_line_down",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "Home",
+      "modifiers": [],
+      "action": "smart_home",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "End",
+      "modifiers": [],
+      "action": "move_line_end",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "PageUp",
+      "modifiers": [],
+      "action": "move_page_up",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "PageDown",
+      "modifiers": [],
+      "action": "move_page_down",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Normal context - File operations",
+      "key": "s",
+      "modifiers": ["ctrl"],
+      "action": "save",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "q",
+      "modifiers": ["ctrl"],
+      "action": "quit",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "o",
+      "modifiers": ["ctrl"],
+      "action": "open",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Ctrl+O - Open file (also available when the file explorer is focused)",
+      "key": "o",
+      "modifiers": ["ctrl"],
+      "action": "open",
+      "args": {},
+      "when": "fileExplorer"
+    },
+    {
+      "comment": "Normal context - Editing",
+      "key": "z",
+      "modifiers": ["ctrl"],
+      "action": "undo",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "y",
+      "modifiers": ["ctrl"],
+      "action": "redo",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "Backspace",
+      "modifiers": [],
+      "action": "delete_backward",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "Delete",
+      "modifiers": [],
+      "action": "delete_forward",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "Enter",
+      "modifiers": [],
+      "action": "insert_newline",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "Tab",
+      "modifiers": [],
+      "action": "insert_tab",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Transpose characters (swap char before cursor with char at cursor)",
+      "key": "t",
+      "modifiers": ["ctrl"],
+      "action": "transpose_chars",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Normal context - Document navigation",
+      "key": "Home",
+      "modifiers": ["ctrl"],
+      "action": "move_document_start",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "End",
+      "modifiers": ["ctrl"],
+      "action": "move_document_end",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Normal context - Word movement",
+      "key": "Left",
+      "modifiers": ["ctrl"],
+      "action": "move_word_left",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "Right",
+      "modifiers": ["ctrl"],
+      "action": "move_word_end",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Normal context - Toggle sidebar/file explorer visibility",
+      "key": "b",
+      "modifiers": ["ctrl"],
+      "action": "toggle_file_explorer",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "b",
+      "modifiers": ["alt"],
+      "action": "move_word_left",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Normal context - Selection",
+      "key": "Left",
+      "modifiers": ["shift"],
+      "action": "select_left",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "Right",
+      "modifiers": ["shift"],
+      "action": "select_right",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "Up",
+      "modifiers": ["shift"],
+      "action": "select_up",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "Down",
+      "modifiers": ["shift"],
+      "action": "select_down",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "Home",
+      "modifiers": ["shift"],
+      "action": "select_line_start",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "End",
+      "modifiers": ["shift"],
+      "action": "select_line_end",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "Home",
+      "modifiers": ["ctrl", "shift"],
+      "action": "select_document_start",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "End",
+      "modifiers": ["ctrl", "shift"],
+      "action": "select_document_end",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "Left",
+      "modifiers": ["ctrl", "shift"],
+      "action": "select_word_left",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "Right",
+      "modifiers": ["ctrl", "shift"],
+      "action": "select_word_end",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "PageUp",
+      "modifiers": ["shift"],
+      "action": "select_page_up",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "PageDown",
+      "modifiers": ["shift"],
+      "action": "select_page_down",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "a",
+      "modifiers": ["ctrl"],
+      "action": "select_all",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Normal context - Clipboard",
+      "key": "c",
+      "modifiers": ["ctrl"],
+      "action": "copy",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "x",
+      "modifiers": ["ctrl"],
+      "action": "cut",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "v",
+      "modifiers": ["ctrl"],
+      "action": "paste",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Normal context - Word deletion",
+      "key": "Backspace",
+      "modifiers": ["ctrl"],
+      "action": "delete_word_backward",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "h",
+      "modifiers": ["ctrl"],
+      "action": "delete_word_backward",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "Delete",
+      "modifiers": ["ctrl"],
+      "action": "delete_word_forward",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Normal context - Delete to end of line (Ctrl+K)",
+      "key": "k",
+      "modifiers": ["ctrl"],
+      "action": "delete_to_line_end",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Normal context - Advanced selection",
+      "key": "w",
+      "modifiers": ["ctrl"],
+      "action": "select_word",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "l",
+      "modifiers": ["ctrl"],
+      "action": "select_line",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Transform to uppercase (Alt+U)",
+      "key": "u",
+      "modifiers": ["alt"],
+      "action": "to_upper_case",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Transform to lowercase (Alt+L - Emacs M-l style)",
+      "key": "l",
+      "modifiers": ["alt"],
+      "action": "to_lower_case",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Normal context - Block selection",
+      "key": "Left",
+      "modifiers": ["alt", "shift"],
+      "action": "block_select_left",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "Right",
+      "modifiers": ["alt", "shift"],
+      "action": "block_select_right",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "Up",
+      "modifiers": ["alt", "shift"],
+      "action": "block_select_up",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "Down",
+      "modifiers": ["alt", "shift"],
+      "action": "block_select_down",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Normal context - Multi-cursor",
+      "key": "d",
+      "modifiers": ["ctrl"],
+      "action": "add_cursor_next_match",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "Up",
+      "modifiers": ["ctrl", "alt"],
+      "action": "add_cursor_above",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "Down",
+      "modifiers": ["ctrl", "alt"],
+      "action": "add_cursor_below",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "VSCode-compatible 'Add Cursor to Line Ends' (Shift+Alt+I) — places a cursor at the end of every line covered by the selection.",
+      "key": "i",
+      "modifiers": ["shift", "alt"],
+      "action": "add_cursors_to_line_ends",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Normal context - Search and replace",
+      "key": "f",
+      "modifiers": ["ctrl"],
+      "action": "search",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "r",
+      "modifiers": ["ctrl"],
+      "action": "replace",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Project-wide Search and Replace panel. Mnemonic: 'A' for All files. Avoids Ctrl+Shift+F because many terminals collapse Ctrl+Shift+letter to Ctrl+letter (Ctrl+Shift+H ≡ Ctrl+H ≡ Backspace, Ctrl+Shift+L ≡ Ctrl+L ≡ form feed). Implements §10 of docs/internal/search-replace-scope-replan-on-widgets.md.",
+      "key": "a",
+      "modifiers": ["alt"],
+      "action": "start_search_replace",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Jump to the next/previous Project Search & Replace match without leaving the editor (issue #2434). Lets you review a large result set one keystroke at a time instead of Down+Enter in the panel then Alt+] back. Ctrl+Alt+Arrow chosen because Alt+n/p and F3 are taken and arrows avoid the Ctrl+[ (ESC) / shifted-punctuation pitfalls.",
+      "key": "Right",
+      "modifiers": ["ctrl", "alt"],
+      "action": "search_replace_next_match",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "Left",
+      "modifiers": ["ctrl", "alt"],
+      "action": "search_replace_prev_match",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "r",
+      "modifiers": ["ctrl", "alt"],
+      "action": "query_replace",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Shell command - pipe buffer/selection through shell command to new buffer",
+      "key": "|",
+      "modifiers": ["alt"],
+      "action": "shell_command",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Shell command replace - pipe buffer/selection through shell command and replace",
+      "key": "|",
+      "modifiers": ["alt", "shift"],
+      "action": "shell_command_replace",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "F3",
+      "modifiers": [],
+      "action": "find_next",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "F3",
+      "modifiers": ["shift"],
+      "action": "find_previous",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Alternative for Shift-F3 (works in more terminals)",
+      "key": "n",
+      "modifiers": ["ctrl", "shift"],
+      "action": "find_previous",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Step through matches without closing the search bar (VS Code / browser find)",
+      "key": "F3",
+      "modifiers": [],
+      "action": "find_next",
+      "args": {},
+      "when": "searchPrompt"
+    },
+    {
+      "key": "F3",
+      "modifiers": ["shift"],
+      "action": "find_previous",
+      "args": {},
+      "when": "searchPrompt"
+    },
+    {
+      "comment": "Alternative for Shift-F3 with the search bar open (works in more terminals)",
+      "key": "n",
+      "modifiers": ["ctrl", "shift"],
+      "action": "find_previous",
+      "args": {},
+      "when": "searchPrompt"
+    },
+    {
+      "comment": "Quick find - search for next occurrence of selection",
+      "key": "F3",
+      "modifiers": ["ctrl"],
+      "action": "find_selection_next",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Quick find - search for previous occurrence of selection",
+      "key": "F3",
+      "modifiers": ["ctrl", "shift"],
+      "action": "find_selection_previous",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Alternative for Ctrl+F3 (works in more terminals) - find next occurrence of selection",
+      "key": "n",
+      "modifiers": ["alt"],
+      "action": "find_selection_next",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Alternative for Ctrl+Shift+F3 (works in more terminals) - find previous occurrence of selection",
+      "key": "p",
+      "modifiers": ["alt"],
+      "action": "find_selection_previous",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Normal context - Error navigation",
+      "key": "F8",
+      "modifiers": [],
+      "action": "jump_to_next_error",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "F8",
+      "modifiers": ["shift"],
+      "action": "jump_to_previous_error",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Global - Open the Remote Indicator menu (Local / SSH / Container actions)",
+      "key": "F6",
+      "modifiers": [],
+      "action": "show_remote_indicator_menu",
+      "args": {},
+      "when": "global"
+    },
+    {
+      "comment": "Normal context - Smart editing",
+      "key": "/",
+      "modifiers": ["ctrl"],
+      "action": "toggle_comment",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "Tab",
+      "modifiers": ["shift"],
+      "action": "dedent_selection",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "BackTab",
+      "modifiers": [],
+      "action": "dedent_selection",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "BackTab",
+      "modifiers": ["shift"],
+      "action": "dedent_selection",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "]",
+      "modifiers": ["ctrl"],
+      "action": "goto_matching_bracket",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "g",
+      "modifiers": ["ctrl"],
+      "action": "goto_line",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "n",
+      "modifiers": ["ctrl"],
+      "action": "new",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Normal context - Help",
+      "key": "F1",
+      "modifiers": [],
+      "action": "show_help",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "F1",
+      "modifiers": ["shift"],
+      "action": "keyboard_shortcuts",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Normal context - Buffer navigation",
+      "key": "PageUp",
+      "modifiers": ["ctrl"],
+      "action": "prev_buffer",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "PageDown",
+      "modifiers": ["ctrl"],
+      "action": "next_buffer",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Normal context - Tab scrolling",
+      "key": "PageUp",
+      "modifiers": ["alt"],
+      "action": "scroll_tabs_left",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "PageDown",
+      "modifiers": ["alt"],
+      "action": "scroll_tabs_right",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Normal context - Position history",
+      "key": "Left",
+      "modifiers": ["alt"],
+      "action": "navigate_back",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "Right",
+      "modifiers": ["alt"],
+      "action": "navigate_forward",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Normal context - LSP",
+      "key": " ",
+      "modifiers": ["ctrl"],
+      "action": "lsp_completion",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "F2",
+      "modifiers": [],
+      "action": "lsp_rename",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "F12",
+      "modifiers": [],
+      "action": "lsp_goto_definition",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "F12",
+      "modifiers": ["shift"],
+      "action": "lsp_references",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "F12",
+      "modifiers": ["ctrl"],
+      "action": "lsp_implementation",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": ".",
+      "modifiers": ["alt"],
+      "action": "lsp_code_actions",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "k",
+      "modifiers": ["alt"],
+      "action": "lsp_hover",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "F5",
+      "modifiers": [],
+      "action": "stop_macro_recording",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Play last recorded macro (F4)",
+      "key": "F4",
+      "modifiers": [],
+      "action": "play_last_macro",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Normal context - Scrolling",
+      "key": "Up",
+      "modifiers": ["ctrl"],
+      "action": "scroll_up",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "Down",
+      "modifiers": ["ctrl"],
+      "action": "scroll_down",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Jump to previous empty line with selection",
+      "key": "Up",
+      "modifiers": ["ctrl", "shift"],
+      "action": "select_to_paragraph_up",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Jump to next empty line with selection",
+      "key": "Down",
+      "modifiers": ["ctrl", "shift"],
+      "action": "select_to_paragraph_down",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Normal context - Cancel/Escape",
+      "key": "Escape",
+      "modifiers": [],
+      "action": "remove_secondary_cursors",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Step through an open Code Tour without leaving the editor split, so you can read the code the step is about and still advance. Mnemonic n/p, matching the keys the tour panel itself uses. NOT Ctrl+Alt+brackets: terminals send Ctrl+[ as ESC, so Ctrl+Alt+[ arrived as Escape and closed the tour instead of stepping back — the same pitfall the Search & Replace binding below avoids. Alt+n/p are find-selection, plain Alt+brackets are split navigation. No-ops when no tour is open.",
+      "key": "n",
+      "modifiers": ["ctrl", "alt"],
+      "action": "tour_next",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "p",
+      "modifiers": ["ctrl", "alt"],
+      "action": "tour_prev",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Normal context - Split navigation",
+      "key": "]",
+      "modifiers": ["alt"],
+      "action": "next_split",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "[",
+      "modifiers": ["alt"],
+      "action": "prev_split",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Normal context - Set Bookmarks (Ctrl+Shift+0-9)",
+      "key": "0",
+      "modifiers": ["ctrl", "shift"],
+      "action": "set_bookmark",
+      "args": {"char": "0"},
+      "when": "normal"
+    },
+    {
+      "key": "1",
+      "modifiers": ["ctrl", "shift"],
+      "action": "set_bookmark",
+      "args": {"char": "1"},
+      "when": "normal"
+    },
+    {
+      "key": "2",
+      "modifiers": ["ctrl", "shift"],
+      "action": "set_bookmark",
+      "args": {"char": "2"},
+      "when": "normal"
+    },
+    {
+      "key": "3",
+      "modifiers": ["ctrl", "shift"],
+      "action": "set_bookmark",
+      "args": {"char": "3"},
+      "when": "normal"
+    },
+    {
+      "key": "4",
+      "modifiers": ["ctrl", "shift"],
+      "action": "set_bookmark",
+      "args": {"char": "4"},
+      "when": "normal"
+    },
+    {
+      "key": "5",
+      "modifiers": ["ctrl", "shift"],
+      "action": "set_bookmark",
+      "args": {"char": "5"},
+      "when": "normal"
+    },
+    {
+      "key": "6",
+      "modifiers": ["ctrl", "shift"],
+      "action": "set_bookmark",
+      "args": {"char": "6"},
+      "when": "normal"
+    },
+    {
+      "key": "7",
+      "modifiers": ["ctrl", "shift"],
+      "action": "set_bookmark",
+      "args": {"char": "7"},
+      "when": "normal"
+    },
+    {
+      "key": "8",
+      "modifiers": ["ctrl", "shift"],
+      "action": "set_bookmark",
+      "args": {"char": "8"},
+      "when": "normal"
+    },
+    {
+      "key": "9",
+      "modifiers": ["ctrl", "shift"],
+      "action": "set_bookmark",
+      "args": {"char": "9"},
+      "when": "normal"
+    },
+    {
+      "comment": "Normal context - Jump to Bookmarks (Alt+0-9)",
+      "key": "0",
+      "modifiers": ["alt"],
+      "action": "jump_to_bookmark",
+      "args": {"char": "0"},
+      "when": "normal"
+    },
+    {
+      "key": "1",
+      "modifiers": ["alt"],
+      "action": "jump_to_bookmark",
+      "args": {"char": "1"},
+      "when": "normal"
+    },
+    {
+      "key": "2",
+      "modifiers": ["alt"],
+      "action": "jump_to_bookmark",
+      "args": {"char": "2"},
+      "when": "normal"
+    },
+    {
+      "key": "3",
+      "modifiers": ["alt"],
+      "action": "jump_to_bookmark",
+      "args": {"char": "3"},
+      "when": "normal"
+    },
+    {
+      "key": "4",
+      "modifiers": ["alt"],
+      "action": "jump_to_bookmark",
+      "args": {"char": "4"},
+      "when": "normal"
+    },
+    {
+      "key": "5",
+      "modifiers": ["alt"],
+      "action": "jump_to_bookmark",
+      "args": {"char": "5"},
+      "when": "normal"
+    },
+    {
+      "key": "6",
+      "modifiers": ["alt"],
+      "action": "jump_to_bookmark",
+      "args": {"char": "6"},
+      "when": "normal"
+    },
+    {
+      "key": "7",
+      "modifiers": ["alt"],
+      "action": "jump_to_bookmark",
+      "args": {"char": "7"},
+      "when": "normal"
+    },
+    {
+      "key": "8",
+      "modifiers": ["alt"],
+      "action": "jump_to_bookmark",
+      "args": {"char": "8"},
+      "when": "normal"
+    },
+    {
+      "key": "9",
+      "modifiers": ["alt"],
+      "action": "jump_to_bookmark",
+      "args": {"char": "9"},
+      "when": "normal"
+    },
+    {
+      "comment": "Prompt context - Navigation",
+      "key": "Enter",
+      "modifiers": [],
+      "action": "prompt_confirm",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "key": "Escape",
+      "modifiers": [],
+      "action": "prompt_cancel",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "key": "Backspace",
+      "modifiers": [],
+      "action": "prompt_backspace",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "key": "Delete",
+      "modifiers": [],
+      "action": "prompt_delete",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "key": "Left",
+      "modifiers": [],
+      "action": "prompt_move_left",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "key": "Right",
+      "modifiers": [],
+      "action": "prompt_move_right",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "key": "Home",
+      "modifiers": [],
+      "action": "prompt_move_start",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "key": "End",
+      "modifiers": [],
+      "action": "prompt_move_end",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "key": "Up",
+      "modifiers": [],
+      "action": "prompt_select_prev",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "key": "Down",
+      "modifiers": [],
+      "action": "prompt_select_next",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "key": "PageUp",
+      "modifiers": [],
+      "action": "prompt_page_up",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "key": "PageDown",
+      "modifiers": [],
+      "action": "prompt_page_down",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "key": "Tab",
+      "modifiers": [],
+      "action": "prompt_accept_suggestion",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "key": "Left",
+      "modifiers": ["ctrl"],
+      "action": "prompt_move_word_left",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "key": "Right",
+      "modifiers": ["ctrl"],
+      "action": "prompt_move_word_right",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "comment": "Prompt context - Emacs-style readline bindings",
+      "key": "e",
+      "modifiers": ["ctrl"],
+      "action": "prompt_move_end",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "key": "b",
+      "modifiers": ["alt"],
+      "action": "prompt_move_word_left",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "key": "f",
+      "modifiers": ["alt"],
+      "action": "prompt_move_word_right",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "comment": "Prompt context - Word deletion",
+      "key": "Backspace",
+      "modifiers": ["ctrl"],
+      "action": "prompt_delete_word_backward",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "key": "h",
+      "modifiers": ["ctrl"],
+      "action": "prompt_delete_word_backward",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "key": "Delete",
+      "modifiers": ["ctrl"],
+      "action": "prompt_delete_word_forward",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "comment": "Prompt context - Delete to end of line (Ctrl+K)",
+      "key": "k",
+      "modifiers": ["ctrl"],
+      "action": "prompt_delete_to_line_end",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "comment": "Prompt context - Delete word backward (Ctrl+W)",
+      "key": "w",
+      "modifiers": ["ctrl"],
+      "action": "prompt_delete_word_backward",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "comment": "Prompt context - Clipboard",
+      "key": "c",
+      "modifiers": ["ctrl"],
+      "action": "prompt_copy",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "key": "x",
+      "modifiers": ["ctrl"],
+      "action": "prompt_cut",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "key": "v",
+      "modifiers": ["ctrl"],
+      "action": "prompt_paste",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "comment": "Prompt context - Selection",
+      "key": "Left",
+      "modifiers": ["shift"],
+      "action": "prompt_move_left_selecting",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "key": "Right",
+      "modifiers": ["shift"],
+      "action": "prompt_move_right_selecting",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "key": "Home",
+      "modifiers": ["shift"],
+      "action": "prompt_move_home_selecting",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "key": "End",
+      "modifiers": ["shift"],
+      "action": "prompt_move_end_selecting",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "key": "Left",
+      "modifiers": ["ctrl", "shift"],
+      "action": "prompt_select_word_left",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "key": "Right",
+      "modifiers": ["ctrl", "shift"],
+      "action": "prompt_select_word_right",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "key": "a",
+      "modifiers": ["ctrl"],
+      "action": "prompt_select_all",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "comment": "Prompt context - Additional confirm bindings",
+      "key": "f",
+      "modifiers": ["ctrl"],
+      "action": "prompt_confirm",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "comment": "Search options — bound in the narrower 'searchPrompt' context (a sub-context of 'prompt' that is active only while a find/replace prompt is up). This keeps Alt+C/Alt+W/Alt+R/Alt+I from firing in unrelated prompts (e.g. the save/discard/cancel close confirmation), where Alt+W previously toggled whole-word match mode instead of being inert. searchPrompt falls through to 'prompt' for all generic editing keys.",
+      "key": "c",
+      "modifiers": ["alt"],
+      "action": "toggle_search_case_sensitive",
+      "args": {},
+      "when": "searchPrompt"
+    },
+    {
+      "key": "w",
+      "modifiers": ["alt"],
+      "action": "toggle_search_whole_word",
+      "args": {},
+      "when": "searchPrompt"
+    },
+    {
+      "key": "r",
+      "modifiers": ["alt"],
+      "action": "toggle_search_regex",
+      "args": {},
+      "when": "searchPrompt"
+    },
+    {
+      "comment": "Toggle confirm each in search/replace (mnemonic: I for Interactive)",
+      "key": "i",
+      "modifiers": ["alt"],
+      "action": "toggle_search_confirm_each",
+      "args": {},
+      "when": "searchPrompt"
+    },
+    {
+      "comment": "File browser - toggle hidden files (mnemonic: dotfiles start with '.')",
+      "key": ".",
+      "modifiers": ["alt"],
+      "action": "file_browser_toggle_hidden",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "comment": "File browser - toggle encoding detection (mnemonic: E for Encoding)",
+      "key": "e",
+      "modifiers": ["alt"],
+      "action": "file_browser_toggle_detect_encoding",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "comment": "Popup context - Navigation",
+      "key": "Up",
+      "modifiers": [],
+      "action": "popup_select_prev",
+      "args": {},
+      "when": "popup"
+    },
+    {
+      "key": "Down",
+      "modifiers": [],
+      "action": "popup_select_next",
+      "args": {},
+      "when": "popup"
+    },
+    {
+      "key": "PageUp",
+      "modifiers": [],
+      "action": "popup_page_up",
+      "args": {},
+      "when": "popup"
+    },
+    {
+      "key": "PageDown",
+      "modifiers": [],
+      "action": "popup_page_down",
+      "args": {},
+      "when": "popup"
+    },
+    {
+      "key": "Enter",
+      "modifiers": [],
+      "action": "popup_confirm",
+      "args": {},
+      "when": "popup"
+    },
+    {
+      "key": "Escape",
+      "modifiers": [],
+      "action": "popup_cancel",
+      "args": {},
+      "when": "popup"
+    },
+    {
+      "comment": "Transfer keyboard focus to the topmost popup (LSP popups appear unfocused so they don't swallow the next keystroke). Bound in normal/fileExplorer rather than global so a user's own alt+t binding in either context wins at the same precedence level — global defaults would shadow the user's normal-context override.",
+      "key": "t",
+      "modifiers": ["alt"],
+      "action": "popup_focus",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "t",
+      "modifiers": ["alt"],
+      "action": "popup_focus",
+      "args": {},
+      "when": "fileExplorer"
+    },
+    {
+      "comment": "Completion popup context - Tab accepts the selected completion",
+      "key": "Tab",
+      "modifiers": [],
+      "action": "completion_accept",
+      "args": {},
+      "when": "completion"
+    },
+    {
+      "comment": "Completion popup context - Esc dismisses the popup",
+      "key": "Escape",
+      "modifiers": [],
+      "action": "completion_dismiss",
+      "args": {},
+      "when": "completion"
+    },
+    {
+      "comment": "Settings context - Navigation and actions",
+      "key": "Escape",
+      "modifiers": [],
+      "action": "close_settings",
+      "args": {},
+      "when": "settings"
+    },
+    {
+      "key": "Up",
+      "modifiers": [],
+      "action": "move_up",
+      "args": {},
+      "when": "settings"
+    },
+    {
+      "key": "Down",
+      "modifiers": [],
+      "action": "move_down",
+      "args": {},
+      "when": "settings"
+    },
+    {
+      "key": "Tab",
+      "modifiers": [],
+      "action": "settings_toggle_focus",
+      "args": {},
+      "when": "settings"
+    },
+    {
+      "key": "Enter",
+      "modifiers": [],
+      "action": "settings_activate",
+      "args": {},
+      "when": "settings"
+    },
+    {
+      "key": "/",
+      "modifiers": [],
+      "action": "settings_search",
+      "args": {},
+      "when": "settings"
+    },
+    {
+      "key": "?",
+      "modifiers": [],
+      "action": "settings_help",
+      "args": {},
+      "when": "settings"
+    },
+    {
+      "key": "Right",
+      "modifiers": [],
+      "action": "settings_increment",
+      "args": {},
+      "when": "settings"
+    },
+    {
+      "key": "Left",
+      "modifiers": [],
+      "action": "settings_decrement",
+      "args": {},
+      "when": "settings"
+    },
+    {
+      "key": "Delete",
+      "modifiers": [],
+      "action": "settings_inherit",
+      "args": {},
+      "when": "settings"
+    },
+    {
+      "comment": "File Explorer context",
+      "key": "Up",
+      "modifiers": [],
+      "action": "file_explorer_up",
+      "args": {},
+      "when": "file_explorer"
+    },
+    {
+      "key": "Down",
+      "modifiers": [],
+      "action": "file_explorer_down",
+      "args": {},
+      "when": "file_explorer"
+    },
+    {
+      "key": "PageUp",
+      "modifiers": [],
+      "action": "file_explorer_page_up",
+      "args": {},
+      "when": "file_explorer"
+    },
+    {
+      "key": "PageDown",
+      "modifiers": [],
+      "action": "file_explorer_page_down",
+      "args": {},
+      "when": "file_explorer"
+    },
+    {
+      "key": "Enter",
+      "modifiers": [],
+      "action": "file_explorer_open",
+      "args": {},
+      "when": "file_explorer"
+    },
+    {
+      "key": "Right",
+      "modifiers": [],
+      "action": "file_explorer_expand",
+      "args": {},
+      "when": "file_explorer"
+    },
+    {
+      "key": "Left",
+      "modifiers": [],
+      "action": "file_explorer_collapse",
+      "args": {},
+      "when": "file_explorer"
+    },
+    {
+      "key": "r",
+      "modifiers": ["ctrl"],
+      "action": "file_explorer_refresh",
+      "args": {},
+      "when": "file_explorer"
+    },
+    {
+      "comment": "Ctrl+E -> Focus editor (switch focus from explorer to editor)",
+      "key": "e",
+      "modifiers": ["ctrl"],
+      "action": "focus_editor",
+      "args": {},
+      "when": "file_explorer"
+    },
+    {
+      "comment": "Alt+] -> Focus last focused editor split",
+      "key": "]",
+      "modifiers": ["alt"],
+      "action": "focus_editor",
+      "args": {},
+      "when": "file_explorer"
+    },
+    {
+      "comment": "Ctrl+B -> Toggle sidebar/file explorer visibility",
+      "key": "b",
+      "modifiers": ["ctrl"],
+      "action": "toggle_file_explorer",
+      "args": {},
+      "when": "file_explorer"
+    },
+    {
+      "key": "n",
+      "modifiers": ["ctrl"],
+      "action": "file_explorer_new_file",
+      "args": {},
+      "when": "file_explorer"
+    },
+    {
+      "key": "n",
+      "modifiers": ["ctrl", "shift"],
+      "action": "file_explorer_new_directory",
+      "args": {},
+      "when": "file_explorer"
+    },
+    {
+      "key": "F2",
+      "modifiers": [],
+      "action": "file_explorer_rename",
+      "args": {},
+      "when": "file_explorer"
+    },
+    {
+      "key": "Delete",
+      "modifiers": [],
+      "action": "file_explorer_delete",
+      "args": {},
+      "when": "file_explorer"
+    },
+    {
+      "key": "i",
+      "modifiers": ["ctrl"],
+      "action": "file_explorer_toggle_gitignored",
+      "args": {},
+      "when": "file_explorer"
+    },
+    {
+      "key": "Escape",
+      "modifiers": [],
+      "action": "file_explorer_search_clear",
+      "args": {},
+      "when": "file_explorer"
+    },
+    {
+      "key": "Backspace",
+      "modifiers": [],
+      "action": "file_explorer_search_backspace",
+      "args": {},
+      "when": "file_explorer"
+    },
+    {
+      "key": "Up",
+      "modifiers": ["shift"],
+      "action": "file_explorer_extend_selection_up",
+      "args": {},
+      "when": "file_explorer"
+    },
+    {
+      "key": "Down",
+      "modifiers": ["shift"],
+      "action": "file_explorer_extend_selection_down",
+      "args": {},
+      "when": "file_explorer"
+    },
+    {
+      "key": " ",
+      "modifiers": [],
+      "action": "file_explorer_toggle_select",
+      "args": {},
+      "when": "file_explorer"
+    },
+    {
+      "key": "a",
+      "modifiers": ["ctrl"],
+      "action": "file_explorer_select_all",
+      "args": {},
+      "when": "file_explorer"
+    },
+    {
+      "key": "c",
+      "modifiers": ["ctrl"],
+      "action": "copy",
+      "args": {},
+      "when": "file_explorer"
+    },
+    {
+      "key": "x",
+      "modifiers": ["ctrl"],
+      "action": "cut",
+      "args": {},
+      "when": "file_explorer"
+    },
+    {
+      "key": "v",
+      "modifiers": ["ctrl"],
+      "action": "paste",
+      "args": {},
+      "when": "file_explorer"
+    },
+    {
+      "comment": "Menu context",
+      "key": "Left",
+      "modifiers": [],
+      "action": "menu_left",
+      "args": {},
+      "when": "menu"
+    },
+    {
+      "key": "Right",
+      "modifiers": [],
+      "action": "menu_right",
+      "args": {},
+      "when": "menu"
+    },
+    {
+      "key": "Up",
+      "modifiers": [],
+      "action": "menu_up",
+      "args": {},
+      "when": "menu"
+    },
+    {
+      "key": "Down",
+      "modifiers": [],
+      "action": "menu_down",
+      "args": {},
+      "when": "menu"
+    },
+    {
+      "key": "Enter",
+      "modifiers": [],
+      "action": "menu_execute",
+      "args": {},
+      "when": "menu"
+    },
+    {
+      "key": "Escape",
+      "modifiers": [],
+      "action": "menu_close",
+      "args": {},
+      "when": "menu"
+    },
+    {
+      "comment": "Terminal context - Exit terminal mode (Ctrl+Space)",
+      "key": " ",
+      "modifiers": ["ctrl"],
+      "action": "terminal_escape",
+      "args": {},
+      "when": "terminal"
+    },
+    {
+      "comment": "Terminal context - Exit terminal mode (Ctrl+])",
+      "key": "]",
+      "modifiers": ["ctrl"],
+      "action": "terminal_escape",
+      "args": {},
+      "when": "terminal"
+    },
+    {
+      "comment": "Terminal context - Toggle keyboard capture (F9)",
+      "key": "F9",
+      "modifiers": [],
+      "action": "toggle_keyboard_capture",
+      "args": {},
+      "when": "terminal"
+    },
+    {
+      "comment": "Terminal context - Paste clipboard contents (Ctrl+V)",
+      "key": "v",
+      "modifiers": ["ctrl"],
+      "action": "terminal_paste",
+      "args": {},
+      "when": "terminal"
+    },
+    {
+      "comment": "Composite buffer context - Close view (q)",
+      "key": "q",
+      "modifiers": [],
+      "action": "close",
+      "args": {},
+      "when": "compositeBuffer"
+    },
+    {
+      "comment": "Composite buffer context - Close view (Esc)",
+      "key": "Escape",
+      "modifiers": [],
+      "action": "close",
+      "args": {},
+      "when": "compositeBuffer"
+    },
+    {
+      "comment": "Composite buffer context - Next hunk (n)",
+      "key": "n",
+      "modifiers": [],
+      "action": "composite_next_hunk",
+      "args": {},
+      "when": "compositeBuffer"
+    },
+    {
+      "comment": "Composite buffer context - Previous hunk (p)",
+      "key": "p",
+      "modifiers": [],
+      "action": "composite_prev_hunk",
+      "args": {},
+      "when": "compositeBuffer"
+    },
+    {
+      "comment": "Composite buffer context - Next hunk (])",
+      "key": "]",
+      "modifiers": [],
+      "action": "composite_next_hunk",
+      "args": {},
+      "when": "compositeBuffer"
+    },
+    {
+      "comment": "Composite buffer context - Previous hunk ([)",
+      "key": "[",
+      "modifiers": [],
+      "action": "composite_prev_hunk",
+      "args": {},
+      "when": "compositeBuffer"
+    },
+    {
+      "comment": "Live Grep — open as floating overlay (issue #1796). Bound to Alt+/ rather than Ctrl+Shift+F because most terminals collapse Ctrl+Shift+F to Ctrl+F (which is already buffer-local search). Mnemonic: '/' is the search character in many editors.",
+      "key": "/",
+      "modifiers": ["alt"],
+      "action": "open_live_grep",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Live Grep — Resume with prior query, selection, and cached results without re-running ripgrep (issue #1796). Mnemonic: 'r' for Resume. The same physical key is `toggle_search_regex` in `prompt` context — disjoint contexts, no conflict.",
+      "key": "r",
+      "modifiers": ["alt"],
+      "action": "resume_live_grep",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Live Grep prompt — export current results to Utility Dock as Quickfix (Alt+Q; Ctrl+Q is reserved for quit)",
+      "key": "q",
+      "modifiers": ["alt"],
+      "action": "live_grep_export_quickfix",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "comment": "Live Grep prompt — alternate Quickfix export binding for terminals that mangle Alt+Q. Mnemonic: 'm' for matches → dock. Uses Alt+M instead of Ctrl+Enter because many terminals don't distinguish Ctrl+Enter from plain Enter (the alternate binding then silently confirmed the selection instead of exporting).",
+      "key": "m",
+      "modifiers": ["alt"],
+      "action": "live_grep_export_quickfix",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "comment": "Utility Dock — focus / unfocus toggle. Avoids Alt+D because Ctrl+D (add_cursor_next_match) is in the multi-cursor cluster and the adjacency is muscle-memory-risky. Mnemonic: 'j' is 'down' in vim-ish navigation, matching the dock's bottom-of-screen home position.",
+      "key": "j",
+      "modifiers": ["alt"],
+      "action": "toggle_utility_dock",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Utility Dock — open a terminal inside the dock (mnemonic: backtick like tmux/VSCode terminal)",
+      "key": "`",
+      "modifiers": ["alt"],
+      "action": "open_terminal_in_dock",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "comment": "Orchestrator dock — toggle keyboard focus between the editor/explorer area and the persistent left session dock (the dog-picture column). Press once to dive into the dock, again to return to the editor — same key both ways (the Zed/Yazelix focus-toggle model). When the dock is hidden it is opened and focused. Mnemonic: 'O' for Orchestrator. Bound per-context rather than globally so it does not shadow the live-grep prompt's Alt+O (toggle whole-word). The 'dock' binding lets you blur back out from inside the focused dock.",
+      "key": "o",
+      "modifiers": ["alt"],
+      "action": "toggle_dock_focus",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "o",
+      "modifiers": ["alt"],
+      "action": "toggle_dock_focus",
+      "args": {},
+      "when": "fileExplorer"
+    },
+    {
+      "key": "o",
+      "modifiers": ["alt"],
+      "action": "toggle_dock_focus",
+      "args": {},
+      "when": "terminal"
+    },
+    {
+      "key": "o",
+      "modifiers": ["alt"],
+      "action": "toggle_dock_focus",
+      "args": {},
+      "when": "compositeBuffer"
+    },
+    {
+      "key": "o",
+      "modifiers": ["alt"],
+      "action": "toggle_dock_focus",
+      "args": {},
+      "when": "dock"
+    },
+    {
+      "comment": "Live Grep prompt — cycle to the next *available* search provider. Built-ins are git-grep → rg → ag → ack → grep (git-grep first when inside a repo, falls through otherwise); user plugins can register more via editor.getPluginApi(\"live-grep\")?.registerProvider(...). Skips providers whose isAvailable() returns false. Mnemonic: 'p' for Provider.",
+      "key": "p",
+      "modifiers": ["alt"],
+      "action": "cycle_live_grep_provider",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "comment": "Universal Search overlay — toggle the 'Project files' scope. Resolves to the live_grep plugin handler (unknown action names dispatch as plugin actions). Mnemonic: 'l' for fiLes ('f' is taken by prompt_move_word_right).",
+      "key": "l",
+      "modifiers": ["alt"],
+      "action": "live_grep_toggle_files",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "comment": "Universal Search overlay — toggle the 'Ignored & hidden files' scope (off by default). Mnemonic: 'h' for Hidden ('i' is taken by toggle_search_confirm_each).",
+      "key": "h",
+      "modifiers": ["alt"],
+      "action": "live_grep_toggle_ignored",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "comment": "Universal Search overlay — toggle the 'Open buffers' (unsaved edits) scope. Mnemonic: 'u' for Unsaved ('b' is taken by prompt_move_word_left).",
+      "key": "u",
+      "modifiers": ["alt"],
+      "action": "live_grep_toggle_buffers",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "comment": "Universal Search overlay — toggle the 'Terminals' scope (terminal scrollback; on by default). Mnemonic: 't' for Terminals.",
+      "key": "t",
+      "modifiers": ["alt"],
+      "action": "live_grep_toggle_terminals",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "comment": "Universal Search overlay — toggle the 'Diagnostics' scope (off by default). Mnemonic: 'd' for Diagnostics.",
+      "key": "d",
+      "modifiers": ["alt"],
+      "action": "live_grep_toggle_diagnostics",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "comment": "Universal Search overlay — toggle the 'Whole word' match mode. Mnemonic: 'o' for wOrd ('w' is taken by toggle_search_whole_word in the find prompt).",
+      "key": "o",
+      "modifiers": ["alt"],
+      "action": "live_grep_toggle_word",
+      "args": {},
+      "when": "prompt"
+    },
+    {
+      "comment": "Universal Search overlay — toggle the 'Regex' match mode (on by default). Mnemonic: 'g' for reGex ('r' is taken by toggle_search_regex in the find prompt).",
+      "key": "g",
+      "modifiers": ["alt"],
+      "action": "live_grep_toggle_regex",
+      "args": {},
+      "when": "prompt"
+    }
+  ]
+}

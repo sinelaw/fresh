@@ -1,7 +1,7 @@
 //! E2E tests for audit_mode (Review Diff) plugin
 
 use crate::common::git_test_helper::{git_command, GitTestRepo};
-use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness};
+use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness, HarnessOptions};
 use crate::common::tracing::init_tracing_from_env;
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::Config;
@@ -1454,6 +1454,107 @@ pub fn new_function() {
     );
 }
 
+/// A single oversized untracked file used to freeze the whole editor.
+///
+/// `git status -uall` lists every untracked file, and each one got its own
+/// `git diff --no-index`, uncapped: a 60 MiB file produced a 60 MiB patch that
+/// then had to cross the plugin boundary, be parsed into hunks, and be laid out
+/// as styled rows — tens of seconds on the editor's own thread, repeated by the
+/// review watch's timer. `diffArgs` now pins `core.bigFileThreshold`, so git
+/// summarises the file instead of expanding it.
+///
+/// The assertion that matters is the *absence* of the patch: the review has to
+/// finish having listed the file without carrying its contents.
+#[test]
+fn test_review_diff_caps_oversized_untracked_file() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    setup_audit_mode_plugin(&repo);
+
+    repo.git_add_all();
+    repo.git_commit("Initial commit");
+
+    // Comfortably over the 1 MiB threshold, and plain text — so nothing but
+    // the cap keeps git from emitting a patch for it. The marker is what a
+    // patch would have put on screen.
+    let big_path = repo.path.join("generated_dump.txt");
+    let mut big = String::with_capacity(3 * 1024 * 1024);
+    while big.len() < 3 * 1024 * 1024 {
+        big.push_str("UNIQUEMARKERROW filler filler filler filler filler\n");
+    }
+    fs::write(&big_path, &big).expect("Failed to write oversized file");
+
+    // A small untracked file alongside it, to show the cap is per file and not
+    // a bail-out that drops the rest of the review.
+    let small_path = repo.path.join("src/small_new.rs");
+    fs::write(&small_path, "pub fn small_new_function() {}\n").expect("Failed to write small file");
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    let main_rs_path = repo.path.join("src/main.rs");
+    harness.open_file(&main_rs_path).unwrap();
+    harness.render().unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("main"))
+        .unwrap();
+
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Review Diff").unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+
+    harness
+        .wait_until(|h| !h.screen_to_string().contains("Generating Review"))
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    println!("Review Diff (oversized untracked) screen:\n{}", screen);
+
+    assert!(
+        !screen.contains("TypeError"),
+        "Should not show any TypeError. Screen:\n{}",
+        screen
+    );
+
+    // Listed, so the reader knows the file changed...
+    assert!(
+        screen.contains("generated_dump.txt"),
+        "The oversized file should still be listed in the review. Screen:\n{}",
+        screen
+    );
+    // ...and said to be omitted, rather than silently showing nothing.
+    assert!(
+        screen.contains("too large to diff"),
+        "The oversized file should say why it has no patch. Screen:\n{}",
+        screen
+    );
+    // The patch itself must not have been expanded.
+    assert!(
+        !screen.contains("UNIQUEMARKERROW"),
+        "The oversized file's contents must not reach the diff stream. Screen:\n{}",
+        screen
+    );
+    // The rest of the review is unaffected.
+    assert!(
+        screen.contains("small_new.rs"),
+        "Other untracked files should still be reviewed. Screen:\n{}",
+        screen
+    );
+}
+
 /// Test that drill-down (side-by-side diff) works for newly added (untracked) files
 /// Before the fix, review_drill_down() would fail because git show HEAD:<file> errors
 /// for files that don't exist in HEAD, causing a silent early return.
@@ -2008,15 +2109,17 @@ fn test_review_diff_scrolling_many_files() {
         .unwrap();
     harness.wait_for_prompt_closed().unwrap();
 
-    // Wait for review diff to load — toolbar's "next hunk" hint marks the
-    // unified-stream layout as ready.
+    // Wait for review diff to load. The toolbar's "next hunk" hint marks the
+    // unified-stream layout as up, but it is painted before the stream body is
+    // written, so the "Generating Review Diff Stream..." status clearing is
+    // what says the diff itself has landed.
     harness
         .wait_until(|h| {
             let screen = h.screen_to_string();
             if screen.contains("TypeError") || screen.contains("Error:") {
                 panic!("Error loading review diff. Screen:\n{}", screen);
             }
-            screen.contains("next hunk")
+            screen.contains("next hunk") && !screen.contains("Generating Review")
         })
         .unwrap();
 
@@ -2081,6 +2184,62 @@ fn open_review_diff(harness: &mut EditorTestHarness) -> String {
         })
         .unwrap();
 
+    harness.screen_to_string()
+}
+
+/// True while a side panel — not the diff — holds keyboard focus. Each
+/// panel header carries a `▸` when it owns the keys.
+fn review_panel_has_focus(screen: &str) -> bool {
+    screen.contains("▸FILES") || screen.contains("▸COMMENTS")
+}
+
+/// Tab until the diff holds the keys again. `F` / `C` focus the panel they
+/// reveal, and the Tab order is FILES → diff → COMMENTS, so the number of
+/// steps back to the diff depends on which panels are already open.
+fn focus_review_diff(harness: &mut EditorTestHarness) {
+    for _ in 0..3 {
+        if !review_panel_has_focus(&harness.screen_to_string()) {
+            return;
+        }
+        let before = harness.screen_to_string();
+        harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+        harness
+            .wait_until(|h| h.screen_to_string() != before)
+            .unwrap();
+    }
+    assert!(
+        !review_panel_has_focus(&harness.screen_to_string()),
+        "focus never came back to the diff:\n{}",
+        harness.screen_to_string()
+    );
+}
+
+/// Reveal the FILES sidebar (`F`) and hand focus back to the diff. Both
+/// side panels start hidden so the diff owns the full width; tests that
+/// exercise the sidebar have to ask for it first, and `F` focuses what it
+/// reveals — so this returns the caller to the state it would otherwise
+/// assume, with the panel visible and the diff holding the keys.
+fn show_files_panel(harness: &mut EditorTestHarness) -> String {
+    harness
+        .send_key(KeyCode::Char('F'), KeyModifiers::SHIFT)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("▸FILES"))
+        .unwrap();
+    focus_review_diff(harness);
+    harness.screen_to_string()
+}
+
+/// Reveal the COMMENTS rail (`C`) and hand focus back to the diff, for the
+/// same reason as `show_files_panel`.
+fn show_comments_panel(harness: &mut EditorTestHarness) -> String {
+    harness
+        .send_key(KeyCode::Char('C'), KeyModifiers::SHIFT)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("COMMENTS"))
+        .unwrap();
+    focus_review_diff(harness);
     harness.screen_to_string()
 }
 
@@ -2228,7 +2387,9 @@ fn test_review_diff_shows_comments_panel() {
         .wait_until(|h| h.screen_to_string().contains("changed"))
         .unwrap();
 
-    let screen = open_review_diff(&mut harness);
+    open_review_diff(&mut harness);
+    // The rail starts hidden; `C` reveals it.
+    let screen = show_comments_panel(&mut harness);
 
     // The comments panel header and empty state are visible.
     assert!(
@@ -2421,6 +2582,9 @@ fn test_review_diff_tab_cycles_focus() {
         .unwrap();
 
     open_review_diff(&mut harness);
+    // The sidebar starts hidden and a hidden panel is not in the focus
+    // ring, so reveal it before cycling focus.
+    show_files_panel(&mut harness);
 
     // The diff panel holds focus initially; Tab moves focus to the FILES
     // panel, which gains the ▸ focus marker on its header.
@@ -2563,6 +2727,8 @@ fn test_review_diff_focus_switch_preserves_scroll() {
     harness.render().unwrap();
 
     let _ = open_review_diff(&mut harness);
+    // The FILES panel has to be on screen to be a focus target.
+    show_files_panel(&mut harness);
 
     // Scroll the cursor far down the unified stream using native `j`
     // motion. `j` delegates to the editor's `move_down`, which moves the
@@ -3940,7 +4106,8 @@ fn test_review_diff_comment_nav_single_keys() {
         .wait_until(|h| h.screen_to_string().contains("edit"))
         .unwrap();
 
-    let screen = open_review_diff(&mut harness);
+    open_review_diff(&mut harness);
+    let screen = show_comments_panel(&mut harness);
     assert!(
         screen.contains("No comments yet"),
         "Empty comments panel should be visible. Screen:\n{}",
@@ -4136,11 +4303,11 @@ fn rename_head_branch(repo: &GitTestRepo, name: &str) {
     run_git(repo, &["branch", "-M", name]);
 }
 
-/// Review PR Branch should default the base-ref prompt to the repo's
+/// Git Log: PR Branch should default the base-ref prompt to the repo's
 /// actual default branch (master in this test), not a hardcoded "main"
 /// that doesn't even exist here.
 #[test]
-fn test_review_branch_prompt_defaults_to_repo_default_branch() {
+fn test_branch_log_prompt_defaults_to_repo_default_branch() {
     let repo = GitTestRepo::new();
     setup_audit_mode_plugin(&repo);
 
@@ -4172,7 +4339,7 @@ fn test_review_branch_prompt_defaults_to_repo_default_branch() {
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     harness.wait_for_prompt().unwrap();
-    harness.type_text("Review PR Branch").unwrap();
+    harness.type_text("Git Log: PR Branch").unwrap();
     harness.render().unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
@@ -4202,13 +4369,13 @@ fn test_review_branch_prompt_defaults_to_repo_default_branch() {
     );
 }
 
-/// PageDown in the detail pane of Review PR Branch should page the
+/// PageDown in the detail pane of Git Log: PR Branch should page the
 /// buffer, not trip the "Action page_down is not defined as a global
-/// function" error. The bug was that the review-branch mode bound
+/// function" error. The bug was that the branch-log mode bound
 /// PageUp/PageDown to action names that don't exist; they should map
 /// to the built-in `move_page_up` / `move_page_down`.
 #[test]
-fn test_review_branch_detail_pane_page_down_works() {
+fn test_branch_log_detail_pane_page_down_works() {
     init_tracing_from_env();
     let repo = GitTestRepo::new();
     setup_audit_mode_plugin(&repo);
@@ -4247,7 +4414,7 @@ fn test_review_branch_detail_pane_page_down_works() {
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     harness.wait_for_prompt().unwrap();
-    harness.type_text("Review PR Branch").unwrap();
+    harness.type_text("Git Log: PR Branch").unwrap();
     harness.render().unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
@@ -4264,7 +4431,7 @@ fn test_review_branch_detail_pane_page_down_works() {
         .unwrap();
     harness.wait_for_prompt_closed().unwrap();
 
-    // Wait for the review-branch view to finish loading.
+    // Wait for the branch-log view to finish loading.
     harness
         .wait_until(|h| h.screen_to_string().contains("add big file"))
         .unwrap();
@@ -4313,13 +4480,13 @@ fn test_review_branch_detail_pane_page_down_works() {
 
 /// Regression test for https://github.com/sinelaw/fresh/issues/1962.
 ///
-/// When the detail panel of Review PR Branch is focused and the cursor
+/// When the detail panel of Git Log: PR Branch is focused and the cursor
 /// sits on a line from the diff that has file context, pressing Enter
 /// should drill into that file at the selected commit's version (in a
 /// read-only virtual buffer). Before the fix, Enter on the detail panel
 /// was a no-op (it only "focused" the panel — which it already was).
 #[test]
-fn test_review_branch_detail_enter_opens_file_at_commit() {
+fn test_branch_log_detail_enter_opens_file_at_commit() {
     init_tracing_from_env();
     let repo = GitTestRepo::new();
     setup_audit_mode_plugin(&repo);
@@ -4332,7 +4499,7 @@ fn test_review_branch_detail_enter_opens_file_at_commit() {
     rename_head_branch(&repo, "master");
 
     // Feature branch with a commit that modifies a file. The detail
-    // panel of Review PR Branch shows `git show --stat --patch` for the
+    // panel of Git Log: PR Branch shows `git show --stat --patch` for the
     // selected commit, so the diff lines carry `(file, line)` text
     // properties that the new Enter-on-detail path reads.
     run_git(&repo, &["checkout", "-b", "feature"]);
@@ -4360,7 +4527,7 @@ fn test_review_branch_detail_enter_opens_file_at_commit() {
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     harness.wait_for_prompt().unwrap();
-    harness.type_text("Review PR Branch").unwrap();
+    harness.type_text("Git Log: PR Branch").unwrap();
     harness.render().unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
@@ -4377,7 +4544,7 @@ fn test_review_branch_detail_enter_opens_file_at_commit() {
         .unwrap();
     harness.wait_for_prompt_closed().unwrap();
 
-    // Wait for the review-branch view to finish loading and the detail
+    // Wait for the branch-log view to finish loading and the detail
     // panel to populate (`git show` is async).
     harness
         .wait_until(|h| h.screen_to_string().contains("add notes.txt"))
@@ -4426,7 +4593,7 @@ fn test_review_branch_detail_enter_opens_file_at_commit() {
     }
     assert!(
         file_view_active(&harness),
-        "Enter on a diff line in the review-branch detail panel should \
+        "Enter on a diff line in the branch-log detail panel should \
          open the file at the selected commit. Screen:\n{}",
         harness.screen_to_string()
     );
@@ -4443,10 +4610,704 @@ fn test_review_branch_detail_enter_opens_file_at_commit() {
         screen
     );
 
-    // q closes the file-view buffer cleanly (review-branch-file-view mode
+    // q closes the file-view buffer cleanly (branch-log-file-view mode
     // binds q to its own close handler so the user can drill back out).
     harness
         .send_key(KeyCode::Char('q'), KeyModifiers::NONE)
         .unwrap();
     harness.wait_until(|h| !file_view_active(h)).unwrap();
+}
+
+// ---------------------------------------------------------------------------
+// Review Diff against a working tree that moves under it, and the actions
+// that claim to have changed it: #2318, #3126, #3104.
+// ---------------------------------------------------------------------------
+
+/// `git status --porcelain` for the repo, trimmed. The tests below assert on
+/// this rather than on the status bar: the bug in #2318 was precisely that
+/// the two disagreed.
+fn porcelain(repo: &GitTestRepo) -> String {
+    let out = git_command(&repo.path)
+        .args(["status", "--porcelain"])
+        .output()
+        .expect("run git status");
+    assert!(out.status.success(), "git status failed");
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
+}
+
+/// Paths whose *index* differs from HEAD — the staged side of the change,
+/// with no opinion about the working tree.
+///
+/// `git status`'s worktree column is not portable here. The harness
+/// suppresses the host's git config for its own commands, but the editor's
+/// git — the one that actually performs a discard — reads the user's real
+/// config, and `GitTestRepo::new` deliberately leaves line-ending settings
+/// at the platform default rather than pinning them. So on a machine whose
+/// git checks files out with CRLF (a Windows runner, `core.autocrlf=true`),
+/// a *correctly* restored file comes back with different line endings than
+/// the test's own git expects, and shows up as modified. The index is
+/// normalised whatever the checkout did, and it is what #2318 was about.
+fn staged_paths(repo: &GitTestRepo) -> String {
+    let out = git_command(&repo.path)
+        .args(["diff", "--cached", "--name-only"])
+        .output()
+        .expect("run git diff --cached");
+    assert!(out.status.success(), "git diff --cached failed");
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
+}
+
+/// A repo with one committed Python file, the audit_mode plugin, and no
+/// changes yet. Returns the repo and the file's path.
+fn repo_with_committed_python() -> (GitTestRepo, std::path::PathBuf) {
+    let repo = GitTestRepo::new();
+    setup_audit_mode_plugin(&repo);
+    let calc = repo.create_file(CALC_ORIGINAL_NAME, CALC_ORIGINAL);
+    repo.git_add_all();
+    repo.git_commit("Initial commit");
+    (repo, calc)
+}
+
+const CALC_ORIGINAL_NAME: &str = "calc.py";
+const CALC_ORIGINAL: &str = "def add(a, b):\n    return a + b\n";
+
+/// Issue #2318: file-level discard (`D`) on a file whose change is entirely
+/// *staged* reported `Discarded: <file>` while changing nothing at all —
+/// `git checkout -- <path>` only rewrites the working tree from the index,
+/// and index and working tree already agreed.
+///
+/// The discard now takes the file back to HEAD, index included, and the
+/// assertions are on git rather than on the status bar: the whole bug was
+/// the two disagreeing.
+#[test]
+fn test_issue2318_discarding_a_fully_staged_file_reverts_it_to_head() {
+    init_tracing_from_env();
+    let (repo, calc) = repo_with_committed_python();
+
+    // Stage the whole change, so the working tree matches the index and a
+    // working-tree-only discard would be a no-op.
+    fs::write(&calc, "def add(a, b):\n    return a + b  # CHANGED\n").unwrap();
+    repo.git_add(&[CALC_ORIGINAL_NAME]);
+    assert_eq!(
+        porcelain(&repo),
+        "M  calc.py",
+        "fixture must be fully staged with a clean working tree"
+    );
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    harness.open_file(&calc).unwrap();
+    harness.render().unwrap();
+
+    let screen = open_review_diff(&mut harness);
+    assert!(
+        screen.contains("STAGED"),
+        "the change should be listed as staged. Screen:\n{screen}"
+    );
+
+    // Land the cursor on the hunk, then discard the file.
+    harness
+        .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("# CHANGED"))
+        .unwrap();
+    harness
+        .send_key(KeyCode::Char('D'), KeyModifiers::SHIFT)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+
+    // Settle on either outcome — discarded, or reported as failed — so a
+    // regression fails on the assertions below instead of hanging.
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("Discarded: calc.py") || s.contains("Discard failed")
+        })
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    assert_eq!(
+        staged_paths(&repo),
+        "",
+        "the staged change must actually be discarded. Screen:\n{screen}"
+    );
+    // The working tree too — compared as content rather than as `git
+    // status`, for the line-ending reason `staged_paths` explains.
+    assert_eq!(
+        fs::read_to_string(&calc).unwrap().replace("\r\n", "\n"),
+        CALC_ORIGINAL,
+        "the file on disk must be back to its committed content"
+    );
+    assert!(
+        screen.contains("Discarded: calc.py"),
+        "a discard that happened should say so. Screen:\n{screen}"
+    );
+}
+
+/// The other half of #2318: the panel must never *claim* a discard it did
+/// not perform. Driven by holding `.git/index.lock` while the discard runs,
+/// which is exactly what a concurrent `git` command in another terminal
+/// does — `git restore` refuses to touch the index and exits non-zero.
+#[test]
+fn test_issue2318_a_discard_that_fails_is_reported_as_failed() {
+    init_tracing_from_env();
+    let (repo, calc) = repo_with_committed_python();
+    fs::write(&calc, "def add(a, b):\n    return a + b  # CHANGED\n").unwrap();
+    repo.git_add(&[CALC_ORIGINAL_NAME]);
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    harness.open_file(&calc).unwrap();
+    harness.render().unwrap();
+    open_review_diff(&mut harness);
+
+    harness
+        .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("# CHANGED"))
+        .unwrap();
+
+    // Another git process is mid-transaction: the index is locked, so the
+    // restore cannot happen. Taken *after* the panel has loaded so the
+    // lock only affects the discard itself.
+    let lock = repo.path.join(".git").join("index.lock");
+    fs::write(&lock, "").unwrap();
+
+    harness
+        .send_key(KeyCode::Char('D'), KeyModifiers::SHIFT)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("Discard failed") || s.contains("Discarded: calc.py")
+        })
+        .unwrap();
+    let screen = harness.screen_to_string();
+    fs::remove_file(&lock).unwrap();
+
+    assert!(
+        !screen.contains("Discarded: calc.py"),
+        "a discard that could not happen must not be reported as done. \
+         Screen:\n{screen}"
+    );
+    assert!(
+        screen.contains("Discard failed"),
+        "a failed discard must say so. Screen:\n{screen}"
+    );
+    // And the change is still there, which is the point of saying so.
+    assert_eq!(
+        porcelain(&repo),
+        "M  calc.py",
+        "nothing should have been discarded"
+    );
+}
+
+/// Issue #3126: an open Review Diff panel never noticed changes made
+/// outside the editor — it sat on `No changes to review.` while git had a
+/// modified file, and only a second `Review Diff` command picked it up.
+#[test]
+fn test_issue3126_open_panel_picks_up_a_change_made_outside_the_editor() {
+    init_tracing_from_env();
+    let (repo, calc) = repo_with_committed_python();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    harness.open_file(&calc).unwrap();
+    harness.render().unwrap();
+
+    let screen = open_review_diff(&mut harness);
+    assert!(
+        screen.contains("No changes to review."),
+        "the tree starts clean. Screen:\n{screen}"
+    );
+
+    // The change arrives from outside: another shell, another tool. Nothing
+    // in the editor is touched — no save, no keystroke in the panel.
+    fs::write(
+        &calc,
+        "def add(a, b):\n    return a + b\n\n# EXTERNAL_EDIT\n",
+    )
+    .unwrap();
+
+    harness
+        .wait_until(|h| h.screen_to_string().contains("EXTERNAL_EDIT"))
+        .unwrap();
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("UNSTAGED") && !screen.contains("No changes to review."),
+        "the panel should show the new change. Screen:\n{screen}"
+    );
+}
+
+/// The second half of #3126: re-running `Review Diff` while a review is
+/// open used to build a *second* panel (`*Review Diff* 1`, `*Review Diff*
+/// 2`, …) — the workaround for the missing refresh leaked a tab every
+/// time. It now refreshes the panel that is already open.
+#[test]
+fn test_issue3126_reopening_review_diff_does_not_stack_a_second_panel() {
+    init_tracing_from_env();
+    let (repo, calc) = repo_with_committed_python();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    harness.open_file(&calc).unwrap();
+    harness.render().unwrap();
+    open_review_diff(&mut harness);
+
+    fs::write(
+        &calc,
+        "def add(a, b):\n    return a + b\n\n# EXTERNAL_EDIT\n",
+    )
+    .unwrap();
+
+    // The old workaround: ask for Review Diff again.
+    open_review_diff(&mut harness);
+    harness
+        .wait_until(|h| h.screen_to_string().contains("EXTERNAL_EDIT"))
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("*Review Diff* 2"),
+        "re-running the command must reuse the open panel, not add another \
+         tab. Screen:\n{screen}"
+    );
+}
+
+/// Issue #3104: the diff body was drawn as plain text — the add/remove
+/// colours and nothing else — while the same lines one tab over in the
+/// editor carried the language's keyword, function and punctuation
+/// colours. The stream now declares where its code is and the host's
+/// highlighter colours it like any buffer.
+#[test]
+fn test_issue3104_diff_body_carries_syntax_colours() {
+    init_tracing_from_env();
+    let (repo, calc) = repo_with_committed_python();
+    // `add` is edited on one token so the diff has a changed pair with a
+    // word-level highlight; `sub` is new.
+    fs::write(
+        &calc,
+        "def add(a, b):\n    return a * b\n\ndef sub(a, b):\n    return a - b\n",
+    )
+    .unwrap();
+
+    // Tests get an empty grammar registry by default (fast startup); this
+    // one is about grammars, so it opts into the real thing.
+    let mut harness = EditorTestHarness::create(
+        120,
+        40,
+        HarnessOptions::new()
+            .with_config(Config::default())
+            .with_working_dir(repo.path.clone())
+            .with_full_grammar_registry(),
+    )
+    .unwrap();
+    harness.render().unwrap();
+    open_review_diff(&mut harness);
+    harness
+        .wait_until(|h| h.screen_to_string().contains("def sub"))
+        .unwrap();
+
+    // `def` — a keyword — in the added row of the diff. A plain `def`
+    // here is the bug, and a never-satisfied wait is how it fails.
+    let keyword = harness.editor().theme().syntax_keyword;
+    let function = harness.editor().theme().syntax_function;
+    wait_for_fg(&mut harness, "def sub", 0, keyword);
+
+    // The function name right after it is a *different* colour — proof the
+    // row is tokenised rather than washed in one colour.
+    let (x, y) = harness.find_text_on_screen("def sub").unwrap();
+    assert_eq!(
+        harness.get_cell(x + 4, y).as_deref(),
+        Some("s"),
+        "expected the `s` of `sub` four columns after `def`"
+    );
+    assert_eq!(
+        harness.get_cell_style(x + 4, y).and_then(|s| s.fg),
+        Some(function),
+        "the function name should carry the theme's function colour"
+    );
+
+    // A context row (unchanged line) is tokenised too — #3104 called those
+    // out separately.
+    wait_for_fg(&mut harness, "def add", 0, keyword);
+
+    // On a changed row the word-level diff still wins: the `*` that
+    // replaced `+` carries the word-diff foreground, not the operator
+    // colour, while the `return` beside it is a keyword. What changed on
+    // the row stays its strongest signal.
+    let word_diff = harness.editor().theme().diagnostic_info_fg;
+    wait_for_fg(&mut harness, "return a * b", 0, keyword);
+    let (x, y) = harness.find_text_on_screen("return a * b").unwrap();
+    assert_eq!(harness.get_cell(x + 9, y).as_deref(), Some("*"));
+    assert_eq!(
+        harness.get_cell_style(x + 9, y).and_then(|s| s.fg),
+        Some(word_diff),
+        "the changed token should keep the word-diff colour over the syntax colour"
+    );
+}
+
+/// A construct spanning several rows of a hunk — here a block comment —
+/// colours every row it covers, not just the one it opens on: the
+/// hunk's side is parsed as the contiguous text it is.
+#[test]
+fn test_issue3104_multi_line_constructs_colour_every_row() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+    setup_audit_mode_plugin(&repo);
+    let app = repo.create_file("app.ts", "const x = 1;\n");
+    repo.git_add_all();
+    repo.git_commit("Initial commit");
+    fs::write(
+        &app,
+        "const x = 1;\n/* alpha\n   BRAVO_MARKER\n   omega */\n",
+    )
+    .unwrap();
+
+    let mut harness = EditorTestHarness::create(
+        120,
+        40,
+        HarnessOptions::new()
+            .with_config(Config::default())
+            .with_working_dir(repo.path.clone())
+            .with_full_grammar_registry(),
+    )
+    .unwrap();
+    harness.render().unwrap();
+    open_review_diff(&mut harness);
+    harness
+        .wait_until(|h| h.screen_to_string().contains("BRAVO_MARKER"))
+        .unwrap();
+
+    // A row in the middle of a block comment carries the comment colour
+    // rather than falling back to plain text.
+    let comment = harness.editor().theme().syntax_comment;
+    wait_for_fg(&mut harness, "BRAVO_MARKER", 0, comment);
+}
+
+/// A file past 9,999 lines widens the line-number gutter: `lineNumPrefix`
+/// pads a number to `LINE_NUM_W` but never truncates one. The bytes before
+/// the code are therefore not a constant, and a row whose gutter width is
+/// assumed rather than measured hands its own diff marker to the language
+/// parser as if it were source.
+///
+/// Markdown shows it, because its grammar anchors a heading to the start
+/// of a line: fed `+## ...` instead of `## ...`, the `#` is no longer at
+/// the start and the row stops being a heading.
+#[test]
+fn test_issue3104_a_five_digit_gutter_still_colours_the_code() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+    setup_audit_mode_plugin(&repo);
+    // Past 10,000 lines, so the changed row carries a five-digit number
+    // and its gutter is wider than a short file's.
+    let mut body = String::new();
+    for i in 0..10_000 {
+        body.push_str(&format!("Filler paragraph {i}.\n"));
+    }
+    body.push_str("## Section Before\n");
+    let notes = repo.create_file("notes.md", &body);
+    repo.git_add_all();
+    repo.git_commit("Initial commit");
+    fs::write(
+        &notes,
+        body.replace("## Section Before\n", "## Section AFTER_EDIT\n"),
+    )
+    .unwrap();
+
+    let mut harness = EditorTestHarness::create(
+        120,
+        40,
+        HarnessOptions::new()
+            .with_config(Config::default())
+            .with_working_dir(repo.path.clone())
+            .with_full_grammar_registry(),
+    )
+    .unwrap();
+    harness.render().unwrap();
+    open_review_diff(&mut harness);
+    harness
+        .wait_until(|h| h.screen_to_string().contains("AFTER_EDIT"))
+        .unwrap();
+
+    // The added row is a heading, and headings are coloured as keywords.
+    let keyword = harness.editor().theme().syntax_keyword;
+    wait_for_fg(&mut harness, "## Section AFTER_EDIT", 0, keyword);
+}
+
+/// Wait until the cell `dx` columns into the first on-screen occurrence of
+/// `text` is painted with foreground `fg`. The colours are the host's
+/// highlighter's, painted on the render after the rows are mounted, so
+/// waiting for them rather than asserting on one frame keeps the test
+/// independent of how many frames the mount takes.
+fn wait_for_fg(harness: &mut EditorTestHarness, text: &str, dx: u16, fg: ratatui::style::Color) {
+    harness
+        .wait_until(|h| {
+            h.find_text_on_screen(text)
+                .and_then(|(x, y)| h.get_cell_style(x + dx, y))
+                .and_then(|s| s.fg)
+                == Some(fg)
+        })
+        .unwrap();
+}
+
+/// The same, from the *other* row. `git status` reports a file added to
+/// the index and then edited (`AM`) as two entries, and the unstaged one
+/// carries `M` — so a test that asked the row under the cursor whether
+/// this discard removes the file said "no" and offered to discard changes,
+/// while `git restore --source=HEAD` deleted a file HEAD never had.
+#[test]
+fn test_issue2318_discarding_an_added_then_edited_file_says_delete() {
+    init_tracing_from_env();
+    let (repo, _calc) = repo_with_committed_python();
+    let added = repo.create_file("new.py", "x = 1\n");
+    repo.git_add(&["new.py"]);
+    fs::write(&added, "x = 1\nx = 2\n").unwrap();
+    assert_eq!(porcelain(&repo), "AM new.py", "fixture must be AM");
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    harness.open_file(&added).unwrap();
+    harness.render().unwrap();
+    open_review_diff(&mut harness);
+
+    // Land on the UNSTAGED row for this file — the one whose own status
+    // says `M` — and ask to discard it.
+    harness
+        .wait_until(|h| h.screen_to_string().contains("UNSTAGED"))
+        .unwrap();
+    let (_, unstaged_row) = harness
+        .find_text_on_screen("UNSTAGED")
+        .expect("the unstaged section should be on screen");
+    let (_, file_row) = harness
+        .find_text_on_screen("new.py")
+        .expect("the file should be listed");
+    assert!(
+        file_row < unstaged_row,
+        "expected the staged row above the unstaged section; screen:\n{}",
+        harness.screen_to_string()
+    );
+    // `.` steps to the next file in the stream, which is this same path
+    // under UNSTAGED.
+    harness
+        .send_key(KeyCode::Char('.'), KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Char('D'), KeyModifiers::SHIFT)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("Delete \"new.py\"?"),
+        "a discard that deletes a file HEAD never had must say Delete, \
+         from either row. Screen:\n{screen}"
+    );
+}
+
+/// Saving a file in another tab must not pull focus back to the review.
+///
+/// The watch is on by default, so every save refreshes the review — and the
+/// refresh's rebuild claimed focus for the diff panel whenever the review's
+/// *own* focused panel was the diff, which is the default. That notion
+/// knows only which review panel holds the keys, not whether the review's
+/// tab is the active one, so a save in `calc.py` activated the review's tab
+/// and the user landed there. A refresh nobody asked for never claims
+/// focus unless the review was already active.
+#[test]
+fn test_issue3126_saving_in_another_tab_does_not_steal_focus() {
+    init_tracing_from_env();
+    let (repo, calc) = repo_with_committed_python();
+    // A second file with a change, so the review has something to show and
+    // the refresh after the save has a visible before/after in the status
+    // line: "1 hunks" becomes "2 hunks" once calc.py's save lands.
+    let helper = repo.create_file("helper.py", "def helper():\n    pass\n");
+    repo.git_add_all();
+    repo.git_commit("Add helper");
+    fs::write(&helper, "def helper():\n    pass\n\n# seed change\n").unwrap();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    harness.open_file(&calc).unwrap();
+    harness.render().unwrap();
+    open_review_diff(&mut harness);
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Review Diff: 1 hunks"))
+        .unwrap();
+
+    // Back to calc.py's tab, edit it, save.
+    harness
+        .send_key(KeyCode::PageDown, KeyModifiers::CONTROL)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("def add(a, b):") && !s.contains("next hunk")
+        })
+        .unwrap();
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.type_text("# EDITED_IN_EDITOR").unwrap();
+    harness
+        .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
+        .unwrap();
+
+    // The watch noticed the save: the review's hunk count moved. Only once
+    // that has happened is "focus stayed put" a meaningful claim — before
+    // it, the refresh that steals focus simply hasn't run yet.
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Review Diff: 2 hunks"))
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("# EDITED_IN_EDITOR") && !screen.contains("next hunk"),
+        "after saving in calc.py the editor must still be showing calc.py, \
+         not the review panel. Screen:\n{screen}"
+    );
+}
+
+/// Cancelling the discard dialog must not leave the auto-refresh watch
+/// switched off. The poll stands down while a discard confirmation is open
+/// — a rebuild under an open dialog would move the ground under it — and
+/// the flag that says so was only cleared on *confirm*, so an Escape left
+/// the panel silently ignoring the working tree for the rest of the
+/// session: #3126's own symptom, reintroduced by its fix.
+#[test]
+fn test_issue3126_cancelling_a_discard_leaves_the_watch_running() {
+    init_tracing_from_env();
+    let (repo, calc) = repo_with_committed_python();
+    // A second tracked file the editor never opens. The change that has to
+    // be noticed lands *there*, so only the git poll can see it: a change to
+    // a file open in the editor would be picked up by the reload channel
+    // instead, and the test would pass without exercising the poll at all.
+    let helper = repo.create_file("helper.py", "def helper():\n    pass\n");
+    repo.git_add_all();
+    repo.git_commit("Add helper");
+    fs::write(&calc, "def add(a, b):\n    return a + b  # FIRST\n").unwrap();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    harness.open_file(&calc).unwrap();
+    harness.render().unwrap();
+    open_review_diff(&mut harness);
+    harness
+        .wait_until(|h| h.screen_to_string().contains("FIRST"))
+        .unwrap();
+
+    // Open the discard dialog and back out of it.
+    harness
+        .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Char('D'), KeyModifiers::SHIFT)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+
+    // Nothing was discarded...
+    // `porcelain` trims, so the worktree-only "` M`" reads as "M".
+    assert_eq!(
+        porcelain(&repo),
+        "M calc.py",
+        "Escape must leave the change alone"
+    );
+    // ...and the panel still follows the working tree, for a file nothing
+    // in the editor is watching on its behalf.
+    fs::write(&helper, "def helper():\n    return \"SECOND\"\n").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("SECOND"))
+        .unwrap();
+}
+
+/// `git restore --source=HEAD` on a path HEAD does not carry *removes* it,
+/// so on a staged add the file-level discard deletes the file. The prompt
+/// has to say so: "Discard changes in" describes an edit being rolled back,
+/// not a file being deleted.
+#[test]
+fn test_issue2318_discarding_a_staged_add_says_delete() {
+    init_tracing_from_env();
+    let (repo, _calc) = repo_with_committed_python();
+    let added = repo.create_file("newfile.py", "x = 1\n");
+    repo.git_add(&["newfile.py"]);
+    assert_eq!(porcelain(&repo), "A  newfile.py");
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    harness.open_file(&added).unwrap();
+    harness.render().unwrap();
+    open_review_diff(&mut harness);
+
+    harness
+        .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Char('D'), KeyModifiers::SHIFT)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("Delete \"newfile.py\"?"),
+        "a discard that deletes the file must say Delete. Screen:\n{screen}"
+    );
+    assert!(
+        !screen.contains("Discard changes in \"newfile.py\"?"),
+        "…and must not describe it as rolling back changes. Screen:\n{screen}"
+    );
 }

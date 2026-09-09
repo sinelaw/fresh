@@ -21,6 +21,8 @@ modules:
     build-commands:
       # Install pre-built binary (built with cargo before flatpak-builder)
       - install -Dm0755 target/release/fresh ${FLATPAK_DEST}/bin/fresh
+      # Provenance receipt: <prefix>/share/fresh/ resolves from /app/bin/fresh.
+      - sh scripts/write-install-receipt.sh flatpak ${FLATPAK_DEST}/share/fresh/install-receipt.toml flatpak_ref=io.github.sinelaw.fresh
       - install -Dm0644 flatpak/io.github.sinelaw.fresh.desktop ${FLATPAK_DEST}/share/applications/${FLATPAK_ID}.desktop
       - install -Dm0644 flatpak/io.github.sinelaw.fresh.metainfo.xml ${FLATPAK_DEST}/share/metainfo/${FLATPAK_ID}.metainfo.xml
       - install -Dm0644 flatpak/io.github.sinelaw.fresh.svg ${FLATPAK_DEST}/share/icons/hicolor/scalable/apps/${FLATPAK_ID}.svg
@@ -32,9 +34,6 @@ modules:
       - cp -r plugins/*.ts plugins/*.json plugins/*.md ${FLATPAK_DEST}/share/fresh-editor/plugins/ 2>/dev/null || true
       - cp -r plugins/lib/* ${FLATPAK_DEST}/share/fresh-editor/plugins/lib/ 2>/dev/null || true
       - cp -r plugins/examples/* ${FLATPAK_DEST}/share/fresh-editor/plugins/examples/ 2>/dev/null || true
-      # Install themes
-      - mkdir -p ${FLATPAK_DEST}/share/fresh-editor/themes
-      - cp -r themes/*.json ${FLATPAK_DEST}/share/fresh-editor/themes/ 2>/dev/null || true
     sources:
       - type: dir
         path: ..

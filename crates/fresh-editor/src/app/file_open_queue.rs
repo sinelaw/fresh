@@ -7,7 +7,7 @@
 
 use std::path::PathBuf;
 
-use rust_i18n::t;
+use fresh_i18n::t;
 
 use super::Editor;
 

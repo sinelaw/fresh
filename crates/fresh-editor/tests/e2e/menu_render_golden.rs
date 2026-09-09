@@ -1,7 +1,6 @@
-//! Golden render snapshot of the TUI menu bar + dropdowns. This is the safety
-//! net for the Phase-3 unification (making `MenuRenderer` derive its content
-//! from the shared `Editor::menu_view()` projection): the TUI menu rendering
-//! must stay byte-identical across that refactor.
+//! Golden render snapshot of the TUI menu bar + dropdowns: the exact cells the
+//! description paints for the File menu. A box is as wide as its widest row,
+//! and an accelerator sits against the right border (`view::shell::menu`).
 
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
@@ -32,23 +31,23 @@ fn menu_region(h: &EditorTestHarness) -> Vec<String> {
 
 const FILE_MENU_GOLDEN: &[&str] = &[
     " File   Edit   View   Selection   Go   LSP   Help",
-    "┌──────────────────────────────────────┐",
-    "│ New File                       Ctrl+N│",
-    "│ Open File...                   Ctrl+O│",
-    "│ ─────────────────────────────────────│",
-    "│ Save                           Ctrl+S│",
-    "│ Save As...                           │",
-    "│ Save All                             │",
-    "│ Revert                               │",
-    "│ Reload with Encoding...              │",
-    "│ ─────────────────────────────────────│",
-    "│ Close Buffer                         │",
-    "│ ─────────────────────────────────────│",
-    "│ Switch Project...                    │",
-    "│ ─────────────────────────────────────│",
-    "│ Detach                               │",
-    "│ Quit                           Ctrl+Q│",
-    "└──────────────────────────────────────┘",
+    "┌────────────────────────┐",
+    "│ New File         Ctrl+N│",
+    "│ Open File...     Ctrl+O│",
+    "│ ───────────────────────│",
+    "│ Save             Ctrl+S│",
+    "│ Save As...             │",
+    "│ Save All               │",
+    "│ Revert                 │",
+    "│ Reload with Encoding...│",
+    "│ ───────────────────────│",
+    "│ Close Buffer           │",
+    "│ ───────────────────────│",
+    "│ Switch Project...      │",
+    "│ ───────────────────────│",
+    "│ Detach                 │",
+    "│ Quit             Ctrl+Q│",
+    "└────────────────────────┘",
 ];
 
 #[test]

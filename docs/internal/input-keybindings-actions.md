@@ -14,6 +14,7 @@ A keystroke flows through these stages:
 
 ```
 Terminal (crossterm KeyEvent)
+  → input::is_keystroke(kind)      — press/repeat act, release is dropped
   → KeyTranslator.translate()      — calibration fixups
   → Editor::handle_key()           — modal priority + chord state
       → KeybindingResolver.resolve() — key → Action
@@ -24,6 +25,14 @@ Terminal (crossterm KeyEvent)
 
 The stage before this one — raw terminal bytes to a `KeyEvent`/`MouseEvent` — is
 [terminal-input-parsing.md](terminal-input-parsing.md).
+
+`input::is_keystroke` is the single gate on the event *kind*, and every raw-event
+entry point (the local event loop, the session server, `handle_input_event`) goes
+through it rather than comparing against `Press`. It only does anything when the
+terminal reports event types (`keyboard_report_event_types`): then one physical
+keypress yields a press, a repeat per auto-repeat tick, and a release. Presses
+and repeats are keystrokes; a release is not. Acting on releases doubled every
+key (#2796); dropping repeats would stop held keys from repeating.
 
 Three distinct vocabularies live here and the separation is deliberate (§4):
 
@@ -121,10 +130,13 @@ Order of checks in `handle_key`:
    - `dispatch_modal_keyboard` walks the overlay stack top-down for the four
      *capture-all* modals — **Settings → KeybindingEditor → CalibrationWizard →
      Menu**. These early-return.
-   - **Prompt**: Alt+char prompt bindings resolved context-only first; then
-     file-browser / query-replace / overlay-toolbar handlers; finally the prompt's
-     own `dispatch_input`. A prompt that returns `Ignored` falls through to global
-     keybindings.
+   - **Prompt**: file-browser / query-replace / overlay-toolbar handlers, then
+     the prompt's own `dispatch_input`. Keys these handlers `Ignored` (notably
+     Alt+letter) fall through to regular keybinding resolution, where the Prompt
+     context's own bindings outrank Global ones (see 5.3) — so the browser's
+     Alt toggles win over menu mnemonics without a special-cased pre-resolve;
+     resolved prompt/file-browser actions are routed back through
+     `handle_file_open_action` while the browser is up.
    - **Popup**, gated by `popups_capture_keys()` so editor-pane popups don't eat
      keys when the file explorer is focused. Completion popups consult the
      `Completion` keybinding context first; global popups outrank buffer popups.
@@ -267,32 +279,57 @@ Several have layered semantics:
 `from_when_clause` parses the `"when"` strings (`mode:git-log`, `searchPrompt`, …)
 used in keymap/plugin bindings.
 
-### 5.3 Single-key resolution order
+### 5.3 Resolution order (single keys and chords)
 
-`resolve` checks, in order:
+`resolve` and `resolve_chord` share one probe sequence, built by `probe_order`
+from two rules (issue #2941):
 
-1. custom **Global**, 2. keymap **Global**,
-3. custom **context**, 4. keymap **context**, 5. **plugin_defaults** context,
-6. **parent context** (custom then keymap — e.g. SearchPrompt → Prompt),
-7. **Normal fallthrough**: full for `allows_normal_fallthrough` / inheriting modes,
-   otherwise only `is_application_wide_action` (Quit, Save, Esc-cancel) or — for
-   UI-fallthrough contexts — `is_terminal_ui_action`. A user binding in Normal
-   *shadows* the keymap default even when it doesn't qualify for fallthrough, so a
-   user can disable an application-wide default like `Ctrl+Q → Quit` with `noop`.
-8. Finally, raw character input in text-input contexts (`InsertChar`).
+1. **Source**: every user binding outranks every built-in one (issue #2720) —
+   the whole custom layer is probed before any keymap or plugin entry.
+2. **Specificity**: within each layer, the context chain is walked from
+   narrowest to broadest — the exact context, its ancestors (SearchPrompt →
+   Prompt), then **Global as the root fallback**. A broad `global` entry never
+   shadows a context-specific binding for the same chord. At equal specificity
+   the active keymap outranks plugin `defineMode` defaults (a keymap can
+   retune a plugin mode), while a plugin's mode bindings still outrank the
+   keymap's less-specific global entries.
 
-A related helper `resolve_in_context_only` bypasses Global/Normal so prompt-specific
-Alt bindings don't collide with menu mnemonics.
+Concretely: custom context → custom parents → custom Global → per chain level:
+keymap context, plugin context → … → keymap Global, plugin Global. After the
+probes, `resolve` applies:
+
+- **Normal fallthrough**: full for `allows_normal_fallthrough` / inheriting
+  modes, otherwise only `is_application_wide_action` (Quit, Save, Esc-cancel)
+  or — for UI-fallthrough contexts — `is_terminal_ui_action`. A user binding
+  in Normal *shadows* the keymap default even when it doesn't qualify for
+  fallthrough, so a user can disable an application-wide default like
+  `Ctrl+Q → Quit` with `noop`.
+- Finally, raw character input in text-input contexts (`InsertChar`).
+
+Bindings disabled by configuration are *suppressed at resolution* — skipped as
+if unbound, releasing the chord to whatever they shadowed — rather than
+resolving and being dropped at dispatch. Today that covers the menu-bar
+mnemonics (`Alt+letter → menu_open`) when `editor.menu_bar_mnemonics` is off,
+which is what makes the option's "frees up Alt+letter keybindings" promise
+true.
+
+The `test_builtin_keymap_bindings_are_reachable` guard asserts every entry in
+every built-in keymap actually fires in its own context, so a shipped binding
+can never be silently dead behind a broader one.
+
+A related helper `resolve_in_context_only` consults exactly one context (no
+chain, no Global) — used where dispatch needs "does this context itself claim
+the key" (popup/completion routing).
 
 ### 5.4 Chords
 
 Chords are multi-key sequences. The chord state is a per-window list of
 `(KeyCode, KeyModifiers)` pairs. `resolve_chord` builds the normalized full
-sequence and searches the same tiers (custom global → keymap global → custom
-context → keymap context → plugin context), returning `Complete(action)` /
-`Partial` (a prefix of some binding) / `NoMatch`. In `handle_key`, `Partial` pushes
-the key and waits, `Complete` clears the state and dispatches, `NoMatch` clears any
-stale prefix. Chord resolution runs both at the mode level and the normal level.
+sequence and searches the same probe order as `resolve` (see 5.3), returning
+`Complete(action)` / `Partial` (a prefix of some binding) / `NoMatch`. In
+`handle_key`, `Partial` pushes the key and waits, `Complete` clears the state
+and dispatches, `NoMatch` clears any stale prefix. Chord resolution runs both
+at the mode level and the normal level.
 
 ### 5.5 Rebindability & reload
 

@@ -9,7 +9,7 @@ name: Theme screenshots
 on:
   pull_request:
     paths:
-      - "crates/fresh-editor/themes/**"
+      - "crates/fresh-editor-core/themes/**"
       - "crates/fresh-editor/tests/e2e/theme_screenshots.rs"
       - ".github/workflows/theme-screenshots.yml"
 
@@ -57,7 +57,7 @@ jobs:
           # to the job timeout. Generous enough for a many-theme PR.
           timeout 900 cargo nextest run \
             --package fresh-editor \
-            --test e2e_tests \
+            --test all_tests \
             -E 'test(theme_diff_gallery)' \
             --run-ignored ignored-only \
             --no-capture 2>&1 | tee /tmp/theme-diff.log

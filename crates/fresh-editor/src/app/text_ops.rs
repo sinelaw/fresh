@@ -5,7 +5,7 @@
 //! events to the active buffer. Pure decision logic for smart-home lives
 //! in `super::smart_home`; these methods are the cross-cutting drivers.
 
-use rust_i18n::t;
+use fresh_i18n::t;
 
 use crate::model::event::{Event, LeafId};
 
@@ -56,17 +56,34 @@ impl Editor {
             } else {
                 // Fall back to physical-line toggle.
                 let state = self.active_state_mut();
-                let mut iter = state
+                // The line's real start. Asking the reader for it scans back on
+                // a budget and, when the budget runs out, reports how far it
+                // looked — a "line start" in the middle of the line. Home then
+                // lands there, and a second press is needed to reach the real
+                // one, which is exactly what a long line used to do.
+                let buffer_len = state.buffer.len();
+                let line_start = state
                     .buffer
-                    .line_iterator(cursor.position, estimated_line_length);
-                let Some((line_start, line_content)) = iter.next_line() else {
-                    continue;
-                };
-                let first_non_ws = line_content
-                    .chars()
-                    .take_while(|c| *c != '\n')
-                    .position(|c| !c.is_whitespace())
-                    .map(|offset| line_start + offset)
+                    .prev_line_start_within(cursor.position, buffer_len)
+                    .unwrap_or(0);
+                // Only the indent decides where Home goes, and indentation is at
+                // the front of the line — so read a page of it rather than the
+                // line, which on a minified file is the file.
+                const INDENT_SCAN_BYTES: usize = 4096;
+                let head_len = INDENT_SCAN_BYTES.min(buffer_len.saturating_sub(line_start));
+                let head = state
+                    .buffer
+                    .get_text_range_mut(line_start, head_len)
+                    .unwrap_or_default();
+                let head = String::from_utf8_lossy(&head);
+                // Byte offsets, not character counts: the two differ the moment
+                // a line is indented with anything but ASCII, and this is added
+                // to a byte position.
+                let first_non_ws = head
+                    .char_indices()
+                    .take_while(|(_, c)| *c != '\n')
+                    .find(|(_, c)| !c.is_whitespace())
+                    .map(|(offset, _)| line_start + offset)
                     .unwrap_or(line_start);
                 if cursor.position == first_non_ws {
                     line_start
@@ -127,7 +144,7 @@ impl Editor {
         use super::smart_home::{smart_home_target, SmartHomeTarget};
 
         let visual_start = self
-            .active_layout()
+            .active_window()
             .visual_line_start(split_id, cursor_pos, false)?;
 
         // Determine the physical line start to tell first-row from continuation.
@@ -155,7 +172,7 @@ impl Editor {
         // compute it eagerly anyway so the pure helper stays unconditional.
         let first_non_ws = if is_first_visual_row {
             let visual_end = self
-                .active_layout()
+                .active_window()
                 .visual_line_end(split_id, cursor_pos, false)
                 .unwrap_or(visual_start);
             let visual_len = visual_end.saturating_sub(visual_start);
@@ -173,7 +190,7 @@ impl Editor {
         match smart_home_target(cursor_pos, visual_start, is_first_visual_row, first_non_ws) {
             SmartHomeTarget::At(pos) => Some(pos),
             SmartHomeTarget::PreviousVisualRowStart => self
-                .active_layout()
+                .active_window()
                 .visual_line_start(split_id, cursor_pos, true),
         }
     }
@@ -354,8 +371,8 @@ impl Editor {
 
         // Use optimized bulk edit for multi-line comment toggle
         let description = format!("{} lines", action_desc);
-        if let Some(bulk_edit) = self.apply_events_as_bulk_edit(events, description) {
-            self.active_event_log_mut().append(bulk_edit);
+        if let Some(applied) = self.apply_events_as_bulk_edit(events, description) {
+            self.active_event_log_mut().append(applied);
         }
 
         self.set_status_message(
@@ -388,20 +405,19 @@ impl Editor {
 
         let ch = bytes[0] as char;
 
-        // All supported bracket pairs
-        const BRACKET_PAIRS: &[(char, char)] = &[('(', ')'), ('[', ']'), ('{', '}'), ('<', '>')];
-
-        let bracket_info = match ch {
-            '(' => Some(('(', ')', true)),
-            ')' => Some(('(', ')', false)),
-            '[' => Some(('[', ']', true)),
-            ']' => Some(('[', ']', false)),
-            '{' => Some(('{', '}', true)),
-            '}' => Some(('{', '}', false)),
-            '<' => Some(('<', '>', true)),
-            '>' => Some(('<', '>', false)),
-            _ => None,
-        };
+        // The same pair table the highlighter uses, and the same language
+        // question: `<` and `>` are brackets only where they are delimiters
+        // rather than comparison operators (issue #3090). Asking it here too
+        // is what keeps the jump and the colouring telling one story — with a
+        // table of its own, this command still walked into the `<` of
+        // `if (a < b)` and called it the enclosing bracket.
+        let angle_brackets = state
+            .highlighter
+            .language()
+            .is_some_and(|language| language.angle_brackets_are_delimiters());
+        let bracket_pairs = crate::view::bracket_highlight_overlay::bracket_pairs(angle_brackets);
+        let bracket_info =
+            crate::view::bracket_highlight_overlay::get_bracket_pair(ch, angle_brackets);
 
         // Limit searches to avoid O(n) scans on huge files.
         use crate::view::bracket_highlight_overlay::MAX_BRACKET_SEARCH_BYTES;
@@ -414,7 +430,7 @@ impl Editor {
             } else {
                 // Search backward from cursor to find enclosing opening bracket.
                 // Track depth per bracket type to handle nesting correctly.
-                let mut depths: Vec<i32> = vec![0; BRACKET_PAIRS.len()];
+                let mut depths: Vec<i32> = vec![0; bracket_pairs.len()];
                 let mut found = None;
                 let search_limit = pos.saturating_sub(MAX_BRACKET_SEARCH_BYTES);
                 let mut search_pos = pos.saturating_sub(1);
@@ -422,7 +438,7 @@ impl Editor {
                     let b = state.buffer.slice_bytes(search_pos..search_pos + 1);
                     if !b.is_empty() {
                         let c = b[0] as char;
-                        for (i, &(open, close)) in BRACKET_PAIRS.iter().enumerate() {
+                        for (i, &(open, close)) in bracket_pairs.iter().enumerate() {
                             if c == close {
                                 depths[i] += 1;
                             } else if c == open {

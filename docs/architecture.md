@@ -34,7 +34,7 @@ The terminal produces `crossterm::event::Event` values:
 - resize events
 
 The main loop routes these into `Editor`:
-- keys → `Editor::handle_key` (`src/app/input.rs`)
+- keys → `Editor::handle_key` (`src/app/input.rs` — the imperative shell; the routing *decisions* live in `src/input/router.rs` as pure, Editor-free functions)
 - mouse → `Editor::handle_mouse` (`src/app/mouse_input.rs`)
 
 ### Modal Dispatch (Settings/Menu/Prompt/Popup)
@@ -75,7 +75,7 @@ Fresh has two distinct layers that are easy to conflate:
 - examples: `Save`, `CommandPalette`, `MoveLeft`, `InsertChar('a')`, `LspHover`, `PluginAction(...)`
 - produced by keybindings, menus, command palette, and some UI handlers
 
-Execution entrypoint: `Editor::handle_action` (`src/app/input.rs`)
+Execution entrypoint: `Editor::handle_action` (`src/app/action_dispatch.rs`)
 
 ### `Event` (State Change + Undo/Redo)
 

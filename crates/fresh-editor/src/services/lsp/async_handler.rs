@@ -59,9 +59,24 @@ const DID_OPEN_GRACE_PERIOD_MS: u64 = 200;
 /// answers) from leaving features wedged in their loading state forever.
 const DEFAULT_REQUEST_TIMEOUT_MS: u64 = 30_000;
 
+/// Timeouts in a row (no answered request in between) before a server is
+/// reported as unresponsive in the UI.
+///
+/// One expiry can be a single pathological request; two in a row means the
+/// server has stopped answering this session and "ready" is a lie — see
+/// issue #2197, where every request expired after 30s while the status bar
+/// stayed on `LSP (python) ready`.
+const UNRESPONSIVE_TIMEOUT_STREAK: u32 = 2;
+
 /// LSP error codes that should not surface as user-visible warnings.
 ///
 /// From [LSP 3.17 specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/):
+/// - RequestCancelled (-32800): the spec-mandated reply to a request the
+///   *client* withdrew with `$/cancelRequest`. We withdraw superseded
+///   requests ourselves on every cursor move, edit and scroll (see
+///   `Window::cancel_pending_lsp_requests`) and on request timeout, so this
+///   error is the answer we asked for — warning about it means warning about
+///   our own bookkeeping (sinelaw/fresh#2952).
 /// - ContentModified (-32801): "If clients receive a ContentModified error,
 ///   it generally should not show it in the UI for the end-user."
 /// - ServerCancelled (-32802): Server cancelled the request (e.g. due to newer request).
@@ -73,6 +88,7 @@ const DEFAULT_REQUEST_TIMEOUT_MS: u64 = 30_000;
 /// suppressed: we want genuine protocol mismatches to surface so they can
 /// be diagnosed. The correct way to avoid MethodNotFound is to check the
 /// server's advertised capabilities before sending the request.
+const LSP_ERROR_REQUEST_CANCELLED: i64 = -32800;
 const LSP_ERROR_CONTENT_MODIFIED: i64 = -32801;
 const LSP_ERROR_SERVER_CANCELLED: i64 = -32802;
 
@@ -110,7 +126,9 @@ fn is_informational_method(method: &str) -> bool {
 /// Whether a JSON-RPC error response should be logged at debug rather than warn.
 /// See `LSP_ERROR_*` constants above for the rationale behind each suppressed code.
 fn is_suppressed_error_code(code: i64) -> bool {
-    code == LSP_ERROR_CONTENT_MODIFIED || code == LSP_ERROR_SERVER_CANCELLED
+    code == LSP_ERROR_REQUEST_CANCELLED
+        || code == LSP_ERROR_CONTENT_MODIFIED
+        || code == LSP_ERROR_SERVER_CANCELLED
 }
 
 /// Whether an error response for `method` with `code` should be downgraded from
@@ -357,7 +375,8 @@ impl LspClientState {
 fn create_client_capabilities() -> ClientCapabilities {
     use lsp_types::{
         CodeActionClientCapabilities, CodeActionKindLiteralSupport, CodeActionLiteralSupport,
-        CompletionClientCapabilities, DiagnosticClientCapabilities, DiagnosticTag,
+        CompletionClientCapabilities, CompletionItemCapability,
+        CompletionItemCapabilityResolveSupport, DiagnosticClientCapabilities, DiagnosticTag,
         DiagnosticWorkspaceClientCapabilities, DocumentFormattingClientCapabilities,
         DocumentHighlightClientCapabilities, DocumentRangeFormattingClientCapabilities,
         DocumentSymbolClientCapabilities, DynamicRegistrationClientCapabilities,
@@ -432,6 +451,45 @@ fn create_client_capabilities() -> ClientCapabilities {
             // entitled to never register the provider. See sinelaw/fresh#2195.
             completion: Some(CompletionClientCapabilities {
                 dynamic_registration: Some(true),
+                completion_item: Some(CompletionItemCapability {
+                    // Declare that `additionalTextEdits` may be filled in
+                    // lazily via `completionItem/resolve`: on accept we apply
+                    // eager edits directly and otherwise send a resolve
+                    // request whose response is applied in
+                    // `handle_completion_resolved` (auto-imports). Servers
+                    // gate features on this — rust-analyzer only offers
+                    // unimported symbols ("flyimport") when the client can
+                    // resolve `additionalTextEdits` (sinelaw/fresh#2603).
+                    //
+                    // `documentation` is listed because rust-analyzer only
+                    // advertises `resolveProvider` when the client can also
+                    // resolve documentation lazily (verified against
+                    // rust-analyzer 1.94.1: with `additionalTextEdits` alone
+                    // it still defers the import edit to resolve but reports
+                    // `resolveProvider: false`, so a spec-compliant client
+                    // never resolves and the import is lost). Deferring
+                    // documentation costs nothing here: the completion popup
+                    // renders label/detail only, never `documentation`.
+                    resolve_support: Some(CompletionItemCapabilityResolveSupport {
+                        properties: vec![
+                            "documentation".to_string(),
+                            "additionalTextEdits".to_string(),
+                        ],
+                    }),
+                    // We render `labelDetails` next to the label in the
+                    // completion popup (`lsp_items_to_popup_items`). Without
+                    // this flag rust-analyzer folds the import path into the
+                    // label itself ("HashMap (use std::collections::HashMap)"),
+                    // which the accept path would then insert literally into
+                    // the buffer.
+                    label_details_support: Some(true),
+                    // `snippetSupport` is deliberately NOT advertised: the
+                    // accept path only detects snippet syntax heuristically
+                    // (`is_snippet`) and does not track `insertTextFormat`,
+                    // so inviting servers to switch every insertion to
+                    // snippet format is not safe yet.
+                    ..Default::default()
+                }),
                 ..Default::default()
             }),
             hover: Some(HoverClientCapabilities {
@@ -920,6 +978,54 @@ enum LspCommand {
     Shutdown,
 }
 
+/// How many requests have expired on a server since it last answered one.
+///
+/// Split out from [`LspState`] so the transition rules are testable without
+/// a live server: they decide when the editor stops calling a server ready
+/// (issue #2197), and getting them wrong either cries wolf on a healthy
+/// server or leaves a dead one looking fine.
+#[derive(Debug, Default)]
+struct TimeoutStreak {
+    consecutive: u32,
+}
+
+/// What a timeout or an answer changes about how the server is reported.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StreakTransition {
+    /// Nothing to report beyond the timeout itself.
+    None,
+    /// This expiry is the one that makes the server unresponsive.
+    BecameUnresponsive,
+    /// The server answered after having been reported unresponsive.
+    Recovered,
+}
+
+impl TimeoutStreak {
+    /// Record an expired request. Returns the new streak length and whether
+    /// it just crossed into "unresponsive" — only on the crossing, so a
+    /// server that keeps timing out is reported once, not once per request.
+    fn record_timeout(&mut self) -> (u32, StreakTransition) {
+        self.consecutive = self.consecutive.saturating_add(1);
+        let transition = if self.consecutive == UNRESPONSIVE_TIMEOUT_STREAK {
+            StreakTransition::BecameUnresponsive
+        } else {
+            StreakTransition::None
+        };
+        (self.consecutive, transition)
+    }
+
+    /// Record an answered request, clearing the streak.
+    fn record_answer(&mut self) -> StreakTransition {
+        let was_unresponsive = self.consecutive >= UNRESPONSIVE_TIMEOUT_STREAK;
+        self.consecutive = 0;
+        if was_unresponsive {
+            StreakTransition::Recovered
+        } else {
+            StreakTransition::None
+        }
+    }
+}
+
 /// Mutable state for LSP command processing.
 ///
 /// All mutable fields use interior mutability (Arc/atomics) so this struct
@@ -959,6 +1065,20 @@ struct LspState {
     /// Mapping from editor request_id to LSP JSON-RPC id for cancellation
     /// Key: editor request_id, Value: LSP JSON-RPC id
     active_requests: Arc<std::sync::Mutex<HashMap<u64, i64>>>,
+
+    /// Requests that expired since this server last answered one.
+    ///
+    /// A server that keeps the connection open but never replies looks
+    /// exactly like a healthy one from the outside, so the count is what
+    /// the editor uses to stop calling it "ready" (issue #2197). Reset by
+    /// the first answered request.
+    ///
+    /// Behind a mutex rather than an atomic because the decision and the
+    /// status message it produces have to stay in the same order: with two
+    /// independently-atomic updates, a timeout and an answer racing could
+    /// deliver "unresponsive" *after* "running" and leave the indicator
+    /// stuck with a counter that no longer agrees with it.
+    timeout_streak: Arc<Mutex<TimeoutStreak>>,
 
     /// Extension-to-languageId overrides for textDocument/didOpen
     language_id_overrides: Arc<HashMap<String, String>>,
@@ -1160,6 +1280,53 @@ impl LspState {
         .await
     }
 
+    /// Record that a request expired: tell the editor so the UI can stop
+    /// claiming the server is ready, and mark the server unresponsive once
+    /// a second request in a row goes unanswered.
+    ///
+    /// One timeout is a bad request or a slow index; a second one with no
+    /// answer in between means the server has stopped serving this session
+    /// (issue #2197 — pyright 1.1.408 completes `initialize` and then
+    /// answers nothing at all).
+    ///
+    /// The lock is held across the sends so a timeout and an answer racing
+    /// cannot deliver their status updates in the opposite order to the
+    /// decisions that produced them.
+    fn note_request_timed_out(&self, method: &str, timeout: Duration) {
+        let mut streak = self.timeout_streak.lock().unwrap();
+        let (consecutive, transition) = streak.record_timeout();
+
+        let _ = self.async_tx.send(AsyncMessage::LspRequestTimeout {
+            language: (*self.language).clone(),
+            server_name: (*self.server_name).clone(),
+            method: method.to_string(),
+            timeout,
+            consecutive,
+        });
+
+        if transition == StreakTransition::BecameUnresponsive {
+            let _ = self.async_tx.send(AsyncMessage::LspStatusUpdate {
+                language: (*self.language).clone(),
+                server_name: (*self.server_name).clone(),
+                status: LspServerStatus::Unresponsive,
+                message: None,
+            });
+        }
+    }
+
+    /// Record that a request was answered, clearing any unresponsive state.
+    fn note_request_answered(&self) {
+        let mut streak = self.timeout_streak.lock().unwrap();
+        if streak.record_answer() == StreakTransition::Recovered {
+            let _ = self.async_tx.send(AsyncMessage::LspStatusUpdate {
+                language: (*self.language).clone(),
+                server_name: (*self.server_name).clone(),
+                status: LspServerStatus::Running,
+                message: None,
+            });
+        }
+    }
+
     /// Send a request, awaiting the response with a per-request timeout.
     ///
     /// On timeout: drops the pending oneshot, sends `$/cancelRequest` to the
@@ -1211,7 +1378,16 @@ impl LspState {
         );
 
         let response_result = match tokio::time::timeout(timeout, rx).await {
-            Ok(Ok(inner)) => inner,
+            Ok(Ok(inner)) => {
+                // The server replied — even an LSP error reply counts, it
+                // means the connection is serving again — so drop any "not
+                // responding" state it is in.
+                self.note_request_answered();
+                inner
+            }
+            // The pending entry was dropped rather than answered (a
+            // superseded request we cancelled ourselves, or shutdown):
+            // that says nothing about whether the server is answering.
             Ok(Err(_)) => Err("Response channel closed".to_string()),
             Err(_) => {
                 // Timed out: forget the pending entry, ask the server to cancel.
@@ -1224,6 +1400,7 @@ impl LspState {
                     self.language.as_str(),
                     timeout
                 );
+                self.note_request_timed_out(method, timeout);
                 let _ = self.send_cancel_request(id).await;
                 Err(format!(
                     "Request '{}' timed out after {:?}",
@@ -1267,6 +1444,9 @@ impl LspState {
             }]
         });
 
+        // Pushed again after `initialized`, see below.
+        let settings = initialization_options.clone();
+
         #[allow(deprecated)]
         let params = InitializeParams {
             process_id: Some(std::process::id()),
@@ -1292,6 +1472,21 @@ impl LspState {
         // Send initialized notification
         self.send_notification::<Initialized>(InitializedParams {})
             .await?;
+
+        // Push the settings once, as VS Code, Neovim and Helix do right after
+        // `initialized`. The spec does not require it, but servers are written
+        // against those clients and some only finish setting up on receiving
+        // it: pyright 1.1.408 never resolved its workspace when the client
+        // advertised `workspaceFolders`, and this notification was the only
+        // thing that unblocked it (microsoft/pyright#11239). The payload is
+        // the same object `workspace/configuration` is answered from, so a
+        // server sees one consistent configuration whichever way it asks.
+        self.send_notification::<lsp_types::notification::DidChangeConfiguration>(
+            lsp_types::DidChangeConfigurationParams {
+                settings: settings.unwrap_or_else(|| serde_json::json!({})),
+            },
+        )
+        .await?;
 
         self.initialized.store(true, Ordering::SeqCst);
 
@@ -2791,8 +2986,22 @@ impl LspState {
         self.write_message(&notification).await
     }
 
-    /// Cancel a request by editor request_id
-    async fn handle_cancel_request(&self, request_id: u64) -> Result<(), String> {
+    /// Cancel a request by editor request_id.
+    ///
+    /// Withdrawing the pending entry is part of cancelling, not an
+    /// optimisation: the entry owns the oneshot the requester is parked on,
+    /// so leaving it in place means a server that never answers a cancelled
+    /// request keeps that requester waiting the full 30s and the expiry is
+    /// then indistinguishable from a server that has stopped answering
+    /// (issue #2197 — the editor cancels superseded completion, definition
+    /// and semantic-token requests on ordinary cursor movement, so those
+    /// would have counted towards "not responding" on a healthy server).
+    /// Dropping the sender resolves the requester immediately instead.
+    async fn handle_cancel_request(
+        &self,
+        request_id: u64,
+        pending: &PendingRequests,
+    ) -> Result<(), String> {
         let lsp_id = self.active_requests.lock().unwrap().remove(&request_id);
         if let Some(lsp_id) = lsp_id {
             tracing::info!(
@@ -2800,6 +3009,7 @@ impl LspState {
                 request_id,
                 lsp_id
             );
+            pending.lock().unwrap().remove(&lsp_id);
             self.send_cancel_request(lsp_id).await
         } else {
             tracing::trace!(
@@ -3100,6 +3310,7 @@ impl LspTask {
             server_name: Arc::new(self.server_name.clone()),
             active_requests: Arc::new(Mutex::new(HashMap::new())),
             language_id_overrides: Arc::new(self.language_id_overrides.clone()),
+            timeout_streak: Arc::new(Mutex::new(TimeoutStreak::default())),
         };
 
         let pending = Arc::new(Mutex::new(self.pending));
@@ -3733,7 +3944,7 @@ impl LspTask {
                 LspCommand::CancelRequest { request_id } => {
                     tracing::info!("Processing CancelRequest for editor_id={}", request_id);
                     // Notification: inline so cancels reach the server promptly.
-                    let _ = state.handle_cancel_request(request_id).await;
+                    let _ = state.handle_cancel_request(request_id, &pending).await;
                 }
                 LspCommand::PluginRequest {
                     request_id,
@@ -4490,7 +4701,30 @@ pub struct LspHandle {
     /// Document version tracking (shared with the async LSP task).
     /// Used to check document versions in workspace/applyEdit.
     document_versions: Arc<std::sync::Mutex<HashMap<PathBuf, i64>>>,
+
+    /// Documents whose incremental `didChange` stream has a hole in it.
+    ///
+    /// `command_tx` is bounded, so a server that stops draining its stdin
+    /// (a stalled `gopls`, a long reindex) eventually backs the queue up to
+    /// the point where `did_change` cannot enqueue. The change carries a
+    /// *range*, so silently losing it desynchronises the server's copy of the
+    /// document from the buffer for as long as the server lives — every later
+    /// diagnostic is then derived from text the user never wrote (#3038).
+    ///
+    /// A document listed here is repaired by replacing the server's whole
+    /// copy: the next notification fresh sends for it is a full-text
+    /// `didChange` rather than a range edit.
+    desynced: Arc<std::sync::Mutex<std::collections::HashSet<PathBuf>>>,
+
+    /// `didSave` notifications that could not be queued, keyed by document,
+    /// holding the text as it was at save time. Re-sent by
+    /// `retry_pending_saves` once the server has room again (#3038).
+    pending_saves: Arc<std::sync::Mutex<PendingSaves>>,
 }
+
+/// `didSave` notifications awaiting a retry, by document path: the URI to send
+/// and the text the document had when it was saved.
+type PendingSaves = HashMap<PathBuf, (Uri, Option<String>)>;
 
 // Channel sends and state transitions in LspHandle are best-effort: async_tx.send()
 // failures mean the editor is shutting down, state transition errors in error-handling
@@ -4630,6 +4864,8 @@ impl LspHandle {
             state,
             runtime: runtime.clone(),
             document_versions,
+            desynced: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
+            pending_saves: Arc::new(std::sync::Mutex::new(HashMap::new())),
         })
     }
 
@@ -4756,6 +4992,13 @@ impl LspHandle {
             ));
         }
 
+        // Note this deliberately does not clear a pending resync. didOpen
+        // carries the full text, but the task discards it when the server
+        // already has the document open (`should_skip_did_open`), so a
+        // successful enqueue is not evidence the server's copy was replaced.
+        // Leaving the flag set costs one redundant full-text change; clearing
+        // it wrongly leaves the server stale for good.
+        //
         // Send command to LspTask which will queue it if not initialized yet
         self.command_tx
             .try_send(LspCommand::DidOpen {
@@ -4766,33 +5009,151 @@ impl LspHandle {
             .map_err(|_| "Failed to send did_open command".to_string())
     }
 
-    /// Notify document changed
+    /// Notify document changed.
+    ///
+    /// The command queue is bounded, so this can fail while the server is not
+    /// draining its stdin. A lost *range* edit desynchronises the server's copy
+    /// of the document permanently, so a failure is recorded rather than merely
+    /// reported: the document is marked desynced (see [`Self::needs_full_resync`])
+    /// and its version is advanced so that the reader task's stale-diagnostics
+    /// guard discards everything the server derives from its stale copy until
+    /// the resync lands (#3038).
     pub fn did_change(
         &self,
         uri: Uri,
         content_changes: Vec<TextDocumentContentChangeEvent>,
     ) -> Result<(), String> {
+        let path = PathBuf::from(uri.path().as_str());
+        // A single change with no range replaces the whole document, so a
+        // successful send re-synchronises the server no matter what it held
+        // before.
+        let replaces_whole_document =
+            content_changes.len() == 1 && content_changes[0].range.is_none();
+
         // Send command to LspTask which will queue it if not initialized yet
-        self.command_tx
-            .try_send(LspCommand::DidChange {
-                uri,
-                content_changes,
-            })
-            .map_err(|_| "Failed to send did_change command".to_string())
+        match self.command_tx.try_send(LspCommand::DidChange {
+            uri,
+            content_changes,
+        }) {
+            Ok(()) => {
+                if replaces_whole_document {
+                    self.desynced.lock().unwrap().remove(&path);
+                }
+                Ok(())
+            }
+            Err(_) => {
+                // Flagged unconditionally. Gating this on `document_versions`
+                // — the task's record of what the server has open — loses the
+                // change whose loss matters most: `document_versions` is only
+                // written when the task *dequeues* the didOpen, so a didChange
+                // dropped while that open is still sitting in the queue would
+                // go unflagged, and the server would be left holding the text
+                // the open carried. A flag on a document the server never
+                // opens costs one full-text change the task discards.
+                //
+                // Note the version counter is deliberately left alone. It is a
+                // shared allocator: the task stamps each change as it dequeues
+                // it, so burning a number here does not create a gap the
+                // server's publishes fall behind — it only pushes
+                // `document_version` ahead of what the server has actually
+                // seen, which `apply_text_document_edit` compares for equality
+                // when deciding whether a versioned workspace edit is stale.
+                self.desynced.lock().unwrap().insert(path);
+                Err("Failed to send did_change command".to_string())
+            }
+        }
+    }
+
+    /// Whether the server's copy of `path` is known to have diverged from the
+    /// buffer, so the next notification for it must replace the whole text.
+    pub fn needs_full_resync(&self, path: &std::path::Path) -> bool {
+        self.desynced.lock().unwrap().contains(path)
+    }
+
+    /// Paths whose server-side copy is known to be stale and still needs a
+    /// full-text resend. Empty on the healthy path, which is the common case.
+    pub fn desynced_documents(&self) -> Vec<PathBuf> {
+        self.desynced.lock().unwrap().iter().cloned().collect()
+    }
+
+    /// Whether the command queue can accept a notification right now.
+    ///
+    /// Lets a caller skip assembling an expensive payload (a whole-buffer
+    /// resync) that `try_send` would only reject.
+    pub fn has_command_capacity(&self) -> bool {
+        self.command_tx.capacity() > 0
     }
 
     /// Send didClose notification
     pub fn did_close(&self, uri: Uri) -> Result<(), String> {
+        let path = PathBuf::from(uri.path().as_str());
         self.command_tx
             .try_send(LspCommand::DidClose { uri })
-            .map_err(|_| "Failed to send did_close command".to_string())
+            .map(|()| {
+                // Only once the close is actually queued is there nothing left
+                // to repair.
+                self.desynced.lock().unwrap().remove(&path);
+            })
+            .map_err(|_| {
+                // A dropped didClose leaves the server holding the document,
+                // and the task never forgets its version — so a later didOpen
+                // for it would be discarded as a duplicate and the server would
+                // keep serving text from a buffer that is gone. Flag it so the
+                // repair pass retries the close.
+                self.desynced.lock().unwrap().insert(path);
+                "Failed to send did_close command".to_string()
+            })
     }
 
     /// Send didSave notification
+    /// Notify the server a document was saved.
+    ///
+    /// A server that runs its checks on save (rust-analyzer's `checkOnSave`,
+    /// and anything else that only re-analyses at that point) publishes
+    /// nothing until it sees this, so a notification lost to a full queue
+    /// leaves the editor showing diagnostics from before the save until the
+    /// user saves again. The dropped notification is kept — with the text as
+    /// it was at save time, not as the buffer is later — and re-sent by
+    /// [`Self::retry_pending_saves`] (#3038).
     pub fn did_save(&self, uri: Uri, text: Option<String>) -> Result<(), String> {
-        self.command_tx
-            .try_send(LspCommand::DidSave { uri, text })
-            .map_err(|_| "Failed to send did_save command".to_string())
+        let path = PathBuf::from(uri.path().as_str());
+        match self.command_tx.try_send(LspCommand::DidSave {
+            uri: uri.clone(),
+            text: text.clone(),
+        }) {
+            Ok(()) => {
+                self.pending_saves.lock().unwrap().remove(&path);
+                Ok(())
+            }
+            Err(_) => {
+                self.pending_saves.lock().unwrap().insert(path, (uri, text));
+                Err("Failed to send did_save command".to_string())
+            }
+        }
+    }
+
+    /// Re-send any `didSave` that could not be queued when it happened.
+    ///
+    /// Returns whether anything was sent. Cheap when nothing is pending, which
+    /// is the common case: one lock and an `is_empty` check.
+    pub fn retry_pending_saves(&self) -> bool {
+        let pending: Vec<(Uri, Option<String>)> = {
+            let saves = self.pending_saves.lock().unwrap();
+            if saves.is_empty() {
+                return false;
+            }
+            saves.values().cloned().collect()
+        };
+
+        let mut sent = false;
+        for (uri, text) in pending {
+            // did_save clears the entry itself on success, and leaves it for a
+            // later attempt on failure.
+            if self.did_save(uri, text).is_ok() {
+                sent = true;
+            }
+        }
+        sent
     }
 
     /// Add a workspace folder to the running LSP server
@@ -5241,6 +5602,65 @@ impl Drop for LspHandle {
 
 #[cfg(test)]
 mod tests {
+    use super::{StreakTransition, TimeoutStreak, UNRESPONSIVE_TIMEOUT_STREAK};
+
+    /// Issue #2197: one expiry is not enough to call a server unresponsive —
+    /// a single pathological request should not take the indicator off
+    /// "on" for an otherwise healthy server.
+    #[test]
+    fn a_single_timeout_does_not_make_a_server_unresponsive() {
+        let mut streak = TimeoutStreak::default();
+        assert_eq!(streak.record_timeout(), (1, StreakTransition::None));
+    }
+
+    /// The second expiry with nothing answered in between is the one that
+    /// flips it, and it flips exactly once however long the server stays
+    /// silent — otherwise every subsequent request re-reports the same news.
+    #[test]
+    fn the_streak_reports_becoming_unresponsive_exactly_once() {
+        let mut streak = TimeoutStreak::default();
+        for _ in 1..UNRESPONSIVE_TIMEOUT_STREAK {
+            assert_eq!(streak.record_timeout().1, StreakTransition::None);
+        }
+        assert_eq!(
+            streak.record_timeout().1,
+            StreakTransition::BecameUnresponsive
+        );
+        assert_eq!(streak.record_timeout(), (3, StreakTransition::None));
+        assert_eq!(streak.record_timeout(), (4, StreakTransition::None));
+    }
+
+    /// An answer clears the streak, so the count is "since the server last
+    /// answered", not "since it started".
+    #[test]
+    fn an_answer_clears_the_streak_without_reporting_recovery() {
+        let mut streak = TimeoutStreak::default();
+        assert_eq!(streak.record_timeout(), (1, StreakTransition::None));
+        assert_eq!(streak.record_answer(), StreakTransition::None);
+        assert_eq!(
+            streak.record_timeout(),
+            (1, StreakTransition::None),
+            "the count restarts after an answer"
+        );
+    }
+
+    /// Recovery is reported only when the server had actually been reported
+    /// unresponsive, so a server that never went quiet does not emit a
+    /// spurious "running" on every answered request.
+    #[test]
+    fn recovery_is_reported_only_after_being_unresponsive() {
+        let mut streak = TimeoutStreak::default();
+        for _ in 0..UNRESPONSIVE_TIMEOUT_STREAK {
+            streak.record_timeout();
+        }
+        assert_eq!(streak.record_answer(), StreakTransition::Recovered);
+        assert_eq!(
+            streak.record_answer(),
+            StreakTransition::None,
+            "already recovered — nothing more to report"
+        );
+    }
+
     use super::*;
     use crate::services::lsp::manager::LanguageScope;
     use crate::services::remote::LocalLongRunningSpawner;
@@ -5248,6 +5668,62 @@ mod tests {
     /// A `workspace/configuration` request item asking for `section`.
     fn config_item(section: &str) -> Value {
         serde_json::json!({ "section": section })
+    }
+
+    /// Reproducer for sinelaw/fresh#2603: rust-analyzer only offers
+    /// unimported symbols ("flyimport") when the client declares it can
+    /// resolve `additionalTextEdits` lazily via `completionItem/resolve`.
+    /// The client applies those edits (`handle_completion_resolved`), so the
+    /// initialize capabilities must advertise it.
+    #[test]
+    fn client_capabilities_advertise_completion_resolve_additional_text_edits() {
+        let caps = create_client_capabilities();
+        let completion_item = caps
+            .text_document
+            .as_ref()
+            .and_then(|td| td.completion.as_ref())
+            .and_then(|c| c.completion_item.as_ref())
+            .expect("completion.completionItem capabilities must be advertised");
+        let resolve = completion_item
+            .resolve_support
+            .as_ref()
+            .expect("completionItem.resolveSupport must be advertised");
+        assert!(
+            resolve
+                .properties
+                .iter()
+                .any(|p| p == "additionalTextEdits"),
+            "resolveSupport.properties must contain additionalTextEdits, got {:?}",
+            resolve.properties
+        );
+        // rust-analyzer only advertises `resolveProvider` when documentation
+        // is lazily resolvable too; without it the deferred import edit is
+        // unreachable (see create_client_capabilities).
+        assert!(
+            resolve.properties.iter().any(|p| p == "documentation"),
+            "resolveSupport.properties must contain documentation, got {:?}",
+            resolve.properties
+        );
+    }
+
+    /// The completion popup renders `labelDetails` (import path of an
+    /// auto-import candidate) next to the label, so the client must
+    /// advertise `labelDetailsSupport`. Without it rust-analyzer folds
+    /// "(use …)" into the label itself, which the accept path would insert
+    /// literally into the buffer.
+    #[test]
+    fn client_capabilities_advertise_completion_label_details() {
+        let caps = create_client_capabilities();
+        let completion_item = caps
+            .text_document
+            .as_ref()
+            .and_then(|td| td.completion.as_ref())
+            .and_then(|c| c.completion_item.as_ref())
+            .expect("completion.completionItem capabilities must be advertised");
+        assert_eq!(completion_item.label_details_support, Some(true));
+        // Snippet support is intentionally not advertised until the accept
+        // path tracks `insertTextFormat` (see create_client_capabilities).
+        assert_eq!(completion_item.snippet_support, None);
     }
 
     #[test]
@@ -5596,6 +6072,12 @@ mod tests {
         // ContentModified and ServerCancelled are normal during editing.
         assert!(is_suppressed_error_code(LSP_ERROR_CONTENT_MODIFIED));
         assert!(is_suppressed_error_code(LSP_ERROR_SERVER_CANCELLED));
+
+        // RequestCancelled is the answer to *our own* `$/cancelRequest`:
+        // every cursor move withdraws the in-flight completion/semantic-token
+        // requests, and rust-analyzer duly replies `-32800 canceled by
+        // client`. Warning about it warns the user about our bookkeeping.
+        assert!(is_suppressed_error_code(LSP_ERROR_REQUEST_CANCELLED));
 
         // Every other JSON-RPC / LSP error must still surface so genuine
         // protocol mismatches stay debuggable — including MethodNotFound
@@ -5996,6 +6478,614 @@ mod tests {
 
         // Should succeed (command is queued)
         assert!(result.is_ok());
+    }
+
+    /// A handle whose commands go nowhere, so the bounded queue can be filled
+    /// deterministically without depending on how fast a server drains it.
+    fn handle_with_undrained_queue(
+        capacity: usize,
+    ) -> (LspHandle, mpsc::Receiver<LspCommand>, PathBuf) {
+        let (command_tx, command_rx) = mpsc::channel(capacity);
+        let path = PathBuf::from("/test.rs");
+        let handle = LspHandle {
+            id: 1,
+            scope: LanguageScope::single("test"),
+            command_tx,
+            state: Arc::new(Mutex::new(LspClientState::Starting)),
+            runtime: tokio::runtime::Handle::current(),
+            // Seeded as already open: only documents the server holds can desync.
+            document_versions: Arc::new(std::sync::Mutex::new(HashMap::from([(
+                path.clone(),
+                1i64,
+            )]))),
+            desynced: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
+            pending_saves: Arc::new(std::sync::Mutex::new(HashMap::new())),
+        };
+        (handle, command_rx, path)
+    }
+
+    fn insert_at_origin(text: &str) -> Vec<TextDocumentContentChangeEvent> {
+        vec![TextDocumentContentChangeEvent {
+            range: Some(lsp_types::Range::new(
+                lsp_types::Position::new(0, 0),
+                lsp_types::Position::new(0, 0),
+            )),
+            range_length: None,
+            text: text.to_string(),
+        }]
+    }
+
+    /// Whatever order the editor's document-sync events arrive in, and however
+    /// many notifications the queue refuses along the way, the server must end
+    /// up holding the buffer's text once it has drained (#3038).
+    ///
+    /// This drives the **real** `LspHandle` and the real
+    /// [`decide_change_to_send`] policy against a model of the LSP task that
+    /// mirrors what the real one does to the shared state: it skips a
+    /// `didOpen` for a document already in `document_versions`, skips a
+    /// `didChange` for one that is not there, and forgets the document on
+    /// `didClose`. What is *not* covered here is the `Window` plumbing that
+    /// finds buffers and builds range payloads — the e2e test covers that.
+    ///
+    /// Buffers are single-line, so an LSP position's `character` is its
+    /// offset. Range arithmetic across lines is `collect_lsp_changes`'
+    /// business and is tested separately; what is under test here is *which*
+    /// notification gets sent, not how a range is computed.
+    mod sync_convergence {
+        use super::*;
+        use crate::services::lsp::sync_policy::{decide_change_to_send, ChangeToSend, SyncState};
+        use proptest::prelude::*;
+
+        /// One step the editor or the server can take.
+        #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+        pub(super) enum Ev {
+            /// Type a character at `pos % (len + 1)`.
+            Insert(u8),
+            /// Delete the character at `pos % len`, if any.
+            Delete(u8),
+            /// The server drains up to `n` queued commands.
+            Drain(u8),
+            /// An editor tick runs the repair pass.
+            Tick,
+            /// Save the buffer.
+            Save,
+            /// Close the buffer in the editor.
+            Close,
+            /// Reopen it.
+            Open,
+        }
+
+        /// Apply one LSP content change the way a server does, clamping
+        /// positions — a server that has fallen behind is routinely sent
+        /// positions past the end of the copy it is holding.
+        fn apply_change(text: &str, change: &TextDocumentContentChangeEvent) -> String {
+            let Some(range) = change.range else {
+                return change.text.clone();
+            };
+            let start = (range.start.character as usize).min(text.len());
+            let end = (range.end.character as usize).min(text.len()).max(start);
+            format!("{}{}{}", &text[..start], change.text, &text[end..])
+        }
+
+        pub(super) struct Sim {
+            handle: LspHandle,
+            rx: mpsc::Receiver<LspCommand>,
+            versions: Arc<std::sync::Mutex<HashMap<PathBuf, i64>>>,
+            uri: Uri,
+            path: PathBuf,
+            /// The buffer, and the editor's source of truth.
+            buffer: String,
+            /// What the server holds; `None` when it has no such document.
+            server: Option<String>,
+            /// Whether the editor has the buffer open.
+            editor_open: bool,
+            /// Whether a `didOpen` for it was accepted by the queue.
+            opened_with_server: bool,
+            /// Notifications the queue refused, so the corpus can be checked
+            /// for actually exercising the failure this all exists for.
+            pub(super) drops: usize,
+        }
+
+        impl Sim {
+            pub(super) fn new(capacity: usize) -> Self {
+                let (command_tx, rx) = mpsc::channel(capacity);
+                let path = PathBuf::from("/doc.rs");
+                let versions: Arc<std::sync::Mutex<HashMap<PathBuf, i64>>> =
+                    Arc::new(std::sync::Mutex::new(HashMap::new()));
+                let handle = LspHandle {
+                    id: 1,
+                    scope: LanguageScope::single("test"),
+                    command_tx,
+                    state: Arc::new(Mutex::new(LspClientState::Starting)),
+                    runtime: tokio::runtime::Handle::current(),
+                    document_versions: versions.clone(),
+                    desynced: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
+                    pending_saves: Arc::new(std::sync::Mutex::new(HashMap::new())),
+                };
+                Self {
+                    handle,
+                    rx,
+                    versions,
+                    uri: "file:///doc.rs".parse().unwrap(),
+                    path,
+                    buffer: "start".to_string(),
+                    server: None,
+                    editor_open: true,
+                    opened_with_server: false,
+                    drops: 0,
+                }
+            }
+
+            fn record(&mut self, sent: Result<(), String>) -> bool {
+                if sent.is_err() {
+                    self.drops += 1;
+                    false
+                } else {
+                    true
+                }
+            }
+
+            /// The editor's send path: open the document if the server has not
+            /// been given it, otherwise let the policy choose the payload.
+            fn send(&mut self, changes: Vec<TextDocumentContentChangeEvent>, resync_only: bool) {
+                if !self.editor_open {
+                    return;
+                }
+                if !self.opened_with_server {
+                    // Mirrors `send_lsp_changes_for_buffer`: a buffer the
+                    // server has not been given is opened rather than changed,
+                    // and only an accepted open is recorded as sent.
+                    let r = self.handle.did_open(
+                        self.uri.clone(),
+                        self.buffer.clone(),
+                        "test".to_string(),
+                    );
+                    self.opened_with_server = self.record(r);
+                    return;
+                }
+                let state = SyncState {
+                    desynced: self.handle.needs_full_resync(&self.path),
+                    has_capacity: self.handle.has_command_capacity(),
+                    text_available: true,
+                    resync_only,
+                };
+                let payload = match decide_change_to_send(state) {
+                    ChangeToSend::FullText => vec![TextDocumentContentChangeEvent {
+                        range: None,
+                        range_length: None,
+                        text: self.buffer.clone(),
+                    }],
+                    ChangeToSend::Incremental => changes,
+                    ChangeToSend::Skip => return,
+                };
+                let r = self.handle.did_change(self.uri.clone(), payload);
+                self.record(r);
+            }
+
+            fn edit(&mut self, changes: Vec<TextDocumentContentChangeEvent>) {
+                self.send(changes, false);
+            }
+
+            /// The repair pass, as `resync_desynced_lsp_documents` runs it.
+            fn tick(&mut self) {
+                self.handle.retry_pending_saves();
+                if !self.handle.has_command_capacity() {
+                    return;
+                }
+                let stale = self.handle.desynced_documents();
+                if stale.is_empty() {
+                    return;
+                }
+                if self.editor_open {
+                    let noop = vec![TextDocumentContentChangeEvent {
+                        range: Some(lsp_types::Range::new(
+                            lsp_types::Position::new(0, 0),
+                            lsp_types::Position::new(0, 0),
+                        )),
+                        range_length: None,
+                        text: String::new(),
+                    }];
+                    self.send(noop, true);
+                } else {
+                    // Orphaned: no buffer to rebuild from, so close it.
+                    let r = self.handle.did_close(self.uri.clone());
+                    self.record(r);
+                }
+            }
+
+            /// The LSP task, doing to the shared state exactly what the real
+            /// one does.
+            fn drain(&mut self, n: usize) {
+                for _ in 0..n {
+                    let Ok(cmd) = self.rx.try_recv() else { return };
+                    match cmd {
+                        LspCommand::DidOpen { text, .. } => {
+                            let mut v = self.versions.lock().unwrap();
+                            if v.contains_key(&self.path) {
+                                continue; // should_skip_did_open
+                            }
+                            v.insert(self.path.clone(), 0);
+                            self.server = Some(text);
+                        }
+                        LspCommand::DidChange {
+                            content_changes, ..
+                        } => {
+                            let mut v = self.versions.lock().unwrap();
+                            let Some(version) = v.get_mut(&self.path) else {
+                                continue; // document not open on the server
+                            };
+                            *version += 1;
+                            let mut text = self.server.clone().unwrap_or_default();
+                            for change in &content_changes {
+                                text = apply_change(&text, change);
+                            }
+                            self.server = Some(text);
+                        }
+                        LspCommand::DidClose { .. } => {
+                            self.versions.lock().unwrap().remove(&self.path);
+                            self.server = None;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+
+            pub(super) fn step(&mut self, ev: Ev) {
+                match ev {
+                    Ev::Insert(pos) => {
+                        if !self.editor_open {
+                            return;
+                        }
+                        let at = (pos as usize) % (self.buffer.len() + 1);
+                        self.buffer.insert(at, 'x');
+                        let p = lsp_types::Position::new(0, at as u32);
+                        self.edit(vec![TextDocumentContentChangeEvent {
+                            range: Some(lsp_types::Range::new(p, p)),
+                            range_length: None,
+                            text: "x".to_string(),
+                        }]);
+                    }
+                    Ev::Delete(pos) => {
+                        if !self.editor_open || self.buffer.is_empty() {
+                            return;
+                        }
+                        let at = (pos as usize) % self.buffer.len();
+                        self.buffer.remove(at);
+                        self.edit(vec![TextDocumentContentChangeEvent {
+                            range: Some(lsp_types::Range::new(
+                                lsp_types::Position::new(0, at as u32),
+                                lsp_types::Position::new(0, at as u32 + 1),
+                            )),
+                            range_length: None,
+                            text: String::new(),
+                        }]);
+                    }
+                    Ev::Drain(n) => self.drain(n as usize),
+                    Ev::Tick => self.tick(),
+                    Ev::Save => {
+                        if self.editor_open && self.opened_with_server {
+                            let r = self
+                                .handle
+                                .did_save(self.uri.clone(), Some(self.buffer.clone()));
+                            self.record(r);
+                        }
+                    }
+                    Ev::Close => {
+                        if self.editor_open {
+                            self.editor_open = false;
+                            // Closing discards the buffer's metadata, so the
+                            // editor forgets it ever opened the document with
+                            // this server whether or not the notification got
+                            // through; a refused close is retried by the
+                            // repair pass instead.
+                            self.opened_with_server = false;
+                            let r = self.handle.did_close(self.uri.clone());
+                            self.record(r);
+                        }
+                    }
+                    Ev::Open => {
+                        if !self.editor_open {
+                            self.editor_open = true;
+                        }
+                    }
+                }
+            }
+
+            /// Let everything settle: drain the queue and run repair passes
+            /// until nothing changes. Bounded, so a system that cannot settle
+            /// fails the assertion below rather than looping forever.
+            pub(super) fn quiesce(&mut self) {
+                for _ in 0..64 {
+                    self.drain(256);
+                    self.tick();
+                    self.drain(256);
+                    if self.editor_open && !self.opened_with_server {
+                        self.send(Vec::new(), false);
+                        continue;
+                    }
+                    if !self.handle.needs_full_resync(&self.path) && self.settled() {
+                        return;
+                    }
+                }
+            }
+
+            fn settled(&self) -> bool {
+                if self.editor_open {
+                    self.server.as_deref() == Some(self.buffer.as_str())
+                } else {
+                    true
+                }
+            }
+
+            /// The invariant.
+            pub(super) fn assert_converged(&self, events: &[Ev]) {
+                if !self.editor_open {
+                    return;
+                }
+                assert_eq!(
+                    self.server.as_deref(),
+                    Some(self.buffer.as_str()),
+                    "server's copy must converge on the buffer after {events:?}"
+                );
+            }
+        }
+
+        /// All orderings of a reduced event alphabet, exhaustively, to a depth
+        /// where every interleaving of an edit, a partial drain, a repair pass
+        /// and a close/reopen can occur.
+        #[tokio::test]
+        async fn every_ordering_converges() {
+            const ALPHABET: [Ev; 6] = [
+                Ev::Insert(0),
+                Ev::Delete(0),
+                Ev::Drain(1),
+                Ev::Tick,
+                Ev::Close,
+                Ev::Open,
+            ];
+            const DEPTH: usize = 5;
+
+            let mut total_drops = 0usize;
+            let mut sequences = 0usize;
+            let mut indices = [0usize; DEPTH];
+            loop {
+                let events: Vec<Ev> = indices.iter().map(|&i| ALPHABET[i]).collect();
+                // Capacity 1 so the queue refuses constantly and the dropped
+                // paths are the common case rather than a rare one.
+                let mut sim = Sim::new(1);
+                for ev in &events {
+                    sim.step(*ev);
+                }
+                sim.quiesce();
+                sim.assert_converged(&events);
+                total_drops += sim.drops;
+                sequences += 1;
+
+                // Odometer over ALPHABET^DEPTH.
+                let mut i = 0;
+                loop {
+                    if i == DEPTH {
+                        assert_eq!(sequences, ALPHABET.len().pow(DEPTH as u32));
+                        assert!(
+                            total_drops > 0,
+                            "the corpus never made the queue refuse a \
+                             notification, so it proves nothing"
+                        );
+                        return;
+                    }
+                    indices[i] += 1;
+                    if indices[i] < ALPHABET.len() {
+                        break;
+                    }
+                    indices[i] = 0;
+                    i += 1;
+                }
+            }
+        }
+
+        proptest::proptest! {
+            /// Longer sequences with arbitrary positions and drain sizes,
+            /// including saves.
+            #[test]
+            fn random_orderings_converge(
+                events in proptest::collection::vec(
+                    prop_oneof![
+                        any::<u8>().prop_map(Ev::Insert),
+                        any::<u8>().prop_map(Ev::Delete),
+                        (0u8..4).prop_map(Ev::Drain),
+                        Just(Ev::Tick),
+                        Just(Ev::Save),
+                        Just(Ev::Close),
+                        Just(Ev::Open),
+                    ],
+                    1..40usize,
+                ),
+                capacity in 1usize..4,
+            ) {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .build()
+                    .unwrap();
+                rt.block_on(async {
+                    let mut sim = Sim::new(capacity);
+                    for ev in &events {
+                        sim.step(*ev);
+                    }
+                    sim.quiesce();
+                    sim.assert_converged(&events);
+                });
+            }
+        }
+    }
+
+    /// A `didChange` that cannot be queued must not be lost silently: the
+    /// document is flagged so the next notification replaces the server's
+    /// whole copy (#3038).
+    #[tokio::test]
+    async fn test_dropped_did_change_marks_document_desynced() {
+        let (handle, _command_rx, path) = handle_with_undrained_queue(2);
+        let uri: Uri = "file:///test.rs".parse().unwrap();
+
+        // Fill the queue; nothing is draining it.
+        assert!(handle
+            .did_change(uri.clone(), insert_at_origin("a"))
+            .is_ok());
+        assert!(handle
+            .did_change(uri.clone(), insert_at_origin("b"))
+            .is_ok());
+        assert!(
+            !handle.needs_full_resync(&path),
+            "changes that were queued keep the server in sync"
+        );
+        let version_before = handle.document_version(&path).unwrap();
+
+        // This one has nowhere to go.
+        assert!(handle.did_change(uri, insert_at_origin("c")).is_err());
+
+        assert!(
+            handle.needs_full_resync(&path),
+            "a dropped range edit leaves the server's copy diverged, so the \
+             document must be flagged for a full-text resend"
+        );
+        assert_eq!(
+            handle.document_version(&path).unwrap(),
+            version_before,
+            "the version counter allocates numbers for changes the task \
+             actually sends; burning one here would push `document_version` \
+             ahead of what the server has seen, which `apply_text_document_edit` \
+             compares for equality when rejecting stale workspace edits"
+        );
+    }
+
+    /// A dropped `didClose` leaves the server holding the document, so the
+    /// pending repair has to survive it.
+    #[tokio::test]
+    async fn test_dropped_did_close_keeps_document_flagged() {
+        let (handle, mut command_rx, path) = handle_with_undrained_queue(1);
+        let uri: Uri = "file:///test.rs".parse().unwrap();
+
+        assert!(handle
+            .did_change(uri.clone(), insert_at_origin("a"))
+            .is_ok());
+        assert!(handle
+            .did_change(uri.clone(), insert_at_origin("b"))
+            .is_err());
+        assert!(handle.needs_full_resync(&path));
+
+        assert!(handle.did_close(uri.clone()).is_err());
+        assert!(
+            handle.needs_full_resync(&path),
+            "the close never reached the server, so its stale copy is still open"
+        );
+
+        let _ = command_rx.recv().await;
+        assert!(handle.did_close(uri).is_ok());
+        assert!(
+            !handle.needs_full_resync(&path),
+            "once the close is queued there is nothing left to repair"
+        );
+    }
+
+    /// `didOpen` is discarded by the task when the server already has the
+    /// document open, so enqueuing one is not evidence that the server's copy
+    /// was replaced and must not clear a pending repair.
+    #[tokio::test]
+    async fn test_did_open_does_not_clear_pending_resync() {
+        let (handle, mut command_rx, path) = handle_with_undrained_queue(1);
+        let uri: Uri = "file:///test.rs".parse().unwrap();
+
+        assert!(handle
+            .did_change(uri.clone(), insert_at_origin("a"))
+            .is_ok());
+        assert!(handle
+            .did_change(uri.clone(), insert_at_origin("b"))
+            .is_err());
+        assert!(handle.needs_full_resync(&path));
+
+        let _ = command_rx.recv().await;
+        assert!(handle
+            .did_open(uri, "whole buffer".to_string(), "test".to_string())
+            .is_ok());
+        assert!(
+            handle.needs_full_resync(&path),
+            "a queued didOpen the task may skip cannot be taken as a resync"
+        );
+    }
+
+    /// Sending the whole document is what repairs the divergence, so a
+    /// successful full-text change — and only a full-text change — clears the
+    /// flag.
+    #[tokio::test]
+    async fn test_full_text_change_clears_desync() {
+        let (handle, mut command_rx, path) = handle_with_undrained_queue(1);
+        let uri: Uri = "file:///test.rs".parse().unwrap();
+
+        assert!(handle
+            .did_change(uri.clone(), insert_at_origin("a"))
+            .is_ok());
+        assert!(handle
+            .did_change(uri.clone(), insert_at_origin("b"))
+            .is_err());
+        assert!(handle.needs_full_resync(&path));
+
+        // Make room, then send another range edit: the server is still missing
+        // the dropped one, so this must not clear the flag.
+        let _ = command_rx.recv().await;
+        assert!(handle
+            .did_change(uri.clone(), insert_at_origin("c"))
+            .is_ok());
+        assert!(
+            handle.needs_full_resync(&path),
+            "another incremental edit extends the broken stream, it does not \
+             repair it"
+        );
+
+        let _ = command_rx.recv().await;
+        assert!(handle
+            .did_change(
+                uri,
+                vec![TextDocumentContentChangeEvent {
+                    range: None,
+                    range_length: None,
+                    text: "whole buffer".to_string(),
+                }],
+            )
+            .is_ok());
+        assert!(
+            !handle.needs_full_resync(&path),
+            "replacing the whole document restores the server's copy"
+        );
+    }
+
+    /// Documents the server never opened cannot desync — the eventual
+    /// `didOpen` carries the full text — so a dropped change for one must not
+    /// leave a resync pending forever.
+    #[tokio::test]
+    async fn test_dropped_change_is_flagged_while_the_open_is_still_queued() {
+        // `document_versions` is written by the task when it dequeues the
+        // didOpen, so a document whose open is still sitting in the queue does
+        // not appear there. A change dropped in that window is exactly the one
+        // that must not be lost: the server will apply the queued open and be
+        // left holding the text it carried.
+        let (handle, _command_rx, _path) = handle_with_undrained_queue(1);
+        let fresh_doc: Uri = "file:///not-yet-dequeued.rs".parse().unwrap();
+        let fresh_path = PathBuf::from("/not-yet-dequeued.rs");
+
+        assert!(handle
+            .did_open(fresh_doc.clone(), "text".to_string(), "test".to_string())
+            .is_ok());
+        assert!(
+            !handle.needs_full_resync(&fresh_path),
+            "nothing has been lost yet"
+        );
+
+        // The queue is now full, and the task has not run.
+        assert!(handle.did_change(fresh_doc, insert_at_origin("a")).is_err());
+
+        assert!(
+            handle.needs_full_resync(&fresh_path),
+            "a change dropped while the open is still queued must be flagged, \
+             or the server keeps the text the open carried"
+        );
     }
 
     #[tokio::test]

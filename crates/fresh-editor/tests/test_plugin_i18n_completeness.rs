@@ -10,9 +10,9 @@ use std::path::Path;
 
 /// Get all supported locale codes from the locales directory
 fn get_supported_locales() -> Vec<String> {
-    let locales_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("locales");
+    let locales_dir = Path::new(fresh::i18n::embedded::LOCALES_DIR);
 
-    let mut locales: Vec<String> = fs::read_dir(&locales_dir)
+    let mut locales: Vec<String> = fs::read_dir(locales_dir)
         .expect("Failed to read locales directory")
         .filter_map(|entry| {
             let entry = entry.ok()?;

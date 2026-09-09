@@ -5,6 +5,7 @@ Fresh includes a built-in file explorer.
 *   **Toggle Sidebar:** Use `Ctrl+B` to show/hide the file explorer sidebar. When a nested file is active, toggling on expands the tree and reveals the file.
 *   **Focus:** Use `Ctrl+E` to switch focus between the file explorer and editor.
 *   **Navigation:** Use the arrow keys to move up and down the file tree.
+*   **Sticky parents:** When you scroll through a nested folder, its expanded ancestor folders remain visible at the top of the sidebar.
 
 ## Opening Files
 

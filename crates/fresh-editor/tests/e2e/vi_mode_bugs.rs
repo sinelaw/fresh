@@ -1443,6 +1443,14 @@ fn test_vi_bug_2441_dfr_deletes_through_target() {
         .wait_until(|h| h.editor().editor_mode() == Some("vi-operator-pending".to_string()))
         .unwrap();
     send_key(&mut harness, 'f');
+    // `f` enters vi-find-char and consumes the *next* key as the target.
+    // Wait for that mode before sending 'r': without it, a slow-CI race
+    // delivers 'r' while still in vi-operator-pending, the find never
+    // happens, and the wait below hangs to the external timeout. Same guard
+    // as the normal-mode f-find tests above.
+    harness
+        .wait_until(|h| h.editor().editor_mode() == Some("vi-find-char".to_string()))
+        .unwrap();
     send_key(&mut harness, 'r');
 
     harness.wait_for_buffer_content("ld foo bar baz\n").unwrap();
@@ -1464,6 +1472,14 @@ fn test_vi_bug_2441_dfw_target_is_motion_key() {
         .wait_until(|h| h.editor().editor_mode() == Some("vi-operator-pending".to_string()))
         .unwrap();
     send_key(&mut harness, 'f');
+    // `f` enters vi-find-char and consumes the *next* key as the target.
+    // Wait for that mode before sending 'w': without it, a slow-CI race
+    // delivers 'w' while still in vi-operator-pending, the find never
+    // happens, and the wait below hangs to the external timeout. Same guard
+    // as the normal-mode f-find tests above.
+    harness
+        .wait_until(|h| h.editor().editor_mode() == Some("vi-find-char".to_string()))
+        .unwrap();
     send_key(&mut harness, 'w');
 
     harness
@@ -1486,6 +1502,14 @@ fn test_vi_bug_2441_dtr_deletes_until_target() {
         .wait_until(|h| h.editor().editor_mode() == Some("vi-operator-pending".to_string()))
         .unwrap();
     send_key(&mut harness, 't');
+    // `t` enters vi-find-char and consumes the *next* key as the target.
+    // Wait for that mode before sending 'r': without it, a slow-CI race
+    // delivers 'r' while still in vi-operator-pending, the find never
+    // happens, and the wait below hangs to the external timeout. Same guard
+    // as the normal-mode f-find tests above.
+    harness
+        .wait_until(|h| h.editor().editor_mode() == Some("vi-find-char".to_string()))
+        .unwrap();
     send_key(&mut harness, 'r');
 
     harness
@@ -1508,6 +1532,14 @@ fn test_vi_bug_2441_cfr_changes_through_target() {
         .wait_until(|h| h.editor().editor_mode() == Some("vi-operator-pending".to_string()))
         .unwrap();
     send_key(&mut harness, 'f');
+    // `f` enters vi-find-char and consumes the *next* key as the target.
+    // Wait for that mode before sending 'r': without it, a slow-CI race
+    // delivers 'r' while still in vi-operator-pending, the find never
+    // happens, and the wait below hangs to the external timeout. Same guard
+    // as the normal-mode f-find tests above.
+    harness
+        .wait_until(|h| h.editor().editor_mode() == Some("vi-find-char".to_string()))
+        .unwrap();
     send_key(&mut harness, 'r');
     wait_insert(&mut harness);
     harness.type_text("X").unwrap();
@@ -1572,4 +1604,305 @@ fn test_vi_bug_2441_comma_repeats_find_reverse() {
 
     send_key(&mut harness, ',');
     harness.wait_until(|h| h.cursor_position() == 4).unwrap();
+}
+
+// =============================================================================
+// Issue #2443: dot-repeat (`.`) of the cursor-repositioning insert commands
+// (`o`/`O`/`a`/`A`) corrupted the buffer: the recorded change spanned from the
+// PRE-reposition cursor position to the insert end, so replay re-inserted
+// intervening buffer text instead of only the typed keystrokes.
+//
+// These reproducers observe only what is on screen: the rendered text rows and
+// the status line's mode and `Ln N, Col N` readouts.
+// =============================================================================
+
+/// First screen row that shows buffer text (row 0 is the menu bar, row 1 the
+/// tab bar).
+const FIRST_TEXT_ROW: u16 = 2;
+
+/// Consecutive identical frames that count as "the editor has finished
+/// reacting". Used only to decide that a *wrong* result is final; the expected
+/// result short-circuits the wait as soon as it renders.
+const SETTLED_RENDERS: usize = 20;
+
+/// The buffer lines as rendered, with the line-number gutter stripped and the
+/// scrollbar column dropped.
+///
+/// A line the editor renders empty comes back as `""`; rows past the end of the
+/// buffer come back as the `~` filler verbatim, so an expectation that lists the
+/// filler also pins the buffer's line count.
+fn rendered_buffer_lines(harness: &EditorTestHarness, count: usize) -> Vec<String> {
+    (0..count)
+        .map(|i| {
+            let row = harness.screen_row_text(FIRST_TEXT_ROW + i as u16);
+            // The scrollbar paints a block glyph in the last column of some
+            // rows; it is chrome, not buffer text.
+            let row = row.trim_end_matches(['▌', '▐', '█', ' ']).to_string();
+            if let Some((_gutter, text)) = row.split_once(" │ ") {
+                text.to_string()
+            } else if row.ends_with('│') {
+                // Gutter with no text after it: an empty buffer line.
+                String::new()
+            } else {
+                row
+            }
+        })
+        .collect()
+}
+
+/// Wait for the rendered buffer rows to become exactly `expected`, and fail with
+/// a diff if the screen settles on anything else.
+///
+/// Both arms wait on observed state rather than elapsed time: the success arm
+/// fires the moment the expected rows render, and the failure arm fires once the
+/// screen has stopped changing. The failure arm is what makes these reproducers
+/// useful regression guards — waiting only for the expected text means a
+/// regression never asserts at all, it just runs until the external test timeout
+/// kills it, which reports a hang instead of naming the corrupted text.
+fn assert_renders(harness: &mut EditorTestHarness, expected: &[&str]) {
+    let mut previous = String::new();
+    let mut settled = 0usize;
+    harness
+        .wait_until(|h| {
+            if rendered_buffer_lines(h, expected.len()) == expected {
+                return true;
+            }
+            let screen = h.screen_to_string();
+            if screen == previous {
+                settled += 1;
+            } else {
+                previous = screen;
+                settled = 0;
+            }
+            settled >= SETTLED_RENDERS
+        })
+        .unwrap();
+
+    assert_eq!(
+        rendered_buffer_lines(harness, expected.len()),
+        expected,
+        "editor settled on the wrong buffer text"
+    );
+}
+
+/// Wait for the status line to report the cursor on the given 1-based line.
+fn wait_cursor_line(harness: &mut EditorTestHarness, line: usize) {
+    harness
+        .wait_for_screen_contains(&format!("Ln {line},"))
+        .unwrap();
+}
+
+/// Wait for the status line to report the given 1-based line and column.
+fn wait_cursor_at(harness: &mut EditorTestHarness, line: usize, col: usize) {
+    harness
+        .wait_for_screen_contains(&format!("Ln {line}, Col {col}"))
+        .unwrap();
+}
+
+/// Wait for the status line to show vi insert mode.
+fn wait_insert_indicator(harness: &mut EditorTestHarness) {
+    harness.wait_for_screen_contains("-- INSERT --").unwrap();
+}
+
+/// Leave insert mode, waiting for the status line to show normal mode again.
+fn escape_to_normal(harness: &mut EditorTestHarness) {
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    harness.wait_for_screen_contains("-- NORMAL --").unwrap();
+}
+
+/// `o hello Esc` then `.` on another line must open a line below it containing
+/// exactly the typed text. BUG: `.` injected the original line's content plus
+/// the typed text mid-word (`charalpha` / `hellolie`).
+#[test]
+fn test_vi_bug_2443_dot_repeat_open_below() {
+    let (mut harness, _td) = vi_mode_harness(80, 24);
+    let fixture = TestFixture::new("test.txt", "alpha\nbravo\ncharlie\ndelta\n").unwrap();
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+    enable_vi_mode(&mut harness);
+
+    send_key(&mut harness, 'o');
+    wait_insert_indicator(&mut harness);
+    harness.type_text("hello").unwrap();
+    escape_to_normal(&mut harness);
+    assert_renders(
+        &mut harness,
+        &["alpha", "hello", "bravo", "charlie", "delta", "", "~"],
+    );
+
+    // Move from the inserted "hello" line down to "charlie", waiting for each
+    // motion to land so `.` replays at the intended position.
+    send_key(&mut harness, 'j');
+    wait_cursor_line(&mut harness, 3);
+    send_key(&mut harness, 'j');
+    wait_cursor_line(&mut harness, 4);
+
+    send_key(&mut harness, '.');
+    assert_renders(
+        &mut harness,
+        &[
+            "alpha", "hello", "bravo", "charlie", "hello", "delta", "", "~",
+        ],
+    );
+}
+
+/// `a Y Esc` then `.` on another line must append the typed text after the
+/// cursor. BUG: `.` re-injected the original line's leading character
+/// (`aYbravo` instead of `bYravo`).
+#[test]
+fn test_vi_bug_2443_dot_repeat_append_after_cursor() {
+    let (mut harness, _td) = vi_mode_harness(80, 24);
+    let fixture = TestFixture::new("test.txt", "alpha\nbravo\n").unwrap();
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+    enable_vi_mode(&mut harness);
+
+    send_key(&mut harness, 'a');
+    wait_insert_indicator(&mut harness);
+    harness.type_text("Y").unwrap();
+    escape_to_normal(&mut harness);
+    assert_renders(&mut harness, &["aYlpha", "bravo", "", "~"]);
+
+    // `j` then `0`: land on the `b` of "bravo".
+    send_key(&mut harness, 'j');
+    wait_cursor_line(&mut harness, 2);
+    send_key(&mut harness, '0');
+    wait_cursor_at(&mut harness, 2, 1);
+
+    send_key(&mut harness, '.');
+    assert_renders(&mut harness, &["aYlpha", "bYravo", "", "~"]);
+}
+
+/// `A X Esc` then `.` on another line must append the typed text at end of
+/// line. BUG: `.` injected the entire original line's content at the cursor
+/// (`bravalphaXo` instead of `bravoX`).
+#[test]
+fn test_vi_bug_2443_dot_repeat_append_line_end() {
+    let (mut harness, _td) = vi_mode_harness(80, 24);
+    let fixture = TestFixture::new("test.txt", "alpha\nbravo\n").unwrap();
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+    enable_vi_mode(&mut harness);
+
+    send_key(&mut harness, 'A');
+    wait_insert_indicator(&mut harness);
+    harness.type_text("X").unwrap();
+    escape_to_normal(&mut harness);
+    assert_renders(&mut harness, &["alphaX", "bravo", "", "~"]);
+
+    send_key(&mut harness, 'j');
+    wait_cursor_line(&mut harness, 2);
+
+    send_key(&mut harness, '.');
+    assert_renders(&mut harness, &["alphaX", "bravoX", "", "~"]);
+}
+
+/// `O` must open the empty line above the current line AND leave the cursor on
+/// it, so the typed text goes into the new line. BUG: the empty line opened at
+/// the right place but the cursor landed on the line above it, so the text
+/// corrupted that line (`bheyravo`), and `.` afterwards reported "No change to
+/// repeat".
+#[test]
+fn test_vi_bug_2443_open_above_cursor_placement_and_repeat() {
+    let (mut harness, _td) = vi_mode_harness(80, 24);
+    let fixture = TestFixture::new("test.txt", "alpha\nbravo\ncharlie\n").unwrap();
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+    enable_vi_mode(&mut harness);
+
+    // Move to "charlie".
+    send_key(&mut harness, 'j');
+    wait_cursor_line(&mut harness, 2);
+    send_key(&mut harness, 'j');
+    wait_cursor_line(&mut harness, 3);
+
+    send_key(&mut harness, 'O');
+    wait_insert_indicator(&mut harness);
+    harness.type_text("hey").unwrap();
+    escape_to_normal(&mut harness);
+    assert_renders(&mut harness, &["alpha", "bravo", "hey", "charlie", "", "~"]);
+
+    // `.` must repeat the whole change: open a line above and insert "hey".
+    send_key(&mut harness, '.');
+    assert_renders(
+        &mut harness,
+        &["alpha", "bravo", "hey", "hey", "charlie", "", "~"],
+    );
+}
+
+/// An insert entered with `i` after an unrelated `x` must be recorded for `.`.
+/// BUG: `.` still repeated the old `x` (the insert was never recorded), so the
+/// second line lost a character instead of gaining the typed one.
+#[test]
+fn test_vi_bug_2443_insert_after_delete_char_is_recorded() {
+    let (mut harness, _td) = vi_mode_harness(80, 24);
+    let fixture = TestFixture::new("test.txt", "abc\nxyz\n").unwrap();
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+    enable_vi_mode(&mut harness);
+
+    send_key(&mut harness, 'x');
+    assert_renders(&mut harness, &["bc", "xyz", "", "~"]);
+
+    send_key(&mut harness, 'i');
+    wait_insert_indicator(&mut harness);
+    harness.type_text("Q").unwrap();
+    escape_to_normal(&mut harness);
+    assert_renders(&mut harness, &["Qbc", "xyz", "", "~"]);
+
+    // `j` then `0`: land on the `x` of "xyz".
+    send_key(&mut harness, 'j');
+    wait_cursor_line(&mut harness, 2);
+    send_key(&mut harness, '0');
+    wait_cursor_at(&mut harness, 2, 1);
+
+    // `.` must repeat the insert (`iQ`), not the earlier `x`.
+    send_key(&mut harness, '.');
+    assert_renders(&mut harness, &["Qbc", "Qxyz", "", "~"]);
+}
+
+/// Control: dot-repeat of a plain `i` insert (already correct before the fix)
+/// keeps working, so the fix cannot regress it.
+#[test]
+fn test_vi_bug_2443_control_dot_repeat_insert_before() {
+    let (mut harness, _td) = vi_mode_harness(80, 24);
+    let fixture = TestFixture::new("test.txt", "alpha\nbravo\n").unwrap();
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+    enable_vi_mode(&mut harness);
+
+    send_key(&mut harness, 'i');
+    wait_insert_indicator(&mut harness);
+    harness.type_text("AB").unwrap();
+    escape_to_normal(&mut harness);
+    assert_renders(&mut harness, &["ABalpha", "bravo", "", "~"]);
+
+    // Cursor rests on `B` (col 2). `j` keeps the column, so `.` inserts before
+    // the `r` of "bravo".
+    send_key(&mut harness, 'j');
+    wait_cursor_at(&mut harness, 2, 2);
+
+    send_key(&mut harness, '.');
+    assert_renders(&mut harness, &["ABalpha", "bABravo", "", "~"]);
+}
+
+/// Control: dot-repeat of `x` (already correct before the fix) keeps deleting
+/// successive characters, so the fix cannot regress it.
+#[test]
+fn test_vi_bug_2443_control_dot_repeat_delete_char() {
+    let (mut harness, _td) = vi_mode_harness(80, 24);
+    let fixture = TestFixture::new("test.txt", "abcdef\n").unwrap();
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+    enable_vi_mode(&mut harness);
+
+    send_key(&mut harness, 'x');
+    assert_renders(&mut harness, &["bcdef", "", "~"]);
+
+    send_key(&mut harness, '.');
+    assert_renders(&mut harness, &["cdef", "", "~"]);
+
+    send_key(&mut harness, '.');
+    assert_renders(&mut harness, &["def", "", "~"]);
 }

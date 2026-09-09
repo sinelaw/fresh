@@ -14,6 +14,8 @@
 // gateway) alongside the rest of repo resolution — import `discoverSubRepos`
 // from there.
 
+import { diffArgs } from "./git_repo.ts";
+
 // =============================================================================
 // Types
 // =============================================================================
@@ -114,7 +116,9 @@ export async function fetchGitLog(
   const maxCommits = opts.maxCommits ?? 200;
   const cwd = opts.cwd ?? editor.getCwd();
   const format = "%H%x00%h%x00%an%x00%ae%x00%ai%x00%ar%x00%D%x00%s%x00%b%x1e";
-  const args = ["log", `--format=${format}`, `-n${maxCommits}`];
+  // `--no-show-signature`: with `log.showSignature` set, a signed commit's
+  // gpg lines precede its record and would be read as part of its hash.
+  const args = ["log", "--no-show-signature", `--format=${format}`, `-n${maxCommits}`];
   if (opts.range) args.push(opts.range);
   // `-- <path>` must come last so git treats it as a pathspec, not a
   // revision. Restricts the log to commits touching that file.
@@ -163,9 +167,11 @@ export async function fetchCommitShow(
 
   // numstat first — small output, lets us spot oversized files before
   // pulling the full diff.
+  // Through `diffArgs` so the paths come back unquoted and match the
+  // `:(exclude,top)` pathspecs built from them below.
   const numstatResult = await editor.spawnProcess(
     "git",
-    ["show", "--numstat", "--format=", hash],
+    diffArgs(["show"], "--numstat", "--format=", hash),
     workdir
   );
   const oversized: string[] = [];
@@ -189,7 +195,7 @@ export async function fetchCommitShow(
 
   // Stat + patch, excluding oversized paths. `:(exclude,top)` is rooted
   // at the repo root so it matches regardless of git's cwd.
-  const showArgs = ["show", "--stat", "--patch", hash];
+  const showArgs = diffArgs(["show"], "--stat", "--patch", hash);
   if (oversized.length > 0) {
     showArgs.push("--", ".");
     for (const p of oversized) showArgs.push(`:(exclude,top)${p}`);
@@ -207,23 +213,13 @@ export async function fetchCommitShow(
 }
 
 // =============================================================================
-// UTF-8 byte-length helper — the runtime's overlay offsets are in bytes, but
-// JS strings are UTF-16. Colocated here so consumers don't have to redefine it.
+// UTF-8 byte-length helper — moved to `lib/text.ts` when a second family of
+// consumers (the finders' result lists) needed it. Re-exported here so the
+// git plugins' imports keep working and there is still one implementation.
 // =============================================================================
 
-export function byteLength(s: string): number {
-  let b = 0;
-  for (let i = 0; i < s.length; i++) {
-    const code = s.charCodeAt(i);
-    if (code <= 0x7f) b += 1;
-    else if (code <= 0x7ff) b += 2;
-    else if (code >= 0xd800 && code <= 0xdfff) {
-      b += 4;
-      i++;
-    } else b += 3;
-  }
-  return b;
-}
+import { byteLength } from "./text.ts";
+export { byteLength };
 
 // =============================================================================
 // Commit log entry building
@@ -593,6 +589,54 @@ export function buildCommitDetailEntries(
 // Placeholder entries shown in the detail panel while no commit has been
 // loaded yet (e.g. during initial render or when the log is empty).
 // =============================================================================
+
+/**
+ * Where the entries from `buildCommitDetailEntries` carry code, for
+ * `editor.setSyntaxRegions`: every `+`, `-` and context row of a hunk,
+ * one marker byte of prefix, in the language of the file the hunk
+ * belongs to. Each hunk's two sides are two parser streams, so a
+ * construct spanning several rows of one side is read as one construct
+ * however the other side's rows interleave with it; a context row feeds
+ * both and is coloured by the new side. Consecutive rows of one file and
+ * stream set share a region.
+ */
+export function commitDetailSyntaxRegions(entries: TextPropertyEntry[]): TsSyntaxRegion[] {
+  const regions: TsSyntaxRegion[] = [];
+  let at = 0;
+  let hunk = -1;
+  let open: TsSyntaxRegion | null = null;
+  let openKey = "";
+  for (const entry of entries) {
+    const start = at;
+    at += byteLength(entry.text);
+    const type = entry.properties?.type as string | undefined;
+    const file = entry.properties?.file as string | undefined;
+    if (type === "detail-hunk-header") hunk++;
+    let streams: number[] | null = null;
+    if (file && hunk >= 0) {
+      const oldSide = 2 * hunk;
+      const newSide = oldSide + 1;
+      if (type === "detail-add") streams = [newSide];
+      else if (type === "detail-remove") streams = [oldSide];
+      else if (type === "detail-context") streams = [newSide, oldSide];
+    }
+    const key = streams && file ? `${file}\0${streams.join(",")}` : "";
+    if (open && key !== "" && key === openKey) {
+      open.end = at;
+      continue;
+    }
+    if (open) {
+      regions.push(open);
+      open = null;
+    }
+    if (streams && file) {
+      open = { start, end: at, language: file, prefix: 1, streams };
+      openKey = key;
+    }
+  }
+  if (open) regions.push(open);
+  return regions;
+}
 
 export function buildDetailPlaceholderEntries(message: string): TextPropertyEntry[] {
   return [

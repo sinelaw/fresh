@@ -3,15 +3,17 @@
 import {
   type GitCommit,
   buildCommitLogEntries,
+  byteLength,
   fetchGitLog,
 } from "./lib/git_history.ts";
 import {
   type GitRepo,
+  diffArgs,
   git,
   resolveGitRepo,
   resolveGitRepoForPath,
 } from "./lib/git_repo.ts";
-import { button, flexSpacer, list, row, WidgetPanel } from "./lib/index.ts";
+import { button, flexSpacer, list, row, selectMove, WidgetPanel } from "./lib/index.ts";
 
 const editor = getEditor();
 
@@ -24,8 +26,8 @@ const editor = getEditor();
  *   * `setPanelContent` with `TextPropertyEntry[]` + `inlineOverlays` for
  *     aligned columns and per-theme colouring (every colour is a theme key,
  *     so the panel follows theme changes).
- *   * `cursor_moved` subscription to live-update the right-hand detail panel
- *     as the user scrolls through the commit list.
+ *   * the log List's own `select` events to live-update the right-hand
+ *     detail panel as the user steps through the commit list.
  *
  * The rendering helpers live in `lib/git_history.ts` so the same commit-list
  * view can be reused by `audit_mode`'s PR-branch review mode.
@@ -131,25 +133,23 @@ const SELECT_DEBOUNCE_MS = 60;
 // handlers below branch on which panel currently has focus to do the
 // right thing (`Return` jumps into the detail panel when pressed in
 // the log, and opens the file at the cursor when pressed in the detail).
+//
+// The log pane is a List: Up/Down/PageUp/PageDown/Home/End are the
+// widget's own (the host routes a described panel's keys to its focused
+// widget before the mode's inherited bindings), and every move comes back
+// as a `select` event that picks the commit. `j`/`k` are the vi aliases
+// for the same step. On the detail pane the same keys are the buffer's
+// ordinary motion, and `j`/`k` alias Up/Down there too.
 // =============================================================================
 
-// The log pane is cursor-driven: j/k/Up/Down/PageUp/PageDown move the
-// pane's real buffer cursor (normal editor movement), which scrolls via
-// the standard `ensure_cursor_visible` wheel — only when the cursor
-// crosses the top/bottom edge. The cursor is the source of truth for
-// which commit is selected; a `cursor_moved` subscription mirrors its
-// line into the List highlight + detail pane. On the detail pane the
-// same keys scroll the diff. Other actions (q/r/y/Tab/Return) are direct
-// bindings — they don't depend on the cursor row.
+// The List's own selection is the source of truth for which commit is
+// selected (`select` events); the detail pane is a real buffer whose keys
+// are the editor's. `q`/`r`/`y`/Tab/Return are direct bindings.
 editor.defineMode(
   "git-log",
   [
-    ["k", "move_up"],
-    ["j", "move_down"],
-    ["Up", "move_up"],
-    ["Down", "move_down"],
-    ["PageUp", "move_page_up"],
-    ["PageDown", "move_page_down"],
+    ["k", "git_log_prev"],
+    ["j", "git_log_next"],
     ["Return", "git_log_enter"],
     ["Tab", "git_log_tab"],
     ["q", "git_log_q"],
@@ -181,7 +181,11 @@ const GROUP_LAYOUT = JSON.stringify({
     type: "split",
     direction: "h",
     ratio: 0.6,
-    first: { type: "scrollable", id: "log" },
+    // The log is a List that windows itself to the pane: the buffer under
+    // it does not scroll, the widget does (`scrollable: false` is what
+    // makes the pane's panel a described one, whose rows answer their own
+    // keys and clicks). The detail is a real diff buffer and scrolls as one.
+    first: { type: "scrollable", id: "log", scrollable: false },
     second: { type: "scrollable", id: "detail" },
   },
 });
@@ -253,11 +257,16 @@ editor.on("widget_event", (data) => {
     }
     return;
   }
-  // Log pane (List of commit rows). Selection is cursor-driven (see the
-  // `cursor_moved` handler), so the List's `select` event is ignored —
-  // a row click places the buffer cursor, and `cursor_moved` mirrors it
-  // into the selection. `activate` (Enter / double-click) still opens.
+  // Log pane (List of commit rows). The List's own selection — an arrow,
+  // a page key, a row click — comes back as `select` with the row index,
+  // and that is the selected commit. `activate` (Enter / double-click)
+  // opens.
   if (state.logPanel !== null && data.panel_id === state.logPanel.id()) {
+    if (data.event_type === "select") {
+      const idx = data.payload?.index;
+      if (typeof idx === "number") void selectCommitLine(idx);
+      return;
+    }
     if (data.event_type === "activate") {
       void git_log_enter();
     }
@@ -281,7 +290,7 @@ function detailFooter(hash: string): string {
 
 /** Stable widget key for the log List. The host keys selection +
  * scroll instance state off this; the plugin re-pins selection
- * through it after click/keyboard `select` events. */
+ * through it after a refresh. */
 const LOG_LIST_KEY = "git-log-list";
 
 function renderLog(): void {
@@ -300,11 +309,8 @@ function renderLog(): void {
       items,
       itemKeys,
       selectedIndex: state.selectedIndex,
-      // Visible-rows only matters for virtualization; setting it to
-      // commits.length renders all rows and lets the buffer's natural
-      // scroll handle viewport. Revisit if commit lists grow into the
-      // tens of thousands.
-      visibleRows: Math.max(1, state.commits.length),
+      // No `visibleRows`: the List windows itself to the pane's height
+      // and scrolls to keep the selection in view.
       key: LOG_LIST_KEY,
     }),
   );
@@ -327,7 +333,16 @@ function renderLog(): void {
  */
 function cachePathForHash(hash: string): string {
   // `<dataDir>/git-show/<sha>.diff` — the .diff extension lets the
-  // syntax-highlight grammar kick in for free.
+  // syntax-highlight grammar kick in for free. That covers the whole
+  // detail panel: the host paints `+` / `-` / `@@` rows from
+  // `editor.diff_add_bg` / `diff_remove_bg` / `diff_modify_bg`, so the
+  // plugin adds no colouring of its own. A plugin-side overlay pass
+  // used to duplicate it and was the only thing that could put a
+  // stripe on the wrong row; the host's pass is also viewport-local,
+  // where the plugin's had to walk the whole buffer. The host leaves
+  // one gap the overlay used to cover — the section context after a
+  // hunk header's closing `@@` gets no wash (#3021) — which is a
+  // host-side issue for every `.diff` buffer, not one to re-patch here.
   return `${editor.getDataDir()}/git-show/${hash}.diff`;
 }
 
@@ -375,9 +390,13 @@ function spawnGitShow(hash: string, cwd: string): ProcessHandle<SpawnResult> {
   // as flat positional args. The runtime JS wrapper also accepts an
   // `{stdoutTo}` options object in the 4th slot, but using the flat
   // form keeps the call type-checked without a cast.
+  //
+  // `diffArgs` pins the patch format: the fold ranges, `Enter` and the
+  // host's `.diff` highlighting all read this file's `diff --git` /
+  // `+++ b/` / `@@` rows, which user config can otherwise reshape.
   return editor.spawnProcess(
     "git",
-    ["show", "--stat", "--patch", hash],
+    diffArgs(["show"], "--stat", "--patch", hash),
     cwd,
     cachePathForHash(hash),
   );
@@ -434,90 +453,6 @@ async function pollUntilSpawnDone(
   // says "complete". Written after the bytes are on disk so a reader
   // that sees the marker also sees the full diff.
   editor.writeFile(editor.localPath(donePathForHash(hash)), "");
-  // Apply diff coloring once the buffer is complete. Doing this
-  // pre-completion would either churn (re-walk on every refresh) or
-  // double-overlay newly-extended lines; on completion we walk once.
-  await applyDiffHighlights(bufferId);
-}
-
-// =============================================================================
-// Diff syntax highlighting via per-line bg overlays
-//
-// Sublime-syntax's bundled `Diff` definition only scopes the `diff`
-// keyword, so themes only colour that. Plugins are responsible for the
-// rest — same approach `live_diff` uses for inline diff coloring in
-// regular buffers.
-//
-// One overlay per line of added/removed content is fine for the
-// "normal commit" workload but explodes on giant commits (the
-// rewrite-bun commit is 1M lines = 1M overlays = back to the old
-// 500k-overlay problem this rewire eliminated). Gate on buffer size;
-// gracefully degrade to no highlighting for outliers.
-// =============================================================================
-
-const HIGHLIGHT_BG_ADDED = "editor.diff_add_bg";
-const HIGHLIGHT_BG_REMOVED = "editor.diff_remove_bg";
-const HIGHLIGHT_BG_HUNK = "editor.diff_modify_bg";
-const HIGHLIGHT_NAMESPACE = "git-log-diff";
-/** Skip overlay highlighting above this size. ~256 KB covers
- *  basically every hand-written commit comfortably; very large
- *  generated-file diffs (lockfiles, minified code) just stay
- *  uncoloured — the cost would be a few thousand-to-a-million
- *  overlays for content the user mostly skims. */
-const HIGHLIGHT_MAX_BYTES = 256 * 1024;
-
-async function applyDiffHighlights(bufferId: number): Promise<void> {
-  const total = editor.getBufferLength(bufferId);
-  if (total === 0 || total > HIGHLIGHT_MAX_BYTES) return;
-  const text = await editor.getBufferText(bufferId, 0, total);
-  if (!text) return;
-
-  // Walk lines tracking byte offsets; coalesce consecutive same-kind
-  // rows into single ranges so a 30-line added block costs one
-  // overlay, not 30.
-  let byte = 0;
-  let runKind: "+" | "-" | "@" | null = null;
-  let runStart = 0;
-  let runEnd = 0;
-
-  const flushRun = () => {
-    if (runKind === null) return;
-    const bg =
-      runKind === "+"
-        ? HIGHLIGHT_BG_ADDED
-        : runKind === "-"
-        ? HIGHLIGHT_BG_REMOVED
-        : HIGHLIGHT_BG_HUNK;
-    editor.addOverlay(bufferId, HIGHLIGHT_NAMESPACE, runStart, runEnd, {
-      bg,
-      extendToLineEnd: true,
-    });
-    runKind = null;
-  };
-
-  for (const line of text.split("\n")) {
-    const lineLen = line.length;
-    const ch = line.charAt(0);
-    let kind: "+" | "-" | "@" | null = null;
-    if (ch === "+" && !line.startsWith("+++")) kind = "+";
-    else if (ch === "-" && !line.startsWith("---")) kind = "-";
-    else if (line.startsWith("@@")) kind = "@";
-
-    if (kind !== runKind) {
-      flushRun();
-      if (kind !== null) {
-        runStart = byte;
-        runKind = kind;
-      }
-    }
-    if (kind !== null) {
-      // Include the trailing newline in the range so the bg colour
-      // fills the row even on empty lines that wrap-extend.
-      runEnd = byte + lineLen + 1;
-    }
-    byte += lineLen + 1;
-  }
-  flushRun();
 }
 
 /**
@@ -640,7 +575,7 @@ function selectedCommit(): GitCommit | null {
 /**
  * Open the magit-style log view. `pathFilter` of `null` shows the full
  * repository history; a path scopes it to that file's commits. Shared by
- * the "Git Log" and "Git Log (Current File)" commands.
+ * the "Git Log" and "Git Log: Current File" commands.
  */
 /**
  * Root of the repository this log view is bound to. Falls back to the editor
@@ -736,20 +671,10 @@ async function openGitLog(pathFilter: string | null): Promise<void> {
 
   renderToolbar();
   renderLog();
-  // Cursor-driven selection: give the log pane a real, visible cursor and
-  // take ownership of it (`setBufferShowCursors` locks it so the widget
-  // runtime won't clear it on repaint). The cursor's line is the selected
-  // commit; `cursor_moved` mirrors it into the List highlight + detail.
-  // Start on HEAD (line 0). Scrolling is the normal cursor-follow wheel.
-  if (state.logBufferId !== null) {
-    editor.setBufferShowCursors(state.logBufferId, true);
-    editor.setBufferCursor(state.logBufferId, 0);
-  }
   await refreshDetail();
 
   editor.on("resize", on_git_log_resize);
   editor.on("buffer_closed", on_git_log_buffer_closed);
-  editor.on("cursor_moved", on_git_log_cursor_moved);
 
   editor.setStatus(
     editor.t("status.log_ready", { count: String(state.commits.length) })
@@ -787,7 +712,6 @@ function git_log_cleanup(): void {
   if (!state.isOpen) return;
   editor.off("resize", on_git_log_resize);
   editor.off("buffer_closed", on_git_log_buffer_closed);
-  editor.off("cursor_moved", on_git_log_cursor_moved);
   // Kill any still-running `git show` spawns — we no longer care.
   for (const [, handle] of state.inFlightSpawns) {
     handle.kill?.();
@@ -907,6 +831,20 @@ function isDetailFocused(): boolean {
     editor.getActiveBufferId() === state.detailBufferId
   );
 }
+
+/** One step through the log, or one line through the diff: the vi
+ *  aliases of Up/Down, which are the List's own keys on the log pane and
+ *  the buffer's on the detail pane. */
+function stepLog(delta: number): void {
+  if (state.groupId === null) return;
+  if (isDetailFocused()) {
+    editor.executeAction(delta < 0 ? "move_up" : "move_down");
+    return;
+  }
+  state.logPanel?.command(selectMove(delta));
+}
+registerHandler("git_log_prev", () => stepLog(-1));
+registerHandler("git_log_next", () => stepLog(1));
 
 function git_log_tab(): void {
   if (state.groupId === null) return;
@@ -1074,11 +1012,14 @@ async function deriveFileAndLineFromDiffCursor(
 
   // Locate the cursor's line index by walking byte offsets. `lines[i]`
   // covers bytes [byte, byte+len]; the `\n` separator lives at
-  // byte+len, so the next line starts at byte+len+1.
+  // byte+len, so the next line starts at byte+len+1. `len` is the
+  // line's UTF-8 byte length — the cursor is a byte offset, so a
+  // UTF-16 `.length` would land on the wrong line in any diff
+  // containing non-ASCII text.
   let byte = 0;
   let cursorLineIdx = lines.length - 1;
   for (let i = 0; i < lines.length; i++) {
-    const lineLen = lines[i].length;
+    const lineLen = byteLength(lines[i]);
     if (cursor <= byte + lineLen) {
       cursorLineIdx = i;
       break;
@@ -1242,32 +1183,21 @@ function git_log_file_view_close(): void {
 registerHandler("git_log_file_view_close", git_log_file_view_close);
 
 // =============================================================================
-// Selection tracking — the log pane is cursor-driven. The buffer cursor's
-// line (set by arrow-key movement or a click) is the selected commit; this
-// `cursor_moved` subscription mirrors it into the List highlight and the
-// detail pane. Scrolling is handled by the normal cursor-follow wheel, so
-// the viewport only moves when the cursor crosses the top/bottom edge.
+// Selection tracking — the log List's selection is the selected commit.
+// An arrow, a page key or a row click moves it (the widget's own keys and
+// pointer), it comes back as a `select` event, and this mirrors it into
+// the detail pane. The List windows and scrolls itself.
 // =============================================================================
-
-function on_git_log_cursor_moved(data: { buffer_id: number; line: number }): void {
-  if (!state.isOpen || state.logBufferId === null) return;
-  if (data.buffer_id !== state.logBufferId) return;
-  // `cursor_moved.line` is 1-based; commit rows are 0-based (no header),
-  // so the selected commit index is `line - 1`.
-  const idx = data.line - 1;
-  if (idx < 0 || idx >= state.commits.length) return;
-  void selectCommitLine(idx);
-}
 
 async function selectCommitLine(idx: number): Promise<void> {
   if (!state.isOpen) return;
+  if (idx < 0 || idx >= state.commits.length) return;
   if (idx === state.selectedIndex) return;
   state.selectedIndex = idx;
 
-  // Move the List's highlight bar to the cursor's row. The cursor itself
-  // is the real (plugin-owned) buffer cursor, so it stays exactly where
-  // the user moved or clicked it — this only repaints the row styling,
-  // and the repaint preserves the cursor position.
+  // The List's highlight is the host's instance state and already sits
+  // on this row when the selection came from the List itself; after a
+  // refresh re-emitted the spec it is re-pinned here.
   state.logPanel?.setSelectedIndex(LOG_LIST_KEY, idx);
 
   const commit = state.commits[state.selectedIndex];

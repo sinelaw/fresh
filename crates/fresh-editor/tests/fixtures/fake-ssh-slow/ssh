@@ -1,0 +1,147 @@
+#!/usr/bin/env python3
+# Fake `ssh` for tests: models a host that COMPLETES the connection but is
+# SLOW — the "bandwidth-throttled remote" shape (cf. the user's
+# `ProxyCommand ... | pv -qL 20k`). Unlike `fake-ssh-hang` (never establishes
+# the channel) and `fake-ssh` (fails fast), this one bootstraps the *real*
+# agent locally so file ops actually work, then throttles selected responses so
+# the channel becomes "connected but slow". That is the state that stalls a
+# synchronous plugin filesystem call on the single plugin thread.
+#
+# The remote command ssh would run is passed as the last argument
+# (`python3 -u -c "import sys;exec(sys.stdin.read(N))"`); we run it locally via
+# `sh -c` so the agent reads its bootstrap + protocol requests from our stdin,
+# exactly as over a real carrier. We forward stdin verbatim (byte-preserving,
+# so python's `read(N)` still lands on a program boundary) while snooping each
+# JSON request line to learn its id -> method mapping, and we delay the agent's
+# responses for the methods named in FAKE_SSH_SLOW_METHODS.
+#
+# Env knobs:
+#   FAKE_SSH_SLOW_METHODS      comma list of methods to slow (default: ls,stat)
+#   FAKE_SSH_SLOW_RESP_DELAY   seconds to delay each slow-method response line
+#   FAKE_SSH_SLOW_READY_DELAY  seconds to delay the agent's initial ready line
+#   FAKE_SSH_SLOW_BLOCK_FILE   if set, slow-method responses block until this
+#                              path is DELETED (deterministic, no wall clock)
+import os
+import sys
+import json
+import time
+import signal
+import threading
+import subprocess
+
+SLOW_METHODS = set(
+    m for m in (os.environ.get("FAKE_SSH_SLOW_METHODS") or "ls,stat").split(",") if m
+)
+RESP_DELAY = float(os.environ.get("FAKE_SSH_SLOW_RESP_DELAY") or "0")
+READY_DELAY = float(os.environ.get("FAKE_SSH_SLOW_READY_DELAY") or "0")
+BLOCK_FILE = os.environ.get("FAKE_SSH_SLOW_BLOCK_FILE") or ""
+LOG_FILE = os.environ.get("FAKE_SSH_SLOW_LOG") or ""
+_t0 = time.time()
+
+
+def _log(msg):
+    if LOG_FILE:
+        try:
+            with open(LOG_FILE, "a") as f:
+                f.write("%.3f %s\n" % (time.time() - _t0, msg))
+        except Exception:
+            pass
+
+remote_cmd = sys.argv[-1]
+proc = subprocess.Popen(
+    ["sh", "-c", remote_cmd],
+    stdin=subprocess.PIPE,
+    stdout=subprocess.PIPE,
+    preexec_fn=os.setsid,
+)
+
+id_to_method = {}
+lock = threading.Lock()
+
+
+def _cleanup(*_):
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    except Exception:
+        pass
+    os._exit(0)
+
+
+for _sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+    signal.signal(_sig, _cleanup)
+
+
+def pump_stdin():
+    # Forward our stdin -> agent, line by line (byte-preserving), snooping the
+    # id -> method map so the stdout side knows which responses to slow.
+    try:
+        for line in sys.stdin.buffer:
+            try:
+                obj = json.loads(line)
+                mid, m = obj.get("id"), obj.get("m")
+                if mid is not None and m is not None:
+                    with lock:
+                        id_to_method[mid] = m
+                    _log("REQ id=%s m=%s" % (mid, m))
+            except Exception:
+                pass
+            proc.stdin.write(line)
+            proc.stdin.flush()
+    except Exception:
+        pass
+    try:
+        proc.stdin.close()
+    except Exception:
+        pass
+
+
+def _write_line(line):
+    sys.stdout.buffer.write(line if isinstance(line, bytes) else line.encode())
+    sys.stdout.buffer.flush()
+
+
+def _hold_read_open(rid):
+    # Hold a `read`'s final result indefinitely while the gate exists,
+    # dribbling empty keepalive data chunks so the editor's idle-timeout never
+    # fires. This models a bandwidth-throttled transfer that makes (trivial)
+    # progress forever: the read blocks whichever thread issued it without the
+    # request timing out — an UNBOUNDED stall, so a test that stays frozen on it
+    # is caught by nextest's external cap rather than silently recovering.
+    keepalive = json.dumps({"id": rid, "d": {"data": ""}}) + "\n"
+    while os.path.exists(BLOCK_FILE):
+        _write_line(keepalive)
+        time.sleep(1.0)
+
+
+first = True
+threading.Thread(target=pump_stdin, daemon=True).start()
+for line in proc.stdout:
+    if first:
+        if READY_DELAY:
+            time.sleep(READY_DELAY)
+        first = False
+        _write_line(line)
+        continue
+    try:
+        obj = json.loads(line)
+        rid = obj.get("id")
+    except Exception:
+        obj, rid = None, None
+    with lock:
+        method = id_to_method.get(rid)
+    is_result = isinstance(obj, dict) and "r" in obj
+    if method in SLOW_METHODS:
+        if BLOCK_FILE and is_result:
+            # Only the final result is withheld; any real data chunk already
+            # streamed through, so the client has the content but never the
+            # completion — it waits forever.
+            _log("HOLD id=%s m=%s" % (rid, method))
+            _hold_read_open(rid)
+            _log("RELEASE id=%s m=%s" % (rid, method))
+        elif RESP_DELAY:
+            _log("SLOW resp id=%s m=%s (delaying)" % (rid, method))
+            time.sleep(RESP_DELAY)
+    _log("RESP id=%s m=%s" % (rid, method))
+    _write_line(line)
+
+proc.wait()

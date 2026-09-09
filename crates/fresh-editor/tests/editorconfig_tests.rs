@@ -13,9 +13,7 @@
 // matching, size mapping, precedence) are covered by unit tests on the
 // resolver in `services::editorconfig`.
 
-mod common;
-
-use common::harness::EditorTestHarness;
+use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::Config;
 use std::fs;

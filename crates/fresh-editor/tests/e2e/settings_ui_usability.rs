@@ -121,9 +121,14 @@ fn focused_button(harness: &EditorTestHarness) -> Option<String> {
     for (row_idx, line) in screen.lines().enumerate() {
         for button in &buttons {
             let label_prefix = format!("[ {}", button);
-            if let Some(col) = line.find(&label_prefix) {
-                // Check for ">" indicator in the 1-3 cells before the button
-                let col = col as u16;
+            if let Some(byte) = line.find(&label_prefix) {
+                // Check for ">" indicator in the 1-3 cells before the button.
+                //
+                // `find` answers in bytes and `get_cell` asks in columns, and
+                // the dialog's row has box-drawing glyphs before the button —
+                // three bytes each, one column each. Counting the characters
+                // before the match is the column.
+                let col = line[..byte].chars().count() as u16;
                 let row = row_idx as u16;
                 for offset in 1..=3 {
                     if col >= offset {

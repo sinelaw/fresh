@@ -7,7 +7,7 @@
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 
-use rust_i18n::t;
+use fresh_i18n::t;
 
 use crate::input::command_registry::CommandRegistry;
 use crate::input::commands::Suggestion;
@@ -73,9 +73,12 @@ impl Editor {
         // Pre-fill with default text if available
         if let Some(text) = default_text {
             if let Some(ref mut prompt) = self.active_window_mut().prompt {
+                // Pre-filled search text sits selected (caret at end,
+                // anchor at start) so typing replaces it; set_input takes
+                // the undo snapshot.
                 prompt.set_input(text.clone());
-                prompt.selection_anchor = Some(0);
-                prompt.cursor_pos = text.len();
+                let filled = prompt.input_str().to_string();
+                prompt.set_input_selected(filled);
             }
             if from_history {
                 self.get_or_create_prompt_history("search").init_at_last();
@@ -93,6 +96,17 @@ impl Editor {
     ) {
         // Dismiss transient popups and clear hover state when opening a prompt
         self.active_window_mut().on_editor_focus_lost();
+
+        // A new prompt displacing a live `editor.pickFile` browser must
+        // resolve the pick as cancelled — a dangling callback would
+        // otherwise hijack the next Open File confirm. (`pickFile`
+        // itself arms the callback after this runs.)
+        if let Some(stale) = self.active_window_mut().pending_file_pick_callback.take() {
+            self.plugin_manager
+                .read()
+                .unwrap()
+                .resolve_callback(stale, "null".to_string());
+        }
 
         // Clear search highlights when starting a new search prompt
         // This ensures old highlights from previous searches don't persist
@@ -128,7 +142,8 @@ impl Editor {
         // Dismiss transient popups and clear hover state when opening a prompt
         self.active_window_mut().on_editor_focus_lost();
 
-        self.active_window_mut().prompt = Some(Prompt::with_initial_text(
+        self.drop_prompt();
+        self.set_prompt(Prompt::with_initial_text(
             message,
             prompt_type,
             initial_text,
@@ -146,12 +161,58 @@ impl Editor {
         self.active_window_mut().status_message = None;
         self.active_window_mut().goto_line_preview = None;
 
+        self.drop_prompt();
         let mut prompt = Prompt::with_suggestions(String::new(), PromptType::QuickOpen, vec![]);
-        prompt.input = prefix.to_string();
-        prompt.cursor_pos = prefix.len();
-        self.active_window_mut().prompt = Some(prompt);
+        prompt.set_input_plain(prefix.to_string());
+        self.set_prompt(prompt);
 
         self.update_quick_open_suggestions(prefix);
+    }
+
+    /// Buffer-group tabs, as `#` switcher entries.
+    ///
+    /// A group's own buffers are `hidden_from_tabs` — the group is the tab,
+    /// not any one panel — so listing buffers alone leaves a group like the
+    /// review-diff panels unreachable from the switcher once focus moves to
+    /// another tab. Emitting the group itself is what closes that gap; the
+    /// entry carries the group's leaf id so selecting it activates the tab
+    /// rather than trying to make a hidden panel buffer active.
+    fn quick_open_group_tabs(&self) -> Vec<BufferInfo> {
+        use crate::view::split::{SplitNode, TabTarget};
+        let Some(window) = self.windows.get(&self.active_window) else {
+            return Vec::new();
+        };
+        let Some((_, view_states)) = window.buffers.splits() else {
+            return Vec::new();
+        };
+        let mut seen = std::collections::HashSet::new();
+        let mut out = Vec::new();
+        for vs in view_states.values() {
+            for target in &vs.open_buffers {
+                let TabTarget::Group(leaf) = target else {
+                    continue;
+                };
+                if !seen.insert(*leaf) {
+                    continue;
+                }
+                let Some(SplitNode::Grouped { name, .. }) = window.grouped_subtrees.get(leaf)
+                else {
+                    continue;
+                };
+                out.push(BufferInfo {
+                    // Groups have no buffer of their own; `id` only orders
+                    // ties in the switcher, and the leaf id is stable and
+                    // unique among groups.
+                    id: leaf.0 .0,
+                    path: String::new(),
+                    name: name.clone(),
+                    modified: false,
+                    is_virtual: true,
+                    group_leaf: Some(leaf.0 .0),
+                });
+            }
+        }
+        out
     }
 
     /// Build a QuickOpenContext from current editor state
@@ -179,6 +240,7 @@ impl Editor {
                             name,
                             modified: state.buffer.is_modified(),
                             is_virtual: false,
+                            group_leaf: None,
                         })
                     }
                     // No file path: only virtual buffers (plugin panels like
@@ -193,10 +255,12 @@ impl Editor {
                             name: meta.display_name.clone(),
                             modified: state.buffer.is_modified(),
                             is_virtual: true,
+                            group_leaf: None,
                         })
                     }
                 }
             })
+            .chain(self.quick_open_group_tabs())
             .collect();
 
         let has_lsp_config = {
@@ -228,6 +292,7 @@ impl Editor {
                 .and_then(|m| m.virtual_mode())
                 .map(|s| s.to_string()),
             has_lsp_config,
+            buffer_caps: self.buffer_capabilities(),
             relative_line_numbers: self.config.editor.relative_line_numbers,
         }
     }
@@ -331,7 +396,7 @@ impl Editor {
         };
         let (viewport_top_byte, viewport_top_view_line_offset, viewport_left_column) = {
             let vp = self.active_viewport();
-            (vp.top_byte, vp.top_view_line_offset, vp.left_column)
+            (vp.top_byte(), vp.top_view_line_offset(), vp.left_column)
         };
 
         self.active_window_mut().goto_line_preview = Some(super::GotoLinePreviewSnapshot {
@@ -410,8 +475,8 @@ impl Editor {
             .get_mut(&snap.split_id)
         {
             let vp = &mut view_state.viewport;
-            vp.top_byte = snap.viewport_top_byte;
-            vp.top_view_line_offset = snap.viewport_top_view_line_offset;
+            vp.set_top_byte(snap.viewport_top_byte);
+            vp.set_top_view_line_offset(snap.viewport_top_view_line_offset);
             vp.left_column = snap.viewport_left_column;
             // The cursor we just restored is already consistent with this
             // viewport; don't let ensure_visible re-scroll on the next render.
@@ -426,9 +491,7 @@ impl Editor {
         // start with an empty input.
         if let Some(prompt) = self.active_window_mut().prompt.as_mut() {
             if prompt.prompt_type == PromptType::OpenFile {
-                prompt.input.clear();
-                prompt.cursor_pos = 0;
-                prompt.selection_anchor = None;
+                prompt.set_input_plain(String::new());
             }
         }
     }
@@ -439,28 +502,44 @@ impl Editor {
     /// (from current buffer's directory or working directory) and triggers async
     /// directory loading.
     pub(super) fn init_file_open_state(&mut self) {
-        // Determine initial directory
-        let buffer_id = self.active_buffer();
+        self.init_file_open_state_at(None, None);
+    }
 
-        // For terminal buffers, use the terminal's initial CWD or fall back to project root
-        // This avoids showing the terminal backing file directory which is confusing for users
-        let initial_dir = if self.active_window().is_terminal_buffer(buffer_id) {
-            self.active_window()
-                .get_terminal_id(buffer_id)
-                .and_then(|tid| self.active_window().terminal_manager.get(tid))
-                .and_then(|handle| handle.cwd())
-                .unwrap_or_else(|| self.working_dir().to_path_buf())
-        } else {
-            self.active_state()
-                .buffer
-                .file_path()
-                .and_then(|path| path.parent())
-                .map(|p| p.to_path_buf())
-                .unwrap_or_else(|| self.working_dir().to_path_buf())
-        };
+    /// Initialize the file open dialog state, optionally pinning the
+    /// starting directory and hidden-file visibility. `pickFile` callers
+    /// use the overrides when the default anchor (the active file's
+    /// directory) or the config's dotfile filter would hide the very
+    /// files being picked; `None` keeps the Ctrl+O behavior.
+    pub(super) fn init_file_open_state_at(
+        &mut self,
+        dir_override: Option<PathBuf>,
+        show_hidden_override: Option<bool>,
+    ) {
+        let initial_dir = dir_override.unwrap_or_else(|| {
+            let buffer_id = self.active_buffer();
+
+            // For terminal buffers, use the terminal's initial CWD or fall back to
+            // project root. This avoids showing the terminal backing file directory
+            // which is confusing for users.
+            if self.active_window().is_terminal_buffer(buffer_id) {
+                self.active_window()
+                    .get_terminal_id(buffer_id)
+                    .and_then(|tid| self.active_window().terminal_manager.get(tid))
+                    .and_then(|handle| handle.cwd())
+                    .unwrap_or_else(|| self.working_dir().to_path_buf())
+            } else {
+                self.active_state()
+                    .buffer
+                    .file_path()
+                    .and_then(|path| path.parent())
+                    .map(|p| p.to_path_buf())
+                    .unwrap_or_else(|| self.working_dir().to_path_buf())
+            }
+        });
 
         // Create the file open state with config-based show_hidden setting
-        let show_hidden = self.config.file_browser.show_hidden;
+        // unless the caller pinned it.
+        let show_hidden = show_hidden_override.unwrap_or(self.config.file_browser.show_hidden);
         self.active_window_mut().file_open_state = Some(file_open::FileOpenState::new(
             initial_dir.clone(),
             show_hidden,
@@ -632,7 +711,7 @@ impl Editor {
                     .active_window()
                     .prompt
                     .as_ref()
-                    .map(|p| p.input.clone())
+                    .map(|p| p.input_str().to_string())
                     .unwrap_or_default();
                 if !filter.is_empty() {
                     if let Some(state) = &mut self.active_window_mut().file_open_state {
@@ -797,7 +876,7 @@ impl Editor {
                         "prompt_cancelled",
                         HookArgs::PromptCancelled {
                             prompt_type: custom_type.clone(),
-                            input: prompt.input.clone(),
+                            input: prompt.input_str().to_string(),
                         },
                     );
                     // Capture Live Grep state on cancel for Resume
@@ -815,10 +894,10 @@ impl Editor {
                         // (empty Vec) and enters the restore branch
                         // with zero entries, producing an empty
                         // popup.
-                        if !prompt.input.is_empty() && !cached.is_empty() {
+                        if !prompt.input_str().is_empty() && !cached.is_empty() {
                             self.active_window_mut().live_grep_last_state =
                                 Some(crate::services::live_grep_state::LiveGrepLastState {
-                                    query: prompt.input.clone(),
+                                    query: prompt.input_str().to_string(),
                                     selected_index: prompt.selected_suggestion,
                                     cached_results: Some(cached),
                                     cached_at: Some(std::time::Instant::now()),
@@ -829,10 +908,10 @@ impl Editor {
                 }
                 PromptType::LiveGrep => {
                     let cached = self.snapshot_prompt_results_for_grep(prompt);
-                    if !prompt.input.is_empty() && !cached.is_empty() {
+                    if !prompt.input_str().is_empty() && !cached.is_empty() {
                         self.active_window_mut().live_grep_last_state =
                             Some(crate::services::live_grep_state::LiveGrepLastState {
-                                query: prompt.input.clone(),
+                                query: prompt.input_str().to_string(),
                                 selected_index: prompt.selected_suggestion,
                                 cached_results: Some(cached),
                                 cached_at: Some(std::time::Instant::now()),
@@ -850,19 +929,27 @@ impl Editor {
                 PromptType::OpenFile | PromptType::SwitchProject | PromptType::SaveFileAs => {
                     // Clear file browser state
                     self.active_window_mut().file_open_state = None;
-                    self.active_window_mut().file_browser_layout = None;
+
+                    // A cancelled `editor.pickFile` browser resolves the
+                    // plugin's promise with null, like a dismissed file
+                    // dialog resolves an empty pick in a browser.
+                    if let Some(callback_id) =
+                        self.active_window_mut().pending_file_pick_callback.take()
+                    {
+                        self.plugin_manager
+                            .read()
+                            .unwrap()
+                            .resolve_callback(callback_id, "null".to_string());
+                    }
 
                     // Cancelling a Save-As that was opened as part of the
                     // "save and quit" chain aborts the quit — the user
                     // explicitly chose not to name this buffer, so we'd
                     // rather keep the editor open than drop their content.
                     if matches!(prompt.prompt_type, PromptType::SaveFileAs)
-                        && !self
-                            .active_window_mut()
-                            .pending_quit_unnamed_save
-                            .is_empty()
+                        && self.has_pending_quit_unnamed_save()
                     {
-                        self.active_window_mut().pending_quit_unnamed_save.clear();
+                        self.clear_pending_quit_unnamed_save();
                         self.set_status_message(t!("buffer.close_cancelled").to_string());
                     }
                 }
@@ -917,7 +1004,7 @@ impl Editor {
             self.cleanup_overlay_preview();
         }
 
-        self.active_window_mut().prompt = None;
+        self.drop_prompt();
         self.active_window_mut().pending_search_range = None;
         self.active_window_mut().status_message = Some(t!("search.cancelled").to_string());
 
@@ -927,48 +1014,27 @@ impl Editor {
         }
     }
 
-    /// Handle mouse wheel scroll in prompt with suggestions.
+    /// Handle mouse wheel scroll over a prompt's suggestion list (command
+    /// palette, Select Locale, quick open, every other bottom-anchored
+    /// dropdown).
+    ///
+    /// The wheel scrolls the **view only** — it never moves the selection.
+    /// That is the editor-wide rule (and what VS Code does): the highlighted
+    /// entry may scroll out of sight, and pressing Enter still commits it.
+    /// Wheeling used to walk `selected_suggestion` instead, which also
+    /// rewrote the prompt input under the user and — once the scrollbar
+    /// could latch the offset — made the list jump, because the wheel
+    /// released the latch and the renderer snapped the view back to a
+    /// selection that had never visibly moved.
+    ///
     /// Returns true if scroll was handled, false if no prompt is active or has no suggestions.
-    pub fn handle_prompt_scroll(&mut self, delta: i32) -> bool {
-        if let Some(ref mut prompt) = self.active_window_mut().prompt {
-            if prompt.suggestions.is_empty() {
-                return false;
-            }
-
-            let current = prompt.selected_suggestion.unwrap_or(0);
-            let len = prompt.suggestions.len();
-
-            // Calculate new position based on scroll direction
-            // delta < 0 = scroll up, delta > 0 = scroll down
-            let new_selected = if delta < 0 {
-                // Scroll up - move selection up (decrease index)
-                current.saturating_sub((-delta) as usize)
-            } else {
-                // Scroll down - move selection down (increase index)
-                (current + delta as usize).min(len.saturating_sub(1))
-            };
-
-            prompt.selected_suggestion = Some(new_selected);
-
-            // Update input to match selected suggestion for non-plugin prompts
-            if !matches!(prompt.prompt_type, PromptType::Plugin { .. }) {
-                if let Some(suggestion) = prompt.suggestions.get(new_selected) {
-                    prompt.input = suggestion.get_value().to_string();
-                    prompt.cursor_pos = prompt.input.len();
-                }
-            }
-
-            return true;
-        }
-        false
-    }
 
     /// Get the confirmed input and prompt type, consuming the prompt
     /// For command palette, returns the selected suggestion if available, otherwise the raw input
     /// Returns (input, prompt_type, selected_index)
     /// Returns None if trying to confirm a disabled command
     pub fn confirm_prompt(&mut self) -> Option<(String, PromptType, Option<usize>)> {
-        if let Some(prompt) = self.active_window_mut().prompt.take() {
+        if let Some(prompt) = self.drop_prompt() {
             // Capture Live Grep state on confirm too (issue #1796).
             // `cancel_prompt` already does this; without it here,
             // pressing Enter on a result jumps to the file but loses
@@ -983,10 +1049,10 @@ impl Editor {
             };
             if is_live_grep {
                 let cached = self.snapshot_prompt_results_for_grep(&prompt);
-                if !prompt.input.is_empty() && !cached.is_empty() {
+                if !prompt.input_str().is_empty() && !cached.is_empty() {
                     self.active_window_mut().live_grep_last_state =
                         Some(crate::services::live_grep_state::LiveGrepLastState {
-                            query: prompt.input.clone(),
+                            query: prompt.input_str().to_string(),
                             selected_index: prompt.selected_suggestion,
                             cached_results: Some(cached),
                             cached_at: Some(std::time::Instant::now()),
@@ -1006,7 +1072,7 @@ impl Editor {
             let mut final_input = if prompt.sync_input_on_navigate {
                 // When sync_input_on_navigate is set, the input field is kept in sync
                 // with the selected suggestion, so always use the input value
-                prompt.input.clone()
+                prompt.input_str().to_string()
             } else if matches!(
                 prompt.prompt_type,
                 PromptType::OpenFile
@@ -1046,13 +1112,13 @@ impl Editor {
                         // Use the selected suggestion value
                         suggestion.get_value().to_string()
                     } else {
-                        prompt.input.clone()
+                        prompt.input_str().to_string()
                     }
                 } else {
-                    prompt.input.clone()
+                    prompt.input_str().to_string()
                 }
             } else {
-                prompt.input.clone()
+                prompt.input_str().to_string()
             };
 
             // For StopLspServer/RestartLspServer, validate that the input matches a suggestion
@@ -1066,7 +1132,7 @@ impl Editor {
                     .any(|s| s.text == final_input || s.get_value() == final_input);
                 if !is_valid {
                     // Restore the prompt and don't confirm
-                    self.active_window_mut().prompt = Some(prompt);
+                    self.set_prompt(prompt);
                     self.set_status_message(
                         t!("error.no_lsp_match", input = final_input.clone()).to_string(),
                     );
@@ -1078,25 +1144,25 @@ impl Editor {
             // If the user typed text, it must match a suggestion value to be accepted.
             // If the input is empty, the pre-selected suggestion is used.
             if matches!(prompt.prompt_type, PromptType::RemoveRuler) {
-                if prompt.input.is_empty() {
+                if prompt.input_str().is_empty() {
                     // No typed text — use the selected suggestion
                     if let Some(selected_idx) = prompt.selected_suggestion {
                         if let Some(suggestion) = prompt.suggestions.get(selected_idx) {
                             final_input = suggestion.get_value().to_string();
                         }
                     } else {
-                        self.active_window_mut().prompt = Some(prompt);
+                        self.set_prompt(prompt);
                         return None;
                     }
                 } else {
                     // User typed text — it must match a suggestion value
-                    let typed = prompt.input.trim().to_string();
+                    let typed = prompt.input_str().trim().to_string();
                     let matched = prompt.suggestions.iter().find(|s| s.get_value() == typed);
                     if let Some(suggestion) = matched {
                         final_input = suggestion.get_value().to_string();
                     } else {
                         // Typed text doesn't match any ruler — reject
-                        self.active_window_mut().prompt = Some(prompt);
+                        self.set_prompt(prompt);
                         return None;
                     }
                 }
@@ -1201,10 +1267,7 @@ impl Editor {
 
     /// Get current prompt input (for display)
     pub fn prompt_input(&self) -> Option<&str> {
-        self.active_window()
-            .prompt
-            .as_ref()
-            .map(|p| p.input.as_str())
+        self.active_window().prompt.as_ref().map(|p| p.input_str())
     }
 
     /// Check if the active cursor currently has a selection
@@ -1247,7 +1310,7 @@ impl Editor {
     pub fn update_prompt_suggestions(&mut self) {
         // Extract prompt type and input to avoid borrow checker issues
         let (prompt_type, input) = if let Some(prompt) = &self.active_window_mut().prompt {
-            (prompt.prompt_type.clone(), prompt.input.clone())
+            (prompt.prompt_type.clone(), prompt.input_str().to_string())
         } else {
             return;
         };

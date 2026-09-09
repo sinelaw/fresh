@@ -5,33 +5,164 @@
 //! `transforms`, `folding`, and `style` — its only dependencies are the
 //! (also self-contained) sibling modules and a few editor state types.
 
-use super::base_tokens::build_base_tokens;
+use super::base_tokens::{build_base_tokens, build_windowed_tokens};
 use super::folding::{apply_folding, fold_adjusted_visible_count, fold_skip_set};
 use super::style::fold_placeholder_style;
 use super::transforms::{
-    apply_conceal_ranges, apply_soft_breaks, apply_wrapping_transform, inject_virtual_lines,
-    splice_inline_virtual_text,
+    apply_conceal_ranges, apply_grid_wrapping_transform, apply_soft_breaks,
+    apply_wrapping_transform_from, inject_virtual_lines, join_adjusted_visible_count,
+    resolve_inline_hints, splice_inline_virtual_text,
 };
 use super::MAX_SAFE_LINE_WIDTH;
 use crate::state::{EditorState, ViewMode};
+use crate::view::compose_only::md_syntax_namespace;
 use crate::view::folding::FoldManager;
 use crate::view::theme::Theme;
-use crate::view::ui::view_pipeline::{ViewLine, ViewLineIterator};
+use crate::view::ui::view_pipeline::{LineStart, ViewLine, ViewLineIterator};
 use crate::view::viewport::Viewport;
-use fresh_core::api::ViewTransformPayload;
-
-/// markdown_compose's conceal namespace (`md-syntax`): the cell-separator /
-/// emphasis-marker conceals that turn raw `|`/`**` into the composed table. Only
-/// valid in a Compose-mode split; suppressed in Source mode (see the conceal
-/// pass below). Mirrors the `md-emphasis` overlay gate in `overlays.rs`.
-fn md_syntax_namespace() -> fresh_core::overlay::OverlayNamespace {
-    fresh_core::overlay::OverlayNamespace::from_string("md-syntax".to_string())
-}
 
 /// Processed view data containing display lines from the view pipeline.
 pub(super) struct ViewData {
     /// Display lines with all token information preserved.
     pub lines: Vec<ViewLine>,
+    /// Index in `lines` of the viewport's first *drawn* row.
+    ///
+    /// Rows before it were built only because the wrap could not be resumed
+    /// exactly at the anchor — a row opening with injected content the carry
+    /// cannot reconstruct forces a walk back to the nearest resumable row (see
+    /// `WrapIndex::resumable_row_at_or_before`). On a plain long line this is
+    /// zero and the build starts exactly at the viewport.
+    ///
+    /// Before the build was anchored this was always `top_view_line_offset`,
+    /// because `lines` began at the logical line's first row and the renderer
+    /// discarded everything above the viewport — the O(scroll-depth) cost this
+    /// replaces.
+    pub first_drawn: usize,
+    /// How far into each logical line these rows start, in bytes.
+    ///
+    /// Zero for every ordinary build: the rows begin at their lines' starts and
+    /// the renderer skips `left_column` characters of them. Non-zero when the
+    /// rows *are* the window a horizontally scrolled pane draws, in which case
+    /// the renderer must skip nothing — see `build_windowed_tokens`. Carried
+    /// with the rows rather than recomputed downstream, because a build and a
+    /// renderer that disagree about this draw an empty pane.
+    pub line_window_byte: usize,
+}
+
+/// Where the build starts, when the caller could resolve a resumable row.
+///
+/// Without one the build begins at `viewport.top_byte()` — the logical line's
+/// start — and every row above the viewport is built and thrown away.
+#[derive(Debug, Clone, Copy)]
+pub(super) struct BuildAnchor {
+    /// Byte of the first row to build; certified to be a visual-row start.
+    pub byte: usize,
+    /// Wrap state to resume that row with.
+    pub carry: crate::view::wrap_machine::RowCarry,
+    /// Rows built before the viewport's first drawn row.
+    pub skip: usize,
+}
+
+/// Width at which one visual row wraps.
+///
+/// Wrapping is always applied for safety, but with different thresholds. When
+/// line_wrap is on: wrap at viewport width (or `wrap_column` if set). When
+/// line_wrap is off: wrap at `MAX_SAFE_LINE_WIDTH` to prevent memory
+/// exhaustion from extremely long lines — except on the large-file path, where
+/// a line is one row and the caller widens this to the row's own span (see
+/// `build_view_data`), because a chop inside the drawn columns is a blank pane.
+///
+/// When wrapping is on, reserve the last content column so the end-of-line
+/// cursor never lands on top of the vertical scrollbar. The cursor sits one
+/// column past the last rendered character, so a row that fills
+/// `content_width` exactly would place the EOL cursor on the scrollbar track
+/// (which is drawn in the column immediately to the right of the content
+/// area). `saturating_sub` keeps this safe at very small widths where the
+/// guard inside `apply_wrapping_transform` will short-circuit anyway.
+fn effective_wrap_width(
+    viewport: &Viewport,
+    line_wrap_enabled: bool,
+    content_width: usize,
+) -> usize {
+    if !line_wrap_enabled {
+        return MAX_SAFE_LINE_WIDTH;
+    }
+    if viewport.grid_wrap {
+        // Terminal-grid wrap (fresh#2649): wrap at exactly the capture-time
+        // PTY column count. No EOL-cursor column is reserved and no clamp to
+        // the content width — the grid is one column wider than the
+        // scroll-back content area (the live view reclaims the scrollbar
+        // column), and clamping or reserving would re-wrap every full-width
+        // grid row one cell early, reflowing the whole view on entry. Full
+        // rows render with their last cell under the scrollbar, exactly like
+        // the non-wrapped exit frame always has.
+        return viewport.grid_cols();
+    }
+    let base = if let Some(col) = viewport.wrap_column {
+        col.min(content_width)
+    } else {
+        content_width
+    };
+    base.saturating_sub(1).max(1)
+}
+
+/// Character budget for [`build_base_tokens`], or `None` to bound the read by
+/// source lines alone.
+///
+/// Only meaningful under soft wrap. There, a logical line occupies
+/// `ceil(width / effective_width)` rows, so the rows the renderer can possibly
+/// draw are covered by about `rows × effective_width` characters — a few
+/// thousand, against the ~540,000 an unbudgeted read pulls in on a
+/// single-line file (`lines_seen` advances only once per `MAX_SAFE_LINE_WIDTH`
+/// characters, so the line bound never fires inside one long line).
+///
+/// With wrapping off a logical line is one visual row, so the rows the
+/// renderer can draw are covered by `rows × ` [`visible_line_span`] — the
+/// columns a row can actually show, not the safety chop it would be broken at
+/// if one line ever reached it.
+fn base_char_budget(
+    row_span: usize,
+    adjusted_visible_count: usize,
+    cursor_positions: &[usize],
+    rows_before_window: usize,
+    start_byte: usize,
+) -> Option<usize> {
+    // Rows the build must cover: the window, plus whatever precedes it. With an
+    // anchor that prefix is the walk-back to a resumable row — usually zero.
+    // Without one it is every row of the logical line above the viewport.
+    let rows = rows_before_window
+        .saturating_add(adjusted_visible_count)
+        .saturating_add(4);
+
+    // Characters per row and columns per row are not the same number: a
+    // double-width glyph fills two columns, a combining mark or ZWJ fills
+    // none, and a tab fills up to `tab_size`. Only the zero-width direction
+    // can make a row consume *more* characters than columns, so pad
+    // generously rather than trying to be exact — over-reading a little is
+    // free next to the 50× the budget saves.
+    let mut budget = rows
+        .saturating_mul(row_span.max(1))
+        .saturating_mul(2)
+        .saturating_add(1024);
+
+    // The scroll math (`ensure_visible_in_layout`) locates the cursor by
+    // searching the rows this build produces, so the build must reach the
+    // cursor even when it sits past the budgeted window — otherwise a cursor
+    // moved far down a long wrapped line would never scroll into view.
+    if let Some(furthest) = cursor_positions
+        .iter()
+        .copied()
+        .filter(|&pos| pos >= start_byte)
+        .max()
+    {
+        budget = budget.max(
+            (furthest - start_byte)
+                .saturating_add(row_span.saturating_mul(2))
+                .saturating_add(1024),
+        );
+    }
+
+    Some(budget)
 }
 
 /// Run the entire view pipeline for the current viewport:
@@ -47,7 +178,6 @@ pub(super) struct ViewData {
 pub(super) fn build_view_data(
     state: &mut EditorState,
     viewport: &Viewport,
-    view_transform: Option<ViewTransformPayload>,
     estimated_line_length: usize,
     visible_count: usize,
     line_wrap_enabled: bool,
@@ -57,13 +187,30 @@ pub(super) fn build_view_data(
     folds: &FoldManager,
     theme: &Theme,
     cursor_positions: &[usize],
+    anchor: Option<BuildAnchor>,
 ) -> ViewData {
+    super::instrument::count_view_data_build();
     let adjusted_visible_count = fold_adjusted_visible_count(
         &state.buffer,
         &state.marker_list,
         folds,
-        viewport.top_byte,
+        viewport.top_byte(),
         visible_count,
+    );
+    // A conceal that spans a line break swallows it: the two source lines
+    // render as one row. Compose mode reflows a paragraph exactly that way
+    // (markdown_compose's join conceals), so a window of N source lines can
+    // fill fewer than N rows and the viewport's bottom comes up short — the
+    // same shortfall a collapsed fold produces, and answered the same way, by
+    // asking the token build for the lines the joins ate.
+    let adjusted_visible_count = join_adjusted_visible_count(
+        &state.buffer,
+        &state.conceals,
+        &state.marker_list,
+        cursor_positions,
+        viewport.top_byte(),
+        adjusted_visible_count,
+        matches!(view_mode, ViewMode::PageView),
     );
 
     let is_binary = state.buffer.is_binary();
@@ -74,21 +221,119 @@ pub(super) fn build_view_data(
     // depth for any tokens produced by plugin view transforms).
     let fold_skip = fold_skip_set(&state.buffer, &state.marker_list, folds);
 
+    // Width one visual row wraps at. Computed here — before the token build
+    // rather than just before `apply_wrapping_transform` — because it also
+    // sizes the token build's character budget (see `base_char_budget`).
+    let effective_width = effective_wrap_width(viewport, line_wrap_enabled, content_width);
+    // What a row can show, which with wrapping off is not what a row is
+    // *chopped* at: the chop is a safety bound no real line reaches, while this
+    // is the handful of columns the pane draws.
+    // Sizing a row by the pane's own window applies to the files it exists for:
+    // the ones too large to read whole. Below the large-file threshold a line
+    // costs nothing to read in full, and reading it in full is what keeps every
+    // *other* consumer of these rows correct — a diff pane scrolls sideways on a
+    // viewport of its own (`CompositeViewState::get_pane_viewport`) that this
+    // build cannot see, and would draw past the end of a row cut to the split's
+    // `left_column`.
+    let bounded_rows = !line_wrap_enabled && state.buffer.is_large_file();
+    // How far into each logical line these rows begin.
+    //
+    // Only this mode can have an offset: with wrap off on a large file a row is
+    // a *window* into a line rather than the line's opening, and the window's
+    // position is the horizontal scroll the viewport maintains — in bytes, as
+    // every column measurement on this path already is. Reading the window
+    // where it is, instead of reading up to it, is what keeps a frame's cost
+    // and its reach independent of how far right the view has been scrolled.
+    // Not for a binary buffer: its rows are built byte-by-byte by a reader of
+    // its own, and a window into a line means nothing to a view already showing
+    // bytes rather than columns.
+    let line_window_byte = if bounded_rows && !is_binary {
+        viewport.left_column
+    } else {
+        0
+    };
+    let row_span = if bounded_rows {
+        // The row is the window: its own width and a screen of slack, and
+        // nothing to do with how far along the line it sits.
+        content_width
+            .max(1)
+            .saturating_mul(2)
+            .min(MAX_SAFE_LINE_WIDTH)
+            .max(1)
+    } else if line_wrap_enabled {
+        effective_width
+    } else {
+        MAX_SAFE_LINE_WIDTH
+    };
+    // With wrap off on a large file a logical line is one visual row, so in
+    // that mode the line is not chopped at all — the build already stopped it
+    // at `row_span`, and the row carries every column from the line's start to
+    // there so the renderer can skip to `left_column` and draw from it.
+    //
+    // A chop here is a chop inside the drawn columns, and both ways of getting
+    // it wrong are visible: at `MAX_SAFE_LINE_WIDTH` the columns a view
+    // scrolled past 10,000 wants are on a row the viewport never reaches, so
+    // `End` on a long line blanks the pane, caret and all; at `row_span` — a
+    // read budget, roughly two screens — the line breaks into screen-wide rows
+    // and `Down` walks them, which is soft wrap by another name and exactly
+    // what this mode exists not to do. So: a bound no row can reach. Twice the
+    // characters the build may emit, since no character is wider than two
+    // columns.
+    let effective_width = if bounded_rows {
+        row_span.saturating_mul(2).saturating_add(1024)
+    } else {
+        effective_width
+    };
+
     // Build base token stream from source, skipping any source-byte range
     // that falls inside a collapsed fold.
-    let base_tokens = build_base_tokens(
-        &mut state.buffer,
-        viewport.top_byte,
-        estimated_line_length,
-        adjusted_visible_count,
-        is_binary,
-        line_ending,
-        &fold_skip,
-    );
+    // With an anchor the build starts at the viewport's own row rather than at
+    // the logical line's start, so nothing above the window is built at all —
+    // and the budget needs to cover only the window, not the prefix leading to
+    // it. Without one, both fall back to the line-start behaviour.
+    let (start_byte, resume_carry, rows_before_window) = match anchor {
+        Some(a) => (a.byte, Some(a.carry), a.skip),
+        None => (viewport.top_byte(), None, viewport.top_view_line_offset()),
+    };
+    let base_tokens = if line_window_byte > 0 {
+        // The rows are the window. Nothing before it is read, so none of the
+        // budgets below apply — the read is a screenful by construction.
+        build_windowed_tokens(
+            &mut state.buffer,
+            start_byte,
+            adjusted_visible_count,
+            line_ending,
+            &fold_skip,
+            line_window_byte,
+            row_span,
+        )
+    } else {
+        build_base_tokens(
+            &mut state.buffer,
+            start_byte,
+            estimated_line_length,
+            adjusted_visible_count,
+            is_binary,
+            line_ending,
+            &fold_skip,
+            base_char_budget(
+                row_span,
+                adjusted_visible_count,
+                cursor_positions,
+                rows_before_window,
+                start_byte,
+            ),
+            // With wrapping off one logical line is one visual row, so a line
+            // contributes only the columns the pane can show. With it on the wrap
+            // machine already breaks the line into rows, and cutting it here would
+            // hide rows the viewport wants. Below the large-file threshold nothing
+            // is cut at all: see `bounded_rows` above.
+            bounded_rows.then_some(row_span),
+            anchor.is_some(),
+        )
+    };
 
-    // Use plugin transform if available, otherwise use base tokens
-    let has_view_transform = view_transform.is_some();
-    let mut tokens = view_transform.map(|vt| vt.tokens).unwrap_or(base_tokens);
+    let mut tokens = base_tokens;
 
     // Apply soft breaks — marker-based line wrapping that survives edits
     // without flicker. Only apply in Compose mode; Source mode shows the raw
@@ -99,13 +344,14 @@ pub(super) fn build_view_data(
             .iter()
             .filter_map(|t| t.source_offset)
             .next_back()
-            .unwrap_or(viewport.top_byte)
+            .unwrap_or(viewport.top_byte())
             + 1;
-        let soft_breaks = state.soft_breaks.query_viewport(
-            viewport.top_byte,
+        let soft_breaks = state.soft_breaks.query_viewport_rendered(
+            viewport.top_byte(),
             viewport_end,
             &state.marker_list,
             cursor_positions,
+            Some(theme),
         );
         if !soft_breaks.is_empty() {
             tokens = apply_soft_breaks(tokens, &soft_breaks);
@@ -126,11 +372,11 @@ pub(super) fn build_view_data(
             .iter()
             .filter_map(|t| t.source_offset)
             .next_back()
-            .unwrap_or(viewport.top_byte)
+            .unwrap_or(viewport.top_byte())
             + 1;
         let exclude_ns = (!is_compose).then(md_syntax_namespace);
         let conceal_ranges = state.conceals.query_viewport_excluding(
-            viewport.top_byte,
+            viewport.top_byte(),
             viewport_end,
             &state.marker_list,
             exclude_ns.as_ref(),
@@ -141,31 +387,9 @@ pub(super) fn build_view_data(
         }
     }
 
-    // Apply wrapping transform - always enabled for safety, but with
-    // different thresholds. When line_wrap is on: wrap at viewport width (or
-    // wrap_column if set). When line_wrap is off: wrap at
-    // MAX_SAFE_LINE_WIDTH to prevent memory exhaustion from extremely long
-    // lines.
-    //
-    // When wrapping is on, reserve the last content column so the
-    // end-of-line cursor never lands on top of the vertical scrollbar.
-    // The cursor sits one column past the last rendered character, so
-    // a row that fills `content_width` exactly would place the EOL
-    // cursor on the scrollbar track (which is drawn in the column
-    // immediately to the right of the content area).  `saturating_sub`
-    // keeps this safe at very small widths where the guard inside
-    // `apply_wrapping_transform` will short-circuit anyway.
-    let effective_width = if line_wrap_enabled {
-        let base = if let Some(col) = viewport.wrap_column {
-            col.min(content_width)
-        } else {
-            content_width
-        };
-        base.saturating_sub(1).max(1)
-    } else {
-        MAX_SAFE_LINE_WIDTH
-    };
-    let hanging_indent = line_wrap_enabled && viewport.wrap_indent;
+    // Wrapping is applied below at `effective_width` (computed before the
+    // token build, above).
+    let hanging_indent = line_wrap_enabled && viewport.wrap_indent && !viewport.grid_wrap;
 
     // Splice inline virtual text (inlay hints) into the stream BEFORE
     // wrapping so its display width participates in wrap boundaries, the
@@ -189,21 +413,39 @@ pub(super) fn build_view_data(
                 Some(start + len)
             })
             .max()
-            .unwrap_or(viewport.top_byte);
-        tokens =
-            splice_inline_virtual_text(tokens, state, Some(theme), viewport.top_byte, viewport_end);
+            .unwrap_or(viewport.top_byte());
+        tokens = splice_inline_virtual_text(
+            tokens,
+            &resolve_inline_hints(
+                state,
+                Some(theme),
+                viewport.top_byte(),
+                viewport_end,
+                is_compose,
+            ),
+        );
     }
 
-    tokens = apply_wrapping_transform(tokens, effective_width, gutter_width, hanging_indent);
+    tokens = if line_wrap_enabled && viewport.grid_wrap {
+        // Exact-column grid wrap — must stay row-for-row identical to the
+        // scroll math's `for_each_grid_row_start` (fresh#2649 symptom 2).
+        apply_grid_wrapping_transform(tokens, effective_width)
+    } else {
+        apply_wrapping_transform_from(
+            tokens,
+            effective_width,
+            gutter_width,
+            hanging_indent,
+            // Resuming at the anchor's carry is what makes a mid-line start
+            // produce the same rows the line-start build would have.
+            resume_carry,
+        )
+    };
 
     // Convert tokens to display lines using the view pipeline.
     let is_binary = state.buffer.is_binary();
     let ansi_aware = !is_binary;
-    let at_buffer_end = if has_view_transform {
-        // View transforms supply their own token streams; the trailing
-        // empty line logic doesn't apply to them.
-        false
-    } else {
+    let at_buffer_end = {
         let max_source_offset = tokens
             .iter()
             .filter_map(|t| t.source_offset)
@@ -213,8 +455,16 @@ pub(super) fn build_view_data(
     };
     // Skip folded source ranges at the iterator level. Most folded content
     // is already absent from `tokens` (pre-skipped in `build_base_tokens`);
-    // this handles plugin view transforms whose token stream predates the
+    // this handles decoration-injected content whose stream predates the
     // skip.
+    // `Beginning` claims the stream starts at a logical line, which the gutter
+    // reads as "print this line's number". An anchored build starts at the
+    // viewport's own row instead, and on a wrapped line that row is a
+    // continuation — the anchor's carry is what knows the difference.
+    let first_line_start = match anchor {
+        Some(a) if a.carry.on_continuation => LineStart::AfterBreak,
+        _ => LineStart::Beginning,
+    };
     let source_lines: Vec<ViewLine> = ViewLineIterator::new(
         &tokens,
         is_binary,
@@ -222,148 +472,9 @@ pub(super) fn build_view_data(
         state.buffer_settings.tab_size,
         at_buffer_end,
     )
+    .starting_at(first_line_start)
     .with_fold_skip(&fold_skip)
     .collect();
-
-    // Writeback to the line-wrap cache.
-    //
-    // We have the full pipeline's output (`source_lines`) for the
-    // visible window.  Slice it by logical line and store each slice
-    // as an `Arc<Vec<ViewLine>>` under the key the scroll-math /
-    // cursor-nav readers will query.  This means subsequent queries
-    // for a line the renderer just visited are O(1) cache hits.
-    //
-    // Skipped when:
-    //   - A plugin view_transform is active.  Its token stream doesn't
-    //     come from raw line text via `build_base_tokens`, so the miss
-    //     handler cannot reproduce it from a one-line input — cached
-    //     entries would mismatch a cache-miss recompute.
-    //   - Line wrap is off.  Every logical line is one visual row;
-    //     caching the trivial answer provides no benefit.
-    //   - Folds or virtual-text injection are active.  Those
-    //     post-processing steps run AFTER this writeback and can add
-    //     lines / reshape rows that a per-line miss-handler recompute
-    //     wouldn't see — keep the cache to pre-fold, pre-virtual-text
-    //     reality so the two writers agree.  (The renderer still uses
-    //     the folded / injected output for drawing; the cache just
-    //     reflects what `compute_line_layout` would produce for the
-    //     same line.)
-    if !has_view_transform
-        && line_wrap_enabled
-        && fold_skip.is_empty()
-        && state.virtual_texts.is_empty()
-    {
-        use crate::view::line_wrap_cache::{
-            cursor_sig_for_line, pipeline_inputs_version, CacheViewMode, LineWrapKey,
-        };
-        use crate::view::ui::view_pipeline::LineStart;
-        use std::sync::Arc;
-
-        let cache_view_mode = if matches!(view_mode, ViewMode::PageView) {
-            CacheViewMode::Compose
-        } else {
-            CacheViewMode::Source
-        };
-        let pipeline_inputs_ver = pipeline_inputs_version(
-            state.buffer.version(),
-            state.soft_breaks.version(),
-            state.conceals.version(),
-            state.virtual_texts.version(),
-        );
-        let make_key = |line_start: usize, mode: CacheViewMode, cursor_sig: u64| LineWrapKey {
-            pipeline_inputs_version: pipeline_inputs_ver,
-            view_mode: mode,
-            line_start,
-            effective_width: effective_width as u32,
-            gutter_width: gutter_width as u16,
-            wrap_column: viewport.wrap_column.map(|c| c as u32),
-            hanging_indent,
-            line_wrap_enabled: true,
-            cursor_sig,
-        };
-
-        // Walk `source_lines` grouping consecutive rows that belong to
-        // the same logical line.  A new logical line begins when we
-        // see `LineStart::Beginning` (only on row 0 of the window) or
-        // `LineStart::AfterSourceNewline`.  `AfterBreak` rows are
-        // wrap continuations — same logical line.
-        // `AfterInjectedNewline` is for plugin-injected breaks; we
-        // conservatively don't publish those runs (their line_start
-        // byte is ambiguous).
-        //
-        // The first row's `source_start_byte` anchors the group to a
-        // buffer byte; if it's `None` (e.g. injected content), skip
-        // the whole group.
-        let mut i = 0;
-        while i < source_lines.len() {
-            let first = &source_lines[i];
-            let is_group_start = match first.line_start {
-                LineStart::Beginning | LineStart::AfterSourceNewline => true,
-                LineStart::AfterInjectedNewline | LineStart::AfterBreak => false,
-            };
-            if !is_group_start {
-                i += 1;
-                continue;
-            }
-            let Some(line_start_byte) = first.source_start_byte else {
-                i += 1;
-                continue;
-            };
-            // Find the end of this logical line's group.
-            let mut j = i + 1;
-            let mut has_injected = false;
-            while j < source_lines.len() {
-                match source_lines[j].line_start {
-                    LineStart::AfterBreak => {
-                        j += 1;
-                    }
-                    LineStart::AfterInjectedNewline => {
-                        has_injected = true;
-                        break;
-                    }
-                    LineStart::Beginning | LineStart::AfterSourceNewline => {
-                        break;
-                    }
-                }
-            }
-            if !has_injected {
-                // Slice `source_lines[i..j]` corresponds to one logical
-                // line with no plugin-injected reshaping.  Store it.
-                //
-                // The key's cursor signature spans through the byte after
-                // the line's last rendered source byte (the start of the
-                // next line when the row ends in a newline), matching the
-                // inclusive bound cursor-activation scopes use.
-                let slice: Vec<ViewLine> = source_lines[i..j].to_vec();
-                let sig_end = slice
-                    .iter()
-                    .flat_map(|l| l.char_source_bytes.iter().copied().flatten())
-                    .max()
-                    .map(|b| b + 1)
-                    .unwrap_or(line_start_byte);
-                let cursor_sig = cursor_sig_for_line(cursor_positions, line_start_byte, sig_end);
-                let arc = Arc::new(slice);
-                state.line_wrap_cache.put(
-                    make_key(line_start_byte, cache_view_mode, cursor_sig),
-                    arc.clone(),
-                );
-                // Also write under `Source` so scroll math (which
-                // queries with its `Source` convention) hits the
-                // same entry.  Same value, same Arc — no deep copy.
-                // Scroll math queries with `cursor_sig: 0`, so the
-                // cursor line's entry (non-zero sig) deliberately
-                // doesn't serve it — cursor-blind consumers recompute
-                // that one line in its cursor-free form.
-                if !matches!(cache_view_mode, CacheViewMode::Source) {
-                    state.line_wrap_cache.put(
-                        make_key(line_start_byte, CacheViewMode::Source, cursor_sig),
-                        arc,
-                    );
-                }
-            }
-            i = j;
-        }
-    }
 
     // Inject virtual lines (LineAbove/LineBelow) from VirtualTextManager.
     // When soft-wrap is enabled, pass the same per-row content width that
@@ -399,5 +510,9 @@ pub(super) fn build_view_data(
         &placeholder_style,
     );
 
-    ViewData { lines }
+    ViewData {
+        lines,
+        first_drawn: rows_before_window,
+        line_window_byte,
+    }
 }

@@ -23,11 +23,15 @@ pub struct PluginDevWorkspace {
 /// - No DOM lib (plugins run in QuickJS, not a browser)
 /// - `types: []` prevents picking up @types/node or other ambient types
 /// - `skipLibCheck: true` avoids checking fresh.d.ts itself
+/// - `moduleResolution: bundler` (matching `plugins/tsconfig.json` and
+///   `check-types.sh`): TypeScript 7 removed the old `node` (node10)
+///   resolution mode, so a tsserver reading this file would fail with
+///   TS5108 (#2872)
 const TSCONFIG_CONTENT: &str = r#"{
   "compilerOptions": {
     "target": "ES2020",
     "module": "ES2020",
-    "moduleResolution": "node",
+    "moduleResolution": "bundler",
     "strict": true,
     "noEmit": true,
     "skipLibCheck": true,
@@ -112,5 +116,24 @@ impl PluginDevWorkspace {
 impl Drop for PluginDevWorkspace {
     fn drop(&mut self) {
         self.cleanup();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// TypeScript 7 removed `moduleResolution: node` (node10); a tsserver
+    /// reading a generated tsconfig that still uses it fails with TS5108.
+    /// The generated config must use `bundler`, matching
+    /// `plugins/tsconfig.json` and `check-types.sh` (#2872).
+    #[test]
+    fn generated_tsconfig_does_not_use_removed_module_resolution() {
+        let parsed: serde_json::Value = serde_json::from_str(TSCONFIG_CONTENT)
+            .expect("generated tsconfig.json must be valid JSON");
+        assert_eq!(
+            parsed["compilerOptions"]["moduleResolution"], "bundler",
+            "moduleResolution must be `bundler`; `node` (node10) was removed in TypeScript 7"
+        );
     }
 }

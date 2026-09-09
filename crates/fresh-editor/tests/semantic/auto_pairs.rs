@@ -391,3 +391,65 @@ fn theorem_backspace_between_empty_single_quotes_deletes_both() {
         ..Default::default()
     });
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// Markdown: auto-close off by default, surround still on
+// ─────────────────────────────────────────────────────────────────────────
+
+#[test]
+fn theorem_typing_backtick_does_not_auto_close_in_markdown() {
+    // `languages.markdown.auto_close` defaults to false: prose types
+    // backticks as literal text far more often than as a pair.
+    assert_buffer_scenario(BufferScenario {
+        behavior: BehaviorFlags::production(),
+        language: Some("x.md".into()),
+        description: "InsertChar('`') inserts one backtick in a Markdown buffer".into(),
+        initial_text: "".into(),
+        actions: vec![Action::InsertChar('`')],
+        expected_text: "`".into(),
+        expected_primary: CursorExpect::at(1),
+        expected_extra_cursors: vec![],
+        expected_selection_text: None,
+        ..Default::default()
+    });
+}
+
+#[test]
+fn theorem_typing_open_paren_does_not_auto_close_in_markdown() {
+    assert_buffer_scenario(BufferScenario {
+        behavior: BehaviorFlags::production(),
+        language: Some("x.md".into()),
+        description: "InsertChar('(') inserts one paren in a Markdown buffer".into(),
+        initial_text: "".into(),
+        actions: vec![Action::InsertChar('(')],
+        expected_text: "(".into(),
+        expected_primary: CursorExpect::at(1),
+        expected_extra_cursors: vec![],
+        expected_selection_text: None,
+        ..Default::default()
+    });
+}
+
+#[test]
+fn theorem_typing_over_a_selection_replaces_it_in_markdown() {
+    // `auto_surround` is off for Markdown too, so a typed delimiter replaces
+    // the selection like any other character instead of wrapping it.
+    assert_buffer_scenario(BufferScenario {
+        behavior: BehaviorFlags::production(),
+        language: Some("x.md".into()),
+        description: "Selecting `code` and typing '`' replaces it in a Markdown buffer".into(),
+        initial_text: "code".into(),
+        actions: vec![
+            Action::SelectRight,
+            Action::SelectRight,
+            Action::SelectRight,
+            Action::SelectRight,
+            Action::InsertChar('`'),
+        ],
+        expected_text: "`".into(),
+        expected_primary: CursorExpect::at(1),
+        expected_extra_cursors: vec![],
+        expected_selection_text: None,
+        ..Default::default()
+    });
+}

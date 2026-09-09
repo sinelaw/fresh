@@ -18,9 +18,7 @@
 //! registry. With the bug present this fails (the remote fs sees
 //! `…/workspaces/…` paths); with the fix it passes (those reads go local).
 
-mod common;
-
-use common::harness::{EditorTestHarness, HarnessOptions};
+use crate::common::harness::{EditorTestHarness, HarnessOptions};
 use fresh::config_io::DirectoryContext;
 use fresh::model::filesystem::{
     DirEntry, FileMetadata, FilePermissions, FileReader, FileSearchCursor, FileSearchOptions,

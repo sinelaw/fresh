@@ -243,7 +243,14 @@ export function dropdown(
  * `WidgetPanel.setDualIncluded(key, values)`.
  *
  * `excluded` names option values owned by a sibling list, kept out of
- * this list's Available column (cross-exclusion). */
+ * this list's Available column (cross-exclusion).
+ *
+ * The focused column's cursor row is marked `▸`, the other column's
+ * parked cursor `▹`, and the active column's header `▾`, so the state
+ * reads without relying on color. `activeIncluded` / `availableCursor`
+ * / `includedCursor` seed that cursor (host instance state takes over
+ * after the first render); `hint` adds a one-line key legend under the
+ * columns. */
 export function dualList(
   options: { value: string; label: string }[],
   opts?: {
@@ -251,6 +258,10 @@ export function dualList(
     excluded?: string[];
     label?: string;
     focused?: boolean;
+    activeIncluded?: boolean;
+    availableCursor?: number;
+    includedCursor?: number;
+    hint?: string;
     visibleRows?: number;
     key?: string;
   },
@@ -262,6 +273,10 @@ export function dualList(
     excluded: opts?.excluded ?? [],
     label: opts?.label ?? "",
     focused: opts?.focused ?? false,
+    activeIncluded: opts?.activeIncluded ?? false,
+    availableCursor: opts?.availableCursor ?? 0,
+    includedCursor: opts?.includedCursor ?? 0,
+    hint: opts?.hint ?? "",
     visibleRows: opts?.visibleRows ?? 6,
     key: opts?.key,
   };
@@ -288,9 +303,52 @@ export function button(
      * advances one stop per group (the active option) and ←/→ moves
      * the selection within the group. Defaults to true. */
     focusable?: boolean;
+    /** Render the label alone — no `[ ]` frame, no focus-marker
+     * gutter — turning the button into an *icon affordance* (a `×`
+     * close glyph, a `▾` chevron) rather than a framed action. Use
+     * where the glyph itself is the control; keep the default for
+     * anything with a word on it. Layout only — `hoverStyle` decides
+     * how it looks under the pointer. */
+    bare?: boolean;
+    /** Stretch the button across the full width it is laid out in (the
+     * panel's content width, or its share of an enclosing `row`),
+     * padding the label out — and `…`-truncating it when the width
+     * can't hold it.
+     *
+     * Focus and hover paint the button's *own* cells, so a
+     * natural-width button leaves the rest of its row unhighlighted
+     * even where the container pads the row out around it (a
+     * `labeledSection` pads every child to its inner width). Menu
+     * entries are rows of a menu rather than free-standing actions, so
+     * set this on them and the highlight spans the row — at the width
+     * the host actually rendered, with no plugin-side width guess to
+     * drift on a resize or a dock drag.
+     *
+     * Leave it off inside an anchored popup that sizes itself to its
+     * content: filling there stretches the popup to the panel width. */
+    fullWidth?: boolean;
+    /** How the button looks while the pointer is over it. Omit to
+     * leave it looking the same hovered as not.
+     *
+     * The host applies this as the mouse moves, with no round-trip to
+     * the plugin, so hover costs a panel re-render and nothing more.
+     * It outranks focus styling while both apply.
+     *
+     * For a close glyph, `{ fg: "ui.tab_close_hover_fg" }` is the
+     * editor's shared "close affordance under the pointer" look — the
+     * tab `×` and the file explorer's `×` both use it. */
+    hoverStyle?: Partial<OverlayOptions>;
+    /** How the button looks at rest — not focused, not hovered, not
+     * disabled. Omit to keep the look its `intent` gives it.
+     *
+     * The sibling of `hoverStyle`, one state earlier: `hoverStyle` can
+     * say what a control looks like under the pointer, but only this
+     * can say that a word IS a control. `{ underline: true }` is the
+     * conventional mark. */
+    style?: Partial<OverlayOptions>;
   },
 ): WidgetSpec {
-  return {
+  const spec: WidgetSpec = {
     kind: "button",
     label,
     focused: options?.focused ?? false,
@@ -298,7 +356,15 @@ export function button(
     key: options?.key,
     disabled: options?.disabled ?? false,
     focusable: options?.focusable ?? true,
+    bare: options?.bare ?? false,
+    fullWidth: options?.fullWidth ?? false,
   };
+  // Omit rather than pass `undefined`: the plugin bridge turns a
+  // present `undefined` into JSON `null`, which fails to deserialize
+  // as the host's `Option<OverlayOptions>`.
+  if (options?.hoverStyle !== undefined) spec.hoverStyle = options.hoverStyle;
+  if (options?.style !== undefined) spec.style = options.style;
+  return spec;
 }
 
 /** Horizontal spacer of fixed column count. In a `Row` it produces
@@ -310,7 +376,10 @@ export function spacer(cols: number, key?: string): WidgetSpec {
 
 /** Flex horizontal spacer — fills remaining row width
  * (`panel_width - sum(non-flex children)`). Use to right-align a
- * trailing widget: `row(label, flexSpacer(), button)`. With
+ * trailing widget: `row(label, flexSpacer(), button)`. Inside a
+ * `col` on a height-budgeted panel it absorbs leftover ROWS instead —
+ * `col(content, flexSpacer(), hintBar)` pins the hints to the panel
+ * bottom without counting chrome rows. With
  * multiple flex spacers in one row the leftover splits evenly. */
 export function flexSpacer(key?: string): WidgetSpec {
   return { kind: "spacer", cols: 0, flex: true, key };
@@ -337,10 +406,15 @@ export function divider(
 
 /** Vertical list of pre-rendered rows with host-managed selection
  * styling, click routing, and **virtual scrolling**. Plugin passes
- * the full dataset of items + a `visibleRows` count; the widget
- * owns scroll offset as instance state (keyed by `key`) and
- * auto-clamps it to keep `selectedIndex` in view. Plugins never
- * compute scroll math.
+ * the full dataset of items; the widget owns scroll offset as
+ * instance state (keyed by `key`) and auto-clamps it to keep
+ * `selectedIndex` in view. Plugins never compute scroll math.
+ *
+ * Omit `visibleRows` to auto-size: the host windows the list to the
+ * panel height it already knows, minus the rows the list's Col
+ * siblings occupy — so a panel with a header and footer never needs
+ * `getViewportHeight()` arithmetic. Pass an explicit count only to
+ * pin the window (at most one auto-sized list/tree per Col).
  *
  * Click on a row fires `widget_event` with `eventType: "select"` and
  * `payload: { index, key }` where `index` is the *absolute* index
@@ -358,9 +432,20 @@ export function list(options: {
    * click anywhere on a card fires the same `select` event a classic
    * row would. Interactive widgets nested in a card aren't routed. */
   itemSpecs?: WidgetSpec[];
+  /** One stable identifier per item, parallel to the item list.
+   *
+   * @deprecated Omitting this is deprecated and will become an error.
+   * Per-item state — scroll position, selection, tree expansion — is
+   * keyed by these strings; items without one all share the empty key,
+   * so they cannot keep state of their own. The host logs a warning
+   * naming your plugin and this widget when any item is unkeyed.
+   * Pass one stable string per item (e.g. `"file:5/match:23"`). */
   itemKeys?: string[];
   selectedIndex?: number;
-  visibleRows: number;
+  /** Rows this widget windows to. Omit to auto-size from the
+   * host-known panel height (recommended); an explicit value pins
+   * the window. */
+  visibleRows?: number;
   /** Whether Tab / Shift+Tab lands focus on this list. Default
    * true (matches other tabbable widgets). Set to false in
    * picker-style layouts where the filter input stays focused
@@ -402,6 +487,21 @@ export function treeNode(
      * nodes so every card is the same height. Ignored when the tree
      * is single-line (`itemHeight === 1`). */
     extraLines?: TextPropertyEntry[];
+    /** The char range of `text` this row exists to show.
+     *
+     * A row wider than the panel is windowed by the host; without this
+     * the window can only start at the head of the line, which is where
+     * a search result's match usually is not. Name the span and the host
+     * rests the window on it — and the reader pans away from there with
+     * Shift+Left/Right or Shift+wheel.
+     *
+     * `pinned` keeps that many leading chars in place while the rest of the
+     * row slides under them — a row's leading pieces are usually its identity
+     * (`path:line`) rather than its content.
+     *
+     * Chars, not display columns: a plugin has the string, not the
+     * terminal's width table. Out-of-range values resolve to the end. */
+    windowAnchor?: { pinned?: number; start: number; len: number };
   },
 ): TreeNode {
   // `checked` is intentionally Optional<bool>, not a default-false
@@ -417,6 +517,16 @@ export function treeNode(
   };
   if (options?.checked !== undefined) {
     node.checked = options.checked;
+  }
+  if (options?.windowAnchor) {
+    // `pinned` is defaulted here rather than left absent: the host's
+    // `TextWindowAnchor` takes it as `#[serde(default)]`, so a missing
+    // field and a zero mean the same thing on the wire — but the
+    // generated type says `pinned: number`, and filling it in is what
+    // keeps the two spellings from being a type error for every caller
+    // that has no pinned head.
+    const { pinned, start, len } = options.windowAnchor;
+    node.windowAnchor = { pinned: pinned ?? 0, start, len };
   }
   if (options?.extraLines && options.extraLines.length > 0) {
     node.extraLines = options.extraLines;
@@ -444,9 +554,20 @@ export function treeNode(
  * selection + expansion across re-renders. */
 export function tree(options: {
   nodes: TreeNode[];
+  /** One stable identifier per item, parallel to the item list.
+   *
+   * @deprecated Omitting this is deprecated and will become an error.
+   * Per-item state — scroll position, selection, tree expansion — is
+   * keyed by these strings; items without one all share the empty key,
+   * so they cannot keep state of their own. The host logs a warning
+   * naming your plugin and this widget when any item is unkeyed.
+   * Pass one stable string per item (e.g. `"file:5/match:23"`). */
   itemKeys?: string[];
   selectedIndex?: number;
-  visibleRows: number;
+  /** Rows this widget windows to. Omit to auto-size from the
+   * host-known panel height (recommended); an explicit value pins
+   * the window. */
+  visibleRows?: number;
   /** Initial expanded keys; subsequent expansion changes are
    * host-owned and don't read this field. Use
    * `panel.setExpandedKeys(...)` to override host state after
@@ -471,6 +592,11 @@ export function tree(options: {
    * headers) render as plain single rows instead of being blank-padded
    * to the card height. */
   cardBorders?: boolean;
+  /** Columns of indent per depth level. `2` (default) is the classic
+   * tree step. Narrow panels that nest several levels deep can drop to
+   * `1` to spend those columns on the node text instead; the disclosure
+   * glyph (or the blank standing in for one) still marks each level. */
+  indentCols?: number;
   key?: string;
 }): WidgetSpec {
   return {
@@ -483,6 +609,7 @@ export function tree(options: {
     checkable: options.checkable ?? false,
     itemHeight: options.itemHeight ?? 1,
     cardBorders: options.cardBorders ?? false,
+    indentCols: options.indentCols ?? 2,
     key: options.key,
   };
 }
@@ -556,6 +683,15 @@ export function text(
      * from the value with `: `, so a column of controls aligns their
      * value cells. `0` (default) keeps the compact `label [value]`. */
     labelWidth?: number;
+    /** Reject every mutating operation (typing, Backspace/Delete, Cut,
+     * Paste) while keeping caret motion, selection, and Copy. Implied
+     * by `markdown`. */
+    readOnly?: boolean;
+    /** Render `value` as a markdown document (multi-line only): the
+     * host renders it through the same engine as LSP hover docs and
+     * word-wraps to the widget's width. Forcibly read-only; the caret,
+     * selection, and Copy operate on the rendered plain text. */
+    markdown?: boolean;
     key?: string;
   } = {},
 ): WidgetSpec {
@@ -575,6 +711,8 @@ export function text(
     selStart: options.selStart ?? -1,
     selEnd: options.selEnd ?? -1,
     labelWidth: options.labelWidth ?? 0,
+    readOnly: options.readOnly ?? false,
+    markdown: options.markdown ?? false,
     key: options.key,
   };
 }
@@ -646,7 +784,9 @@ export function textInput(
  * reserved rectangle.
  *
  * `windowId` of 0 (or any unknown id) renders the placeholder
- * blanks without dispatching the per-window paint. */
+ * blanks without dispatching the per-window paint — which is also
+ * what a `windowId` that names no window at all is normalised to,
+ * see below. */
 export function windowEmbed(options: {
   windowId: number;
   rows: number;
@@ -654,7 +794,30 @@ export function windowEmbed(options: {
 }): WidgetSpec {
   return {
     kind: "windowEmbed",
-    windowId: options.windowId,
+    // **A window id the host cannot hold is "no window", not a broken
+    // panel.** The host reads this field as a `u32`, so a negative or
+    // fractional id fails to deserialise — and it fails for the *whole
+    // spec*, which the host then drops: `updateFloatingWidget` logs
+    // `invalid spec` and the panel keeps painting whatever it last
+    // showed. A plugin that embeds a placeholder row therefore froze
+    // its own panel, and the user saw a stuck card that only unstuck on
+    // the next keystroke that happened to produce a valid spec
+    // (sinelaw/fresh#1971: the orchestrator's synthetic ids for
+    // workspaces that have no window yet, which left the picker on
+    // "Archiving… / Waiting for git…" after the archive had finished).
+    //
+    // "No window" is a state this widget already has a value for, and
+    // that value is 0. Mapping to it keeps a placeholder rendering as
+    // the blanks it is meant to render, instead of taking the panel
+    // down with it.
+    // The range is closed at *both* ends: `u32` has a top as well as a
+    // bottom, and an id above it fails to deserialise exactly as a negative
+    // one does — same rejected spec, same frozen panel.
+    windowId: Number.isFinite(options.windowId) &&
+        options.windowId > 0 &&
+        options.windowId <= 0xffff_ffff
+      ? Math.trunc(options.windowId)
+      : 0,
     rows: options.rows,
     key: options.key,
   };
@@ -677,21 +840,36 @@ export function windowEmbed(options: {
 export function labeledSection(options: {
   label?: string;
   child: WidgetSpec;
+  /** How the section's own chrome — border and legend — looks while
+   * `key` is the hovered widget. A section emits no hit of its own, so
+   * give it the key of a control inside it and the frame answers with
+   * that control: a card whose rows share one key lights as a card. */
+  hoverStyle?: Partial<OverlayOptions>;
   /** When this section is a Block child of a Row, request a
    * specific share of the row's width as a percentage (1..=100).
    * Out-of-range values fall back to the equal-split default.
    * Useful for picker-style layouts: a narrow list pane next to
    * a wide preview pane. */
   widthPct?: number;
+  /** When this section is a Block child of a Row, request exactly this
+   * many columns. Takes precedence over `widthPct`, and is what you
+   * want whenever you have a measure in mind: a percent is an integer,
+   * so "a third of the row" does not divide — three equal siblings
+   * either overflow the panel, and the host wraps the last onto its own
+   * line, or leave a remainder that all lands on one side. */
+  widthCols?: number;
   key?: string;
 }): WidgetSpec {
-  return {
+  const spec: WidgetSpec = {
     kind: "labeledSection",
     label: options.label ?? "",
     child: options.child,
     widthPct: options.widthPct,
     key: options.key,
   };
+  if (options.widthCols !== undefined) spec.widthCols = options.widthCols;
+  if (options.hoverStyle !== undefined) spec.hoverStyle = options.hoverStyle;
+  return spec;
 }
 
 /** Float `child` over the rest of the layout instead of consuming
@@ -713,6 +891,50 @@ export function overlay(
 ): WidgetSpec {
   return {
     kind: "overlay",
+    child,
+    key: options?.key,
+  };
+}
+
+/** A popup layer: the child paints OVER the panel's rows (like
+ * `overlay`) as a first-class tree node — part of the layout-box
+ * tree, pointer-opaque, and slated to grow screen-space anchoring
+ * so a popup near a panel edge is not clipped. Prefer this over
+ * `overlay` for new popup UI. */
+export function popup(
+  child: WidgetSpec,
+  options?: {
+    key?: string;
+    /** Anchor [row, col] in panel-inner coordinates the popup drops
+     * from (host resolves the final rect: below the anchor, flipping
+     * above near the frame edge, clamped on screen). */
+    anchor?: [number, number];
+    /** Escape the panel's clipping and paint at screen level (what
+     * the dropdown pop-over does). Default: panel-clipped. */
+    screenSpace?: boolean;
+  },
+): WidgetSpec {
+  return {
+    kind: "popup",
+    child,
+    key: options?.key,
+    anchor: options?.anchor,
+    screenSpace: options?.screenSpace ?? false,
+  };
+}
+
+/** A focus and event scope around a subtree — the unit for composing
+ * reusable pieces. Renders its child transparently (no chrome of its
+ * own); Tab / Shift+Tab cycle among the focusable widgets INSIDE the
+ * component instead of the whole panel, so a picker or dialog subtree
+ * keeps its own ring without hand-written focus code. Give it a `key`
+ * for stable identity (keyed reconciliation, targeted swaps). */
+export function component(
+  child: WidgetSpec,
+  options?: { key?: string },
+): WidgetSpec {
+  return {
+    kind: "component",
     child,
     key: options?.key,
   };
@@ -766,10 +988,26 @@ export class WidgetPanel {
   private mounted = false;
   private readonly panelId: number;
   private readonly bufferId: number;
+  private readonly options: WidgetPanelOptions | undefined;
 
-  constructor(bufferId: number, panelId?: number) {
+  /** `options` are host behaviours the spec does not describe, applied
+   *  at mount and kept for the panel's life — see `WidgetPanelOptions`.
+   *  Pass `{ autoFocusFirst: false }` when "nothing focused" is a real
+   *  resting state for the panel, or clearing focus will not clear it:
+   *  the next repaint re-seeds it onto whichever widget happens to be
+   *  first in the tab order. Pass `{ focusFollowsCursor: true }` for a
+   *  panel mounted into a buffer the reader moves a caret through, so
+   *  focus and that caret stay on the same thing in both directions —
+   *  which makes "nothing focused" the common case, so the two options
+   *  are nearly always set together. */
+  constructor(
+    bufferId: number,
+    panelId?: number,
+    options?: WidgetPanelOptions,
+  ) {
     this.bufferId = bufferId;
     this.panelId = panelId ?? allocatePanelId();
+    this.options = options;
   }
 
   /** Returns the plugin-allocated panel id, useful for routing
@@ -785,7 +1023,12 @@ export class WidgetPanel {
     const editor = (globalThis as any).editor;
     if (!this.mounted) {
       this.mounted = true;
-      return editor.mountWidgetPanel(this.panelId, this.bufferId, spec);
+      return editor.mountWidgetPanel(
+        this.panelId,
+        this.bufferId,
+        spec,
+        this.options,
+      );
     }
     return editor.updateWidgetPanel(this.panelId, spec);
   }
@@ -992,6 +1235,17 @@ export class FloatingWidgetPanel {
        * the panel exactly like Esc / Cancel (fires the panel's `cancel`
        * `widget_event`). Ignored for `asDock`. Default false. */
       closable?: boolean;
+      /** Mount without taking keyboard focus — the editor keeps the
+       * keys. Use this instead of mount-then-`blur` for a panel that
+       * must never own the keyboard (command dispatch is budgeted
+       * across frames, so a follow-up blur can land a tick late).
+       * Default false: mounting focuses the panel. */
+      startBlurred?: boolean;
+      /** The plugin mode (`defineMode`) whose bindings this panel's keys
+       * resolve against first — the panel's own keymap, ahead of the
+       * widget that holds focus. A dock declares its chords here rather
+       * than through the window's editor mode. */
+      mode?: string;
     } = {},
   ): boolean {
     // deno-lint-ignore no-explicit-any
@@ -1008,6 +1262,8 @@ export class FloatingWidgetPanel {
       options.focusMarker ?? false,
       options.title ?? "",
       options.closable ?? false,
+      options.startBlurred ?? false,
+      options.mode ?? "",
     );
   }
 

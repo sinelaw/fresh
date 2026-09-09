@@ -1,0 +1,2522 @@
+{
+  "id": "E0",
+  "type": "Gesture",
+  "rect": {"x": 0, "y": 0, "w": 127, "h": 36},
+  "cause": "mount",
+  "children": [
+    {
+      "id": "E1",
+      "type": "Gesture",
+      "rect": {"x": 0, "y": 0, "w": 127, "h": 36},
+      "cause": "parent E0",
+      "children": [
+        {
+          "id": "E2",
+          "type": "Box",
+          "rect": {"x": 0, "y": 0, "w": 127, "h": 36},
+          "cause": "parent E1",
+          "children": [
+            {
+              "id": "E3",
+              "type": "Host",
+              "key": "region:1",
+              "rect": {"x": 0, "y": 0, "w": 0, "h": 36},
+              "cause": "parent E2",
+              "children": []
+            },
+            {
+              "id": "E4",
+              "type": "Provide",
+              "key": "window:9",
+              "rect": {"x": 0, "y": 0, "w": 127, "h": 36},
+              "cause": "parent E2",
+              "children": [
+                {
+                  "id": "E5",
+                  "type": "Box",
+                  "key": "chrome_column",
+                  "rect": {"x": 0, "y": 0, "w": 127, "h": 36},
+                  "cause": "parent E4",
+                  "children": [
+                    {
+                      "id": "E6",
+                      "type": "Memo<fresh::view::shell::menu::MenuBar, fresh::view::shell::msg::UiMsg>",
+                      "key": "region:2",
+                      "rect": {"x": 0, "y": 0, "w": 127, "h": 1},
+                      "state": "()",
+                      "builds": 1,
+                      "cause": "parent E5",
+                      "children": [
+                        {
+                          "id": "E7",
+                          "type": "Gesture",
+                          "rect": {"x": 0, "y": 0, "w": 127, "h": 1},
+                          "cause": "mount",
+                          "children": [
+                            {
+                              "id": "E8",
+                              "type": "Box",
+                              "rect": {"x": 0, "y": 0, "w": 127, "h": 1},
+                              "cause": "mount",
+                              "children": [
+                                {
+                                  "id": "E9",
+                                  "type": "Gesture",
+                                  "rect": {"x": 0, "y": 0, "w": 7, "h": 1},
+                                  "cause": "mount",
+                                  "children": [
+                                    {
+                                      "id": "E10",
+                                      "type": "TextRun",
+                                      "rect": {"x": 0, "y": 0, "w": 7, "h": 1},
+                                      "text": " File  ",
+                                      "cause": "mount",
+                                      "children": []
+                                    }
+                                  ]
+                                },
+                                {
+                                  "id": "E11",
+                                  "type": "Gesture",
+                                  "rect": {"x": 7, "y": 0, "w": 7, "h": 1},
+                                  "cause": "mount",
+                                  "children": [
+                                    {
+                                      "id": "E12",
+                                      "type": "TextRun",
+                                      "rect": {"x": 7, "y": 0, "w": 7, "h": 1},
+                                      "text": " Edit  ",
+                                      "cause": "mount",
+                                      "children": []
+                                    }
+                                  ]
+                                },
+                                {
+                                  "id": "E13",
+                                  "type": "Gesture",
+                                  "rect": {"x": 14, "y": 0, "w": 7, "h": 1},
+                                  "cause": "mount",
+                                  "children": [
+                                    {
+                                      "id": "E14",
+                                      "type": "TextRun",
+                                      "rect": {"x": 14, "y": 0, "w": 7, "h": 1},
+                                      "text": " View  ",
+                                      "cause": "mount",
+                                      "children": []
+                                    }
+                                  ]
+                                },
+                                {
+                                  "id": "E15",
+                                  "type": "Gesture",
+                                  "rect": {"x": 21, "y": 0, "w": 12, "h": 1},
+                                  "cause": "mount",
+                                  "children": [
+                                    {
+                                      "id": "E16",
+                                      "type": "TextRun",
+                                      "rect": {"x": 21, "y": 0, "w": 12, "h": 1},
+                                      "text": " Selection  ",
+                                      "cause": "mount",
+                                      "children": []
+                                    }
+                                  ]
+                                },
+                                {
+                                  "id": "E17",
+                                  "type": "Gesture",
+                                  "rect": {"x": 33, "y": 0, "w": 5, "h": 1},
+                                  "cause": "mount",
+                                  "children": [
+                                    {
+                                      "id": "E18",
+                                      "type": "TextRun",
+                                      "rect": {"x": 33, "y": 0, "w": 5, "h": 1},
+                                      "text": " Go  ",
+                                      "cause": "mount",
+                                      "children": []
+                                    }
+                                  ]
+                                },
+                                {
+                                  "id": "E19",
+                                  "type": "Gesture",
+                                  "rect": {"x": 38, "y": 0, "w": 6, "h": 1},
+                                  "cause": "mount",
+                                  "children": [
+                                    {
+                                      "id": "E20",
+                                      "type": "TextRun",
+                                      "rect": {"x": 38, "y": 0, "w": 6, "h": 1},
+                                      "text": " LSP  ",
+                                      "cause": "mount",
+                                      "children": []
+                                    }
+                                  ]
+                                },
+                                {
+                                  "id": "E21",
+                                  "type": "Gesture",
+                                  "rect": {"x": 44, "y": 0, "w": 7, "h": 1},
+                                  "cause": "mount",
+                                  "children": [
+                                    {
+                                      "id": "E22",
+                                      "type": "TextRun",
+                                      "rect": {"x": 44, "y": 0, "w": 7, "h": 1},
+                                      "text": " Help  ",
+                                      "cause": "mount",
+                                      "children": []
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "id": "E23",
+                      "type": "Box",
+                      "rect": {"x": 0, "y": 1, "w": 127, "h": 34},
+                      "cause": "parent E5",
+                      "children": [
+                        {
+                          "id": "E24",
+                          "type": "Memo<fresh::view::shell::file_explorer::Explorer, fresh::view::shell::msg::UiMsg>",
+                          "key": "region:3",
+                          "rect": {"x": 0, "y": 1, "w": 38, "h": 34},
+                          "state": "()",
+                          "builds": 3,
+                          "cause": "parent E23",
+                          "children": [
+                            {
+                              "id": "E25",
+                              "type": "Box",
+                              "rect": {"x": 0, "y": 1, "w": 38, "h": 34},
+                              "cause": "parent E24",
+                              "children": [
+                                {
+                                  "id": "E26",
+                                  "type": "Gesture",
+                                  "rect": {"x": 0, "y": 1, "w": 38, "h": 34},
+                                  "cause": "parent E25",
+                                  "children": [
+                                    {
+                                      "id": "E27",
+                                      "type": "Box",
+                                      "rect": {"x": 0, "y": 1, "w": 38, "h": 34},
+                                      "cause": "parent E26",
+                                      "children": [
+                                        {
+                                          "id": "E28",
+                                          "type": "Gesture",
+                                          "key": "explorer_row:0",
+                                          "rect": {"x": 1, "y": 2, "w": 36, "h": 1},
+                                          "cause": "parent E27",
+                                          "children": [
+                                            {
+                                              "id": "E29",
+                                              "type": "Box",
+                                              "rect": {"x": 1, "y": 2, "w": 36, "h": 1},
+                                              "cause": "parent E28",
+                                              "children": [
+                                                {
+                                                  "id": "E30",
+                                                  "type": "TextRun",
+                                                  "rect": {"x": 1, "y": 2, "w": 7, "h": 1},
+                                                  "text": "▼ fresh",
+                                                  "cause": "parent E29",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "id": "E31",
+                                                  "type": "Box",
+                                                  "rect": {"x": 8, "y": 2, "w": 28, "h": 1},
+                                                  "cause": "parent E29",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "id": "E209",
+                                                  "type": "Gesture",
+                                                  "key": "explorer_slot:0",
+                                                  "rect": {"x": 36, "y": 2, "w": 1, "h": 1},
+                                                  "cause": "parent E29",
+                                                  "children": [
+                                                    {
+                                                      "id": "E210",
+                                                      "type": "TextRun",
+                                                      "rect": {"x": 36, "y": 2, "w": 1, "h": 1},
+                                                      "text": "●",
+                                                      "cause": "parent E209",
+                                                      "children": []
+                                                    }
+                                                  ]
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "id": "E32",
+                                          "type": "Gesture",
+                                          "key": "explorer_row:1",
+                                          "rect": {"x": 1, "y": 3, "w": 36, "h": 1},
+                                          "cause": "parent E27",
+                                          "children": [
+                                            {
+                                              "id": "E33",
+                                              "type": "Box",
+                                              "rect": {"x": 1, "y": 3, "w": 36, "h": 1},
+                                              "cause": "parent E32",
+                                              "children": [
+                                                {
+                                                  "id": "E34",
+                                                  "type": "TextRun",
+                                                  "rect": {"x": 1, "y": 3, "w": 11, "h": 1},
+                                                  "text": "  > .agents",
+                                                  "cause": "parent E33",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "id": "E35",
+                                                  "type": "Box",
+                                                  "rect": {"x": 12, "y": 3, "w": 25, "h": 1},
+                                                  "cause": "parent E33",
+                                                  "children": []
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "id": "E36",
+                                          "type": "Gesture",
+                                          "key": "explorer_row:2",
+                                          "rect": {"x": 1, "y": 4, "w": 36, "h": 1},
+                                          "cause": "parent E27",
+                                          "children": [
+                                            {
+                                              "id": "E37",
+                                              "type": "Box",
+                                              "rect": {"x": 1, "y": 4, "w": 36, "h": 1},
+                                              "cause": "parent E36",
+                                              "children": [
+                                                {
+                                                  "id": "E38",
+                                                  "type": "TextRun",
+                                                  "rect": {"x": 1, "y": 4, "w": 11, "h": 1},
+                                                  "text": "  > .claude",
+                                                  "cause": "parent E37",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "id": "E39",
+                                                  "type": "Box",
+                                                  "rect": {"x": 12, "y": 4, "w": 25, "h": 1},
+                                                  "cause": "parent E37",
+                                                  "children": []
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "id": "E40",
+                                          "type": "Gesture",
+                                          "key": "explorer_row:3",
+                                          "rect": {"x": 1, "y": 5, "w": 36, "h": 1},
+                                          "cause": "parent E27",
+                                          "children": [
+                                            {
+                                              "id": "E41",
+                                              "type": "Box",
+                                              "rect": {"x": 1, "y": 5, "w": 36, "h": 1},
+                                              "cause": "parent E40",
+                                              "children": [
+                                                {
+                                                  "id": "E42",
+                                                  "type": "TextRun",
+                                                  "rect": {"x": 1, "y": 5, "w": 10, "h": 1},
+                                                  "text": "  > .codex",
+                                                  "cause": "parent E41",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "id": "E43",
+                                                  "type": "Box",
+                                                  "rect": {"x": 11, "y": 5, "w": 26, "h": 1},
+                                                  "cause": "parent E41",
+                                                  "children": []
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "id": "E44",
+                                          "type": "Gesture",
+                                          "key": "explorer_row:4",
+                                          "rect": {"x": 1, "y": 6, "w": 36, "h": 1},
+                                          "cause": "parent E27",
+                                          "children": [
+                                            {
+                                              "id": "E45",
+                                              "type": "Box",
+                                              "rect": {"x": 1, "y": 6, "w": 36, "h": 1},
+                                              "cause": "parent E44",
+                                              "children": [
+                                                {
+                                                  "id": "E46",
+                                                  "type": "TextRun",
+                                                  "rect": {"x": 1, "y": 6, "w": 13, "h": 1},
+                                                  "text": "  > · .config",
+                                                  "cause": "parent E45",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "id": "E47",
+                                                  "type": "Box",
+                                                  "rect": {"x": 14, "y": 6, "w": 23, "h": 1},
+                                                  "cause": "parent E45",
+                                                  "children": []
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "id": "E48",
+                                          "type": "Gesture",
+                                          "key": "explorer_row:5",
+                                          "rect": {"x": 1, "y": 7, "w": 36, "h": 1},
+                                          "cause": "parent E27",
+                                          "children": [
+                                            {
+                                              "id": "E49",
+                                              "type": "Box",
+                                              "rect": {"x": 1, "y": 7, "w": 36, "h": 1},
+                                              "cause": "parent E48",
+                                              "children": [
+                                                {
+                                                  "id": "E50",
+                                                  "type": "TextRun",
+                                                  "rect": {"x": 1, "y": 7, "w": 10, "h": 1},
+                                                  "text": "  > .fresh",
+                                                  "cause": "parent E49",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "id": "E51",
+                                                  "type": "Box",
+                                                  "rect": {"x": 11, "y": 7, "w": 26, "h": 1},
+                                                  "cause": "parent E49",
+                                                  "children": []
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "id": "E52",
+                                          "type": "Gesture",
+                                          "key": "explorer_row:6",
+                                          "rect": {"x": 1, "y": 8, "w": 36, "h": 1},
+                                          "cause": "parent E27",
+                                          "children": [
+                                            {
+                                              "id": "E53",
+                                              "type": "Box",
+                                              "rect": {"x": 1, "y": 8, "w": 36, "h": 1},
+                                              "cause": "parent E52",
+                                              "children": [
+                                                {
+                                                  "id": "E54",
+                                                  "type": "TextRun",
+                                                  "rect": {"x": 1, "y": 8, "w": 8, "h": 1},
+                                                  "text": "  > .git",
+                                                  "cause": "parent E53",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "id": "E55",
+                                                  "type": "Box",
+                                                  "rect": {"x": 9, "y": 8, "w": 28, "h": 1},
+                                                  "cause": "parent E53",
+                                                  "children": []
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "id": "E56",
+                                          "type": "Gesture",
+                                          "key": "explorer_row:7",
+                                          "rect": {"x": 1, "y": 9, "w": 36, "h": 1},
+                                          "cause": "parent E27",
+                                          "children": [
+                                            {
+                                              "id": "E57",
+                                              "type": "Box",
+                                              "rect": {"x": 1, "y": 9, "w": 36, "h": 1},
+                                              "cause": "parent E56",
+                                              "children": [
+                                                {
+                                                  "id": "E58",
+                                                  "type": "TextRun",
+                                                  "rect": {"x": 1, "y": 9, "w": 13, "h": 1},
+                                                  "text": "  > ▄ .github",
+                                                  "cause": "parent E57",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "id": "E59",
+                                                  "type": "Box",
+                                                  "rect": {"x": 14, "y": 9, "w": 23, "h": 1},
+                                                  "cause": "parent E57",
+                                                  "children": []
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "id": "E60",
+                                          "type": "Gesture",
+                                          "key": "explorer_row:8",
+                                          "rect": {"x": 1, "y": 10, "w": 36, "h": 1},
+                                          "cause": "parent E27",
+                                          "children": [
+                                            {
+                                              "id": "E61",
+                                              "type": "Box",
+                                              "rect": {"x": 1, "y": 10, "w": 36, "h": 1},
+                                              "cause": "parent E60",
+                                              "children": [
+                                                {
+                                                  "id": "E62",
+                                                  "type": "TextRun",
+                                                  "rect": {"x": 1, "y": 10, "w": 14, "h": 1},
+                                                  "text": "  > .worktrees",
+                                                  "cause": "parent E61",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "id": "E63",
+                                                  "type": "Box",
+                                                  "rect": {"x": 15, "y": 10, "w": 22, "h": 1},
+                                                  "cause": "parent E61",
+                                                  "children": []
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "id": "E64",
+                                          "type": "Gesture",
+                                          "key": "explorer_row:9",
+                                          "rect": {"x": 1, "y": 11, "w": 36, "h": 1},
+                                          "cause": "parent E27",
+                                          "children": [
+                                            {
+                                              "id": "E65",
+                                              "type": "Box",
+                                              "rect": {"x": 1, "y": 11, "w": 36, "h": 1},
+                                              "cause": "parent E64",
+                                              "children": [
+                                                {
+                                                  "id": "E66",
+                                                  "type": "TextRun",
+                                                  "rect": {"x": 1, "y": 11, "w": 12, "h": 1},
+                                                  "text": "  > █ crates",
+                                                  "cause": "parent E65",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "id": "E67",
+                                                  "type": "Box",
+                                                  "rect": {"x": 13, "y": 11, "w": 23, "h": 1},
+                                                  "cause": "parent E65",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "id": "E211",
+                                                  "type": "Gesture",
+                                                  "key": "explorer_slot:9",
+                                                  "rect": {"x": 36, "y": 11, "w": 1, "h": 1},
+                                                  "cause": "parent E65",
+                                                  "children": [
+                                                    {
+                                                      "id": "E212",
+                                                      "type": "TextRun",
+                                                      "rect": {"x": 36, "y": 11, "w": 1, "h": 1},
+                                                      "text": "●",
+                                                      "cause": "parent E211",
+                                                      "children": []
+                                                    }
+                                                  ]
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "id": "E68",
+                                          "type": "Gesture",
+                                          "key": "explorer_row:10",
+                                          "rect": {"x": 1, "y": 12, "w": 36, "h": 1},
+                                          "cause": "parent E27",
+                                          "children": [
+                                            {
+                                              "id": "E69",
+                                              "type": "Box",
+                                              "rect": {"x": 1, "y": 12, "w": 36, "h": 1},
+                                              "cause": "parent E68",
+                                              "children": [
+                                                {
+                                                  "id": "E70",
+                                                  "type": "TextRun",
+                                                  "rect": {"x": 1, "y": 12, "w": 12, "h": 1},
+                                                  "text": "  > ▃ debian",
+                                                  "cause": "parent E69",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "id": "E71",
+                                                  "type": "Box",
+                                                  "rect": {"x": 13, "y": 12, "w": 24, "h": 1},
+                                                  "cause": "parent E69",
+                                                  "children": []
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "id": "E72",
+                                          "type": "Gesture",
+                                          "key": "explorer_row:11",
+                                          "rect": {"x": 1, "y": 13, "w": 36, "h": 1},
+                                          "cause": "parent E27",
+                                          "children": [
+                                            {
+                                              "id": "E73",
+                                              "type": "Box",
+                                              "rect": {"x": 1, "y": 13, "w": 36, "h": 1},
+                                              "cause": "parent E72",
+                                              "children": [
+                                                {
+                                                  "id": "E74",
+                                                  "type": "TextRun",
+                                                  "rect": {"x": 1, "y": 13, "w": 8, "h": 1},
+                                                  "text": "  > dist",
+                                                  "cause": "parent E73",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "id": "E75",
+                                                  "type": "Box",
+                                                  "rect": {"x": 9, "y": 13, "w": 28, "h": 1},
+                                                  "cause": "parent E73",
+                                                  "children": []
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "id": "E76",
+                                          "type": "Gesture",
+                                          "key": "explorer_row:12",
+                                          "rect": {"x": 1, "y": 14, "w": 36, "h": 1},
+                                          "cause": "parent E27",
+                                          "children": [
+                                            {
+                                              "id": "E77",
+                                              "type": "Box",
+                                              "rect": {"x": 1, "y": 14, "w": 36, "h": 1},
+                                              "cause": "parent E76",
+                                              "children": [
+                                                {
+                                                  "id": "E78",
+                                                  "type": "TextRun",
+                                                  "rect": {"x": 1, "y": 14, "w": 10, "h": 1},
+                                                  "text": "  > ▆ docs",
+                                                  "cause": "parent E77",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "id": "E79",
+                                                  "type": "Box",
+                                                  "rect": {"x": 11, "y": 14, "w": 26, "h": 1},
+                                                  "cause": "parent E77",
+                                                  "children": []
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "id": "E80",
+                                          "type": "Gesture",
+                                          "key": "explorer_row:13",
+                                          "rect": {"x": 1, "y": 15, "w": 36, "h": 1},
+                                          "cause": "parent E27",
+                                          "children": [
+                                            {
+                                              "id": "E81",
+                                              "type": "Box",
+                                              "rect": {"x": 1, "y": 15, "w": 36, "h": 1},
+                                              "cause": "parent E80",
+                                              "children": [
+                                                {
+                                                  "id": "E82",
+                                                  "type": "TextRun",
+                                                  "rect": {"x": 1, "y": 15, "w": 14, "h": 1},
+                                                  "text": "  > ▂ homepage",
+                                                  "cause": "parent E81",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "id": "E83",
+                                                  "type": "Box",
+                                                  "rect": {"x": 15, "y": 15, "w": 22, "h": 1},
+                                                  "cause": "parent E81",
+                                                  "children": []
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "id": "E84",
+                                          "type": "Gesture",
+                                          "key": "explorer_row:14",
+                                          "rect": {"x": 1, "y": 16, "w": 36, "h": 1},
+                                          "cause": "parent E27",
+                                          "children": [
+                                            {
+                                              "id": "E85",
+                                              "type": "Box",
+                                              "rect": {"x": 1, "y": 16, "w": 36, "h": 1},
+                                              "cause": "parent E84",
+                                              "children": [
+                                                {
+                                                  "id": "E86",
+                                                  "type": "TextRun",
+                                                  "rect": {"x": 1, "y": 16, "w": 16, "h": 1},
+                                                  "text": "  > node_modules",
+                                                  "cause": "parent E85",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "id": "E87",
+                                                  "type": "Box",
+                                                  "rect": {"x": 17, "y": 16, "w": 20, "h": 1},
+                                                  "cause": "parent E85",
+                                                  "children": []
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "id": "E88",
+                                          "type": "Gesture",
+                                          "key": "explorer_row:15",
+                                          "rect": {"x": 1, "y": 17, "w": 36, "h": 1},
+                                          "cause": "parent E27",
+                                          "children": [
+                                            {
+                                              "id": "E89",
+                                              "type": "Box",
+                                              "rect": {"x": 1, "y": 17, "w": 36, "h": 1},
+                                              "cause": "parent E88",
+                                              "children": [
+                                                {
+                                                  "id": "E90",
+                                                  "type": "TextRun",
+                                                  "rect": {"x": 1, "y": 17, "w": 13, "h": 1},
+                                                  "text": "  > ▃ scripts",
+                                                  "cause": "parent E89",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "id": "E91",
+                                                  "type": "Box",
+                                                  "rect": {"x": 14, "y": 17, "w": 23, "h": 1},
+                                                  "cause": "parent E89",
+                                                  "children": []
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "id": "E92",
+                                          "type": "Gesture",
+                                          "key": "explorer_row:16",
+                                          "rect": {"x": 1, "y": 18, "w": 36, "h": 1},
+                                          "cause": "parent E27",
+                                          "children": [
+                                            {
+                                              "id": "E93",
+                                              "type": "Box",
+                                              "rect": {"x": 1, "y": 18, "w": 36, "h": 1},
+                                              "cause": "parent E92",
+                                              "children": [
+                                                {
+                                                  "id": "E94",
+                                                  "type": "TextRun",
+                                                  "rect": {"x": 1, "y": 18, "w": 10, "h": 1},
+                                                  "text": "  > target",
+                                                  "cause": "parent E93",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "id": "E95",
+                                                  "type": "Box",
+                                                  "rect": {"x": 11, "y": 18, "w": 26, "h": 1},
+                                                  "cause": "parent E93",
+                                                  "children": []
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "id": "E96",
+                                          "type": "Gesture",
+                                          "key": "explorer_row:17",
+                                          "rect": {"x": 1, "y": 19, "w": 36, "h": 1},
+                                          "cause": "parent E27",
+                                          "children": [
+                                            {
+                                              "id": "E97",
+                                              "type": "Box",
+                                              "rect": {"x": 1, "y": 19, "w": 36, "h": 1},
+                                              "cause": "parent E96",
+                                              "children": [
+                                                {
+                                                  "id": "E98",
+                                                  "type": "TextRun",
+                                                  "rect": {"x": 1, "y": 19, "w": 11, "h": 1},
+                                                  "text": "  > ▃ tests",
+                                                  "cause": "parent E97",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "id": "E99",
+                                                  "type": "Box",
+                                                  "rect": {"x": 12, "y": 19, "w": 25, "h": 1},
+                                                  "cause": "parent E97",
+                                                  "children": []
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "id": "E100",
+                                          "type": "Gesture",
+                                          "key": "explorer_row:18",
+                                          "rect": {"x": 1, "y": 20, "w": 36, "h": 1},
+                                          "cause": "parent E27",
+                                          "children": [
+                                            {
+                                              "id": "E101",
+                                              "type": "Box",
+                                              "rect": {"x": 1, "y": 20, "w": 36, "h": 1},
+                                              "cause": "parent E100",
+                                              "children": [
+                                                {
+                                                  "id": "E102",
+                                                  "type": "TextRun",
+                                                  "rect": {"x": 1, "y": 20, "w": 12, "h": 1},
+                                                  "text": "  > ▅ web-ui",
+                                                  "cause": "parent E101",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "id": "E103",
+                                                  "type": "Box",
+                                                  "rect": {"x": 13, "y": 20, "w": 24, "h": 1},
+                                                  "cause": "parent E101",
+                                                  "children": []
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "id": "E104",
+                                          "type": "Gesture",
+                                          "key": "explorer_row:19",
+                                          "rect": {"x": 1, "y": 21, "w": 36, "h": 1},
+                                          "cause": "parent E27",
+                                          "children": [
+                                            {
+                                              "id": "E105",
+                                              "type": "Box",
+                                              "rect": {"x": 1, "y": 21, "w": 36, "h": 1},
+                                              "cause": "parent E104",
+                                              "children": [
+                                                {
+                                                  "id": "E106",
+                                                  "type": "TextRun",
+                                                  "rect": {"x": 1, "y": 21, "w": 12, "h": 1},
+                                                  "text": "    · .envrc",
+                                                  "cause": "parent E105",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "id": "E107",
+                                                  "type": "Box",
+                                                  "rect": {"x": 13, "y": 21, "w": 24, "h": 1},
+                                                  "cause": "parent E105",
+                                                  "children": []
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "id": "E108",
+                                          "type": "Gesture",
+                                          "key": "explorer_row:20",
+                                          "rect": {"x": 1, "y": 22, "w": 36, "h": 1},
+                                          "cause": "parent E27",
+                                          "children": [
+                                            {
+                                              "id": "E109",
+                                              "type": "Box",
+                                              "rect": {"x": 1, "y": 22, "w": 36, "h": 1},
+                                              "cause": "parent E108",
+                                              "children": [
+                                                {
+                                                  "id": "E110",
+                                                  "type": "TextRun",
+                                                  "rect": {"x": 1, "y": 22, "w": 22, "h": 1},
+                                                  "text": "    · .fresh-tour.json",
+                                                  "cause": "parent E109",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "id": "E111",
+                                                  "type": "Box",
+                                                  "rect": {"x": 23, "y": 22, "w": 14, "h": 1},
+                                                  "cause": "parent E109",
+                                                  "children": []
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "id": "E112",
+                                          "type": "Gesture",
+                                          "key": "explorer_row:21",
+                                          "rect": {"x": 1, "y": 23, "w": 36, "h": 1},
+                                          "cause": "parent E27",
+                                          "children": [
+                                            {
+                                              "id": "E113",
+                                              "type": "Box",
+                                              "rect": {"x": 1, "y": 23, "w": 36, "h": 1},
+                                              "cause": "parent E112",
+                                              "children": [
+                                                {
+                                                  "id": "E114",
+                                                  "type": "TextRun",
+                                                  "rect": {"x": 1, "y": 23, "w": 20, "h": 1},
+                                                  "text": "    ▂ .gitattributes",
+                                                  "cause": "parent E113",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "id": "E115",
+                                                  "type": "Box",
+                                                  "rect": {"x": 21, "y": 23, "w": 16, "h": 1},
+                                                  "cause": "parent E113",
+                                                  "children": []
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "id": "E116",
+                                          "type": "Gesture",
+                                          "key": "explorer_row:22",
+                                          "rect": {"x": 1, "y": 24, "w": 36, "h": 1},
+                                          "cause": "parent E27",
+                                          "children": [
+                                            {
+                                              "id": "E117",
+                                              "type": "Box",
+                                              "rect": {"x": 1, "y": 24, "w": 36, "h": 1},
+                                              "cause": "parent E116",
+                                              "children": [
+                                                {
+                                                  "id": "E118",
+                                                  "type": "TextRun",
+                                                  "rect": {"x": 1, "y": 24, "w": 16, "h": 1},
+                                                  "text": "    ▂ .gitignore",
+                                                  "cause": "parent E117",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "id": "E119",
+                                                  "type": "Box",
+                                                  "rect": {"x": 17, "y": 24, "w": 20, "h": 1},
+                                                  "cause": "parent E117",
+                                                  "children": []
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "id": "E120",
+                                          "type": "Gesture",
+                                          "key": "explorer_row:23",
+                                          "rect": {"x": 1, "y": 25, "w": 36, "h": 1},
+                                          "cause": "parent E27",
+                                          "children": [
+                                            {
+                                              "id": "E121",
+                                              "type": "Box",
+                                              "rect": {"x": 1, "y": 25, "w": 36, "h": 1},
+                                              "cause": "parent E120",
+                                              "children": [
+                                                {
+                                                  "id": "E122",
+                                                  "type": "TextRun",
+                                                  "rect": {"x": 1, "y": 25, "w": 14, "h": 1},
+                                                  "text": "    · bun.lock",
+                                                  "cause": "parent E121",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "id": "E123",
+                                                  "type": "Box",
+                                                  "rect": {"x": 15, "y": 25, "w": 22, "h": 1},
+                                                  "cause": "parent E121",
+                                                  "children": []
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "id": "E124",
+                                          "type": "Gesture",
+                                          "key": "explorer_row:24",
+                                          "rect": {"x": 1, "y": 26, "w": 36, "h": 1},
+                                          "cause": "parent E27",
+                                          "children": [
+                                            {
+                                              "id": "E125",
+                                              "type": "Box",
+                                              "rect": {"x": 1, "y": 26, "w": 36, "h": 1},
+                                              "cause": "parent E124",
+                                              "children": [
+                                                {
+                                                  "id": "E126",
+                                                  "type": "TextRun",
+                                                  "rect": {"x": 1, "y": 26, "w": 16, "h": 1},
+                                                  "text": "    ▅ Cargo.lock",
+                                                  "cause": "parent E125",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "id": "E127",
+                                                  "type": "Box",
+                                                  "rect": {"x": 17, "y": 26, "w": 20, "h": 1},
+                                                  "cause": "parent E125",
+                                                  "children": []
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "id": "E128",
+                                          "type": "Gesture",
+                                          "key": "explorer_row:25",
+                                          "rect": {"x": 1, "y": 27, "w": 36, "h": 1},
+                                          "cause": "parent E27",
+                                          "children": [
+                                            {
+                                              "id": "E129",
+                                              "type": "Box",
+                                              "rect": {"x": 1, "y": 27, "w": 36, "h": 1},
+                                              "cause": "parent E128",
+                                              "children": [
+                                                {
+                                                  "id": "E130",
+                                                  "type": "TextRun",
+                                                  "rect": {"x": 1, "y": 27, "w": 16, "h": 1},
+                                                  "text": "    ▄ Cargo.toml",
+                                                  "cause": "parent E129",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "id": "E131",
+                                                  "type": "Box",
+                                                  "rect": {"x": 17, "y": 27, "w": 20, "h": 1},
+                                                  "cause": "parent E129",
+                                                  "children": []
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "id": "E132",
+                                          "type": "Gesture",
+                                          "key": "explorer_row:26",
+                                          "rect": {"x": 1, "y": 28, "w": 36, "h": 1},
+                                          "cause": "parent E27",
+                                          "children": [
+                                            {
+                                              "id": "E133",
+                                              "type": "Box",
+                                              "rect": {"x": 1, "y": 28, "w": 36, "h": 1},
+                                              "cause": "parent E132",
+                                              "children": [
+                                                {
+                                                  "id": "E134",
+                                                  "type": "TextRun",
+                                                  "rect": {"x": 1, "y": 28, "w": 18, "h": 1},
+                                                  "text": "    ▇ CHANGELOG.md",
+                                                  "cause": "parent E133",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "id": "E135",
+                                                  "type": "Box",
+                                                  "rect": {"x": 19, "y": 28, "w": 18, "h": 1},
+                                                  "cause": "parent E133",
+                                                  "children": []
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "id": "E136",
+                                          "type": "Gesture",
+                                          "key": "explorer_row:27",
+                                          "rect": {"x": 1, "y": 29, "w": 36, "h": 1},
+                                          "cause": "parent E27",
+                                          "children": [
+                                            {
+                                              "id": "E137",
+                                              "type": "Box",
+                                              "rect": {"x": 1, "y": 29, "w": 36, "h": 1},
+                                              "cause": "parent E136",
+                                              "children": [
+                                                {
+                                                  "id": "E138",
+                                                  "type": "TextRun",
+                                                  "rect": {"x": 1, "y": 29, "w": 21, "h": 1},
+                                                  "text": "    ▁ CONTRIBUTING.md",
+                                                  "cause": "parent E137",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "id": "E139",
+                                                  "type": "Box",
+                                                  "rect": {"x": 22, "y": 29, "w": 15, "h": 1},
+                                                  "cause": "parent E137",
+                                                  "children": []
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "id": "E140",
+                                          "type": "Gesture",
+                                          "key": "explorer_row:28",
+                                          "rect": {"x": 1, "y": 30, "w": 36, "h": 1},
+                                          "cause": "parent E27",
+                                          "children": [
+                                            {
+                                              "id": "E141",
+                                              "type": "Box",
+                                              "rect": {"x": 1, "y": 30, "w": 36, "h": 1},
+                                              "cause": "parent E140",
+                                              "children": [
+                                                {
+                                                  "id": "E142",
+                                                  "type": "TextRun",
+                                                  "rect": {"x": 1, "y": 30, "w": 17, "h": 1},
+                                                  "text": "    · default.nix",
+                                                  "cause": "parent E141",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "id": "E143",
+                                                  "type": "Box",
+                                                  "rect": {"x": 18, "y": 30, "w": 19, "h": 1},
+                                                  "cause": "parent E141",
+                                                  "children": []
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "id": "E144",
+                                          "type": "Gesture",
+                                          "key": "explorer_row:29",
+                                          "rect": {"x": 1, "y": 31, "w": 36, "h": 1},
+                                          "cause": "parent E27",
+                                          "children": [
+                                            {
+                                              "id": "E145",
+                                              "type": "Box",
+                                              "rect": {"x": 1, "y": 31, "w": 36, "h": 1},
+                                              "cause": "parent E144",
+                                              "children": [
+                                                {
+                                                  "id": "E146",
+                                                  "type": "TextRun",
+                                                  "rect": {"x": 1, "y": 31, "w": 25, "h": 1},
+                                                  "text": "    ▁ dist-workspace.toml",
+                                                  "cause": "parent E145",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "id": "E147",
+                                                  "type": "Box",
+                                                  "rect": {"x": 26, "y": 31, "w": 11, "h": 1},
+                                                  "cause": "parent E145",
+                                                  "children": []
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "id": "E148",
+                                          "type": "Gesture",
+                                          "key": "explorer_row:30",
+                                          "rect": {"x": 1, "y": 32, "w": 36, "h": 1},
+                                          "cause": "parent E27",
+                                          "children": [
+                                            {
+                                              "id": "E149",
+                                              "type": "Box",
+                                              "rect": {"x": 1, "y": 32, "w": 36, "h": 1},
+                                              "cause": "parent E148",
+                                              "children": [
+                                                {
+                                                  "id": "E150",
+                                                  "type": "TextRun",
+                                                  "rect": {"x": 1, "y": 32, "w": 16, "h": 1},
+                                                  "text": "    · flake.lock",
+                                                  "cause": "parent E149",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "id": "E151",
+                                                  "type": "Box",
+                                                  "rect": {"x": 17, "y": 32, "w": 20, "h": 1},
+                                                  "cause": "parent E149",
+                                                  "children": []
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "id": "E152",
+                                          "type": "Gesture",
+                                          "key": "explorer_row:31",
+                                          "rect": {"x": 1, "y": 33, "w": 36, "h": 1},
+                                          "cause": "parent E27",
+                                          "children": [
+                                            {
+                                              "id": "E153",
+                                              "type": "Box",
+                                              "rect": {"x": 1, "y": 33, "w": 36, "h": 1},
+                                              "cause": "parent E152",
+                                              "children": [
+                                                {
+                                                  "id": "E154",
+                                                  "type": "TextRun",
+                                                  "rect": {"x": 1, "y": 33, "w": 15, "h": 1},
+                                                  "text": "    ▂ flake.nix",
+                                                  "cause": "parent E153",
+                                                  "children": []
+                                                },
+                                                {
+                                                  "id": "E155",
+                                                  "type": "Box",
+                                                  "rect": {"x": 16, "y": 33, "w": 21, "h": 1},
+                                                  "cause": "parent E153",
+                                                  "children": []
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                },
+                                {
+                                  "id": "E156",
+                                  "type": "Box",
+                                  "rect": {"x": 0, "y": 1, "w": 38, "h": 34},
+                                  "cause": "parent E25",
+                                  "children": [
+                                    {
+                                      "id": "E157",
+                                      "type": "Box",
+                                      "rect": {"x": 0, "y": 1, "w": 38, "h": 1},
+                                      "cause": "parent E156",
+                                      "children": [
+                                        {
+                                          "id": "E158",
+                                          "type": "Box",
+                                          "rect": {"x": 0, "y": 1, "w": 1, "h": 1},
+                                          "cause": "parent E157",
+                                          "children": []
+                                        },
+                                        {
+                                          "id": "E159",
+                                          "type": "TextRun",
+                                          "rect": {"x": 1, "y": 1, "w": 24, "h": 1},
+                                          "text": " File Explorer (Ctrl+E) ",
+                                          "cause": "parent E157",
+                                          "children": []
+                                        },
+                                        {
+                                          "id": "E160",
+                                          "type": "Box",
+                                          "rect": {"x": 25, "y": 1, "w": 10, "h": 1},
+                                          "cause": "parent E157",
+                                          "children": []
+                                        },
+                                        {
+                                          "id": "E161",
+                                          "type": "Gesture",
+                                          "key": "explorer_close",
+                                          "rect": {"x": 35, "y": 1, "w": 3, "h": 1},
+                                          "cause": "parent E157",
+                                          "children": [
+                                            {
+                                              "id": "E162",
+                                              "type": "Box",
+                                              "rect": {"x": 35, "y": 1, "w": 3, "h": 1},
+                                              "cause": "parent E161",
+                                              "children": [
+                                                {
+                                                  "id": "E163",
+                                                  "type": "TextRun",
+                                                  "rect": {"x": 35, "y": 1, "w": 1, "h": 1},
+                                                  "text": "×",
+                                                  "cause": "parent E162",
+                                                  "children": []
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "id": "E164",
+                                      "type": "Box",
+                                      "rect": {"x": 0, "y": 2, "w": 38, "h": 33},
+                                      "cause": "parent E156",
+                                      "children": [
+                                        {
+                                          "id": "E165",
+                                          "type": "Box",
+                                          "rect": {"x": 0, "y": 2, "w": 38, "h": 32},
+                                          "cause": "parent E164",
+                                          "children": [
+                                            {
+                                              "id": "E166",
+                                              "type": "Box",
+                                              "rect": {"x": 0, "y": 2, "w": 37, "h": 32},
+                                              "cause": "parent E165",
+                                              "children": []
+                                            },
+                                            {
+                                              "id": "E167",
+                                              "type": "Gesture",
+                                              "key": "explorer_grip",
+                                              "rect": {"x": 37, "y": 2, "w": 1, "h": 32},
+                                              "cause": "parent E165",
+                                              "children": [
+                                                {
+                                                  "id": "E168",
+                                                  "type": "Box",
+                                                  "rect": {"x": 37, "y": 2, "w": 1, "h": 32},
+                                                  "cause": "parent E167",
+                                                  "children": []
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "id": "E169",
+                                          "type": "Box",
+                                          "rect": {"x": 0, "y": 34, "w": 38, "h": 1},
+                                          "cause": "parent E164",
+                                          "children": []
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        },
+                        {
+                          "id": "E170",
+                          "type": "Box",
+                          "key": "region:4",
+                          "rect": {"x": 38, "y": 1, "w": 89, "h": 34},
+                          "cause": "parent E23",
+                          "children": [
+                            {
+                              "id": "E171",
+                              "type": "Host",
+                              "rect": {"x": 38, "y": 1, "w": 89, "h": 34},
+                              "cause": "parent E170",
+                              "children": []
+                            },
+                            {
+                              "id": "E172",
+                              "type": "Box",
+                              "key": "pane:0",
+                              "rect": {"x": 38, "y": 1, "w": 89, "h": 34},
+                              "cause": "parent E170",
+                              "children": [
+                                {
+                                  "id": "E173",
+                                  "type": "Host",
+                                  "rect": {"x": 38, "y": 1, "w": 89, "h": 34},
+                                  "cause": "parent E172",
+                                  "children": []
+                                },
+                                {
+                                  "id": "E174",
+                                  "type": "Box",
+                                  "rect": {"x": 38, "y": 1, "w": 89, "h": 34},
+                                  "cause": "parent E172",
+                                  "children": [
+                                    {
+                                      "id": "E175",
+                                      "type": "Box",
+                                      "key": "pane_tabs:0",
+                                      "rect": {"x": 38, "y": 1, "w": 89, "h": 1},
+                                      "cause": "parent E174",
+                                      "children": [
+                                        {
+                                          "id": "E176",
+                                          "type": "Gesture",
+                                          "rect": {"x": 38, "y": 1, "w": 89, "h": 1},
+                                          "cause": "parent E175",
+                                          "children": [
+                                            {
+                                              "id": "E177",
+                                              "type": "Box",
+                                              "rect": {"x": 38, "y": 1, "w": 89, "h": 1},
+                                              "cause": "parent E176",
+                                              "children": []
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "id": "E178",
+                                          "type": "Box",
+                                          "rect": {"x": 127, "y": 1, "w": 0, "h": 1},
+                                          "cause": "parent E175",
+                                          "children": []
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "id": "E179",
+                                      "type": "Box",
+                                      "rect": {"x": 38, "y": 2, "w": 89, "h": 33},
+                                      "cause": "parent E174",
+                                      "children": [
+                                        {
+                                          "id": "E180",
+                                          "type": "Gesture",
+                                          "key": "pane_content:0",
+                                          "rect": {"x": 38, "y": 2, "w": 88, "h": 33},
+                                          "cause": "parent E179",
+                                          "children": [
+                                            {
+                                              "id": "E181",
+                                              "type": "Box",
+                                              "rect": {"x": 38, "y": 2, "w": 88, "h": 33},
+                                              "cause": "parent E180",
+                                              "children": []
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "id": "E182",
+                                          "type": "Gesture",
+                                          "key": "pane_vscroll:0",
+                                          "rect": {"x": 126, "y": 2, "w": 1, "h": 33},
+                                          "cause": "parent E179",
+                                          "children": [
+                                            {
+                                              "id": "E183",
+                                              "type": "Box",
+                                              "rect": {"x": 126, "y": 2, "w": 1, "h": 33},
+                                              "cause": "parent E182",
+                                              "children": []
+                                            }
+                                          ]
+                                        }
+                                      ]
+                                    },
+                                    {
+                                      "id": "E184",
+                                      "type": "Box",
+                                      "rect": {"x": 38, "y": 35, "w": 89, "h": 0},
+                                      "cause": "parent E174",
+                                      "children": [
+                                        {
+                                          "id": "E185",
+                                          "type": "Gesture",
+                                          "key": "pane_hscroll:0",
+                                          "rect": {"x": 38, "y": 35, "w": 88, "h": 0},
+                                          "cause": "parent E184",
+                                          "children": [
+                                            {
+                                              "id": "E186",
+                                              "type": "Box",
+                                              "rect": {"x": 38, "y": 35, "w": 88, "h": 0},
+                                              "cause": "parent E185",
+                                              "children": []
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "id": "E187",
+                                          "type": "Box",
+                                          "rect": {"x": 126, "y": 35, "w": 1, "h": 0},
+                                          "cause": "parent E184",
+                                          "children": []
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "id": "E205",
+                      "type": "Host",
+                      "key": "region:5",
+                      "rect": {"x": 0, "y": 35, "w": 127, "h": 0},
+                      "cause": "parent E5",
+                      "children": []
+                    },
+                    {
+                      "id": "E206",
+                      "type": "Box",
+                      "key": "region:6",
+                      "rect": {"x": 0, "y": 35, "w": 127, "h": 0},
+                      "cause": "parent E5",
+                      "children": [
+                        {
+                          "id": "E207",
+                          "type": "Box",
+                          "rect": {"x": 0, "y": 35, "w": 1, "h": 0},
+                          "cause": "parent E206",
+                          "children": []
+                        }
+                      ]
+                    },
+                    {
+                      "id": "E208",
+                      "type": "Host",
+                      "key": "region:7",
+                      "rect": {"x": 0, "y": 35, "w": 127, "h": 1},
+                      "cause": "parent E5",
+                      "children": []
+                    },
+                    {
+                      "id": "E217",
+                      "type": "Layer",
+                      "key": "prompt_suggestions",
+                      "rect": {"x": 0, "y": 22, "w": 127, "h": 13},
+                      "cause": "parent E5",
+                      "children": [
+                        {
+                          "id": "E218",
+                          "type": "Box",
+                          "rect": {"x": 0, "y": 22, "w": 127, "h": 13},
+                          "cause": "parent E217",
+                          "children": [
+                            {
+                              "id": "E219",
+                              "type": "Gesture",
+                              "rect": {"x": 0, "y": 22, "w": 127, "h": 12},
+                              "cause": "parent E218",
+                              "children": [
+                                {
+                                  "id": "E220",
+                                  "type": "Box",
+                                  "key": "prompt_suggestion_popup",
+                                  "rect": {"x": 0, "y": 22, "w": 127, "h": 12},
+                                  "cause": "parent E219",
+                                  "children": [
+                                    {
+                                      "id": "E221",
+                                      "type": "Box",
+                                      "rect": {"x": 0, "y": 22, "w": 127, "h": 12},
+                                      "cause": "parent E220",
+                                      "children": []
+                                    },
+                                    {
+                                      "id": "E222",
+                                      "type": "Box",
+                                      "rect": {"x": 0, "y": 22, "w": 127, "h": 12},
+                                      "cause": "parent E220",
+                                      "children": [
+                                        {
+                                          "id": "E223",
+                                          "type": "Box",
+                                          "rect": {"x": 0, "y": 22, "w": 127, "h": 1},
+                                          "cause": "parent E222",
+                                          "children": []
+                                        },
+                                        {
+                                          "id": "E224",
+                                          "type": "Box",
+                                          "rect": {"x": 0, "y": 23, "w": 127, "h": 10},
+                                          "cause": "parent E222",
+                                          "children": [
+                                            {
+                                              "id": "E225",
+                                              "type": "Box",
+                                              "rect": {"x": 0, "y": 23, "w": 1, "h": 10},
+                                              "cause": "parent E224",
+                                              "children": []
+                                            },
+                                            {
+                                              "id": "E226",
+                                              "type": "Box",
+                                              "key": "prompt_suggestion_list",
+                                              "rect": {"x": 1, "y": 23, "w": 126, "h": 10},
+                                              "cause": "parent E224",
+                                              "children": [
+                                                {
+                                                  "id": "E227",
+                                                  "type": "List<fresh::view::shell::msg::UiMsg>",
+                                                  "rect": {"x": 1, "y": 23, "w": 126, "h": 10},
+                                                  "state": "ListState",
+                                                  "state_detail": "sel=0",
+                                                  "builds": 10,
+                                                  "behaviors": ["Anchor"],
+                                                  "cause": "parent E226",
+                                                  "children": [
+                                                    {
+                                                      "id": "E228",
+                                                      "type": "Viewport",
+                                                      "rect": {"x": 1, "y": 23, "w": 126, "h": 10},
+                                                      "cause": "parent E227",
+                                                      "children": [
+                                                        {
+                                                          "id": "E229",
+                                                          "type": "LayoutReader",
+                                                          "rect": {"x": 1, "y": 23, "w": 125, "h": 10},
+                                                          "cause": "parent E228",
+                                                          "children": [
+                                                            {
+                                                              "id": "E188",
+                                                              "type": "Box",
+                                                              "rect": {"x": 1, "y": 23, "w": 125, "h": 10},
+                                                              "cause": "parent E229",
+                                                              "children": [
+                                                                {
+                                                                  "id": "E189",
+                                                                  "type": "Gesture",
+                                                                  "rect": {"x": 1, "y": 23, "w": 125, "h": 1},
+                                                                  "cause": "parent E188",
+                                                                  "children": [
+                                                                    {
+                                                                      "id": "E190",
+                                                                      "type": "Box",
+                                                                      "key": "suggestion:0",
+                                                                      "rect": {"x": 1, "y": 23, "w": 125, "h": 1},
+                                                                      "cause": "parent E189",
+                                                                      "children": [
+                                                                        {
+                                                                          "id": "E216",
+                                                                          "type": "Box",
+                                                                          "rect": {"x": 1, "y": 23, "w": 2, "h": 1},
+                                                                          "cause": "parent E190",
+                                                                          "children": []
+                                                                        },
+                                                                        {
+                                                                          "id": "E215",
+                                                                          "type": "TextRun",
+                                                                          "key": "suggestion_name:0",
+                                                                          "rect": {"x": 3, "y": 23, "w": 30, "h": 1},
+                                                                          "text": "Dump Config",
+                                                                          "cause": "parent E190",
+                                                                          "children": []
+                                                                        },
+                                                                        {
+                                                                          "id": "E213",
+                                                                          "type": "Box",
+                                                                          "rect": {"x": 33, "y": 23, "w": 2, "h": 1},
+                                                                          "cause": "parent E190",
+                                                                          "children": []
+                                                                        },
+                                                                        {
+                                                                          "id": "E214",
+                                                                          "type": "TextRun",
+                                                                          "rect": {"x": 35, "y": 23, "w": 74, "h": 1},
+                                                                          "text": "Save the current configuration to the user config file",
+                                                                          "cause": "parent E190",
+                                                                          "children": []
+                                                                        },
+                                                                        {
+                                                                          "id": "E204",
+                                                                          "type": "Box",
+                                                                          "rect": {"x": 109, "y": 23, "w": 2, "h": 1},
+                                                                          "cause": "parent E190",
+                                                                          "children": []
+                                                                        },
+                                                                        {
+                                                                          "id": "E337",
+                                                                          "type": "Box",
+                                                                          "rect": {"x": 111, "y": 23, "w": 15, "h": 1},
+                                                                          "cause": "mount",
+                                                                          "children": [
+                                                                            {
+                                                                              "id": "E338",
+                                                                              "type": "Box",
+                                                                              "rect": {"x": 111, "y": 23, "w": 8, "h": 1},
+                                                                              "cause": "mount",
+                                                                              "children": []
+                                                                            },
+                                                                            {
+                                                                              "id": "E346",
+                                                                              "type": "TextRun",
+                                                                              "rect": {"x": 119, "y": 23, "w": 7, "h": 1},
+                                                                              "text": "builtin",
+                                                                              "cause": "mount",
+                                                                              "children": []
+                                                                            }
+                                                                          ]
+                                                                        }
+                                                                      ]
+                                                                    }
+                                                                  ]
+                                                                },
+                                                                {
+                                                                  "id": "E198",
+                                                                  "type": "Gesture",
+                                                                  "rect": {"x": 1, "y": 24, "w": 125, "h": 1},
+                                                                  "cause": "parent E188",
+                                                                  "children": [
+                                                                    {
+                                                                      "id": "E196",
+                                                                      "type": "Box",
+                                                                      "key": "suggestion:1",
+                                                                      "rect": {"x": 1, "y": 24, "w": 125, "h": 1},
+                                                                      "cause": "parent E198",
+                                                                      "children": [
+                                                                        {
+                                                                          "id": "E197",
+                                                                          "type": "Box",
+                                                                          "rect": {"x": 1, "y": 24, "w": 2, "h": 1},
+                                                                          "cause": "parent E196",
+                                                                          "children": []
+                                                                        },
+                                                                        {
+                                                                          "id": "E195",
+                                                                          "type": "TextRun",
+                                                                          "key": "suggestion_name:1",
+                                                                          "rect": {"x": 3, "y": 24, "w": 30, "h": 1},
+                                                                          "text": "Dump UI Tree",
+                                                                          "cause": "parent E196",
+                                                                          "children": []
+                                                                        },
+                                                                        {
+                                                                          "id": "E193",
+                                                                          "type": "Box",
+                                                                          "rect": {"x": 33, "y": 24, "w": 2, "h": 1},
+                                                                          "cause": "parent E196",
+                                                                          "children": []
+                                                                        },
+                                                                        {
+                                                                          "id": "E194",
+                                                                          "type": "TextRun",
+                                                                          "rect": {"x": 35, "y": 24, "w": 74, "h": 1},
+                                                                          "text": "Open this window's retained UI tree as JSON in a read-only buffer",
+                                                                          "cause": "parent E196",
+                                                                          "children": []
+                                                                        },
+                                                                        {
+                                                                          "id": "E192",
+                                                                          "type": "Box",
+                                                                          "rect": {"x": 109, "y": 24, "w": 2, "h": 1},
+                                                                          "cause": "parent E196",
+                                                                          "children": []
+                                                                        },
+                                                                        {
+                                                                          "id": "E348",
+                                                                          "type": "Box",
+                                                                          "rect": {"x": 111, "y": 24, "w": 15, "h": 1},
+                                                                          "cause": "mount",
+                                                                          "children": [
+                                                                            {
+                                                                              "id": "E347",
+                                                                              "type": "Box",
+                                                                              "rect": {"x": 111, "y": 24, "w": 8, "h": 1},
+                                                                              "cause": "mount",
+                                                                              "children": []
+                                                                            },
+                                                                            {
+                                                                              "id": "E345",
+                                                                              "type": "TextRun",
+                                                                              "rect": {"x": 119, "y": 24, "w": 7, "h": 1},
+                                                                              "text": "builtin",
+                                                                              "cause": "mount",
+                                                                              "children": []
+                                                                            }
+                                                                          ]
+                                                                        }
+                                                                      ]
+                                                                    }
+                                                                  ]
+                                                                },
+                                                                {
+                                                                  "id": "E241",
+                                                                  "type": "Gesture",
+                                                                  "rect": {"x": 1, "y": 25, "w": 125, "h": 1},
+                                                                  "cause": "parent E188",
+                                                                  "children": [
+                                                                    {
+                                                                      "id": "E242",
+                                                                      "type": "Box",
+                                                                      "key": "suggestion:2",
+                                                                      "rect": {"x": 1, "y": 25, "w": 125, "h": 1},
+                                                                      "cause": "parent E241",
+                                                                      "children": [
+                                                                        {
+                                                                          "id": "E243",
+                                                                          "type": "Box",
+                                                                          "rect": {"x": 1, "y": 25, "w": 2, "h": 1},
+                                                                          "cause": "parent E242",
+                                                                          "children": []
+                                                                        },
+                                                                        {
+                                                                          "id": "E244",
+                                                                          "type": "TextRun",
+                                                                          "key": "suggestion_name:2",
+                                                                          "rect": {"x": 3, "y": 25, "w": 30, "h": 1},
+                                                                          "text": "Go to LSP Symbol",
+                                                                          "cause": "parent E242",
+                                                                          "children": []
+                                                                        },
+                                                                        {
+                                                                          "id": "E245",
+                                                                          "type": "Box",
+                                                                          "rect": {"x": 33, "y": 25, "w": 2, "h": 1},
+                                                                          "cause": "parent E242",
+                                                                          "children": []
+                                                                        },
+                                                                        {
+                                                                          "id": "E246",
+                                                                          "type": "TextRun",
+                                                                          "rect": {"x": 35, "y": 25, "w": 74, "h": 1},
+                                                                          "text": "List document symbols from LSP and navigate to selected",
+                                                                          "cause": "parent E242",
+                                                                          "children": []
+                                                                        },
+                                                                        {
+                                                                          "id": "E247",
+                                                                          "type": "Box",
+                                                                          "rect": {"x": 109, "y": 25, "w": 2, "h": 1},
+                                                                          "cause": "parent E242",
+                                                                          "children": []
+                                                                        },
+                                                                        {
+                                                                          "id": "E344",
+                                                                          "type": "Box",
+                                                                          "rect": {"x": 111, "y": 25, "w": 15, "h": 1},
+                                                                          "cause": "mount",
+                                                                          "children": [
+                                                                            {
+                                                                              "id": "E343",
+                                                                              "type": "Box",
+                                                                              "rect": {"x": 111, "y": 25, "w": 1, "h": 1},
+                                                                              "cause": "mount",
+                                                                              "children": []
+                                                                            },
+                                                                            {
+                                                                              "id": "E342",
+                                                                              "type": "TextRun",
+                                                                              "rect": {"x": 112, "y": 25, "w": 14, "h": 1},
+                                                                              "text": "lsp_navigation",
+                                                                              "cause": "mount",
+                                                                              "children": []
+                                                                            }
+                                                                          ]
+                                                                        }
+                                                                      ]
+                                                                    }
+                                                                  ]
+                                                                },
+                                                                {
+                                                                  "id": "E253",
+                                                                  "type": "Gesture",
+                                                                  "rect": {"x": 1, "y": 26, "w": 125, "h": 1},
+                                                                  "cause": "parent E188",
+                                                                  "children": [
+                                                                    {
+                                                                      "id": "E254",
+                                                                      "type": "Box",
+                                                                      "key": "suggestion:3",
+                                                                      "rect": {"x": 1, "y": 26, "w": 125, "h": 1},
+                                                                      "cause": "parent E253",
+                                                                      "children": [
+                                                                        {
+                                                                          "id": "E255",
+                                                                          "type": "Box",
+                                                                          "rect": {"x": 1, "y": 26, "w": 2, "h": 1},
+                                                                          "cause": "parent E254",
+                                                                          "children": []
+                                                                        },
+                                                                        {
+                                                                          "id": "E256",
+                                                                          "type": "TextRun",
+                                                                          "key": "suggestion_name:3",
+                                                                          "rect": {"x": 3, "y": 26, "w": 30, "h": 1},
+                                                                          "text": "Add Ruler",
+                                                                          "cause": "parent E254",
+                                                                          "children": []
+                                                                        },
+                                                                        {
+                                                                          "id": "E257",
+                                                                          "type": "Box",
+                                                                          "rect": {"x": 33, "y": 26, "w": 2, "h": 1},
+                                                                          "cause": "parent E254",
+                                                                          "children": []
+                                                                        },
+                                                                        {
+                                                                          "id": "E258",
+                                                                          "type": "TextRun",
+                                                                          "rect": {"x": 35, "y": 26, "w": 74, "h": 1},
+                                                                          "text": "Add a vertical ruler line at a specific column position",
+                                                                          "cause": "parent E254",
+                                                                          "children": []
+                                                                        },
+                                                                        {
+                                                                          "id": "E259",
+                                                                          "type": "Box",
+                                                                          "rect": {"x": 109, "y": 26, "w": 2, "h": 1},
+                                                                          "cause": "parent E254",
+                                                                          "children": []
+                                                                        },
+                                                                        {
+                                                                          "id": "E341",
+                                                                          "type": "Box",
+                                                                          "rect": {"x": 111, "y": 26, "w": 15, "h": 1},
+                                                                          "cause": "mount",
+                                                                          "children": [
+                                                                            {
+                                                                              "id": "E340",
+                                                                              "type": "Box",
+                                                                              "rect": {"x": 111, "y": 26, "w": 8, "h": 1},
+                                                                              "cause": "mount",
+                                                                              "children": []
+                                                                            },
+                                                                            {
+                                                                              "id": "E339",
+                                                                              "type": "TextRun",
+                                                                              "rect": {"x": 119, "y": 26, "w": 7, "h": 1},
+                                                                              "text": "builtin",
+                                                                              "cause": "mount",
+                                                                              "children": []
+                                                                            }
+                                                                          ]
+                                                                        }
+                                                                      ]
+                                                                    }
+                                                                  ]
+                                                                },
+                                                                {
+                                                                  "id": "E265",
+                                                                  "type": "Gesture",
+                                                                  "rect": {"x": 1, "y": 27, "w": 125, "h": 1},
+                                                                  "cause": "parent E188",
+                                                                  "children": [
+                                                                    {
+                                                                      "id": "E266",
+                                                                      "type": "Box",
+                                                                      "key": "suggestion:4",
+                                                                      "rect": {"x": 1, "y": 27, "w": 125, "h": 1},
+                                                                      "cause": "parent E265",
+                                                                      "children": [
+                                                                        {
+                                                                          "id": "E267",
+                                                                          "type": "Box",
+                                                                          "rect": {"x": 1, "y": 27, "w": 2, "h": 1},
+                                                                          "cause": "parent E266",
+                                                                          "children": []
+                                                                        },
+                                                                        {
+                                                                          "id": "E268",
+                                                                          "type": "TextRun",
+                                                                          "key": "suggestion_name:4",
+                                                                          "rect": {"x": 3, "y": 27, "w": 30, "h": 1},
+                                                                          "text": "Env: Use System (Deactivate Environment)",
+                                                                          "cause": "parent E266",
+                                                                          "children": []
+                                                                        },
+                                                                        {
+                                                                          "id": "E269",
+                                                                          "type": "Box",
+                                                                          "rect": {"x": 33, "y": 27, "w": 2, "h": 1},
+                                                                          "cause": "parent E266",
+                                                                          "children": []
+                                                                        },
+                                                                        {
+                                                                          "id": "E270",
+                                                                          "type": "TextRun",
+                                                                          "rect": {"x": 35, "y": 27, "w": 74, "h": 1},
+                                                                          "text": "Deactivate the project environment and use the system environment for new processes",
+                                                                          "cause": "parent E266",
+                                                                          "children": []
+                                                                        },
+                                                                        {
+                                                                          "id": "E271",
+                                                                          "type": "Box",
+                                                                          "rect": {"x": 109, "y": 27, "w": 2, "h": 1},
+                                                                          "cause": "parent E266",
+                                                                          "children": []
+                                                                        },
+                                                                        {
+                                                                          "id": "E349",
+                                                                          "type": "Box",
+                                                                          "rect": {"x": 111, "y": 27, "w": 15, "h": 1},
+                                                                          "cause": "mount",
+                                                                          "children": [
+                                                                            {
+                                                                              "id": "E350",
+                                                                              "type": "Box",
+                                                                              "rect": {"x": 111, "y": 27, "w": 4, "h": 1},
+                                                                              "cause": "mount",
+                                                                              "children": []
+                                                                            },
+                                                                            {
+                                                                              "id": "E358",
+                                                                              "type": "TextRun",
+                                                                              "rect": {"x": 115, "y": 27, "w": 11, "h": 1},
+                                                                              "text": "env-manager",
+                                                                              "cause": "mount",
+                                                                              "children": []
+                                                                            }
+                                                                          ]
+                                                                        }
+                                                                      ]
+                                                                    }
+                                                                  ]
+                                                                },
+                                                                {
+                                                                  "id": "E277",
+                                                                  "type": "Gesture",
+                                                                  "rect": {"x": 1, "y": 28, "w": 125, "h": 1},
+                                                                  "cause": "parent E188",
+                                                                  "children": [
+                                                                    {
+                                                                      "id": "E278",
+                                                                      "type": "Box",
+                                                                      "key": "suggestion:5",
+                                                                      "rect": {"x": 1, "y": 28, "w": 125, "h": 1},
+                                                                      "cause": "parent E277",
+                                                                      "children": [
+                                                                        {
+                                                                          "id": "E279",
+                                                                          "type": "Box",
+                                                                          "rect": {"x": 1, "y": 28, "w": 2, "h": 1},
+                                                                          "cause": "parent E278",
+                                                                          "children": []
+                                                                        },
+                                                                        {
+                                                                          "id": "E280",
+                                                                          "type": "TextRun",
+                                                                          "key": "suggestion_name:5",
+                                                                          "rect": {"x": 3, "y": 28, "w": 30, "h": 1},
+                                                                          "text": "Toggle Orchestrator Dock Focus",
+                                                                          "cause": "parent E278",
+                                                                          "children": []
+                                                                        },
+                                                                        {
+                                                                          "id": "E281",
+                                                                          "type": "Box",
+                                                                          "rect": {"x": 33, "y": 28, "w": 2, "h": 1},
+                                                                          "cause": "parent E278",
+                                                                          "children": []
+                                                                        },
+                                                                        {
+                                                                          "id": "E282",
+                                                                          "type": "TextRun",
+                                                                          "rect": {"x": 35, "y": 28, "w": 74, "h": 1},
+                                                                          "text": "Move keyboard focus to or from the orchestrator workspace dock (opens it if hidden)",
+                                                                          "cause": "parent E278",
+                                                                          "children": []
+                                                                        },
+                                                                        {
+                                                                          "id": "E283",
+                                                                          "type": "Box",
+                                                                          "rect": {"x": 109, "y": 28, "w": 2, "h": 1},
+                                                                          "cause": "parent E278",
+                                                                          "children": []
+                                                                        },
+                                                                        {
+                                                                          "id": "E360",
+                                                                          "type": "Box",
+                                                                          "rect": {"x": 111, "y": 28, "w": 15, "h": 1},
+                                                                          "cause": "mount",
+                                                                          "children": [
+                                                                            {
+                                                                              "id": "E359",
+                                                                              "type": "Box",
+                                                                              "rect": {"x": 111, "y": 28, "w": 8, "h": 1},
+                                                                              "cause": "mount",
+                                                                              "children": []
+                                                                            },
+                                                                            {
+                                                                              "id": "E357",
+                                                                              "type": "TextRun",
+                                                                              "rect": {"x": 119, "y": 28, "w": 7, "h": 1},
+                                                                              "text": "builtin",
+                                                                              "cause": "mount",
+                                                                              "children": []
+                                                                            }
+                                                                          ]
+                                                                        }
+                                                                      ]
+                                                                    }
+                                                                  ]
+                                                                },
+                                                                {
+                                                                  "id": "E289",
+                                                                  "type": "Gesture",
+                                                                  "rect": {"x": 1, "y": 29, "w": 125, "h": 1},
+                                                                  "cause": "parent E188",
+                                                                  "children": [
+                                                                    {
+                                                                      "id": "E290",
+                                                                      "type": "Box",
+                                                                      "key": "suggestion:6",
+                                                                      "rect": {"x": 1, "y": 29, "w": 125, "h": 1},
+                                                                      "cause": "parent E289",
+                                                                      "children": [
+                                                                        {
+                                                                          "id": "E291",
+                                                                          "type": "Box",
+                                                                          "rect": {"x": 1, "y": 29, "w": 2, "h": 1},
+                                                                          "cause": "parent E290",
+                                                                          "children": []
+                                                                        },
+                                                                        {
+                                                                          "id": "E292",
+                                                                          "type": "TextRun",
+                                                                          "key": "suggestion_name:6",
+                                                                          "rect": {"x": 3, "y": 29, "w": 30, "h": 1},
+                                                                          "text": "Suspend Process",
+                                                                          "cause": "parent E290",
+                                                                          "children": []
+                                                                        },
+                                                                        {
+                                                                          "id": "E293",
+                                                                          "type": "Box",
+                                                                          "rect": {"x": 33, "y": 29, "w": 2, "h": 1},
+                                                                          "cause": "parent E290",
+                                                                          "children": []
+                                                                        },
+                                                                        {
+                                                                          "id": "E294",
+                                                                          "type": "TextRun",
+                                                                          "rect": {"x": 35, "y": 29, "w": 74, "h": 1},
+                                                                          "text": "Suspend the editor with SIGTSTP (Unix); resume with `fg` in the parent shell",
+                                                                          "cause": "parent E290",
+                                                                          "children": []
+                                                                        },
+                                                                        {
+                                                                          "id": "E295",
+                                                                          "type": "Box",
+                                                                          "rect": {"x": 109, "y": 29, "w": 2, "h": 1},
+                                                                          "cause": "parent E290",
+                                                                          "children": []
+                                                                        },
+                                                                        {
+                                                                          "id": "E356",
+                                                                          "type": "Box",
+                                                                          "rect": {"x": 111, "y": 29, "w": 15, "h": 1},
+                                                                          "cause": "mount",
+                                                                          "children": [
+                                                                            {
+                                                                              "id": "E355",
+                                                                              "type": "Box",
+                                                                              "rect": {"x": 111, "y": 29, "w": 8, "h": 1},
+                                                                              "cause": "mount",
+                                                                              "children": []
+                                                                            },
+                                                                            {
+                                                                              "id": "E354",
+                                                                              "type": "TextRun",
+                                                                              "rect": {"x": 119, "y": 29, "w": 7, "h": 1},
+                                                                              "text": "builtin",
+                                                                              "cause": "mount",
+                                                                              "children": []
+                                                                            }
+                                                                          ]
+                                                                        }
+                                                                      ]
+                                                                    }
+                                                                  ]
+                                                                },
+                                                                {
+                                                                  "id": "E301",
+                                                                  "type": "Gesture",
+                                                                  "rect": {"x": 1, "y": 30, "w": 125, "h": 1},
+                                                                  "cause": "parent E188",
+                                                                  "children": [
+                                                                    {
+                                                                      "id": "E302",
+                                                                      "type": "Box",
+                                                                      "key": "suggestion:7",
+                                                                      "rect": {"x": 1, "y": 30, "w": 125, "h": 1},
+                                                                      "cause": "parent E301",
+                                                                      "children": [
+                                                                        {
+                                                                          "id": "E303",
+                                                                          "type": "Box",
+                                                                          "rect": {"x": 1, "y": 30, "w": 2, "h": 1},
+                                                                          "cause": "parent E302",
+                                                                          "children": []
+                                                                        },
+                                                                        {
+                                                                          "id": "E304",
+                                                                          "type": "TextRun",
+                                                                          "key": "suggestion_name:7",
+                                                                          "rect": {"x": 3, "y": 30, "w": 30, "h": 1},
+                                                                          "text": "Toggle Utility Dock",
+                                                                          "cause": "parent E302",
+                                                                          "children": []
+                                                                        },
+                                                                        {
+                                                                          "id": "E305",
+                                                                          "type": "Box",
+                                                                          "rect": {"x": 33, "y": 30, "w": 2, "h": 1},
+                                                                          "cause": "parent E302",
+                                                                          "children": []
+                                                                        },
+                                                                        {
+                                                                          "id": "E306",
+                                                                          "type": "TextRun",
+                                                                          "rect": {"x": 35, "y": 30, "w": 74, "h": 1},
+                                                                          "text": "Move keyboard focus to/from the shared bottom dock (diagnostics, search-replace, quickfix, …)",
+                                                                          "cause": "parent E302",
+                                                                          "children": []
+                                                                        },
+                                                                        {
+                                                                          "id": "E307",
+                                                                          "type": "Box",
+                                                                          "rect": {"x": 109, "y": 30, "w": 2, "h": 1},
+                                                                          "cause": "parent E302",
+                                                                          "children": []
+                                                                        },
+                                                                        {
+                                                                          "id": "E353",
+                                                                          "type": "Box",
+                                                                          "rect": {"x": 111, "y": 30, "w": 15, "h": 1},
+                                                                          "cause": "mount",
+                                                                          "children": [
+                                                                            {
+                                                                              "id": "E352",
+                                                                              "type": "Box",
+                                                                              "rect": {"x": 111, "y": 30, "w": 8, "h": 1},
+                                                                              "cause": "mount",
+                                                                              "children": []
+                                                                            },
+                                                                            {
+                                                                              "id": "E351",
+                                                                              "type": "TextRun",
+                                                                              "rect": {"x": 119, "y": 30, "w": 7, "h": 1},
+                                                                              "text": "builtin",
+                                                                              "cause": "mount",
+                                                                              "children": []
+                                                                            }
+                                                                          ]
+                                                                        }
+                                                                      ]
+                                                                    }
+                                                                  ]
+                                                                },
+                                                                {
+                                                                  "id": "E313",
+                                                                  "type": "Gesture",
+                                                                  "rect": {"x": 1, "y": 31, "w": 125, "h": 1},
+                                                                  "cause": "parent E188",
+                                                                  "children": [
+                                                                    {
+                                                                      "id": "E314",
+                                                                      "type": "Box",
+                                                                      "key": "suggestion:8",
+                                                                      "rect": {"x": 1, "y": 31, "w": 125, "h": 1},
+                                                                      "cause": "parent E313",
+                                                                      "children": [
+                                                                        {
+                                                                          "id": "E315",
+                                                                          "type": "Box",
+                                                                          "rect": {"x": 1, "y": 31, "w": 2, "h": 1},
+                                                                          "cause": "parent E314",
+                                                                          "children": []
+                                                                        },
+                                                                        {
+                                                                          "id": "E316",
+                                                                          "type": "TextRun",
+                                                                          "key": "suggestion_name:8",
+                                                                          "rect": {"x": 3, "y": 31, "w": 30, "h": 1},
+                                                                          "text": "K8s: Disconnect Environment",
+                                                                          "cause": "parent E314",
+                                                                          "children": []
+                                                                        },
+                                                                        {
+                                                                          "id": "E317",
+                                                                          "type": "Box",
+                                                                          "rect": {"x": 33, "y": 31, "w": 2, "h": 1},
+                                                                          "cause": "parent E314",
+                                                                          "children": []
+                                                                        },
+                                                                        {
+                                                                          "id": "E318",
+                                                                          "type": "TextRun",
+                                                                          "rect": {"x": 35, "y": 31, "w": 74, "h": 1},
+                                                                          "text": "Disconnect / detach from the Kubernetes environment and restore local editing. Keywords: kubernetes k8s kubectl pod cluster remote cloud disconnect detach.",
+                                                                          "cause": "parent E314",
+                                                                          "children": []
+                                                                        },
+                                                                        {
+                                                                          "id": "E319",
+                                                                          "type": "Box",
+                                                                          "rect": {"x": 109, "y": 31, "w": 2, "h": 1},
+                                                                          "cause": "parent E314",
+                                                                          "children": []
+                                                                        },
+                                                                        {
+                                                                          "id": "E361",
+                                                                          "type": "Box",
+                                                                          "rect": {"x": 111, "y": 31, "w": 15, "h": 1},
+                                                                          "cause": "mount",
+                                                                          "children": [
+                                                                            {
+                                                                              "id": "E362",
+                                                                              "type": "Box",
+                                                                              "rect": {"x": 111, "y": 31, "w": 2, "h": 1},
+                                                                              "cause": "mount",
+                                                                              "children": []
+                                                                            },
+                                                                            {
+                                                                              "id": "E363",
+                                                                              "type": "TextRun",
+                                                                              "rect": {"x": 113, "y": 31, "w": 13, "h": 1},
+                                                                              "text": "k8s-workspace",
+                                                                              "cause": "mount",
+                                                                              "children": []
+                                                                            }
+                                                                          ]
+                                                                        }
+                                                                      ]
+                                                                    }
+                                                                  ]
+                                                                },
+                                                                {
+                                                                  "id": "E325",
+                                                                  "type": "Gesture",
+                                                                  "rect": {"x": 1, "y": 32, "w": 125, "h": 1},
+                                                                  "cause": "parent E188",
+                                                                  "children": [
+                                                                    {
+                                                                      "id": "E326",
+                                                                      "type": "Box",
+                                                                      "key": "suggestion:9",
+                                                                      "rect": {"x": 1, "y": 32, "w": 125, "h": 1},
+                                                                      "cause": "parent E325",
+                                                                      "children": [
+                                                                        {
+                                                                          "id": "E327",
+                                                                          "type": "Box",
+                                                                          "rect": {"x": 1, "y": 32, "w": 2, "h": 1},
+                                                                          "cause": "parent E326",
+                                                                          "children": []
+                                                                        },
+                                                                        {
+                                                                          "id": "E328",
+                                                                          "type": "TextRun",
+                                                                          "key": "suggestion_name:9",
+                                                                          "rect": {"x": 3, "y": 32, "w": 30, "h": 1},
+                                                                          "text": "K8s: Connect Environment",
+                                                                          "cause": "parent E326",
+                                                                          "children": []
+                                                                        },
+                                                                        {
+                                                                          "id": "E329",
+                                                                          "type": "Box",
+                                                                          "rect": {"x": 33, "y": 32, "w": 2, "h": 1},
+                                                                          "cause": "parent E326",
+                                                                          "children": []
+                                                                        },
+                                                                        {
+                                                                          "id": "E330",
+                                                                          "type": "TextRun",
+                                                                          "rect": {"x": 35, "y": 32, "w": 74, "h": 1},
+                                                                          "text": "Connect / attach to a Kubernetes environment via kubectl exec — edit inside a remote pod on any cluster: EKS, GKE, AKS, k3d, minikube, kind. Keywords: kubernetes k8s kubectl pod container cluster remote cloud environment workspace attach.",
+                                                                          "cause": "parent E326",
+                                                                          "children": []
+                                                                        },
+                                                                        {
+                                                                          "id": "E331",
+                                                                          "type": "Box",
+                                                                          "rect": {"x": 109, "y": 32, "w": 2, "h": 1},
+                                                                          "cause": "parent E326",
+                                                                          "children": []
+                                                                        },
+                                                                        {
+                                                                          "id": "E364",
+                                                                          "type": "Box",
+                                                                          "rect": {"x": 111, "y": 32, "w": 15, "h": 1},
+                                                                          "cause": "mount",
+                                                                          "children": [
+                                                                            {
+                                                                              "id": "E365",
+                                                                              "type": "Box",
+                                                                              "rect": {"x": 111, "y": 32, "w": 2, "h": 1},
+                                                                              "cause": "mount",
+                                                                              "children": []
+                                                                            },
+                                                                            {
+                                                                              "id": "E366",
+                                                                              "type": "TextRun",
+                                                                              "rect": {"x": 113, "y": 32, "w": 13, "h": 1},
+                                                                              "text": "k8s-workspace",
+                                                                              "cause": "mount",
+                                                                              "children": []
+                                                                            }
+                                                                          ]
+                                                                        }
+                                                                      ]
+                                                                    }
+                                                                  ]
+                                                                }
+                                                              ]
+                                                            }
+                                                          ]
+                                                        }
+                                                      ]
+                                                    }
+                                                  ]
+                                                }
+                                              ]
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "id": "E230",
+                                          "type": "Box",
+                                          "rect": {"x": 0, "y": 33, "w": 127, "h": 1},
+                                          "cause": "parent E222",
+                                          "children": []
+                                        }
+                                      ]
+                                    }
+                                  ]
+                                }
+                              ]
+                            },
+                            {
+                              "id": "E231",
+                              "type": "Box",
+                              "rect": {"x": 0, "y": 34, "w": 127, "h": 1},
+                              "cause": "parent E218",
+                              "children": [
+                                {
+                                  "id": "E232",
+                                  "type": "Box",
+                                  "rect": {"x": 0, "y": 34, "w": 2, "h": 1},
+                                  "cause": "parent E231",
+                                  "children": []
+                                },
+                                {
+                                  "id": "E233",
+                                  "type": "TextRun",
+                                  "rect": {"x": 2, "y": 34, "w": 39, "h": 1},
+                                  "text": "file  |  >command  |  :line  |  #buffer",
+                                  "cause": "parent E231",
+                                  "children": []
+                                }
+                              ]
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "id": "E234",
+                      "type": "Layer",
+                      "rect": {"x": 0, "y": 0, "w": 127, "h": 36},
+                      "cause": "parent E5",
+                      "children": [
+                        {
+                          "id": "E235",
+                          "type": "Focusable",
+                          "rect": {"x": 0, "y": 0, "w": 127, "h": 36},
+                          "cause": "parent E234",
+                          "children": [
+                            {
+                              "id": "E236",
+                              "type": "Box",
+                              "rect": {"x": 0, "y": 0, "w": 127, "h": 36},
+                              "cause": "parent E235",
+                              "children": []
+                            }
+                          ]
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

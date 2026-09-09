@@ -10,9 +10,9 @@
 //!   entry even when there's no screen room left, so visual-line
 //!   navigation can still reach the trailing line.
 //! * `fill_eof_rows` — pad the bottom of the viewport with `~`
-//!   markers / `after_eof_bg` shading so post-EOF space is visually
-//!   distinct from buffer content (see issues #779, #458, ratatui
-//!   #1606).
+//!   markers on the split's effective editor background, unless the
+//!   theme names a post-EOF shade of its own (see issues #779, #458,
+//!   ratatui #1606).
 
 use super::super::super::style::dim_color_for_tilde;
 use super::super::contexts::DecorationContext;
@@ -37,6 +37,8 @@ pub(super) struct PostRowAccumulator<'a> {
 /// Read-only inputs threaded from `render_view_lines`.
 pub(super) struct PostRowContext<'a> {
     pub state: &'a EditorState,
+    /// The pane's resolved left margin; see `LineRenderInput::margin`.
+    pub margin: &'a crate::view::margin::MarginConfig,
     pub theme: &'a Theme,
     pub render_area: Rect,
     pub gutter_width: usize,
@@ -104,7 +106,7 @@ fn render_implicit_line_into(
             None
         };
 
-    if ctx.state.margins.left_config.enabled {
+    if ctx.margin.enabled {
         push_left_margin(
             &mut implicit_line_spans,
             ctx,
@@ -116,8 +118,8 @@ fn render_implicit_line_into(
 
     // Fill remaining width with current_line_bg for cursor line.
     if let Some(bg) = implicit_cursor_bg {
-        let gutter_w = if ctx.state.margins.left_config.enabled {
-            ctx.state.margins.left_total_width()
+        let gutter_w = if ctx.margin.enabled {
+            ctx.margin.total_width()
         } else {
             0
         };
@@ -141,6 +143,7 @@ fn render_implicit_line_into(
         visual_to_char: Vec::new(),
         line_end_byte: ctx.state.buffer.len(),
         is_plugin_virtual: false,
+        end_exclusive: None,
     });
 
     // NOTE: We intentionally do NOT update last_line_end here; the
@@ -182,12 +185,11 @@ fn push_left_margin(
     }
 
     // Line number (or byte offset in byte_offset_mode).
-    let rendered_text = if ctx.byte_offset_mode && ctx.show_line_numbers {
-        format!(
-            "{:>width$}",
-            implicit_gutter_num,
-            width = ctx.state.margins.left_config.width
-        )
+    let rendered_text = if ctx.state.diff_gutter.is_some() {
+        // No row, so no diff numbers.
+        " ".repeat(ctx.margin.width)
+    } else if ctx.byte_offset_mode && ctx.show_line_numbers {
+        format!("{:>width$}", implicit_gutter_num, width = ctx.margin.width)
     } else {
         let estimated_lines =
             ctx.state.buffer.line_count().unwrap_or(
@@ -199,7 +201,7 @@ fn push_left_margin(
             estimated_lines,
             ctx.show_line_numbers,
         );
-        margin_content.render(ctx.state.margins.left_config.width).0
+        margin_content.render(ctx.margin.width).0
     };
     let mut margin_style = Style::default().fg(ctx.theme.line_number_fg);
     if let Some(bg) = implicit_cursor_bg {
@@ -207,15 +209,12 @@ fn push_left_margin(
     }
     spans.push(Span::styled(rendered_text, margin_style));
 
-    if ctx.state.margins.left_config.show_separator {
+    if ctx.margin.show_separator {
         let mut sep_style = Style::default().fg(ctx.theme.line_number_fg);
         if let Some(bg) = implicit_cursor_bg {
             sep_style = sep_style.bg(bg);
         }
-        spans.push(Span::styled(
-            ctx.state.margins.left_config.separator.to_string(),
-            sep_style,
-        ));
+        spans.push(Span::styled(ctx.margin.separator.to_string(), sep_style));
     }
 }
 
@@ -235,12 +234,14 @@ fn ensure_trailing_mapping(ctx: &PostRowContext<'_>, acc: &mut PostRowAccumulato
             visual_to_char: Vec::new(),
             line_end_byte: ctx.state.buffer.len(),
             is_plugin_virtual: false,
+            end_exclusive: None,
         });
     }
 }
 
-/// Pad the bottom of the viewport with `~` (when `show_tilde`) and
-/// `theme.after_eof_bg` shading. Issues #779, #458 explain why we
+/// Pad the bottom of the viewport with `~` (when `show_tilde`) on
+/// `Theme::post_eof_bg` — `effective_editor_bg` unless the theme names a
+/// separate post-EOF color. Issues #779, #458 explain why we
 /// don't use `Modifier::DIM` here, and ratatui #1606 explains why
 /// we always emit a styled span (vs leaving the row blank).
 pub(super) fn fill_eof_rows(
@@ -248,9 +249,12 @@ pub(super) fn fill_eof_rows(
     theme: &Theme,
     render_area: Rect,
     show_tilde: bool,
+    effective_editor_bg: Color,
 ) {
     let eof_fg = dim_color_for_tilde(theme.line_number_fg);
-    let eof_style = Style::default().fg(eof_fg).bg(theme.after_eof_bg);
+    let eof_style = Style::default()
+        .fg(eof_fg)
+        .bg(theme.post_eof_bg(effective_editor_bg));
     while lines.len() < render_area.height as usize {
         let width = render_area.width as usize;
         let eof_line = if show_tilde && width > 0 {

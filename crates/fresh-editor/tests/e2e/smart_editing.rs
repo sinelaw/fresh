@@ -1620,3 +1620,166 @@ fn test_surround_selection_disabled() {
         "With auto_surround disabled, typing ( should replace selection and auto-close"
     );
 }
+
+// =============================================================================
+// Auto-Surround Independence Tests
+// =============================================================================
+
+/// Return the rendered row containing `needle`, or the whole screen on miss so
+/// a failure shows what was actually drawn.
+fn rendered_row_with(harness: &EditorTestHarness, needle: &str) -> String {
+    let screen = harness.screen_to_string();
+    match screen.lines().find(|line| line.contains(needle)) {
+        Some(row) => row.to_string(),
+        None => screen,
+    }
+}
+
+/// The two settings are independent: a language with `auto_close` off and
+/// `auto_surround` on still wraps a selection.
+#[test]
+fn test_surround_selection_independent_of_auto_close() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("notes.md");
+    std::fs::write(&file_path, "code").unwrap();
+
+    let mut config = Config::default();
+    let markdown = config
+        .languages
+        .get_mut("markdown")
+        .expect("markdown language config");
+    markdown.auto_close = Some(false);
+    markdown.auto_surround = Some(true);
+
+    let mut harness =
+        EditorTestHarness::create(80, 24, HarnessOptions::new().with_config(config)).unwrap();
+    harness.enable_shadow_validation();
+    harness.open_file(&file_path).unwrap();
+
+    // Select "code"
+    for _ in 0..4 {
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::SHIFT)
+            .unwrap();
+    }
+    harness.render().unwrap();
+
+    harness.type_text("`").unwrap();
+    harness.render().unwrap();
+
+    let row = rendered_row_with(&harness, "`code`");
+    assert!(
+        row.contains("`code`"),
+        "auto_surround should wrap the selection even with auto_close off; row was {row:?}"
+    );
+}
+
+// =============================================================================
+// Markdown Auto-Pairing Defaults
+//
+// Markdown ships with both `languages.markdown.auto_close` and
+// `.auto_surround` set to false: prose types a backtick, a quote or a bracket
+// as literal text far more often than as half a pair. These drive the
+// production key path and assert on rendered output only.
+// =============================================================================
+
+/// A harness whose config is the shipped default (global `auto_close` and
+/// `auto_surround` both on), with no plugins loaded so the rendered rows are
+/// the buffer's own text rather than Markdown Compose's styling.
+fn harness_with_default_config() -> EditorTestHarness {
+    let mut harness =
+        EditorTestHarness::create(80, 24, HarnessOptions::new().with_config(Config::default()))
+            .unwrap();
+    harness.enable_shadow_validation();
+    harness
+}
+
+/// Typing a backtick in a Markdown buffer inserts one backtick, not a pair.
+#[test]
+fn test_no_auto_close_backtick_in_markdown() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("notes.md");
+    std::fs::write(&file_path, "").unwrap();
+
+    let mut harness = harness_with_default_config();
+    harness.open_file(&file_path).unwrap();
+
+    harness.type_text("`code").unwrap();
+    harness.render().unwrap();
+
+    let row = rendered_row_with(&harness, "`code");
+    assert!(
+        row.contains("`code") && !row.contains("`code`"),
+        "Markdown defaults to auto_close off, so `` ` `` should not have paired; row was {row:?}"
+    );
+}
+
+/// The same keystrokes in a Rust buffer still auto-close: the new default is
+/// scoped to Markdown, not a global change.
+#[test]
+fn test_auto_close_backtick_still_pairs_in_rust() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.rs");
+    std::fs::write(&file_path, "").unwrap();
+
+    let mut harness = harness_with_default_config();
+    harness.open_file(&file_path).unwrap();
+
+    harness.type_text("`").unwrap();
+    harness.render().unwrap();
+
+    let row = rendered_row_with(&harness, "``");
+    assert!(
+        row.contains("``"),
+        "Rust is unaffected by the Markdown default and should still pair `` ` ``; row was {row:?}"
+    );
+}
+
+/// Typing a double quote in a Markdown buffer inserts one quote, not a pair.
+#[test]
+fn test_no_auto_close_double_quote_in_markdown() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("notes.md");
+    std::fs::write(&file_path, "").unwrap();
+
+    let mut harness = harness_with_default_config();
+    harness.open_file(&file_path).unwrap();
+
+    harness.type_text("\"quoted").unwrap();
+    harness.render().unwrap();
+
+    let row = rendered_row_with(&harness, "\"quoted");
+    assert!(
+        row.contains("\"quoted") && !row.contains("\"quoted\""),
+        "Markdown defaults to auto_close off, so '\"' should not have paired; row was {row:?}"
+    );
+}
+
+/// Markdown also ships with `auto_surround` off, so typing a delimiter over a
+/// selection replaces it like any other character.
+#[test]
+fn test_no_surround_selection_in_markdown() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("notes.md");
+    std::fs::write(&file_path, "code").unwrap();
+
+    let mut harness = harness_with_default_config();
+    harness.open_file(&file_path).unwrap();
+
+    // Select "code"
+    for _ in 0..4 {
+        harness
+            .send_key(KeyCode::Right, KeyModifiers::SHIFT)
+            .unwrap();
+    }
+    harness.render().unwrap();
+
+    harness.type_text("`").unwrap();
+    harness.render().unwrap();
+
+    let row = rendered_row_with(&harness, "`");
+    assert!(
+        !row.contains("`code"),
+        "Markdown defaults to auto_surround off, so the selection should have been replaced; row was {row:?}"
+    );
+}

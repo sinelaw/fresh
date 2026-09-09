@@ -57,6 +57,23 @@ Settings are loaded from multiple layers, with higher layers overriding lower on
 - On Windows, User config is at `%APPDATA%\fresh\config.json`
 - Project config is found by searching up from the current directory for `.fresh/config.json`
 
+### Per-Buffer Overrides
+
+Below the config layers sits one more scope: an individual buffer. Command-palette toggles say which scope they act on, so you never have to guess:
+
+| Command form | Scope | Where it is saved |
+|---|---|---|
+| **Toggle X** | Editor-wide default | User config layer (`config.json`) |
+| **Toggle X (Current Buffer)** | The active buffer only | Per-file workspace state |
+
+An unsuffixed toggle changes the default and writes it to your user config immediately, the same as changing it in the Settings UI. It applies to every buffer that hasn't been pinned; the buffer you run it in adopts the new default (its own pin is cleared — you just expressed a global intent on it), while every *other* pinned buffer keeps its choice. A `(Current Buffer)` toggle pins just that file and leaves the default and every other buffer alone. Pins live in your session: they survive a restart for files the session restores, but closing a file's tab drops its pins.
+
+The write lands in the most specific config layer that already defines the setting: if a project config (`.fresh/config.json`) sets the key, the toggle updates the project file — so the change stays in effect in that project — and otherwise it updates your user config. If a write fails, the toggle still applies for the session and the status-bar warning indicator lights up with the reason in the warning log.
+
+Commands with the `(Current Buffer)` suffix: Line Numbers, Line Wrap, Virtual Space, Indentation Guides, Folding Indicators, Whitespace Indicators, Tab Indicators, Indentation (Spaces ↔ Tabs), Current Line Highlight, Occurrence Highlight, Read-Only Mode, and Auto-Revert. **Toggle LSP for Current Buffer** says it in prose instead, so that it stays easy to find in the palette for languages with no server configured. Auto-Revert and LSP apply for the current session only — they control file watching and language-server lifecycle rather than display.
+
+Some settings also have a per-language layer in the config file (`languages.<id>.<setting>`), which sits between the editor-wide default and a per-buffer pin.
+
 ## How Layers Are Merged
 
 Fresh merges all layers. Merge behavior depends on the setting type:
@@ -277,13 +294,35 @@ behavior, so you can override just one thing.
 | Field | When it matches | Effect |
 |-------|-----------------|--------|
 | `increase_indent_pattern` | the reference line | the new line is **one level deeper** |
-| `decrease_indent_pattern` | the new line's leading text | that line is **one level shallower** |
+| `decrease_indent_pattern` | the new line's leading text | that line is **one level shallower** (also fires live while typing — see below) |
 | `indent_next_line_pattern` | the reference line | the **next line only** is one level deeper (one-shot; doesn't persist) |
 | `dedent_next_line_pattern` | the reference line | the **following line** is one level shallower (one-shot) |
 | `self_close_pattern` | the reference line | cancels `increase_indent_pattern` for that line (stops one-liners like `def f; end` from over-indenting) |
 
 The indent step is one unit of the language's `tab_size` (tabs or spaces per
 your `use_tabs` setting).
+
+#### Dedent while typing
+
+`decrease_indent_pattern` also fires **as you type**, not just on Enter — the
+keyword analogue of the electric `}`. On each keystroke the pattern is matched
+against the whole line: at the keystroke where it first matches the entire line
+content (leading whitespace included, trailing whitespace tolerated), the line
+is re-indented one level shallower.
+
+Because the check runs on every keystroke, include the statement's terminator
+in the pattern when the language has one — exactly as VS Code's
+`decreaseIndentPattern` does. For example, `^\s*end$` fires only once `end` is
+the whole line, while `^\s*end\b` behaves the same while typing but also
+matches when text follows the keyword. Fresh's built-in Python rule requires
+the statement-final colon (mirroring ms-python):
+
+```text
+^\s*(elif\s.*|else\s*|except.*|finally\s*|case\s.*):\s*
+```
+
+so `else:` dedents at the `:` keystroke, a bare `else` does not move, and an
+identifier such as `elsewhere` can never trigger a dedent.
 
 #### Examples
 
@@ -378,7 +417,7 @@ In the Settings UI, each setting shows where its current value comes from:
 
 ## Status Bar
 
-The left and right sides of the status bar are configurable through the Settings UI. Each side uses a **DualList** picker: items live in an **Available** column or an **Included** column, and you move them back and forth to show or hide them. Use the arrow buttons next to the Included list to reorder. Elements include the filename, cursor position, encoding, LSP indicator, git branch, warning counts, palette hint, a `{clock}` element that shows `HH:MM` with a blinking colon, a `{remote}` indicator that lights up when you're attached to an SSH remote or a devcontainer, a `{read_only}` `[RO]` indicator, and a clickable `{trust}` indicator (see [Workspace Trust](../features/workspace-trust.md)) that leads the left side by default. A separator drawn between elements can also be set in the Settings UI.
+The left and right sides of the status bar are configurable through the Settings UI. Each side uses a **DualList** picker: items live in an **Available** column or an **Included** column, and you move them back and forth to show or hide them. Use the arrow buttons next to the Included list to reorder. Elements include the filename, cursor position, encoding, LSP indicator, git branch, warning counts, palette hint, a `{clock}` element that shows `HH:MM` with a blinking colon, a `{remote}` indicator that lights up when you're attached to an SSH remote or a devcontainer, a `{read_only}` `[RO]` indicator, a clickable `{terminal_restart}` indicator that appears when the active terminal buffer's process has quit (see [Integrated Terminal](../features/terminal.md#restarting-an-exited-terminal)), and a clickable `{trust}` indicator (see [Workspace Trust](../features/workspace-trust.md)) that leads the left side by default. A separator drawn between elements can also be set in the Settings UI.
 
 The `{remote}` indicator is clickable — activate it to open a context-aware menu for the current authority (detach, show container logs, retry attach, etc.). It also reflects connection state: `Connecting`, `Connected`, or `FailedAttach`.
 

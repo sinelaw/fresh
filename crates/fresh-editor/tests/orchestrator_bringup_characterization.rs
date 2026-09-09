@@ -18,8 +18,6 @@
 //!
 //! Plugins are disabled so the tests exercise only the Rust core path.
 
-mod common;
-
 use fresh::config::Config;
 use fresh::config_io::DirectoryContext;
 use fresh::model::filesystem::StdFileSystem;

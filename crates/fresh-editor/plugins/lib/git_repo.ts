@@ -100,6 +100,115 @@ export function git(
 }
 
 /**
+ * User settings that reshape git's patch output, pinned back to the documented
+ * default. Written as top-level `-c` overrides rather than per-sub-command
+ * flags: `git stash show` mangles `--src-prefix=`/`--dst-prefix=`, and `-c`
+ * behaves the same for every sub-command (`diff`, `show`, `stash show`, ...).
+ * Plumbing (`diff-files -p` and friends) is no escape hatch: `core.quotePath`
+ * and `diff.suppressBlankEmpty` are honoured there too.
+ */
+const DIFF_FORMAT_CONFIG = [
+  // The `a/` / `b/` path prefixes the parsers match on.
+  "-c", "diff.noprefix=false",
+  "-c", "diff.mnemonicPrefix=false",
+  "-c", "diff.srcPrefix=a/",
+  "-c", "diff.dstPrefix=b/",
+  // Non-ASCII paths otherwise come out quoted and octal-escaped in every
+  // header (`diff --git "a/caf\303\251"`), and in `--numstat`/`--stat` rows.
+  "-c", "core.quotepath=false",
+  // Empty context lines otherwise lose their leading space, so a parser
+  // classifying rows by their first byte drops them.
+  "-c", "diff.suppressBlankEmpty=false",
+  // Paths stay repo-relative, and files outside git's cwd are not omitted.
+  "-c", "diff.relative=false",
+  // A changed submodule is one `Subproject commit` hunk, not a nested diff
+  // whose `diff --git` paths are relative to the submodule.
+  "-c", "diff.submodule=short",
+];
+
+/**
+ * Per-file ceiling on the blob any `git diff` in the editor will expand.
+ *
+ * `core.bigFileThreshold` is git's own "this blob is not worth treating as
+ * text" switch: above it git emits the one-line `Binary files ... differ` in
+ * place of a patch, and reports `-`/`-` in `--numstat`. Git's default is 512
+ * MiB — a sane ceiling for a batch tool writing to a pipe, and a ruinous one
+ * for an editor, where the patch has to be carried across the plugin
+ * boundary, parsed into hunks, and laid out as styled rows, all at a cost
+ * linear in the patch and all on the editor's own thread.
+ *
+ * So the threshold *is* the worst-case stall, and it has to be set from what
+ * a reader can use rather than from what git can produce. A single untracked
+ * 60 MiB file is a 60 MiB patch; on the review watch's timer that is a
+ * multi-second freeze every tick with nothing on screen saying why. 1 MiB is
+ * already around 25k lines — well past what anyone reads hunk by hunk, and
+ * far past any file written by hand.
+ *
+ * This caps the *rendering*, not the review: the file keeps its row in the
+ * file list and its header in the stream, carrying the binary-shaped block
+ * git hands back instead of a patch nobody would have read.
+ */
+export const BIG_FILE_THRESHOLD = "1m";
+
+/**
+ * The threshold as a top-level `git` override, for the `git diff` callers that
+ * do not go through `diffArgs`.
+ *
+ * `diffArgs` covers everything that *parses a patch*, but it is not the whole
+ * exposure: `--numstat` and `--shortstat` produce almost no output and still
+ * make git diff the blob to get there, so an uncapped one stalls just as long
+ * for a summary line nobody could have read anyway. Every `git diff` the
+ * editor runs takes the cap, whatever it asks git to print.
+ *
+ * The Rust side runs its own `git diff --numstat` for the file explorer's
+ * status tooltip (`app/chrome/file_explorer.rs`) and cannot import this;
+ * it pins the same value, and the two must stay in sync.
+ */
+export const BIG_FILE_ARGS: readonly string[] = [
+  "-c", `core.bigFileThreshold=${BIG_FILE_THRESHOLD}`,
+];
+
+/**
+ * Build the `git` argv for a patch-producing sub-command whose stdout a plugin
+ * parses (`diff --git` / `+++ b/` / `@@` headers, `+`/`-`/` ` rows). Every
+ * knob neutralised here is one a user may legitimately have set, and any one
+ * alone breaks the parse: `diff.external` swaps in a tool's own format,
+ * textconv diffs converted text (so hunk line numbers stop addressing the
+ * real file), `color.diff=always` wraps every line in escapes, and the
+ * config knobs above reshape the headers and rows.
+ */
+export function diffArgs(subcommand: string[], ...rest: string[]): string[] {
+  return [
+    // Top-level, so it has to precede the sub-command. `git diff` refreshes
+    // the index and writes it back under `.git/index.lock` just as
+    // `git status` does, and the review watch runs both on a timer (#3126)
+    // — pinning the flag here rather than at one call site keeps the panel
+    // from racing the user's own `git` for that lock whichever sub-command
+    // the tick reaches for.
+    "--no-optional-locks",
+    ...DIFF_FORMAT_CONFIG,
+    ...BIG_FILE_ARGS,
+    ...subcommand,
+    "--no-ext-diff",
+    "--no-textconv",
+    "--no-color",
+    ...rest,
+  ];
+}
+
+/**
+ * Route an already-assembled git argv through `diffArgs`, splitting it at its
+ * first option so the leading sub-command words (`diff`, `stash show`, ...)
+ * stay in front. Lets callers that build the argv dynamically inherit the
+ * format pinning instead of each having to repeat the flag list.
+ */
+export function withDiffArgs(command: string[]): string[] {
+  const firstOption = command.findIndex((a) => a.startsWith("-"));
+  const cut = firstOption === -1 ? command.length : firstOption;
+  return diffArgs(command.slice(0, cut), ...command.slice(cut));
+}
+
+/**
  * Absolute path for a repo-relative path (e.g. a line of `git ls-files` or
  * `git grep` output). In a monorepo the workspace root differs from the repo
  * root, so a repo-relative path must be joined onto the repo root to open.

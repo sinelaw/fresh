@@ -15,12 +15,12 @@ use crate::services::async_bridge::{
 use crate::services::lsp::diagnostics::AnchoredDiagnostic;
 use crate::state::{SemanticTokenSpan, SemanticTokenStore};
 use crate::view::file_tree::{FileTreeView, NodeId};
+use fresh_i18n::t;
 use lsp_types::{
     Diagnostic, FoldingRange, InlayHint, SemanticToken, SemanticTokensEdit,
     SemanticTokensFullDeltaResult, SemanticTokensLegend, SemanticTokensRangeResult,
     SemanticTokensResult,
 };
-use rust_i18n::t;
 use serde_json::Value;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
@@ -182,6 +182,31 @@ impl Editor {
             if !lsp.has_server_named(&server_name) {
                 tracing::debug!(
                     "Dropping diagnostics from stopped server '{}' for {}",
+                    server_name,
+                    uri
+                );
+                return;
+            }
+
+            // Drop diagnostics from a server whose copy of the document we know
+            // has diverged from the buffer: it computed them from text the user
+            // never wrote, and the version they carry cannot expose that,
+            // because the server is answering for every change it did receive.
+            // A full-text resync is already pending, so a correct set follows
+            // shortly (#3038).
+            let desynced = uri
+                .parse::<lsp_types::Uri>()
+                .ok()
+                .map(|u| PathBuf::from(u.path().as_str()))
+                .is_some_and(|path| {
+                    lsp.all_handles()
+                        .iter()
+                        .any(|sh| sh.name == server_name && sh.handle.needs_full_resync(&path))
+                });
+            if desynced {
+                tracing::debug!(
+                    "Dropping diagnostics from '{}' for {}: its copy of the \
+                     document is stale, awaiting resync",
                     server_name,
                     uri
                 );
@@ -1160,9 +1185,25 @@ impl Editor {
         // that language so the server can start providing diagnostics, etc.
         // without waiting for the next user edit.
         if status == LspServerStatus::Running {
-            let was_already_running = old_status
-                .as_ref()
-                .is_some_and(|s| matches!(s, LspServerStatus::Running));
+            // `Unresponsive` counts as already-running: the server never
+            // stopped, it just went quiet, so recovering from it must not
+            // re-`didOpen` every buffer.
+            let was_already_running = old_status.as_ref().is_some_and(|s| {
+                matches!(s, LspServerStatus::Running | LspServerStatus::Unresponsive)
+            });
+
+            // A server that is answering again must not have its old
+            // expiries explaining results it now produces correctly
+            // (issue #2197). Matched on the server as well as the language,
+            // because a universal server records its expiries under the
+            // label `"universal"` rather than under any language.
+            let recovered_language = language.clone();
+            let recovered_server = server_name_ref.clone();
+            self.active_window_mut()
+                .lsp_request_timeouts
+                .retain(|(lang, _), record| {
+                    lang != &recovered_language && record.server_name != recovered_server
+                });
             if !was_already_running {
                 let scope = self
                     .lsp()
@@ -1191,9 +1232,22 @@ impl Editor {
 
         // Handle server crash - trigger auto-restart
         if status == LspServerStatus::Error {
+            // `Unresponsive` is a live server that stopped answering, and it
+            // is the state most likely to *precede* a death — wedged, then
+            // OOM-killed or its stdout reader errors. Leaving it out would
+            // cost that server its auto-restart and leave its diagnostics on
+            // screen, which is exactly what used to happen when the same
+            // sequence passed through `Running`.
             let was_running = old_status
                 .as_ref()
-                .map(|s| matches!(s, LspServerStatus::Running | LspServerStatus::Initializing))
+                .map(|s| {
+                    matches!(
+                        s,
+                        LspServerStatus::Running
+                            | LspServerStatus::Initializing
+                            | LspServerStatus::Unresponsive
+                    )
+                })
                 .unwrap_or(false);
 
             if was_running {
@@ -1218,6 +1272,18 @@ impl Editor {
         // (and the status popup keeps showing "Indexing …") even
         // though the process is gone — that's the "popup still says
         // indexing after external kill" user report.
+        // The popup is a snapshot, so a server going quiet (or answering
+        // again) has to re-render it: otherwise an open popup keeps saying
+        // `(ready)` while the status bar reads `LSP (stuck)`, or keeps
+        // saying `(not responding)` after the server recovered.
+        if matches!(
+            status,
+            LspServerStatus::Unresponsive | LspServerStatus::Running
+        ) && old_status != Some(status)
+        {
+            self.refresh_lsp_status_popup_if_open();
+        }
+
         if matches!(status, LspServerStatus::Error | LspServerStatus::Shutdown) {
             let any_running_for_lang =
                 self.active_window()
@@ -1243,6 +1309,7 @@ impl Editor {
             LspServerStatus::Starting => "starting",
             LspServerStatus::Initializing => "initializing",
             LspServerStatus::Running => "running",
+            LspServerStatus::Unresponsive => "unresponsive",
             LspServerStatus::Error => "error",
             LspServerStatus::Shutdown => "shutdown",
         };
@@ -1251,6 +1318,7 @@ impl Editor {
                 LspServerStatus::Starting => "starting",
                 LspServerStatus::Initializing => "initializing",
                 LspServerStatus::Running => "running",
+                LspServerStatus::Unresponsive => "unresponsive",
                 LspServerStatus::Error => "error",
                 LspServerStatus::Shutdown => "shutdown",
             })
@@ -1466,6 +1534,7 @@ impl Editor {
         let defaults = crate::app::file_explorer::FileExplorerViewDefaults {
             show_hidden: self.config.file_explorer.show_hidden,
             show_gitignored: self.config.file_explorer.show_gitignored,
+            respect_gitignore: self.config.file_explorer.respect_gitignore,
             compact_directories: self.config.file_explorer.compact_directories,
             custom_ignore_patterns: self.config.file_explorer.custom_ignore_patterns.clone(),
         };
@@ -1549,7 +1618,10 @@ impl Editor {
     /// No-op sentinels like `HookCompleted` do not count.
     #[cfg(feature = "plugins")]
     pub(super) fn process_plugin_commands(&mut self) -> bool {
-        let commands = self.plugin_manager.write().unwrap().process_commands();
+        // Backlog first so a burst spread over several frames keeps arrival
+        // order, then whatever the plugin thread has produced since.
+        let mut commands: Vec<_> = self.plugin_command_backlog.drain(..).collect();
+        commands.extend(self.plugin_manager.write().unwrap().process_commands());
         if commands.is_empty() {
             return false;
         }
@@ -1583,7 +1655,11 @@ impl Editor {
             | Pc::UnwatchPath { .. }
             | Pc::SetGlobalState { .. }
             | Pc::SetWindowState { .. }
-            | Pc::SetViewState { .. } => false,
+            | Pc::SetViewState { .. }
+            // Arming or cancelling a timer paints nothing; what the handler
+            // eventually draws arrives as its own command and is counted then.
+            | Pc::SetPluginTimer { .. }
+            | Pc::ClearPluginTimer { .. } => false,
             Pc::SetStatusBarValue {
                 buffer_id,
                 key,
@@ -1616,14 +1692,38 @@ impl Editor {
             }
         }
 
-        for command in commands {
+        // Frame budget: dispatch against a deadline, then stop and re-arm. A
+        // plugin that floods the channel costs one budget per frame instead of
+        // an unbounded stall, and the unprocessed tail keeps its arrival order
+        // in `plugin_command_backlog`. The DRAIN_MIN_PER_PASS floor keeps
+        // throughput from collapsing to one item per frame when a single
+        // dispatch overruns the whole budget.
+        let deadline = std::time::Instant::now() + super::PLUGIN_COMMAND_FRAME_BUDGET;
+        let mut iter = commands.into_iter();
+        let mut dispatched = 0usize;
+        for command in iter.by_ref() {
             tracing::trace!(
                 "process_plugin_commands: handling command {:?}",
                 std::mem::discriminant(&command)
             );
-            if let Err(e) = self.handle_plugin_command(command) {
-                tracing::error!("Error handling TypeScript plugin command: {}", e);
+            self.dispatch_plugin_command_measured(command);
+            dispatched += 1;
+            if dispatched >= super::DRAIN_MIN_PER_PASS && std::time::Instant::now() >= deadline {
+                break;
             }
+        }
+        let deferred: std::collections::VecDeque<_> = iter.collect();
+        if !deferred.is_empty() {
+            tracing::debug!(
+                dispatched,
+                deferred = deferred.len(),
+                "plugin command frame budget exhausted — deferring tail"
+            );
+            // Prepend: these arrived before anything a later tick will read.
+            for command in deferred.into_iter().rev() {
+                self.plugin_command_backlog.push_front(command);
+            }
+            self.plugin_render_requested = true;
         }
 
         // Flush any deferred grammar rebuilds as a single batch

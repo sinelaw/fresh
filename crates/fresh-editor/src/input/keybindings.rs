@@ -1,6 +1,6 @@
 use crate::config::Config;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use rust_i18n::t;
+use fresh_i18n::t;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -70,7 +70,7 @@ fn use_macos_symbols() -> bool {
 /// On Windows, the AltGr key is reported as Ctrl+Alt by crossterm, which is needed for
 /// typing characters like @, [, ], {, }, etc. on German, French, and other keyboard layouts.
 /// See: https://github.com/crossterm-rs/crossterm/issues/820
-fn is_text_input_modifier(modifiers: KeyModifiers) -> bool {
+pub(crate) fn is_text_input_modifier(modifiers: KeyModifiers) -> bool {
     if modifiers.is_empty() || modifiers == KeyModifiers::SHIFT {
         return true;
     }
@@ -281,7 +281,7 @@ impl KeyContext {
 
     /// Whether this context should allow Normal-context bindings to fall
     /// through when the action is in the curated UI / navigation set
-    /// (`is_terminal_ui_action`): tab/buffer switching, split navigation,
+    /// (`is_ui_fallthrough_action`): tab/buffer switching, split navigation,
     /// palette, settings, etc. These actions don't depend on a text cursor
     /// and naturally apply to whichever buffer is currently active, so
     /// users expect them to work even when keyboard focus is elsewhere
@@ -289,7 +289,7 @@ impl KeyContext {
     ///
     /// Also true for plugin `Mode(_)` contexts so that focus inside a
     /// panel (search/replace, dashboard, git log, …) doesn't swallow
-    /// global navigation keys. `is_terminal_ui_action` is the curated
+    /// global navigation keys. `is_ui_fallthrough_action` is the curated
     /// whitelist (split nav, palette, save, quit, help, …) — none of
     /// which a sensible plugin mode would want to suppress. See §18 of
     /// `docs/internal/search-replace-scope-replan-on-widgets.md`.
@@ -545,6 +545,10 @@ pub enum Action {
     ShowLspStatus,
     ShowRemoteIndicatorMenu,
     ShowReadOnlyMenu,
+    /// Offer/confirm an in-editor update when a new version is available.
+    UpdateFresh,
+    /// Open the background self-update log (always the local copy).
+    OpenUpdateLog,
     ClearWarnings,
     CommandPalette, // Alias for QuickOpen — kept for keymap/plugin compatibility
     /// Quick Open - unified prompt with prefix-based provider routing
@@ -688,6 +692,9 @@ pub enum Action {
     /// persistent orchestrator dock (the left session column). When the
     /// dock is hidden, this opens and focuses it.
     ToggleDockFocus,
+    /// Cycle keyboard focus through the sidebar: the file explorer, then
+    /// each plugin section under it in order, then back to the editor.
+    FocusNextSidebarSection,
     FileExplorerUp,
     FileExplorerDown,
     FileExplorerPageUp,
@@ -742,6 +749,20 @@ pub enum Action {
     ToggleLineWrapCurrentBuffer,
     /// Toggle virtual space (off ↔ on) for the current buffer only
     ToggleVirtualSpaceCurrentBuffer,
+    /// Toggle indentation guides for the current buffer only (per-buffer
+    /// override that persists across restart, without touching the global
+    /// `editor.indentation_guide` mode or other buffers).
+    ToggleIndentationGuideCurrentBuffer,
+    /// Toggle the gutter folding indicators for the current buffer only
+    /// (per-buffer override that persists across restart). Existing folds are
+    /// left alone; only the ▾/▸ arrows are hidden.
+    ToggleFoldIndicatorsCurrentBuffer,
+    /// Toggle the current-line highlight for the current buffer only
+    /// (per-buffer override that persists across restart).
+    ToggleCurrentLineHighlightCurrentBuffer,
+    /// Toggle occurrence highlighting for the current buffer only
+    /// (per-buffer override that persists across restart).
+    ToggleOccurrenceHighlightCurrentBuffer,
     /// Playful full-screen wave that bounces all painted content around.
     TriggerWaveAnimation,
     ToggleScrollSync,
@@ -765,6 +786,9 @@ pub enum Action {
 
     // Config operations
     DumpConfig,
+
+    // Open this window's retained UI tree in a read-only buffer
+    DumpUiTree,
 
     // Force a full terminal clear + redraw (fixes display corruption from external output)
     RedrawScreen,
@@ -810,14 +834,17 @@ pub enum Action {
     SettingsInherit,     // Set nullable setting to null (inherit value)
 
     // Terminal operations
-    OpenTerminal,            // Open a new terminal in the current split
-    OpenTerminalRight,       // Open a new terminal in a split to the right (vertical split)
-    OpenTerminalBelow,       // Open a new terminal in a split below (horizontal split)
-    CloseTerminal,           // Close the current terminal
-    FocusTerminal,           // Focus the terminal buffer (if viewing terminal, focus input)
-    TerminalEscape,          // Escape from terminal mode back to editor
-    ToggleKeyboardCapture,   // Toggle keyboard capture mode (all keys go to terminal)
-    TerminalPaste,           // Paste clipboard contents into terminal as a single batch
+    OpenTerminal,      // Open a new terminal in the current split
+    OpenTerminalRight, // Open a new terminal in a split to the right (vertical split)
+    OpenTerminalBelow, // Open a new terminal in a split below (horizontal split)
+    CloseTerminal,     // Close the current terminal
+    /// Restart the exited terminal process in the current buffer, resuming the
+    /// agent conversation when the terminal carries an agent-resume spec.
+    RestartTerminal,
+    FocusTerminal,  // Focus the terminal buffer (if viewing terminal, focus input)
+    TerminalEscape, // Escape from terminal mode back to editor
+    ToggleKeyboardCapture, // Toggle keyboard capture mode (all keys go to terminal)
+    TerminalPaste,  // Paste clipboard contents into terminal as a single batch
     SendSelectionToTerminal, // Run the selection (or current line) in the last-focused terminal
 
     // Shell command operations
@@ -1083,6 +1110,8 @@ impl Action {
             "show_lsp_status" => ShowLspStatus,
             "show_remote_indicator_menu" => ShowRemoteIndicatorMenu,
             "show_read_only_menu" => ShowReadOnlyMenu,
+            "update_fresh" => UpdateFresh,
+            "open_update_log" => OpenUpdateLog,
             "clear_warnings" => ClearWarnings,
             "command_palette" => CommandPalette,
             "quick_open" => QuickOpen,
@@ -1177,6 +1206,7 @@ impl Action {
             "focus_file_explorer" => FocusFileExplorer,
             "focus_editor" => FocusEditor,
             "toggle_dock_focus" => ToggleDockFocus,
+            "focus_next_sidebar_section" => FocusNextSidebarSection,
             "file_explorer_up" => FileExplorerUp,
             "file_explorer_down" => FileExplorerDown,
             "file_explorer_page_up" => FileExplorerPageUp,
@@ -1222,6 +1252,10 @@ impl Action {
             "toggle_line_numbers_current_buffer" => ToggleLineNumbersCurrentBuffer,
             "toggle_line_wrap_current_buffer" => ToggleLineWrapCurrentBuffer,
             "toggle_virtual_space_current_buffer" => ToggleVirtualSpaceCurrentBuffer,
+            "toggle_indentation_guide_current_buffer" => ToggleIndentationGuideCurrentBuffer,
+            "toggle_fold_indicators_current_buffer" => ToggleFoldIndicatorsCurrentBuffer,
+            "toggle_current_line_highlight_current_buffer" => ToggleCurrentLineHighlightCurrentBuffer,
+            "toggle_occurrence_highlight_current_buffer" => ToggleOccurrenceHighlightCurrentBuffer,
             "trigger_wave_animation" => TriggerWaveAnimation,
             "toggle_scroll_sync" => ToggleScrollSync,
             "toggle_mouse_capture" => ToggleMouseCapture,
@@ -1247,6 +1281,7 @@ impl Action {
             "remove_ruler" => RemoveRuler,
 
             "dump_config" => DumpConfig,
+            "dump_ui_tree" => DumpUiTree,
             "redraw_screen" => RedrawScreen,
 
             "search" => Search,
@@ -1271,6 +1306,7 @@ impl Action {
             "open_terminal_right" => OpenTerminalRight,
             "open_terminal_below" => OpenTerminalBelow,
             "close_terminal" => CloseTerminal,
+            "restart_terminal" => RestartTerminal,
             "focus_terminal" => FocusTerminal,
             "terminal_escape" => TerminalEscape,
             "toggle_keyboard_capture" => ToggleKeyboardCapture,
@@ -1599,10 +1635,337 @@ pub struct KeybindingResolver {
     /// Plugin default chord bindings (for mode chord bindings from defineMode)
     plugin_chord_defaults: HashMap<KeyContext, HashMap<Vec<(KeyCode, KeyModifiers)>, Action>>,
 
+    /// Entries of `default_bindings` that were not written by the keymap
+    /// itself but synthesized by [`terminal_key_equivalents`] (e.g. the
+    /// `Ctrl+7` alias a `Ctrl+/` binding registers). An explicit binding
+    /// outranks such an alias no matter which order they load in, so a
+    /// child keymap that rebinds `Ctrl+/` also takes over `Ctrl+7`
+    /// instead of leaving the parent's action stranded on the alias.
+    default_binding_aliases: std::collections::HashSet<(KeyContext, (KeyCode, KeyModifiers))>,
+    /// Built-in single-key bindings the user removed with an `unbind`
+    /// entry, by context. They are dropped from `default_bindings` at load
+    /// and refused when a plugin registers the same key for the same mode,
+    /// so a removal outlives plugin (re)registration and config reloads.
+    removed_bindings: std::collections::HashSet<(KeyContext, (KeyCode, KeyModifiers))>,
+    /// Chord counterpart of `removed_bindings`.
+    removed_chords: std::collections::HashSet<(KeyContext, Vec<(KeyCode, KeyModifiers)>)>,
+
     /// Plugin modes that want unbound keys to fall through to Normal
     /// bindings (motion, selection, copy). Populated by `defineMode` when
     /// `inheritNormalBindings: true`.
     inheriting_modes: std::collections::HashSet<String>,
+
+    /// Mirror of `editor.menu_bar_mnemonics`. When false, the menu-bar
+    /// mnemonic bindings (`Alt+letter → menu_open`) are suppressed at
+    /// *resolution* time — they neither fire nor consume the key — so
+    /// whatever they were shadowing becomes reachable. Gating here rather
+    /// than at dispatch is what makes the option's documented promise
+    /// ("frees up Alt+letter keybindings for other actions") true.
+    menu_mnemonics_enabled: bool,
+}
+
+/// One source layer of bindings, in decreasing precedence: the user's
+/// custom overrides, the active built-in keymap, plugin `defineMode`
+/// defaults. Used by [`KeybindingResolver::probe_order`] to spell out the
+/// resolution order once, shared by single-key and chord resolution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BindingSource {
+    Custom,
+    Default,
+    Plugin,
+}
+
+impl BindingSource {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Custom => "custom",
+            Self::Default => "default",
+            Self::Plugin => "plugin default",
+        }
+    }
+}
+
+/// Log that a configured keybinding entry was dropped because its key name did
+/// not parse, so a rejected binding leaves a trace in the log instead of dying
+/// silently (issue #1128: `"key": "asterisk"` was ignored with no feedback
+/// anywhere).
+/// A key a config entry can name in words, and the spellings it answers to.
+///
+/// The tables below plus [`fresh_input_parser::keypad::KEYPAD_KEYS`] are the
+/// whole accepted vocabulary, and they are data rather than match arms for two
+/// reasons: `parse_key` reads them, and so does the generator that writes the
+/// table in `docs/configuration/keyboard.md`. A name that is not documented is
+/// a name nobody can find.
+pub struct KeyName {
+    /// Accepted spellings, lowercase. The first is canonical — the one the
+    /// generated documentation lists and the one to prefer in examples.
+    pub names: &'static [&'static str],
+    /// What the name resolves to.
+    pub code: KeyCode,
+}
+
+/// Keys that have a name of their own — neither a character nor the keypad.
+///
+/// Every spelling `keybinding_editor::helpers::key_code_to_config_name` can
+/// write must appear here, or the editor would record a binding that its own
+/// loader then rejects; `config_names_round_trip` holds that.
+pub const NAMED_KEYS: &[KeyName] = &[
+    KeyName {
+        names: &["enter"],
+        code: KeyCode::Enter,
+    },
+    KeyName {
+        names: &["backspace"],
+        code: KeyCode::Backspace,
+    },
+    KeyName {
+        names: &["delete", "del"],
+        code: KeyCode::Delete,
+    },
+    KeyName {
+        names: &["insert", "ins"],
+        code: KeyCode::Insert,
+    },
+    KeyName {
+        names: &["tab"],
+        code: KeyCode::Tab,
+    },
+    KeyName {
+        names: &["backtab"],
+        code: KeyCode::BackTab,
+    },
+    KeyName {
+        names: &["escape", "esc"],
+        code: KeyCode::Esc,
+    },
+    KeyName {
+        names: &["space"],
+        code: KeyCode::Char(' '),
+    },
+    KeyName {
+        names: &["left"],
+        code: KeyCode::Left,
+    },
+    KeyName {
+        names: &["right"],
+        code: KeyCode::Right,
+    },
+    KeyName {
+        names: &["up"],
+        code: KeyCode::Up,
+    },
+    KeyName {
+        names: &["down"],
+        code: KeyCode::Down,
+    },
+    KeyName {
+        names: &["home"],
+        code: KeyCode::Home,
+    },
+    KeyName {
+        names: &["end"],
+        code: KeyCode::End,
+    },
+    KeyName {
+        names: &["pageup"],
+        code: KeyCode::PageUp,
+    },
+    KeyName {
+        names: &["pagedown"],
+        code: KeyCode::PageDown,
+    },
+    // Lock and system keys. A terminal speaking the kitty keyboard protocol
+    // reports these (the input parser decodes them at codepoints 57358-57363),
+    // so the keybinding editor can record one — and without a name here it
+    // would write a `{:?}` spelling that the loader then refused, which is the
+    // `Insert` bug one line up, repeated.
+    KeyName {
+        names: &["capslock"],
+        code: KeyCode::CapsLock,
+    },
+    KeyName {
+        names: &["scrolllock"],
+        code: KeyCode::ScrollLock,
+    },
+    KeyName {
+        names: &["numlock"],
+        code: KeyCode::NumLock,
+    },
+    KeyName {
+        names: &["printscreen"],
+        code: KeyCode::PrintScreen,
+    },
+    KeyName {
+        names: &["pause"],
+        code: KeyCode::Pause,
+    },
+    KeyName {
+        names: &["menu"],
+        code: KeyCode::Menu,
+    },
+];
+
+/// X11 keysym spellings for ASCII punctuation.
+///
+/// A single-character key name is still the canonical spelling (and what the
+/// keybinding editor writes back), but people reach for the X11 keysym name
+/// they know — `"key": "asterisk"` is what issue #1128 was actually configured
+/// with, and it bound nothing at all. JSON also makes some of these awkward to
+/// write literally (`"\\"` for backslash, `"\""` for the double quote), so a
+/// name is the friendlier spelling.
+pub const PUNCTUATION_KEYS: &[KeyName] = &[
+    KeyName {
+        names: &["asterisk", "star"],
+        code: KeyCode::Char('*'),
+    },
+    KeyName {
+        names: &["plus"],
+        code: KeyCode::Char('+'),
+    },
+    KeyName {
+        names: &["minus", "hyphen"],
+        code: KeyCode::Char('-'),
+    },
+    KeyName {
+        names: &["slash"],
+        code: KeyCode::Char('/'),
+    },
+    KeyName {
+        names: &["period", "dot"],
+        code: KeyCode::Char('.'),
+    },
+    KeyName {
+        names: &["equal", "equals"],
+        code: KeyCode::Char('='),
+    },
+    KeyName {
+        names: &["backslash"],
+        code: KeyCode::Char('\\'),
+    },
+    KeyName {
+        names: &["comma"],
+        code: KeyCode::Char(','),
+    },
+    KeyName {
+        names: &["semicolon"],
+        code: KeyCode::Char(';'),
+    },
+    KeyName {
+        names: &["colon"],
+        code: KeyCode::Char(':'),
+    },
+    KeyName {
+        names: &["apostrophe", "quote"],
+        code: KeyCode::Char('\''),
+    },
+    KeyName {
+        names: &["quotedbl", "doublequote"],
+        code: KeyCode::Char('"'),
+    },
+    KeyName {
+        names: &["grave", "backtick"],
+        code: KeyCode::Char('`'),
+    },
+    KeyName {
+        names: &["tilde"],
+        code: KeyCode::Char('~'),
+    },
+    KeyName {
+        names: &["exclam", "exclamation"],
+        code: KeyCode::Char('!'),
+    },
+    KeyName {
+        names: &["at"],
+        code: KeyCode::Char('@'),
+    },
+    KeyName {
+        names: &["numbersign", "hash"],
+        code: KeyCode::Char('#'),
+    },
+    KeyName {
+        names: &["dollar"],
+        code: KeyCode::Char('$'),
+    },
+    KeyName {
+        names: &["percent"],
+        code: KeyCode::Char('%'),
+    },
+    KeyName {
+        names: &["asciicircum", "caret"],
+        code: KeyCode::Char('^'),
+    },
+    KeyName {
+        names: &["ampersand"],
+        code: KeyCode::Char('&'),
+    },
+    KeyName {
+        names: &["underscore"],
+        code: KeyCode::Char('_'),
+    },
+    KeyName {
+        names: &["bar", "pipe"],
+        code: KeyCode::Char('|'),
+    },
+    KeyName {
+        names: &["question"],
+        code: KeyCode::Char('?'),
+    },
+    KeyName {
+        names: &["less", "lessthan"],
+        code: KeyCode::Char('<'),
+    },
+    KeyName {
+        names: &["greater", "greaterthan"],
+        code: KeyCode::Char('>'),
+    },
+    KeyName {
+        names: &["parenleft"],
+        code: KeyCode::Char('('),
+    },
+    KeyName {
+        names: &["parenright"],
+        code: KeyCode::Char(')'),
+    },
+    KeyName {
+        names: &["bracketleft"],
+        code: KeyCode::Char('['),
+    },
+    KeyName {
+        names: &["bracketright"],
+        code: KeyCode::Char(']'),
+    },
+    KeyName {
+        names: &["braceleft"],
+        code: KeyCode::Char('{'),
+    },
+    KeyName {
+        names: &["braceright"],
+        code: KeyCode::Char('}'),
+    },
+];
+
+/// Resolve an already-lowercased key name against every table.
+///
+/// The last two come from the parser's own tables rather than a second
+/// hand-written list, so a name that binds and a key that arrives agree by
+/// construction: the keypad, whose names are aliases for the key the terminal
+/// actually reports (`kp_multiply` *is* `*` by the time the editor sees it),
+/// and the media and modifier keys, which are not aliases — nothing on the
+/// main keyboard means "mute".
+pub fn key_name_to_code(lower: &str) -> Option<KeyCode> {
+    NAMED_KEYS
+        .iter()
+        .chain(PUNCTUATION_KEYS)
+        .find(|k| k.names.contains(&lower))
+        .map(|k| k.code)
+        .or_else(|| fresh_input_parser::keypad::code_for_keysym(lower))
+        .or_else(|| fresh_input_parser::media_modifier::code_for_keysym(lower))
+}
+
+fn warn_invalid_key(key: &str, action: &str) {
+    tracing::warn!(
+        "Invalid keybinding in config: unknown key \"{key}\" for action \"{action}\" (binding ignored)"
+    );
 }
 
 impl KeybindingResolver {
@@ -1615,7 +1978,11 @@ impl KeybindingResolver {
             chord_bindings: HashMap::new(),
             default_chord_bindings: HashMap::new(),
             plugin_chord_defaults: HashMap::new(),
+            default_binding_aliases: std::collections::HashSet::new(),
+            removed_bindings: std::collections::HashSet::new(),
+            removed_chords: std::collections::HashSet::new(),
             inheriting_modes: std::collections::HashSet::new(),
+            menu_mnemonics_enabled: config.editor.menu_bar_mnemonics,
         };
 
         // Load bindings from the active keymap (with inheritance resolution) into default_bindings
@@ -1650,6 +2017,9 @@ impl KeybindingResolver {
         rebuilt.plugin_defaults = std::mem::take(&mut self.plugin_defaults);
         rebuilt.plugin_chord_defaults = std::mem::take(&mut self.plugin_chord_defaults);
         rebuilt.inheriting_modes = std::mem::take(&mut self.inheriting_modes);
+        // The carried-over plugin bindings were filtered against the *old*
+        // config's removals; apply the new one's `unbind` entries to them.
+        rebuilt.prune_removed_plugin_bindings();
         *self = rebuilt;
     }
 
@@ -1674,6 +2044,7 @@ impl KeybindingResolver {
                             sequence.push((key_code, modifiers));
                         } else {
                             // Invalid key in sequence, skip this binding
+                            warn_invalid_key(&key_press.key, &binding.action);
                             break;
                         }
                     }
@@ -1697,6 +2068,8 @@ impl KeybindingResolver {
                         action,
                         &binding.key,
                     );
+                } else {
+                    warn_invalid_key(&binding.key, &binding.action);
                 }
             }
         }
@@ -1712,18 +2085,32 @@ impl KeybindingResolver {
         action: Action,
         key_name: &str,
     ) {
-        let context_bindings = self.default_bindings.entry(context.clone()).or_default();
-
-        // Insert the primary binding
-        context_bindings.insert((key_code, modifiers), action.clone());
+        // Insert the primary binding. It is explicit, so it also reclaims
+        // the slot from any alias a previously loaded binding synthesized
+        // for it (a parent keymap's `Ctrl+/` registers `Ctrl+7`; a child
+        // rebinding `Ctrl+/` must take `Ctrl+7` with it).
+        self.default_bindings
+            .entry(context.clone())
+            .or_default()
+            .insert((key_code, modifiers), action.clone());
+        self.default_binding_aliases
+            .remove(&(context.clone(), (key_code, modifiers)));
 
         // Get terminal key equivalents and add them as aliases
         let equivalents = terminal_key_equivalents(key_code, modifiers);
         for (equiv_key, equiv_mods) in equivalents {
-            // Check if this equivalent is already bound
-            if let Some(existing_action) = context_bindings.get(&(equiv_key, equiv_mods)) {
+            let slot = (context.clone(), (equiv_key, equiv_mods));
+            // An *explicit* binding for the equivalent chord wins; another
+            // alias does not, so the newer binding's alias replaces it.
+            let existing_explicit = self
+                .default_bindings
+                .get(&context)
+                .and_then(|m| m.get(&(equiv_key, equiv_mods)))
+                .filter(|_| !self.default_binding_aliases.contains(&slot))
+                .cloned();
+            if let Some(existing_action) = existing_explicit {
                 // Only warn if bound to a DIFFERENT action
-                if existing_action != &action {
+                if existing_action != action {
                     let equiv_name = format!("{:?}", equiv_key);
                     tracing::warn!(
                         "Terminal key equivalent conflict in {:?} context: {} (equivalent of {}) \
@@ -1739,8 +2126,12 @@ impl KeybindingResolver {
                 }
                 // Don't override explicit bindings with auto-generated equivalents
             } else {
-                // Add the equivalent binding
-                context_bindings.insert((equiv_key, equiv_mods), action.clone());
+                // Add (or refresh) the equivalent binding
+                self.default_bindings
+                    .entry(context.clone())
+                    .or_default()
+                    .insert((equiv_key, equiv_mods), action.clone());
+                self.default_binding_aliases.insert(slot);
             }
         }
     }
@@ -1755,6 +2146,12 @@ impl KeybindingResolver {
                 KeyContext::Normal
             };
 
+            // An `unbind` entry removes a built-in binding; it binds nothing.
+            if binding.is_unbind() {
+                self.unbind(context, binding);
+                continue;
+            }
+
             if let Some(action) = Action::from_str(&binding.action, &binding.args) {
                 // Check if this is a chord binding (has keys field)
                 if !binding.keys.is_empty() {
@@ -1766,6 +2163,7 @@ impl KeybindingResolver {
                             sequence.push((key_code, modifiers));
                         } else {
                             // Invalid key in sequence, skip this binding
+                            warn_invalid_key(&key_press.key, &binding.action);
                             break;
                         }
                     }
@@ -1784,7 +2182,90 @@ impl KeybindingResolver {
                         .entry(context)
                         .or_default()
                         .insert((key_code, modifiers), action);
+                } else {
+                    warn_invalid_key(&binding.key, &binding.action);
                 }
+            }
+        }
+    }
+
+    /// Parse a chord binding's `keys` into a key sequence; `None` (after a
+    /// warning) if any key is invalid, or if the sequence is empty.
+    fn parse_chord_sequence(
+        binding: &crate::config::Keybinding,
+    ) -> Option<Vec<(KeyCode, KeyModifiers)>> {
+        let mut sequence = Vec::with_capacity(binding.keys.len());
+        for key_press in &binding.keys {
+            let Some(key_code) = Self::parse_key(&key_press.key) else {
+                warn_invalid_key(&key_press.key, &binding.action);
+                return None;
+            };
+            sequence.push((key_code, Self::parse_modifiers(&key_press.modifiers)));
+        }
+        (!sequence.is_empty()).then_some(sequence)
+    }
+
+    /// Apply an `unbind` entry: take the built-in binding for its key (or
+    /// chord) in `context` out of scope. Nothing is bound in its place, so
+    /// the key falls through to whatever else binds it — a broader context,
+    /// the parent keymap, or nothing at all — which is what deleting a row
+    /// means, as opposed to a `noop` override that leaves the key dead.
+    /// The removal is remembered so a plugin registering the same key for
+    /// the same mode later (or again, after a reload) stays removed.
+    fn unbind(&mut self, context: KeyContext, binding: &crate::config::Keybinding) {
+        if !binding.keys.is_empty() {
+            let Some(sequence) = Self::parse_chord_sequence(binding) else {
+                return;
+            };
+            if let Some(chords) = self.default_chord_bindings.get_mut(&context) {
+                chords.remove(&sequence);
+            }
+            if let Some(chords) = self.plugin_chord_defaults.get_mut(&context) {
+                chords.remove(&sequence);
+            }
+            self.removed_chords.insert((context, sequence));
+            return;
+        }
+
+        let Some(key_code) = Self::parse_key(&binding.key) else {
+            warn_invalid_key(&binding.key, &binding.action);
+            return;
+        };
+        let key = (key_code, Self::parse_modifiers(&binding.modifiers));
+        if let Some(map) = self.default_bindings.get_mut(&context) {
+            map.remove(&key);
+            // A keymap binding brings its terminal equivalents along
+            // (`Ctrl+/` registers `Ctrl+7`), so removing it takes those
+            // aliases with it. An equivalent the keymap bound explicitly is
+            // its own binding and stays.
+            for equiv in terminal_key_equivalents(key.0, key.1) {
+                if self
+                    .default_binding_aliases
+                    .remove(&(context.clone(), equiv))
+                {
+                    map.remove(&equiv);
+                }
+            }
+        }
+        if let Some(map) = self.plugin_defaults.get_mut(&context) {
+            map.remove(&key);
+        }
+        self.removed_bindings.insert((context, key));
+    }
+
+    /// Drop every plugin-registered binding the config's `unbind` entries
+    /// remove. Registration already refuses them; this covers bindings
+    /// registered before the removal existed — a reload after the user
+    /// deleted a plugin binding in the keybinding editor.
+    fn prune_removed_plugin_bindings(&mut self) {
+        for (context, key) in &self.removed_bindings {
+            if let Some(map) = self.plugin_defaults.get_mut(context) {
+                map.remove(key);
+            }
+        }
+        for (context, sequence) in &self.removed_chords {
+            if let Some(map) = self.plugin_chord_defaults.get_mut(context) {
+                map.remove(sequence);
             }
         }
     }
@@ -1797,6 +2278,12 @@ impl KeybindingResolver {
         modifiers: KeyModifiers,
         action: Action,
     ) {
+        if self
+            .removed_bindings
+            .contains(&(context.clone(), (key_code, modifiers)))
+        {
+            return;
+        }
         self.plugin_defaults
             .entry(context)
             .or_default()
@@ -1810,6 +2297,12 @@ impl KeybindingResolver {
         sequence: Vec<(KeyCode, KeyModifiers)>,
         action: Action,
     ) {
+        if self
+            .removed_chords
+            .contains(&(context.clone(), sequence.clone()))
+        {
+            return;
+        }
         self.plugin_chord_defaults
             .entry(context)
             .or_default()
@@ -1857,64 +2350,207 @@ impl KeybindingResolver {
         )
     }
 
-    /// Check if an action is a UI action that should work in terminal mode
-    /// (without keyboard capture). These are general navigation and UI actions
-    /// that don't involve text editing.
-    pub fn is_terminal_ui_action(action: &Action) -> bool {
+    /// Whether an action mutates the active buffer's text, and so needs a
+    /// buffer that accepts edits.
+    ///
+    /// The handlers already refuse when `editing_disabled` is set — this is the
+    /// same question asked one step earlier, so the command palette and the
+    /// menus can grey the entry out instead of letting the user pick it and get
+    /// "editing is disabled for this buffer" back.
+    pub fn is_buffer_mutating_action(action: &Action) -> bool {
         matches!(
             action,
-            // Global UI actions
+            Action::Undo
+                | Action::Redo
+                | Action::Cut
+                | Action::Paste
+                | Action::DeleteLine
+                | Action::DeleteWordBackward
+                | Action::DeleteWordForward
+                | Action::DeleteToLineEnd
+                | Action::TransposeChars
+                | Action::ToUpperCase
+                | Action::ToLowerCase
+                | Action::SortLines
+                | Action::OpenLine
+                | Action::DuplicateLine
+                | Action::ToggleComment
+                | Action::DedentSelection
+                | Action::Replace
+                | Action::QueryReplace
+                | Action::FormatBuffer
+                | Action::TrimTrailingWhitespace
+                | Action::EnsureFinalNewline
+                | Action::LspRename
+                | Action::ShellCommandReplace
+        )
+    }
+
+    fn is_global_ui_action(action: &Action) -> bool {
+        matches!(
+            action,
             Action::CommandPalette
                 | Action::QuickOpen
                 | Action::QuickOpenBuffers
                 | Action::QuickOpenFiles
                 | Action::OpenLiveGrep
                 | Action::ResumeLiveGrep
+                | Action::CycleLiveGrepProvider
                 | Action::ToggleUtilityDock
                 | Action::OpenTerminalInDock
                 | Action::ToggleDockFocus
-                | Action::CycleLiveGrepProvider
+                | Action::FocusNextSidebarSection
                 | Action::OpenSettings
                 | Action::MenuActivate
                 | Action::MenuOpen(_)
+                | Action::ToggleMenuBar
                 | Action::ShowHelp
                 | Action::ShowKeyboardShortcuts
                 | Action::Quit
                 | Action::ForceQuit
-                // Split navigation
-                | Action::NextSplit
+        )
+    }
+
+    fn is_layout_navigation_action(action: &Action) -> bool {
+        matches!(
+            action,
+            Action::NextSplit
                 | Action::PrevSplit
-                // Pane navigation (cycle through all splits + tabs)
                 | Action::NextPane
                 | Action::PrevPane
-                // Window navigation
                 | Action::NextWindow
                 | Action::PrevWindow
                 | Action::SplitHorizontal
                 | Action::SplitVertical
                 | Action::CloseSplit
                 | Action::ToggleMaximizeSplit
-                // Tab/buffer navigation
                 | Action::NextBuffer
                 | Action::PrevBuffer
                 | Action::Close
                 | Action::CloseTab
                 | Action::ScrollTabsLeft
                 | Action::ScrollTabsRight
-                // Terminal control
-                | Action::TerminalEscape
+        )
+    }
+
+    fn is_terminal_control_action(action: &Action) -> bool {
+        matches!(
+            action,
+            Action::TerminalEscape
                 | Action::ToggleKeyboardCapture
                 | Action::OpenTerminal
                 | Action::OpenTerminalRight
                 | Action::OpenTerminalBelow
                 | Action::CloseTerminal
                 | Action::TerminalPaste
-                // File explorer
-                | Action::ToggleFileExplorer
-                | Action::ToggleFileExplorerSide
-                // Menu bar
-                | Action::ToggleMenuBar
         )
+    }
+
+    /// Its own group because its default keys are readline's: Ctrl+B is
+    /// backward-char, Ctrl+E is end-of-line.
+    fn is_file_explorer_ui_action(action: &Action) -> bool {
+        matches!(
+            action,
+            Action::ToggleFileExplorer | Action::ToggleFileExplorerSide
+        )
+    }
+
+    /// UI actions a focused terminal yields to the editor instead of sending to
+    /// the PTY. `terminal_escape` is among them, so what is left out stays one
+    /// keystroke away rather than unreachable.
+    fn is_terminal_ui_action(action: &Action) -> bool {
+        Self::is_global_ui_action(action)
+            || Self::is_layout_navigation_action(action)
+            || Self::is_terminal_control_action(action)
+    }
+
+    /// Adds the explorer's keys back, for contexts the user looks at rather
+    /// than types into ([`KeyContext::allows_ui_fallthrough`] and the lookups
+    /// that draw keybinding hints).
+    pub fn is_ui_fallthrough_action(action: &Action) -> bool {
+        Self::is_terminal_ui_action(action) || Self::is_file_explorer_ui_action(action)
+    }
+
+    /// The context chain for a lookup: the context itself, its ancestors
+    /// (e.g. `SearchPrompt → Prompt`), and finally `Global` as the root
+    /// fallback of every chain.
+    fn context_chain(context: &KeyContext) -> Vec<KeyContext> {
+        let mut chain = vec![context.clone()];
+        let mut current = context.clone();
+        while let Some(parent) = current.parent_context() {
+            chain.push(parent.clone());
+            current = parent;
+        }
+        if *context != KeyContext::Global {
+            chain.push(KeyContext::Global);
+        }
+        chain
+    }
+
+    /// The `(source, context)` probe sequence shared by [`Self::resolve`]
+    /// and [`Self::resolve_chord`], so single-key and chord resolution can
+    /// never disagree about precedence.
+    ///
+    /// Two rules, in order (issue #2941):
+    ///
+    /// 1. **Source**: every user binding outranks every built-in one — a
+    ///    user's override must win no matter which context either side
+    ///    used (issue #2720).
+    /// 2. **Specificity**: within the built-in sources, a narrower context
+    ///    outranks a broader one — exact context, then ancestors, then
+    ///    `Global`. A broad `global` entry is a fallback, not a trump: it
+    ///    must not make a context-specific binding for the same chord
+    ///    unreachable. At equal specificity the active keymap outranks
+    ///    plugin `defineMode` defaults, so a keymap can retune a plugin
+    ///    mode; a plugin's mode bindings still outrank the keymap's
+    ///    *global* entries, which are less specific.
+    fn probe_order(&self, context: &KeyContext) -> Vec<(BindingSource, KeyContext)> {
+        let chain = Self::context_chain(context);
+        let mut probes = Vec::with_capacity(chain.len() * 3);
+        for ctx in &chain {
+            probes.push((BindingSource::Custom, ctx.clone()));
+        }
+        for ctx in &chain {
+            probes.push((BindingSource::Default, ctx.clone()));
+            probes.push((BindingSource::Plugin, ctx.clone()));
+        }
+        probes
+    }
+
+    fn single_key_map(
+        &self,
+        source: BindingSource,
+    ) -> &HashMap<KeyContext, HashMap<(KeyCode, KeyModifiers), Action>> {
+        match source {
+            BindingSource::Custom => &self.bindings,
+            BindingSource::Default => &self.default_bindings,
+            BindingSource::Plugin => &self.plugin_defaults,
+        }
+    }
+
+    fn chord_map(
+        &self,
+        source: BindingSource,
+    ) -> &HashMap<KeyContext, HashMap<Vec<(KeyCode, KeyModifiers)>, Action>> {
+        match source {
+            BindingSource::Custom => &self.chord_bindings,
+            BindingSource::Default => &self.default_chord_bindings,
+            BindingSource::Plugin => &self.plugin_chord_defaults,
+        }
+    }
+
+    /// Whether this binding is switched off by configuration rather than
+    /// unbound: a menu-bar mnemonic (`Alt+letter → menu_open`) while
+    /// `editor.menu_bar_mnemonics` is disabled. A suppressed binding must
+    /// not resolve — and must not consume the key — so anything it was
+    /// shadowing becomes reachable. Only Alt+letter chords are mnemonics;
+    /// a `menu_open` binding on any other chord (e.g. a user's `F2`)
+    /// stays live regardless of the option.
+    fn is_suppressed(&self, key: &(KeyCode, KeyModifiers), action: &Action) -> bool {
+        !self.menu_mnemonics_enabled
+            && matches!(action, Action::MenuOpen(_))
+            && matches!(key.0, KeyCode::Char(_))
+            && key.1.contains(KeyModifiers::ALT)
     }
 
     /// Resolve a key event with chord state to check for multi-key sequences
@@ -1942,52 +2578,101 @@ impl KeybindingResolver {
             context
         );
 
-        // Check all chord binding sources in priority order
-        let search_order = vec![
-            (&self.chord_bindings, &KeyContext::Global, "custom global"),
-            (
-                &self.default_chord_bindings,
-                &KeyContext::Global,
-                "default global",
-            ),
-            (&self.chord_bindings, &context, "custom context"),
-            (&self.default_chord_bindings, &context, "default context"),
-            (
-                &self.plugin_chord_defaults,
-                &context,
-                "plugin default context",
-            ),
-        ];
+        // Check all chord binding sources in the shared precedence order
+        // (see `probe_order`).
+        let probes = self.probe_order(&context);
 
-        let mut has_partial_match = false;
-
-        for (binding_map, bind_context, label) in search_order {
-            if let Some(context_chords) = binding_map.get(bind_context) {
-                // Check for exact match
-                if let Some(action) = context_chords.get(&full_sequence) {
-                    tracing::trace!("  -> Complete chord match in {}: {:?}", label, action);
-                    return ChordResolution::Complete(action.clone());
-                }
-
-                // Check for partial match (our sequence is a prefix of any binding)
-                for (chord_seq, _) in context_chords.iter() {
-                    if chord_seq.len() > full_sequence.len()
-                        && chord_seq[..full_sequence.len()] == full_sequence[..]
-                    {
-                        tracing::trace!("  -> Partial chord match in {}", label);
-                        has_partial_match = true;
-                        break;
-                    }
-                }
+        // Exact match: the highest-precedence binding of this sequence
+        // wins. A user's `noop` override completes too — it resolves to
+        // `Action::None`, which is how the keybinding editor disables a
+        // keymap chord.
+        for (source, bind_context) in &probes {
+            if let Some(action) = self
+                .chord_map(*source)
+                .get(bind_context)
+                .and_then(|chords| chords.get(&full_sequence))
+            {
+                tracing::trace!(
+                    "  -> Complete chord match in {} {}: {:?}",
+                    source.label(),
+                    bind_context.to_when_clause(),
+                    action
+                );
+                return ChordResolution::Complete(action.clone());
             }
         }
 
-        if has_partial_match {
-            ChordResolution::Partial
-        } else {
-            tracing::trace!("  -> No chord match");
-            ChordResolution::NoMatch
+        // Partial match: the sequence is a proper prefix of a *live* chord.
+        //
+        // A chord holds its prefix only while it can still fire. Two
+        // things release it:
+        //
+        // * Its effective binding — the highest-precedence entry for the
+        //   full sequence — is `noop`. Deleting a keymap chord in the
+        //   keybinding editor writes exactly that override, and before
+        //   this the disabled chord kept swallowing its prefix: with the
+        //   emacs `Alt+G G` / `Alt+G Alt+G` goto-line chords removed,
+        //   `Alt+G` still did nothing, and a fresh `Alt+G → goto_line`
+        //   binding never fired.
+        // * On the first key, the user has bound that key on its own.
+        //   Every user binding outranks every built-in one (issue
+        //   #2720), and a built-in chord's prefix is no exception —
+        //   otherwise the emacs keymap's goto-line chords made a user's
+        //   `Alt+G → goto_line` unreachable with no conflict reported.
+        //   The user's *own* chord on that prefix still wins over their
+        //   single-key binding: they wrote both, and finishing a
+        //   sequence beats cutting it short.
+        let user_claims_first_key = full_sequence.len() == 1
+            && Self::context_chain(&context).iter().any(|ctx| {
+                self.bindings
+                    .get(ctx)
+                    .and_then(|m| m.get(&full_sequence[0]))
+                    .is_some_and(|action| *action != Action::None)
+            });
+
+        for (source, bind_context) in &probes {
+            if user_claims_first_key && *source != BindingSource::Custom {
+                continue;
+            }
+            let Some(context_chords) = self.chord_map(*source).get(bind_context) else {
+                continue;
+            };
+            let holds_prefix = context_chords.keys().any(|chord_seq| {
+                chord_seq.len() > full_sequence.len()
+                    && chord_seq[..full_sequence.len()] == full_sequence[..]
+                    && self.chord_is_live(&probes, chord_seq)
+            });
+            if holds_prefix {
+                tracing::trace!(
+                    "  -> Partial chord match in {} {}",
+                    source.label(),
+                    bind_context.to_when_clause()
+                );
+                return ChordResolution::Partial;
+            }
         }
+
+        tracing::trace!("  -> No chord match");
+        ChordResolution::NoMatch
+    }
+
+    /// Whether `sequence` can still fire under `probes`: its effective
+    /// binding — the first entry for the full sequence in precedence
+    /// order — is not a `noop` override. A `noop` chord is disabled, not
+    /// merely shadowed, so it must not hold its prefix either.
+    fn chord_is_live(
+        &self,
+        probes: &[(BindingSource, KeyContext)],
+        sequence: &[(KeyCode, KeyModifiers)],
+    ) -> bool {
+        probes
+            .iter()
+            .find_map(|(source, ctx)| {
+                self.chord_map(*source)
+                    .get(ctx)
+                    .and_then(|chords| chords.get(sequence))
+            })
+            .is_some_and(|action| *action != Action::None)
     }
 
     /// Resolve a key event to an action in the given context
@@ -2003,70 +2688,32 @@ impl KeybindingResolver {
             context
         );
 
-        // Check Global bindings first (highest priority - work in all contexts)
-        if let Some(global_bindings) = self.bindings.get(&KeyContext::Global) {
-            if let Some(action) = global_bindings.get(norm) {
-                tracing::trace!("  -> Found in custom global bindings: {:?}", action);
-                return action.clone();
-            }
-        }
-
-        if let Some(global_bindings) = self.default_bindings.get(&KeyContext::Global) {
-            if let Some(action) = global_bindings.get(norm) {
-                tracing::trace!("  -> Found in default global bindings: {:?}", action);
-                return action.clone();
-            }
-        }
-
-        // Try context-specific custom bindings
-        if let Some(context_bindings) = self.bindings.get(&context) {
-            if let Some(action) = context_bindings.get(norm) {
-                tracing::trace!(
-                    "  -> Found in custom {} bindings: {:?}",
-                    context.to_when_clause(),
-                    action
-                );
-                return action.clone();
-            }
-        }
-
-        // Try context-specific default bindings
-        if let Some(context_bindings) = self.default_bindings.get(&context) {
-            if let Some(action) = context_bindings.get(norm) {
-                tracing::trace!(
-                    "  -> Found in default {} bindings: {:?}",
-                    context.to_when_clause(),
-                    action
-                );
-                return action.clone();
-            }
-        }
-
-        // Try plugin default bindings (mode bindings from defineMode)
-        if let Some(plugin_bindings) = self.plugin_defaults.get(&context) {
-            if let Some(action) = plugin_bindings.get(norm) {
-                tracing::trace!(
-                    "  -> Found in plugin default {} bindings: {:?}",
-                    context.to_when_clause(),
-                    action
-                );
-                return action.clone();
-            }
-        }
-
-        // Fall through to the parent context's bindings (e.g. SearchPrompt →
-        // Prompt) so a narrowed context inherits all of its parent's keys and
-        // only owns/overrides the few it declares. Checked after this context's
-        // own bindings but before the Normal fallthrough below, so the parent's
-        // editing/navigation keys outrank Normal.
-        if let Some(parent) = context.parent_context() {
-            if let Some(parent_bindings) = self.bindings.get(&parent) {
-                if let Some(action) = parent_bindings.get(norm) {
-                    return action.clone();
-                }
-            }
-            if let Some(parent_bindings) = self.default_bindings.get(&parent) {
-                if let Some(action) = parent_bindings.get(norm) {
+        // Probe every binding source in the shared precedence order (see
+        // `probe_order`): all user bindings before all built-in ones
+        // (issue #2720), and within the built-ins, narrower contexts
+        // before broader ones — a `global` entry is the root fallback,
+        // never a trump over a context-specific binding for the same
+        // chord (issue #2941). Bindings suppressed by configuration
+        // (menu mnemonics while disabled) are skipped as if unbound, so
+        // they release the chord instead of consuming it.
+        for (source, bind_context) in self.probe_order(&context) {
+            if let Some(context_bindings) = self.single_key_map(source).get(&bind_context) {
+                if let Some(action) = context_bindings.get(norm) {
+                    if self.is_suppressed(norm, action) {
+                        tracing::trace!(
+                            "  -> Skipping suppressed binding in {} {}: {:?}",
+                            source.label(),
+                            bind_context.to_when_clause(),
+                            action
+                        );
+                        continue;
+                    }
+                    tracing::trace!(
+                        "  -> Found in {} {} bindings: {:?}",
+                        source.label(),
+                        bind_context.to_when_clause(),
+                        action
+                    );
                     return action.clone();
                 }
             }
@@ -2099,7 +2746,7 @@ impl KeybindingResolver {
                 if let Some(action) = normal_bindings.get(norm) {
                     if full_fallthrough
                         || Self::is_application_wide_action(action)
-                        || (ui_fallthrough && Self::is_terminal_ui_action(action))
+                        || (ui_fallthrough && Self::is_ui_fallthrough_action(action))
                     {
                         tracing::trace!(
                             "  -> Found action in custom normal bindings (fallthrough): {:?}",
@@ -2115,7 +2762,7 @@ impl KeybindingResolver {
                     if let Some(action) = normal_bindings.get(norm) {
                         if full_fallthrough
                             || Self::is_application_wide_action(action)
-                            || (ui_fallthrough && Self::is_terminal_ui_action(action))
+                            || (ui_fallthrough && Self::is_ui_fallthrough_action(action))
                         {
                             tracing::trace!(
                                 "  -> Found action in default normal bindings (fallthrough): {:?}",
@@ -2140,9 +2787,10 @@ impl KeybindingResolver {
         Action::None
     }
 
-    /// Resolve a key event looking only in the specified context (no Global fallback).
-    /// This is used when a modal context (like Prompt) needs to check if it has
-    /// a specific binding without being overridden by Global bindings.
+    /// Resolve a key event looking only in the specified context — no parent
+    /// chain, no Global fallback. Used where dispatch needs "does this context
+    /// itself claim this key" (popup/completion routing), as opposed to full
+    /// resolution.
     /// Returns None if no binding found in the specified context.
     pub fn resolve_in_context_only(&self, event: &KeyEvent, context: KeyContext) -> Option<Action> {
         let norm = normalize_key(event.code, event.modifiers);
@@ -2171,28 +2819,32 @@ impl KeybindingResolver {
     /// check used by `dispatch_floating_widget_key` to decide
     /// whether to let mode dispatch override its smart-key defaults.
     pub fn has_explicit_binding(&self, event: &KeyEvent, context: &KeyContext) -> bool {
+        self.explicit_binding(event, context).is_some()
+    }
+
+    /// The action `context` itself binds `event` to — user-customised,
+    /// built-in default, or plugin-default (from `defineMode`), in that
+    /// order — with no fall-back to the Global or Normal contexts.
+    ///
+    /// **A panel's keymap on the tree** reads a plugin mode's bindings
+    /// through this (`view::shell::panel::Keymap`): the panel's interior
+    /// captures a key the mode explicitly binds ahead of the widget that
+    /// holds focus, which is the precedence `defineMode` promises a panel.
+    pub fn explicit_binding(&self, event: &KeyEvent, context: &KeyContext) -> Option<Action> {
         let norm = normalize_key(event.code, event.modifiers);
-        if let Some(bindings) = self.bindings.get(context) {
-            if bindings.contains_key(&norm) {
-                return true;
-            }
-        }
-        if let Some(bindings) = self.default_bindings.get(context) {
-            if bindings.contains_key(&norm) {
-                return true;
-            }
-        }
-        if let Some(bindings) = self.plugin_defaults.get(context) {
-            if bindings.contains_key(&norm) {
-                return true;
-            }
-        }
-        false
+        [
+            &self.bindings,
+            &self.default_bindings,
+            &self.plugin_defaults,
+        ]
+        .into_iter()
+        .find_map(|table| table.get(context).and_then(|b| b.get(&norm)).cloned())
     }
 
     /// Resolve a key event to a UI action for terminal mode.
-    /// Only returns actions that are classified as UI actions (is_terminal_ui_action).
-    /// Returns Action::None if the key doesn't map to a UI action.
+    /// Only returns actions the terminal yields to the editor
+    /// ([`Self::is_terminal_ui_action`]).
+    /// Returns Action::None if the key doesn't map to such an action.
     pub fn resolve_terminal_ui_action(&self, event: &KeyEvent) -> Action {
         let norm = normalize_key(event.code, event.modifiers);
         tracing::trace!(
@@ -2256,6 +2908,28 @@ impl KeybindingResolver {
             }
         }
         names
+    }
+
+    /// Every chord bound in one context, defaults included, with custom
+    /// bindings winning.
+    ///
+    /// For surfaces that carry their bindings *into* a description as
+    /// shortcuts rather than resolving a key at dispatch time — see
+    /// `Editor::menu_shortcuts`. Resolution order matches
+    /// [`Self::find_keybinding_for_action`]: customs shadow defaults for the
+    /// same chord.
+    pub fn bindings_in_context(
+        &self,
+        context: KeyContext,
+    ) -> Vec<((KeyCode, KeyModifiers), Action)> {
+        let mut out: HashMap<(KeyCode, KeyModifiers), Action> = HashMap::new();
+        if let Some(m) = self.default_bindings.get(&context) {
+            out.extend(m.iter().map(|(k, a)| (*k, a.clone())));
+        }
+        if let Some(m) = self.bindings.get(&context) {
+            out.extend(m.iter().map(|(k, a)| (*k, a.clone())));
+        }
+        out.into_iter().collect()
     }
 
     pub fn find_keybinding_for_action(
@@ -2371,28 +3045,25 @@ impl KeybindingResolver {
         None
     }
 
-    /// Parse a key string to KeyCode
+    /// Parse a key string to KeyCode.
+    ///
+    /// Three sources, in order: the tables of names below, the numeric keypad
+    /// (via [`fresh_input_parser::keypad`], which is also what decodes those
+    /// keys off the wire — one definition, so a name that binds and a key that
+    /// arrives cannot drift apart), and finally the two open-ended forms, a
+    /// single character and `f<n>`.
     fn parse_key(key: &str) -> Option<KeyCode> {
         let lower = key.to_lowercase();
+        if let Some(code) = key_name_to_code(&lower) {
+            return Some(code);
+        }
         match lower.as_str() {
-            "enter" => Some(KeyCode::Enter),
-            "backspace" => Some(KeyCode::Backspace),
-            "delete" | "del" => Some(KeyCode::Delete),
-            "tab" => Some(KeyCode::Tab),
-            "backtab" => Some(KeyCode::BackTab),
-            "esc" | "escape" => Some(KeyCode::Esc),
-            "space" => Some(KeyCode::Char(' ')),
-
-            "left" => Some(KeyCode::Left),
-            "right" => Some(KeyCode::Right),
-            "up" => Some(KeyCode::Up),
-            "down" => Some(KeyCode::Down),
-            "home" => Some(KeyCode::Home),
-            "end" => Some(KeyCode::End),
-            "pageup" => Some(KeyCode::PageUp),
-            "pagedown" => Some(KeyCode::PageDown),
-
-            s if s.len() == 1 => s.chars().next().map(KeyCode::Char),
+            // Character count, not byte count: `"é"` is two bytes, and
+            // spelling it out as a key name used to fall past this arm
+            // into the function-key arm and out as `None` — a binding on
+            // a non-ASCII character silently did nothing, the same class
+            // of quiet drop as the names above (issue #1128).
+            s if s.chars().count() == 1 => s.chars().next().map(KeyCode::Char),
             // Handle function keys like "f1", "f2", ..., "f12"
             s if s.starts_with('f') && s.len() >= 2 => s[1..].parse::<u8>().ok().map(KeyCode::F),
             _ => None,
@@ -2472,6 +3143,8 @@ impl KeybindingResolver {
 
     /// Format an action as a readable description
     pub fn format_action(action: &Action) -> String {
+        // The keybinding editor can render before `i18n::init`, e.g. from a test.
+        crate::i18n::embedded::ensure_registered();
         match action {
             Action::InsertChar(c) => t!("action.insert_char", char = c),
             Action::InsertNewline => t!("action.insert_newline"),
@@ -2612,6 +3285,8 @@ impl KeybindingResolver {
             Action::ShowLspStatus => t!("action.show_lsp_status"),
             Action::ShowRemoteIndicatorMenu => t!("action.show_remote_indicator_menu"),
             Action::ShowReadOnlyMenu => t!("action.show_read_only_menu"),
+            Action::UpdateFresh => t!("action.update_fresh"),
+            Action::OpenUpdateLog => t!("action.open_update_log"),
             Action::ClearWarnings => t!("action.clear_warnings"),
             Action::CommandPalette => t!("action.command_palette"),
             Action::QuickOpen => t!("action.quick_open"),
@@ -2701,6 +3376,7 @@ impl KeybindingResolver {
             Action::FocusFileExplorer => t!("action.focus_file_explorer"),
             Action::FocusEditor => t!("action.focus_editor"),
             Action::ToggleDockFocus => t!("action.toggle_dock_focus"),
+            Action::FocusNextSidebarSection => t!("action.focus_next_sidebar_section"),
             Action::FileExplorerUp => t!("action.file_explorer_up"),
             Action::FileExplorerDown => t!("action.file_explorer_down"),
             Action::FileExplorerPageUp => t!("action.file_explorer_page_up"),
@@ -2750,6 +3426,18 @@ impl KeybindingResolver {
             Action::ToggleVirtualSpaceCurrentBuffer => {
                 t!("action.toggle_virtual_space_current_buffer")
             }
+            Action::ToggleIndentationGuideCurrentBuffer => {
+                t!("action.toggle_indentation_guide_current_buffer")
+            }
+            Action::ToggleFoldIndicatorsCurrentBuffer => {
+                t!("action.toggle_fold_indicators_current_buffer")
+            }
+            Action::ToggleCurrentLineHighlightCurrentBuffer => {
+                t!("action.toggle_current_line_highlight_current_buffer")
+            }
+            Action::ToggleOccurrenceHighlightCurrentBuffer => {
+                t!("action.toggle_occurrence_highlight_current_buffer")
+            }
             Action::TriggerWaveAnimation => t!("action.trigger_wave_animation"),
             Action::ToggleScrollSync => t!("action.toggle_scroll_sync"),
             Action::ToggleMouseCapture => t!("action.toggle_mouse_capture"),
@@ -2768,6 +3456,7 @@ impl KeybindingResolver {
             Action::ToggleWhitespaceIndicators => t!("action.toggle_whitespace_indicators"),
             Action::ResetBufferSettings => t!("action.reset_buffer_settings"),
             Action::DumpConfig => t!("action.dump_config"),
+            Action::DumpUiTree => t!("action.dump_ui_tree"),
             Action::RedrawScreen => t!("action.redraw_screen"),
             Action::Search => t!("action.search"),
             Action::FindInSelection => t!("action.find_in_selection"),
@@ -2800,6 +3489,7 @@ impl KeybindingResolver {
             Action::OpenTerminalRight => t!("action.open_terminal_right"),
             Action::OpenTerminalBelow => t!("action.open_terminal_below"),
             Action::CloseTerminal => t!("action.close_terminal"),
+            Action::RestartTerminal => t!("action.restart_terminal"),
             Action::FocusTerminal => t!("action.focus_terminal"),
             Action::TerminalEscape => t!("action.terminal_escape"),
             Action::ToggleKeyboardCapture => t!("action.toggle_keyboard_capture"),
@@ -2973,7 +3663,7 @@ impl KeybindingResolver {
         if context != KeyContext::Normal
             && (context.allows_normal_fallthrough()
                 || Self::is_application_wide_action(action)
-                || (context.allows_ui_fallthrough() && Self::is_terminal_ui_action(action)))
+                || (context.allows_ui_fallthrough() && Self::is_ui_fallthrough_action(action)))
         {
             // Check custom normal bindings
             if let Some(normal_bindings) = self.bindings.get(&KeyContext::Normal) {
@@ -3038,6 +3728,114 @@ mod tests {
             Some(KeyCode::BackTab)
         );
         assert_eq!(KeybindingResolver::parse_key("a"), Some(KeyCode::Char('a')));
+    }
+
+    /// Issue #1128: the reporter wrote `"key": "asterisk"` (the X11
+    /// keysym spelling) and got a binding that did nothing. Symbolic
+    /// punctuation names parse to the character they name, alongside the
+    /// single-character spelling that remains canonical, and the keypad
+    /// aliases land on the same characters their key transmits.
+    #[test]
+    fn test_parse_key_symbolic_names() {
+        for (name, ch) in [
+            ("asterisk", '*'),
+            ("kp_multiply", '*'),
+            ("plus", '+'),
+            ("minus", '-'),
+            ("kp_subtract", '-'),
+            ("slash", '/'),
+            ("backslash", '\\'),
+            ("period", '.'),
+            ("comma", ','),
+            ("underscore", '_'),
+            ("quotedbl", '"'),
+            ("grave", '`'),
+            ("bracketleft", '['),
+            ("bracketright", ']'),
+        ] {
+            assert_eq!(
+                KeybindingResolver::parse_key(name),
+                Some(KeyCode::Char(ch)),
+                "key name {name:?}"
+            );
+        }
+        // Case-insensitive, like every other name in the table.
+        assert_eq!(
+            KeybindingResolver::parse_key("Asterisk"),
+            Some(KeyCode::Char('*'))
+        );
+        // The single-character spelling still wins where the two overlap,
+        // and unrelated names are still rejected.
+        assert_eq!(KeybindingResolver::parse_key("*"), Some(KeyCode::Char('*')));
+        assert_eq!(KeybindingResolver::parse_key("asterix"), None);
+        // A single non-ASCII character is one key name, not two bytes'
+        // worth of nothing.
+        assert_eq!(KeybindingResolver::parse_key("é"), Some(KeyCode::Char('é')));
+        assert_eq!(KeybindingResolver::parse_key("ñ"), Some(KeyCode::Char('ñ')));
+    }
+
+    /// The end of the same issue: a config entry spelled with a symbolic
+    /// name must actually register, not merely parse.
+    #[test]
+    fn test_symbolic_key_name_binds_from_config() {
+        let mut config = Config::default();
+        config.keybindings.push(crate::config::Keybinding {
+            key: "asterisk".to_string(),
+            modifiers: vec!["ctrl".to_string()],
+            keys: Vec::new(),
+            action: "duplicate_line".to_string(),
+            args: HashMap::new(),
+            when: None,
+        });
+        let resolver = KeybindingResolver::new(&config);
+        let event = KeyEvent::new(KeyCode::Char('*'), KeyModifiers::CONTROL);
+        assert_eq!(
+            resolver.resolve(&event, KeyContext::Normal),
+            Action::DuplicateLine
+        );
+    }
+
+    /// A keypad name binds the key the terminal actually sends.
+    ///
+    /// `kp_enter` is the headline gap issue #1128 left open: the name parsed
+    /// as nothing, so the entry was dropped at load and the binding silently
+    /// did nothing. It resolves on `Enter`, because that is what a terminal
+    /// reports the keypad's Enter as — the aliasing the docs spell out.
+    #[test]
+    fn keypad_name_binds_from_config() {
+        let mut config = Config::default();
+        config.keybindings.push(crate::config::Keybinding {
+            key: "kp_enter".to_string(),
+            modifiers: vec!["ctrl".to_string()],
+            keys: Vec::new(),
+            action: "duplicate_line".to_string(),
+            args: HashMap::new(),
+            when: None,
+        });
+        config.keybindings.push(crate::config::Keybinding {
+            key: "kp_begin".to_string(),
+            modifiers: Vec::new(),
+            keys: Vec::new(),
+            action: "select_all".to_string(),
+            args: HashMap::new(),
+            when: None,
+        });
+        let resolver = KeybindingResolver::new(&config);
+        assert_eq!(
+            resolver.resolve(
+                &KeyEvent::new(KeyCode::Enter, KeyModifiers::CONTROL),
+                KeyContext::Normal
+            ),
+            Action::DuplicateLine
+        );
+        // The one keypad key that is not an alias resolves on its own code.
+        assert_eq!(
+            resolver.resolve(
+                &KeyEvent::new(KeyCode::KeypadBegin, KeyModifiers::empty()),
+                KeyContext::Normal
+            ),
+            Action::SelectAll
+        );
     }
 
     #[test]
@@ -3176,6 +3974,69 @@ mod tests {
         assert_eq!(action.to_qualified_action_str(), "menu_open:Edit");
     }
 
+    /// Issue #1128: a keybinding whose key name doesn't parse is rejected —
+    /// the entry must be dropped (binding nothing) while a `tracing::warn!`
+    /// at load time names the key and action, and the rest of the config
+    /// must still load. The warning itself is emitted by
+    /// `warn_invalid_key`; here we assert the dropped-but-load-continues
+    /// behavior.
+    ///
+    /// The names that started that issue — "asterisk" / "kp_multiply" —
+    /// are no longer in this group: they parse now (see
+    /// `test_parse_key_symbolic_names`). This test needs a name nothing
+    /// claims, so it uses one.
+    #[test]
+    fn test_unknown_key_name_entry_is_dropped_but_load_continues() {
+        let mut config = Config::default();
+        config.keybindings.push(crate::config::Keybinding {
+            key: "no_such_key_name".to_string(),
+            modifiers: vec!["ctrl".to_string()],
+            keys: Vec::new(),
+            action: "duplicate_line".to_string(),
+            args: HashMap::new(),
+            when: None,
+        });
+        // Same failure inside a chord sequence.
+        config.keybindings.push(crate::config::Keybinding {
+            key: String::new(),
+            modifiers: Vec::new(),
+            keys: vec![
+                crate::config::KeyPress {
+                    key: "x".to_string(),
+                    modifiers: vec!["ctrl".to_string()],
+                },
+                crate::config::KeyPress {
+                    key: "also_not_a_key".to_string(),
+                    modifiers: Vec::new(),
+                },
+            ],
+            action: "save".to_string(),
+            args: HashMap::new(),
+            when: None,
+        });
+        // A valid entry after the bad ones: loading must not abort mid-config.
+        config.keybindings.push(crate::config::Keybinding {
+            key: "f6".to_string(),
+            modifiers: Vec::new(),
+            keys: Vec::new(),
+            action: "save".to_string(),
+            args: HashMap::new(),
+            when: None,
+        });
+        let resolver = KeybindingResolver::new(&config);
+
+        // Only the valid entry produced custom bindings; both bad entries were
+        // dropped rather than half-registered.
+        let custom_single: usize = resolver.bindings.values().map(|m| m.len()).sum();
+        assert_eq!(custom_single, 1, "bindings: {:?}", resolver.bindings);
+        let custom_chords: usize = resolver.chord_bindings.values().map(|m| m.len()).sum();
+        assert_eq!(custom_chords, 0, "chords: {:?}", resolver.chord_bindings);
+
+        // The valid entry still resolves.
+        let event = KeyEvent::new(KeyCode::F(6), KeyModifiers::empty());
+        assert_eq!(resolver.resolve(&event, KeyContext::Normal), Action::Save);
+    }
+
     #[test]
     fn test_resolve_basic() {
         let config = Config::default();
@@ -3223,7 +4084,7 @@ mod tests {
         );
 
         // Ctrl+S is application-wide (covered by `is_application_wide_action`),
-        // but also `is_terminal_ui_action`-true — verify the UI fallthrough
+        // but also `is_ui_fallthrough_action`-true — verify the UI fallthrough
         // path doesn't accidentally exclude it.
         let ctrl_s = KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL);
         assert_eq!(
@@ -3234,7 +4095,7 @@ mod tests {
 
         // Editing actions on the source buffer must NOT pass through.
         // Ctrl+D (add cursor next match) is editor-only and absent from
-        // `is_terminal_ui_action`.
+        // `is_ui_fallthrough_action`.
         let ctrl_d = KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL);
         assert_ne!(
             resolver.resolve(&ctrl_d, mode_ctx),
@@ -3802,6 +4663,865 @@ mod tests {
         );
     }
 
+    /// Regression guard for issue #2720: a user-defined binding for an
+    /// Alt+letter chord must take precedence over the built-in menu-bar
+    /// mnemonic, which lives in the default keymap as a *global* binding
+    /// (`Alt+H → menu_open Help`). A user binding with no `when` clause loads
+    /// into the Normal context; before the fix the default-global tier was
+    /// checked ahead of the custom-context tier, so the override was shadowed
+    /// (opening the Help menu, or silently no-op'ing when mnemonics were off).
+    #[test]
+    fn test_user_alt_letter_binding_overrides_menu_mnemonic() {
+        use crate::config::Keybinding;
+
+        let alt_h = KeyEvent::new(KeyCode::Char('h'), KeyModifiers::ALT);
+
+        // Pin the keymap: on macOS `Config::default()` selects the macos
+        // keymap, which deliberately binds Alt+F to word movement in Normal —
+        // that context-specific binding outranks the File mnemonic there, so
+        // the mnemonic assertions below only hold on the default keymap.
+        let mut baseline = Config::default();
+        baseline.active_keybinding_map = "default".into();
+
+        // Baseline: with no user override, Alt+H is the Help menu mnemonic
+        // (a default *global* binding).
+        let default_resolver = KeybindingResolver::new(&baseline);
+        assert_eq!(
+            default_resolver.resolve(&alt_h, KeyContext::Normal),
+            Action::MenuOpen("Help".to_string()),
+            "unbound Alt+H must still open the Help menu by default"
+        );
+
+        // User binds Alt+H → command_palette (no `when` clause → Normal context).
+        let mut config = baseline.clone();
+        config.keybindings.push(Keybinding {
+            key: "h".to_string(),
+            modifiers: vec!["alt".to_string()],
+            keys: vec![],
+            action: "command_palette".to_string(),
+            args: HashMap::new(),
+            when: None,
+        });
+        let resolver = KeybindingResolver::new(&config);
+
+        assert_eq!(
+            resolver.resolve(&alt_h, KeyContext::Normal),
+            Action::CommandPalette,
+            "a user Alt+H binding must win over the default-global Help mnemonic"
+        );
+
+        // Other unbound Alt-letter mnemonics must remain intact.
+        let alt_f = KeyEvent::new(KeyCode::Char('f'), KeyModifiers::ALT);
+        assert_eq!(
+            resolver.resolve(&alt_f, KeyContext::Normal),
+            Action::MenuOpen("File".to_string()),
+            "unrelated Alt+F mnemonic must not regress when Alt+H is overridden"
+        );
+    }
+
+    /// A user override placed explicitly in the `global` context must also win
+    /// over the default-global mnemonic for the same chord.
+    #[test]
+    fn test_user_global_binding_overrides_default_global() {
+        use crate::config::Keybinding;
+
+        let mut config = Config::default();
+        config.keybindings.push(Keybinding {
+            key: "h".to_string(),
+            modifiers: vec!["alt".to_string()],
+            keys: vec![],
+            action: "command_palette".to_string(),
+            args: HashMap::new(),
+            when: Some("global".to_string()),
+        });
+        let resolver = KeybindingResolver::new(&config);
+
+        let alt_h = KeyEvent::new(KeyCode::Char('h'), KeyModifiers::ALT);
+        assert_eq!(
+            resolver.resolve(&alt_h, KeyContext::Normal),
+            Action::CommandPalette,
+            "a user global Alt+H binding must win over the default-global mnemonic"
+        );
+    }
+
+    /// Issue #2941, core rule: within one source layer, a context-specific
+    /// binding outranks a `global` binding for the same chord. A broad
+    /// global fallback must never make the narrower binding unreachable.
+    #[test]
+    fn test_context_binding_outranks_global_binding_same_source() {
+        use crate::config::Keybinding;
+
+        // User binds Alt+N globally (broad fallback) AND in Normal
+        // (specific job). In Normal the specific one must win.
+        let mut config = Config::default();
+        config.keybindings.push(Keybinding {
+            key: "n".to_string(),
+            modifiers: vec!["alt".to_string()],
+            keys: vec![],
+            action: "move_down".to_string(),
+            args: HashMap::new(),
+            when: Some("global".to_string()),
+        });
+        config.keybindings.push(Keybinding {
+            key: "n".to_string(),
+            modifiers: vec!["alt".to_string()],
+            keys: vec![],
+            action: "move_word_right".to_string(),
+            args: HashMap::new(),
+            when: Some("normal".to_string()),
+        });
+        let resolver = KeybindingResolver::new(&config);
+
+        let alt_n = KeyEvent::new(KeyCode::Char('n'), KeyModifiers::ALT);
+        assert_eq!(
+            resolver.resolve(&alt_n, KeyContext::Normal),
+            Action::MoveWordRight,
+            "the user's normal-context binding must outrank their own global fallback"
+        );
+        // Where no narrower binding exists, the global fallback applies.
+        assert_eq!(
+            resolver.resolve(&alt_n, KeyContext::Popup),
+            Action::MoveDown,
+            "the global fallback must still apply in contexts without a narrower binding"
+        );
+    }
+
+    /// A user's single-key binding must outrank a built-in chord's prefix.
+    /// On the emacs keymap, `Alt+G → goto_line` was unreachable: the
+    /// keymap's `Alt+G G` / `Alt+G Alt+G` chords held `Alt+G` as a pending
+    /// prefix, and the keybinding editor reported no conflict.
+    #[test]
+    fn test_chord_prefix_user_single_key_outranks_keymap() {
+        use crate::config::Keybinding;
+
+        let mut baseline = Config::default();
+        baseline.active_keybinding_map = "emacs".into();
+        let alt_g = KeyEvent::new(KeyCode::Char('g'), KeyModifiers::ALT);
+        let alt_g_single = |action: &str, when: &str| -> Keybinding {
+            serde_json::from_value(serde_json::json!({
+                "key": "g", "modifiers": ["alt"], "action": action, "when": when
+            }))
+            .unwrap()
+        };
+
+        // Regression guard: with nothing else bound, the keymap chords do
+        // hold Alt+G as a prefix.
+        let resolver = KeybindingResolver::new(&baseline);
+        assert_eq!(
+            resolver.resolve_chord(&[], &alt_g, KeyContext::Normal),
+            ChordResolution::Partial,
+            "the emacs goto-line chords must hold Alt+G while nothing outranks them"
+        );
+
+        for when in ["normal", "global"] {
+            let mut config = baseline.clone();
+            config.keybindings.push(alt_g_single("goto_line", when));
+            let resolver = KeybindingResolver::new(&config);
+            assert_eq!(
+                resolver.resolve_chord(&[], &alt_g, KeyContext::Normal),
+                ChordResolution::NoMatch,
+                "a user `{when}` Alt+G binding must release the keymap chord prefix"
+            );
+            assert_eq!(
+                resolver.resolve(&alt_g, KeyContext::Normal),
+                Action::GotoLine,
+                "the user's `{when}` Alt+G binding must then fire"
+            );
+        }
+
+        // The user's own chord on the same prefix still wins over their
+        // single-key binding: they wrote both, and the sequence completes.
+        let mut config = baseline.clone();
+        config.keybindings.push(alt_g_single("goto_line", "normal"));
+        config.keybindings.push(
+            serde_json::from_value(serde_json::json!({
+                "keys": [{"key": "g", "modifiers": ["alt"]}, {"key": "l"}],
+                "action": "goto_line", "when": "normal"
+            }))
+            .unwrap(),
+        );
+        let resolver = KeybindingResolver::new(&config);
+        assert_eq!(
+            resolver.resolve_chord(&[], &alt_g, KeyContext::Normal),
+            ChordResolution::Partial,
+            "a user chord must keep holding the prefix over the user's own single-key binding"
+        );
+        let l = KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE);
+        assert_eq!(
+            resolver.resolve_chord(
+                &[(KeyCode::Char('g'), KeyModifiers::ALT)],
+                &l,
+                KeyContext::Normal
+            ),
+            ChordResolution::Complete(Action::GotoLine),
+            "the user chord must complete"
+        );
+
+        // A `noop` single-key binding disables the key; it is not a claim
+        // on it, so the keymap chords keep their prefix.
+        let mut config = baseline.clone();
+        config.keybindings.push(alt_g_single("noop", "normal"));
+        let resolver = KeybindingResolver::new(&config);
+        assert_eq!(
+            resolver.resolve_chord(&[], &alt_g, KeyContext::Normal),
+            ChordResolution::Partial,
+            "a noop single-key override must not release a keymap chord prefix"
+        );
+    }
+
+    /// Disabling a keymap chord — the `noop` override the keybinding
+    /// editor's `d` writes — must release the chord's prefix once no live
+    /// chord starts with it. Before, the disabled emacs goto-line chords
+    /// kept swallowing `Alt+G`: the key did nothing, and the global Go-menu
+    /// mnemonic behind it stayed unreachable.
+    #[test]
+    fn test_chord_prefix_released_by_noop_override() {
+        use crate::config::Keybinding;
+
+        let mut baseline = Config::default();
+        baseline.active_keybinding_map = "emacs".into();
+        let alt_g = KeyEvent::new(KeyCode::Char('g'), KeyModifiers::ALT);
+        let g = KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE);
+        let alt_g_state = [(KeyCode::Char('g'), KeyModifiers::ALT)];
+        let noop_chord = |second: serde_json::Value| -> Keybinding {
+            serde_json::from_value(serde_json::json!({
+                "keys": [{"key": "g", "modifiers": ["alt"]}, second],
+                "action": "noop", "when": "normal"
+            }))
+            .unwrap()
+        };
+
+        // Only `Alt+G G` disabled: `Alt+G Alt+G` is still live, so the
+        // prefix stays held; the disabled chord completes as a no-op.
+        let mut config = baseline.clone();
+        config
+            .keybindings
+            .push(noop_chord(serde_json::json!({"key": "g"})));
+        let resolver = KeybindingResolver::new(&config);
+        assert_eq!(
+            resolver.resolve_chord(&[], &alt_g, KeyContext::Normal),
+            ChordResolution::Partial,
+            "a live chord on the prefix must keep holding it"
+        );
+        assert_eq!(
+            resolver.resolve_chord(&alt_g_state, &g, KeyContext::Normal),
+            ChordResolution::Complete(Action::None),
+            "the disabled chord must complete as a no-op, not fall through to goto_line"
+        );
+        assert_eq!(
+            resolver.resolve_chord(&alt_g_state, &alt_g, KeyContext::Normal),
+            ChordResolution::Complete(Action::GotoLine),
+            "the live chord must still fire"
+        );
+
+        // Both disabled: nothing live starts with Alt+G, so the prefix is
+        // released and the key resolves on its own — here to the global
+        // Go-menu mnemonic the chords were shadowing.
+        config.keybindings.push(noop_chord(
+            serde_json::json!({"key": "g", "modifiers": ["alt"]}),
+        ));
+        let resolver = KeybindingResolver::new(&config);
+        assert_eq!(
+            resolver.resolve_chord(&[], &alt_g, KeyContext::Normal),
+            ChordResolution::NoMatch,
+            "with every chord on the prefix disabled, Alt+G must not be held"
+        );
+        assert_eq!(
+            resolver.resolve(&alt_g, KeyContext::Normal),
+            Action::MenuOpen("Go".to_string()),
+            "the released key must resolve as a single key"
+        );
+    }
+
+    /// An `unbind` entry removes a built-in binding outright, so the key
+    /// falls through to whatever else binds it — unlike a `noop` override,
+    /// which is itself a binding and leaves the key dead.
+    #[test]
+    fn test_unbind_removes_builtin_binding_and_falls_through() {
+        use crate::config::Keybinding;
+
+        // A keymap with F5 bound in both `global` and `normal`.
+        let mut config = Config::default();
+        config.keybinding_maps.insert(
+            "t".to_string(),
+            serde_json::from_value(serde_json::json!({
+                "inherits": "default",
+                "bindings": [
+                    {"key": "f5", "action": "save", "when": "global"},
+                    {"key": "f5", "action": "move_down", "when": "normal"}
+                ]
+            }))
+            .unwrap(),
+        );
+        config.active_keybinding_map = "t".into();
+        let f5 = KeyEvent::new(KeyCode::F(5), KeyModifiers::NONE);
+        let entry = |action: &str| -> Keybinding {
+            serde_json::from_value(serde_json::json!({
+                "key": "f5", "action": action, "when": "normal"
+            }))
+            .unwrap()
+        };
+
+        let resolver = KeybindingResolver::new(&config);
+        assert_eq!(resolver.resolve(&f5, KeyContext::Normal), Action::MoveDown);
+
+        let mut removed = config.clone();
+        removed.keybindings.push(entry("unbind"));
+        let resolver = KeybindingResolver::new(&removed);
+        assert!(
+            !resolver.has_explicit_binding(&f5, &KeyContext::Normal),
+            "the unbound normal binding must be gone, not shadowed"
+        );
+        assert_eq!(
+            resolver.resolve(&f5, KeyContext::Normal),
+            Action::Save,
+            "the global binding underneath must take over"
+        );
+
+        let mut disabled = config.clone();
+        disabled.keybindings.push(entry("noop"));
+        let resolver = KeybindingResolver::new(&disabled);
+        assert_eq!(
+            resolver.resolve(&f5, KeyContext::Normal),
+            Action::None,
+            "a noop override is a binding: the key stays dead"
+        );
+    }
+
+    /// Unbinding the emacs goto-line chords removes them: `Alt+G` is not held
+    /// as a prefix, nothing is swallowed after it, and the global Go-menu
+    /// mnemonic the chords hid becomes reachable.
+    #[test]
+    fn test_unbind_removes_keymap_chord_and_releases_prefix() {
+        use crate::config::Keybinding;
+
+        let mut config = Config::default();
+        config.active_keybinding_map = "emacs".into();
+        let alt_g = KeyEvent::new(KeyCode::Char('g'), KeyModifiers::ALT);
+        let g = KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE);
+        let alt_g_state = [(KeyCode::Char('g'), KeyModifiers::ALT)];
+        let unbind_chord = |second: serde_json::Value| -> Keybinding {
+            serde_json::from_value(serde_json::json!({
+                "keys": [{"key": "g", "modifiers": ["alt"]}, second],
+                "action": "unbind", "when": "normal"
+            }))
+            .unwrap()
+        };
+
+        // One chord removed: the other still holds the prefix, and the
+        // removed sequence no longer matches anything.
+        config
+            .keybindings
+            .push(unbind_chord(serde_json::json!({"key": "g"})));
+        let resolver = KeybindingResolver::new(&config);
+        assert_eq!(
+            resolver.resolve_chord(&[], &alt_g, KeyContext::Normal),
+            ChordResolution::Partial
+        );
+        assert_eq!(
+            resolver.resolve_chord(&alt_g_state, &g, KeyContext::Normal),
+            ChordResolution::NoMatch,
+            "a removed chord must not match — or swallow its last key"
+        );
+
+        // Both removed: the prefix is released and Alt+G resolves alone.
+        config.keybindings.push(unbind_chord(
+            serde_json::json!({"key": "g", "modifiers": ["alt"]}),
+        ));
+        let resolver = KeybindingResolver::new(&config);
+        assert_eq!(
+            resolver.resolve_chord(&[], &alt_g, KeyContext::Normal),
+            ChordResolution::NoMatch
+        );
+        assert_eq!(
+            resolver.resolve(&alt_g, KeyContext::Normal),
+            Action::MenuOpen("Go".to_string())
+        );
+    }
+
+    /// A keymap binding registers its terminal aliases (`Ctrl+/` → `Ctrl+7`);
+    /// unbinding it must take the aliases along, or the "removed" key keeps
+    /// firing from the terminal's own spelling of it.
+    #[test]
+    fn test_unbind_takes_terminal_aliases_along() {
+        let mut config = Config::default();
+        config.active_keybinding_map = "default".into();
+        let ctrl_slash = KeyEvent::new(KeyCode::Char('/'), KeyModifiers::CONTROL);
+        let ctrl_7 = KeyEvent::new(KeyCode::Char('7'), KeyModifiers::CONTROL);
+
+        let resolver = KeybindingResolver::new(&config);
+        assert_eq!(
+            resolver.resolve(&ctrl_slash, KeyContext::Normal),
+            Action::ToggleComment
+        );
+        assert_eq!(
+            resolver.resolve(&ctrl_7, KeyContext::Normal),
+            Action::ToggleComment,
+            "the alias must be registered for this test to mean anything"
+        );
+
+        config.keybindings.push(
+            serde_json::from_value(serde_json::json!({
+                "key": "/", "modifiers": ["ctrl"], "action": "unbind", "when": "normal"
+            }))
+            .unwrap(),
+        );
+        let resolver = KeybindingResolver::new(&config);
+        assert!(!resolver.has_explicit_binding(&ctrl_slash, &KeyContext::Normal));
+        assert!(
+            !resolver.has_explicit_binding(&ctrl_7, &KeyContext::Normal),
+            "the terminal alias must go with the binding it was derived from"
+        );
+    }
+
+    /// A removal must outlive plugin registration: a plugin can't put a
+    /// removed mode binding back, and a reload after the user removed a
+    /// binding the plugin had already registered must drop it.
+    #[test]
+    fn test_unbind_outlives_plugin_registration_and_reload() {
+        let ctx = KeyContext::Mode("nav".to_string());
+        let j = KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE);
+        let mut removed = Config::default();
+        removed.active_keybinding_map = "default".into();
+        removed.keybindings.push(
+            serde_json::from_value(serde_json::json!({
+                "key": "j", "action": "unbind", "when": "mode:nav"
+            }))
+            .unwrap(),
+        );
+
+        let mut resolver = KeybindingResolver::new(&removed);
+        resolver.load_plugin_default(ctx.clone(), j.code, j.modifiers, Action::MoveDown);
+        assert!(
+            !resolver.has_explicit_binding(&j, &ctx),
+            "a plugin must not re-register a removed key"
+        );
+
+        let mut pristine = Config::default();
+        pristine.active_keybinding_map = "default".into();
+        let mut resolver = KeybindingResolver::new(&pristine);
+        resolver.load_plugin_default(ctx.clone(), j.code, j.modifiers, Action::MoveDown);
+        assert!(resolver.has_explicit_binding(&j, &ctx));
+        resolver.reload_from_config(&removed);
+        assert!(
+            !resolver.has_explicit_binding(&j, &ctx),
+            "a reload must apply the new removal to bindings a plugin registered earlier"
+        );
+    }
+
+    /// Issue #2941: the default keymap's own prompt-context bindings
+    /// (Universal Search toggles, file-browser encoding toggle) must be
+    /// reachable over the default-global menu mnemonics on the same chords.
+    /// Before the fix these only worked via a hard-coded Alt+Char bypass in
+    /// the prompt dispatch path.
+    #[test]
+    fn test_default_prompt_bindings_outrank_menu_mnemonics() {
+        // Pin the keymap so the assertions don't depend on the host OS
+        // (macOS defaults to the macos keymap).
+        let mut config = Config::default();
+        config.active_keybinding_map = "default".into();
+        let resolver = KeybindingResolver::new(&config);
+
+        // Alt+G: `live_grep_toggle_regex` (prompt) vs `menu_open Go` (global).
+        let alt_g = KeyEvent::new(KeyCode::Char('g'), KeyModifiers::ALT);
+        assert_eq!(
+            resolver.resolve(&alt_g, KeyContext::Prompt),
+            Action::PluginAction("live_grep_toggle_regex".to_string()),
+            "prompt-context Alt+G toggle must outrank the global Go-menu mnemonic"
+        );
+        assert_eq!(
+            resolver.resolve(&alt_g, KeyContext::Normal),
+            Action::MenuOpen("Go".to_string()),
+            "Alt+G must still open the Go menu outside the prompt"
+        );
+
+        // Alt+E: `file_browser_toggle_detect_encoding` (prompt) vs
+        // `menu_open Edit` (global).
+        let alt_e = KeyEvent::new(KeyCode::Char('e'), KeyModifiers::ALT);
+        assert_eq!(
+            resolver.resolve(&alt_e, KeyContext::Prompt),
+            Action::FileBrowserToggleDetectEncoding,
+            "prompt-context Alt+E toggle must outrank the global Edit-menu mnemonic"
+        );
+
+        // SearchPrompt narrows Prompt and must inherit the same outcome
+        // through the context chain.
+        assert_eq!(
+            resolver.resolve(&alt_g, KeyContext::SearchPrompt),
+            Action::PluginAction("live_grep_toggle_regex".to_string()),
+            "SearchPrompt must inherit Prompt's Alt+G toggle through the context chain"
+        );
+    }
+
+    /// Issue #2941: `editor.menu_bar_mnemonics = false` promises to free the
+    /// Alt+letter chords. The mnemonic bindings must be suppressed at
+    /// resolution — neither firing nor consuming the key — instead of
+    /// resolving to a MenuOpen that dispatch silently drops (a dead key).
+    #[test]
+    fn test_mnemonics_disabled_releases_alt_letter_chords() {
+        use crate::config::Keybinding;
+
+        // Pin the keymap: on macOS `Config::default()` selects the macos
+        // keymap, whose own `normal` Alt+F word-movement binding would
+        // resolve here (correctly) instead of Action::None.
+        let mut baseline = Config::default();
+        baseline.active_keybinding_map = "default".into();
+        baseline.editor.menu_bar_mnemonics = false;
+
+        let resolver = KeybindingResolver::new(&baseline);
+
+        // With nothing else bound, Alt+F is genuinely unbound now — not a
+        // swallowed MenuOpen.
+        let alt_f = KeyEvent::new(KeyCode::Char('f'), KeyModifiers::ALT);
+        assert_eq!(
+            resolver.resolve(&alt_f, KeyContext::Normal),
+            Action::None,
+            "with mnemonics off, Alt+F must not resolve to a (dropped) MenuOpen"
+        );
+
+        // The freed chord is available to user bindings.
+        let mut config = baseline.clone();
+        config.keybindings.push(Keybinding {
+            key: "f".to_string(),
+            modifiers: vec!["alt".to_string()],
+            keys: vec![],
+            action: "move_word_right".to_string(),
+            args: HashMap::new(),
+            when: Some("normal".to_string()),
+        });
+        let resolver = KeybindingResolver::new(&config);
+        assert_eq!(
+            resolver.resolve(&alt_f, KeyContext::Normal),
+            Action::MoveWordRight,
+            "with mnemonics off, a user Alt+F binding must fire"
+        );
+
+        // The option governs Alt+letter mnemonics only: a menu_open binding
+        // on a non-mnemonic chord (e.g. F2) stays live.
+        let mut config = baseline.clone();
+        config.keybindings.push(Keybinding {
+            key: "f2".to_string(),
+            modifiers: vec![],
+            keys: vec![],
+            action: "menu_open".to_string(),
+            args: [(
+                "name".to_string(),
+                serde_json::Value::String("File".to_string()),
+            )]
+            .into_iter()
+            .collect(),
+            when: Some("normal".to_string()),
+        });
+        let resolver = KeybindingResolver::new(&config);
+        let f2 = KeyEvent::new(KeyCode::F(2), KeyModifiers::empty());
+        assert_eq!(
+            resolver.resolve(&f2, KeyContext::Normal),
+            Action::MenuOpen("File".to_string()),
+            "menu_open on a non-Alt chord must not be suppressed by the mnemonics option"
+        );
+    }
+
+    /// Issue #2941: a plugin mode's own bindings (specific) must outrank the
+    /// keymap's `global` entries (broad), while the keymap's *mode* bindings
+    /// still outrank the plugin's — at equal specificity the chosen keymap
+    /// wins over plugin defaults.
+    #[test]
+    fn test_plugin_mode_binding_outranks_default_global() {
+        let mut resolver = KeybindingResolver::new(&Config::default());
+        let mode_ctx = KeyContext::Mode("test-mode".to_string());
+        resolver
+            .plugin_defaults
+            .entry(mode_ctx.clone())
+            .or_default()
+            .insert(
+                (KeyCode::Char('h'), KeyModifiers::ALT),
+                Action::PluginAction("test_mode_help".to_string()),
+            );
+
+        // Alt+H is the global Help mnemonic; inside the plugin mode the
+        // mode's own binding must win.
+        let alt_h = KeyEvent::new(KeyCode::Char('h'), KeyModifiers::ALT);
+        assert_eq!(
+            resolver.resolve(&alt_h, mode_ctx.clone()),
+            Action::PluginAction("test_mode_help".to_string()),
+            "a plugin mode binding must outrank the default-global mnemonic"
+        );
+
+        // Same specificity, keymap side: a default-keymap binding for the
+        // same mode context outranks the plugin default.
+        resolver
+            .default_bindings
+            .entry(mode_ctx.clone())
+            .or_default()
+            .insert(
+                (KeyCode::Char('h'), KeyModifiers::ALT),
+                Action::CommandPalette,
+            );
+        assert_eq!(
+            resolver.resolve(&alt_h, mode_ctx),
+            Action::CommandPalette,
+            "at equal specificity the active keymap outranks plugin defaults"
+        );
+    }
+
+    /// Issue #2941: chord resolution shares `resolve`'s precedence order. A
+    /// custom context-specific chord must outrank a default global chord for
+    /// the same sequence (the chord path previously kept the pre-#2720
+    /// default-global-first order).
+    #[test]
+    fn test_chord_resolution_context_outranks_global() {
+        let mut resolver = KeybindingResolver::new(&Config::default());
+        let seq = vec![
+            (KeyCode::Char('k'), KeyModifiers::CONTROL),
+            (KeyCode::Char('z'), KeyModifiers::empty()),
+        ];
+        resolver
+            .default_chord_bindings
+            .entry(KeyContext::Global)
+            .or_default()
+            .insert(seq.clone(), Action::Quit);
+        resolver
+            .chord_bindings
+            .entry(KeyContext::Normal)
+            .or_default()
+            .insert(seq.clone(), Action::CommandPalette);
+
+        let chord_state = vec![(KeyCode::Char('k'), KeyModifiers::CONTROL)];
+        let key_z = KeyEvent::new(KeyCode::Char('z'), KeyModifiers::empty());
+        assert_eq!(
+            resolver.resolve_chord(&chord_state, &key_z, KeyContext::Normal),
+            ChordResolution::Complete(Action::CommandPalette),
+            "a custom context chord must outrank a default global chord"
+        );
+    }
+
+    /// A keymap that rebinds a chord must take its terminal-equivalent
+    /// spelling with it. `default` binds Ctrl+/ (which also registers the
+    /// Ctrl+7 alias many terminals send); `emacs` rebinds Ctrl+/ to Undo, so
+    /// Ctrl+7 must be Undo too — otherwise the same physical keypress means
+    /// Undo or Toggle Comment depending on the terminal.
+    #[test]
+    fn child_keymap_override_claims_the_terminal_equivalent() {
+        let config = Config {
+            active_keybinding_map: "emacs".into(),
+            ..Config::default()
+        };
+        let resolver = KeybindingResolver::new(&config);
+
+        for key in ['/', '7'] {
+            let event = KeyEvent::new(KeyCode::Char(key), KeyModifiers::CONTROL);
+            assert_eq!(
+                resolver.resolve(&event, KeyContext::Normal),
+                Action::Undo,
+                "Ctrl+{} must resolve to the emacs binding, not default's",
+                key
+            );
+        }
+        // Same for the Ctrl+Space / Ctrl+@ pair: default binds it to LSP
+        // completion, emacs to set-mark.
+        for key in [' ', '@'] {
+            let event = KeyEvent::new(KeyCode::Char(key), KeyModifiers::CONTROL);
+            assert_eq!(
+                resolver.resolve(&event, KeyContext::Normal),
+                Action::SetMark,
+                "Ctrl+{:?} must resolve to the emacs binding, not default's",
+                key
+            );
+        }
+    }
+
+    /// The emacs keymap inherits `default`, so every context the editor can
+    /// put the keyboard into keeps a working set of keys. Before this it was
+    /// the one built-in map with `inherits: null` and left whole contexts
+    /// (completion, search prompt, terminal, dock, settings) unbound.
+    #[test]
+    fn emacs_keymap_inherits_the_default_contexts() {
+        let config = Config {
+            active_keybinding_map: "emacs".into(),
+            ..Config::default()
+        };
+        let resolver = KeybindingResolver::new(&config);
+
+        let cases: &[(KeyContext, KeyCode, KeyModifiers, Action)] = &[
+            (
+                KeyContext::Completion,
+                KeyCode::Tab,
+                KeyModifiers::NONE,
+                Action::CompletionAccept,
+            ),
+            (
+                KeyContext::SearchPrompt,
+                KeyCode::Char('c'),
+                KeyModifiers::ALT,
+                Action::ToggleSearchCaseSensitive,
+            ),
+            (
+                KeyContext::Terminal,
+                KeyCode::Char(']'),
+                KeyModifiers::CONTROL,
+                Action::TerminalEscape,
+            ),
+            (
+                KeyContext::Normal,
+                KeyCode::Char(']'),
+                KeyModifiers::CONTROL,
+                Action::GoToMatchingBracket,
+            ),
+            (
+                KeyContext::Normal,
+                KeyCode::Down,
+                KeyModifiers::CONTROL | KeyModifiers::ALT,
+                Action::AddCursorBelow,
+            ),
+        ];
+        for (context, code, modifiers, expected) in cases {
+            let event = KeyEvent::new(*code, *modifiers);
+            assert_eq!(
+                &resolver.resolve(&event, context.clone()),
+                expected,
+                "emacs keymap lost the inherited {:?} binding for {:?}+{:?}",
+                context,
+                modifiers,
+                code
+            );
+        }
+    }
+
+    /// The Emacs bindings whose key was previously spelled as the *unshifted*
+    /// character plus a `shift` modifier (`M-<` as `alt+shift+,`). A terminal
+    /// sends `ESC <`, so those entries never matched and the commands were
+    /// dead. Guard the shifted spelling that actually fires.
+    #[test]
+    fn emacs_shifted_symbol_bindings_resolve() {
+        let config = Config {
+            active_keybinding_map: "emacs".into(),
+            ..Config::default()
+        };
+        let resolver = KeybindingResolver::new(&config);
+
+        let cases: &[(char, Action)] = &[
+            ('<', Action::MoveDocumentStart),
+            ('>', Action::MoveDocumentEnd),
+            ('%', Action::QueryReplace),
+            ('_', Action::Redo),
+        ];
+        for (ch, expected) in cases {
+            for modifiers in [
+                KeyModifiers::ALT,
+                // Terminals on the kitty protocol report Shift alongside the
+                // shifted glyph; legacy ones send the glyph alone.
+                KeyModifiers::ALT | KeyModifiers::SHIFT,
+            ] {
+                let event = KeyEvent::new(KeyCode::Char(*ch), modifiers);
+                assert_eq!(
+                    &resolver.resolve(&event, KeyContext::Normal),
+                    expected,
+                    "M-{} must fire with modifiers {:?}",
+                    ch,
+                    modifiers
+                );
+            }
+        }
+
+        // Undo's three terminal spellings: C-/ , C-_ (as ctrl+- plus the alias
+        // `terminal_key_equivalents` derives) and the kitty ctrl+shift+_ form.
+        for (ch, modifiers) in [
+            ('/', KeyModifiers::CONTROL),
+            ('-', KeyModifiers::CONTROL),
+            ('_', KeyModifiers::CONTROL),
+            ('_', KeyModifiers::CONTROL | KeyModifiers::SHIFT),
+        ] {
+            let event = KeyEvent::new(KeyCode::Char(ch), modifiers);
+            assert_eq!(
+                resolver.resolve(&event, KeyContext::Normal),
+                Action::Undo,
+                "C-{} ({:?}) must undo",
+                ch,
+                modifiers
+            );
+        }
+    }
+
+    /// Emacs `C-k` is kill-line: it kills from point to end of line. Binding
+    /// it to `delete_line` threw away the text *before* the cursor too.
+    #[test]
+    fn emacs_ctrl_k_kills_to_end_of_line() {
+        let config = Config {
+            active_keybinding_map: "emacs".into(),
+            ..Config::default()
+        };
+        let resolver = KeybindingResolver::new(&config);
+        let event = KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL);
+        assert_eq!(
+            resolver.resolve(&event, KeyContext::Normal),
+            Action::DeleteToLineEnd
+        );
+    }
+
+    /// The `C-x` prefix commands an Emacs user reaches for first.
+    #[test]
+    fn emacs_ctrl_x_chords_are_bound() {
+        let config = Config {
+            active_keybinding_map: "emacs".into(),
+            ..Config::default()
+        };
+        let resolver = KeybindingResolver::new(&config);
+        let ctrl_x = [(KeyCode::Char('x'), KeyModifiers::CONTROL)];
+
+        let cases: &[(KeyCode, KeyModifiers, Action)] = &[
+            (KeyCode::Char('s'), KeyModifiers::CONTROL, Action::Save),
+            (KeyCode::Char('f'), KeyModifiers::CONTROL, Action::Open),
+            (KeyCode::Char('w'), KeyModifiers::CONTROL, Action::SaveAs),
+            (KeyCode::Char('s'), KeyModifiers::NONE, Action::SaveAll),
+            (KeyCode::Char('u'), KeyModifiers::NONE, Action::Undo),
+            (KeyCode::Char('h'), KeyModifiers::NONE, Action::SelectAll),
+            (
+                KeyCode::Char('b'),
+                KeyModifiers::NONE,
+                Action::QuickOpenBuffers,
+            ),
+        ];
+        for (code, modifiers, expected) in cases {
+            let event = KeyEvent::new(*code, *modifiers);
+            assert_eq!(
+                resolver.resolve_chord(&ctrl_x, &event, KeyContext::Normal),
+                ChordResolution::Complete(expected.clone()),
+                "C-x {:?}+{:?} must run {:?}",
+                modifiers,
+                code,
+                expected
+            );
+        }
+    }
+
+    /// Reachability guard for issue #2941: every binding shipped in every
+    /// built-in keymap must actually fire in its own context — no entry may
+    /// be dead because a broader binding shadows its chord. This is what
+    /// keeps the resolver's precedence rule and the keymap data honest with
+    /// each other (the old global-first order shipped four dead entries).
+    #[test]
+    fn test_builtin_keymap_bindings_are_reachable() {
+        for map_name in crate::config::KeybindingMapName::BUILTIN_OPTIONS {
+            let mut config = Config::default();
+            config.active_keybinding_map = (*map_name).into();
+            let resolver = KeybindingResolver::new(&config);
+
+            for (context, bindings) in &resolver.default_bindings {
+                for ((code, modifiers), action) in bindings {
+                    let event = KeyEvent::new(*code, *modifiers);
+                    let resolved = resolver.resolve(&event, context.clone());
+                    assert_eq!(
+                        &resolved, action,
+                        "keymap '{}': binding {:?}+{:?} → {:?} in context {:?} is \
+                         unreachable — it resolves to {:?} instead (shadowed by a \
+                         broader binding)",
+                        map_name, modifiers, code, action, context, resolved,
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     fn test_all_context_default_bindings_exist() {
         let config = Config::default();
@@ -3860,6 +5580,11 @@ mod tests {
             // — handled by the live_grep plugin (Finder panel), dispatched
             // as a plugin action from the prompt context.
             "live_grep_export_quickfix",
+            // Code Tour step navigation — handled by the code-tour plugin;
+            // bound in the default keymap so a tour can be stepped from the
+            // editor split while the tour panel stays docked below.
+            "tour_next",
+            "tour_prev",
         ];
 
         let config = Config::default();
@@ -4141,8 +5866,14 @@ mod tests {
         use std::collections::HashMap;
 
         let keymaps: &[(&str, &str)] = &[
-            ("default", include_str!("../../keymaps/default.json")),
-            ("macos", include_str!("../../keymaps/macos.json")),
+            (
+                "default",
+                crate::config::builtin_keymap_json("default").unwrap(),
+            ),
+            (
+                "macos",
+                crate::config::builtin_keymap_json("macos").unwrap(),
+            ),
         ];
 
         for (keymap_name, json_content) in keymaps {
@@ -4239,5 +5970,132 @@ mod tests {
             Action::MoveLeft,
             "inheriting-modes membership must survive reload_from_config"
         );
+    }
+
+    /// Every keypad key the input parser decodes is nameable in config.
+    ///
+    /// This is the half of issue #1128 that the first pass left open: the
+    /// table stopped at the five arithmetic keysyms, so `kp_enter`,
+    /// `kp_0`…`kp_9`, `kp_equal`, `kp_separator` and the navigation names
+    /// parsed as nothing and their bindings were dropped. Both sides now read
+    /// one table, so this cannot regress by omission.
+    #[test]
+    fn every_keypad_key_has_a_config_name() {
+        for k in fresh_input_parser::keypad::KEYPAD_KEYS {
+            assert_eq!(
+                KeybindingResolver::parse_key(k.keysym),
+                Some(k.code),
+                "keypad name {:?} does not parse",
+                k.keysym
+            );
+            // Case-insensitive, like every other name.
+            assert_eq!(
+                KeybindingResolver::parse_key(&k.keysym.to_uppercase()),
+                Some(k.code),
+                "keypad name {:?} is case-sensitive",
+                k.keysym
+            );
+        }
+    }
+
+    /// `kp_begin` is the one keypad name that does not alias a main-keyboard
+    /// key — the distinction the generated docs promise.
+    #[test]
+    fn keypad_begin_is_the_only_distinct_keypad_binding() {
+        assert_eq!(
+            KeybindingResolver::parse_key("kp_begin"),
+            Some(KeyCode::KeypadBegin)
+        );
+        assert_eq!(
+            KeybindingResolver::parse_key("kp_enter"),
+            Some(KeyCode::Enter)
+        );
+        assert_eq!(
+            KeybindingResolver::parse_key("kp_multiply"),
+            Some(KeyCode::Char('*'))
+        );
+        assert_eq!(
+            KeybindingResolver::parse_key("kp_left"),
+            Some(KeyCode::Left)
+        );
+    }
+
+    /// Anything the keybinding editor can write, the loader can read back.
+    ///
+    /// The editor records a chord and serialises it with
+    /// `key_code_to_config_name`; if `parse_key` then rejects that spelling,
+    /// the editor has written a binding that silently does nothing. `Insert`
+    /// was exactly that — emitted as `"Insert"`, and no `insert` arm existed —
+    /// and `KeypadBegin` fell through to a `{:?}` spelling nothing claimed.
+    ///
+    /// **The codes come from the decoder, not from the name tables.** Asking
+    /// the tables which codes to check only ever asks whether the names name
+    /// themselves: `Media(MuteVolume)` and `Modifier(LeftHyper)` are keys the
+    /// input parser decodes and the keybinding editor can record, and they
+    /// stayed unnamed — the same bug, one family over — while a test called
+    /// `config_names_round_trip` passed. Sweeping the Private Use Area is
+    /// what makes "the editor can write it" and "the loader can read it" two
+    /// different questions.
+    #[test]
+    fn config_names_round_trip() {
+        use crate::app::keybinding_editor::helpers::key_code_to_config_name;
+
+        let mut codes: Vec<KeyCode> = NAMED_KEYS.iter().map(|k| k.code).collect();
+        codes.extend(PUNCTUATION_KEYS.iter().map(|k| k.code));
+        // Every key the kitty keyboard protocol can deliver.
+        codes.extend((0xe000..=0xf8ff).filter_map(fresh_input_parser::kitty_functional_key));
+        codes.extend((1..=24).map(KeyCode::F));
+        codes.extend("azAZ09".chars().map(KeyCode::Char));
+
+        for code in codes {
+            let name = key_code_to_config_name(code);
+            let parsed = KeybindingResolver::parse_key(&name);
+            // `Char` is written lowercase, so an uppercase input round-trips
+            // to its lowercase self — that is the documented behaviour, not a
+            // loss (modifiers carry the shift).
+            let expected = match code {
+                KeyCode::Char(c) => KeyCode::Char(c.to_lowercase().next().unwrap_or(c)),
+                other => other,
+            };
+            assert_eq!(
+                parsed,
+                Some(expected),
+                "{code:?} serialises to {name:?}, which does not parse back"
+            );
+        }
+    }
+
+    /// No spelling is claimed twice. A duplicate would make one of the two
+    /// entries unreachable, silently, depending on table order.
+    #[test]
+    fn key_names_are_unique() {
+        let mut all: Vec<&str> = NAMED_KEYS
+            .iter()
+            .chain(PUNCTUATION_KEYS)
+            .flat_map(|k| k.names.iter().copied())
+            .chain(
+                fresh_input_parser::keypad::KEYPAD_KEYS
+                    .iter()
+                    .map(|k| k.keysym),
+            )
+            .chain(fresh_input_parser::media_modifier::all().map(|k| k.keysym))
+            .collect();
+        all.sort_unstable();
+        let total = all.len();
+        all.dedup();
+        assert_eq!(all.len(), total, "a key name is claimed by two entries");
+    }
+
+    /// Every documented name is lowercase, since `parse_key` lowercases its
+    /// input before looking it up — an upper-case entry would be dead.
+    #[test]
+    fn key_names_are_lowercase() {
+        for name in NAMED_KEYS
+            .iter()
+            .chain(PUNCTUATION_KEYS)
+            .flat_map(|k| k.names.iter().copied())
+        {
+            assert_eq!(name, &name.to_lowercase(), "{name:?} is not lowercase");
+        }
     }
 }

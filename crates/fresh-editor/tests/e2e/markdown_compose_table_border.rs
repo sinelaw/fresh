@@ -666,11 +666,14 @@ fn structure_changing_edit_clears_seen_byte_ranges() {
 ///
 /// A well-formed frame ends with the bottom border: no table content line may
 /// appear after it.
+///
+/// Fixed in `inject_virtual_lines`: a `LineBelow` virtual line now follows the
+/// last visual row of the source line it is anchored in, rather than the row
+/// its anchor byte happens to land in. A plugin soft break — how compose mode
+/// folds a wide cell — reaches the view as an *injected* newline, so the rows
+/// it produces are continuations of one source line, not lines of their own.
 #[cfg(feature = "plugins")]
 #[test]
-#[ignore = "reproduces an unfixed bug: the bottom border renders after the \
-            first visual row of a wrapped last row, so the continuation spills \
-            below the closed frame. Run with --ignored."]
 fn test_table_bottom_border_below_wrapped_last_row() {
     use crate::common::harness::{copy_plugin, copy_plugin_lib};
     use crossterm::event::{KeyCode, KeyModifiers};

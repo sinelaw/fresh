@@ -87,7 +87,15 @@ fn vi_mode_autostart_true_enables_vi_immediately() {
         .lines()
         .find(|l| l.contains("1 │"))
         .expect("expected line 1 in render");
-    let content = line1.rsplit('│').next().unwrap_or("").trim();
+    // `trim_end_matches('▌')` drops the scrollbar's unsaved-change mark: the
+    // buffer is dirty at this point, so the track carries one in the last
+    // column of the same row.
+    let content = line1
+        .rsplit('│')
+        .next()
+        .unwrap_or("")
+        .trim_end_matches('▌')
+        .trim();
     assert_eq!(
         content, "X",
         "autoStart=true: vi-normal `i` should swallow the keystroke, \
@@ -116,7 +124,15 @@ fn vi_mode_autostart_false_leaves_vi_dormant() {
         .lines()
         .find(|l| l.contains("1 │"))
         .expect("expected line 1 in render");
-    let content = line1.rsplit('│').next().unwrap_or("").trim();
+    // `trim_end_matches('▌')` drops the scrollbar's unsaved-change mark: the
+    // buffer is dirty at this point, so the track carries one in the last
+    // column of the same row.
+    let content = line1
+        .rsplit('│')
+        .next()
+        .unwrap_or("")
+        .trim_end_matches('▌')
+        .trim();
     assert_eq!(
         content, "iX",
         "autoStart=false: vi mode should stay off, both `i` and `X` \

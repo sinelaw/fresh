@@ -7,6 +7,27 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+/// A repository-relative path, resolved against the workspace root.
+///
+/// These artifacts belong to the checkout (they are committed under
+/// `docs/visual-regression/`), and the obvious spelling — a relative
+/// `PathBuf::from("docs/...")` — resolves against the *process* current
+/// directory, which no test owns. Around 130 git tests call
+/// `GitTestRepo::change_to_repo_dir`, so while a visual test is capturing a
+/// step the process cwd may be some other test's temp repository — or, once
+/// that test's `TempDir` has been deleted, a directory that no longer exists,
+/// where `create_dir_all` fails outright and takes the capture down with it.
+/// `CARGO_MANIFEST_DIR` is fixed at compile time and cannot move.
+fn repo_dir(relative: &str) -> PathBuf {
+    // CARGO_MANIFEST_DIR points at crates/fresh-editor/, so go up two levels
+    // (same derivation as `common::blog_showcase`).
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .and_then(|p| p.parent())
+        .expect("workspace root")
+        .join(relative)
+}
+
 /// Metadata for a single step in a visual test flow
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StepMetadata {
@@ -73,7 +94,7 @@ impl VisualFlow {
             "{}_{:02}_{}.svg",
             self.flow_name_sanitized, self.step_num, step_name
         );
-        let image_path = PathBuf::from("docs/visual-regression/screenshots").join(&image_filename);
+        let image_path = repo_dir("docs/visual-regression/screenshots").join(&image_filename);
 
         // Only update image if needed
         if should_update_image(&image_path)? {
@@ -106,7 +127,7 @@ impl VisualFlow {
         }
 
         // Create docs/visual-regression/tests/ directory
-        let docs_dir = PathBuf::from("docs/visual-regression/tests");
+        let docs_dir = repo_dir("docs/visual-regression/tests");
         fs::create_dir_all(&docs_dir)?;
 
         // Write individual test markdown file
@@ -389,6 +410,38 @@ mod tests {
         assert!(svg_content.contains(">d<"));
         assert!(svg_content.contains(">!</"));
         assert!(svg_content.contains("<svg"));
+    }
+
+    /// The captured artifacts must land in the checkout, not wherever the
+    /// process happens to be standing.
+    ///
+    /// `docs/visual-regression/...` used to be spelled as a plain relative
+    /// path, and the visual regression captures run in the same process as
+    /// ~130 git tests that move the process cwd into a temp repository. A
+    /// capture that landed while one of those was in flight wrote its SVG into
+    /// that repo — and once the repo's `TempDir` was gone, `create_dir_all`
+    /// failed outright and took `capture_visual_step` (and the test) with it.
+    #[test]
+    fn repo_dir_resolves_from_the_checkout_not_the_process_cwd() {
+        // The cwd is shared with every git-backed test; take the same lock they
+        // do so this one is the only writer while it moves it.
+        let _cwd = crate::common::git_test_helper::cwd_lock()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        let elsewhere = tempfile::tempdir().unwrap();
+        let restore = std::env::current_dir().unwrap();
+        std::env::set_current_dir(elsewhere.path()).unwrap();
+        let resolved = repo_dir("docs/visual-regression");
+        let _ = std::env::set_current_dir(&restore);
+
+        assert!(
+            resolved.is_absolute(),
+            "artifact paths must not depend on the process cwd, got {resolved:?}"
+        );
+        assert!(
+            resolved.is_dir(),
+            "{resolved:?} should be the checkout's docs/visual-regression"
+        );
     }
 
     #[test]

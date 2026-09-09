@@ -3,11 +3,23 @@
 //!
 //! Scenario is data; runner executes. Load-bearing claim: after
 //! Recenter the cursor's screen row lands in the middle band of
-//! the viewport. Empirically, in a 10-row terminal after 25
-//! MoveDown the natural-scroll cursor sits at row 2; Recenter
-//! pulls it down to the middle band (row 3). The band `[3,4]`
-//! is chosen so the anti-test (which drops Recenter) lands at
-//! row 2 — outside the band — and is therefore detected.
+//! the viewport, somewhere natural scrolling would not have put it.
+//!
+//! The scenario has to be one where those two differ, and the
+//! original was not. It used a 10-row terminal, whose text area is
+//! 7 rows; with a scroll margin of 3, minimal downward placement
+//! rests the cursor at `height - 1 - margin` = row 3 — which is
+//! also the middle. The anti-test only detected anything because
+//! the placement pass of the day overshot by one row and left the
+//! cursor at row 2, `margin + 1` rows from the bottom rather than
+//! `margin`. It was pinned to a defect, so removing the defect
+//! (see `wrap_model/viewport.py::ensure_visible`, whose minimality
+//! property this branch made explicit) broke it.
+//!
+//! A taller viewport separates them: minimal placement rests near
+//! the bottom while the middle band stays in the middle, so
+//! Recenter has somewhere to move the cursor *to* and dropping it
+//! is detectable again.
 
 use crate::common::scenario::layout_scenario::{
     assert_layout_scenario, check_layout_scenario, LayoutScenario,
@@ -30,14 +42,14 @@ fn move_down_n_then_recenter(n: usize) -> Vec<Action> {
 #[test]
 fn migrated_recenter_lands_cursor_in_middle_band_of_viewport() {
     assert_layout_scenario(LayoutScenario {
-        description: "Recenter centres cursor in 10-row viewport".into(),
+        description: "Recenter centres cursor in 20-row viewport".into(),
         initial_text: long_buffer(50),
         width: 40,
-        height: 10,
+        height: 20,
         actions: move_down_n_then_recenter(25),
         expected_top_byte: None,
         expected_snapshot: RenderSnapshotExpect {
-            hardware_cursor_row_in: Some((3, 4)),
+            hardware_cursor_row_in: Some((7, 9)),
             ..Default::default()
         },
         ..Default::default()
@@ -53,11 +65,11 @@ fn anti_recenter_dropped_leaves_cursor_at_viewport_bottom() {
         description: "anti: Recenter dropped — cursor stays above the middle band".into(),
         initial_text: long_buffer(50),
         width: 40,
-        height: 10,
+        height: 20,
         actions: (0..25).map(|_| Action::MoveDown).collect(),
         expected_top_byte: None,
         expected_snapshot: RenderSnapshotExpect {
-            hardware_cursor_row_in: Some((3, 4)),
+            hardware_cursor_row_in: Some((7, 9)),
             ..Default::default()
         },
         ..Default::default()

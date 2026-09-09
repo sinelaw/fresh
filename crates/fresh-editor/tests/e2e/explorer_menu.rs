@@ -656,9 +656,9 @@ fn test_rename_prompt_enter_accepts() {
     // Directly set the prompt input to the new name
     if let Some(prompt) = harness.editor_mut().prompt_mut() {
         assert!(
-            prompt.input.contains("file_to_rename"),
+            prompt.input_str().contains("file_to_rename"),
             "Should be renaming file_to_rename.txt, but prompt shows: {}",
-            prompt.input
+            prompt.input_str()
         );
         prompt.clear();
         prompt.insert_str(new_name);

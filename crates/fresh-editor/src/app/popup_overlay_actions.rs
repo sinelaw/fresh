@@ -13,7 +13,7 @@
 
 use std::ops::Range;
 
-use rust_i18n::t;
+use fresh_i18n::t;
 
 use crate::model::event::Event;
 
@@ -31,9 +31,9 @@ impl Editor {
     /// overlay manager rather than round-tripping through an `AddOverlay` event
     /// — which would discard the handle. The handle comes straight from the add
     /// (via [`EditorState::add_overlay`]); recovering it from
-    /// `overlays.all().last()` would be wrong, since overlays are
-    /// priority-sorted and `.last()` is the highest-priority overlay (e.g. an
-    /// error diagnostic at priority 100), not the one just added.
+    /// `overlays.all().last()` would be wrong — the set is unordered and a
+    /// removal swaps entries around, so `.last()` is some other producer's
+    /// overlay (e.g. an error diagnostic), not the one just added.
     pub fn add_overlay(
         &mut self,
         namespace: Option<crate::view::overlay::OverlayNamespace>,
@@ -163,23 +163,6 @@ impl Editor {
         if is_transient_popup {
             self.hide_popup();
             tracing::trace!("Dismissed transient popup");
-        }
-    }
-
-    /// Scroll any popup content by delta lines
-    /// Positive delta scrolls down, negative scrolls up
-    pub(super) fn scroll_popup(&mut self, delta: i32) {
-        if let Some(popup) = self.global_popups.top_mut() {
-            popup.scroll_by(delta);
-            return;
-        }
-        if let Some(popup) = self.active_state_mut().popups.top_mut() {
-            popup.scroll_by(delta);
-            tracing::debug!(
-                "Scrolled popup by {}, new offset: {}",
-                delta,
-                popup.scroll_offset
-            );
         }
     }
 

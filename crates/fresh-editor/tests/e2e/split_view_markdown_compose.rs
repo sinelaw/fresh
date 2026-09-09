@@ -7,7 +7,7 @@
 /// 1. Compose mode only applies to the right panel (conceals, soft breaks)
 /// 2. Line numbers visible in source panel, hidden in compose panel
 /// 3. Scroll synchronization between panels
-use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness};
+use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness, HarnessOptions};
 use crate::common::tracing::init_tracing_from_env;
 use crossterm::event::{KeyCode, KeyModifiers};
 
@@ -502,4 +502,214 @@ fn test_split_view_scroll_sync() {
             right_before, right_after,
         );
     }
+}
+
+/// The rows of `pane`, clipped to its own columns — so an assertion about one
+/// pane cannot be satisfied (or broken) by what its neighbour drew.
+#[cfg(feature = "plugins")]
+fn pane_rows(harness: &EditorTestHarness, pane: fresh::model::event::LeafId) -> Vec<String> {
+    let rect = harness
+        .editor()
+        .pane_content_rect(pane)
+        .expect("the shell laid the pane out");
+    harness
+        .screen_to_string()
+        .lines()
+        .skip(rect.y as usize)
+        .take(rect.height as usize)
+        .map(|line| {
+            line.chars()
+                .skip(rect.x as usize)
+                .take(rect.width as usize)
+                .collect()
+        })
+        .collect()
+}
+
+/// A project with the `markdown_compose` plugin and one markdown file, opened.
+///
+/// `full_grammar` is what the code-frame assertions need: compose frames a
+/// fenced block from the region classification the *Markdown grammar* makes, so
+/// with the default empty registry there is no classification and — correctly —
+/// no frame to assert about (see `markdown_compose_code_frame`).
+#[cfg(feature = "plugins")]
+fn compose_split_harness(md: &str, full_grammar: bool) -> (EditorTestHarness, tempfile::TempDir) {
+    init_tracing_from_env();
+
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project");
+    std::fs::create_dir(&project_root).unwrap();
+    let plugins_dir = project_root.join("plugins");
+    std::fs::create_dir(&plugins_dir).unwrap();
+    copy_plugin(&plugins_dir, "markdown_compose");
+    copy_plugin_lib(&plugins_dir);
+    let md_path = project_root.join("doc.md");
+    std::fs::write(&md_path, md).unwrap();
+
+    let mut options = HarnessOptions::new()
+        .with_working_dir(project_root.clone())
+        .without_empty_plugins_dir();
+    if full_grammar {
+        options = options.with_full_grammar_registry();
+    }
+    let mut harness = EditorTestHarness::create(160, 40, options).unwrap();
+    harness.open_file(&md_path).unwrap();
+    harness.render().unwrap();
+
+    (harness, temp_dir)
+}
+
+/// Regression: a fenced code block must render as plain numbered lines in a
+/// Source-mode split, even while a sibling split composes the same buffer.
+///
+/// Compose frames a code block with a `┌──┐` / `└──┘` border (conceals, already
+/// gated on the split's mode) *and* with `│` side rails on every body line. The
+/// rails are inline virtual text, which lives on the buffer and had no such
+/// gate: a source split drew them around the raw code. Worse, the rails are
+/// spliced in before wrapping, so each body line came out wide enough to fold —
+/// and a folded row carries no line number, so the block's lines lost their
+/// gutter entries too. That is exactly what the bug report described: "the ```
+/// code blocks are missing the line number in the gutter and they have | |
+/// borders inserted for them".
+///
+/// Asserted on rendered output only, and only on the source split's own
+/// columns: its code line keeps its gutter number, and nothing past the gutter
+/// is a rail.
+#[cfg(feature = "plugins")]
+#[test]
+fn test_code_block_renders_plain_in_source_split_while_sibling_composes() {
+    let md = "\
+# Title
+
+Some text before the code.
+
+```rust
+fn main() {
+    println!(\"hello\");
+}
+```
+
+Text after the code.
+";
+    let (mut harness, _tmp) = compose_split_harness(md, true);
+
+    // Split first, then compose the LEFT split — so the right one, which stays
+    // in source, is the split the assertions look at.
+    run_palette_command(&mut harness, "Split Vertical");
+    harness.wait_for_async_quiescence(6).unwrap();
+    let source_pane = harness.editor().get_active_split();
+
+    run_palette_command(&mut harness, "Previous Split");
+    harness.render().unwrap();
+    run_palette_command(&mut harness, "Toggle Compose");
+    harness
+        .wait_until_stable(|h| h.screen_to_string().contains('┌'))
+        .unwrap();
+
+    // The composing split proves the frame is being emitted at all — without
+    // this the test would pass on a buffer that simply has no decorations.
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains('┌'),
+        "the composing split should frame the code block.\nScreen:\n{screen}",
+    );
+
+    let row = pane_rows(&harness, source_pane)
+        .into_iter()
+        .find(|r| r.contains("println!"))
+        .unwrap_or_else(|| panic!("the source split never showed the code.\nScreen:\n{screen}"));
+    let (gutter, text) = row
+        .split_once('│')
+        .unwrap_or_else(|| panic!("the source split drew no gutter: {row:?}.\nScreen:\n{screen}"));
+    assert!(
+        gutter.contains('7'),
+        "the source split's code line lost its gutter line number: {row:?}.\n\
+         Screen:\n{screen}",
+    );
+    assert!(
+        !text.contains('│'),
+        "the source split drew compose's code rails around the raw code: \
+         {row:?}.\nScreen:\n{screen}",
+    );
+}
+
+/// Regression: composing one split must not turn line wrap on in a sibling
+/// split showing the same buffer in source mode.
+///
+/// `enableMarkdownCompose` turns native wrap on so a long unbreakable line
+/// still folds inside the page. It used to ask for that with no split id, which
+/// the editor reads as "every split showing this buffer" — and the hook runs on
+/// `buffer_activated`, so merely moving focus onto the composing split rewrote
+/// the source split's wrap setting, undoing the user's own "Toggle Line Wrap
+/// (Current Buffer)".
+#[cfg(feature = "plugins")]
+#[test]
+fn test_composing_one_split_leaves_a_sibling_splits_line_wrap_alone() {
+    // One line far wider than either pane, so wrap on / off is visible as a
+    // different number of rows carrying its text.
+    let long = "word ".repeat(60);
+    // `## Section` is the compose signal below — deliberately not line 1, which
+    // is where the caret sits: compose reveals the markup on the caret's own
+    // row, so a heading there stays raw forever and waiting on it never ends.
+    let (mut harness, _tmp) =
+        compose_split_harness(&format!("# Title\n\n{long}\n\n## Section\n"), false);
+
+    // Rows of `pane` carrying the long line: 1 with wrap off, several with it on.
+    fn long_line_rows(harness: &EditorTestHarness, pane: fresh::model::event::LeafId) -> usize {
+        pane_rows(harness, pane)
+            .iter()
+            .filter(|r| r.contains("word"))
+            .count()
+    }
+
+    run_palette_command(&mut harness, "Split Vertical");
+    harness.wait_for_async_quiescence(6).unwrap();
+    let source_pane = harness.editor().get_active_split();
+
+    // The new right split is active. Get its wrap *off*, whichever way
+    // `editor.line_wrap` happens to default — asserting the toggle's direction
+    // instead made this depend on the harness's config, and a render taken
+    // before the toggle had settled read the old layout and let the setup pass
+    // while leaving wrap on.
+    if long_line_rows(&harness, source_pane) != 1 {
+        run_palette_command(&mut harness, "Toggle Line Wrap (Current");
+    }
+    harness
+        .wait_until_stable(|h| long_line_rows(h, source_pane) == 1)
+        .unwrap();
+
+    // Compose the LEFT split, then come back. Both moves fire
+    // `buffer_activated`, which is where the wrap request lives.
+    run_palette_command(&mut harness, "Previous Split");
+    harness.render().unwrap();
+    let compose_pane = harness.editor().get_active_split();
+    assert_ne!(
+        compose_pane, source_pane,
+        "the test needs focus on the other split before composing"
+    );
+    run_palette_command(&mut harness, "Toggle Compose");
+    // Wait for the sibling to be *actually* composing rather than for a timer:
+    // compose conceals a heading's `##` markers, so a `Section` heading that
+    // still reads `## Section` is a pane that is not composing yet. The scenario
+    // does not exist until then, and a run where the toggle never landed would
+    // otherwise report on an invariant it never exercised.
+    harness
+        .wait_until_stable(|h| {
+            pane_rows(h, compose_pane)
+                .iter()
+                .any(|r| r.contains("Section") && !r.contains("## Section"))
+        })
+        .unwrap();
+    run_palette_command(&mut harness, "Next Split");
+    harness.wait_for_async_quiescence(6).unwrap();
+
+    let rows_now = long_line_rows(&harness, source_pane);
+    assert_eq!(
+        rows_now,
+        1,
+        "composing the sibling split turned line wrap back on in the source \
+         split: its long line now occupies {rows_now} rows instead of 1.\
+         \nScreen:\n{}",
+        harness.screen_to_string(),
+    );
 }

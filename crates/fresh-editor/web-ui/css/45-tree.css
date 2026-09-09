@@ -1,0 +1,117 @@
+/* The plugin panels, folded from the display list (72-tree.js). Items sit at
+   the exact cell rectangles the tree laid them out at; the layer takes no
+   input of its own and the items fall through to the document's cell mapping. */
+.tree{position:absolute;left:0;top:0;pointer-events:none;user-select:none;z-index:90}
+/* A surface is an opaque region of the screen, and its GROUND is the terminal's
+   own: the TUI clears the frame to the theme background and then folds the
+   display list over it, so a cell no item paints reads as `editor.bg` there.
+   The web has no such clear — under the layer sits the page (a wallpaper, in
+   the shell themes) — so every cell the panel leaves blank leaked it: the gaps
+   between a row's runs, the dock's hint bar, the empty space under a short
+   session list. The ground is painted per surface, and all surfaces are
+   appended before any item, which is exactly the terminal's order (clear the
+   screen, then paint). A `sidebar` section stands inside the file explorer's
+   native column, which paints its own ground, so it is left to that. */
+.tree-surface{position:absolute;pointer-events:none}
+.tree-surface.dock,.tree-surface.floating{background:var(--bg)}
+/* The dock's right edge is a drag border in the editor (`Grip::DockWidth`).
+   The cell mapping already forwards a press there, so this only carries the
+   affordance the pointer needs — and `.tree` takes no pointer events, so the
+   grip has to ask for its own. */
+.tree .resize-grip{pointer-events:auto}
+/* **Above the flow, and said so rather than left to document order.** Layer
+   items and the scrim come after in-flow items in the list, which is enough
+   while every item paints in tree order — but an in-flow item a theme gives a
+   `transform`, a `filter` or an `opacity` becomes a stacking context, and CSS
+   paints those *after* every plain positioned sibling however late that
+   sibling is. A Winamp toolbar button did exactly that and its plate came up
+   through the menu the same toolbar had just opened. The display list already
+   says which half is out of flow (`LayoutSpec::layers_from`); this is that
+   fact, stated where the browser reads it. */
+.tree-item[data-layer],.tree-scrim{z-index:2}
+.tree-scrim{position:absolute;left:0;top:0;pointer-events:auto;background:rgba(0,0,0,.45)}
+/* An item's paint: `--fold-bg` / `--fold-fg` are the fold's answer, set inline
+   per item, with `data-fg` / `data-bg` naming the theme keys they were read
+   from (itemPaint(), 72-tree.js). `--ink-*` is the WEB THEME's say — nothing
+   sets it inline, so an ordinary rule states it and wins, where an inline
+   colour (or an inline `--fold-*`) would have needed `!important` to beat:
+   `body.theme-x .tree-item[data-bg="editor.bg"]{--ink-bg:...}`. Neither set
+   leaves the item unpainted, which is what a `Color::Reset` half means. */
+.tree-item{position:absolute;pointer-events:auto;overflow:hidden;box-sizing:border-box;
+  background:var(--ink-bg,var(--fold-bg,transparent))}
+.tree-item.k-lines{color:var(--ink-fg,var(--fold-fg,inherit))}
+.tree-item.k-wash{opacity:.45}
+.tree-item.k-border{border:1px solid;border-color:var(--ink-fg,var(--fold-fg,currentColor))}
+.tree-item.k-border.rounded{border-radius:6px}
+.tree-item.k-scrim.dim{background:rgba(0,0,0,.45)}
+.tree-item.k-selectable{pointer-events:none}
+/* A run of the display list's text, one row tall at its cell origin. It is
+   GRID text, not chrome text: pinned to the buffer's monospace stack at the
+   size the metrics were measured with, and tracked so N characters advance N
+   cells — the same contract `svg.cells` keeps. Left to inherit the page's
+   font, a web theme that repoints the chrome at a proportional stack (macOS,
+   which also drops the tracking and shrinks the size) rendered every panel
+   run narrower than the cells the tree budgeted for it, and the dock's rows
+   drifted out of their own layout. Weight/slant/decoration stay inherited
+   from the item, so no `font` shorthand here — it would reset them. */
+.tree-line{position:absolute;white-space:pre;color:inherit;
+  font-family:var(--mono-family);font-size:var(--font-size);
+  letter-spacing:var(--cell-tracking,0)}
+/* A vertical box-drawing glyph, drawn as a rule instead (see 72-tree.js). */
+.tree-rule{position:absolute;background:currentColor}
+.tree-thumb{position:absolute;left:0;right:0;border-radius:3px;
+  background:var(--ink-fg,var(--fold-fg,currentColor))}
+.tree-caret{position:absolute;pointer-events:none;border-left:2px solid var(--accent, #fff);opacity:.9}
+/* A mark on a scrollbar's track: half the cell's width in the mark's colour
+   over the thumb or the track (the TUI's half-block glyph); a full mark takes
+   the cell. */
+.tree-mark{position:absolute;left:0;width:50%}
+.tree-mark-full{position:absolute;left:0;right:0}
+
+/* ── A control, not a bracketed string ──────────────────────────────────────
+   The description says *button*, and each backend says what that looks like:
+   the terminal's rule table draws `[` and `]` in the columns it reserved, and
+   these rules draw a pill in the same place. The label arrives naked, so
+   neither backend is spelling the other's frame.
+
+   KIND AND CLASS TOGETHER, ALWAYS. A classed node emits a `fill` over its own
+   rectangle and its label arrives as a separate `lines` item wearing the same
+   class — the flat display list has no other way to say which control a run
+   belongs to. So `.k-fill` is the box and `.k-lines` is what it says; a rule
+   written on `[data-class~="button"]` alone would paint the pill twice, once
+   under the text and once over it.
+
+   The four columns the terminal's frame occupies are exactly the pill's own
+   padding, so the label lands in the same cell in both backends. */
+/* The ground is `.tree-item`'s already; what this adds is the shape — rounded,
+   and inset vertically so the pill reads as a control sitting in the row rather
+   than as a full-height band. The outline is what makes a resting button
+   visible against a ground it shares: the terminal's brackets do that work, and
+   a plain button declares no background of its own to do it with. */
+.tree-item.k-fill[data-class~="button"]{
+  border-radius:calc(var(--font-size) * .35);
+  transform:scaleY(.72);
+  box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--ink-fg,var(--fold-fg,currentColor)) 28%, transparent);
+}
+/* Focus and hover already arrive as colour, through the class table's ink; all
+   the web adds is the outline reading as deliberate rather than incidental. */
+.tree-item.k-fill[data-class~="button.focused"]{
+  box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--ink-fg,var(--fold-fg,currentColor)) 55%, transparent);
+}
+.tree-item.k-fill[data-class~="button.hover"]{
+  box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--ink-fg,var(--fold-fg,currentColor)) 45%, transparent);
+}
+.tree-item.k-fill[data-class~="button.disabled"]{
+  box-shadow:inset 0 0 0 1px color-mix(in srgb, var(--ink-fg,var(--fold-fg,currentColor)) 14%, transparent);
+}
+/* A bare affordance — a `×` close glyph — wears `button.bare` and never
+   `button`, because `button` is the class that declares the frame. So none of
+   the box rules above match it, in either backend, and there is nothing here
+   to undo. */
+/* The label rides above its own box because the fill is emitted first and both
+   are absolutely positioned siblings — document order is the whole mechanism.
+   It must NOT be given a `z-index`: that lifts it out of document order
+   entirely, and a toolbar button's label then painted straight through the
+   pop-over menu the same toolbar had just raised over it. A layer is later in
+   the list precisely so it covers what is under it. */
+.tree-item.k-lines[data-class~="button"]{background:transparent}

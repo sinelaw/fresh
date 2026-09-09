@@ -375,6 +375,15 @@ fn test_flow_b_hot_exit_recovery_with_cli_files() {
 ///
 /// Currently fails because recovery storage is global, not session-scoped (#1233).
 /// Will pass after implementing session-scoped recovery (Phase 2 of the plan).
+///
+/// Both sessions run with `editor.restore_previous_session = false` so this
+/// isolates *recovery*, which is what it is about. Workspaces are one shared set
+/// — a daemon is a host for them, not the owner of a private copy — so two
+/// daemons over one project directory legitimately restore the same layout, and
+/// asserting recovery isolation through the workspace layout would just be
+/// re-testing the old partitioned store. Hot-exit content is still restored with
+/// session restore off (the documented `--no-restore` behaviour), which is
+/// exactly the state under test.
 #[test]
 fn test_flow_c_session_scoped_recovery_isolation() {
     let temp_dir = TempDir::new().unwrap();
@@ -470,8 +479,7 @@ fn test_flow_c_session_scoped_recovery_isolation() {
         harness
             .editor_mut()
             .set_session_name(Some("session_a".into()));
-        let restored = harness.startup(true, &[]).unwrap();
-        assert!(restored, "Session A workspace should be restored");
+        harness.startup(false, &[]).unwrap();
         harness.render().unwrap();
 
         harness.assert_screen_contains("MODIFIED_A");
@@ -499,8 +507,7 @@ fn test_flow_c_session_scoped_recovery_isolation() {
         harness
             .editor_mut()
             .set_session_name(Some("session_b".into()));
-        let restored = harness.startup(true, &[]).unwrap();
-        assert!(restored, "Session B workspace should be restored");
+        harness.startup(false, &[]).unwrap();
         harness.render().unwrap();
 
         harness.assert_screen_contains("MODIFIED_B");

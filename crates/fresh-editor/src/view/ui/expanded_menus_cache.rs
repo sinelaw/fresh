@@ -1,6 +1,6 @@
 //! Memoised expansion of `MenuConfig` against the active `ThemeRegistry`.
 //!
-//! Without this cache, `MenuRenderer::render` rescans the themes directory
+//! Without this cache, describing the menu rescans the themes directory
 //! and re-deserialises every theme JSON file on every frame to expand any
 //! `DynamicSubmenu` items in the menu config. The cache builds the
 //! expansion once per registry instance and reuses it until the registry

@@ -1,4 +1,25 @@
 {
+  "bg": {
+    "cmd.show_references": "Показване на Панел за обръщения",
+    "cmd.show_references_desc": "Покажи текущите обръщения",
+    "cmd.hide_references": "Скриване на Панел за обръщения",
+    "cmd.hide_references_desc": "Затваряне на Панел за обръщения",
+    "status.ready": "Плъгин за Обръщения е зареден",
+    "status.no_references": "Не са намерени обръщения за '%{symbol}'",
+    "status.found_references": "Намерени %{count} обръщение(я)%{limit} - Up/Down навигация, RET скок, q затваряне",
+    "status.showing_first": " (показва Първи %{max})",
+    "status.reference_index": "обръщение %{current}/%{total}",
+    "status.jumped_to": "Преминаване към %{file}:%{line}",
+    "status.no_references_to_jump": "Нямя обръщения за преминаване към",
+    "status.source_split_unavailable": "Source панел недостъпен",
+    "status.move_cursor": "Преместване на курсора към ред обръщение",
+    "status.closed": "панел обръщения затворен",
+    "status.failed_open_panel": "Неуспешно отваряне на панел обръщения",
+    "panel.header": "Обръщения към %{symbol} (%{count}%{limit})",
+    "panel.limited": ", ограничени до %{max}",
+    "panel.no_references": "Обръщения не са намерени",
+    "panel.help": "[Up/Down] навигация [RET] скок [q/Esc] затваряне"
+  },
   "cs": {
     "cmd.show_references": "Zobrazit panel odkazu",
     "cmd.show_references_desc": "Zobrazit aktualni odkazy",

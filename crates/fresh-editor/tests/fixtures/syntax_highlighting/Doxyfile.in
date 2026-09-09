@@ -1,0 +1,12 @@
+# Doxygen configuration template
+PROJECT_NAME           = "Fresh Editor"
+PROJECT_NUMBER         = @PROJECT_VERSION@
+OUTPUT_DIRECTORY       = @CMAKE_CURRENT_BINARY_DIR@/docs
+INPUT                  = @CMAKE_CURRENT_SOURCE_DIR@/src
+FILE_PATTERNS          = *.h \
+                         *.cpp \
+                         *.dox
+RECURSIVE              = YES
+GENERATE_HTML          = YES
+GENERATE_LATEX         = NO
+PREDEFINED            += FRESH_VERSION="$(PROJECT_VERSION)"

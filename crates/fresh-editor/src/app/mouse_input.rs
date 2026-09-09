@@ -7,137 +7,112 @@
 //! - Split separator dragging
 //! - Text selection via mouse
 
+use super::chrome::in_rect;
 use super::*;
-use crate::input::keybindings::Action;
-use crate::model::event::{ContainerId, CursorId, LeafId, SplitDirection};
 use crate::services::plugins::hooks::HookArgs;
-use crate::view::popup_mouse::{popup_areas_to_layout_info, PopupHitTester};
 use crate::view::prompt::PromptType;
-use crate::view::ui::tabs::TabHit;
 use anyhow::Result as AnyhowResult;
-use ratatui::layout::Rect;
-use rust_i18n::t;
+use std::time::{Duration, Instant};
 
-/// Returns true if (col, row) falls inside `rect`.
-fn in_rect(col: u16, row: u16, rect: Rect) -> bool {
-    col >= rect.x && col < rect.x + rect.width && row >= rect.y && row < rect.y + rect.height
+/// Columns one notch of a sideways wheel pans. Horizontal panning has no
+/// line-oriented setting to follow — `mouse_wheel_scroll_lines` counts lines
+/// — so it takes the same fixed step a pan keystroke does, which is what
+/// [`PAN_COLUMNS`] is for.
+///
+/// [`PAN_COLUMNS`]: crate::widgets::render::PAN_COLUMNS
+const WHEEL_COLUMNS: i32 = crate::widgets::render::PAN_COLUMNS;
+
+/// How long one line of a smoothed wheel gesture is meant to take.
+/// Roughly a frame at 60Hz, so a three-line notch walks across about
+/// three frames — enough to read as a slide rather than a jump, and
+/// short enough that the view never feels behind the wheel.
+const SMOOTH_SCROLL_LINE: Duration = Duration::from_millis(16);
+
+/// A wheel gesture still playing out.
+///
+/// One notch asks for several lines at once. Handing them over one at a
+/// time makes the view slide instead of jumping — and gives the scroll
+/// fade a row at a time to work with — but only while the frames to
+/// show it in are actually arriving. So the walk is paced by the clock
+/// rather than by frames: whatever the last frame did not get to is
+/// still owed, and a caller that has been away long enough for all of
+/// it delivers the remainder in one go. A terminal too slow to animate
+/// therefore gets the plain jump it had before, rather than a scroll
+/// that drags on behind the wheel.
+pub(crate) struct PendingWheelScroll {
+    /// Where the pointer was. The lines still owed are replayed through
+    /// the same dispatch as the original event, so they land on
+    /// whatever surface that event routed to.
+    col: u16,
+    row: u16,
+    /// -1 for up, +1 for down.
+    direction: i32,
+    /// Lines still owed to that surface.
+    remaining: u32,
+    /// How many lines may stay owed before the walk starts handing over
+    /// the surplus with the current frame. Two notches' worth, so the
+    /// view never trails the wheel by more than a moment.
+    max_backlog: u32,
+    /// When the last line was handed over. Advanced by exactly the
+    /// lines delivered, so the pace does not drift with frame times.
+    last_step: Instant,
+}
+
+/// How many of `remaining` lines the clock has made due after
+/// `elapsed`, at one line per `interval`: none until the first comes
+/// due, and the whole remainder at once for a caller that has been away
+/// long enough for all of them.
+fn lines_due(elapsed: Duration, interval: Duration, remaining: u32) -> u32 {
+    if interval.is_zero() {
+        return remaining;
+    }
+    let due = elapsed.as_nanos() / interval.as_nanos();
+    u32::try_from(due).unwrap_or(u32::MAX).min(remaining)
+}
+
+/// Lines to hand over this frame: the ones the clock has made due, plus
+/// anything past `max_backlog` that would otherwise leave the view
+/// trailing the wheel.
+///
+/// The backlog is what keeps a flick honest. Notches can arrive faster
+/// than a line a frame, and a gesture must travel exactly as far as it
+/// asks for — dropping the excess would make fast scrolling cover less
+/// ground than slow scrolling. So nothing is ever dropped: past the
+/// backlog the surplus rides along with this frame's line, and the walk
+/// degrades toward the jump it replaced instead of falling behind.
+fn lines_to_deliver(
+    elapsed: Duration,
+    interval: Duration,
+    remaining: u32,
+    max_backlog: u32,
+) -> u32 {
+    lines_due(elapsed, interval, remaining).max(remaining.saturating_sub(max_backlog))
 }
 
 impl Editor {
-    /// If any overlay layer captures mouse events, dispatch to its
-    /// dedicated handler and return its result; otherwise return `None`
-    /// so the caller continues with the normal click/wheel pipeline.
-    ///
-    /// This is the mouse counterpart of `resolve_focus_context` /
-    /// `presents_blocking_overlay`: precedence is the order of
-    /// `overlay_layers()`, top-first. Only the kinds whose modal
-    /// handlers exist need an arm here — non-capturing layers fall
-    /// through.
-    fn dispatch_modal_mouse(
-        &mut self,
-        mouse_event: crossterm::event::MouseEvent,
-        is_double_click: bool,
-    ) -> Option<AnyhowResult<bool>> {
-        use crate::app::overlay::LayerKind;
-
-        // Snapshot the capturing kinds first so the borrow ends before
-        // any `&mut self` handler runs.
-        let capturing_kind = self.overlay_layers().iter().find_map(|l| match l.kind {
-            LayerKind::Settings
-            | LayerKind::KeybindingEditor
-            | LayerKind::CalibrationWizard
-            | LayerKind::WorkspaceTrust
-            | LayerKind::FloatingModal => Some(l.kind),
-            _ => None,
-        })?;
-        Some(match capturing_kind {
-            LayerKind::KeybindingEditor => self.handle_keybinding_editor_mouse(mouse_event),
-            LayerKind::Settings => self.handle_settings_mouse(mouse_event, is_double_click),
-            // The calibration wizard owns the modal z-band but ignores
-            // every mouse event (its UI is keyboard-driven). Swallowing
-            // here matches the previous explicit `return Ok(false)`.
-            LayerKind::CalibrationWizard => Ok(false),
-            LayerKind::WorkspaceTrust => self.handle_workspace_trust_mouse(mouse_event),
-            // The centered widget modal (orchestrator control room /
-            // New-Session form) captures the whole mouse channel here —
-            // before the terminal-forward and the editor's buffer paths —
-            // so a click/double-click/scroll over the dialog never leaks to
-            // an alternate-screen terminal or the buffer it covers. Clicks
-            // route to the panel's own hit-test (focusing the clicked
-            // widget); everything else is swallowed.
-            LayerKind::FloatingModal => self.handle_floating_modal_mouse(mouse_event),
-            _ => unreachable!("find_map only returns capturing kinds"),
-        })
-    }
-
-    /// Mouse handler for the centered widget modal (`floating_widget_panel`).
-    /// The dialog is fully modal: presses hit-test the panel (focusing the
-    /// clicked widget / placing the text cursor), wheel scrolls it, and a
-    /// drag drives only its scrollbar. Every other event — and every press
-    /// that lands outside the panel box — is swallowed, so nothing reaches
-    /// the buffer, terminal, or dock beneath. Always returns
-    /// `Ok(true)` (a render is cheap and the modal just consumed an event).
-    fn handle_floating_modal_mouse(
-        &mut self,
-        mouse_event: crossterm::event::MouseEvent,
-    ) -> AnyhowResult<bool> {
-        use crossterm::event::{MouseButton, MouseEventKind};
-        let (col, row) = (mouse_event.column, mouse_event.row);
-        match mouse_event.kind {
-            MouseEventKind::Down(MouseButton::Left) => {
-                // A press on the native modal-frame `[×]` close button
-                // dismisses the panel exactly like Esc / Cancel (same
-                // `dismiss_floating_panel_with_cancel` path that fires the
-                // panel's `cancel` widget_event). Checked BEFORE the general
-                // panel hit-test so the click never also focuses a widget in
-                // the interior beneath the button.
-                if let Some(cbr) = self
-                    .panel(super::PanelSlot::Floating)
-                    .and_then(|f| f.close_button_rect)
-                {
-                    if in_rect(col, row, cbr) {
-                        self.dismiss_floating_panel_with_cancel(super::PanelSlot::Floating);
-                        return Ok(true);
-                    }
-                }
-                // An anchored popup (right-click context menu) dismisses when
-                // the press lands outside its box — standard menu behaviour.
-                // The centered modal instead swallows outside-clicks (it has
-                // explicit Cancel / Esc).
-                if self.floating_panel_is_anchored()
-                    && !self.point_in_floating_panel(super::PanelSlot::Floating, col, row)
-                {
-                    self.dismiss_floating_panel_with_cancel(super::PanelSlot::Floating);
-                    return Ok(true);
-                }
-                // Single / double / triple clicks all map to one panel
-                // hit-test — never the buffer's word/line select beneath.
-                self.handle_floating_widget_click(super::PanelSlot::Floating, col, row);
-            }
-            MouseEventKind::Drag(MouseButton::Left) => {
-                // Only a scrollbar drag is meaningful; other drags are
-                // swallowed rather than starting a buffer text-selection.
-                self.try_widget_scrollbar_drag(super::PanelSlot::Floating, row);
-            }
-            MouseEventKind::Up(MouseButton::Left) => {
-                self.release_widget_scrollbar();
-            }
-            MouseEventKind::ScrollUp => {
-                self.handle_floating_widget_panel_wheel(super::PanelSlot::Floating, col, row, -3);
-            }
-            MouseEventKind::ScrollDown => {
-                self.handle_floating_widget_panel_wheel(super::PanelSlot::Floating, col, row, 3);
-            }
-            // Right-click, horizontal scroll, motion, other-button releases:
-            // swallowed — the modal eats them all.
-            _ => {}
-        }
-        Ok(true)
-    }
-
     /// Handle a mouse event.
     /// Returns true if a re-render is needed.
     pub fn handle_mouse(
+        &mut self,
+        mouse_event: crossterm::event::MouseEvent,
+    ) -> AnyhowResult<bool> {
+        // As `handle_key`: routed over a tree laid out from the facts as they
+        // stand. What it leaves stale is decided where the event is spent —
+        // a fact says whether it changed anything routing reads
+        // (`UiFact::is_pointer_transient`), and the legacy walk, which cannot,
+        // marks the description stale for every press and release it takes.
+        self.lay_out_shell_if_stale();
+        self.handle_mouse_routed(mouse_event)
+    }
+
+    fn handle_mouse_routed(
+        &mut self,
+        mouse_event: crossterm::event::MouseEvent,
+    ) -> AnyhowResult<bool> {
+        self.handle_mouse_impl(mouse_event)
+    }
+
+    fn handle_mouse_impl(
         &mut self,
         mouse_event: crossterm::event::MouseEvent,
     ) -> AnyhowResult<bool> {
@@ -148,16 +123,32 @@ impl Editor {
 
         let (is_double_click, is_triple_click) = self.detect_multi_click(&mouse_event, col, row);
 
-        // Modal mouse-capture: walk the overlay stack top-down (the same
-        // list `get_key_context` / `dispatch_terminal_input` consult) and
-        // dispatch to the first layer that captures mouse. This replaces
-        // a hand-listed ladder that had drifted out of order with the
-        // keyboard dispatcher.
-        if let Some(result) = self.dispatch_modal_mouse(mouse_event, is_double_click) {
-            return result;
-        }
+        // The modal mouse-capture band is gone. It walked the overlay stack
+        // in rank order and gave the whole mouse channel to the first modal
+        // that was up — a second routing engine, ahead of the shell's, and
+        // the reason `placed_surface_outranks_shell` had to exist. A modal is
+        // a `Modality::Exclusive` layer in the tree now, so the tree answers
+        // the same question in the same walk as everything else.
+        //
+        // The event it routes stays here rather than travelling as a fact: a
+        // full-screen modal's interior hit-tests rectangles its own painter
+        // recorded and tells a drag from a move, which a tree `Event`
+        // deliberately cannot. See `view::shell::modal`.
+        self.shell_pointer_event = Some((mouse_event, is_double_click));
 
-        // Cancel LSP rename prompt on any mouse interaction
+        // Cancel the LSP-rename prompt on ANY mouse interaction that
+        // reaches normal routing. RULING — a pre-WALK observer of the
+        // non-modal channel: it fires on every event kind the capture
+        // band above lets through (click, wheel, even bare motion)
+        // wherever it lands, which no box on the walk can express (a
+        // box fires only when hit, and only for gestures with arms),
+        // then continues — the walk proceeds as if it weren't here.
+        // Deliberately BELOW the capture band, unlike the keyboard's
+        // transient-popup dismissal (which observes even under
+        // modals): a capturing modal owns its events wholly, and a
+        // click aimed at Settings must not reach through it to cancel
+        // a rename prompt the user cannot see. The `prompt_type`
+        // match is the observer's own gate, not surface routing.
         let mut needs_render = false;
         if let Some(ref prompt) = self.active_window_mut().prompt {
             if matches!(prompt.prompt_type, PromptType::LspRename { .. }) {
@@ -181,173 +172,121 @@ impl Editor {
             row
         );
 
-        // Check if we should forward mouse events to the terminal
-        // Forward if: in terminal mode, mouse is over terminal buffer, and terminal is in alternate screen mode
+        // Then the migration shell. It used to run *after* a capture band,
+        // because a full-screen modal had to outrank anything in the tree and
+        // running the shell first would have inverted that — and it consulted
+        // `placed_surface_outranks_shell` for the same reason at the level of
+        // individual surfaces, restating the `z` a migrated box used to carry
+        // so a modal drawn over the file explorer still owned its own cells.
         //
-        // ...unless a chrome drag is in progress (dock-border resize, split
-        // separator, or file-explorer width). That drag owns the mouse until
-        // release, so don't let an alternate-screen terminal swallow the
-        // motion once the pointer crosses over it — *growing* the dock drags
-        // the cursor rightward across a full-screen `btop`, and forwarding
-        // there both stalls the resize and eats the mouse-up that ends it,
-        // leaving the drag stuck. Shrinking happened to work only because the
-        // pointer stays left of the terminal the whole time.
-        let chrome_drag_active = self.dock_resizing || {
-            let ms = &self.active_window().mouse_state;
-            ms.dragging_separator.is_some() || ms.drag_start_explorer_width.is_some()
+        // Both are gone. The modals are `Modality::Exclusive` layers, and no
+        // placed box above the shell's band is left — the split grid's sit at
+        // 70 and 80, below it. So there is one walk, and it is this one; the
+        // legacy walk below stays the floor.
+        //
+        // Whether the tree took the event is reported by `dispatch`, not
+        // inferred from whether it had anything to say: a hover moves a
+        // highlight without claiming, and a right-click outside a menu closes
+        // it while staying available to open the next one.
+        //
+        // Which press of a run this is, as the editor's own multi-click
+        // detector saw it. The tree carries it to its handlers on
+        // `Event::clicks`; nothing in the library counts.
+        let clicks = if is_triple_click {
+            3
+        } else if is_double_click {
+            2
+        } else {
+            1
         };
-        // An open native context menu (tab / "+" new-tab / file-explorer)
-        // takes mouse precedence over terminal forwarding. These menus render
-        // on top of — and frequently overlap — an alternate-screen terminal
-        // that has captured the mouse (e.g. right-clicking a terminal's tab
-        // opens the tab menu directly over the terminal's content). Without
-        // this gate the terminal-forward path below would swallow clicks/moves
-        // aimed at the menu, so menu items couldn't be selected (they'd inject
-        // mouse escape codes into the PTY instead). Skipping forwarding lets
-        // the event fall through to the normal pipeline, where
-        // `handle_click_context_menus` (select / dismiss) and the hover
-        // hit-test (highlight-follows-pointer) already handle it. Centralizing
-        // the precedence at this single fork mirrors the modal-capture ladder
-        // in `dispatch_modal_mouse`.
-        let context_menu_open = self.active_window().context_menu_core().is_some();
-        if !chrome_drag_active && !context_menu_open {
-            let forwarding = self.config.terminal.mouse_forwarding;
-            if let Some(result) = self.active_window_mut().try_forward_mouse_to_terminal(
-                col,
-                row,
-                mouse_event,
-                forwarding,
-            ) {
-                return result;
+        // A notch is worth `mouse_wheel_scroll_lines` on the vertical axis and
+        // `WHEEL_COLUMNS` sideways — the same rule `begin_wheel_scroll` states
+        // for the walk below, because a surface that moved into the tree must
+        // not scroll at a different speed from the one beside it.
+        let wheel_lines = self.config.editor.mouse_wheel_scroll_lines.max(1) as i32;
+        // **A multi-line notch slides rather than jumping**, and the split has
+        // to happen here, ahead of dispatch. The first line goes with this
+        // event and the rest are owed, walked one at a time by
+        // `step_pending_wheel_scroll`. It used to sit between the tree's
+        // dispatch and the legacy walk — which meant it applied only to the
+        // notches the tree *declined*, and once a surface's wheel became a node
+        // that was none of that surface's.
+        let wheel_lines = self.arm_wheel_walk(mouse_event, col, row, wheel_lines);
+        if let Some(input) =
+            crate::view::shell::input::mouse(mouse_event, clicks, wheel_lines, WHEEL_COLUMNS)
+        {
+            let d = self.shell_dispatch(input);
+            if d.claimed {
+                return Ok(true);
             }
+            // Declined, but not necessarily inert: a hover restyles the
+            // surface under the pointer and lets the event go on to the
+            // trackers below, so the frame is stale even though the walk
+            // continues. See `Dispatched`.
+            needs_render = needs_render || d.changed;
         }
-
-        // Ctrl+Click on a file path printed in the live terminal opens it in
-        // Fresh (jumping to any :line:col it encodes). Handled before normal
-        // click routing so it doesn't disturb cursor/selection state.
-        if let Some(result) = self.try_open_terminal_link(col, row, mouse_event) {
+        // **The legacy walk cannot say what it changed**, so a press or a
+        // release it takes leaves the description stale for routing. A
+        // motion report is spent on trackers and grabs that change nothing
+        // routing reads, and a drag along a divider must not cost a layout
+        // per report.
+        if !matches!(
+            mouse_event.kind,
+            MouseEventKind::Moved | MouseEventKind::Drag(_)
+        ) {
+            self.shell_description_stale = true;
+        }
+        // A live terminal's own mouse, and the Ctrl+Click that opens a path it
+        // printed. Both belong to a pane's *content*, and the pane's content
+        // is a node — so its handlers ask this first, before placing a caret
+        // (`Editor::pane_content_takes_pointer`). This call is for the event
+        // kinds that node does not claim: a motion or a release mid-drag, and
+        // anything landing outside a pane. One rule, asked wherever the
+        // pointer can reach the content.
+        if let Some(result) = self.pane_content_takes_pointer(col, row, mouse_event) {
             return result;
         }
 
-        // Dismiss theme info popup on any left-click; check if click is on the button first
-        if self.active_window_mut().theme_info_popup.is_some() {
-            if let MouseEventKind::Down(MouseButton::Left) = mouse_event.kind {
-                if let Some((popup_rect, button_row_offset)) = self.theme_info_popup_rect() {
-                    if in_rect(col, row, popup_rect) {
-                        // Check if click is on the button row (last content row
-                        // before border). `button_row_offset` is `None` when the
-                        // popup has no theme keys (no button to open).
-                        if let Some(offset) = button_row_offset {
-                            let actual_button_row = popup_rect.y + offset;
-                            if row == actual_button_row {
-                                let key =
-                                    self.active_window_mut().theme_info_popup.as_ref().and_then(
-                                        |p| p.info.fg_key.clone().or_else(|| p.info.bg_key.clone()),
-                                    );
-                                self.active_window_mut().theme_info_popup = None;
-                                if let Some(key) = key {
-                                    self.fire_theme_inspect_hook(key);
-                                }
-                                return Ok(true);
-                            }
-                        }
-                        // Click inside popup but not on an actionable button - ignore
-                        return Ok(true);
-                    }
-                }
-                // Click outside popup - dismiss
-                self.active_window_mut().theme_info_popup = None;
-                needs_render = true;
-            }
-        }
-
         match mouse_event.kind {
-            MouseEventKind::Down(MouseButton::Left) => {
-                if is_double_click || is_triple_click {
-                    if let Some((buffer_id, byte_pos)) =
-                        self.fold_toggle_line_at_screen_position(col, row)
-                    {
-                        self.active_window_mut()
-                            .toggle_fold_at_byte(buffer_id, byte_pos);
-                        needs_render = true;
-                        return Ok(needs_render);
-                    }
-                }
-                if is_triple_click {
-                    // Triple click detected - select entire line
-                    self.handle_mouse_triple_click(col, row)?;
-                    needs_render = true;
-                    return Ok(needs_render);
-                }
-                if is_double_click {
-                    // Double click detected - both clicks within time threshold AND at same position
-                    self.handle_mouse_double_click(col, row)?;
-                    needs_render = true;
-                    return Ok(needs_render);
-                }
-                self.handle_mouse_click(col, row, mouse_event.modifiers)?;
-                needs_render = true;
-            }
             MouseEventKind::Drag(MouseButton::Left) => {
                 self.handle_mouse_drag(col, row)?;
                 needs_render = true;
             }
             MouseEventKind::Up(MouseButton::Left) => {
-                // End a dock-resize drag and persist the chosen width so
-                // it survives toggling the dock off/on.
-                if self.dock_resizing {
-                    self.dock_resizing = false;
-                    if let Some(super::PanelPlacement::LeftDock { width_cols }) =
-                        self.dock.as_ref().map(|f| f.placement)
-                    {
-                        self.dock_width = Some(width_cols);
-                    }
-                    return Ok(true);
-                }
-                // Check if we were dragging a separator to trigger terminal resize
-                let was_dragging_separator = self
-                    .active_window_mut()
-                    .mouse_state
-                    .dragging_separator
-                    .is_some();
+                // Release is GRAB-KEYED like the Drag arm: the derived
+                // `pointer_grab` names which press-to-release routing is
+                // ending, and its arm runs that grab's finalizer — no
+                // more per-surface field-poke ladder that had to be kept
+                // in sync with the grab roster by hand. Grabs without a
+                // finalizer just fall to the blanket clear below.
+                // A tab drop was finalized here, keyed on its grab. The
+                // tab's node holds the pointer for the drag now, so the
+                // release comes back to it (`UiFact::PaneTabDrop`) and never
+                // reaches this walk.
 
-                // Check if we were dragging a tab and complete the drop
-                if let Some(drag_state) = self.active_window_mut().mouse_state.dragging_tab.take() {
-                    if drag_state.is_dragging() {
-                        if let Some(drop_zone) = drag_state.drop_zone {
-                            self.execute_tab_drop(
-                                drag_state.buffer_id,
-                                drag_state.source_split_id,
-                                drop_zone,
-                            );
-                        }
-                    }
-                }
-
-                // Stop dragging and clear drag state
-                self.release_widget_scrollbar();
+                // Blanket sweep: every remaining drag flag drops here,
+                // so no grab can outlive its release even if its
+                // finalizer above was skipped.
+                self.widget_text_drag = None;
                 self.clear_active_window_drag_state();
 
-                // If we finished dragging a split separator, the split
-                // ratios changed: reflow through the single layout funnel.
-                if was_dragging_separator {
-                    self.relayout();
-                }
+                // The separator's reflow was here, keyed on its grab. It is
+                // the divider node's own release now — the grip keeps the
+                // pointer it took, so its release never reaches this walk.
 
                 needs_render = true;
             }
             MouseEventKind::Moved => {
                 // Dispatch MouseMove hook to plugins (fire-and-forget, no blocking check)
                 {
-                    // Find content rect for the split under the mouse
-                    let content_rect = self
-                        .active_layout()
-                        .split_areas
-                        .iter()
-                        .find(|(_, _, content_rect, _, _, _)| in_rect(col, row, *content_rect))
-                        .map(|(_, _, rect, _, _, _)| *rect);
-
-                    let (content_x, content_y) = content_rect.map(|r| (r.x, r.y)).unwrap_or((0, 0));
+                    // Where the pane under the pointer starts, so a plugin can
+                    // turn a screen cell into a content one. `pane_content_at`
+                    // is the one answer to that; this used to scan
+                    // `split_areas` for it.
+                    let (content_x, content_y) = self
+                        .pane_content_at(col, row)
+                        .map(|(_, r)| (r.x, r.y))
+                        .unwrap_or((0, 0));
 
                     self.plugin_manager.read().unwrap().run_hook(
                         "mouse_move",
@@ -360,104 +299,33 @@ impl Editor {
                     );
                 }
 
-                // Only re-render if hover target actually changed
-                // (preserve needs_render if already set, e.g., for GPM cursor updates)
-                let hover_changed = self.update_hover_target(col, row);
-                needs_render = needs_render || hover_changed;
+                // The cell-keyed fan-out was here, for one reaction: the
+                // dock's overlay scrollbar. Its column is a node and reports
+                // its own Enter and Leave, so every motion event no longer has
+                // to be offered to every component to find out.
 
                 // Ctrl+hover over a resolvable path in the live terminal
-                // underlines it to signal it's clickable.
+                // underlines it to signal it's clickable. RULING: stays
+                // beside (not inside) the `HoverTarget` walk, like its
+                // click half stays pre-walk — the tracker is a
+                // modifier-keyed regex probe over terminal-grid CONTENT,
+                // not a surface-naming question; the walk names chrome,
+                // content trackers own their reactions (the same seam as
+                // `update_lsp_hover_state` below).
                 let term_link_changed =
                     self.update_terminal_link_hover(col, row, mouse_event.modifiers);
                 needs_render = needs_render || term_link_changed;
 
-                // Update theme info popup button highlight on hover (only when
-                // the popup actually has a button — the keyless message variant
-                // returns `None` and never highlights).
-                if let Some((popup_rect, Some(button_row_offset))) = self.theme_info_popup_rect() {
-                    let button_row = popup_rect.y + button_row_offset;
-                    let new_highlighted = row == button_row
-                        && col >= popup_rect.x
-                        && col < popup_rect.x + popup_rect.width;
-                    if let Some(ref mut popup) = self.active_window_mut().theme_info_popup {
-                        if popup.button_highlighted != new_highlighted {
-                            popup.button_highlighted = new_highlighted;
-                            needs_render = true;
-                        }
-                    }
-                }
-
-                // Track LSP hover state for mouse-triggered hover popups
-                self.update_lsp_hover_state(col, row);
-
-                // The dock's overlay scrollbar follows the pointer: reveal it
-                // while the mouse is over the sessions list, hide it otherwise.
-                // Tracked off the actual motion events we receive (not gated on
-                // `mouse_hover_enabled`, which only governs terminal-level mode
-                // 1003 — and is off by default on Windows): if a Moved event
-                // arrives, use it. Re-render only on the enter/leave transition
-                // (not every motion) so it fades in/out without churn.
-                let now_over = self
-                    .dock
-                    .as_ref()
-                    .map(|d| {
-                        d.scrollbar_hover_zones.iter().any(|z| {
-                            col >= z.x && col < z.x + z.width && row >= z.y && row < z.y + z.height
-                        })
-                    })
-                    .unwrap_or(false);
-                if let Some(d) = self.dock.as_mut() {
-                    if d.scrollbar_zone_hovered != now_over {
-                        d.scrollbar_zone_hovered = now_over;
-                        needs_render = true;
-                    }
-                }
-            }
-            MouseEventKind::ScrollUp => {
-                self.handle_vertical_scroll(col, row, mouse_event.modifiers, -3)?;
-                needs_render = true;
-            }
-            MouseEventKind::ScrollDown => {
-                self.handle_vertical_scroll(col, row, mouse_event.modifiers, 3)?;
-                needs_render = true;
-            }
-            MouseEventKind::ScrollLeft => {
-                // Native horizontal scroll left
-                self.active_window_mut()
-                    .handle_horizontal_scroll(col, row, -3)?;
-                needs_render = true;
-            }
-            MouseEventKind::ScrollRight => {
-                // Native horizontal scroll right
-                self.active_window_mut()
-                    .handle_horizontal_scroll(col, row, 3)?;
-                needs_render = true;
-            }
-            MouseEventKind::Down(MouseButton::Right) => {
-                // Mouse-modal overlay: swallow right-click / Ctrl+right-click
-                // so neither the tab context menu nor the theme-info popup
-                // fires, and the buffer below is untouched.
-                if self.overlay_prompt_active() {
-                    needs_render = true;
-                } else if mouse_event
-                    .modifiers
-                    .contains(crossterm::event::KeyModifiers::CONTROL)
-                {
-                    // Ctrl+Right-Click → theme info popup
-                    self.show_theme_info_popup(col, row)?;
-                    needs_render = true;
-                } else {
-                    // Normal right-click → tab context menu
-                    self.handle_right_click(col, row)?;
-                    needs_render = true;
-                }
+                // Track LSP hover state for mouse-triggered hover popups.
+                // Dismissing the popup is a repaint, and this is the only
+                // party that knows it happened — see the docstring.
+                needs_render = self.update_lsp_hover_state(col, row) || needs_render;
             }
             _ => {
                 // Ignore other mouse events for now
             }
         }
 
-        self.active_window_mut().mouse_state.last_position = Some((col, row));
         Ok(needs_render)
     }
 
@@ -499,267 +367,164 @@ impl Editor {
         (is_double, is_triple)
     }
 
-    /// Dispatch a vertical scroll event (ScrollUp/ScrollDown) through the priority chain:
-    /// Shift → horizontal scroll, prompt, file browser, popup, editor/terminal.
-    fn handle_vertical_scroll(
+    /// Split one wheel notch into the line that lands now and the lines the
+    /// walk still owes, returning the first. `lines` is the notch's full worth.
+    ///
+    /// A notch is worth `mouse_wheel_scroll_lines`. The first lands with the
+    /// event itself, so the view answers the wheel on the same frame; the rest
+    /// are owed and walked one at a time by [`Self::step_pending_wheel_scroll`],
+    /// which is what makes a multi-line notch slide rather than jump.
+    fn arm_wheel_walk(
         &mut self,
+        ev: crossterm::event::MouseEvent,
         col: u16,
         row: u16,
-        modifiers: crossterm::event::KeyModifiers,
-        delta: i32,
-    ) -> AnyhowResult<()> {
-        if modifiers.contains(crossterm::event::KeyModifiers::SHIFT) {
-            self.active_window_mut()
-                .handle_horizontal_scroll(col, row, delta)?;
-        } else if self.handle_overlay_prompt_scroll(col, row, delta) {
-            // Floating-overlay prompt (Live Grep): the wheel scrolls the pane
-            // under the pointer — the preview when over it, otherwise the
-            // result list (without moving the selection). See issue #2119.
-        } else if self.handle_prompt_scroll(delta) {
-            // bottom-anchored prompt consumed the scroll (moves selection)
-        } else if self.is_file_open_active()
-            && self.is_mouse_over_file_browser(col, row)
-            && self.handle_file_open_scroll(delta)
-        {
-            // file browser consumed the scroll
-        } else if self.is_mouse_over_any_popup(col, row) {
-            self.scroll_popup(delta);
-        } else if self.floating_widget_panel.is_some() {
-            // A centered modal (orchestrator picker, New-Session form,
-            // ...) is modal and takes precedence: scroll it when the
-            // pointer is over it, otherwise swallow the wheel so it
-            // can't leak through to the buffer (or the dock) behind it.
-            // Either way the event is consumed here — never falls through.
-            self.handle_floating_widget_panel_wheel(super::PanelSlot::Floating, col, row, delta);
-        } else if self.dock.is_some()
-            && self.handle_floating_widget_panel_wheel(super::PanelSlot::Dock, col, row, delta)
-        {
-            // The dock swallows the wheel whenever the pointer is over
-            // its column (never leaks to the window beneath).
-        } else if self
-            .active_window()
-            .split_at_position(col, row)
-            .map(|(_, buffer_id)| self.handle_widget_panel_wheel(buffer_id, delta))
-            .unwrap_or(false)
-        {
-            // a mounted widget panel consumed the scroll
-        } else {
-            if self.active_window().focused_terminal_live() {
-                // Scrolling up drops the focused split into read-only scrollback
-                // (recorded per-split, so re-focusing keeps it there).
-                self.enter_terminal_scrollback();
-            } else if let Some((split_id, buffer_id)) =
-                self.active_window().split_at_position(col, row)
+        lines: i32,
+    ) -> i32 {
+        use crossterm::event::{KeyModifiers, MouseEventKind};
+        // Only a vertical notch walks. Anything else — a press, a motion, a
+        // sideways wheel — leaves the gesture in progress alone; it plays out
+        // on its own frames.
+        let direction = match ev.kind {
+            MouseEventKind::ScrollDown => 1,
+            MouseEventKind::ScrollUp => -1,
+            _ => return lines,
+        };
+        // Shift turns the wheel horizontal. That pans by columns, which the
+        // line-oriented setting has nothing to say about and there is no
+        // line-by-line walk for — so it ends any gesture in flight rather than
+        // letting one keep playing under a sideways scroll.
+        let sideways = ev.modifiers.contains(KeyModifiers::SHIFT);
+        // Nothing to walk for a single-line notch, and a user who turned
+        // motion off gets the jump.
+        let walk = !sideways
+            && lines > 1
+            && self.config.editor.smooth_scroll
+            && self.config.editor.animations;
+        if !walk {
+            self.flush_pending_wheel_scroll();
+            return lines;
+        }
+
+        // A flick sends notches faster than they can be walked, so the lines
+        // the last one still owed carry over into this one — the walk tracks a
+        // single running total rather than a queue of notches. One aimed
+        // elsewhere, or the other way, cannot carry over; its lines are handed
+        // to the surface they were routed to instead, so a nudge of the mouse
+        // mid-scroll cannot swallow distance. Either way nothing is dropped.
+        let lines = lines as u32;
+        let carried = match self.pending_wheel_scroll.take() {
+            Some(pending)
+                if pending.direction == direction && (pending.col, pending.row) == (col, row) =>
             {
-                // Scrolling a terminal split that a drag parked in implicit
-                // scrollback means the user is now *reading* the scrollback:
-                // convert the visit to an explicit one, so copy / click-away
-                // no longer auto-resume the live grid (no-op for everything
-                // else).
-                self.active_window_mut()
-                    .set_split_terminal_drag_scrollback(split_id, buffer_id, false);
+                pending.remaining
             }
-            self.dismiss_transient_popups();
-            self.active_window_mut()
-                .handle_mouse_scroll(col, row, delta)?;
-        }
-        Ok(())
+            Some(pending) => {
+                self.deliver_owed(&pending);
+                0
+            }
+            None => 0,
+        };
+        self.pending_wheel_scroll = Some(PendingWheelScroll {
+            col,
+            row,
+            direction,
+            remaining: carried + lines - 1,
+            max_backlog: lines * 2,
+            last_step: Instant::now(),
+        });
+        1
     }
 
-    /// Route a wheel event inside the floating-overlay prompt (Live Grep).
-    ///
-    /// The overlay is mouse-modal, so it always consumes the wheel (returns
-    /// true) when active — the event must never leak to the buffer below.
-    /// * Over the preview pane → scroll the preview.
-    /// * Anywhere else (result list, input, toolbar, frame) → scroll the
-    ///   result list *without* moving the selection.
-    ///
-    /// Bottom-anchored prompts (command palette, file finder) are left to
-    /// `handle_prompt_scroll`, which keeps their wheel-moves-selection UX.
-    fn handle_overlay_prompt_scroll(&mut self, col: u16, row: u16, delta: i32) -> bool {
-        if !self.overlay_prompt_active() {
-            return false;
+    /// Hand a gesture the lines it still owes, all at once, to the
+    /// surface its own notches were routed to.
+    fn deliver_owed(&mut self, pending: &PendingWheelScroll) {
+        if pending.remaining == 0 {
+            return;
         }
-        let preview_area = self.active_chrome().prompt_preview_area;
-        let results_visible = self
-            .active_chrome()
-            .prompt_results_area
-            .map(|r| r.height as usize)
-            .unwrap_or(0);
-        if let Some(preview) = preview_area {
-            if in_rect(col, row, preview) {
-                self.active_window_mut()
-                    .scroll_overlay_preview_by_lines(delta);
-                return true;
-            }
-        }
-        if let Some(prompt) = self.active_window_mut().prompt.as_mut() {
-            prompt.scroll_results(delta, results_visible);
-        }
-        true
+        self.deliver_wheel(
+            pending.col,
+            pending.row,
+            pending.direction,
+            pending.remaining,
+        );
     }
 
-    /// Update the current hover target based on mouse position
-    /// Returns true if the hover target changed (requiring a re-render)
-    pub(super) fn update_hover_target(&mut self, col: u16, row: u16) -> bool {
-        let old_target = self.active_window_mut().mouse_state.hover_target.clone();
-        let new_target = self.compute_hover_target(col, row);
-        let changed = old_target != new_target;
-        self.active_window_mut().mouse_state.hover_target = new_target.clone();
+    /// Hand `lines` of owed wheel to whatever is under `(col, row)`, through
+    /// the same route a real notch takes.
+    ///
+    /// **One route.** The walk replays into the tree, exactly as the notch it
+    /// came from did, so the surface that took the first line takes the rest
+    /// — rather than the walk having a delivery path of its own that could
+    /// route somewhere else.
+    fn deliver_wheel(&mut self, col: u16, row: u16, direction: i32, lines: u32) {
+        use crossterm::event::{KeyModifiers, MouseEvent, MouseEventKind};
+        let ev = MouseEvent {
+            kind: match direction {
+                d if d > 0 => MouseEventKind::ScrollDown,
+                _ => MouseEventKind::ScrollUp,
+            },
+            column: col,
+            row,
+            modifiers: KeyModifiers::empty(),
+        };
+        if let Some(input) = crate::view::shell::input::mouse(ev, 1, lines as i32, WHEEL_COLUMNS) {
+            self.shell_dispatch(input);
+        }
+    }
 
-        // If a menu is currently open and we're hovering over a different menu bar item,
-        // switch to that menu automatically
-        if let Some(active_menu_idx) = self.menu_state.active_menu {
-            let all_menus: Vec<crate::config::Menu> = self
-                .menus
-                .menus
-                .iter()
-                .chain(self.menu_state.plugin_menus.iter())
-                .cloned()
-                .collect();
-            if let Some(HoverTarget::MenuBarItem(hovered_menu_idx)) = new_target.clone() {
-                if hovered_menu_idx != active_menu_idx {
-                    self.menu_state.open_menu(hovered_menu_idx);
-                    return true; // Force re-render since menu changed
-                }
-            }
+    /// End any playing-out gesture, delivering what it still owes rather
+    /// than dropping it. A wheel turned sideways, or a walk switched off
+    /// mid-gesture, must not cost the view the distance already asked
+    /// for.
+    fn flush_pending_wheel_scroll(&mut self) {
+        let Some(pending) = self.pending_wheel_scroll.take() else {
+            return;
+        };
+        self.deliver_owed(&pending);
+    }
 
-            // If hovering over a menu dropdown item, check if it's a submenu and open it
-            if let Some(HoverTarget::MenuDropdownItem(_, item_idx)) = new_target.clone() {
-                // If this item is the parent of the currently open submenu, keep it open.
-                // This prevents blinking when hovering over the parent item of an open submenu.
-                if self.menu_state.submenu_path.first() == Some(&item_idx) {
-                    tracing::trace!(
-                        "menu hover: staying on submenu parent item_idx={}, submenu_path={:?}",
-                        item_idx,
-                        self.menu_state.submenu_path
-                    );
-                    return changed;
-                }
+    /// True while a wheel gesture still owes lines. The event loop keeps
+    /// producing frames while it does — without them the walk would
+    /// stall part-way through a notch.
+    pub fn has_pending_wheel_scroll(&self) -> bool {
+        self.pending_wheel_scroll.is_some()
+    }
 
-                // Clear any open submenus since we're at a different item in the main dropdown
-                if !self.menu_state.submenu_path.is_empty() {
-                    tracing::trace!(
-                        "menu hover: clearing submenu_path={:?} for different item_idx={}",
-                        self.menu_state.submenu_path,
-                        item_idx
-                    );
-                    self.menu_state.submenu_path.clear();
-                    self.menu_state.highlighted_item = Some(item_idx);
-                    return true;
-                }
+    /// When the next owed line comes due, for the loop's wait.
+    pub fn pending_wheel_scroll_deadline(&self) -> Option<Instant> {
+        self.pending_wheel_scroll
+            .as_ref()
+            .map(|pending| pending.last_step + SMOOTH_SCROLL_LINE)
+    }
 
-                // Check if the hovered item is a submenu
-                if let Some(menu) = all_menus.get(active_menu_idx) {
-                    if let Some(crate::config::MenuItem::Submenu { items, .. }) =
-                        menu.items.get(item_idx)
-                    {
-                        if !items.is_empty() {
-                            tracing::trace!("menu hover: opening submenu at item_idx={}", item_idx);
-                            self.menu_state.submenu_path.push(item_idx);
-                            self.menu_state.highlighted_item = Some(0);
-                            return true;
-                        }
-                    }
-                }
-                // Update highlighted item for non-submenu items too
-                if self.menu_state.highlighted_item != Some(item_idx) {
-                    self.menu_state.highlighted_item = Some(item_idx);
-                    return true;
-                }
-            }
-
-            // If hovering over a submenu item, handle submenu navigation
-            if let Some(HoverTarget::SubmenuItem(depth, item_idx)) = new_target {
-                // If this item is the parent of a currently open nested submenu, keep it open.
-                // This prevents blinking when hovering over the parent item of an open nested submenu.
-                // submenu_path[depth] stores the index of the nested submenu opened from this level.
-                if self.menu_state.submenu_path.len() > depth
-                    && self.menu_state.submenu_path.get(depth) == Some(&item_idx)
-                {
-                    tracing::trace!(
-                        "menu hover: staying on nested submenu parent depth={}, item_idx={}, submenu_path={:?}",
-                        depth,
-                        item_idx,
-                        self.menu_state.submenu_path
-                    );
-                    return changed;
-                }
-
-                // Truncate submenu path to this depth (close any deeper submenus)
-                if self.menu_state.submenu_path.len() > depth {
-                    tracing::trace!(
-                        "menu hover: truncating submenu_path={:?} to depth={} for item_idx={}",
-                        self.menu_state.submenu_path,
-                        depth,
-                        item_idx
-                    );
-                    self.menu_state.submenu_path.truncate(depth);
-                }
-
-                // Get the items at this depth
-                if let Some(items) = self
-                    .menu_state
-                    .get_current_items(&all_menus, active_menu_idx)
-                {
-                    // Check if hovered item is a submenu - if so, open it
-                    if let Some(crate::config::MenuItem::Submenu {
-                        items: sub_items, ..
-                    }) = items.get(item_idx)
-                    {
-                        if !sub_items.is_empty()
-                            && !self.menu_state.submenu_path.contains(&item_idx)
-                        {
-                            tracing::trace!(
-                                "menu hover: opening nested submenu at depth={}, item_idx={}",
-                                depth,
-                                item_idx
-                            );
-                            self.menu_state.submenu_path.push(item_idx);
-                            self.menu_state.highlighted_item = Some(0);
-                            return true;
-                        }
-                    }
-                    // Update highlighted item
-                    if self.menu_state.highlighted_item != Some(item_idx) {
-                        self.menu_state.highlighted_item = Some(item_idx);
-                        return true;
-                    }
-                }
-            }
+    /// Hand the surface under the pointer however many lines a
+    /// playing-out wheel gesture owes it by now. Called once per frame,
+    /// before layout, so the lines land in the frame about to be
+    /// painted.
+    pub(crate) fn step_pending_wheel_scroll(&mut self) {
+        let Some(pending) = self.pending_wheel_scroll.as_mut() else {
+            return;
+        };
+        let due = lines_to_deliver(
+            pending.last_step.elapsed(),
+            SMOOTH_SCROLL_LINE,
+            pending.remaining,
+            pending.max_backlog,
+        );
+        if due == 0 {
+            return;
+        }
+        let (col, row, direction) = (pending.col, pending.row, pending.direction);
+        pending.remaining -= due;
+        // Advance by what was delivered rather than to now, so a late
+        // frame does not push the rest of the walk back with it.
+        pending.last_step += SMOOTH_SCROLL_LINE * due;
+        if pending.remaining == 0 {
+            self.pending_wheel_scroll = None;
         }
 
-        // Hovering an item in whichever native context menu is open moves its
-        // highlight. One handler covers all three menus via the shared core.
-        if let Some(HoverTarget::ContextMenuItem(item_idx)) = new_target {
-            if let Some(core) = self.active_window_mut().context_menu_core_mut() {
-                if core.highlighted != item_idx {
-                    core.highlighted = item_idx;
-                    return true;
-                }
-            }
-        }
-
-        // Handle file explorer status indicator hover - show tooltip
-        // Always dismiss existing tooltip first when target changes
-        if old_target != new_target
-            && matches!(
-                old_target,
-                Some(HoverTarget::FileExplorerStatusIndicator(_))
-            )
-        {
-            self.dismiss_file_explorer_status_tooltip();
-        }
-
-        if let Some(HoverTarget::FileExplorerStatusIndicator(ref path)) = new_target {
-            // Only show tooltip if this is a new hover (not already showing for this path)
-            if old_target != new_target {
-                self.show_file_explorer_status_tooltip(path.clone(), col, row);
-                return true;
-            }
-        }
-
-        changed
+        self.deliver_wheel(col, row, direction, due);
     }
 
     /// Update LSP hover state based on mouse position
@@ -769,16 +534,68 @@ impl Editor {
     /// - Mouse is over the hover popup itself
     /// - Mouse is within the hovered symbol range
     ///
-    /// Hover is dismissed when mouse leaves the editor area entirely.
-    fn update_lsp_hover_state(&mut self, col: u16, row: u16) {
+    /// Hover is dismissed when the pointer leaves the editor's content — and
+    /// **the condition there is the popup, not the request**. Those are two
+    /// different facts, and gating the dismissal on the second one is what
+    /// stranded tooltips (F.7). `lsp_hover_state` is the debounce state
+    /// machine — *which byte a request is pending for* — and the branches
+    /// below for the gutter and for the space past a line's end deliberately
+    /// clear it while keeping the popup up, because passing over a line
+    /// number must not tear the card down. So a pointer that left the editor
+    /// *through the gutter* arrived at the leave-the-editor branch with the
+    /// state already `None`, that branch skipped its own dismissal, and the
+    /// card sat there until a key or a click removed it. What the branch
+    /// means is "a transient popup is up and the pointer has left", so that
+    /// is what it now asks: `popups.is_visible()` with a `transient` popup on
+    /// top — the same three facts `is_mouse_over_transient_popup` reads, and
+    /// exactly the popup `dismiss_transient_popups` would take down.
+    ///
+    /// One transient popup on that stack is **not** this pipeline's: the file
+    /// explorer's status tooltip, which `FileExplorer::on_hover_change` shows
+    /// while the pointer rests on a status indicator. The sidebar is not pane
+    /// content, so this branch runs on the very same motion event that put
+    /// the tooltip up and would pop it before it was ever painted. Hovering
+    /// that indicator is therefore held out by name — see
+    /// `chrome_owns_transient_popup`.
+    ///
+    /// RULING — this pipeline stays OUTSIDE the `HoverTarget` walk: it
+    /// is not a "name the surface under the pointer" question but a
+    /// debounced request state machine over BUFFER content (symbol
+    /// ranges, popup keep-alive, request dedup) whose transitions the
+    /// walk's enter/leave diff cannot express. It composes with the
+    /// walk the same way `update_terminal_link_hover` does: the walk
+    /// names chrome, these trackers own editor-content reactions.
+    /// Folding it in is recorded in the plan doc as part of the
+    /// mounted-panel/hover unification arc, not chrome registration.
+    ///
+    /// **Reports whether the frame is stale**, which is the half of
+    /// `update_hover_target` that had no replacement. That walk returned "the
+    /// target moved, redraw" and every tracker rode on it; the tree reports
+    /// its own hover now, but a pointer over ground the tree does not describe
+    /// — the `~` filler past the last line, the padding right of the text —
+    /// crosses no element and produces neither a message nor a mutation. So
+    /// the one transition here that changes pixels, dismissing the popup, has
+    /// to say so itself. Nothing else does: clearing `lsp_hover_state` moves
+    /// the request state machine, not the screen.
+    fn update_lsp_hover_state(&mut self, col: u16, row: u16) -> bool {
         tracing::trace!(col, row, "update_lsp_hover_state: raw mouse position");
 
-        // Suppress LSP hover when a popup is already visible (e.g. theme info popup,
-        // tab context menu, or the status-bar LSP status popup) to avoid hover
-        // tooltips overlapping other popups.
+        // Suppress LSP hover when a popup is already visible (the theme
+        // info popup or the status-bar LSP status popup — both hand
+        // -listed because neither declares an overlay layer) to avoid
+        // hover tooltips overlapping other popups. Same for any modal
+        // overlay (Open File dialog, command palette, menu, native
+        // context menus, …), all DERIVED from `modal_overlay_active`:
+        // mouse positions over the overlay map to the buffer *behind*
+        // it, so tracking them would fire hover requests for invisible
+        // content and render the popup on top of the dialog
+        // (sinelaw/fresh#2912). (An open context menu used to be a
+        // third hand-listed check here; its ContextMenu layer already
+        // makes `modal_overlay_active` true, so the check was a
+        // redundant second encoding.)
         if self.active_window_mut().theme_info_popup.is_some()
-            || self.active_window().context_menu_core().is_some()
             || self.is_lsp_status_popup_open()
+            || self.modal_overlay_active()
         {
             if self
                 .active_window_mut()
@@ -789,27 +606,26 @@ impl Editor {
                 self.active_window_mut().mouse_state.lsp_hover_state = None;
                 self.active_window_mut().mouse_state.lsp_hover_request_sent = false;
                 self.dismiss_transient_popups();
+                return true;
             }
-            return;
+            return false;
         }
 
         // Check if mouse is over a transient popup - if so, keep hover active
         if self.is_mouse_over_transient_popup(col, row) {
-            return;
+            return false;
         }
 
-        // Find which split the mouse is over
+        // Which split the mouse is over, and the rectangle to project through.
         let split_info = self
-            .active_layout()
-            .split_areas
-            .iter()
-            .find(|(_, _, content_rect, _, _, _)| in_rect(col, row, *content_rect))
-            .map(|(split_id, buffer_id, content_rect, _, _, _)| {
-                (*split_id, *buffer_id, *content_rect)
-            });
+            .pane_content_at(col, row)
+            .and_then(|(pane, rect)| Some((pane, self.active_window().pane_buffer(pane)?, rect)));
 
         let Some((split_id, buffer_id, content_rect)) = split_info else {
-            // Mouse is not over editor content - clear hover state and dismiss popup
+            // Mouse is not over editor content. Two independent things happen
+            // here, and the bug was treating them as one: the pending request
+            // is dropped *if there is one*, and the popup comes down *if there
+            // is one*. Neither implies the other — see the docstring.
             if self
                 .active_window_mut()
                 .mouse_state
@@ -818,17 +634,21 @@ impl Editor {
             {
                 self.active_window_mut().mouse_state.lsp_hover_state = None;
                 self.active_window_mut().mouse_state.lsp_hover_request_sent = false;
-                self.dismiss_transient_popups();
             }
-            return;
+            if self.transient_popup_showing() && !self.chrome_owns_transient_popup() {
+                self.dismiss_transient_popups();
+                // Only this path repainted, so only this path is stale.
+                return true;
+            }
+            return false;
         };
 
-        // Get cached mappings and gutter width for this split
+        // The rows the pane's last text pass drew, as its leaf keeps them,
+        // and the gutter width for this split.
         let cached_mappings = self
-            .active_layout()
-            .view_line_mappings
-            .get(&split_id)
-            .cloned();
+            .active_window()
+            .pane_view(split_id)
+            .map(|v| v.rows.clone());
         let gutter_width = self
             .buffers()
             .get(&buffer_id)
@@ -856,7 +676,7 @@ impl Editor {
             row,
             content_rect,
             gutter_width,
-            &cached_mappings,
+            cached_mappings.as_deref(),
             fallback,
             false, // Don't include gutter
             compose_width,
@@ -873,7 +693,7 @@ impl Editor {
                 self.active_window_mut().mouse_state.lsp_hover_state = None;
                 self.active_window_mut().mouse_state.lsp_hover_request_sent = false;
             }
-            return;
+            return false;
         };
 
         // Check if mouse is past the end of line content - don't trigger hover for empty space
@@ -932,14 +752,14 @@ impl Editor {
                 self.active_window_mut().mouse_state.lsp_hover_state = None;
                 self.active_window_mut().mouse_state.lsp_hover_request_sent = false;
             }
-            return;
+            return false;
         }
 
         // Check if mouse is within the hovered symbol range - if so, keep hover active
         if let Some((start, end)) = self.active_window_mut().hover.symbol_range() {
             if byte_pos >= start && byte_pos < end {
                 // Mouse is still over the hovered symbol - keep hover state
-                return;
+                return false;
             }
         }
 
@@ -949,7 +769,7 @@ impl Editor {
         {
             if old_pos == byte_pos && old_buf == buffer_id {
                 // Same position - keep existing state
-                return;
+                return false;
             }
             // Position changed outside the hovered symbol range. Don't dismiss
             // the popup here: a new hover request will fire after the debounce
@@ -964,684 +784,72 @@ impl Editor {
         self.active_window_mut().mouse_state.lsp_hover_state =
             Some((byte_pos, std::time::Instant::now(), col, row, buffer_id));
         self.active_window_mut().mouse_state.lsp_hover_request_sent = false;
+        false
     }
 
-    /// Check if mouse position is over a transient popup (hover, signature help)
+    /// Is the pointer over a transient popup (hover, signature help)?
+    ///
+    /// The LSP hover keep-alive's one question, asked directly. It used to go
+    /// through `view::popup_mouse` — a `PopupHitTester` over a
+    /// `Vec<PopupLayoutInfo>` built by converting the cached tuples into a
+    /// struct with seven fields, of which this reads one. That module's other
+    /// half (click, hover, drag dispatch) was replaced by the popups
+    /// component and then by the tree; what was left was scaffolding around a
+    /// rectangle test, with a doc comment naming a second caller that no
+    /// longer exists.
     fn is_mouse_over_transient_popup(&self, col: u16, row: u16) -> bool {
-        let layouts = popup_areas_to_layout_info(&self.active_chrome().popup_areas);
-        let hit_tester = PopupHitTester::new(&layouts, &self.active_state().popups);
-        hit_tester.is_over_transient_popup(col, row)
+        if !self.transient_popup_showing() {
+            return false;
+        }
+        self.active_chrome()
+            .popup_areas
+            .iter()
+            .any(|(_, outer, ..)| in_rect(col, row, *outer))
     }
 
-    /// Check if mouse position is over any popup (including non-transient ones like completion)
-    fn is_mouse_over_any_popup(&self, col: u16, row: u16) -> bool {
-        // Editor-level popup overlays absorb every click within their outer
-        // rect so the buffer below doesn't receive a stray cursor placement.
-        for (_, popup_area, _, _, _) in &self.active_chrome().global_popup_areas {
-            if in_rect(col, row, *popup_area) {
-                return true;
-            }
-        }
-        // The prompt's suggestions popup also absorbs clicks across its full
-        // outer rect (border + items): clicking the chrome must not move the
-        // buffer cursor below.
-        if let Some(outer) = self.active_chrome().suggestions_outer_area {
-            if in_rect(col, row, outer) {
-                return true;
-            }
-        }
-        let layouts = popup_areas_to_layout_info(&self.active_chrome().popup_areas);
-        let hit_tester = PopupHitTester::new(&layouts, &self.active_state().popups);
-        hit_tester.is_over_popup(col, row)
+    /// Is a transient popup (hover, signature help) actually on screen?
+    ///
+    /// The keep-alive's question minus the pointer, and the one the
+    /// leave-the-editor dismissal wants: it names the popup
+    /// `dismiss_transient_popups` would take down, so it is also the honest
+    /// answer to "would dismissing change any pixels". Asking
+    /// `lsp_hover_state.is_some()` instead — the gate that used to stand here
+    /// — answers a different question entirely (is a debounced request
+    /// pending), and the two come apart every time the pointer crosses the
+    /// gutter.
+    fn transient_popup_showing(&self) -> bool {
+        let popups = &self.active_state().popups;
+        popups.is_visible() && popups.top().is_some_and(|p| p.transient)
     }
 
-    /// Check if mouse position is over the file browser popup
-    fn is_mouse_over_file_browser(&self, col: u16, row: u16) -> bool {
-        self.active_window()
-            .file_browser_layout
-            .as_ref()
-            .is_some_and(|layout| layout.contains(col, row))
+    /// Is the transient popup on top one that a chrome surface under the
+    /// pointer owns, rather than this pipeline?
+    ///
+    /// Only one is: the file explorer's git-status tooltip. It is pushed by
+    /// `FileExplorer::on_hover_change` when the pointer enters a status
+    /// indicator and popped by the same reaction when it leaves, so "the
+    /// pointer is on a status indicator" and "that tooltip is up" are the
+    /// same fact — no stale answer is possible. Hand-listed for the same
+    /// reason the theme-info and LSP-status popups are hand-listed at the top
+    /// of `update_lsp_hover_state`: a popup does not record who put it there.
+    ///
+    /// Without this, `update_lsp_hover_state` would dismiss the tooltip on
+    /// the very motion event that created it — the shell's hover fact is
+    /// applied first, then the same event falls through to the trackers, and
+    /// the sidebar is not pane content, so the leave-the-editor branch runs
+    /// and finds a transient popup on top.
+    fn chrome_owns_transient_popup(&self) -> bool {
+        matches!(
+            self.hovered(),
+            Some(crate::app::types::HoverTarget::FileExplorerStatusIndicator(
+                _
+            ))
+        )
     }
 
     // `split_at_position` lives on `impl Window` — call it via
     // `self.active_window().split_at_position(col, row)`.
 
-    /// Compute what hover target is at the given position
-    fn compute_hover_target(&self, col: u16, row: u16) -> Option<HoverTarget> {
-        self.hover_target_in_floating_overlays(col, row)
-            .or_else(|| self.hover_target_in_chrome(col, row))
-    }
-
-    /// Hit-test floating overlay layers: context menus, command palette,
-    /// popup lists, and the file-browser dialog. These always render on
-    /// top of the chrome and must be checked first.
-    fn hover_target_in_floating_overlays(&self, col: u16, row: u16) -> Option<HoverTarget> {
-        // The native context menus (tab / "+" new-tab / file-explorer) all
-        // render on top and share one geometry core, so a single hit-test
-        // over the open menu covers all three. An interior (item) row yields
-        // a hover target; border rows and outside positions fall through to
-        // the chrome below.
-        if let Some(core) = self.active_window().context_menu_core() {
-            if let super::types::ContextMenuHit::Item(item_idx) = core.hit(
-                col,
-                row,
-                self.active_chrome().last_frame.width,
-                self.active_chrome().last_frame.height,
-            ) {
-                return Some(HoverTarget::ContextMenuItem(item_idx));
-            }
-        }
-
-        // Check suggestions area first (command palette, autocomplete)
-        if let Some((inner_rect, start_idx, _visible_count, total_count)) =
-            &self.active_chrome().suggestions_area
-        {
-            if in_rect(col, row, *inner_rect) {
-                let relative_row = (row - inner_rect.y) as usize;
-                let item_idx = start_idx + relative_row;
-
-                if item_idx < *total_count {
-                    return Some(HoverTarget::SuggestionItem(item_idx));
-                }
-            }
-        }
-
-        // Check popups (they're rendered on top)
-        // Check from top to bottom (reverse order since last popup is on top)
-        for (popup_idx, _popup_rect, inner_rect, scroll_offset, num_items, _, _) in
-            self.active_chrome().popup_areas.iter().rev()
-        {
-            if in_rect(col, row, *inner_rect) && *num_items > 0 {
-                // Calculate which item is being hovered
-                let relative_row = (row - inner_rect.y) as usize;
-                let item_idx = scroll_offset + relative_row;
-
-                if item_idx < *num_items {
-                    return Some(HoverTarget::PopupListItem(*popup_idx, item_idx));
-                }
-            }
-        }
-
-        // Check file browser popup
-        if self.is_file_open_active() {
-            if let Some(hover) = self.compute_file_browser_hover(col, row) {
-                return Some(hover);
-            }
-        }
-
-        None
-    }
-
-    /// Hit-test the permanent chrome: menu bar, file explorer panel,
-    /// split separators, tabs, scrollbars, status bar, and search
-    /// options. Called only after floating overlays have been ruled out.
-    fn hover_target_in_chrome(&self, col: u16, row: u16) -> Option<HoverTarget> {
-        // Check menu bar (row 0, only when visible)
-        // Check menu bar using cached layout from previous render
-        if self.active_window().menu_bar_visible {
-            if let Some(ref menu_layout) = self.active_chrome().menu_layout {
-                if let Some(menu_idx) = menu_layout.menu_at(col, row) {
-                    return Some(HoverTarget::MenuBarItem(menu_idx));
-                }
-            }
-        }
-
-        // Check menu dropdown items if a menu is open (including submenus)
-        if let Some(active_idx) = self.menu_state.active_menu {
-            if let Some(hover) = self.compute_menu_dropdown_hover(col, row, active_idx) {
-                return Some(hover);
-            }
-        }
-
-        // Check file explorer close button and border (for resize)
-        if let Some(explorer_area) = self.active_layout().file_explorer_area {
-            // Close button is at position: explorer_area.x + explorer_area.width - 3 to -1
-            let close_button_x = explorer_area.x + explorer_area.width.saturating_sub(3);
-            if row == explorer_area.y
-                && col >= close_button_x
-                && col < explorer_area.x + explorer_area.width
-            {
-                return Some(HoverTarget::FileExplorerCloseButton);
-            }
-
-            // Check if hovering over a status indicator in the file explorer content area
-            let content_start_y = explorer_area.y + 1; // +1 for title bar
-            let content_end_y = explorer_area.y + explorer_area.height.saturating_sub(1); // -1 for bottom border
-            let content_width = explorer_area.width.saturating_sub(3) as usize;
-
-            if row >= content_start_y && row < content_end_y {
-                // Determine which item is at this row
-                if let Some(explorer) = self.file_explorer().as_ref() {
-                    let relative_row = row.saturating_sub(content_start_y) as usize;
-                    let scroll_offset = explorer.get_scroll_offset();
-                    let item_index = relative_row + scroll_offset;
-                    let display_nodes = explorer.get_display_nodes();
-
-                    if item_index < display_nodes.len() {
-                        let (node_id, indent) = display_nodes[item_index];
-                        if let Some(node) = explorer.tree().get_node(node_id) {
-                            let theme = self.theme.read().unwrap();
-                            let neutral_fg = if node
-                                .entry
-                                .metadata
-                                .as_ref()
-                                .map(|m| m.is_hidden)
-                                .unwrap_or(false)
-                            {
-                                theme.line_number_fg
-                            } else if node.entry.is_symlink() {
-                                theme.syntax_type
-                            } else if node.is_dir() {
-                                theme.syntax_keyword
-                            } else {
-                                theme.editor_fg
-                            };
-                            let slot_resolver = self.file_explorer_slot_resolver();
-                            let slot_context = crate::view::file_tree::ExplorerSlotContext {
-                                path: &node.entry.path,
-                                is_dir: node.is_dir(),
-                                has_unsaved: self.file_explorer_node_has_unsaved_changes(
-                                    &node.entry.path,
-                                    node.is_dir(),
-                                ),
-                                is_symlink: node.entry.is_symlink(),
-                                is_hidden: node
-                                    .entry
-                                    .metadata
-                                    .as_ref()
-                                    .map(|m| m.is_hidden)
-                                    .unwrap_or(false),
-                                decorations: &self.active_window().file_explorer_decoration_cache,
-                                slot_overrides: &self
-                                    .active_window()
-                                    .file_explorer_slot_override_cache,
-                                theme: &theme,
-                                neutral_fg,
-                            };
-                            let slot_resolution = slot_resolver.resolve(&slot_context);
-                            if let Some((slot_start, slot_end)) = crate::view::ui::file_explorer::FileExplorerRenderer::trailing_slot_screen_bounds(
-                                crate::view::ui::file_explorer::TrailingSlotBoundsCtx {
-                                    view: explorer,
-                                    node_id,
-                                    indent,
-                                    content_width,
-                                    slot_resolution: &slot_resolution,
-                                    tree_indicator_collapsed: &self.config.file_explorer.tree_indicator_collapsed,
-                                    tree_indicator_expanded: &self.config.file_explorer.tree_indicator_expanded,
-                                    explorer_area,
-                                },
-                            ) {
-                                if col >= slot_start && col < slot_end {
-                                    return Some(HoverTarget::FileExplorerStatusIndicator(
-                                        node.entry.path.clone(),
-                                    ));
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-
-            // The border is at the rightmost column of the file explorer area
-            // (the drawn border character), not one past it.
-            let border_x = explorer_area.x + explorer_area.width.saturating_sub(1);
-            if col == border_x
-                && row >= explorer_area.y
-                && row < explorer_area.y + explorer_area.height
-            {
-                return Some(HoverTarget::FileExplorerBorder);
-            }
-        }
-
-        // Check split separators
-        for (split_id, direction, sep_x, sep_y, sep_length) in &self.active_layout().separator_areas
-        {
-            let is_on_separator = match direction {
-                SplitDirection::Horizontal => {
-                    row == *sep_y && col >= *sep_x && col < sep_x + sep_length
-                }
-                SplitDirection::Vertical => {
-                    col == *sep_x && row >= *sep_y && row < sep_y + sep_length
-                }
-            };
-
-            if is_on_separator {
-                return Some(HoverTarget::SplitSeparator(*split_id, *direction));
-            }
-        }
-
-        // Check tab areas using cached hit regions (computed during rendering)
-        // Check split control buttons first (they're on top of the tab row)
-        for (split_id, btn_row, start_col, end_col) in &self.active_layout().close_split_areas {
-            if row == *btn_row && col >= *start_col && col < *end_col {
-                return Some(HoverTarget::CloseSplitButton(*split_id));
-            }
-        }
-
-        for (split_id, btn_row, start_col, end_col) in &self.active_layout().maximize_split_areas {
-            if row == *btn_row && col >= *start_col && col < *end_col {
-                return Some(HoverTarget::MaximizeSplitButton(*split_id));
-            }
-        }
-
-        for (split_id, tab_layout) in &self.active_layout().tab_layouts {
-            match tab_layout.hit_test(col, row) {
-                Some(TabHit::CloseButton(target)) => {
-                    return Some(HoverTarget::TabCloseButton(target, *split_id));
-                }
-                Some(TabHit::TabName(target)) => {
-                    return Some(HoverTarget::TabName(target, *split_id));
-                }
-                Some(TabHit::ScrollLeft)
-                | Some(TabHit::ScrollRight)
-                | Some(TabHit::BarBackground)
-                | Some(TabHit::NewTabButton)
-                | None => {}
-            }
-        }
-
-        // Check scrollbars
-        for (split_id, _buffer_id, _content_rect, scrollbar_rect, thumb_start, thumb_end) in
-            &self.active_layout().split_areas
-        {
-            if in_rect(col, row, *scrollbar_rect) {
-                let relative_row = row.saturating_sub(scrollbar_rect.y) as usize;
-                let is_on_thumb = relative_row >= *thumb_start && relative_row < *thumb_end;
-
-                if is_on_thumb {
-                    return Some(HoverTarget::ScrollbarThumb(*split_id));
-                } else {
-                    return Some(HoverTarget::ScrollbarTrack(*split_id, relative_row as u16));
-                }
-            }
-        }
-
-        // Check status bar indicators — one generic hit-test over every
-        // clickable segment recorded last frame (encoding, LSP, remote, …).
-        if let Some((status_row, _status_x, _status_width)) = self.active_chrome().status_bar.area {
-            if row == status_row {
-                for (id, indicator_row, start, end) in &self.active_chrome().status_bar.clickable {
-                    if row == *indicator_row && col >= *start && col < *end {
-                        return Some(HoverTarget::StatusBarClickable(*id));
-                    }
-                }
-            }
-        }
-
-        // Check search options bar checkboxes
-        if let Some(ref layout) = self.active_chrome().search_options_layout {
-            use crate::view::ui::status_bar::SearchOptionsHover;
-            if let Some(hover) = layout.checkbox_at(col, row) {
-                return Some(match hover {
-                    SearchOptionsHover::CaseSensitive => HoverTarget::SearchOptionCaseSensitive,
-                    SearchOptionsHover::WholeWord => HoverTarget::SearchOptionWholeWord,
-                    SearchOptionsHover::Regex => HoverTarget::SearchOptionRegex,
-                    SearchOptionsHover::ConfirmEach => HoverTarget::SearchOptionConfirmEach,
-                    SearchOptionsHover::None => return None,
-                });
-            }
-        }
-
-        None
-    }
-
-    /// Handle mouse double click (down event)
-    /// Double-click in editor area selects the word under the cursor.
-    pub(super) fn handle_mouse_double_click(&mut self, col: u16, row: u16) -> AnyhowResult<()> {
-        tracing::debug!("handle_mouse_double_click at col={}, row={}", col, row);
-
-        // Double-click on a suggestion item commits the choice — even for
-        // prompts whose first click only previews. The first click already
-        // selected the row; the second confirms (#1660).
-        if let Some(r) = self.handle_click_suggestions_confirm(col, row) {
-            return r;
-        }
-
-        // Mouse-modal overlay: swallow any double-click that wasn't on a
-        // result row so it can't reach (and word-select in) the buffer below.
-        if self.overlay_prompt_active() {
-            return Ok(());
-        }
-
-        // Handle popups: dismiss if clicking outside, block if clicking inside
-        if self.is_mouse_over_any_popup(col, row) {
-            // Double-click inside popup - block from reaching editor
-            return Ok(());
-        } else {
-            // Double-click outside popup - dismiss transient popups
-            self.dismiss_transient_popups();
-        }
-
-        // Is it in the file open dialog?
-        if self.handle_file_open_double_click(col, row) {
-            return Ok(());
-        }
-
-        // Is it in the file explorer? Double-click opens file AND focuses editor
-        if let Some(explorer_area) = self.active_layout().file_explorer_area {
-            if col >= explorer_area.x
-                && col < explorer_area.x + explorer_area.width
-                && row > explorer_area.y // Skip title bar
-                && row < explorer_area.y + explorer_area.height
-            {
-                // Open file and focus editor (via file_explorer_open_file which calls focus_editor)
-                self.file_explorer_open_file()?;
-                return Ok(());
-            }
-        }
-
-        // Find which split/buffer was clicked and handle double-click
-        let split_areas = self.active_layout().split_areas.clone();
-        for (split_id, buffer_id, content_rect, _scrollbar_rect, _thumb_start, _thumb_end) in
-            &split_areas
-        {
-            if in_rect(col, row, *content_rect) {
-                // Double-clicked on an editor split. A LIVE terminal grid has
-                // no selection model of its own — select the word through the
-                // same implicit-scrollback detour a drag uses (the first
-                // press of the pair already focused the split; with
-                // `mouse_drag_selects` off the grid stays inert). A terminal
-                // in read-only scrollback is an ordinary buffer view: fall
-                // through so double-click selects the word.
-                if self.active_window().is_terminal_buffer(*buffer_id)
-                    && !self
-                        .active_window()
-                        .split_terminal_scrollback(*split_id, *buffer_id)
-                {
-                    if self.config.terminal.mouse_drag_selects {
-                        return self
-                            .begin_terminal_grid_word_selection(*split_id, *buffer_id, col, row);
-                    }
-                    self.active_window_mut().key_context =
-                        crate::input::keybindings::KeyContext::Terminal;
-                    return Ok(());
-                }
-
-                self.active_window_mut().key_context =
-                    crate::input::keybindings::KeyContext::Normal;
-
-                // Position cursor at click location and select word
-                self.handle_editor_double_click(col, row, *split_id, *buffer_id, *content_rect)?;
-                return Ok(());
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Handle double-click in editor content area - selects the word under cursor
-    fn handle_editor_double_click(
-        &mut self,
-        col: u16,
-        row: u16,
-        split_id: LeafId,
-        buffer_id: BufferId,
-        content_rect: ratatui::layout::Rect,
-    ) -> AnyhowResult<()> {
-        use crate::model::event::Event;
-
-        // Fixed panels (toolbars, headers) are inert — no click focus,
-        // no selection. Scrollable group panels still accept clicks even
-        // when their cursor is hidden.
-        if self.active_window().is_non_scrollable_buffer(buffer_id) {
-            return Ok(());
-        }
-
-        // Focus this split
-        self.focus_split(split_id, buffer_id);
-
-        // Get cached view line mappings for this split
-        let cached_mappings = self
-            .active_layout()
-            .view_line_mappings
-            .get(&split_id)
-            .cloned();
-
-        // Get fallback from SplitViewState viewport
-        let leaf_id = split_id;
-        let fallback = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(_, vs)| vs)
-            .expect("active window must have a populated split layout")
-            .get(&leaf_id)
-            .map(|vs| vs.viewport.top_byte)
-            .unwrap_or(0);
-
-        // Get compose width for this split
-        let compose_width = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(_, vs)| vs)
-            .expect("active window must have a populated split layout")
-            .get(&leaf_id)
-            .and_then(|vs| vs.compose_width);
-
-        // Pull the bits we need out of the active window separately;
-        // the per-step helper methods (`apply_event_to_buffer` etc.)
-        // hide the disjoint sub-field borrowing.
-        let gutter_width = self
-            .active_window()
-            .buffers
-            .get(&buffer_id)
-            .map(|s| s.margins.left_total_width() as u16)
-            .unwrap_or(0);
-
-        let Some(target_position) = super::click_geometry::screen_to_buffer_position(
-            col,
-            row,
-            content_rect,
-            gutter_width,
-            &cached_mappings,
-            fallback,
-            true, // Allow gutter clicks
-            compose_width,
-        ) else {
-            return Ok(());
-        };
-
-        let primary_cursor_id = self
-            .active_window()
-            .buffers
-            .splits()
-            .and_then(|(_, vs)| vs.get(&leaf_id))
-            .map(|vs| vs.cursors.primary_id())
-            .unwrap_or(CursorId(0));
-        let event = Event::MoveCursor {
-            cursor_id: primary_cursor_id,
-            old_position: 0,
-            new_position: target_position,
-            old_anchor: None,
-            new_anchor: None,
-            old_sticky_column: None,
-            new_sticky_column: None,
-        };
-
-        if let Some(event_log) = self.active_window_mut().event_logs.get_mut(&buffer_id) {
-            event_log.append(event.clone());
-        }
-        self.active_window_mut()
-            .apply_event_to_buffer(buffer_id, leaf_id, &event);
-
-        // Now select the word under cursor
-        self.handle_action(Action::SelectWord)?;
-
-        // Set up drag state so subsequent drag events extend selection word-by-word
-        if let Some(cursor) = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(_, vs)| vs)
-            .expect("active window must have a populated split layout")
-            .get(&leaf_id)
-            .map(|vs| vs.cursors.primary())
-        {
-            // Store both edges of the selected word so we can use the appropriate
-            // anchor when dragging forward (use word start) vs backward (use word end).
-            let sel_start = cursor.selection_start();
-            let sel_end = cursor.selection_end();
-            self.active_window_mut().mouse_state.dragging_text_selection = true;
-            self.active_window_mut().mouse_state.drag_selection_split = Some(split_id);
-            self.active_window_mut().mouse_state.drag_selection_anchor = Some(sel_start);
-            self.active_window_mut().mouse_state.drag_selection_by_words = true;
-            self.active_window_mut().mouse_state.drag_selection_word_end = Some(sel_end);
-        }
-
-        Ok(())
-    }
-    /// Handle mouse triple click (down event)
-    /// Triple-click in editor area selects the entire line under the cursor.
-    pub(super) fn handle_mouse_triple_click(&mut self, col: u16, row: u16) -> AnyhowResult<()> {
-        tracing::debug!("handle_mouse_triple_click at col={}, row={}", col, row);
-
-        // Mouse-modal overlay: never let a triple-click line-select in the
-        // buffer below the overlay.
-        if self.overlay_prompt_active() {
-            return Ok(());
-        }
-
-        // Handle popups: dismiss if clicking outside, block if clicking inside
-        if self.is_mouse_over_any_popup(col, row) {
-            return Ok(());
-        } else {
-            self.dismiss_transient_popups();
-        }
-
-        // Find which split/buffer was clicked
-        let split_areas = self.active_layout().split_areas.clone();
-        for (split_id, buffer_id, content_rect, _scrollbar_rect, _thumb_start, _thumb_end) in
-            &split_areas
-        {
-            if in_rect(col, row, *content_rect) {
-                // Live grid: select the line via the implicit-scrollback
-                // detour (see double-click above); scrollback view: ordinary
-                // buffer, select the line.
-                if self.active_window().is_terminal_buffer(*buffer_id)
-                    && !self
-                        .active_window()
-                        .split_terminal_scrollback(*split_id, *buffer_id)
-                {
-                    if self.config.terminal.mouse_drag_selects {
-                        return self
-                            .begin_terminal_grid_line_selection(*split_id, *buffer_id, col, row);
-                    }
-                    return Ok(());
-                }
-
-                self.active_window_mut().key_context =
-                    crate::input::keybindings::KeyContext::Normal;
-
-                // Use the same pattern as handle_editor_double_click:
-                // first focus and position cursor, then select line
-                self.handle_editor_triple_click(col, row, *split_id, *buffer_id, *content_rect)?;
-                return Ok(());
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Handle triple-click in editor content area - selects the entire line under cursor
-    fn handle_editor_triple_click(
-        &mut self,
-        col: u16,
-        row: u16,
-        split_id: LeafId,
-        buffer_id: BufferId,
-        content_rect: ratatui::layout::Rect,
-    ) -> AnyhowResult<()> {
-        use crate::model::event::Event;
-
-        if self.active_window().is_non_scrollable_buffer(buffer_id) {
-            return Ok(());
-        }
-
-        // Focus this split
-        self.focus_split(split_id, buffer_id);
-
-        // Get cached view line mappings for this split
-        let cached_mappings = self
-            .active_layout()
-            .view_line_mappings
-            .get(&split_id)
-            .cloned();
-
-        let leaf_id = split_id;
-        let fallback = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(_, vs)| vs)
-            .expect("active window must have a populated split layout")
-            .get(&leaf_id)
-            .map(|vs| vs.viewport.top_byte)
-            .unwrap_or(0);
-
-        // Get compose width for this split
-        let compose_width = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(_, vs)| vs)
-            .expect("active window must have a populated split layout")
-            .get(&leaf_id)
-            .and_then(|vs| vs.compose_width);
-
-        // Pull the bits we need out of the active window separately;
-        // the per-step helper methods (`apply_event_to_buffer` etc.)
-        // hide the disjoint sub-field borrowing.
-        let gutter_width = self
-            .active_window()
-            .buffers
-            .get(&buffer_id)
-            .map(|s| s.margins.left_total_width() as u16)
-            .unwrap_or(0);
-
-        let Some(target_position) = super::click_geometry::screen_to_buffer_position(
-            col,
-            row,
-            content_rect,
-            gutter_width,
-            &cached_mappings,
-            fallback,
-            true,
-            compose_width,
-        ) else {
-            return Ok(());
-        };
-
-        let primary_cursor_id = self
-            .active_window()
-            .buffers
-            .splits()
-            .and_then(|(_, vs)| vs.get(&leaf_id))
-            .map(|vs| vs.cursors.primary_id())
-            .unwrap_or(CursorId(0));
-        let event = Event::MoveCursor {
-            cursor_id: primary_cursor_id,
-            old_position: 0,
-            new_position: target_position,
-            old_anchor: None,
-            new_anchor: None,
-            old_sticky_column: None,
-            new_sticky_column: None,
-        };
-
-        if let Some(event_log) = self.active_window_mut().event_logs.get_mut(&buffer_id) {
-            event_log.append(event.clone());
-        }
-        self.active_window_mut()
-            .apply_event_to_buffer(buffer_id, leaf_id, &event);
-
-        // Now select the entire line
-        self.handle_action(Action::SelectLine)?;
-
-        Ok(())
-    }
-
-    /// Handle mouse click (down event)
     /// True while a floating-overlay prompt (e.g. Live Grep / Universal
     /// Search) owns the screen. Such overlays are **mouse-modal**: their own
     /// targets (result list, scrollbar, and — once wired — toolbar controls)
@@ -1655,2656 +863,122 @@ impl Editor {
             .is_some_and(|p| p.overlay)
     }
 
-    pub(super) fn handle_mouse_click(
+    /// Whether the pane's content under the pointer takes this event before
+    /// anything the editor would do with it.
+    ///
+    /// Two things do. A **live terminal** that has asked for the mouse gets
+    /// it; and a **Ctrl+Click on a path** the terminal printed opens it in
+    /// Fresh, before normal click routing, so it does not disturb the cursor
+    /// or the selection.
+    ///
+    /// Forwarding is suppressed in two cases, both of which would otherwise
+    /// have their events swallowed by the PTY:
+    ///
+    /// * **A chrome drag is in progress** — a dock-border resize, a split
+    ///   separator, the file-explorer width. That drag owns the mouse until
+    ///   release, and an alternate-screen terminal must not take the motion
+    ///   once the pointer crosses it. *Growing* the dock drags the cursor
+    ///   rightward across a full-screen `btop`; forwarding there both stalls
+    ///   the resize and eats the mouse-up that ends it, leaving the drag
+    ///   stuck. Shrinking only ever worked because the pointer stays left of
+    ///   the terminal.
+    /// * **A native context menu is open** — the tab menu, the "+" menu, the
+    ///   explorer's. They render over, and often overlap, an alternate-screen
+    ///   terminal that has captured the mouse: right-clicking a terminal's tab
+    ///   opens its menu directly over that terminal's content. The menu is a
+    ///   `Modality::Inert` layer, so it does not claim a press aimed past it,
+    ///   and this fork is what keeps the PTY from swallowing one before the
+    ///   menu's own dismissal sees it.
+    ///
+    /// The opacity suppression that used to sit beside these is gone with the
+    /// surfaces it derived from. It said a pointer-opaque chrome box over the
+    /// cell — an info popup, the suggestions dropdown, the theme inspector —
+    /// had to take the event, because forwarding it would inject mouse codes
+    /// into the PTY *through* the popup. Every one of those is a node now, and
+    /// the tree is offered the pointer first: a surface that claims stops the
+    /// event there.
+    ///
+    /// `Some` means handled — nothing else should see the event.
+    pub(super) fn pane_content_takes_pointer(
         &mut self,
         col: u16,
         row: u16,
-        modifiers: crossterm::event::KeyModifiers,
-    ) -> AnyhowResult<()> {
-        // A centered modal takes click precedence over the dock: while
-        // the New-Session form is up over the dock, clicks hit-test the
-        // modal (clicks outside it are swallowed — it has Cancel / Esc).
-        if self.floating_widget_panel.is_some() {
-            self.handle_floating_widget_click(super::PanelSlot::Floating, col, row);
-            return Ok(());
-        }
-        // Dock resize: a press on the dock's right border (its rightmost
-        // column) starts a drag that resizes the dock width. Checked
-        // before the click-routing below so the border column is a
-        // resize handle, not a widget hit.
-        if let Some(super::PanelPlacement::LeftDock { width_cols }) =
-            self.dock.as_ref().map(|f| f.placement)
-        {
-            if col == width_cols.saturating_sub(1) {
-                self.dock_resizing = true;
-                return Ok(());
-            }
-        }
-        // Dock click routing (non-modal): clicks inside its column
-        // hit-test (and re-focus it if blurred); clicks in the editor
-        // blur the dock and fall through to normal editor handling.
-        if let Some((super::PanelPlacement::LeftDock { width_cols }, focused)) =
-            self.dock.as_ref().map(|f| (f.placement, f.focused))
-        {
-            if col < width_cols {
-                tracing::debug!(
-                    target: "fresh::dock",
-                    col,
-                    row,
-                    width_cols,
-                    focused,
-                    "handle_mouse_click: click in dock column"
-                );
-                if !focused {
-                    // Symmetric with `blur_floating_panel`: the un-blur
-                    // must notify the plugin via a `focus` widget_event
-                    // so any mirror of dock-focus state updates before
-                    // the click's row-select event fires its scheduling
-                    // logic. Without this, the orchestrator's
-                    // `dockBlurred` mirror stayed `true` and its
-                    // debounced live-switch aborted on the first
-                    // un-dive click.
-                    self.refocus_floating_panel(super::PanelSlot::Dock);
-                }
-                self.handle_floating_widget_click(super::PanelSlot::Dock, col, row);
-                return Ok(());
-            }
-            if focused {
-                tracing::debug!(
-                    target: "fresh::dock",
-                    col,
-                    row,
-                    width_cols,
-                    "handle_mouse_click: click outside dock — blurring"
-                );
-                self.blur_floating_panel(super::PanelSlot::Dock);
-            }
-        }
-        if let Some(r) = self.handle_click_context_menus(col, row) {
-            return r;
-        }
-        if !self.is_mouse_over_any_popup(col, row) {
-            self.dismiss_transient_popups();
-        }
-        if let Some(r) = self.handle_click_suggestions(col, row) {
-            return r;
-        }
-        if let Some(r) = self.handle_click_prompt_scrollbar(col, row) {
-            return r;
-        }
-        if let Some(r) = self.handle_click_popup_scrollbar(col, row) {
-            return r;
-        }
-        if let Some(r) = self.handle_click_global_popups(col, row) {
-            return r;
-        }
-        if let Some(r) = self.handle_click_buffer_popups(col, row) {
-            return r;
-        }
-        if self.is_mouse_over_any_popup(col, row) {
-            return Ok(());
-        }
-        if self.is_file_open_active() && self.handle_file_open_click(col, row) {
-            return Ok(());
-        }
-        if let Some(r) = self.handle_click_menu_bar(col, row) {
-            return r;
-        }
-        if let Some(r) = self.handle_click_file_explorer_area(col, row) {
-            return r;
-        }
-        if let Some(r) = self.handle_click_scrollbar(col, row) {
-            return r;
-        }
-        if let Some(r) = self.handle_click_horizontal_scrollbar(col, row) {
-            return r;
-        }
-        if let Some(r) = self.handle_click_status_bar(col, row) {
-            return r;
-        }
-        if let Some(r) = self.handle_click_search_options(col, row) {
-            return r;
-        }
-        if let Some(r) = self.handle_click_split_separator(col, row) {
-            return r;
-        }
-        if let Some(r) = self.handle_click_split_controls(col, row) {
-            return r;
-        }
-        if let Some(r) = self.handle_click_tab_bar(col, row) {
-            return r;
-        }
-
-        // A floating-overlay prompt is mouse-modal: its own targets (result
-        // list, scrollbar) were handled above. A click on a toolbar control
-        // toggles it through the host (which emits a widget_event); anything
-        // else — the input row, separator, preview pane, empty space, or a
-        // click outside the frame — is swallowed here so it never reaches the
-        // buffer and moves its cursor.
-        if self.overlay_prompt_active() {
-            let hit = self
-                .active_chrome()
-                .prompt_toolbar_hits
-                .iter()
-                .find(|(_, r)| in_rect(col, row, *r))
-                .map(|(k, _)| k.clone());
-            if let Some(widget_key) = hit {
-                // Move keyboard focus to the clicked control so Tab continues
-                // from here, then flip it through the host (which emits a
-                // widget_event for the plugin).
-                if let Some(p) = self.active_window_mut().prompt.as_mut() {
-                    p.toolbar_focus = Some(widget_key.clone());
-                }
-                self.toggle_overlay_toolbar_widget(&widget_key);
-            }
-            return Ok(());
-        }
-
-        // Check if click is in editor content area
-        tracing::debug!(
-            "handle_mouse_click: checking {} split_areas for click at ({}, {})",
-            self.active_layout().split_areas.len(),
-            col,
-            row
-        );
-        for (split_id, buffer_id, content_rect, _scrollbar_rect, _thumb_start, _thumb_end) in
-            &self.active_layout().split_areas
-        {
-            tracing::debug!(
-                "  split_id={:?}, content_rect=({}, {}, {}x{})",
-                split_id,
-                content_rect.x,
-                content_rect.y,
-                content_rect.width,
-                content_rect.height
-            );
-            if in_rect(col, row, *content_rect) {
-                // Click in editor - focus split and position cursor
-                tracing::debug!("  -> HIT! calling handle_editor_click");
-                self.handle_editor_click(
-                    col,
-                    row,
-                    *split_id,
-                    *buffer_id,
-                    *content_rect,
-                    modifiers,
-                )?;
-                return Ok(());
-            }
-        }
-        tracing::debug!("  -> No split area hit");
-
-        Ok(())
-    }
-
-    // ── handle_mouse_click helpers ──────────────────────────────────────────
-    // Each returns Some(result) if the click was consumed, None to fall through.
-
-    /// Route a left-click to whichever native context menu is open (tab /
-    /// "+" new-tab / file-explorer). Returns `None` when no menu is open so
-    /// the caller continues the normal click pipeline.
-    ///
-    /// The shared geometry core does the hit-test; only the *activation* of a
-    /// selected item differs per menu, so that is the one part that branches
-    /// on [`ContextMenuKind`]. Click-outside dismisses; border rows are inert;
-    /// an item click closes the menu and runs its `execute_*` action.
-    fn handle_click_context_menus(&mut self, col: u16, row: u16) -> Option<AnyhowResult<()>> {
-        use super::types::ContextMenuHit;
-
-        let (kind, core) = self.active_window().open_context_menu()?;
-        let hit = core.hit(
-            col,
-            row,
-            self.active_chrome().last_frame.width,
-            self.active_chrome().last_frame.height,
-        );
-        match hit {
-            // Click outside the box dismisses the menu.
-            ContextMenuHit::Outside => {
-                self.active_window_mut().close_context_menus();
-                Some(Ok(()))
-            }
-            // Border rows are inert — swallow without acting or closing.
-            ContextMenuHit::Border => Some(Ok(())),
-            // An item click moves the highlight to it and activates through
-            // the same path as a keyboard Enter.
-            ContextMenuHit::Item(idx) => {
-                if let Some(core) = self.active_window_mut().context_menu_core_mut() {
-                    core.highlighted = idx;
-                }
-                Some(self.activate_highlighted_context_menu(kind))
-            }
-        }
-    }
-
-    /// Hit-test (col, row) against the suggestions popup. Returns the index
-    /// of the suggestion under the click, or `None` if the click is outside
-    /// the inner item area or no suggestions are visible.
-    fn suggestion_at(&self, col: u16, row: u16) -> Option<usize> {
-        let (inner_rect, start_idx, _visible_count, total_count) =
-            self.active_chrome().suggestions_area?;
-        if col < inner_rect.x
-            || col >= inner_rect.x + inner_rect.width
-            || row < inner_rect.y
-            || row >= inner_rect.y + inner_rect.height
-        {
-            return None;
-        }
-        let relative_row = (row - inner_rect.y) as usize;
-        let item_idx = start_idx + relative_row;
-        if item_idx < total_count {
-            Some(item_idx)
-        } else {
-            None
-        }
-    }
-
-    fn handle_click_suggestions(&mut self, col: u16, row: u16) -> Option<AnyhowResult<()>> {
-        let item_idx = self.suggestion_at(col, row)?;
-        let prompt = self.active_window_mut().prompt.as_mut()?;
-        prompt.selected_suggestion = Some(item_idx);
-        let confirms = prompt.prompt_type.click_confirms();
-        if !confirms {
-            // Mirror keyboard navigation / scroll: sync the input
-            // to the selected suggestion so the prompt reflects
-            // what Enter would commit.
-            if let Some(suggestion) = prompt.suggestions.get(item_idx) {
-                prompt.input = suggestion.get_value().to_string();
-                prompt.cursor_pos = prompt.input.len();
-            }
-        }
-        if confirms {
-            return Some(self.handle_action(Action::PromptConfirm));
-        }
-        Some(Ok(()))
-    }
-
-    /// Click handler that always commits the suggestion under the cursor,
-    /// regardless of `click_confirms`. Used for double-clicks so that
-    /// preview-on-click prompts still have a mouse-only commit path.
-    fn handle_click_suggestions_confirm(&mut self, col: u16, row: u16) -> Option<AnyhowResult<()>> {
-        let item_idx = self.suggestion_at(col, row)?;
-        let prompt = self.active_window_mut().prompt.as_mut()?;
-        prompt.selected_suggestion = Some(item_idx);
-        if let Some(suggestion) = prompt.suggestions.get(item_idx) {
-            prompt.input = suggestion.get_value().to_string();
-            prompt.cursor_pos = prompt.input.len();
-        }
-        Some(self.handle_action(Action::PromptConfirm))
-    }
-
-    /// Click/drag on the floating-overlay prompt's scrollbar
-    /// (issue #1796). Reuses
-    /// `view::ui::scrollbar::ScrollbarState::click_to_offset` for
-    /// the same math the popup-scrollbar handler uses, so thumb
-    /// behaviour is consistent across the editor.
-    fn handle_click_prompt_scrollbar(&mut self, col: u16, row: u16) -> Option<AnyhowResult<()>> {
-        use crate::view::ui::scrollbar::ScrollbarState;
-        let sb_rect = self.active_chrome().suggestions_scrollbar_rect?;
-        if col < sb_rect.x
-            || col >= sb_rect.x + sb_rect.width
-            || row < sb_rect.y
-            || row >= sb_rect.y + sb_rect.height
-        {
-            return None;
-        }
-        // Read what the renderer drew so the drag math matches what
-        // the user sees. `suggestions_area` carries
-        // (inner_rect, scroll_start_idx, visible_count, total_count).
-        // Snapshot suggestions_area before borrowing the window's
-        // prompt — `active_window_mut()` is a method call so the
-        // compiler can't see that `prompt` and `chrome_layout` are
-        // disjoint sub-fields.
-        let suggestions_area_visible = self.active_chrome().suggestions_area.map(|(_, _, v, _)| v);
-        let active_window_id = self.active_window;
-        let prompt = self
-            .windows
-            .get_mut(&active_window_id)
-            .and_then(|w| w.prompt.as_mut())?;
-        let visible = suggestions_area_visible.unwrap_or(prompt.suggestions.len().min(10));
-        let total = prompt.suggestions.len();
-        let track_height = sb_rect.height as usize;
-        let click_row = row.saturating_sub(sb_rect.y) as usize;
-        let state = ScrollbarState::new(total, visible, prompt.scroll_offset);
-        prompt.scroll_offset = state.click_to_offset(track_height, click_row);
-        // Hand off to the drag follow-up so subsequent mouse moves
-        // keep tracking the thumb.
-        self.active_window_mut()
-            .mouse_state
-            .dragging_prompt_scrollbar = true;
-        Some(Ok(()))
-    }
-
-    fn handle_click_popup_scrollbar(&mut self, col: u16, row: u16) -> Option<AnyhowResult<()>> {
-        // Collect all needed data before mutating self.
-        let scrollbar_info: Option<(usize, i32)> =
-            self.active_chrome().popup_areas.iter().rev().find_map(
-                |(popup_idx, _popup_rect, inner_rect, _scroll, _n, scrollbar_rect, total_lines)| {
-                    let sb_rect = scrollbar_rect.as_ref()?;
-                    if col >= sb_rect.x
-                        && col < sb_rect.x + sb_rect.width
-                        && row >= sb_rect.y
-                        && row < sb_rect.y + sb_rect.height
-                    {
-                        let relative_row = (row - sb_rect.y) as usize;
-                        let track_height = sb_rect.height as usize;
-                        let visible_lines = inner_rect.height as usize;
-                        if track_height > 0 && *total_lines > visible_lines {
-                            let max_scroll = total_lines.saturating_sub(visible_lines);
-                            let target = if track_height > 1 {
-                                (relative_row * max_scroll) / (track_height.saturating_sub(1))
-                            } else {
-                                0
-                            };
-                            Some((*popup_idx, target as i32))
-                        } else {
-                            Some((*popup_idx, 0))
-                        }
-                    } else {
-                        None
-                    }
-                },
-            );
-        let (popup_idx, target_scroll) = scrollbar_info?;
-        self.active_window_mut()
-            .mouse_state
-            .dragging_popup_scrollbar = Some(popup_idx);
-        self.active_window_mut().mouse_state.drag_start_row = Some(row);
-        let current_scroll = self
-            .active_state()
-            .popups
-            .get(popup_idx)
-            .map(|p| p.scroll_offset)
-            .unwrap_or(0);
-        self.active_window_mut().mouse_state.drag_start_popup_scroll = Some(current_scroll);
-        let state = self.active_state_mut();
-        if let Some(popup) = state.popups.get_mut(popup_idx) {
-            popup.scroll_by(target_scroll - current_scroll as i32);
-        }
-        Some(Ok(()))
-    }
-
-    /// Handle every mouse event while the workspace-trust modal is up. Left
-    /// clicks act on its controls (radio rows select + confirm; [ OK ] confirms
-    /// the current selection; the secondary button cancels or quits); the wheel
-    /// scrolls an overflowing dialog. Everything else is absorbed so nothing
-    /// reaches the buffer behind the modal.
-    fn handle_workspace_trust_mouse(
-        &mut self,
         mouse_event: crossterm::event::MouseEvent,
-    ) -> AnyhowResult<bool> {
-        use crossterm::event::{MouseButton, MouseEventKind};
-        let col = mouse_event.column;
-        let row = mouse_event.row;
-        let layout = self.active_chrome().workspace_trust_dialog.clone();
-
-        match mouse_event.kind {
-            MouseEventKind::ScrollUp => {
-                self.workspace_trust_scroll = self.workspace_trust_scroll.saturating_sub(2);
-            }
-            MouseEventKind::ScrollDown => {
-                let max = layout.as_ref().map(|l| l.max_scroll).unwrap_or(0);
-                self.workspace_trust_scroll = (self.workspace_trust_scroll + 2).min(max);
-            }
-            MouseEventKind::Down(MouseButton::Left) => {
-                if let Some(layout) = layout {
-                    let hit = |r: ratatui::layout::Rect| in_rect(col, row, r);
-                    if hit(layout.ok) {
-                        let idx = self.current_workspace_trust_selection();
-                        self.confirm_workspace_trust(idx);
-                    } else if hit(layout.quit) {
-                        // Secondary: Cancel (close) when voluntarily opened,
-                        // Quit (exit the editor) for the mandatory open-time gate.
-                        self.hide_popup();
-                        if !self.workspace_trust_prompt_cancellable {
-                            self.should_quit = true;
-                        }
-                    } else if let Some(i) = layout.radios.iter().position(|r| hit(*r)) {
-                        self.confirm_workspace_trust(i);
-                    }
-                    // else: click on the dialog body or dimmed backdrop — absorb.
-                }
-            }
-            // Drag / move / release / right-click / horizontal scroll: absorb.
-            _ => {}
-        }
-        Ok(true)
-    }
-
-    fn handle_click_global_popups(&mut self, col: u16, row: u16) -> Option<AnyhowResult<()>> {
-        for (popup_idx, popup_rect, inner_rect, scroll_offset, num_items) in self
-            .active_chrome()
-            .global_popup_areas
-            .clone()
-            .into_iter()
-            .rev()
-        {
-            if popup_rect.width >= 5 {
-                let cb_x = popup_rect.x + popup_rect.width - 4;
-                if row == popup_rect.y && col >= cb_x && col < cb_x + 3 {
-                    return Some(self.handle_action(Action::PopupCancel));
-                }
-            }
-            if in_rect(col, row, inner_rect) && num_items > 0 {
-                let relative_row = (row - inner_rect.y) as usize;
-                let item_idx = scroll_offset + relative_row;
-                if item_idx < num_items {
-                    if let Some(popup) = self.global_popups.get_mut(popup_idx) {
-                        if let crate::view::popup::PopupContent::List { items: _, selected } =
-                            &mut popup.content
-                        {
-                            *selected = item_idx;
-                        }
-                    }
-                    return Some(self.handle_action(Action::PopupConfirm));
-                }
-            }
-        }
-        None
-    }
-
-    fn handle_click_buffer_popups(&mut self, col: u16, row: u16) -> Option<AnyhowResult<()>> {
-        // Check close-button overlay ("[×]") on each popup.
-        let close_hit = self.active_chrome().popup_areas.iter().rev().find_map(
-            |(_idx, popup_rect, _inner, _scroll, _n, _sb, _tl)| {
-                if popup_rect.width < 5 {
-                    return None;
-                }
-                let cb_x = popup_rect.x + popup_rect.width - 4;
-                if row == popup_rect.y && col >= cb_x && col < cb_x + 3 {
-                    Some(())
-                } else {
-                    None
-                }
-            },
-        );
-        if close_hit.is_some() {
-            return Some(self.handle_action(Action::PopupCancel));
-        }
-
-        // Content area clicks — clone to allow &mut self calls inside the loop.
-        let popup_areas = self.active_chrome().popup_areas.clone();
-        for (popup_idx, _popup_rect, inner_rect, scroll_offset, num_items, _, _) in
-            popup_areas.iter().rev()
-        {
-            if !in_rect(col, row, *inner_rect) {
-                continue;
-            }
-            let relative_col = (col - inner_rect.x) as usize;
-            let relative_row = (row - inner_rect.y) as usize;
-
-            let link_url = {
-                let state = self.active_state();
-                state
-                    .popups
-                    .top()
-                    .and_then(|p| p.link_at_position(relative_col, relative_row))
-            };
-            if let Some(url) = link_url {
-                #[cfg(feature = "runtime")]
-                if let Err(e) = open::that(&url) {
-                    self.set_status_message(format!("Failed to open URL: {}", e));
-                } else {
-                    self.set_status_message(format!("Opening: {}", url));
-                }
-                return Some(Ok(()));
-            }
-
-            if *num_items > 0 {
-                let item_idx = scroll_offset + relative_row;
-                if item_idx < *num_items {
-                    let state = self.active_state_mut();
-                    if let Some(popup) = state.popups.top_mut() {
-                        if let crate::view::popup::PopupContent::List { items: _, selected } =
-                            &mut popup.content
-                        {
-                            *selected = item_idx;
-                        }
-                    }
-                    return Some(self.handle_action(Action::PopupConfirm));
-                }
-            }
-
-            let is_text_popup = {
-                let state = self.active_state();
-                state.popups.top().is_some_and(|p| {
-                    matches!(
-                        p.content,
-                        crate::view::popup::PopupContent::Text(_)
-                            | crate::view::popup::PopupContent::Markdown(_)
-                    )
-                })
-            };
-            if is_text_popup {
-                let line = scroll_offset + relative_row;
-                let popup_idx_copy = *popup_idx;
-                let state = self.active_state_mut();
-                if let Some(popup) = state.popups.top_mut() {
-                    popup.start_selection(line, relative_col);
-                }
-                self.active_window_mut().mouse_state.selecting_in_popup = Some(popup_idx_copy);
-                return Some(Ok(()));
-            }
-        }
-        None
-    }
-
-    fn handle_click_menu_bar(&mut self, col: u16, row: u16) -> Option<AnyhowResult<()>> {
-        if self.active_window_mut().menu_bar_visible {
-            // Resolve the hit before any &mut operations to avoid borrow conflicts.
-            let hit = self
-                .active_chrome()
-                .menu_layout
-                .as_ref()
-                .and_then(|ml| ml.menu_at(col, row));
-            let layout_exists = self.active_chrome().menu_layout.is_some();
-            if layout_exists {
-                if let Some(menu_idx) = hit {
-                    if self.menu_state.active_menu == Some(menu_idx) {
-                        self.close_menu_with_auto_hide();
-                    } else {
-                        self.active_window_mut().on_editor_focus_lost();
-                        self.menu_state.open_menu(menu_idx);
-                    }
-                    return Some(Ok(()));
-                } else if row == 0 {
-                    self.close_menu_with_auto_hide();
-                    return Some(Ok(()));
-                }
-            }
-        }
-
-        if let Some(active_idx) = self.menu_state.active_menu {
-            let all_menus: Vec<crate::config::Menu> = self
-                .menus
-                .menus
-                .iter()
-                .chain(self.menu_state.plugin_menus.iter())
-                .cloned()
-                .collect();
-            if let Some(menu) = all_menus.get(active_idx) {
-                match self.handle_menu_dropdown_click(col, row, menu) {
-                    Ok(Some(click_result)) => return Some(click_result),
-                    Ok(None) => {}
-                    Err(e) => return Some(Err(e)),
-                }
-            }
-            self.close_menu_with_auto_hide();
-            return Some(Ok(()));
-        }
-
-        None
-    }
-
-    fn handle_click_file_explorer_area(&mut self, col: u16, row: u16) -> Option<AnyhowResult<()>> {
-        let explorer_area = self.active_layout().file_explorer_area?;
-        let border_x = explorer_area.x + explorer_area.width.saturating_sub(1);
-        if col == border_x && row >= explorer_area.y && row < explorer_area.y + explorer_area.height
-        {
-            self.active_window_mut().mouse_state.dragging_file_explorer = true;
-            self.active_window_mut().mouse_state.drag_start_position = Some((col, row));
-            self.active_window_mut()
-                .mouse_state
-                .drag_start_explorer_width = Some(self.active_window().file_explorer_width);
-            return Some(Ok(()));
-        }
-        if in_rect(col, row, explorer_area) {
-            return Some(self.handle_file_explorer_click(col, row, explorer_area));
-        }
-        None
-    }
-
-    fn handle_click_scrollbar(&mut self, col: u16, row: u16) -> Option<AnyhowResult<()>> {
-        let (split_id, buffer_id, scrollbar_rect, is_on_thumb) =
-            self.active_layout().split_areas.iter().find_map(
-                |(split_id, buffer_id, _content, scrollbar_rect, thumb_start, thumb_end)| {
-                    if in_rect(col, row, *scrollbar_rect) {
-                        let relative_row = row.saturating_sub(scrollbar_rect.y) as usize;
-                        let on_thumb = relative_row >= *thumb_start && relative_row < *thumb_end;
-                        Some((*split_id, *buffer_id, *scrollbar_rect, on_thumb))
-                    } else {
-                        None
-                    }
-                },
-            )?;
-
-        self.focus_split(split_id, buffer_id);
-        // Grabbing the scrollbar of a drag-parked terminal scrollback view is
-        // scrollback *reading* — convert the implicit visit to an explicit one
-        // (no-op otherwise).
-        self.active_window_mut()
-            .set_split_terminal_drag_scrollback(split_id, buffer_id, false);
-        if is_on_thumb {
-            self.active_window_mut().mouse_state.dragging_scrollbar = Some(split_id);
-            self.active_window_mut().mouse_state.drag_start_row = Some(row);
-            if self.active_window().is_composite_buffer(buffer_id) {
-                if let Some(vs) = self
-                    .active_window()
-                    .composite_view_states
-                    .get(&(split_id, buffer_id))
-                {
-                    self.active_window_mut()
-                        .mouse_state
-                        .drag_start_composite_scroll_row = Some(vs.scroll_row);
-                }
-            } else {
-                let snap = self
-                    .windows
-                    .get(&self.active_window)
-                    .and_then(|w| w.buffers.splits())
-                    .map(|(_, vs)| vs)
-                    .expect("active window must have a populated split layout")
-                    .get(&split_id)
-                    .map(|vs| (vs.viewport.top_byte, vs.viewport.top_view_line_offset));
-                if let Some((top_byte, top_view_line_offset)) = snap {
-                    let ms = &mut self.active_window_mut().mouse_state;
-                    ms.drag_start_top_byte = Some(top_byte);
-                    ms.drag_start_view_line_offset = Some(top_view_line_offset);
-                }
-            }
-        } else {
-            self.active_window_mut().mouse_state.dragging_scrollbar = Some(split_id);
-            if let Err(e) = self.active_window_mut().handle_scrollbar_jump(
-                col,
-                row,
-                split_id,
-                buffer_id,
-                scrollbar_rect,
-            ) {
-                return Some(Err(e));
-            }
-            self.active_window_mut().mouse_state.hover_target =
-                Some(HoverTarget::ScrollbarThumb(split_id));
-        }
-        Some(Ok(()))
-    }
-
-    fn handle_click_horizontal_scrollbar(
-        &mut self,
-        col: u16,
-        row: u16,
-    ) -> Option<AnyhowResult<()>> {
-        let (split_id, buffer_id, hscrollbar_rect, max_content_width, is_on_thumb) = self
-            .active_layout()
-            .horizontal_scrollbar_areas
-            .iter()
-            .find_map(
-                |(
-                    split_id,
-                    buffer_id,
-                    hscrollbar_rect,
-                    max_content_width,
-                    thumb_start,
-                    thumb_end,
-                )| {
-                    if col >= hscrollbar_rect.x
-                        && col < hscrollbar_rect.x + hscrollbar_rect.width
-                        && row >= hscrollbar_rect.y
-                        && row < hscrollbar_rect.y + hscrollbar_rect.height
-                    {
-                        let relative_col = col.saturating_sub(hscrollbar_rect.x) as usize;
-                        let on_thumb = relative_col >= *thumb_start && relative_col < *thumb_end;
-                        Some((
-                            *split_id,
-                            *buffer_id,
-                            *hscrollbar_rect,
-                            *max_content_width,
-                            on_thumb,
-                        ))
-                    } else {
-                        None
-                    }
-                },
-            )?;
-
-        self.focus_split(split_id, buffer_id);
-        self.active_window_mut()
-            .mouse_state
-            .dragging_horizontal_scrollbar = Some(split_id);
-        if is_on_thumb {
-            self.active_window_mut().mouse_state.drag_start_hcol = Some(col);
-            if let Some(vs) = self
-                .windows
-                .get(&self.active_window)
-                .and_then(|w| w.buffers.splits())
-                .map(|(_, vs)| vs)
-                .expect("active window must have a populated split layout")
-                .get(&split_id)
-            {
-                self.active_window_mut().mouse_state.drag_start_left_column =
-                    Some(vs.viewport.left_column);
-            }
-        } else {
-            self.active_window_mut().mouse_state.drag_start_hcol = None;
-            self.active_window_mut().mouse_state.drag_start_left_column = None;
-            let relative_col = col.saturating_sub(hscrollbar_rect.x) as f64;
-            let track_width = hscrollbar_rect.width as f64;
-            let ratio = if track_width > 1.0 {
-                (relative_col / (track_width - 1.0)).clamp(0.0, 1.0)
-            } else {
-                0.0
-            };
-            if let Some(vs) = self
-                .windows
-                .get_mut(&self.active_window)
-                .and_then(|w| w.split_view_states_mut())
-                .expect("active window must have a populated split layout")
-                .get_mut(&split_id)
-            {
-                let visible_width = vs.viewport.width as usize;
-                let max_scroll = max_content_width.saturating_sub(visible_width);
-                let target_col = (ratio * max_scroll as f64).round() as usize;
-                vs.viewport.left_column = target_col.min(max_scroll);
-                vs.viewport.set_skip_ensure_visible();
-            }
-        }
-        Some(Ok(()))
-    }
-
-    /// Map a click on a status-bar segment to its editor `Action`. This is the
-    /// single id→action table for the generic click rail; adding a clickable
-    /// element means adding one arm here (plus listing it in
-    /// `StatusBarRenderer::clickable_for_kind`).
-    ///
-    /// Most segments dismiss any open menu-style popup first (the #1941
-    /// follow-up: otherwise a stale popup overlaps the new prompt). The LSP,
-    /// remote, and read-only menus are the exceptions — each owns a toggle
-    /// (a second click closes it), so dismissing first would defeat the toggle;
-    /// they clear other popups themselves after their toggle check.
-    fn dispatch_status_bar_click(
-        &mut self,
-        id: crate::view::ui::status_bar::StatusBarClickable,
-    ) -> AnyhowResult<()> {
-        use crate::view::ui::status_bar::StatusBarClickable as C;
-        match id {
-            C::LineEnding => {
-                self.dismiss_menu_popups_for_prompt();
-                self.handle_action(Action::SetLineEnding)
-            }
-            C::Encoding => {
-                self.dismiss_menu_popups_for_prompt();
-                self.handle_action(Action::SetEncoding)
-            }
-            C::Language => {
-                self.dismiss_menu_popups_for_prompt();
-                self.handle_action(Action::SetLanguage)
-            }
-            // Owns its own toggle (second click closes the popup).
-            C::Lsp => self.handle_action(Action::ShowLspStatus),
-            // Owns its own toggle; clears other popups itself after the check.
-            C::RemoteIndicator => self.handle_action(Action::ShowRemoteIndicatorMenu),
-            C::WorkspaceTrust => {
-                // Opens the (cancellable) workspace-trust prompt.
-                self.dismiss_menu_popups_for_prompt();
-                self.handle_action(Action::WorkspaceTrustPrompt)
-            }
-            C::Warnings => {
-                self.dismiss_menu_popups_for_prompt();
-                self.handle_action(Action::ShowWarnings)
-            }
-            C::Messages => self.handle_action(Action::ShowStatusLog),
-            // Owns its own toggle (second click closes the read-only menu).
-            C::ReadOnly => self.handle_action(Action::ShowReadOnlyMenu),
-        }
-    }
-
-    fn handle_click_status_bar(&mut self, col: u16, row: u16) -> Option<AnyhowResult<()>> {
-        let (status_row, _status_x, _status_width) = self.active_chrome().status_bar.area?;
-        if row != status_row {
-            return None;
-        }
-        // Generic click rail: one hit-test over every clickable segment drawn
-        // last frame. The id→Action mapping (and each element's popup-dismiss
-        // nuance) lives in `dispatch_status_bar_click`.
-        let clickables = self.active_chrome().status_bar.clickable.clone();
-        for (id, r, s, e) in clickables {
-            if row == r && col >= s && col < e {
-                return Some(self.dispatch_status_bar_click(id));
-            }
-        }
-        // Plugin-registered tokens. Walk the per-frame map produced by
-        // `render_status_bar`; on a hit, fire `status_bar_token_clicked`
-        // so the registering plugin can react. We split the registry key
-        // (`"<plugin>:<token>"`) on the first colon — that's how
-        // `register_status_bar_element` builds it.
-        let plugin_areas = self.active_chrome().status_bar.plugin_token_areas.clone();
-        for (key, (r, s, e)) in plugin_areas {
-            if row == r && col >= s && col < e {
-                let (plugin_name, token_name) = match key.split_once(':') {
-                    Some((p, t)) => (p.to_string(), t.to_string()),
-                    None => (String::new(), key.clone()),
-                };
-                self.dismiss_menu_popups_for_prompt();
-                self.plugin_manager.read().unwrap().run_hook(
-                    "status_bar_token_clicked",
-                    crate::services::plugins::hooks::HookArgs::StatusBarTokenClicked {
-                        plugin_name,
-                        token_name,
-                    },
-                );
-                return Some(Ok(()));
-            }
-        }
-        None
-    }
-
-    fn handle_click_search_options(&mut self, col: u16, row: u16) -> Option<AnyhowResult<()>> {
-        use crate::view::ui::status_bar::SearchOptionsHover;
-        let layout = self.active_chrome().search_options_layout.clone()?;
-        match layout.checkbox_at(col, row)? {
-            SearchOptionsHover::CaseSensitive => {
-                Some(self.handle_action(Action::ToggleSearchCaseSensitive))
-            }
-            SearchOptionsHover::WholeWord => {
-                Some(self.handle_action(Action::ToggleSearchWholeWord))
-            }
-            SearchOptionsHover::Regex => Some(self.handle_action(Action::ToggleSearchRegex)),
-            SearchOptionsHover::ConfirmEach => {
-                Some(self.handle_action(Action::ToggleSearchConfirmEach))
-            }
-            SearchOptionsHover::None => None,
-        }
-    }
-
-    fn handle_click_split_separator(&mut self, col: u16, row: u16) -> Option<AnyhowResult<()>> {
-        let separator_areas = self.active_layout().separator_areas.clone();
-        for (split_id, direction, sep_x, sep_y, sep_length) in &separator_areas {
-            let is_on_separator = match direction {
-                SplitDirection::Horizontal => {
-                    row == *sep_y && col >= *sep_x && col < sep_x + sep_length
-                }
-                SplitDirection::Vertical => {
-                    col == *sep_x && row >= *sep_y && row < sep_y + sep_length
-                }
-            };
-            if is_on_separator {
-                self.active_window_mut().mouse_state.dragging_separator =
-                    Some((*split_id, *direction));
-                self.active_window_mut().mouse_state.drag_start_position = Some((col, row));
-                let ratio = self
-                    .split_manager_mut()
-                    .get_ratio((*split_id).into())
-                    .or_else(|| self.grouped_split_ratio(*split_id));
-                if let Some(ratio) = ratio {
-                    self.active_window_mut().mouse_state.drag_start_ratio = Some(ratio);
-                }
-                return Some(Ok(()));
-            }
-        }
-        None
-    }
-
-    fn handle_click_split_controls(&mut self, col: u16, row: u16) -> Option<AnyhowResult<()>> {
-        let close_split_id = self
-            .active_layout()
-            .close_split_areas
-            .iter()
-            .find(|(_, btn_row, start_col, end_col)| {
-                row == *btn_row && col >= *start_col && col < *end_col
-            })
-            .map(|(split_id, _, _, _)| *split_id);
-        if let Some(split_id) = close_split_id {
-            if let Err(e) = self
-                .windows
-                .get_mut(&self.active_window)
-                .and_then(|w| w.split_manager_mut())
-                .expect("active window must have a populated split layout")
-                .close_split(split_id)
-            {
-                self.set_status_message(
-                    t!("error.cannot_close_split", error = e.to_string()).to_string(),
-                );
-            } else {
-                // Drop the closed split from every terminal's scrollback set.
-                self.active_window_mut()
-                    .forget_split_terminal_modes(split_id);
-                let new_active = self
-                    .windows
-                    .get(&self.active_window)
-                    .and_then(|w| w.buffers.splits())
-                    .map(|(mgr, _)| mgr)
-                    .expect("active window must have a populated split layout")
-                    .active_split();
-                if let Some(buffer_id) = self
-                    .windows
-                    .get(&self.active_window)
-                    .and_then(|w| w.buffers.splits())
-                    .map(|(mgr, _)| mgr)
-                    .expect("active window must have a populated split layout")
-                    .buffer_for_split(new_active)
-                {
-                    self.set_active_buffer(buffer_id);
-                }
-                self.set_status_message(t!("split.closed").to_string());
-            }
-            return Some(Ok(()));
-        }
-
-        let maximize_target = self
-            .active_layout()
-            .maximize_split_areas
-            .iter()
-            .find(|(_, btn_row, start_col, end_col)| {
-                row == *btn_row && col >= *start_col && col < *end_col
-            })
-            .map(|(split_id, _, _, _)| *split_id);
-        if let Some(target) = maximize_target {
-            // Move focus to the clicked split before maximizing. Otherwise
-            // a click on a non-active split's button leaves the active
-            // split (now hidden by the maximize) silently capturing
-            // keystrokes. Skip when already maximized: the unmaximize
-            // click can only land on the maximized split, which is
-            // already the active one.
-            let already_maximized = self
-                .windows
-                .get(&self.active_window)
-                .and_then(|w| w.buffers.splits())
-                .map(|(mgr, _)| mgr.is_maximized())
-                .unwrap_or(false);
-            if !already_maximized {
-                if let Some(buffer_id) = self
-                    .windows
-                    .get(&self.active_window)
-                    .and_then(|w| w.buffers.splits())
-                    .map(|(mgr, _)| mgr)
-                    .expect("active window must have a populated split layout")
-                    .buffer_for_split(target)
-                {
-                    self.focus_split(target, buffer_id);
-                }
-            }
-            match self
-                .windows
-                .get_mut(&self.active_window)
-                .and_then(|w| w.split_manager_mut())
-                .expect("active window must have a populated split layout")
-                .toggle_maximize_for(target)
-            {
-                Ok(maximized) => {
-                    let msg = if maximized {
-                        t!("split.maximized").to_string()
-                    } else {
-                        t!("split.restored").to_string()
-                    };
-                    self.set_status_message(msg);
-                }
-                Err(e) => self.set_status_message(e),
-            }
-            return Some(Ok(()));
-        }
-
-        None
-    }
-
-    fn handle_click_tab_bar(&mut self, col: u16, row: u16) -> Option<AnyhowResult<()>> {
-        for (split_id, tab_layout) in &self.active_layout().tab_layouts {
-            tracing::debug!(
-                "Tab layout for split {:?}: bar_area={:?}, left_scroll={:?}, right_scroll={:?}",
-                split_id,
-                tab_layout.bar_area,
-                tab_layout.left_scroll_area,
-                tab_layout.right_scroll_area
-            );
-        }
-        let tab_hit = self
-            .active_layout()
-            .tab_layouts
-            .iter()
-            .find_map(|(split_id, tab_layout)| {
-                let hit = tab_layout.hit_test(col, row);
-                tracing::debug!(
-                    "Tab hit_test at ({}, {}) for split {:?} returned {:?}",
+    ) -> Option<AnyhowResult<bool>> {
+        let chrome_drag_active = super::chrome::pointer_grab(self).is_some();
+        let context_menu_open = self.active_window().context_menu_core().is_some();
+        if !chrome_drag_active && !context_menu_open {
+            let forwarding = self.config.terminal.mouse_forwarding;
+            // Which terminal, and where its grid is: a question about the
+            // shell's tree, so it is asked on this side and handed down.
+            if let Some(at) = self.terminal_pane_at(col, row) {
+                if let Some(result) = self.active_window_mut().try_forward_mouse_to_terminal(
                     col,
                     row,
-                    split_id,
-                    hit
-                );
-                hit.map(|h| (*split_id, h))
-            });
-        let (split_id, hit) = tab_hit?;
-        match hit {
-            TabHit::CloseButton(target) => {
-                match target {
-                    crate::view::split::TabTarget::Buffer(buffer_id) => {
-                        self.focus_split(split_id, buffer_id);
-                        self.close_tab_in_split(buffer_id, split_id);
-                    }
-                    crate::view::split::TabTarget::Group(group_leaf) => {
-                        self.close_buffer_group_by_leaf(group_leaf);
-                    }
+                    at,
+                    mouse_event,
+                    forwarding,
+                ) {
+                    return Some(result);
                 }
-                Some(Ok(()))
             }
-            TabHit::TabName(target) => {
-                let direction = self
-                    .windows
-                    .get(&self.active_window)
-                    .and_then(|w| w.buffers.splits())
-                    .map(|(_, vs)| vs)
-                    .expect("active window must have a populated split layout")
-                    .get(&split_id)
-                    .map(|vs| {
-                        let open = &vs.open_buffers;
-                        let cur = vs.active_target();
-                        let cur_idx = open.iter().position(|t| *t == cur);
-                        let new_idx = open.iter().position(|t| *t == target);
-                        match (cur_idx, new_idx) {
-                            (Some(c), Some(n)) if n > c => 1,
-                            (Some(c), Some(n)) if n < c => -1,
-                            _ => 0,
-                        }
-                    })
-                    .unwrap_or(0);
-                self.active_window_mut()
-                    .animate_tab_switch(split_id, direction);
-                match target {
-                    crate::view::split::TabTarget::Buffer(buffer_id) => {
-                        self.focus_split(split_id, buffer_id);
-                        self.active_window_mut()
-                            .promote_buffer_from_preview(buffer_id);
-                        self.active_window_mut().mouse_state.dragging_tab = Some(
-                            super::types::TabDragState::new(buffer_id, split_id, (col, row)),
-                        );
-                    }
-                    crate::view::split::TabTarget::Group(group_leaf) => {
-                        self.activate_group_tab(split_id, group_leaf);
-                    }
-                }
-                Some(Ok(()))
-            }
-            TabHit::ScrollLeft => {
-                self.set_status_message("ScrollLeft clicked!".to_string());
-                if let Some(vs) = self
-                    .windows
-                    .get_mut(&self.active_window)
-                    .and_then(|w| w.split_view_states_mut())
-                    .expect("active window must have a populated split layout")
-                    .get_mut(&split_id)
-                {
-                    vs.tab_scroll_offset = vs.tab_scroll_offset.saturating_sub(10);
-                }
-                Some(Ok(()))
-            }
-            TabHit::ScrollRight => {
-                self.set_status_message("ScrollRight clicked!".to_string());
-                if let Some(vs) = self
-                    .windows
-                    .get_mut(&self.active_window)
-                    .and_then(|w| w.split_view_states_mut())
-                    .expect("active window must have a populated split layout")
-                    .get_mut(&split_id)
-                {
-                    vs.tab_scroll_offset = vs.tab_scroll_offset.saturating_add(10);
-                }
-                Some(Ok(()))
-            }
-            TabHit::NewTabButton => {
-                // Open the "+" popup just below the button. Close any tab
-                // context menu first so only one popup is visible.
-                self.active_window_mut().tab_context_menu = None;
-                self.active_window_mut().new_tab_menu =
-                    Some(super::types::NewTabMenu::new(split_id, col, row + 1));
-                Some(Ok(()))
-            }
-            TabHit::BarBackground => None,
         }
+        self.try_open_terminal_link(col, row, mouse_event)
     }
 
     /// Handle mouse drag event
     pub(super) fn handle_mouse_drag(&mut self, col: u16, row: u16) -> AnyhowResult<()> {
-        // Dock resize drag: track the pointer column as the new dock
-        // width (the right border follows the cursor), clamped so it
-        // can't swallow the chrome.
-        if self.dock_resizing {
-            let max_cols = self.terminal_width.max(20).saturating_sub(20).max(10);
-            let new_w = col.saturating_add(1).clamp(10, max_cols);
-            let mut changed = false;
-            if let Some(fwp) = self.dock.as_mut() {
-                if let super::PanelPlacement::LeftDock { width_cols } = &mut fwp.placement {
-                    changed = *width_cols != new_w;
-                    *width_cols = new_w;
-                }
-            }
-            if changed {
-                // Persist the live width *before* relaying out. `relayout`
-                // fires the `resize` hook, and the orchestrator answers it
-                // by re-issuing the dock's responsive `dock_width`, which
-                // `handle_floating_panel_control` clamps against the
-                // persisted `dock_width` override. Updating that override
-                // here (not only on mouse-up) lets the user's dragged width
-                // win the round-trip — otherwise the responsive re-issue
-                // snaps the dock straight back and the drag does nothing.
-                self.dock_width = Some(new_w);
-                // The dock got wider/narrower: reflow the chrome (terminals,
-                // viewports, panels) to the new dock width via the funnel.
-                self.relayout();
-            }
+        use super::chrome::PointerGrab;
+        // THE grab slot: the press-to-release owner derived from live
+        // drag state (`chrome::pointer_grab`) routes every motion —
+        // no re-hit-testing mid-drag (the btop-resize ruling), no
+        // hand-ordered flag ladder. `pointer_grab`'s check order
+        // preserves the old ladder's precedence.
+        let Some(grab) = super::chrome::pointer_grab(self) else {
+            return Ok(());
+        };
+        // Mouse-modal overlay: the only legitimate drags are the grabs the
+        // old ladder ran ahead of the swallow (dock resize, widget text,
+        // widget scrollbar). Anything else — text selection in the buffer, a
+        // buffer scrollbar behind the overlay — is swallowed so the buffer
+        // stays put.
+        //
+        // The overlay's own result-list scrollbar used to be on this list.
+        // It is not a grab any more: the list is a `fresh-ui` viewport and
+        // `hit.rs` owns its thumb, capturing the pointer itself for the
+        // duration of the drag, so nothing reaches this walk to be let
+        // through.
+        if self.overlay_prompt_active() && !matches!(grab, PointerGrab::WidgetText) {
             return Ok(());
         }
-        // Floating-panel list scrollbar drag takes precedence — the
-        // modal panel owns the input channel while it's up.
-        if self.try_widget_scrollbar_drag(super::PanelSlot::Dock, row)
-            || self.try_widget_scrollbar_drag(super::PanelSlot::Floating, row)
-        {
-            let _ = col;
-            return Ok(());
-        }
-        // Mouse-modal overlay: the only legitimate drag is on the overlay's
-        // own result-list scrollbar (its drag flag was set on mouse-down).
-        // Anything else — text-selection drag in the buffer, a buffer
-        // scrollbar behind the overlay — is swallowed so the buffer stays put.
-        if self.overlay_prompt_active()
-            && !self.active_window().mouse_state.dragging_prompt_scrollbar
-        {
-            return Ok(());
-        }
-
-        // If dragging scrollbar, update scroll position
-        if let Some(dragging_split_id) = self.active_window_mut().mouse_state.dragging_scrollbar {
-            // Snapshot split_areas so we don't borrow `self.active_layout()` and
-            // `self.active_window_mut()` simultaneously below.
-            let split_areas = self.active_layout().split_areas.clone();
-            for (split_id, buffer_id, _content_rect, scrollbar_rect, _thumb_start, _thumb_end) in
-                &split_areas
-            {
-                if *split_id == dragging_split_id {
-                    // Check if we started dragging from the thumb (have drag_start_row)
-                    if self.active_window().mouse_state.drag_start_row.is_some() {
-                        // Relative drag from thumb
-                        self.active_window_mut().handle_scrollbar_drag_relative(
-                            row,
-                            *split_id,
-                            *buffer_id,
-                            *scrollbar_rect,
-                        )?;
-                    } else {
-                        // Jump drag (started from track)
-                        self.active_window_mut().handle_scrollbar_jump(
-                            col,
-                            row,
-                            *split_id,
-                            *buffer_id,
-                            *scrollbar_rect,
-                        )?;
-                    }
-                    return Ok(());
-                }
-            }
-        }
-
-        // If dragging horizontal scrollbar, update horizontal scroll position
-        if let Some(dragging_split_id) = self
-            .active_window_mut()
-            .mouse_state
-            .dragging_horizontal_scrollbar
-        {
-            // Clone the scrollbar layout so the loop doesn't hold an
-            // immutable borrow on `self` while it mutates
-            // `self.split_view_states`. The active window's layout cache
-            // is repopulated each frame, so a one-frame snapshot is fine.
-            let hscrollbar_areas = self.active_layout().horizontal_scrollbar_areas.clone();
-            for (
-                split_id,
-                _buffer_id,
-                hscrollbar_rect,
-                max_content_width,
-                thumb_start,
-                thumb_end,
-            ) in &hscrollbar_areas
-            {
-                if *split_id == dragging_split_id {
-                    let track_width = hscrollbar_rect.width as f64;
-                    if track_width <= 1.0 {
-                        break;
-                    }
-
-                    if let (Some(drag_start_hcol), Some(drag_start_left_column)) = (
-                        self.active_window_mut().mouse_state.drag_start_hcol,
-                        self.active_window_mut().mouse_state.drag_start_left_column,
-                    ) {
-                        // Relative drag from thumb - move proportionally to mouse offset
-                        // Use thumb size to compute the correct ratio so thumb tracks with mouse
-                        let col_offset = (col as i32) - (drag_start_hcol as i32);
-                        if let Some(view_state) = self
-                            .windows
-                            .get_mut(&self.active_window)
-                            .and_then(|w| w.split_view_states_mut())
-                            .expect("active window must have a populated split layout")
-                            .get_mut(&dragging_split_id)
-                        {
-                            let visible_width = view_state.viewport.width as usize;
-                            let max_scroll = max_content_width.saturating_sub(visible_width);
-                            if max_scroll > 0 {
-                                let thumb_size = thumb_end.saturating_sub(*thumb_start).max(1);
-                                let track_travel = (track_width - thumb_size as f64).max(1.0);
-                                let scroll_per_pixel = max_scroll as f64 / track_travel;
-                                let scroll_offset =
-                                    (col_offset as f64 * scroll_per_pixel).round() as i64;
-                                let new_left =
-                                    (drag_start_left_column as i64 + scroll_offset).max(0) as usize;
-                                view_state.viewport.left_column = new_left.min(max_scroll);
-                                view_state.viewport.set_skip_ensure_visible();
-                            }
-                        }
-                    } else {
-                        // Jump drag (started from track) - jump to absolute position
-                        let relative_col = col.saturating_sub(hscrollbar_rect.x) as f64;
-                        let ratio = (relative_col / (track_width - 1.0)).clamp(0.0, 1.0);
-
-                        if let Some(view_state) = self
-                            .windows
-                            .get_mut(&self.active_window)
-                            .and_then(|w| w.split_view_states_mut())
-                            .expect("active window must have a populated split layout")
-                            .get_mut(&dragging_split_id)
-                        {
-                            let visible_width = view_state.viewport.width as usize;
-                            let max_scroll = max_content_width.saturating_sub(visible_width);
-                            let target_col = (ratio * max_scroll as f64).round() as usize;
-                            view_state.viewport.left_column = target_col.min(max_scroll);
-                            view_state.viewport.set_skip_ensure_visible();
-                        }
-                    }
-
-                    return Ok(());
-                }
-            }
-        }
-
-        // If selecting text in popup, extend selection
-        if let Some(popup_idx) = self.active_window_mut().mouse_state.selecting_in_popup {
-            // Find the popup area from cached layout
-            if let Some((_, _, inner_rect, scroll_offset, _, _, _)) = self
-                .active_chrome()
-                .popup_areas
-                .iter()
-                .find(|(idx, _, _, _, _, _, _)| *idx == popup_idx)
-            {
-                // Check if mouse is within the popup inner area
-                if col >= inner_rect.x
-                    && col < inner_rect.x + inner_rect.width
-                    && row >= inner_rect.y
-                    && row < inner_rect.y + inner_rect.height
-                {
-                    let relative_col = (col - inner_rect.x) as usize;
-                    let relative_row = (row - inner_rect.y) as usize;
-                    let line = scroll_offset + relative_row;
-
-                    let state = self.active_state_mut();
-                    if let Some(popup) = state.popups.get_mut(popup_idx) {
-                        popup.extend_selection(line, relative_col);
-                    }
-                }
-            }
-            return Ok(());
-        }
-
-        // If dragging the floating-overlay prompt's scrollbar
-        // (issue #1796), update its scroll_offset using the same
-        // math as the click handler. Same shared-widget logic the
-        // popup-scrollbar drag uses below.
-        if self
-            .active_window_mut()
-            .mouse_state
-            .dragging_prompt_scrollbar
-        {
-            use crate::view::ui::scrollbar::ScrollbarState;
-            // Snapshot chrome rects up front so the prompt borrow on
-            // active_window_mut() doesn't conflict.
-            let sb_rect = self.active_chrome().suggestions_scrollbar_rect;
-            let suggestions_area_visible =
-                self.active_chrome().suggestions_area.map(|(_, _, v, _)| v);
-            let active_window_id = self.active_window;
-            if let (Some(sb_rect), Some(prompt)) = (
-                sb_rect,
-                self.windows
-                    .get_mut(&active_window_id)
-                    .and_then(|w| w.prompt.as_mut()),
-            ) {
-                let visible = suggestions_area_visible.unwrap_or(prompt.suggestions.len().min(10));
-                let total = prompt.suggestions.len();
-                let track_height = sb_rect.height as usize;
-                // Allow dragging slightly past the top/bottom; clamp
-                // here rather than rejecting so the thumb keeps up
-                // with a fast mouse.
-                let clamped_row =
-                    row.clamp(sb_rect.y, sb_rect.y + sb_rect.height.saturating_sub(1));
-                let click_row = clamped_row.saturating_sub(sb_rect.y) as usize;
-                let state = ScrollbarState::new(total, visible, prompt.scroll_offset);
-                prompt.scroll_offset = state.click_to_offset(track_height, click_row);
-            }
-            return Ok(());
-        }
-
-        // If dragging popup scrollbar, update popup scroll position
-        if let Some(popup_idx) = self
-            .active_window_mut()
-            .mouse_state
-            .dragging_popup_scrollbar
-        {
-            // Find the popup's scrollbar rect from cached layout
-            if let Some((_, _, inner_rect, _, _, Some(sb_rect), total_lines)) = self
-                .active_chrome()
-                .popup_areas
-                .iter()
-                .find(|(idx, _, _, _, _, _, _)| *idx == popup_idx)
-            {
-                let track_height = sb_rect.height as usize;
-                let visible_lines = inner_rect.height as usize;
-
-                if track_height > 0 && *total_lines > visible_lines {
-                    let relative_row = row.saturating_sub(sb_rect.y) as usize;
-                    let max_scroll = total_lines.saturating_sub(visible_lines);
-                    let target_scroll = if track_height > 1 {
-                        (relative_row * max_scroll) / (track_height.saturating_sub(1))
-                    } else {
-                        0
-                    };
-
-                    let state = self.active_state_mut();
-                    if let Some(popup) = state.popups.get_mut(popup_idx) {
-                        let current_scroll = popup.scroll_offset as i32;
-                        let delta = target_scroll as i32 - current_scroll;
-                        popup.scroll_by(delta);
-                    }
-                }
-            }
-            return Ok(());
-        }
-
-        // If dragging separator, update split ratio
-        if let Some((split_id, direction)) = self.active_window_mut().mouse_state.dragging_separator
-        {
-            self.handle_separator_drag(col, row, split_id, direction)?;
-            return Ok(());
-        }
-
-        // If dragging file explorer border, update width
-        if self.active_window_mut().mouse_state.dragging_file_explorer {
-            self.handle_file_explorer_border_drag(col)?;
-            return Ok(());
-        }
-
-        // A drag whose press landed on a live terminal grid: this is
-        // selection intent (a bare click only focuses — see
-        // `handle_editor_click`). Drop the split into read-only scrollback
-        // and start a normal text-selection drag anchored at the press.
-        if let Some((split_id, buffer_id, ocol, orow)) =
-            self.active_window().mouse_state.terminal_drag_pending
-        {
-            self.begin_terminal_grid_selection(split_id, buffer_id, ocol, orow, col, row)?;
-            return Ok(());
-        }
-
-        // If dragging to select text
-        if self.active_window_mut().mouse_state.dragging_text_selection {
-            self.handle_text_selection_drag(col, row)?;
-            return Ok(());
-        }
-
-        // If dragging a tab, update position and compute drop zone
-        if self.active_window_mut().mouse_state.dragging_tab.is_some() {
-            self.handle_tab_drag(col, row)?;
-            return Ok(());
+        #[allow(clippy::single_match, clippy::match_single_binding)]
+        match grab {
+            // Drag-to-select on a widget markdown/text document: armed by the
+            // press that placed the caret; every Drag extends the selection to
+            // the pointer.
+            PointerGrab::WidgetText => {
+                self.handle_widget_text_selection_drag(col, row);
+            } // A panel's list scrollbar was an arm here — the dock's and the
+              // modal's, then a buffer-mounted panel's. A described panel's
+              // list is a viewport and `hit.rs` captures the pointer for its
+              // own thumb, so the drag never reaches this walk.
+              // The split separator's and the file explorer's width drags were
+              // here, and so were both of a pane's scrollbars. All four are
+              // nodes that capture the pointer, so their moves arrive as
+              // `UiFact::GripDrag` / `UiFact::PaneScrollbarDrag` and never reach
+              // this walk. The buffer's text selection and the live terminal
+              // grid's selection intent were the last two: the pane's content
+              // leaf captures the pointer on its press, so they arrive as
+              // `UiFact::PaneContentDrag` (`Editor::drag_pane_content`).
         }
 
         Ok(())
-    }
-
-    /// Handle text selection drag - extends selection from anchor to current position
-    fn handle_text_selection_drag(&mut self, col: u16, row: u16) -> AnyhowResult<()> {
-        use crate::model::event::Event;
-        use crate::primitives::word_navigation::{find_word_end, find_word_start};
-
-        let Some(split_id) = self.active_window_mut().mouse_state.drag_selection_split else {
-            return Ok(());
-        };
-        let Some(anchor_position) = self.active_window_mut().mouse_state.drag_selection_anchor
-        else {
-            return Ok(());
-        };
-
-        // Find the buffer and content rect for this split in one pass
-        let Some((buffer_id, content_rect)) = self
-            .active_layout()
-            .split_areas
-            .iter()
-            .find(|(sid, _, _, _, _, _)| *sid == split_id)
-            .map(|(_, bid, rect, _, _, _)| (*bid, *rect))
-        else {
-            return Ok(());
-        };
-
-        // Get cached view line mappings for this split
-        let cached_mappings = self
-            .active_layout()
-            .view_line_mappings
-            .get(&split_id)
-            .cloned();
-
-        let leaf_id = split_id;
-
-        // Get fallback from SplitViewState viewport
-        let fallback = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(_, vs)| vs)
-            .expect("active window must have a populated split layout")
-            .get(&leaf_id)
-            .map(|vs| vs.viewport.top_byte)
-            .unwrap_or(0);
-
-        // Get compose width for this split
-        let compose_width = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(_, vs)| vs)
-            .expect("active window must have a populated split layout")
-            .get(&leaf_id)
-            .and_then(|vs| vs.compose_width);
-
-        // Calculate the target position and selection geometry by
-        // reading buffer state directly, then dispatch the move via
-        // Window helpers.
-        let drag_by_words = self.active_window_mut().mouse_state.drag_selection_by_words;
-        let drag_word_end = self.active_window_mut().mouse_state.drag_selection_word_end;
-
-        // Terminal scrollback views are unwrapped and gutter-free, so a
-        // screen cell maps to a byte exactly (viewport top line + row).
-        // Resolve directly instead of through the render-cached view-line
-        // mappings: drag events processed after the live-grid→scrollback
-        // flip but before the next render would otherwise resolve against
-        // mappings cached from a *previous* buffer view of this split and
-        // land the selection head far from the pointer.
-        let terminal_grid_target = if self.active_window().is_terminal_buffer(buffer_id)
-            && self
-                .active_window()
-                .split_terminal_scrollback(leaf_id, buffer_id)
-        {
-            self.terminal_grid_byte_at(leaf_id, buffer_id, content_rect, col, row)
-        } else {
-            None
-        };
-
-        let Some((target_position, new_position, anchor_position, new_sticky_column)) = self
-            .active_window()
-            .buffers
-            .get(&buffer_id)
-            .and_then(|state| {
-                let gutter_width = state.margins.left_total_width() as u16;
-                let target_position = match terminal_grid_target {
-                    Some(pos) => pos,
-                    None => super::click_geometry::screen_to_buffer_position(
-                        col,
-                        row,
-                        content_rect,
-                        gutter_width,
-                        &cached_mappings,
-                        fallback,
-                        true, // Allow gutter clicks for drag selection
-                        compose_width,
-                    )?,
-                };
-                let (new_position, anchor_pos) = if drag_by_words {
-                    if target_position >= anchor_position {
-                        (
-                            find_word_end(&state.buffer, target_position),
-                            anchor_position,
-                        )
-                    } else {
-                        let word_end = drag_word_end.unwrap_or(anchor_position);
-                        (find_word_start(&state.buffer, target_position), word_end)
-                    }
-                } else {
-                    (target_position, anchor_position)
-                };
-                // Visual column, not byte column — see `visual_column_of`.
-                let new_sticky_column =
-                    crate::primitives::display_width::visual_column_of(&state.buffer, new_position);
-                Some((target_position, new_position, anchor_pos, new_sticky_column))
-            })
-        else {
-            return Ok(());
-        };
-        let _ = target_position;
-
-        let (primary_cursor_id, old_position, old_anchor, old_sticky_column) = self
-            .active_window()
-            .buffers
-            .splits()
-            .and_then(|(_, vs)| vs.get(&leaf_id))
-            .map(|vs| {
-                let cursor = vs.cursors.primary();
-                (
-                    vs.cursors.primary_id(),
-                    cursor.position,
-                    cursor.anchor,
-                    cursor.sticky_column,
-                )
-            })
-            .unwrap_or((CursorId(0), 0, None, None));
-
-        let event = Event::MoveCursor {
-            cursor_id: primary_cursor_id,
-            old_position,
-            new_position,
-            old_anchor,
-            new_anchor: Some(anchor_position),
-            old_sticky_column,
-            new_sticky_column: new_sticky_column.or(old_sticky_column),
-        };
-
-        if let Some(event_log) = self.active_window_mut().event_logs.get_mut(&buffer_id) {
-            event_log.append(event.clone());
-        }
-        self.active_window_mut()
-            .apply_event_to_buffer(buffer_id, leaf_id, &event);
-
-        Ok(())
-    }
-
-    /// Handle file explorer border drag for resizing
-    pub(super) fn handle_file_explorer_border_drag(&mut self, col: u16) -> AnyhowResult<()> {
-        let Some((start_col, _start_row)) =
-            self.active_window_mut().mouse_state.drag_start_position
-        else {
-            return Ok(());
-        };
-        let Some(start_width) = self
-            .active_window_mut()
-            .mouse_state
-            .drag_start_explorer_width
-        else {
-            return Ok(());
-        };
-
-        let delta = col as i32 - start_col as i32;
-        let total_width = self.terminal_width as i32;
-
-        // Drag preserves the variant the user chose. A user editing
-        // columns doesn't want their mode silently flipped to percent
-        // just because they grabbed the divider.
-        if total_width > 0 {
-            use crate::config::ExplorerWidth;
-            self.active_window_mut().file_explorer_width = match start_width {
-                ExplorerWidth::Percent(start_pct) => {
-                    let percent_delta = (delta * 100) / total_width;
-                    let new_pct = (start_pct as i32 + percent_delta).clamp(0, 100) as u8;
-                    ExplorerWidth::Percent(new_pct)
-                }
-                ExplorerWidth::Columns(start_cols) => {
-                    let new_cols = (start_cols as i32 + delta).clamp(0, total_width) as u16;
-                    ExplorerWidth::Columns(new_cols)
-                }
-            };
-            // The sidebar width changed: reflow terminals/viewports/panels
-            // through the single layout funnel.
-            self.relayout();
-        }
-
-        Ok(())
-    }
-
-    /// Handle separator drag for split resizing
-    pub(super) fn handle_separator_drag(
-        &mut self,
-        col: u16,
-        row: u16,
-        split_id: ContainerId,
-        direction: SplitDirection,
-    ) -> AnyhowResult<()> {
-        let Some((start_col, start_row)) = self.active_window_mut().mouse_state.drag_start_position
-        else {
-            return Ok(());
-        };
-        let Some(start_ratio) = self.active_window_mut().mouse_state.drag_start_ratio else {
-            return Ok(());
-        };
-        let Some(editor_area) = self.active_layout().editor_content_area else {
-            return Ok(());
-        };
-
-        // Calculate the delta in screen space
-        let (delta, total_size) = match direction {
-            SplitDirection::Horizontal => {
-                // For horizontal splits, we move the separator up/down (row changes)
-                let delta = row as i32 - start_row as i32;
-                let total = editor_area.height as i32;
-                (delta, total)
-            }
-            SplitDirection::Vertical => {
-                // For vertical splits, we move the separator left/right (col changes)
-                let delta = col as i32 - start_col as i32;
-                let total = editor_area.width as i32;
-                (delta, total)
-            }
-        };
-
-        // Convert screen delta to ratio delta
-        // The ratio represents the fraction of space the first split gets
-        if total_size > 0 {
-            let ratio_delta = delta as f32 / total_size as f32;
-            let new_ratio = (start_ratio + ratio_delta).clamp(0.1, 0.9);
-
-            // Update the split ratio. The container may live in the main
-            // split tree or inside a stashed Grouped subtree (buffer group
-            // panels like the theme editor); try the main tree first and
-            // fall back to the grouped subtrees.
-            if self
-                .windows
-                .get(&self.active_window)
-                .and_then(|w| w.buffers.splits())
-                .map(|(mgr, _)| mgr)
-                .expect("active window must have a populated split layout")
-                .get_ratio(split_id.into())
-                .is_some()
-            {
-                // Guarded by the `get_ratio(..).is_some()` check above, so
-                // this id resolves to a resizable Split; the bool result is
-                // not actionable here (the drag can only target a container).
-                let _resized = self
-                    .windows
-                    .get_mut(&self.active_window)
-                    .and_then(|w| w.split_manager_mut())
-                    .expect("active window must have a populated split layout")
-                    .set_ratio(split_id, new_ratio);
-            } else {
-                self.set_grouped_split_ratio(split_id, new_ratio);
-            }
-            // Reflow live as the separator moves so terminals track the
-            // split sizes during the drag, not just on release.
-            self.relayout();
-        }
-
-        Ok(())
-    }
-
-    /// Handle right-click event
-    pub(super) fn handle_right_click(&mut self, col: u16, row: u16) -> AnyhowResult<()> {
-        // A right-click anywhere dismisses the "+" new-tab popup (it's a
-        // left-click-only menu).
-        self.active_window_mut().new_tab_menu = None;
-
-        // Right-click inside the orchestrator dock column → let the plugin
-        // raise a per-session context menu. Mirrors the left-click path:
-        // re-focus the dock first (so the menu acts against a focused dock)
-        // and swallow the event so it never falls through to the editor or
-        // the file-explorer menu below.
-        if let Some(super::PanelPlacement::LeftDock { width_cols }) =
-            self.dock.as_ref().map(|f| f.placement)
-        {
-            if col < width_cols {
-                if self.dock.as_ref().map(|f| !f.focused).unwrap_or(false) {
-                    self.refocus_floating_panel(super::PanelSlot::Dock);
-                }
-                self.handle_floating_widget_context_click(super::PanelSlot::Dock, col, row);
-                return Ok(());
-            }
-        }
-
-        // A right-click landing inside an already-open native context menu
-        // (file-explorer or tab — the "+" popup was dismissed above) is
-        // swallowed so the menu stays put rather than being re-opened /
-        // re-targeted. One shared hit-test covers both.
-        let frame_w = self.active_chrome().last_frame.width;
-        let frame_h = self.active_chrome().last_frame.height;
-        if let Some(core) = self.active_window().context_menu_core() {
-            if !matches!(
-                core.hit(col, row, frame_w, frame_h),
-                super::types::ContextMenuHit::Outside
-            ) {
-                return Ok(());
-            }
-        }
-
-        if let Some(explorer_area) = self.active_layout().file_explorer_area {
-            if col >= explorer_area.x
-                && col < explorer_area.x + explorer_area.width
-                && row < explorer_area.y + explorer_area.height
-                && row > explorer_area.y
-            // skip title row
-            {
-                let relative_row = row.saturating_sub(explorer_area.y + 1);
-                let (is_multi, is_root_selected) =
-                    if let Some(explorer) = self.file_explorer_mut().as_mut() {
-                        let display_nodes = explorer.get_display_nodes();
-                        let scroll_offset = explorer.get_scroll_offset();
-                        let clicked_index = (relative_row as usize) + scroll_offset;
-                        let mut clicked_is_root = false;
-                        if clicked_index < display_nodes.len() {
-                            let (node_id, _) = display_nodes[clicked_index];
-                            explorer.set_selected(Some(node_id));
-                            clicked_is_root = node_id == explorer.tree().root_id();
-                        }
-                        (explorer.has_multi_selection(), clicked_is_root)
-                    } else {
-                        (false, false)
-                    };
-                self.active_window_mut().key_context =
-                    crate::input::keybindings::KeyContext::FileExplorer;
-                self.active_window_mut().tab_context_menu = None;
-                self.active_window_mut().file_explorer_context_menu =
-                    Some(super::types::FileExplorerContextMenu::new(
-                        col,
-                        row + 1,
-                        is_multi,
-                        is_root_selected,
-                    ));
-                return Ok(());
-            }
-        }
-
-        self.active_window_mut().file_explorer_context_menu = None;
-
-        // Check if right-click is on a tab
-        let tab_hit = self
-            .active_layout()
-            .tab_layouts
-            .iter()
-            .find_map(
-                |(split_id, tab_layout)| match tab_layout.hit_test(col, row) {
-                    Some(TabHit::TabName(target) | TabHit::CloseButton(target)) => {
-                        // Context menu only makes sense for buffer tabs; groups are
-                        // plugin-managed and closed via the close button.
-                        target.as_buffer().map(|bid| (*split_id, bid))
-                    }
-                    _ => None,
-                },
-            );
-
-        if let Some((split_id, buffer_id)) = tab_hit {
-            // Open tab context menu
-            self.active_window_mut().tab_context_menu =
-                Some(TabContextMenu::new(buffer_id, split_id, col, row + 1));
-        } else {
-            // Click outside tab - close context menu if open
-            self.active_window_mut().tab_context_menu = None;
-        }
-
-        Ok(())
-    }
-
-    /// Execute a "+" new-tab popup menu action.
-    fn execute_new_tab_menu_action(
-        &mut self,
-        item: super::types::NewTabMenuItem,
-        split_id: LeafId,
-    ) -> AnyhowResult<()> {
-        use super::types::NewTabMenuItem;
-        // Ensure the new buffer/terminal lands in the split whose "+" was
-        // clicked: `open_terminal`/`new_buffer` act on the active split, so
-        // focus that split first (via the buffer it currently shows).
-        if let Some(buffer_id) = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .and_then(|(mgr, _)| mgr.buffer_for_split(split_id))
-        {
-            self.focus_split(split_id, buffer_id);
-        }
-        match item {
-            NewTabMenuItem::NewTerminal => {
-                self.open_terminal();
-            }
-            NewTabMenuItem::NewFile => {
-                self.new_buffer();
-            }
-        }
-        Ok(())
-    }
-
-    /// Execute a tab context menu action
-    fn execute_tab_context_menu_action(
-        &mut self,
-        item: super::types::TabContextMenuItem,
-        buffer_id: BufferId,
-        leaf_id: LeafId,
-    ) -> AnyhowResult<()> {
-        use super::types::TabContextMenuItem;
-        match item {
-            TabContextMenuItem::Close => {
-                self.close_tab_in_split(buffer_id, leaf_id);
-            }
-            TabContextMenuItem::CloseOthers => {
-                self.close_other_tabs_in_split(buffer_id, leaf_id);
-            }
-            TabContextMenuItem::CloseToRight => {
-                self.close_tabs_to_right_in_split(buffer_id, leaf_id);
-            }
-            TabContextMenuItem::CloseToLeft => {
-                self.close_tabs_to_left_in_split(buffer_id, leaf_id);
-            }
-            TabContextMenuItem::CloseAll => {
-                self.close_all_tabs_in_split(leaf_id);
-            }
-            TabContextMenuItem::CopyRelativePath => {
-                self.copy_buffer_path(buffer_id, true);
-            }
-            TabContextMenuItem::CopyFullPath => {
-                self.copy_buffer_path(buffer_id, false);
-            }
-            TabContextMenuItem::ExtractToNewWorkspace => {
-                self.extract_tab_to_new_workspace(buffer_id);
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Handle a key event while a native context menu (tab / "+" new-tab /
-    /// file-explorer) is open — the one keyboard handler for all three.
-    ///
-    /// The open menu **grabs the keyboard**: Up/Down move the highlight,
-    /// Enter activates the highlighted item, Esc dismisses, and every other
-    /// key — printable characters, Backspace, modified chords — is swallowed
-    /// so it can't leak into the buffer or the explorer's type-ahead find
-    /// underneath and silently retarget the selection the menu acts on
-    /// (#2587). Navigation/activation act only on *unmodified* keys; a
-    /// modified chord is swallowed like any other non-menu key.
-    ///
-    /// Returns `Some` whenever a menu is open (the key is always consumed),
-    /// `None` when no menu is open so normal dispatch continues.
-    pub(super) fn handle_context_menu_key(
-        &mut self,
-        code: crossterm::event::KeyCode,
-        modifiers: crossterm::event::KeyModifiers,
-    ) -> Option<AnyhowResult<()>> {
-        use crossterm::event::{KeyCode, KeyModifiers};
-
-        let kind = self.active_window().open_context_menu().map(|(k, _)| k)?;
-
-        if modifiers == KeyModifiers::NONE {
-            match code {
-                KeyCode::Up => {
-                    if let Some(core) = self.active_window_mut().context_menu_core_mut() {
-                        core.prev_item();
-                    }
-                    return Some(Ok(()));
-                }
-                KeyCode::Down => {
-                    if let Some(core) = self.active_window_mut().context_menu_core_mut() {
-                        core.next_item();
-                    }
-                    return Some(Ok(()));
-                }
-                KeyCode::Enter => {
-                    return Some(self.activate_highlighted_context_menu(kind));
-                }
-                KeyCode::Esc => {
-                    self.active_window_mut().close_context_menus();
-                    return Some(Ok(()));
-                }
-                _ => {}
-            }
-        }
-
-        // Modal: swallow every other key while a menu is open.
-        Some(Ok(()))
-    }
-
-    /// Activate the highlighted item of the open context menu: resolve the
-    /// item + its payload from the concrete menu, dismiss the menu, then run
-    /// the matching `execute_*` action. Shared by both the keyboard (Enter)
-    /// and mouse (click) paths so activation lives in exactly one place.
-    fn activate_highlighted_context_menu(
-        &mut self,
-        kind: super::types::ContextMenuKind,
-    ) -> AnyhowResult<()> {
-        use super::types::ContextMenuKind;
-        match kind {
-            ContextMenuKind::Tab => {
-                let selected = self
-                    .active_window()
-                    .tab_context_menu
-                    .as_ref()
-                    .map(|m| (m.highlighted_item(), m.buffer_id, m.split_id));
-                self.active_window_mut().close_context_menus();
-                if let Some((item, buffer_id, split_id)) = selected {
-                    return self.execute_tab_context_menu_action(item, buffer_id, split_id);
-                }
-            }
-            ContextMenuKind::NewTab => {
-                let selected = self
-                    .active_window()
-                    .new_tab_menu
-                    .as_ref()
-                    .map(|m| (m.highlighted_item(), m.split_id));
-                self.active_window_mut().close_context_menus();
-                if let Some((item, split_id)) = selected {
-                    return self.execute_new_tab_menu_action(item, split_id);
-                }
-            }
-            ContextMenuKind::FileExplorer => {
-                let selected = self
-                    .active_window()
-                    .file_explorer_context_menu
-                    .as_ref()
-                    .map(|m| m.highlighted_item());
-                self.active_window_mut().close_context_menus();
-                if let Some(item) = selected {
-                    self.execute_file_explorer_context_menu_action(item);
-                }
-            }
-        }
-        Ok(())
-    }
-
-    fn execute_file_explorer_context_menu_action(
-        &mut self,
-        item: super::types::FileExplorerContextMenuItem,
-    ) {
-        use super::types::FileExplorerContextMenuItem;
-        match item {
-            FileExplorerContextMenuItem::NewFile => self.file_explorer_new_file(),
-            FileExplorerContextMenuItem::NewDirectory => self.file_explorer_new_directory(),
-            FileExplorerContextMenuItem::Rename => self.file_explorer_rename(),
-            FileExplorerContextMenuItem::Cut => self.active_window_mut().file_explorer_cut(),
-            FileExplorerContextMenuItem::Copy => self.active_window_mut().file_explorer_copy(),
-            FileExplorerContextMenuItem::Paste => self.file_explorer_paste(),
-            FileExplorerContextMenuItem::Duplicate => self.file_explorer_duplicate(),
-            FileExplorerContextMenuItem::Delete => self.file_explorer_delete(),
-            FileExplorerContextMenuItem::CopyFullPath => self.file_explorer_copy_path(false),
-            FileExplorerContextMenuItem::CopyRelativePath => self.file_explorer_copy_path(true),
-        }
-    }
-
-    /// Show a tooltip for a file explorer status indicator
-    fn show_file_explorer_status_tooltip(&mut self, path: std::path::PathBuf, col: u16, row: u16) {
-        use crate::view::popup::{Popup, PopupPosition};
-        use ratatui::style::Style;
-
-        let is_directory = path.is_dir();
-        let has_unsaved_changes = self.file_explorer_node_has_unsaved_changes(&path, is_directory);
-
-        let node_metadata = self
-            .file_explorer()
-            .and_then(|explorer| explorer.tree().get_node_by_path(&path))
-            .and_then(|node| node.entry.metadata.as_ref());
-        let is_hidden = node_metadata.map(|m| m.is_hidden).unwrap_or(false);
-        let is_symlink = path.is_symlink();
-        let theme = self.theme.read().unwrap();
-        let neutral_fg = if is_hidden {
-            theme.line_number_fg
-        } else if is_symlink {
-            theme.syntax_type
-        } else if is_directory {
-            theme.syntax_keyword
-        } else {
-            theme.editor_fg
-        };
-        let slot_resolver = self.file_explorer_slot_resolver();
-        let slot_context = crate::view::file_tree::ExplorerSlotContext {
-            path: &path,
-            is_dir: is_directory,
-            has_unsaved: has_unsaved_changes,
-            is_symlink,
-            is_hidden,
-            decorations: &self.active_window().file_explorer_decoration_cache,
-            slot_overrides: &self.active_window().file_explorer_slot_override_cache,
-            theme: &theme,
-            neutral_fg,
-        };
-        let slot_resolution = slot_resolver.resolve(&slot_context);
-
-        // Build tooltip content
-        let Some(summary) = slot_resolution.trailing.and_then(|slot| slot.tooltip) else {
-            return; // No status to show
-        };
-        let mut lines = summary.lines;
-        let has_custom_trailing_override = self
-            .active_window()
-            .file_explorer_slot_override_cache
-            .has_trailing_override_for_path(&path);
-
-        if !has_custom_trailing_override {
-            // Compatibility tooltips enrich native git/status content with
-            // directory child summaries and file diff stats. Explicit slot
-            // overrides own their hover content end-to-end.
-            if is_directory {
-                if let Some(modified_files) = self.get_modified_files_in_directory(&path) {
-                    lines.push(String::new()); // Empty line separator
-                    lines.push("Modified files:".to_string());
-                    const MAX_FILES: usize = 8;
-                    for (i, file) in modified_files.iter().take(MAX_FILES).enumerate() {
-                        // Show relative path from the directory
-                        let display_name = file
-                            .strip_prefix(&path)
-                            .unwrap_or(file)
-                            .to_string_lossy()
-                            .to_string();
-                        lines.push(format!("  {}", display_name));
-                        if i == MAX_FILES - 1 && modified_files.len() > MAX_FILES {
-                            lines.push(format!(
-                                "  ... and {} more",
-                                modified_files.len() - MAX_FILES
-                            ));
-                            break;
-                        }
-                    }
-                }
-            } else if let Some(stats) = self.get_git_diff_stats(&path) {
-                // For files, try to get git diff stats
-                lines.push(String::new()); // Empty line separator
-                lines.push(stats);
-            }
-        }
-
-        if lines.is_empty() {
-            return;
-        }
-
-        // Create popup
-        let mut popup = Popup::text(lines, &self.theme.read().unwrap());
-        popup.title = Some(summary.title);
-        popup.transient = true;
-        popup.position = PopupPosition::Fixed { x: col, y: row + 1 };
-        popup.width = 50;
-        popup.max_height = 15;
-        popup.border_style = Style::default().fg(self.theme.read().unwrap().popup_border_fg);
-        popup.background_style = Style::default().bg(self.theme.read().unwrap().popup_bg);
-
-        // Show the popup
-        let __buffer_id = self.active_buffer();
-        if let Some(state) = self
-            .windows
-            .get_mut(&self.active_window)
-            .map(|w| &mut w.buffers)
-            .expect("active window present")
-            .get_mut(&__buffer_id)
-        {
-            state.popups.show(popup);
-        }
-    }
-
-    fn file_explorer_node_has_unsaved_changes(
-        &self,
-        path: &std::path::Path,
-        is_directory: bool,
-    ) -> bool {
-        if is_directory {
-            self.windows
-                .get(&self.active_window)
-                .map(|w| &w.buffers)
-                .expect("active window present")
-                .iter()
-                .any(|(buffer_id, state)| {
-                    if state.buffer.is_modified() {
-                        if let Some(metadata) = self.active_window().buffer_metadata.get(buffer_id)
-                        {
-                            if let Some(file_path) = metadata.file_path() {
-                                return file_path.starts_with(path);
-                            }
-                        }
-                    }
-                    false
-                })
-        } else {
-            self.windows
-                .get(&self.active_window)
-                .map(|w| &w.buffers)
-                .expect("active window present")
-                .iter()
-                .any(|(buffer_id, state)| {
-                    if state.buffer.is_modified() {
-                        if let Some(metadata) = self.active_window().buffer_metadata.get(buffer_id)
-                        {
-                            return metadata.file_path().map(|p| p.as_path()) == Some(path);
-                        }
-                    }
-                    false
-                })
-        }
-    }
-
-    /// Dismiss the file explorer status tooltip
-    fn dismiss_file_explorer_status_tooltip(&mut self) {
-        // Dismiss any transient popups
-        let __buffer_id = self.active_buffer();
-        if let Some(state) = self
-            .windows
-            .get_mut(&self.active_window)
-            .map(|w| &mut w.buffers)
-            .expect("active window present")
-            .get_mut(&__buffer_id)
-        {
-            state.popups.dismiss_transient();
-        }
-    }
-
-    /// Get git diff stats for a file (insertions/deletions)
-    fn get_git_diff_stats(&self, path: &std::path::Path) -> Option<String> {
-        use crate::services::process_hidden::HideWindow;
-        use std::process::Command;
-
-        // Run git diff --numstat for the file
-        let output = Command::new("git")
-            .args(["diff", "--numstat", "--"])
-            .arg(path)
-            .current_dir(self.working_dir())
-            .hide_window()
-            .output()
-            .ok()?;
-
-        if !output.status.success() {
-            return None;
-        }
-
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        let line = stdout.lines().next()?;
-        let parts: Vec<&str> = line.split('\t').collect();
-
-        if parts.len() >= 2 {
-            let insertions = parts[0];
-            let deletions = parts[1];
-
-            // Handle binary files (shows as -)
-            if insertions == "-" && deletions == "-" {
-                return Some("Binary file changed".to_string());
-            }
-
-            let ins: i32 = insertions.parse().unwrap_or(0);
-            let del: i32 = deletions.parse().unwrap_or(0);
-
-            if ins > 0 || del > 0 {
-                return Some(format!("+{} -{} lines", ins, del));
-            }
-        }
-
-        // Also check staged changes
-        let staged_output = Command::new("git")
-            .args(["diff", "--numstat", "--cached", "--"])
-            .arg(path)
-            .current_dir(self.working_dir())
-            .hide_window()
-            .output()
-            .ok()?;
-
-        if staged_output.status.success() {
-            let staged_stdout = String::from_utf8_lossy(&staged_output.stdout);
-            if let Some(line) = staged_stdout.lines().next() {
-                let parts: Vec<&str> = line.split('\t').collect();
-                if parts.len() >= 2 {
-                    let insertions = parts[0];
-                    let deletions = parts[1];
-
-                    if insertions == "-" && deletions == "-" {
-                        return Some("Binary file staged".to_string());
-                    }
-
-                    let ins: i32 = insertions.parse().unwrap_or(0);
-                    let del: i32 = deletions.parse().unwrap_or(0);
-
-                    if ins > 0 || del > 0 {
-                        return Some(format!("+{} -{} lines (staged)", ins, del));
-                    }
-                }
-            }
-        }
-
-        None
-    }
-
-    /// Get list of modified files in a directory
-    fn get_modified_files_in_directory(
-        &self,
-        dir_path: &std::path::Path,
-    ) -> Option<Vec<std::path::PathBuf>> {
-        let modified_files = self
-            .active_window()
-            .file_explorer_decoration_cache
-            .direct_paths_under(dir_path);
-
-        (!modified_files.is_empty()).then_some(modified_files)
-    }
-
-    /// Hit-test a click against the floating widget panel. Clicks
-    /// inside the panel's inner rect resolve to a widget row/byte
-    /// and fire `widget_event` via the same path
-    /// Forward a vertical-wheel scroll to the active floating
-    /// widget panel — same plumbing the orchestrator's
-    /// embedded-widget panels use, but the floating panel
-    /// doesn't show up in `split_at_position` so it needs its
-    /// own dispatch entry point. Returns `true` when the panel
-    /// is active AND the mouse is inside its inner rect (so the
-    /// caller knows the wheel was consumed and shouldn't fall
-    /// through to buffer scrolling).
-    fn handle_floating_widget_panel_wheel(
-        &mut self,
-        slot: super::PanelSlot,
-        col: u16,
-        row: u16,
-        delta: i32,
-    ) -> bool {
-        let inner = match self.panel(slot) {
-            Some(fwp) => match fwp.last_inner_rect {
-                Some(rect) => rect,
-                None => return false,
-            },
-            None => return false,
-        };
-        if col < inner.x || col >= inner.x + inner.width {
-            return false;
-        }
-        if row < inner.y || row >= inner.y + inner.height {
-            return false;
-        }
-        let scrolled = self.handle_widget_panel_wheel(slot.buffer_id(), delta);
-        // The non-modal dock must swallow the wheel whenever the pointer
-        // is over it, even when the list is too short to scroll — the
-        // scroll must never leak through to the active window beneath.
-        let is_dock = matches!(
-            self.panel(slot).map(|f| f.placement),
-            Some(super::PanelPlacement::LeftDock { .. })
-        );
-        scrolled || is_dock
-    }
-
-    /// Try to start a floating-panel list scrollbar drag. Returns
-    /// true if the press landed on a scrollbar track (so the caller
-    /// skips row hit-testing — the bar overlaps the list's rightmost
-    /// column). Reuses the canonical `ScrollbarMouse`/`ScrollbarState`.
-    fn try_widget_scrollbar_press(&mut self, slot: super::PanelSlot, col: u16, row: u16) -> bool {
-        use crate::view::ui::scrollbar::ScrollbarState;
-        let (panel_key, tracks) = match self.panel(slot) {
-            Some(fwp) => (fwp.panel_key.clone(), fwp.scrollbar_tracks.clone()),
-            None => return false,
-        };
-        for t in &tracks {
-            let state = ScrollbarState::new(t.total, t.visible, t.scroll);
-            let pressed = self
-                .panel_mut(slot)
-                .and_then(|fwp| fwp.scrollbar_mouse.press(state, t.rect, col, row));
-            if let Some(new_offset) = pressed {
-                if let Some(fwp) = self.panel_mut(slot) {
-                    fwp.scrollbar_drag_key = Some(t.list_key.clone());
-                }
-                self.apply_widget_scroll(&panel_key, &t.list_key, new_offset, t.visible);
-                return true;
-            }
-        }
-        false
-    }
-
-    /// Continue an in-flight floating-panel scrollbar drag. Returns
-    /// true if a drag is active (the press captured a `list_key`).
-    fn try_widget_scrollbar_drag(&mut self, slot: super::PanelSlot, row: u16) -> bool {
-        use crate::view::ui::scrollbar::ScrollbarState;
-        let (panel_key, key) = match self.panel(slot) {
-            Some(fwp) => match &fwp.scrollbar_drag_key {
-                Some(k) => (fwp.panel_key.clone(), k.clone()),
-                None => return false,
-            },
-            None => return false,
-        };
-        // The track geometry for the dragged list (its rect may have
-        // shifted if the panel re-rendered between events).
-        let track = self.panel(slot).and_then(|fwp| {
-            fwp.scrollbar_tracks
-                .iter()
-                .find(|t| t.list_key == key)
-                .cloned()
-        });
-        let Some(t) = track else {
-            return false;
-        };
-        let state = ScrollbarState::new(t.total, t.visible, t.scroll);
-        let new_offset = self
-            .panel_mut(slot)
-            .and_then(|fwp| fwp.scrollbar_mouse.drag(state, t.rect, row));
-        if let Some(off) = new_offset {
-            self.apply_widget_scroll(&panel_key, &key, off, t.visible);
-        }
-        true
-    }
-
-    /// End any in-flight floating-panel scrollbar drag.
-    pub(super) fn release_widget_scrollbar(&mut self) {
-        for fwp in [self.dock.as_mut(), self.floating_widget_panel.as_mut()]
-            .into_iter()
-            .flatten()
-        {
-            fwp.scrollbar_mouse.release();
-            fwp.scrollbar_drag_key = None;
-        }
-    }
-
-    /// Apply a host-driven scroll to a panel list (scrollbar press /
-    /// drag): update the registry's instance state, re-render, and —
-    /// when the list has a live selection that moved into the new
-    /// window — notify the plugin so its own selection mirror +
-    /// preview stay in sync with the thumb.
-    fn apply_widget_scroll(
-        &mut self,
-        panel_key: &crate::widgets::PanelKey,
-        list_key: &str,
-        new_offset: usize,
-        visible: usize,
-    ) {
-        let moved_sel = self.widget_registry.set_list_scroll(
-            panel_key,
-            list_key,
-            new_offset as u32,
-            visible as u32,
-        );
-        self.rerender_widget_panel(panel_key);
-        if let Some(sel) = moved_sel {
-            self.fire_widget_event(
-                panel_key,
-                list_key.to_string(),
-                "select".to_string(),
-                serde_json::json!({ "index": sel as i64 }),
-            );
-        }
-    }
-
-    /// Right-click hit-test against a floating widget panel. Resolves the
-    /// cell under the cursor to a widget and — only when it lands on a
-    /// `list` row — fires a `widget_event` with `event_type: "context"`
-    /// (carrying the same `{ index, key, list_key }` payload a left-click
-    /// "select" would). Plugins use this to raise a context menu for the
-    /// right-clicked row. Returns `true` when a context event fired (so the
-    /// caller swallows the click). Clicks on non-list widgets, padding, or
-    /// outside the inner rect return `false`.
-    fn handle_floating_widget_context_click(
-        &mut self,
-        slot: super::PanelSlot,
-        col: u16,
-        row: u16,
-    ) -> bool {
-        let (panel_key, inner) = match self.panel(slot) {
-            Some(fwp) => match fwp.last_inner_rect {
-                Some(rect) => (fwp.panel_key.clone(), rect),
-                None => return false,
-            },
-            None => return false,
-        };
-        if col < inner.x || col >= inner.x + inner.width {
-            return false;
-        }
-        if row < inner.y || row >= inner.y + inner.height {
-            return false;
-        }
-        let brow = (row - inner.y) as u32;
-        let entries = self
-            .panel(slot)
-            .map(|f| f.entries.clone())
-            .unwrap_or_default();
-        let local_screen_col = (col - inner.x) as usize;
-        let bcol = match entries.get(brow as usize) {
-            Some(entry) => crate::primitives::display_width::grapheme_byte_at_visual_column(
-                &entry.text,
-                local_screen_col,
-            ),
-            None => return false,
-        };
-        // Resolve row-aware (exact byte hit, else the row's body `select`
-        // when the click lands past a compact row's text — a context menu
-        // targets the ROW, not a byte), then keep only list/tree hits: a
-        // right-click raises a menu for a session row, not for a button or
-        // empty padding. Shares `hit_test_row_aware` with the left-click
-        // path so the row-width rule lives in exactly one place.
-        let (mut payload, key, _kind) = match self
-            .widget_registry
-            .hit_test_row_aware(slot.buffer_id(), brow, bcol as u32)
-            .filter(|(_, hit)| hit.widget_kind == "list" || hit.widget_kind == "tree")
-        {
-            Some((_, hit)) => (hit.payload.clone(), hit.widget_key.clone(), hit.widget_kind),
-            None => return false,
-        };
-        // Carry the screen cell so the plugin can anchor its popup at the
-        // click (the list `select` payload only has the row index).
-        if let Some(obj) = payload.as_object_mut() {
-            obj.insert("col".to_string(), serde_json::json!(col));
-            obj.insert("row".to_string(), serde_json::json!(row));
-        }
-        if !self
-            .plugin_manager
-            .read()
-            .unwrap()
-            .has_hook_handlers("widget_event")
-        {
-            return false;
-        }
-        self.fire_widget_event(&panel_key, key, "context".to_string(), payload);
-        true
-    }
-
-    /// True when the centered (`Floating`) slot currently holds an
-    /// anchored context-menu popup rather than a centered modal.
-    fn floating_panel_is_anchored(&self) -> bool {
-        matches!(
-            self.floating_widget_panel.as_ref().map(|f| f.placement),
-            Some(super::PanelPlacement::Anchored { .. })
-        )
-    }
-
-    /// True when `(col, row)` falls within the panel's drawn box — the
-    /// last-rendered inner rect grown by its 1-cell border. False when the
-    /// panel or its rect is absent.
-    fn point_in_floating_panel(&self, slot: super::PanelSlot, col: u16, row: u16) -> bool {
-        let Some(inner) = self.panel(slot).and_then(|f| f.last_inner_rect) else {
-            return false;
-        };
-        let x0 = inner.x.saturating_sub(1);
-        let y0 = inner.y.saturating_sub(1);
-        // inner.{x,y} + {width,height} already lands on the far border cell.
-        col >= x0 && col <= inner.x + inner.width && row >= y0 && row <= inner.y + inner.height
-    }
-
-    /// Unmount the floating panel and fire a `cancel` widget_event so the
-    /// owning plugin clears its state — the click-outside analogue of the
-    /// Esc dismissal in `dispatch_floating_widget_key`.
-    fn dismiss_floating_panel_with_cancel(&mut self, slot: super::PanelSlot) {
-        let panel_key = match self.panel(slot) {
-            Some(f) => f.panel_key.clone(),
-            None => return,
-        };
-        let widget_key = self
-            .widget_registry
-            .get(&panel_key)
-            .map(|p| p.focus_key.clone())
-            .unwrap_or_default();
-        self.fire_widget_event(
-            &panel_key,
-            widget_key,
-            "cancel".to_string(),
-            serde_json::json!({}),
-        );
-        *self.panel_opt_mut(slot) = None;
-        let _ = self.widget_registry.unmount(&panel_key);
-    }
-
-    /// `handle_editor_click` uses; clicks outside the rect are
-    /// swallowed without dismissing the panel.
-    /// Resolve a click against the open dropdown pop-over's screen rects
-    /// (recorded by the last draw). A click on an option row delivers the
-    /// same `dropdown_select` hit a TUI cell click on the old inline list
-    /// would; a click elsewhere inside the box (border) is swallowed so it
-    /// neither selects nor dismisses the modal. Returns true when the click
-    /// was inside the pop-over box (and thus consumed).
-    fn try_dropdown_popup_click(&mut self, slot: super::PanelSlot, col: u16, row: u16) -> bool {
-        let (panel_key, key, hits, popup_rect) = match self.panel(slot) {
-            Some(f) => (
-                f.panel_key.clone(),
-                f.dropdown_popup.as_ref().map(|d| d.widget_key.clone()),
-                f.dropdown_popup_hits.clone(),
-                f.dropdown_popup_rect,
-            ),
-            None => return false,
-        };
-        let popup_rect = match popup_rect {
-            Some(r) => r,
-            None => return false,
-        };
-        let key = match key {
-            Some(k) if !k.is_empty() => k,
-            _ => return false,
-        };
-        // Option row → select that index (fires `change`) and close.
-        if let Some(hit) = hits.iter().find(|h| in_rect(col, row, h.rect)) {
-            let ha = crate::widgets::HitArea {
-                widget_key: key,
-                widget_kind: "dropdown",
-                buffer_row: 0,
-                byte_start: 0,
-                byte_end: 0,
-                payload: serde_json::json!({ "index": hit.index }),
-                event_type: "dropdown_select",
-            };
-            self.deliver_widget_hit(&panel_key, &ha, None);
-            return true;
-        }
-        // Inside the box but not on a row (its border): consume so the
-        // modal isn't dismissed and the list stays open.
-        in_rect(col, row, popup_rect)
-    }
-
-    fn handle_floating_widget_click(&mut self, slot: super::PanelSlot, col: u16, row: u16) {
-        // An open dropdown's option list floats as a screen-level pop-over
-        // that extends PAST the panel/modal border, so a click on one of
-        // its option rows lands outside the panel's inner rect and would be
-        // dropped by the gate below. Resolve it first, against the screen
-        // rects recorded at draw time.
-        if self.try_dropdown_popup_click(slot, col, row) {
-            return;
-        }
-        // Scrollbar press wins over row hit-testing (the bar overlaps
-        // the list's rightmost column).
-        if self.try_widget_scrollbar_press(slot, col, row) {
-            return;
-        }
-        let (panel_key, inner) = match self.panel(slot) {
-            Some(fwp) => match fwp.last_inner_rect {
-                Some(rect) => (fwp.panel_key.clone(), rect),
-                None => return,
-            },
-            None => return,
-        };
-        if col < inner.x || col >= inner.x + inner.width {
-            return;
-        }
-        if row < inner.y || row >= inner.y + inner.height {
-            return;
-        }
-        let brow = (row - inner.y) as u32;
-        let entries = self
-            .panel(slot)
-            .map(|f| f.entries.clone())
-            .unwrap_or_default();
-        let local_screen_col = (col - inner.x) as usize;
-        let bcol = match entries.get(brow as usize) {
-            Some(entry) => crate::primitives::display_width::grapheme_byte_at_visual_column(
-                &entry.text,
-                local_screen_col,
-            ),
-            None => return,
-        };
-        // Row-aware resolution: an exact byte hit wins, but a click past a
-        // compact list/tree row's text still lands on the row (its body
-        // `select`) instead of being dropped — the same rule the
-        // right-click context path uses, kept in one place so the two can't
-        // drift (they did once: right-click was row-wide, left-click was
-        // byte-exact, so compact dock rows ignored left-clicks past the label).
-        let (mut hit_payload, hit_event, hit_key, hit_kind, hit_byte_start) = match self
-            .widget_registry
-            .hit_test_row_aware(slot.buffer_id(), brow, bcol as u32)
-        {
-            Some((_, hit)) => (
-                hit.payload.clone(),
-                hit.event_type.to_string(),
-                hit.widget_key.clone(),
-                hit.widget_kind,
-                hit.byte_start,
-            ),
-            None => {
-                tracing::debug!(
-                    target: "fresh::dock",
-                    ?slot, col, row, brow, bcol,
-                    "handle_floating_widget_click: hit_test found no widget"
-                );
-                return;
-            }
-        };
-        if !hit_key.is_empty() {
-            let tabbable = self
-                .widget_registry
-                .get(&panel_key)
-                .map(|p| p.tabbable.iter().any(|k| k == &hit_key))
-                .unwrap_or(false);
-            tracing::debug!(
-                target: "fresh::dock",
-                hit_key = %hit_key,
-                hit_kind,
-                hit_event = %hit_event,
-                tabbable,
-                "handle_floating_widget_click: hit"
-            );
-            if tabbable {
-                self.set_panel_focus_and_notify(&panel_key, hit_key.clone());
-            }
-            self.rerender_widget_panel(&panel_key);
-        } else {
-            tracing::debug!(
-                target: "fresh::dock",
-                hit_kind,
-                hit_event = %hit_event,
-                "handle_floating_widget_click: hit with empty key (not focusable)"
-            );
-        }
-        // Click-to-position-cursor: a click inside a text field moves the
-        // caret to the clicked column, matching every GUI text input
-        // (#2573). Focus was set just above, so the field is now the
-        // panel's focused widget; the helper maps `bcol` → value byte and
-        // fires `change` so the plugin's cursor mirror follows.
-        if hit_kind == "text" && hit_event == "focus" {
-            self.reposition_widget_text_cursor_from_click(
-                &panel_key,
-                &hit_key,
-                bcol,
-                hit_byte_start,
-                &hit_payload,
-            );
-        }
-        let handled_specially = if hit_kind == "tree" && hit_event == "expand" {
-            if let Some(item_key) = hit_payload.get("key").and_then(|v| v.as_str()) {
-                self.handle_widget_tree_expand_toggle(&panel_key, &hit_key, item_key);
-                true
-            } else {
-                false
-            }
-        } else if hit_kind == "dropdown" && hit_event == "dropdown_toggle" {
-            // Clicking the `[value ▼]` trigger toggles the option list open.
-            // Focus moved to this dropdown just above, so `focused_dropdown_open`
-            // reads *this* widget's state. Without this the click only focused
-            // the dropdown and fired the event to the plugin, never opening the
-            // list (the shared `deliver_widget_hit` path handled this; this
-            // TUI-native click path did not).
-            let now_open = !self.focused_dropdown_open(&panel_key);
-            self.set_dropdown_open(&panel_key, &hit_key, now_open);
-            true
-        } else {
-            false
-        };
-        if !handled_specially {
-            // Tag the event as mouse-originated. Keyboard nav (arrows)
-            // fires `select` through `handle_widget_command` *without* this
-            // marker, so a plugin can tell a click apart from an arrow-move
-            // that happens to emit the same event/payload — e.g. the
-            // orchestrator dock opens an inactive on-disk worktree on
-            // *click* but not when you merely arrow past it.
-            if let Some(obj) = hit_payload.as_object_mut() {
-                obj.insert("via".to_string(), serde_json::json!("click"));
-            }
-            self.fire_widget_event(&panel_key, hit_key, hit_event, hit_payload);
-        }
     }
 
     /// Clear all in-progress drag state on the active window's mouse state.
     /// The active text/popup selection is intentionally preserved — only the
     /// drag bookkeeping fields are reset.
-    fn clear_active_window_drag_state(&mut self) {
+    pub(crate) fn clear_active_window_drag_state(&mut self) {
         let ms = &mut self.active_window_mut().mouse_state;
         ms.dragging_scrollbar = None;
         ms.drag_start_row = None;
@@ -4323,9 +997,79 @@ impl Editor {
         ms.drag_selection_by_words = false;
         ms.drag_selection_word_end = None;
         ms.terminal_drag_pending = None;
-        ms.dragging_popup_scrollbar = None;
-        ms.drag_start_popup_scroll = None;
-        ms.dragging_prompt_scrollbar = false;
-        ms.selecting_in_popup = None;
+    }
+}
+
+#[cfg(test)]
+mod smooth_scroll_tests {
+    use super::{lines_due, lines_to_deliver, SMOOTH_SCROLL_LINE};
+    use std::time::Duration;
+
+    /// The walk is paced by the clock: a line comes due once its share
+    /// of time has passed, and not before.
+    #[test]
+    fn lines_come_due_one_interval_at_a_time() {
+        assert_eq!(lines_due(Duration::ZERO, SMOOTH_SCROLL_LINE, 4), 0);
+        assert_eq!(
+            lines_due(
+                SMOOTH_SCROLL_LINE - Duration::from_millis(1),
+                SMOOTH_SCROLL_LINE,
+                4
+            ),
+            0
+        );
+        assert_eq!(lines_due(SMOOTH_SCROLL_LINE, SMOOTH_SCROLL_LINE, 4), 1);
+        assert_eq!(lines_due(SMOOTH_SCROLL_LINE * 3, SMOOTH_SCROLL_LINE, 4), 3);
+    }
+
+    /// A frame rate too slow to show the walk collapses it back into a
+    /// jump rather than letting the view lag behind the wheel: a caller
+    /// away long enough for every remaining line gets all of them at
+    /// once, and never more than it is owed.
+    #[test]
+    fn a_slow_frame_delivers_the_whole_remainder_at_once() {
+        assert_eq!(
+            lines_due(Duration::from_millis(250), SMOOTH_SCROLL_LINE, 4),
+            4
+        );
+        assert_eq!(lines_due(Duration::from_secs(60), SMOOTH_SCROLL_LINE, 2), 2);
+        // Nothing owed, nothing delivered, however long the wait.
+        assert_eq!(lines_due(Duration::from_secs(60), SMOOTH_SCROLL_LINE, 0), 0);
+    }
+
+    /// A zero interval is a walk with no pacing at all — everything at
+    /// once, rather than a division by zero.
+    #[test]
+    fn a_zero_interval_delivers_everything() {
+        assert_eq!(lines_due(Duration::ZERO, Duration::ZERO, 7), 7);
+    }
+
+    /// Notches can arrive faster than a line a frame. Whatever the walk
+    /// cannot pace out within the backlog rides along with this frame,
+    /// so a flick covers exactly the ground it asked for — dropping the
+    /// surplus instead would make fast scrolling travel less far than
+    /// slow scrolling.
+    #[test]
+    fn a_backlog_past_the_limit_rides_along_with_this_frame() {
+        // Within the backlog, only the clock decides.
+        assert_eq!(
+            lines_to_deliver(Duration::ZERO, SMOOTH_SCROLL_LINE, 6, 6),
+            0
+        );
+        // Past it, the surplus comes too.
+        assert_eq!(
+            lines_to_deliver(Duration::ZERO, SMOOTH_SCROLL_LINE, 10, 6),
+            4
+        );
+        // The clock still wins when it is further along.
+        assert_eq!(
+            lines_to_deliver(SMOOTH_SCROLL_LINE * 8, SMOOTH_SCROLL_LINE, 10, 6),
+            8
+        );
+        // And never more than is owed.
+        assert_eq!(
+            lines_to_deliver(SMOOTH_SCROLL_LINE * 99, SMOOTH_SCROLL_LINE, 3, 6),
+            3
+        );
     }
 }

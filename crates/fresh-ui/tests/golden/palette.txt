@@ -1,0 +1,64 @@
+=== opened
+ File  Go ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+Filter      │new task…                              Add
+(o) All░░░░░│ ribbon: click the text, it falls through ·
+( ) Open    │»[x┌──────────────────────┐              #2
+( ) Done    │»[ │command…▪▪▪▪▪▪▪▪▪▪▪▪▪▪│              #3
+┌──────────┐│»[ │Toggle theme░░░░░░░░░░│              #4
+│clip-test ││»[ │Toggle preview        │              #5
+└──────────┘│   │Toggle clipping       │
+            │   │Clear done            │
+            │   │Sync                  │
+            │   └──────────────────────┘
+            │
+ alpha · visit 1
+5 tasks · light · synced 0 · ready
+
+=== filtered to matches containing p
+ File  Go ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+Filter      │new task…                              Add
+(o) All░░░░░│ ribbon: click the text, it falls through ·
+( ) Open    │»[x] build the reconciler                #2
+( ) Done    │»[ ┌──────────────────────┐              #3
+┌──────────┐│»[ │p▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪│              #4
+│clip-test ││»[ │Toggle preview░░░░░░░░│              #5
+└──────────┘│   │Toggle clipping       │
+            │   └──────────────────────┘
+            │
+            │
+            │
+ alpha · visit 1
+5 tasks · light · synced 0 · ready
+
+=== filtered to matches containing t
+ File  Go ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+Filter      │new task…                              Add
+(o) All░░░░░│ ribbon: click the text, it falls through ·
+( ) Open    │»[x] build the reconciler                #2
+( ) Done    │»[ ┌──────────────────────┐              #3
+┌──────────┐│»[ │t▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪▪│              #4
+│clip-test ││»[ │Toggle theme░░░░░░░░░░│              #5
+└──────────┘│   │Toggle preview        │
+            │   │Toggle clipping       │
+            │   └──────────────────────┘
+            │
+            │
+ alpha · visit 1
+5 tasks · light · synced 0 · ready
+
+=== ran Toggle theme: the accent and the status change
+ File  Go ▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+Filter      │new task…                              Add
+(o) All░░░░░│ ribbon: click the text, it falls through ·
+( ) Open    │▸[x] build the reconciler                #2
+( ) Done    │▸[ ] lay it out                          #3
+┌──────────┐│▸[ ] route the pointer                   #4
+│clip-test ││▸[ ] wire up focus                       #5
+└──────────┘│
+            │
+            │
+            │
+            │
+ alpha · visit 1
+5 tasks · dark · synced 0 · theme dark
+

@@ -2,7 +2,6 @@
 
 import {
   hintBar,
-  key,
   list,
   parseHintString,
   WidgetPanel,
@@ -223,6 +222,13 @@ interface InstalledPackage {
   manifest?: PackageManifest;
   /** Original local path if installed from a local directory */
   localSource?: string;
+  /**
+   * URL or path this package was installed from, as recorded in
+   * `.fresh-source.json`. This is what an update re-fetches: unlike
+   * `source` (a git remote, which monorepo-subpath and local-directory
+   * installs don't have) it is written by every install path.
+   */
+  installedFrom?: string;
 }
 
 interface LockfileEntry {
@@ -296,6 +302,29 @@ async function gitCommand(args: string[]): Promise<{ exit_code: number; stdout: 
   ];
   const result = await editor.spawnProcess("git", gitArgs);
   return result;
+}
+
+/**
+ * Turn a failed git invocation's stderr into one line worth showing.
+ *
+ * Prefers git's first `fatal:` / `error:` line over the first line of
+ * output: git opens with progress noise ("Cloning into '/tmp/...'...")
+ * and trails off into advice ("...and the repository exists."), and
+ * this text is what the package browser shows the user when an install
+ * or update fails.
+ */
+function gitErrorMessage(stderr: string, fallback: string): string {
+  if (stderr.includes("Could not resolve host")) return "Network error";
+  if (stderr.includes("not found") || stderr.includes("404")) return "Repository not found";
+  if (stderr.includes("Authentication") || stderr.includes("403")) {
+    return "Access denied (repository may be private)";
+  }
+  const lines = stderr.split("\n").map((l) => l.trim()).filter((l) => l.length > 0);
+  for (const line of lines) {
+    const match = line.match(/^(?:fatal|error):\s*(.+)$/);
+    if (match) return match[1];
+  }
+  return lines[0] || fallback;
 }
 
 /**
@@ -627,24 +656,44 @@ function getInstalledPackages(type: "plugin" | "theme" | "language" | "bundle"):
           }
         }
 
-        // Check for .fresh-source.json (local path or monorepo installs)
-        if (!source) {
-          const freshSourcePath = editor.pathJoin(pkgPath, ".fresh-source.json");
-          const freshSource = readJsonFile<{ local_path?: string; original_url?: string }>(freshSourcePath);
-          if (freshSource?.local_path) {
-            localSource = freshSource.local_path;
-            source = freshSource.original_url || freshSource.local_path;
-          }
+        // Every install path writes .fresh-source.json; read it whatever
+        // the git remote said, because the marker is the only record a
+        // monorepo-subpath or local-directory install leaves behind (they
+        // are copies, so they have no .git at all).
+        const freshSourcePath = editor.pathJoin(pkgPath, ".fresh-source.json");
+        const freshSource = readJsonFile<{
+          local_path?: string;
+          original_url?: string;
+          url?: string;
+          repository?: string;
+          subpath?: string;
+          installed_from?: string;
+        }>(freshSourcePath);
+        if (freshSource?.local_path) {
+          localSource = freshSource.local_path;
+        }
+        const installedFrom = freshSource?.installed_from
+          || freshSource?.original_url
+          || freshSource?.url
+          || freshSource?.local_path
+          || undefined;
+        if (!source && installedFrom) {
+          source = installedFrom;
         }
 
         packages.push({
-          name: entry.name,
+          // The manifest names the package; the directory is only
+          // where it happens to live. They match for anything the
+          // installer put there, but the manifest is what a registry
+          // entry would be keyed by, so prefer it.
+          name: manifest?.name || entry.name,
           path: pkgPath,
           type,
           source,
           version: manifest?.version || "unknown",
           manifest: manifest ?? undefined,
           localSource,
+          installedFrom,
         });
       }
     }
@@ -653,6 +702,23 @@ function getInstalledPackages(type: "plugin" | "theme" | "language" | "bundle"):
   }
 
   return packages;
+}
+
+/**
+ * Every installed package, of every kind.
+ *
+ * The manager's commands used to look at plugins and themes only, so a
+ * language pack or bundle — which `Package: Install from URL` installs
+ * just as readily — was listed in the browser but invisible to Update,
+ * Remove, Update All and the lockfile.
+ */
+function getAllInstalledPackages(): InstalledPackage[] {
+  return [
+    ...getInstalledPackages("plugin"),
+    ...getInstalledPackages("theme"),
+    ...getInstalledPackages("language"),
+    ...getInstalledPackages("bundle"),
+  ];
 }
 
 /**
@@ -837,6 +903,134 @@ function validatePackage(packageDir: string, packageName: string): ValidationRes
 }
 
 /**
+ * Read the `version` recorded in an installed package's manifest, or
+ * `null` when the directory holds no readable manifest. Used to name
+ * the version an upgrade replaced.
+ */
+function installedVersion(packageDir: string): string | null {
+  const manifest = readJsonFile<PackageManifest>(
+    editor.pathJoin(packageDir, "package.json"),
+  );
+  return manifest?.version || null;
+}
+
+/**
+ * Unload every plugin running out of `packageDir`.
+ *
+ * Must run before an installed directory is replaced: deleting files
+ * under a loaded plugin leaves the old copy running for the rest of
+ * the session. Matches by path prefix rather than by package name
+ * (the runtime plugin name comes from the entry file), and unloads
+ * every match so a bundle's several plugins all come down.
+ */
+async function unloadPluginsUnder(packageDir: string): Promise<void> {
+  const loadedPlugins = await editor.listPlugins();
+  for (const plugin of loadedPlugins) {
+    if (plugin.path.startsWith(packageDir)) {
+      await editor.unloadPlugin(plugin.name).catch(() => {});
+    }
+  }
+}
+
+/**
+ * Move a freshly fetched, already-validated package into its install
+ * directory, replacing any copy already there.
+ *
+ * Callers validate the staging copy first and unload anything running
+ * out of the target, so by the time this runs the replacement is known
+ * good. The existing copy is renamed aside and only deleted once the
+ * new one is in place; a failed swap puts it back, so an upgrade can
+ * never leave the user without a working install. The backup name
+ * starts with a dot so `getInstalledPackages` never sees it as a
+ * package of its own.
+ *
+ * `move` renames the staging directory in (the git-clone paths, whose
+ * staging lives under the temp dir); otherwise it is copied, leaving
+ * the source intact (local-path installs).
+ */
+function swapInstalledDir(
+  stagingDir: string,
+  packagesDir: string,
+  packageName: string,
+  move: boolean,
+): boolean {
+  const targetDir = editor.pathJoin(packagesDir, packageName);
+  const backupDir = editor.pathJoin(
+    packagesDir,
+    `.${packageName}.replaced-${Date.now()}`,
+  );
+
+  const hadExisting = fsLocal.fileExists(targetDir);
+  if (hadExisting && !fsLocal.renamePath(targetDir, backupDir)) {
+    return false;
+  }
+
+  const placed = move
+    ? fsLocal.renamePath(stagingDir, targetDir)
+    : fsLocal.copyPath(stagingDir, targetDir);
+
+  if (!placed) {
+    // A directory copy that fails part-way still leaves what it managed
+    // to write. Clear it: a half-copied package left at the install
+    // path is scanned as an installed one and shows up in the browser
+    // as if the install had worked.
+    fsLocal.removePath(targetDir);
+    if (hadExisting) {
+      fsLocal.renamePath(backupDir, targetDir);
+    }
+    return false;
+  }
+
+  if (hadExisting) {
+    fsLocal.removePath(backupDir);
+  }
+  return true;
+}
+
+/**
+ * Status line for a finished install. `previousVersion` is `null` for a
+ * first install and the replaced version otherwise, so an upgrade reads
+ * as one ("Upgraded file-diff 1.0.0 → 1.1.0"). Re-running an install at
+ * the version already on disk is a deliberate forced refresh (the
+ * source may have moved without the version changing), reported as a
+ * reinstall rather than silently doing nothing.
+ */
+function installedStatus(
+  action: string,
+  packageName: string,
+  previousVersion: string | null,
+  version: string,
+): string {
+  if (previousVersion === null) {
+    return `${action} ${packageName} v${version}`;
+  }
+  if (previousVersion === version) {
+    return `Reinstalled ${packageName} v${version}`;
+  }
+  return `Upgraded ${packageName} ${previousVersion} → ${version}`;
+}
+
+/**
+ * The most recent install / update / uninstall failure.
+ *
+ * Progress messages belong on the status bar, but a failure the user
+ * has to act on must not vanish the next time anything else writes
+ * there — the package browser reads this to show the failure in its
+ * own panel. Cleared by `runPackageAction` when a new action starts.
+ */
+let lastPackageError: string | null = null;
+
+/**
+ * Report a failed package operation: to the status bar as before, and
+ * into `lastPackageError` so the browser UI can surface it too.
+ */
+function packageFailure(message: string): false {
+  lastPackageError = message;
+  editor.setStatus(message);
+  return false;
+}
+
+/**
  * Install a package from a git URL, direct file URL, or local path.
  *
  * Supports:
@@ -904,14 +1098,14 @@ async function installFromDirectFile(
       : result.exit_code > 0
       ? `HTTP ${result.exit_code}`
       : result.stderr.split("\n")[0] || "Download failed";
-    editor.setStatus(`Failed to download ${packageName}: ${errorMsg}`);
+    packageFailure(`Failed to download ${packageName}: ${errorMsg}`);
     fsLocal.removePath(tempFile);
     return false;
   }
 
   const content = fsLocal.readFile(tempFile);
   if (!content) {
-    editor.setStatus(`Failed to read downloaded file`);
+    packageFailure(`Failed to read downloaded file`);
     fsLocal.removePath(tempFile);
     return false;
   }
@@ -920,7 +1114,7 @@ async function installFromDirectFile(
   try {
     parsed = JSON.parse(content) as Record<string, unknown>;
   } catch (e) {
-    editor.setStatus(`Downloaded file is not valid JSON: ${e}`);
+    packageFailure(`Downloaded file is not valid JSON: ${e}`);
     fsLocal.removePath(tempFile);
     return false;
   }
@@ -939,7 +1133,7 @@ async function installFromDirectFile(
   );
 
   if (!looksLikeTheme) {
-    editor.setStatus(
+    packageFailure(
       `Unrecognized file format at ${url} - direct file install currently supports Fresh theme JSON only`
     );
     fsLocal.removePath(tempFile);
@@ -952,52 +1146,68 @@ async function installFromDirectFile(
   // Sanitize for use as a directory name.
   const safeName = packageName.replace(/[^a-zA-Z0-9_.-]/g, "-");
   const targetDir = editor.pathJoin(THEMES_PACKAGES_DIR, safeName);
+  // Remembered before anything is replaced so the finished install can
+  // report an upgrade; `null` when this is a first install.
+  const previousVersion = fsLocal.fileExists(targetDir)
+    ? installedVersion(targetDir)
+    : null;
 
-  if (fsLocal.fileExists(targetDir)) {
-    editor.setStatus(`Package '${safeName}' is already installed`);
-    fsLocal.removePath(tempFile);
-    return false;
-  }
-
-  ensureDir(THEMES_PACKAGES_DIR);
-  if (!ensureDir(targetDir)) {
-    editor.setStatus(`Failed to create package directory ${targetDir}`);
+  // Stage the whole package in the temp dir first. Only once it is
+  // complete does `swapInstalledDir` touch the installed copy, so a
+  // half-written theme can never replace a working one.
+  const stagingDir = editor.pathJoin(
+    editor.getTempDir(),
+    `fresh-pkg-theme-${hashString(url)}-${Date.now()}`,
+  );
+  if (!ensureDir(stagingDir)) {
+    packageFailure(`Failed to create staging directory ${stagingDir}`);
     fsLocal.removePath(tempFile);
     return false;
   }
 
   const themeFileName = "theme.json";
-  if (!fsLocal.writeFile(editor.pathJoin(targetDir, themeFileName), content)) {
-    editor.setStatus(`Failed to write theme file`);
+  if (!fsLocal.writeFile(editor.pathJoin(stagingDir, themeFileName), content)) {
+    packageFailure(`Failed to write theme file`);
     fsLocal.removePath(tempFile);
-    fsLocal.removePath(targetDir);
+    fsLocal.removePath(stagingDir);
     return false;
   }
 
   const manifest: PackageManifest = {
     name: safeName,
-    version: "1.0.0",
+    version: previousVersion ?? "1.0.0",
     description: `Theme installed from ${url}`,
     type: "theme",
     fresh: {
       themes: [{ file: themeFileName, name: themeName ?? safeName }],
     },
   };
-  if (!await writeJsonFile(editor.pathJoin(targetDir, "package.json"), manifest)) {
-    editor.setStatus(`Failed to write package manifest`);
+  if (!await writeJsonFile(editor.pathJoin(stagingDir, "package.json"), manifest)) {
+    packageFailure(`Failed to write package manifest`);
     fsLocal.removePath(tempFile);
-    fsLocal.removePath(targetDir);
+    fsLocal.removePath(stagingDir);
     return false;
   }
 
-  await writeJsonFile(editor.pathJoin(targetDir, ".fresh-source.json"), {
+  await writeJsonFile(editor.pathJoin(stagingDir, ".fresh-source.json"), {
     url,
+    installed_from: url,
     installed_at: new Date().toISOString(),
   });
 
+  ensureDir(THEMES_PACKAGES_DIR);
+  if (!swapInstalledDir(stagingDir, THEMES_PACKAGES_DIR, safeName, true)) {
+    packageFailure(`Failed to install ${safeName}: could not replace ${targetDir}`);
+    fsLocal.removePath(tempFile);
+    fsLocal.removePath(stagingDir);
+    return false;
+  }
+
   fsLocal.removePath(tempFile);
   editor.reloadThemes();
-  editor.setStatus(`Installed theme ${themeName ?? safeName}`);
+  editor.setStatus(
+    installedStatus("Installed theme", themeName ?? safeName, previousVersion, manifest.version),
+  );
   return true;
 }
 
@@ -1022,12 +1232,8 @@ async function installFromRepo(
   const result = await gitCommand(cloneArgs);
 
   if (result.exit_code !== 0) {
-    const errorMsg = result.stderr.includes("not found") || result.stderr.includes("404")
-      ? "Repository not found"
-      : result.stderr.includes("Authentication") || result.stderr.includes("403")
-      ? "Access denied (repository may be private)"
-      : result.stderr.split("\n")[0] || "Clone failed";
-    editor.setStatus(`Failed to install ${packageName}: ${errorMsg}`);
+    const errorMsg = gitErrorMessage(result.stderr, "Clone failed");
+    packageFailure(`Failed to install ${packageName}: ${errorMsg}`);
     return false;
   }
 
@@ -1043,7 +1249,7 @@ async function installFromRepo(
   const validation = validatePackage(tempDir, packageName);
   if (!validation.valid) {
     editor.warn(`[pkg] Invalid package '${packageName}': ${validation.error}`);
-    editor.setStatus(`Failed to install ${packageName}: ${validation.error}`);
+    packageFailure(`Failed to install ${packageName}: ${validation.error}`);
     // Clean up
     fsLocal.removePath(tempDir);
     return false;
@@ -1062,38 +1268,55 @@ async function installFromRepo(
                            : LANGUAGES_PACKAGES_DIR;
   const correctTargetDir = editor.pathJoin(correctPackagesDir, packageName);
 
-  // Check if already installed in correct location
-  if (fsLocal.fileExists(correctTargetDir)) {
-    editor.setStatus(`Package '${packageName}' is already installed`);
-    fsLocal.removePath(tempDir);
-    return false;
+  // An existing installation is an upgrade, not a dead end. The clone
+  // above is already fetched and validated, so replacing the old copy
+  // from here can only fail on a filesystem error — a bad download
+  // returned long before this point, leaving the install untouched.
+  const previousVersion = fsLocal.fileExists(correctTargetDir)
+    ? installedVersion(correctTargetDir)
+    : null;
+
+  // Record where this came from so the package manager can re-install
+  // it later without re-deriving the URL from the clone's git remote.
+  await writeJsonFile(editor.pathJoin(tempDir, ".fresh-source.json"), {
+    repository: repoUrl,
+    installed_from: repoUrl,
+    installed_at: new Date().toISOString()
+  });
+
+  if (previousVersion !== null) {
+    // Unload before replacing: files deleted under a loaded plugin
+    // leave the old copy running for the rest of the session.
+    await unloadPluginsUnder(correctTargetDir);
   }
 
   // Ensure correct directory exists and move from temp
   ensureDir(correctPackagesDir);
-  if (!fsLocal.renamePath(tempDir, correctTargetDir)) {
-    editor.setStatus(`Failed to install ${packageName}: could not move package to target directory`);
+  if (!swapInstalledDir(tempDir, correctPackagesDir, packageName, true)) {
+    packageFailure(`Failed to install ${packageName}: could not move package to target directory`);
     fsLocal.removePath(tempDir);
     return false;
   }
+
+  const newVersion = manifest?.version ?? "unknown";
 
   // Dynamically load plugins, reload themes, load language packs, or load bundles
   if (manifest?.type === "plugin" && validation.entryPath) {
     // Update entry path to new location
     const newEntryPath = validation.entryPath.replace(tempDir, correctTargetDir);
     await editor.loadPlugin(newEntryPath);
-    editor.setStatus(`Installed and activated ${packageName}${manifest ? ` v${manifest.version}` : ""}`);
+    editor.setStatus(installedStatus("Installed and activated", packageName, previousVersion, newVersion));
   } else if (manifest?.type === "theme") {
     editor.reloadThemes();
-    editor.setStatus(`Installed theme ${packageName}${manifest ? ` v${manifest.version}` : ""}`);
+    editor.setStatus(installedStatus("Installed theme", packageName, previousVersion, newVersion));
   } else if (manifest?.type === "language") {
     await loadLanguagePack(correctTargetDir, manifest);
-    editor.setStatus(`Installed language pack ${packageName}${manifest ? ` v${manifest.version}` : ""}`);
+    editor.setStatus(installedStatus("Installed language pack", packageName, previousVersion, newVersion));
   } else if (manifest?.type === "bundle") {
     await loadBundle(correctTargetDir, manifest);
-    editor.setStatus(`Installed bundle ${packageName}${manifest ? ` v${manifest.version}` : ""}`);
+    editor.setStatus(installedStatus("Installed bundle", packageName, previousVersion, newVersion));
   } else {
-    editor.setStatus(`Installed ${packageName}${manifest ? ` v${manifest.version}` : ""}`);
+    editor.setStatus(installedStatus("Installed", packageName, previousVersion, newVersion));
   }
   return true;
 }
@@ -1127,21 +1350,21 @@ async function installFromLocalPath(
 
   // Check if source exists
   if (!fsLocal.fileExists(sourcePath)) {
-    editor.setStatus(`Local path not found: ${sourcePath}`);
+    packageFailure(`Local path not found: ${sourcePath}`);
     return false;
   }
 
   // Check if it's a directory (by checking for package.json)
   const manifestPath = editor.pathJoin(sourcePath, "package.json");
   if (!fsLocal.fileExists(manifestPath)) {
-    editor.setStatus(`Not a valid package (no package.json): ${sourcePath}`);
+    packageFailure(`Not a valid package (no package.json): ${sourcePath}`);
     return false;
   }
 
   // Read manifest FIRST to determine actual package type and name
   const manifest = readJsonFile<PackageManifest>(manifestPath);
   if (!manifest) {
-    editor.setStatus(`Invalid package.json in ${sourcePath}`);
+    packageFailure(`Invalid package.json in ${sourcePath}`);
     return false;
   }
 
@@ -1156,29 +1379,34 @@ async function installFromLocalPath(
                            : LANGUAGES_PACKAGES_DIR;
   const correctTargetDir = editor.pathJoin(correctPackagesDir, packageName);
 
-  // Check if already installed in correct location
-  if (fsLocal.fileExists(correctTargetDir)) {
-    editor.setStatus(`Package '${packageName}' is already installed`);
-    return false;
-  }
+  // An existing installation is an upgrade, not a dead end.
+  const previousVersion = fsLocal.fileExists(correctTargetDir)
+    ? installedVersion(correctTargetDir)
+    : null;
 
   // Ensure correct directory exists
   ensureDir(correctPackagesDir);
 
-  // Copy the directory to correct target
+  // Copy into a staging directory and validate there, so a source that
+  // turns out not to be a valid package never touches an installation
+  // that already works.
+  const stagingDir = editor.pathJoin(
+    editor.getTempDir(),
+    `fresh-pkg-local-${hashString(sourcePath)}-${Date.now()}`,
+  );
   editor.setStatus(`Copying from ${sourcePath}...`);
-  if (!fsLocal.copyPath(sourcePath, correctTargetDir)) {
-    editor.setStatus(`Failed to copy package from ${sourcePath}`);
+  if (!fsLocal.copyPath(sourcePath, stagingDir)) {
+    packageFailure(`Failed to copy package from ${sourcePath}`);
     return false;
   }
 
   // Validate package structure
-  const validation = validatePackage(correctTargetDir, packageName);
+  const validation = validatePackage(stagingDir, packageName);
   if (!validation.valid) {
     editor.warn(`[pkg] Invalid package '${packageName}': ${validation.error}`);
-    editor.setStatus(`Failed to install ${packageName}: ${validation.error}`);
+    packageFailure(`Failed to install ${packageName}: ${validation.error}`);
     // Clean up the invalid package
-    fsLocal.removePath(correctTargetDir);
+    fsLocal.removePath(stagingDir);
     return false;
   }
 
@@ -1188,23 +1416,39 @@ async function installFromLocalPath(
     original_url: parsed.subpath ? `${parsed.repoUrl}#${parsed.subpath}` : parsed.repoUrl,
     installed_at: new Date().toISOString()
   };
-  await writeJsonFile(editor.pathJoin(correctTargetDir, ".fresh-source.json"), sourceInfo);
+  await writeJsonFile(editor.pathJoin(stagingDir, ".fresh-source.json"), sourceInfo);
+
+  if (previousVersion !== null) {
+    // Unload before replacing: files deleted under a loaded plugin
+    // leave the old copy running for the rest of the session.
+    await unloadPluginsUnder(correctTargetDir);
+  }
+  if (!swapInstalledDir(stagingDir, correctPackagesDir, packageName, true)) {
+    packageFailure(`Failed to install ${packageName}: could not move package to target directory`);
+    fsLocal.removePath(stagingDir);
+    return false;
+  }
+
+  const newVersion = manifest.version || "unknown";
+  // The validated entry path points into the staging directory; the
+  // package now lives at its install path.
+  const entryPath = validation.entryPath?.replace(stagingDir, correctTargetDir);
 
   // Dynamically load plugins, reload themes, load language packs, or load bundles
-  if (manifest.type === "plugin" && validation.entryPath) {
-    await editor.loadPlugin(validation.entryPath);
-    editor.setStatus(`Installed and activated ${packageName} v${manifest.version || "unknown"}`);
+  if (manifest.type === "plugin" && entryPath) {
+    await editor.loadPlugin(entryPath);
+    editor.setStatus(installedStatus("Installed and activated", packageName, previousVersion, newVersion));
   } else if (manifest.type === "theme") {
     editor.reloadThemes();
-    editor.setStatus(`Installed theme ${packageName} v${manifest.version || "unknown"}`);
+    editor.setStatus(installedStatus("Installed theme", packageName, previousVersion, newVersion));
   } else if (manifest.type === "language") {
     await loadLanguagePack(correctTargetDir, manifest);
-    editor.setStatus(`Installed language pack ${packageName} v${manifest.version || "unknown"}`);
+    editor.setStatus(installedStatus("Installed language pack", packageName, previousVersion, newVersion));
   } else if (manifest.type === "bundle") {
     await loadBundle(correctTargetDir, manifest);
-    editor.setStatus(`Installed bundle ${packageName} v${manifest.version || "unknown"}`);
+    editor.setStatus(installedStatus("Installed bundle", packageName, previousVersion, newVersion));
   } else {
-    editor.setStatus(`Installed ${packageName} v${manifest.version || "unknown"}`);
+    editor.setStatus(installedStatus("Installed", packageName, previousVersion, newVersion));
   }
   return true;
 }
@@ -1236,12 +1480,8 @@ async function installFromMonorepo(
 
     const cloneResult = await gitCommand(cloneArgs);
     if (cloneResult.exit_code !== 0) {
-      const errorMsg = cloneResult.stderr.includes("not found") || cloneResult.stderr.includes("404")
-        ? "Repository not found"
-        : cloneResult.stderr.includes("Authentication") || cloneResult.stderr.includes("403")
-        ? "Access denied (repository may be private)"
-        : cloneResult.stderr.split("\n")[0] || "Clone failed";
-      editor.setStatus(`Failed to clone repository: ${errorMsg}`);
+      const errorMsg = gitErrorMessage(cloneResult.stderr, "Clone failed");
+      packageFailure(`Failed to clone repository: ${errorMsg}`);
       return false;
     }
 
@@ -1253,7 +1493,7 @@ async function installFromMonorepo(
     // Verify subpath exists
     const subpathDir = editor.pathJoin(tempDir, parsed.subpath!);
     if (!fsLocal.fileExists(subpathDir)) {
-      editor.setStatus(`Subpath '${parsed.subpath}' not found in repository`);
+      packageFailure(`Subpath '${parsed.subpath}' not found in repository`);
       fsLocal.removePath(tempDir);
       return false;
     }
@@ -1262,7 +1502,7 @@ async function installFromMonorepo(
     const validation = validatePackage(subpathDir, packageName);
     if (!validation.valid) {
       editor.warn(`[pkg] Invalid package '${packageName}': ${validation.error}`);
-      editor.setStatus(`Failed to install ${packageName}: ${validation.error}`);
+      packageFailure(`Failed to install ${packageName}: ${validation.error}`);
       fsLocal.removePath(tempDir);
       return false;
     }
@@ -1280,50 +1520,60 @@ async function installFromMonorepo(
                              : LANGUAGES_PACKAGES_DIR;
     const correctTargetDir = editor.pathJoin(correctPackagesDir, packageName);
 
-    // Check if already installed
-    if (fsLocal.fileExists(correctTargetDir)) {
-      editor.setStatus(`Package '${packageName}' is already installed`);
-      fsLocal.removePath(tempDir);
-      return false;
-    }
+    // An existing installation is an upgrade, not a dead end. The
+    // subdirectory in the clone is already fetched and validated, so
+    // the old copy only goes once the replacement is known good.
+    const previousVersion = fsLocal.fileExists(correctTargetDir)
+      ? installedVersion(correctTargetDir)
+      : null;
 
     // Ensure correct directory exists
     ensureDir(correctPackagesDir);
 
-    // Copy subdirectory to correct target
-    editor.setStatus(`Installing ${packageName} from ${parsed.subpath}...`);
-    if (!fsLocal.copyPath(subpathDir, correctTargetDir)) {
-      editor.setStatus(`Failed to copy package from ${parsed.subpath}`);
-      fsLocal.removePath(tempDir);
-      return false;
-    }
-
-    // Store the original monorepo URL in a .fresh-source file
+    // Store the original monorepo URL in a .fresh-source file. Written
+    // into the clone before the swap so the marker lands with the files
+    // it describes.
     const sourceInfo = {
       repository: parsed.repoUrl,
       subpath: parsed.subpath,
       installed_from: `${parsed.repoUrl}#${parsed.subpath}`,
       installed_at: new Date().toISOString()
     };
-    await writeJsonFile(editor.pathJoin(correctTargetDir, ".fresh-source.json"), sourceInfo);
+    await writeJsonFile(editor.pathJoin(subpathDir, ".fresh-source.json"), sourceInfo);
+
+    if (previousVersion !== null) {
+      // Unload before replacing: files deleted under a loaded plugin
+      // leave the old copy running for the rest of the session.
+      await unloadPluginsUnder(correctTargetDir);
+    }
+
+    // Copy subdirectory to correct target
+    editor.setStatus(`Installing ${packageName} from ${parsed.subpath}...`);
+    if (!swapInstalledDir(subpathDir, correctPackagesDir, packageName, false)) {
+      packageFailure(`Failed to copy package from ${parsed.subpath}`);
+      fsLocal.removePath(tempDir);
+      return false;
+    }
+
+    const newVersion = manifest?.version ?? "unknown";
 
     // Dynamically load plugins, reload themes, load language packs, or load bundles
     if (manifest?.type === "plugin" && validation.entryPath) {
       // Update entry path to new location
       const newEntryPath = validation.entryPath.replace(subpathDir, correctTargetDir);
       await editor.loadPlugin(newEntryPath);
-      editor.setStatus(`Installed and activated ${packageName}${manifest ? ` v${manifest.version}` : ""}`);
+      editor.setStatus(installedStatus("Installed and activated", packageName, previousVersion, newVersion));
     } else if (manifest?.type === "theme") {
       editor.reloadThemes();
-      editor.setStatus(`Installed theme ${packageName}${manifest ? ` v${manifest.version}` : ""}`);
+      editor.setStatus(installedStatus("Installed theme", packageName, previousVersion, newVersion));
     } else if (manifest?.type === "language") {
       await loadLanguagePack(correctTargetDir, manifest);
-      editor.setStatus(`Installed language pack ${packageName}${manifest ? ` v${manifest.version}` : ""}`);
+      editor.setStatus(installedStatus("Installed language pack", packageName, previousVersion, newVersion));
     } else if (manifest?.type === "bundle") {
       await loadBundle(correctTargetDir, manifest);
-      editor.setStatus(`Installed bundle ${packageName}${manifest ? ` v${manifest.version}` : ""}`);
+      editor.setStatus(installedStatus("Installed bundle", packageName, previousVersion, newVersion));
     } else {
-      editor.setStatus(`Installed ${packageName}${manifest ? ` v${manifest.version}` : ""}`);
+      editor.setStatus(installedStatus("Installed", packageName, previousVersion, newVersion));
     }
     return true;
   } finally {
@@ -1528,117 +1778,40 @@ async function findMatchingSemver(pkgPath: string, spec: string): Promise<string
 }
 
 /**
- * Update a package
+ * Where an installed package can be re-fetched from, or `null` when
+ * nothing recorded a source.
+ *
+ * The `.fresh-source.json` marker comes first because every install
+ * path writes it; the git remote is the fallback for plain-repo
+ * installs made before the marker existed.
  */
-async function updatePackage(pkg: InstalledPackage): Promise<boolean> {
-  editor.setStatus(`Updating ${pkg.name}...`);
-
-  const result = await gitCommand(["-C", `${pkg.path}`, "pull", "--ff-only"]);
-
-  if (result.exit_code === 0) {
-    if (result.stdout.includes("Already up to date")) {
-      editor.setStatus(`${pkg.name} is already up to date`);
-    } else {
-      // Reload the plugin to apply changes
-      // Use listPlugins to find the correct runtime plugin name
-      if (pkg.type === "plugin") {
-        const loadedPlugins = await editor.listPlugins();
-        const plugin = loadedPlugins.find((p: { path: string }) => p.path.startsWith(pkg.path));
-        if (plugin) {
-          await editor.reloadPlugin(plugin.name);
-        }
-      } else if (pkg.type === "theme") {
-        editor.reloadThemes();
-      }
-      editor.setStatus(`Updated and reloaded ${pkg.name}`);
-    }
-    return true;
-  } else {
-    const errorMsg = result.stderr.includes("Could not resolve host")
-      ? "Network error"
-      : result.stderr.includes("Authentication") || result.stderr.includes("403")
-      ? "Authentication failed"
-      : result.stderr.split("\n")[0] || "Update failed";
-    editor.setStatus(`Failed to update ${pkg.name}: ${errorMsg}`);
-    return false;
-  }
+function updateSource(pkg: InstalledPackage): string | null {
+  return pkg.installedFrom || pkg.source || null;
 }
 
 /**
- * Reinstall a package from its original local path.
- * Removes the installed copy and re-copies from the source directory.
+ * Update a package by re-running its install from the source it came
+ * from.
+ *
+ * This used to be `git -C <pkgdir> pull --ff-only`, which only means
+ * anything for a plain-repo install, where the clone itself became the
+ * installed directory. A monorepo install is a copy of a subdirectory
+ * taken out of a throwaway clone and a local install is a copy of a
+ * directory: neither has a `.git`, so the pull failed and those
+ * packages could never be updated at all. Re-installing works for every
+ * kind, and inherits the install path's guarantees — it validates the
+ * new copy before touching the old one, unloads before replacing, and
+ * reloads afterwards.
  */
-async function reinstallPackage(pkg: InstalledPackage): Promise<boolean> {
-  if (!pkg.localSource) {
-    editor.setStatus(`Cannot reinstall ${pkg.name}: no local source path`);
+async function updatePackage(pkg: InstalledPackage): Promise<boolean> {
+  const source = updateSource(pkg);
+  if (!source) {
+    packageFailure(`Cannot update ${pkg.name}: no recorded install source`);
     return false;
   }
 
-  const sourcePath = pkg.localSource;
-
-  if (!fsLocal.fileExists(sourcePath)) {
-    editor.setStatus(`Source path no longer exists: ${sourcePath}`);
-    return false;
-  }
-
-  editor.setStatus(`Reinstalling ${pkg.name} from ${sourcePath}...`);
-
-  // Unload plugin first if applicable
-  if (pkg.type === "plugin") {
-    const loadedPlugins = await editor.listPlugins();
-    const plugin = loadedPlugins.find((p: { path: string }) => p.path.startsWith(pkg.path));
-    if (plugin) {
-      await editor.unloadPlugin(plugin.name).catch(() => {});
-    }
-  }
-
-  // Remove old copy
-  if (!fsLocal.removePath(pkg.path)) {
-    editor.setStatus(`Failed to remove old copy of ${pkg.name}`);
-    return false;
-  }
-
-  // Re-copy from source
-  if (!fsLocal.copyPath(sourcePath, pkg.path)) {
-    editor.setStatus(`Failed to copy from source: ${sourcePath}`);
-    return false;
-  }
-
-  // Re-write the .fresh-source.json marker
-  const sourceInfo = {
-    local_path: sourcePath,
-    original_url: pkg.source,
-    installed_at: new Date().toISOString()
-  };
-  await writeJsonFile(editor.pathJoin(pkg.path, ".fresh-source.json"), sourceInfo);
-
-  // Re-read manifest for validation and reload
-  const validation = validatePackage(pkg.path, pkg.name);
-  if (!validation.valid) {
-    editor.setStatus(`Reinstalled ${pkg.name} but package is invalid: ${validation.error}`);
-    return false;
-  }
-
-  const manifest = validation.manifest;
-
-  // Reload
-  if (manifest?.type === "plugin" && validation.entryPath) {
-    await editor.loadPlugin(validation.entryPath);
-    editor.setStatus(`Reinstalled and activated ${pkg.name}`);
-  } else if (manifest?.type === "theme") {
-    editor.reloadThemes();
-    editor.setStatus(`Reinstalled theme ${pkg.name}`);
-  } else if (manifest?.type === "language") {
-    await loadLanguagePack(pkg.path, manifest);
-    editor.setStatus(`Reinstalled language pack ${pkg.name}`);
-  } else if (manifest?.type === "bundle") {
-    await loadBundle(pkg.path, manifest);
-    editor.setStatus(`Reinstalled bundle ${pkg.name}`);
-  } else {
-    editor.setStatus(`Reinstalled ${pkg.name}`);
-  }
-
-  return true;
+  editor.setStatus(`Updating ${pkg.name} from ${source}...`);
+  return await installPackage(source, pkg.name);
 }
 
 /**
@@ -1666,7 +1839,7 @@ async function removePackage(pkg: InstalledPackage): Promise<boolean> {
     editor.setStatus(`Removed ${pkg.name}`);
     return true;
   } else {
-    editor.setStatus(`Failed to remove ${pkg.name}`);
+    packageFailure(`Failed to remove ${pkg.name}`);
     return false;
   }
 }
@@ -1675,9 +1848,7 @@ async function removePackage(pkg: InstalledPackage): Promise<boolean> {
  * Update all packages
  */
 async function updateAllPackages(): Promise<void> {
-  const plugins = getInstalledPackages("plugin");
-  const themes = getInstalledPackages("theme");
-  const all = [...plugins, ...themes];
+  const all = getAllInstalledPackages();
 
   if (all.length === 0) {
     editor.setStatus("No packages installed");
@@ -1690,27 +1861,17 @@ async function updateAllPackages(): Promise<void> {
   for (const pkg of all) {
     editor.setStatus(`Updating ${pkg.name} (${updated + failed + 1}/${all.length})...`);
 
-    if (pkg.localSource) {
-      // Local packages: reinstall from source path
-      const ok = await reinstallPackage(pkg);
-      if (ok) {
-        updated++;
-      } else {
-        failed++;
-      }
+    // One path for every kind of install — see `updatePackage`. A
+    // re-install always replaces, so there is no "unchanged" outcome
+    // to report any more.
+    if (await updatePackage(pkg)) {
+      updated++;
     } else {
-      const result = await gitCommand(["-C", `${pkg.path}`, "pull", "--ff-only"]);
-      if (result.exit_code === 0) {
-        if (!result.stdout.includes("Already up to date")) {
-          updated++;
-        }
-      } else {
-        failed++;
-      }
+      failed++;
     }
   }
 
-  editor.setStatus(`Update complete: ${updated} updated, ${all.length - updated - failed} unchanged, ${failed} failed`);
+  editor.setStatus(`Update complete: ${updated} updated, ${failed} failed`);
 }
 
 // =============================================================================
@@ -1723,9 +1884,7 @@ async function updateAllPackages(): Promise<void> {
 async function generateLockfile(): Promise<void> {
   editor.setStatus("Generating lockfile...");
 
-  const plugins = getInstalledPackages("plugin");
-  const themes = getInstalledPackages("theme");
-  const all = [...plugins, ...themes];
+  const all = getAllInstalledPackages();
 
   const lockfile: Lockfile = {
     lockfile_version: 1,
@@ -1837,11 +1996,14 @@ type FocusTarget =
 
 interface PkgManagerState {
   isOpen: boolean;
-  bufferId: number | null;
   splitId: number | null;
   sourceBufferId: number | null;
   filter: "all" | "installed" | "plugins" | "themes" | "languages" | "bundles";
   searchQuery: string;
+  /** Last failed action, shown in the detail panel. The status bar is
+   * overwritten by any other code path, so a failure the user has to
+   * act on gets its own place in this UI. */
+  error: string | null;
   items: PackageListItem[];
   selectedIndex: number;
   focus: FocusTarget;  // What element has Tab focus
@@ -1864,11 +2026,11 @@ interface PkgManagerState {
 
 const pkgState: PkgManagerState = {
   isOpen: false,
-  bufferId: null,
   splitId: null,
   sourceBufferId: null,
   filter: "all",
   searchQuery: "",
+  error: null,
   items: [],
   selectedIndex: 0,
   focus: { type: "list" },
@@ -1979,10 +2141,44 @@ editor.defineMode(
 );
 
 /**
+ * Compare two dotted version strings numerically, component by
+ * component: negative when `a` sorts before `b`, positive after, zero
+ * when equal. A leading `v` is ignored and non-numeric components
+ * compare as 0, which is enough to answer "is the registry's version
+ * newer than the one on disk" without pulling in a semver parser.
+ */
+function compareVersions(a: string, b: string): number {
+  const parts = (v: string) => v.replace(/^v/, "").split(".").map((n) => parseInt(n, 10) || 0);
+  const av = parts(a);
+  const bv = parts(b);
+  for (let i = 0; i < Math.max(av.length, bv.length); i++) {
+    const diff = (av[i] ?? 0) - (bv[i] ?? 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+}
+
+/**
  * Build package list from installed and registry data
  */
 function buildPackageList(): PackageListItem[] {
   const items: PackageListItem[] = [];
+
+  // Registry entries, keyed by package name, loaded up front so the
+  // installed rows below can consult them too — an installed package
+  // the registry knows about carries its `latest_version`, which is
+  // the one thing that lets `updateAvailable` be answered honestly.
+  const registrySynced = isRegistrySynced();
+  const registryEntries = new Map<string, RegistryEntry>();
+  const pluginRegistry = registrySynced ? loadRegistry("plugins") : null;
+  const themeRegistry = registrySynced ? loadRegistry("themes") : null;
+  const languageRegistry = registrySynced ? loadRegistry("languages") : null;
+  for (const registry of [pluginRegistry, themeRegistry, languageRegistry]) {
+    if (!registry) continue;
+    for (const [name, entry] of Object.entries(registry.packages)) {
+      registryEntries.set(name, entry);
+    }
+  }
 
   // Get installed packages
   const installedPlugins = getInstalledPackages("plugin");
@@ -1993,26 +2189,35 @@ function buildPackageList(): PackageListItem[] {
 
   for (const pkg of [...installedPlugins, ...installedThemes, ...installedLanguages, ...installedBundles]) {
     installedMap.set(pkg.name, pkg);
+    const entry = registryEntries.get(pkg.name);
+    // An update is "available" when the registry names a version newer
+    // than the one on disk. Packages the registry doesn't list have
+    // nothing to compare against — they still get an Update action,
+    // which re-installs from their recorded source.
+    const latestVersion = entry?.latest_version;
+    const updateAvailable = latestVersion !== undefined
+      && pkg.version !== "unknown"
+      && compareVersions(latestVersion, pkg.version) > 0;
     items.push({
       type: "installed",
       name: pkg.name,
-      description: pkg.manifest?.description || "No description",
+      description: pkg.manifest?.description || entry?.description || "No description",
       version: pkg.version,
       installed: true,
-      updateAvailable: false, // TODO: Check for updates
-      author: pkg.manifest?.author,
-      license: pkg.manifest?.license,
+      updateAvailable,
+      latestVersion,
+      author: pkg.manifest?.author || entry?.author,
+      license: pkg.manifest?.license || entry?.license,
       repository: pkg.source,
+      keywords: pkg.manifest?.keywords || entry?.keywords,
       packageType: pkg.type,
       installedPackage: pkg,
+      registryEntry: entry,
     });
   }
 
   // Get available packages from registry
-  if (isRegistrySynced()) {
-    const pluginRegistry = loadRegistry("plugins");
-    const themeRegistry = loadRegistry("themes");
-
+  if (pluginRegistry && themeRegistry && languageRegistry) {
     for (const [name, entry] of Object.entries(pluginRegistry.packages)) {
       if (!installedMap.has(name)) {
         items.push({
@@ -2058,7 +2263,6 @@ function buildPackageList(): PackageListItem[] {
     }
 
     // Add language packages from registry
-    const languageRegistry = loadRegistry("languages");
     for (const [name, entry] of Object.entries(languageRegistry.packages)) {
       if (!installedMap.has(name)) {
         items.push({
@@ -2166,10 +2370,16 @@ function getActionButtons(): string[] {
   const item = items[pkgState.selectedIndex];
 
   if (item.installed) {
-    if (item.installedPackage?.localSource) {
-      return ["Reinstall", "Uninstall"];
-    }
-    return item.updateAvailable ? ["Update", "Uninstall"] : ["Uninstall"];
+    // "Update" is offered whenever we know where the package came
+    // from, not only when a newer version has been detected: an
+    // update is a re-install from the recorded source, which is also
+    // what the old "Reinstall" button did, so the two collapse into
+    // one action. Gating it on `updateAvailable` is what used to make
+    // it unreachable — that flag is only knowable for packages the
+    // registry lists a version for.
+    const canUpdate = item.installedPackage !== undefined
+      && updateSource(item.installedPackage) !== null;
+    return canUpdate ? ["Update", "Uninstall"] : ["Uninstall"];
   } else {
     return ["Install"];
   }
@@ -2397,10 +2607,22 @@ function renderPkgList(): void {
       items: rows.map((r) => r.entry),
       itemKeys: rows.map((r) => r.key),
       selectedIndex: rowSel,
-      visibleRows: Math.max(1, rows.length),
+      // No `visibleRows`: the List windows itself to the pane's height
+      // and scrolls to keep the selection in view.
       key: "pkg-list",
     }),
   );
+  // The spec's `selectedIndex` only takes effect on the first mount:
+  // `updateWidgetPanel` preserves the host's instance state by design,
+  // so every later render leaves the widget's selection wherever it
+  // was. State it explicitly instead. Without this, a panel that
+  // mounted before the registry finished loading — an empty list, so
+  // selection -1 — kept that -1 once the packages arrived, and the
+  // first two arrow presses went into catching the widget up rather
+  // than moving the selection.
+  if (rowSel >= 0) {
+    pkgState.listPanel.setSelectedIndex("pkg-list", rowSel);
+  }
 }
 
 function buildPkgDetailEntries(): TextPropertyEntry[] {
@@ -2412,7 +2634,14 @@ function buildPkgDetailEntries(): TextPropertyEntry[] {
   if (selectedItem) {
     entries.push({ text: selectedItem.name + "\n", properties: { type: "detail-title" } });
     entries.push({ text: "─".repeat(Math.min(selectedItem.name.length + 2, 50)) + "\n", properties: { type: "detail-sep" } });
-    let metaLine = `v${selectedItem.version}`;
+    // The kind is on the row for available packages (the `[P]`/`[T]`
+    // tag) but nowhere for installed ones, so state it here — it is
+    // read straight off the manifest, which every installed package
+    // has whether or not a registry lists it.
+    let metaLine = `${selectedItem.packageType} • v${selectedItem.version}`;
+    if (selectedItem.updateAvailable && selectedItem.latestVersion) {
+      metaLine += ` → v${selectedItem.latestVersion}`;
+    }
     if (selectedItem.author) metaLine += ` • ${selectedItem.author}`;
     if (selectedItem.license) metaLine += ` • ${selectedItem.license}`;
     entries.push({ text: metaLine + "\n", properties: { type: "detail-meta" } });
@@ -2431,6 +2660,16 @@ function buildPkgDetailEntries(): TextPropertyEntry[] {
       let displayUrl = selectedItem.repository.replace(/^https?:\/\//, "").replace(/\.git$/, "");
       if (displayUrl.length > 50) displayUrl = displayUrl.slice(0, 47) + "...";
       entries.push({ text: displayUrl + "\n", properties: { type: "detail-url" } });
+      entries.push({ text: "\n", properties: { type: "blank" } });
+    }
+    if (pkgState.error) {
+      for (const line of wrapText(pkgState.error, 50)) {
+        entries.push({
+          text: line + "\n",
+          properties: { type: "detail-error" },
+          style: { fg: "diagnostics.error" },
+        });
+      }
       entries.push({ text: "\n", properties: { type: "blank" } });
     }
     const actions = getActionButtons();
@@ -2464,6 +2703,13 @@ function renderPkgFooter(): void {
 
 function updatePkgManagerView(): void {
   if (pkgState.groupId === null) return;
+  // The item set changes under the selection — the background registry
+  // sync lands, a filter narrows it, a package is uninstalled — so pin
+  // it back into range before anything renders against it.
+  const itemCount = getFilteredItems().length;
+  pkgState.selectedIndex = itemCount === 0
+    ? 0
+    : Math.min(pkgState.selectedIndex, itemCount - 1);
   // Header + detail still flow through the legacy `setPanelContent`
   // path — their UI shape (filter/sync/search inputs in the header,
   // action buttons in the detail) spans cross-panel focus, which
@@ -2481,11 +2727,21 @@ function updatePkgManagerView(): void {
  */
 async function openPackageManager(): Promise<void> {
   if (pkgState.isOpen) {
-    // Already open, just focus it
-    if (pkgState.bufferId !== null) {
-      editor.showBuffer(pkgState.bufferId);
+    // Adopt the group we already own and bring it to the front, rather
+    // than stacking a second one. This used to key off `pkgState
+    // .bufferId`, which nothing ever assigned (the buffer-group
+    // migration left it null), so re-running the command while the
+    // manager was open did nothing at all.
+    const listBufferId = pkgState.panelBuffers["list"];
+    if (typeof listBufferId === "number" && bufferExists(listBufferId)) {
+      editor.showBuffer(listBufferId);
+      return;
     }
-    return;
+    // The group is gone without us hearing about it. Drop the dead
+    // handles and open a new one instead of returning to a UI that no
+    // longer exists.
+    unmountPkgPanels();
+    resetPkgManagerState();
   }
 
   // Store current buffer
@@ -2497,10 +2753,14 @@ async function openPackageManager(): Promise<void> {
   pkgState.searchQuery = "";
   pkgState.selectedIndex = 0;
   pkgState.focus = { type: "list" };
+  pkgState.error = null;
 
   // Build package list immediately with installed packages and cached registry
   pkgState.items = buildPackageList();
-  pkgState.isLoading = false;
+  // With nothing installed and no cached registry the first paint has
+  // no rows at all. Say so, rather than claiming "No packages found"
+  // while the background sync below is still fetching them.
+  pkgState.isLoading = !isRegistrySynced();
 
   // Create buffer group with layout:
   // vertical: [header(fixed 4), horizontal: [list, detail], footer(fixed 1)]
@@ -2518,7 +2778,11 @@ async function openPackageManager(): Promise<void> {
         type: "split",
         direction: "h",
         ratio: 0.4,
-        first: { type: "scrollable", id: "list" },
+        // The list is a List widget that windows itself to the pane;
+        // the buffer under it does not scroll (`scrollable: false` is
+        // what makes the pane's panel a described one). The detail is
+        // plain panel content and scrolls as a buffer.
+        first: { type: "scrollable", id: "list", scrollable: false },
         second: { type: "scrollable", id: "detail" },
       },
       second: { type: "fixed", id: "footer", height: 1 },
@@ -2546,12 +2810,56 @@ async function openPackageManager(): Promise<void> {
 
   // Sync registry in background and update view when done
   // User can still interact with installed packages during sync
-  syncRegistry().then(() => {
-    if (pkgState.isOpen) {
-      pkgState.items = buildPackageList();
-      updatePkgManagerView();
-    }
-  });
+  syncRegistry()
+    .then(() => {
+      if (pkgState.isOpen) {
+        pkgState.isLoading = false;
+        pkgState.items = buildPackageList();
+        updatePkgManagerView();
+      }
+    })
+    // Detached, so it needs its own catch: an unhandled rejection here
+    // takes down the plugin runtime, and the browser is perfectly
+    // usable for installed packages without the registry.
+    .catch((e) => {
+      editor.warn(`[pkg] Background registry sync failed: ${e}`);
+      if (pkgState.isOpen) {
+        pkgState.isLoading = false;
+        updatePkgManagerView();
+      }
+    });
+}
+
+/** Whether `bufferId` is still a live buffer. */
+function bufferExists(bufferId: number): boolean {
+  return editor.listBuffers().some((b) => b.id === bufferId);
+}
+
+/**
+ * Unmount the widget panels the manager owns.
+ *
+ * The host keys panels by (plugin, panel id) and is never told that a
+ * panel's buffer went away, so a panel that is merely dropped on the
+ * plugin side stays registered against a dead buffer for the rest of
+ * the session. Closing the buffer group is not an unmount; only this
+ * is.
+ */
+function unmountPkgPanels(): void {
+  pkgState.listPanel?.unmount();
+  pkgState.footerPanel?.unmount();
+  pkgState.listPanel = null;
+  pkgState.footerPanel = null;
+  pkgListRowCache = [];
+}
+
+/** Drop every handle into a package-manager UI that no longer exists. */
+function resetPkgManagerState(): void {
+  pkgState.isOpen = false;
+  pkgState.groupId = null;
+  pkgState.panelBuffers = {};
+  pkgState.splitId = null;
+  pkgState.sourceBufferId = null;
+  pkgState.error = null;
 }
 
 /**
@@ -2560,32 +2868,47 @@ async function openPackageManager(): Promise<void> {
 function closePackageManager(): void {
   if (!pkgState.isOpen) return;
 
-  // Close the buffer group if using the new system
-  if (pkgState.groupId !== null) {
-    editor.closeBufferGroup(pkgState.groupId);
-    pkgState.groupId = null;
-    pkgState.panelBuffers = {};
-  } else if (pkgState.bufferId !== null) {
-    editor.closeBuffer(pkgState.bufferId);
+  const groupId = pkgState.groupId;
+  const sourceBufferId = pkgState.sourceBufferId;
+  const splitId = pkgState.splitId;
+
+  // Unmount before the buffers go, and clear the state before the
+  // close fires `buffer_closed` for each panel — by then there is
+  // nothing left for `pkg_buffer_closed` to tear down, so the two
+  // teardown routes can't trip over each other.
+  unmountPkgPanels();
+  resetPkgManagerState();
+
+  if (groupId !== null) {
+    editor.closeBufferGroup(groupId);
   }
 
   // Restore previous buffer if possible
-  if (pkgState.sourceBufferId !== null && pkgState.splitId !== null) {
-    editor.showBuffer(pkgState.sourceBufferId);
+  if (sourceBufferId !== null && splitId !== null) {
+    editor.showBuffer(sourceBufferId);
   }
-
-  // Reset state. The buffer group's close will tear down the panel
-  // buffers and (implicitly) the widget panels rendering into them;
-  // we just null the handles so any stray render call after close
-  // is a no-op.
-  pkgState.isOpen = false;
-  pkgState.bufferId = null;
-  pkgState.splitId = null;
-  pkgState.sourceBufferId = null;
-  pkgState.listPanel = null;
-  pkgState.footerPanel = null;
-  pkgListRowCache = [];
 }
+
+/**
+ * Tear down when a panel buffer is closed by the editor rather than by
+ * `pkg_back_or_close`: the group tab's ×, File → Close Buffer, or a
+ * split going away.
+ *
+ * Without this the state stays "open" pointing at dead buffer ids, and
+ * because the open path then takes its adopt branch, `Package:
+ * Packages` never opens again for the rest of the session.
+ */
+function pkg_buffer_closed(data: { buffer_id: number }): void {
+  if (!pkgState.isOpen) return;
+  const isOurs = Object.values(pkgState.panelBuffers).some(
+    (id) => id === data.buffer_id,
+  );
+  if (!isOurs) return;
+  unmountPkgPanels();
+  resetPkgManagerState();
+}
+registerHandler("pkg_buffer_closed", pkg_buffer_closed);
+editor.on("buffer_closed", "pkg_buffer_closed");
 
 /**
  * Get all focusable elements in order for Tab navigation
@@ -2631,21 +2954,43 @@ function getCurrentFocusIndex(): number {
 }
 
 // Navigation commands
+
+/**
+ * Move the list selection by `delta` packages.
+ *
+ * The plugin owns the selection and pushes it to the List widget
+ * (`renderPkgList`), rather than forwarding the arrow key and adopting
+ * whichever row the host lands on. That indirection is what made Down
+ * look dead: the widget's rows include non-selectable section headers
+ * and a spacer, and its instance state survives every re-render, so a
+ * key press could move the widget's highlight without moving
+ * `pkgState.selectedIndex` at all. Counting in packages makes one
+ * press move the selection by exactly one package, every time.
+ */
+function moveSelection(delta: number): void {
+  pkgState.focus = { type: "list" };
+  const items = getFilteredItems();
+  if (items.length === 0) return;
+  const next = Math.min(
+    items.length - 1,
+    Math.max(0, pkgState.selectedIndex + delta),
+  );
+  if (next === pkgState.selectedIndex) return;
+  pkgState.selectedIndex = next;
+  // The error belongs to the package it happened on.
+  pkgState.error = null;
+  updatePkgManagerView();
+}
+
 function pkg_nav_up(): void {
   if (!pkgState.isOpen) return;
-  // Always snap focus back to the list and let the host move the
-  // List widget's selection. The resulting `widget_event "select"`
-  // updates `pkgState.selectedIndex` and refreshes the detail
-  // panel — see the `widget_event` listener installed below.
-  pkgState.focus = { type: "list" };
-  pkgState.listPanel?.command(key("Up"));
+  moveSelection(-1);
 }
 registerHandler("pkg_nav_up", pkg_nav_up);
 
 function pkg_nav_down(): void {
   if (!pkgState.isOpen) return;
-  pkgState.focus = { type: "list" };
-  pkgState.listPanel?.command(key("Down"));
+  moveSelection(1);
 }
 registerHandler("pkg_nav_down", pkg_nav_down);
 
@@ -2661,10 +3006,22 @@ editor.on("widget_event", (data) => {
       typeof data.payload?.index === "number" ? data.payload.index : -1;
     if (rowIdx < 0) return;
     const itemIdx = selectedRowToItemIndex(rowIdx);
-    if (itemIdx < 0) return; // selection landed on a section header
+    if (itemIdx < 0) {
+      // A click landed on a section header or the blank spacer between
+      // sections. Those aren't packages, so put the highlight back on
+      // the selected one instead of leaving it parked on a row the
+      // detail panel has nothing to say about.
+      const rowSel = itemIndexToRow(pkgState.selectedIndex);
+      if (rowSel >= 0) {
+        pkgState.listPanel?.setSelectedIndex("pkg-list", rowSel);
+      }
+      return;
+    }
     if (itemIdx === pkgState.selectedIndex) return;
     pkgState.selectedIndex = itemIdx;
     pkgState.focus = { type: "list" };
+    // The error belongs to the package it happened on.
+    pkgState.error = null;
     // Re-render header/detail to reflect the new selection;
     // the list itself is already updated by the host (we don't
     // need to call renderPkgList again).
@@ -2703,6 +3060,51 @@ function pkg_prev_button() : void {
 }
 registerHandler("pkg_prev_button", pkg_prev_button);
 
+/**
+ * Run one of the browser's package actions, refreshing the list
+ * afterwards and keeping any failure on screen in the detail panel.
+ * The action's own progress messages still go to the status bar.
+ */
+async function runPackageAction(
+  run: () => Promise<boolean>,
+): Promise<boolean> {
+  pkgState.error = null;
+  lastPackageError = null;
+  const selectedName = getFilteredItems()[pkgState.selectedIndex]?.name;
+  const ok = await run();
+  if (!ok) {
+    pkgState.error = lastPackageError ?? "Action failed";
+  }
+  pkgState.items = buildPackageList();
+  // Keep the selection on the same package. The list is ordered
+  // installed-first, so installing one moves it up past every
+  // available entry and a positional index would land on something
+  // else. A package that is gone (uninstalled) leaves the index where
+  // it was, which `updatePkgManagerView` clamps into range.
+  if (selectedName !== undefined) {
+    const idx = getFilteredItems().findIndex((i) => i.name === selectedName);
+    if (idx >= 0) {
+      pkgState.selectedIndex = idx;
+    }
+  }
+  return ok;
+}
+
+/**
+ * Re-read what is installed and repaint, if the browser is open.
+ *
+ * Installs and removals started from outside the browser's own action
+ * buttons — `Package: Install from URL`, the registry finder, the
+ * Update / Remove finders — otherwise leave it showing the package set
+ * from when it was opened, so a package just installed from a URL
+ * doesn't appear until the browser is closed and reopened.
+ */
+function refreshPackageManagerIfOpen(): void {
+  if (!pkgState.isOpen) return;
+  pkgState.items = buildPackageList();
+  updatePkgManagerView();
+}
+
 async function pkg_activate() : Promise<void> {
   if (!pkgState.isOpen) return;
 
@@ -2713,6 +3115,7 @@ async function pkg_activate() : Promise<void> {
     const filters = ["all", "installed", "plugins", "themes", "languages", "bundles"] as const;
     pkgState.filter = filters[focus.index];
     pkgState.selectedIndex = 0;
+    pkgState.error = null;
     pkgState.items = buildPackageList();
     updatePkgManagerView();
     return;
@@ -2758,24 +3161,25 @@ async function pkg_activate() : Promise<void> {
     const actions = getActionButtons();
     const actionName = actions[focus.index];
 
-    if (actionName === "Reinstall" && item.installedPackage) {
-      await reinstallPackage(item.installedPackage);
-      pkgState.items = buildPackageList();
+    const installedPackage = item.installedPackage;
+    if (actionName === "Update" && installedPackage) {
+      await runPackageAction(() => updatePackage(installedPackage));
       updatePkgManagerView();
-    } else if (actionName === "Update" && item.installedPackage) {
-      await updatePackage(item.installedPackage);
-      pkgState.items = buildPackageList();
-      updatePkgManagerView();
-    } else if (actionName === "Uninstall" && item.installedPackage) {
-      await removePackage(item.installedPackage);
-      pkgState.items = buildPackageList();
+    } else if (actionName === "Uninstall" && installedPackage) {
+      await runPackageAction(() => removePackage(installedPackage));
       const newItems = getFilteredItems();
       pkgState.selectedIndex = Math.min(pkgState.selectedIndex, Math.max(0, newItems.length - 1));
       pkgState.focus = { type: "list" };
       updatePkgManagerView();
-    } else if (actionName === "Install" && item.registryEntry) {
-      await installPackage(item.registryEntry.repository, item.name, item.packageType);
-      pkgState.items = buildPackageList();
+    } else if (actionName === "Install") {
+      const installUrl = item.registryEntry?.repository ?? item.repository;
+      if (installUrl) {
+        await runPackageAction(() =>
+          installPackage(installUrl, item.name, item.packageType)
+        );
+      } else {
+        pkgState.error = `Cannot install ${item.name}: no source URL`;
+      }
       updatePkgManagerView();
     }
   }
@@ -2856,6 +3260,7 @@ const registryFinder = new Finder<[string, RegistryEntry]>(editor, {
   maxResults: 100,
   onSelect: async ([name, entry]) => {
     await installPackage(entry.repository, name, "plugin");
+    refreshPackageManagerIfOpen();
   }
 });
 
@@ -2945,11 +3350,22 @@ editor.on("prompt_confirmed", async (args) => {
   if (args.prompt_type !== "pkg-install-url") return true;
 
   const url = args.input.trim();
-  if (url) {
-    await installPackage(url);
-  } else {
+  if (!url) {
     editor.setStatus("No URL or path provided");
+    return true;
   }
+
+  // The handler's promise is detached from here on, so it carries its
+  // own catch: an unhandled rejection is fatal to the plugin runtime.
+  try {
+    await installPackage(url);
+  } catch (e) {
+    packageFailure(`Install failed: ${e}`);
+  }
+  // A package installed from a URL is an installed package like any
+  // other; if the browser is open it belongs in the list now, not
+  // after a close and reopen.
+  refreshPackageManagerIfOpen();
 
   return true;
 });
@@ -2967,6 +3383,7 @@ registerHandler("pkg_list", pkg_list);
  */
 async function pkg_update_all() : Promise<void> {
   await updateAllPackages();
+  refreshPackageManagerIfOpen();
 }
 registerHandler("pkg_update_all", pkg_update_all);
 
@@ -2974,9 +3391,7 @@ registerHandler("pkg_update_all", pkg_update_all);
  * Update a specific package
  */
 function pkg_update() : void {
-  const plugins = getInstalledPackages("plugin");
-  const themes = getInstalledPackages("theme");
-  const all = [...plugins, ...themes];
+  const all = getAllInstalledPackages();
 
   if (all.length === 0) {
     editor.setStatus("No packages installed");
@@ -2992,11 +3407,8 @@ function pkg_update() : void {
     }),
     preview: false,
     onSelect: async (pkg) => {
-      if (pkg.localSource) {
-        await reinstallPackage(pkg);
-      } else {
-        await updatePackage(pkg);
-      }
+      await updatePackage(pkg);
+      refreshPackageManagerIfOpen();
     }
   });
 
@@ -3014,9 +3426,7 @@ registerHandler("pkg_update", pkg_update);
  * Remove a package
  */
 function pkg_remove() : void {
-  const plugins = getInstalledPackages("plugin");
-  const themes = getInstalledPackages("theme");
-  const all = [...plugins, ...themes];
+  const all = getAllInstalledPackages();
 
   if (all.length === 0) {
     editor.setStatus("No packages installed");
@@ -3033,6 +3443,7 @@ function pkg_remove() : void {
     preview: false,
     onSelect: async (pkg) => {
       await removePackage(pkg);
+      refreshPackageManagerIfOpen();
     }
   });
 
@@ -3058,9 +3469,7 @@ registerHandler("pkg_sync", pkg_sync);
  * Show outdated packages
  */
 async function pkg_outdated() : Promise<void> {
-  const plugins = getInstalledPackages("plugin");
-  const themes = getInstalledPackages("theme");
-  const all = [...plugins, ...themes];
+  const all = getAllInstalledPackages();
 
   if (all.length === 0) {
     editor.setStatus("No packages installed");
@@ -3071,7 +3480,17 @@ async function pkg_outdated() : Promise<void> {
 
   const outdated: Array<{ pkg: InstalledPackage; behind: number }> = [];
 
+  let skipped = 0;
   for (const pkg of all) {
+    // Only a plain-repo install has a .git to count commits against. A
+    // monorepo-subpath or local-directory install is a copy, so git
+    // here reports nothing and the package would silently look up to
+    // date; those are updated by re-installing (see `updatePackage`).
+    if (!fsLocal.fileExists(editor.pathJoin(pkg.path, ".git"))) {
+      skipped++;
+      continue;
+    }
+
     // Fetch latest
     await gitCommand(["-C", `${pkg.path}`, "fetch"]);
 
@@ -3087,7 +3506,11 @@ async function pkg_outdated() : Promise<void> {
   }
 
   if (outdated.length === 0) {
-    editor.setStatus("All packages are up to date");
+    editor.setStatus(
+      skipped > 0
+        ? `All git-tracked packages are up to date (${skipped} installed by copy — use Update to re-install)`
+        : "All packages are up to date",
+    );
     return;
   }
 
@@ -3101,6 +3524,7 @@ async function pkg_outdated() : Promise<void> {
     preview: false,
     onSelect: async (item) => {
       await updatePackage(item.pkg);
+      refreshPackageManagerIfOpen();
     }
   });
 

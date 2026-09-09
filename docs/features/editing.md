@@ -9,14 +9,19 @@ Some keybindings may not work or may differ on your system due to differences in
 - **Smart Home** — Home toggles between first non-whitespace character and column 0.
 - **Smart Backspace** — Backspace in leading whitespace removes one indent level instead of a single character.
 - **Auto-indent** — Enter preserves the current indentation level. After `{`, `(`, or `:`, an extra indent level is added.
-- **Auto-close** — Typing an opening bracket or quote inserts the closing pair. Controlled by `auto_close` (default: on), independent of `auto_indent`. Per-language overrides via `languages.<lang>.auto_close`.
-- **Surround selection** — With text selected, typing an opening delimiter wraps the selection (e.g. select `hello`, type `(` → `(hello)`). Controlled by `auto_surround` (default: on) with per-language overrides.
+- **Auto-close** — Typing an opening bracket or quote inserts the closing pair. Controlled by `auto_close` (default: on), independent of `auto_indent`. Per-language overrides via `languages.<lang>.auto_close`. Plain text files never auto-close quotes, only brackets.
+- **Surround selection** — With text selected, typing an opening delimiter wraps the selection (e.g. select `hello`, type `(` → `(hello)`). Controlled by `auto_surround` (default: on) with per-language overrides. It is independent of `auto_close`: either can be on with the other off.
+- **Markdown types delimiters literally** — Markdown ships with both `languages.markdown.auto_close` and `languages.markdown.auto_surround` set to `false`, because prose types backticks, quotes and brackets as literal text far more often than as pairs. Set either to `true` to opt back in.
 - **Smart quote suppression** — Quotes typed inside an existing string don't auto-close.
 - **Bracket matching** — Matching brackets are highlighted. Use "Go to Matching Bracket" from the command palette to jump. Enabled by default; toggle via `highlight_matching_brackets` in settings.
 
 ## Vertical Rulers
 
 Add column rulers at any position via "Add Ruler" from the command palette. Useful for enforcing line length limits. Remove with "Remove Ruler". Rulers are per-buffer. The `rulers` config setting can also set default rulers (e.g. `[80, 120]`).
+
+Ruler columns are 1-based *display* columns — screen cells, not characters: a ruler at 80 highlights the 80th display column, the last one the text may occupy. A tab advances to the next tab stop and a full-width character (CJK, most emoji) takes two cells, so on lines containing either, the ruler column is not the character count the status bar reports; for plain ASCII text the two numbers agree. Values below 1 are not valid columns and are ignored.
+
+When a ruler column falls inside a full-width character — for example a ruler at an even column on a line of CJK text — the guide marks that character's first cell, so it stays visible and still points at the character occupying the column. On such a row the bar can therefore sit one cell to the left of where it runs on the rows above and below.
 
 ## Indentation Guides
 
@@ -25,6 +30,8 @@ Enable vertical indentation guides in the Settings UI. The default is off; choos
 Guides are visual-only: they replace rendered leading whitespace cells without changing buffer text, cursor positions, byte mappings, or mouse behavior. Themes can set the guide color with the `indentation_guide_fg` key; when omitted, it inherits the whitespace-indicator color.
 
 Turn on `editor.rainbow_indentation` to color guide levels independently. Themes configure the six-color cycle with `indent_rainbow_1` through `indent_rainbow_6`; these colors are separate from bracket-rainbow and accent colors.
+
+**Per-buffer override** — **Toggle Indentation Guides (Current Buffer)** in the command palette flips guides for the active buffer only, leaving the global setting and other buffers untouched. Turning them on in a buffer where the global mode is `none` draws every level; where it is `active`, that mode is kept. The choice persists across restarts.
 
 Guides are a source-code aid, so plain-text buffers (language `text` — undetected files, `.txt`, and buffers manually set to Plain Text) never draw them, even when guides are enabled globally. Any language can opt out (or plain text back in) with the per-language `indentation_guide` setting:
 
@@ -43,11 +50,11 @@ The row the cursor is on is highlighted for quick visual tracking. Enabled by de
 
 ## Occurrence Highlighting
 
-Every occurrence of the word under the cursor is highlighted in the viewport. Enabled by default; toggle with **Toggle Occurrence Highlight** from the command palette or in the Settings UI.
+Every occurrence of the word under the cursor is highlighted in the viewport. While text is selected the selection takes over: the word highlight is dropped and every other instance of the *selected* text in the viewport is highlighted instead. Only single-line selections of at least `min_word_length` characters are matched - a one-character selection would mark most of the screen. The highlight uses the `ui.semantic_highlight_bg` theme key, which every builtin keeps clearly separated from both `editor.bg` and `editor.selection_bg` - in truecolor and after 256-colour quantisation. Because a background that visible necessarily overlaps the range where syntax colours live, a foreground that would become unreadable on it is nudged to the nearest legible shade for as long as the highlight is painted. Enabled by default; toggle with **Toggle Occurrence Highlight** from the command palette or in the Settings UI.
 
 ## Post-EOF Background
 
-Rows past the end of the buffer render with a distinct background color (`post_eof_bg` theme key) so the "end of file" boundary is obvious even without `~` tildes. Works alongside `show_tilde`.
+Rows past the end of the buffer keep the theme's editor background, so the empty space below a short file reads as the same surface as the text above it; the end of the buffer is marked by the `~` tildes (`show_tilde`, on by default). A theme that wants that space called out with a shade of its own sets the `editor.after_eof_bg` key - in a custom theme JSON, or in the graphical theme editor under **Editor -> After End-of-File Background** - and those rows use it instead.
 
 ## Auto-Save
 
@@ -60,6 +67,8 @@ Fold and unfold code blocks via gutter indicators or "Toggle Fold" from the comm
 - **LSP folding** — uses `foldingRange` from the language server when available.
 - **Indent-based folding** — fallback for files without LSP support and large file mode. Fold from any line within an indented block.
 
+**Per-buffer override** — **Toggle Folding Indicators (Current Buffer)** in the command palette hides the ▾/▸ gutter arrows for the active buffer only. Existing folds are untouched — collapsed regions stay collapsed and keep their placeholder, and "Toggle Fold" still works — but a gutter click no longer creates a fold, since there is no arrow to aim at. The choice persists across restarts.
+
 ## Read-Only Mode
 
 Files without write permission and known library paths (rustup toolchains, `/usr/include`, `/nix/store`, Homebrew Cellar, `.nuget`, Xcode SDKs) open as read-only automatically. The status bar shows `[RO]`. Use "Toggle Read Only" from the command palette to override for a single buffer, or set `auto_read_only` to `false` in config to disable automatic read-only entirely (binary files still open read-only).
@@ -67,6 +76,12 @@ Files without write permission and known library paths (rustup toolchains, `/usr
 ## Whitespace Indicators
 
 Control visibility of space (`·`) and tab (`→`) characters. Configure independently for leading, inner, and trailing positions via the Settings UI or `whitespace_indicators` in config. A master toggle and per-language overrides are supported. Theme color: `whitespace_indicator_fg`.
+
+**Toggle Whitespace Indicators (Current Buffer)** in the command palette flips the master toggle for the active buffer. Switching it on marks every space, whatever the configured per-position settings say — otherwise the command looks inert in a space-indented file with the default settings (spaces off, tabs on). Tab and line-ending indicators follow the configuration, so a language that hides tab arrows keeps hiding them. "Reset Buffer Settings" drops the per-buffer choice.
+
+Line endings can be shown too: `whitespace_newlines` renders `↵` at the end of every line, and `whitespace_carriage_returns` renders `␍` for the CR half of CRLF (and Classic-Mac CR) line endings — so a CRLF file shows `␍↵` where an LF file shows `↵`. Both are off by default and follow the same master toggle.
+
+Inside a selection the indicators appear regardless of the settings above, so selected runs of spaces and tabs stay legible without turning indicators on for the whole buffer. Set `whitespace_in_selection` to `false` to switch that off; it is independent of the master toggle and of the per-buffer whitespace overrides. Selected indicators are drawn in `whitespace_indicator_selected_fg`, a subdued color that a theme may set explicitly and that is otherwise derived from `selection_bg` — without it they would take the selected text's own foreground and read as content rather than as marks.
 
 ## Inline Diagnostics
 
@@ -76,7 +91,7 @@ Diagnostic messages can be displayed at the end of each line, right-aligned, wit
 
 When line wrap is enabled (`line_wrap` in settings), wrapped continuation lines preserve the indentation of their parent line (hanging indent).
 
-**Per-buffer overrides** — **Toggle Line Wrap (Current Buffer)** and **Toggle Line Numbers (Current Buffer)** flip these for the active buffer only, leaving the global default and other buffers untouched. The override persists across restarts; the editor-wide **Toggle Line Wrap** / **Toggle Line Numbers** commands still change the default for everything else.
+**Per-buffer overrides** — **Toggle Line Wrap (Current Buffer)** and **Toggle Line Numbers (Current Buffer)** flip these for the active buffer only, leaving the global default and other buffers untouched. The override persists across restarts; the editor-wide **Toggle Line Wrap** / **Toggle Line Numbers** commands still change the default for everything else and save it to your config. See [Per-Buffer Overrides](../configuration/index.md#per-buffer-overrides) for the naming convention every settings toggle follows.
 
 ## Multiple Cursors
 
@@ -102,6 +117,8 @@ Edit multiple locations simultaneously:
 | `Shift+Home/End` | Select to line start/end |
 | `Ctrl+Shift+Home/End` | Select to document start/end |
 | `Shift+PgUp/PgDn` | Select page up/down |
+
+Selected line breaks are drawn too: every line break inside the selection highlights the single column it occupies — column 0 on an empty line, just past the text otherwise — so a selection that spans blank lines is visible instead of leaving them looking untouched. Whitespace inside the selection also gets its `·` / `→` indicators (see [Whitespace Indicators](#whitespace-indicators)).
 
 ### Block Selection
 
@@ -165,8 +182,8 @@ Configure `trim_trailing_whitespace_on_save` and `ensure_final_newline_on_save` 
 | `Ctrl+F` | Search in buffer |
 | `Ctrl+R` | Replace in buffer |
 | `Ctrl+Alt+R` | Interactive replace (y/n/!/q for each match) |
-| `F3` | Find next match |
-| `Shift+F3` | Find previous match |
+| `F3` | Find next match (works with the search bar open, which stays open) |
+| `Shift+F3` | Find previous match (likewise) |
 | `Alt+N` / `Ctrl+F3` | Find next occurrence of selection |
 | `Alt+P` / `Ctrl+Shift+F3` | Find previous occurrence of selection |
 
@@ -239,6 +256,29 @@ Smart editing for Markdown files (provided by the built-in `markdown_source` plu
 ### Compose Mode
 
 "Markdown: Toggle Compose" from the command palette enables a distraction-free mode that conceals markup (`**`, `*`, `[]()`), applies soft line breaks at a configurable width, and renders tables. Use "Markdown: Set Compose Width" to adjust the width. Open the same file in a vertical split to see source and composed views side by side.
+
+Compose mode reads the document the way markdown defines it, so a paragraph, list item or quote written across several source lines is re-flowed into one block at the page width — a hard-wrapped file reads as prose rather than as its source layout. The things markdown treats as their own block still are: a blank line, a heading, a thematic break, a table row, a fenced code block, a new list marker, and a hard break (two trailing spaces or a trailing backslash).
+
+### Contents Panel
+
+The `markdown_toc` plugin adds a **Contents** section to the sidebar, under the file explorer, listing the headings of the active Markdown file as a tree — one row per heading, indented by level, with the `#` markers stripped. Headings inside fenced code blocks are not listed. The section opens when a Markdown file becomes active and closes when the active file is not Markdown; "Markdown: Toggle Table of Contents" opens or closes it by hand.
+
+- The highlighted row is the heading whose section contains the cursor. When the pane showing the file is not focused (you are in the sidebar, or reading the file in another split), the row follows the top of the viewport instead. "Markdown: Contents — Follow Cursor/Scroll" pins one or the other for the session.
+- Click a row to put the cursor on that heading and centre it in the pane; focus stays in the sidebar. Press Enter on a row to jump and move focus to the pane. Up/Down browse the rows, Left/Right fold and unfold them.
+- The disclosure glyphs collapse and expand the outline. With `foldBuffer` on, collapsing a heading also folds its section in the buffer.
+
+The panel works the same way in source and compose mode: compose conceals the markers and re-flows the text but does not move it, so the rows, the highlight and the jump target are identical in both.
+
+Settings live under *Plugin Settings → markdown_toc* (`plugins.markdown_toc.settings` in `config.json`):
+
+| Setting | Default | Meaning |
+|---------|---------|---------|
+| `follow` | `"cursor"` | `"cursor"` highlights the heading containing the cursor; `"scroll"` the one at the top of the viewport |
+| `foldBuffer` | `false` | Collapsing a heading in the panel also folds its section in the buffer |
+| `autoOpen` | `true` | Open the panel for Markdown files and close it for other files automatically |
+| `rows` | `10` | Rows the section asks for; dragging the section divider overrides it |
+
+Files above the `editor.large_file_threshold_bytes` limit keep the headings last scanned and the section title reads "Contents (stale)".
 
 ## Shell Integration
 

@@ -12,8 +12,6 @@
 //! protected still holds, and the file's expected location has been
 //! updated accordingly.
 
-mod common;
-
 use fresh::config::Config;
 use fresh::config_io::DirectoryContext;
 use fresh::model::filesystem::StdFileSystem;

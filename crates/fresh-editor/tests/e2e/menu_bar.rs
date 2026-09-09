@@ -222,6 +222,33 @@ fn test_mouse_click_toggles_menu() {
     harness.assert_screen_not_contains("New File");
 }
 
+/// **The toggle, with a frame drawn between press and release.**
+///
+/// `mouse_click` sends both halves back to back; the real loop repaints in
+/// between, because the press changed something. That gap is where a toggle
+/// goes wrong: the press dismisses the open menu, the repaint rebuilds the
+/// menu bar with nothing open, and a release handler that had closed over "my
+/// menu is open" is holding an answer from a frame that no longer exists — so
+/// the click reopens the menu it was meant to shut.
+///
+/// The bar acts on the press for exactly this reason, which is also what the
+/// pre-migration code did.
+#[test]
+fn test_mouse_click_toggles_menu_across_a_repaint() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    let double_click_delay =
+        std::time::Duration::from_millis(harness.config().editor.double_click_time_ms * 2);
+    harness.render().unwrap();
+
+    harness.mouse_click_with_repaint(2, 0).unwrap();
+    harness.assert_screen_contains("New File");
+
+    harness.sleep(double_click_delay);
+
+    harness.mouse_click_with_repaint(2, 0).unwrap();
+    harness.assert_screen_not_contains("New File");
+}
+
 /// Test that clicking outside menu labels closes menu
 #[test]
 fn test_mouse_click_empty_area_closes_menu() {
@@ -509,11 +536,13 @@ fn test_copy_with_formatting_submenu_activates_on_enter() {
         .unwrap();
     harness.render().unwrap();
 
-    // Verify text is selected (status bar should show selection)
+    // Verify text is selected: Ctrl+A selects the line, and selected
+    // whitespace draws its indicator (`editor.whitespace_in_selection`), so
+    // the space between the words renders as `·`.
     let screen = harness.screen_to_string();
     assert!(
-        screen.contains("Hello World"),
-        "Text should be visible in the editor"
+        screen.contains("Hello·World"),
+        "Selected text should be visible in the editor:\n{screen}"
     );
 
     // Open Edit menu
@@ -567,9 +596,10 @@ fn test_copy_with_formatting_submenu_activates_on_enter() {
         "Menu should close after activating copy action. Screen:\n{}",
         screen_after
     );
-    // The editor content should still be visible
+    // The editor content should still be visible (still selected, so the
+    // space between the words keeps its `·` indicator).
     assert!(
-        screen_after.contains("Hello World"),
+        screen_after.contains("Hello·World"),
         "Editor content should still be visible after copy. Screen:\n{}",
         screen_after
     );
@@ -994,4 +1024,49 @@ fn test_edit_menu_query_replace_invokes_query_replace() {
         .unwrap();
     harness.render().unwrap();
     harness.assert_screen_contains("Query replace 'hello' with:");
+}
+
+/// **A hover the tree owns asks for the frame it changed.**
+///
+/// `handle_mouse` returns "a re-render is needed", and the pointer walk used
+/// to answer it for hover: `update_hover_target` reported that the target had
+/// moved. Deleting the walk left the tree naming the new target — which it
+/// does, correctly, and every migrated surface styles itself from it — with
+/// nothing left to ask for the repaint. So the highlight landed a frame late,
+/// on whatever redrew next, and on an idle editor it never landed at all.
+///
+/// The answer is `Dispatched::changed`: the tree reports *claimed* and
+/// *changed* separately, because a hover is exactly the case where they
+/// differ. It does not claim — the move goes on to the plugin `mouse_move`
+/// hook, the terminal-link tracker and the LSP hover probe — and it still
+/// changed the frame.
+#[test]
+fn hovering_a_menu_label_asks_for_the_frame_it_changed() {
+    use crossterm::event::{MouseEvent, MouseEventKind};
+
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.render().unwrap();
+
+    let moved = |column| MouseEvent {
+        kind: MouseEventKind::Moved,
+        column,
+        row: 0,
+        modifiers: KeyModifiers::empty(),
+    };
+
+    // Onto the first label. Nothing else on this path reacts to a bare move
+    // over the menu bar — no dock, no terminal, no panel — so a `true` here
+    // is the hover's own.
+    assert!(
+        harness.editor_mut().handle_mouse(moved(2)).unwrap(),
+        "moving onto a menu label must ask for the repaint that restyles it"
+    );
+
+    // And staying on it crosses no element boundary, so there is no message
+    // and no frame. This half is what keeps an idle motion from redrawing the
+    // editor on every pixel of travel.
+    assert!(
+        !harness.editor_mut().handle_mouse(moved(3)).unwrap(),
+        "a move within the same label changed nothing"
+    );
 }

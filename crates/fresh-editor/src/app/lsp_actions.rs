@@ -7,7 +7,7 @@ use super::Editor;
 use crate::input::commands::Suggestion;
 use crate::model::event::BufferId;
 use crate::view::prompt::{Prompt, PromptType};
-use rust_i18n::t;
+use fresh_i18n::t;
 
 impl Editor {
     /// Handle the LspRestart action.
@@ -106,7 +106,7 @@ impl Editor {
         }
 
         // Start prompt with suggestions
-        self.active_window_mut().prompt = Some(Prompt::with_suggestions(
+        self.set_prompt(Prompt::with_suggestions(
             "Restart LSP server: ".to_string(),
             PromptType::RestartLspServer,
             suggestions.clone(),
@@ -324,7 +324,7 @@ impl Editor {
         }
 
         // Start prompt with suggestions
-        self.active_window_mut().prompt = Some(Prompt::with_suggestions(
+        self.set_prompt(Prompt::with_suggestions(
             "Stop LSP server: ".to_string(),
             PromptType::StopLspServer,
             suggestions.clone(),
@@ -334,8 +334,7 @@ impl Editor {
         if let Some(prompt) = self.active_window_mut().prompt.as_mut() {
             if suggestions.len() == 1 {
                 // If only one entry, pre-fill the input with it
-                prompt.input = suggestions[0].text.clone();
-                prompt.cursor_pos = prompt.input.len();
+                prompt.set_input_plain(suggestions[0].text.clone());
                 prompt.selected_suggestion = Some(0);
             } else if !prompt.suggestions.is_empty() {
                 // Auto-select first suggestion
@@ -687,7 +686,7 @@ impl crate::app::window::Window {
             state.buffer.line_start_offset(line).unwrap_or_else(|| {
                 use crate::view::folding::indent_folding;
                 let approx = line * state.buffer.estimated_line_length();
-                indent_folding::find_line_start_byte(&state.buffer, approx)
+                indent_folding::find_line_start_byte(&state.buffer, approx).unwrap_or(approx)
             })
         };
         self.toggle_fold_at_byte(buffer_id, byte_pos);
@@ -711,6 +710,7 @@ impl crate::app::window::Window {
                 let header_byte = {
                     use crate::view::folding::indent_folding;
                     indent_folding::find_line_start_byte(&state.buffer, byte_pos)
+                        .unwrap_or(byte_pos)
                 };
                 if buf_state.folds.remove_by_header_byte(
                     &state.buffer,
@@ -848,14 +848,18 @@ fn create_fold(
         }
     });
 
-    buf_state
-        .folds
-        .add(&mut state.marker_list, start_byte, end_byte, placeholder);
+    buf_state.folds.add(
+        &state.buffer,
+        &mut state.marker_list,
+        start_byte,
+        end_byte,
+        placeholder,
+    );
 
     // If the viewport top is now inside the folded range, move it to the header.
-    if buf_state.viewport.top_byte >= start_byte && buf_state.viewport.top_byte < end_byte {
-        buf_state.viewport.top_byte = header_byte;
-        buf_state.viewport.top_view_line_offset = 0;
+    if buf_state.viewport.top_byte() >= start_byte && buf_state.viewport.top_byte() < end_byte {
+        buf_state.viewport.set_top_byte(header_byte);
+        buf_state.viewport.set_top_view_line_offset(0);
     }
 }
 

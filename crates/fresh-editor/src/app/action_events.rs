@@ -125,11 +125,16 @@ impl crate::app::window::Window {
                 .expect("active window must have a populated split layout")
                 .get(&split_id)?
                 .viewport;
-            Some((vp.top_byte, vp.top_view_line_offset))
+            Some((vp.top_byte(), vp.top_view_line_offset()))
         };
 
         let old_pos = viewport_pos(self)?;
-        self.handle_scroll_event(delta);
+        // Scroll *this* leaf: `split_id` is the effective active split, which
+        // for a grouped buffer's inner panel is not the split manager's
+        // active leaf. Scrolling the latter left the panel's viewport where
+        // it was, so this always fell through to the logical-line fallback
+        // below — fold-blind, so a page landed inside a collapsed body.
+        self.handle_scroll_event_for_split(split_id, delta);
         let new_pos = viewport_pos(self)?;
 
         if new_pos == old_pos {
@@ -147,20 +152,24 @@ impl crate::app::window::Window {
         // start (landing the cursor there would re-introduce the overshoot
         // / jump-to-top bugs).
         let target_byte = {
-            let buffer_id = self
-                .buffers
-                .splits()
-                .map(|(mgr, _)| mgr)
-                .expect("active window must have a populated split layout")
-                .buffer_for_split(split_id)?;
+            let buffer_id = self.buffer_for_leaf(split_id)?;
             self.buffers
                 .with_buffer_and_split(buffer_id, split_id, |state, vs| {
                     let soft_breaks = state.collect_soft_break_positions();
                     let virtual_lines = state.collect_virtual_line_positions();
+                    // The rows this walks are the rows the frame drew, so it
+                    // has to skip the same collapsed folds the frame did.
+                    let hidden_ranges: Vec<(usize, usize)> = vs
+                        .folds
+                        .resolved_ranges(&state.buffer, &state.marker_list)
+                        .into_iter()
+                        .map(|r| (r.start_byte, r.end_byte))
+                        .collect();
                     vs.viewport.top_visual_row_source_byte(
                         &mut state.buffer,
                         &soft_breaks,
                         &virtual_lines,
+                        &hidden_ranges,
                     )
                 })?
         };
@@ -201,6 +210,18 @@ impl crate::app::window::Window {
         Some(events)
     }
 
+    /// Whether `split_id` currently soft-wraps. Falls back to the global
+    /// `editor.line_wrap` for a split with no view state yet, so a cursor
+    /// motion arriving before the first render behaves as configured.
+    fn split_line_wrap(&self, split_id: LeafId) -> bool {
+        self.buffers
+            .splits()
+            .map(|(_, vs)| vs)
+            .and_then(|vs| vs.get(&split_id))
+            .map(|vs| vs.viewport.line_wrap_enabled)
+            .unwrap_or_else(|| self.config().editor.line_wrap)
+    }
+
     /// Handle visual line movement actions using the cached layout
     /// Returns Some(events) if the action was handled, None if it should fall through
     fn handle_visual_line_movement(
@@ -238,16 +259,22 @@ impl crate::app::window::Window {
             // When line wrapping is off, Home/End should move to the physical line
             // start/end, not the visual (horizontally-scrolled) row boundary.
             // Fall through to the standard handler which uses line_iterator.
-            Action::MoveLineEnd if self.config().editor.line_wrap => {
+            //
+            // Ask the split the cursor is actually in, not the global config:
+            // a plugin panel can turn wrap off for itself (`setLineWrap`, and
+            // every buffer-group panel does), and reading the global default
+            // there sent Home walking a wrap boundary that the unwrapped view
+            // never draws — one press landed mid-line instead of at column 1.
+            Action::MoveLineEnd if self.split_line_wrap(split_id) => {
                 VisualAction::LineEnd { is_select: false }
             }
-            Action::SelectLineEnd if self.config().editor.line_wrap => {
+            Action::SelectLineEnd if self.split_line_wrap(split_id) => {
                 VisualAction::LineEnd { is_select: true }
             }
-            Action::MoveLineStart if self.config().editor.line_wrap => {
+            Action::MoveLineStart if self.split_line_wrap(split_id) => {
                 VisualAction::LineStart { is_select: false }
             }
-            Action::SelectLineStart if self.config().editor.line_wrap => {
+            Action::SelectLineStart if self.split_line_wrap(split_id) => {
                 VisualAction::LineStart { is_select: true }
             }
             _ => return None, // Not a visual line action
@@ -369,9 +396,7 @@ impl crate::app::window::Window {
                     };
 
                     // Calculate current visual column from cached layout
-                    let current_visual_col = self
-                        .layout_cache
-                        .byte_to_visual_column(split_id, from_pos)?;
+                    let current_visual_col = self.byte_to_visual_column(split_id, from_pos)?;
 
                     let goal_visual_col = if let Some(sticky) = sticky_column {
                         sticky
@@ -379,12 +404,7 @@ impl crate::app::window::Window {
                         current_visual_col
                     };
 
-                    match self.layout_cache.move_visual_line(
-                        split_id,
-                        from_pos,
-                        goal_visual_col,
-                        *direction,
-                    ) {
+                    match self.move_visual_line(split_id, from_pos, goal_visual_col, *direction) {
                         Some((pos, goal)) => (pos, Some(goal)),
                         None => {
                             // Target visual row is past the cached view-line
@@ -414,21 +434,21 @@ impl crate::app::window::Window {
                 VisualAction::LineEnd { .. } => {
                     // Allow advancing to next visual segment only if not at a physical line ending
                     let allow_advance = !at_line_ending;
-                    match self
-                        .layout_cache
-                        .visual_line_end(split_id, position, allow_advance)
-                    {
-                        Some(end_pos) => (end_pos, None),
+                    match self.visual_line_end(split_id, position, allow_advance) {
+                        // The row reports its end as the last source byte it
+                        // drew, which is one cell short when that byte is a
+                        // content character — every row a compose-mode soft
+                        // break wrapped, since the break consumes the space it
+                        // fell on. The row owns and draws the position past it
+                        // (`end_exclusive`), so the caret stays on the row.
+                        Some(end_pos) => (self.step_past_row_end_char(end_pos), None),
                         None => return None,
                     }
                 }
                 VisualAction::LineStart { .. } => {
                     // Allow advancing to previous visual segment only if not at a physical line start
                     let allow_advance = !at_line_start;
-                    match self
-                        .layout_cache
-                        .visual_line_start(split_id, position, allow_advance)
-                    {
+                    match self.visual_line_start(split_id, position, allow_advance) {
                         Some(start_pos) => (start_pos, None),
                         None => return None,
                     }
@@ -494,6 +514,35 @@ impl crate::app::window::Window {
     /// Returns `Some((new_position, new_sticky))` on success, or `None`
     /// if wrap mode is off (delegate to caller default) or we're at a
     /// genuine buffer boundary.
+    /// Where `End` stops, given the byte a visual row reports as its end.
+    ///
+    /// That byte is the last source byte the row drew. For a row ending at its
+    /// line ending, or at whitespace a wrap consumed, it already is the
+    /// position after the row's text. For a row ending on a content character
+    /// it is one cell short, so step past that character.
+    fn step_past_row_end_char(&mut self, end_pos: usize) -> usize {
+        let buffer = &mut self.active_state_mut().buffer;
+        if end_pos >= buffer.len() {
+            return end_pos;
+        }
+        let Some(ch) = char_at(buffer, end_pos) else {
+            return end_pos;
+        };
+        if ch.is_whitespace() {
+            return end_pos;
+        }
+        // Only when the byte past it is a separator the wrap consumed. A wrap
+        // can also split a run with no whitespace in it — CJK text, a long URL
+        // — and there the next byte is the first character of the row BELOW,
+        // which that row draws: stepping onto it would take `End` off the row.
+        let after = end_pos + ch.len_utf8();
+        match char_at(buffer, after) {
+            Some(next) if next.is_whitespace() => after,
+            None => after,
+            Some(_) => end_pos,
+        }
+    }
+
     fn compute_wrap_aware_visual_move_fallback(
         &mut self,
         from_pos: usize,
@@ -535,9 +584,9 @@ impl crate::app::window::Window {
             // authoritative "end of current visual row" position that the
             // renderer itself uses.
             let cur_row_line_end = {
-                let mappings = self.layout_cache.view_line_mappings.get(&active_split)?;
-                let row_idx = self.layout_cache.find_visual_row(active_split, from_pos)?;
-                mappings.get(row_idx)?.line_end_byte
+                let view = self.pane_view(active_split)?;
+                let row_idx = view.find_visual_row(from_pos)?;
+                view.rows.get(row_idx)?.line_end_byte
             };
 
             let state = self.buffers.get_mut(&active_buffer)?;
@@ -555,10 +604,27 @@ impl crate::app::window::Window {
             // `find_view_line_for_byte` resolves back to the SAME row — so
             // pressing Down from an empty separator line on a CRLF file
             // appears to jump the cursor to the wrong visual row (issue
-            // #1574, Windows-CRLF variant).  When `cur_row_line_end` isn't a
-            // newline the current row is a wrapped continuation and the
-            // next visual row starts at the same byte position.
-            let target_pos = step_past_line_break(buffer, cur_row_line_end, buffer_len);
+            // #1574, Windows-CRLF variant).
+            //
+            // Past a line ending that step is the whole story. On a wrapped
+            // continuation row it is not: `line_end_byte` is the last byte the
+            // row *drew*, not one past it, so the cursor lands back on the row
+            // it started from and every later Down resolves to it again — which
+            // is what pinned `Down` on a one-line file (issue #1806). The row
+            // pass keeps a margin of built rows and never reaches this
+            // fallback; a lazily-loaded buffer has no such index.
+            //
+            // The next row starts one character on, whether the wrap split a
+            // run or broke on a space it consumed.
+            let stepped = step_past_line_break(buffer, cur_row_line_end, buffer_len);
+            let target_pos = if stepped != cur_row_line_end {
+                stepped
+            } else {
+                match char_at(buffer, cur_row_line_end) {
+                    Some(ch) => cur_row_line_end + ch.len_utf8(),
+                    None => return None,
+                }
+            };
             if target_pos > buffer_len {
                 return None;
             }
@@ -610,9 +676,9 @@ impl crate::app::window::Window {
             // stepping back one byte lands on the previous line's
             // trailing newline — again the end of its last visual row.
             let (cur_row_anchor, row_is_empty) = {
-                let mappings = self.layout_cache.view_line_mappings.get(&active_split)?;
-                let row_idx = self.layout_cache.find_visual_row(active_split, from_pos)?;
-                let row = mappings.get(row_idx)?;
+                let view = self.pane_view(active_split)?;
+                let row_idx = view.find_visual_row(from_pos)?;
+                let row = view.rows.get(row_idx)?;
                 match row.char_source_bytes.iter().find_map(|b| *b) {
                     Some(start) => (start, false),
                     None => (row.line_end_byte, true),
@@ -651,6 +717,10 @@ impl crate::app::window::Window {
         let active_buffer = self.active_buffer();
         let state = self.buffers.get(&active_buffer)?;
         let vs = self.buffers.splits().map(|(_, vs)| vs)?.get(&split_id)?;
+        // Terminal-grid wrap (fresh#2649): rows are exactly the grid width.
+        if vs.viewport.grid_wrap {
+            return Some(vs.viewport.grid_cols());
+        }
         let gutter = vs.viewport.gutter_width(&state.buffer);
         let wrap = WrapConfig::new(
             vs.viewport.effective_width() as usize,
@@ -758,4 +828,23 @@ fn step_before_line_break(buffer: &crate::model::buffer::Buffer, pos: usize) -> 
         }
     }
     pos - 1
+}
+
+/// The character starting at `pos`, or `None` when `pos` is not a character
+/// boundary or the buffer ends there.
+///
+/// The width comes from the leading byte rather than from decoding a fixed
+/// window: a four-byte slice can end mid-character (`1+2+2`, `2+3`, …), and
+/// decoding that returns `Err`, which silently reads as "no character here".
+fn char_at(buffer: &crate::model::buffer::Buffer, pos: usize) -> Option<char> {
+    let lead = *buffer.slice_bytes(pos..pos.saturating_add(1)).first()?;
+    let width = match lead {
+        0x00..=0x7F => 1,
+        0xC0..=0xDF => 2,
+        0xE0..=0xEF => 3,
+        0xF0..=0xF7 => 4,
+        _ => return None,
+    };
+    let bytes = buffer.slice_bytes(pos..pos.saturating_add(width));
+    std::str::from_utf8(&bytes).ok()?.chars().next()
 }

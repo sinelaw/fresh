@@ -9,7 +9,7 @@
 //! Also includes tab navigation (next/prev/cycle, navigate_back/forward,
 //! switch_buffer) which depends on the same focus-history machinery.
 
-use rust_i18n::t;
+use fresh_i18n::t;
 
 use crate::model::event::{BufferId, Event, LeafId};
 use crate::view::prompt::PromptType;
@@ -93,13 +93,24 @@ impl Editor {
             self.active_window_mut().completed_waits.push(wait_id);
         }
 
-        // Save file state before closing (for per-file session persistence)
-        self.active_window().save_file_state_on_close(id);
+        // Save file state before closing (for per-file session persistence).
+        // Snapshot on this thread, write on the runtime: the state file write
+        // (canonicalize + create_dir_all + temp file + rename) is disk I/O
+        // that has no business inside a close that may run mid-frame.
+        if let Some((path, file_state)) = self.active_window().file_state_on_close_snapshot(id) {
+            let ephemeral = self.config().editor.ephemeral_file_patterns.clone();
+            self.spawn_off_loop_effect("file_state_on_close", move || {
+                crate::workspace::PersistedFileWorkspace::save(&path, file_state, &ephemeral);
+                tracing::debug!("Saved file state on close for {:?}", path);
+            });
+        }
 
         // Delete recovery data for explicitly closed buffers (including unnamed)
         if let Err(e) = self.delete_buffer_recovery(id) {
             tracing::debug!("Failed to delete buffer recovery on close: {}", e);
         }
+
+        self.active_window_mut().notify_lsp_buffer_closed(id);
 
         // If closing a terminal buffer, tear down its terminal-side state.
         // Removing the entry drops the buffer's remembered mode with it.
@@ -191,6 +202,11 @@ impl Editor {
             }
         }
 
+        // Drop any diff baselines registered against this buffer; their
+        // lifecycle follows the buffer's, like composite source panes.
+        #[cfg(feature = "plugins")]
+        self.diff_baselines.drop_for_buffer(id);
+
         // Notify plugins so they can reset any state tied to this buffer
         // (e.g. a plugin that owns a buffer group clears its `isOpen` flag
         // when the group is closed via the tab's close button rather than
@@ -227,24 +243,33 @@ impl Editor {
         // Rename rather than leave in place: backing files are named
         // by terminal id, which restarts per session, so a future
         // same-id terminal would otherwise clobber this log.
+        //
+        // The rename, the raw-log delete, and above all the retained-file
+        // GC (a directory scan plus up to hundreds of deletes) are disk
+        // I/O — run on the runtime, not inside a close that may run
+        // mid-frame. Only the map removals need this thread.
         let backing_file = self
             .active_window_mut()
             .terminal_backing_files
             .remove(&terminal_id);
-        if let Some(ref path) = backing_file {
-            self.retain_closed_terminal_backing(path);
-        }
-        // Clean up raw log file
-        if let Some(log_file) = self
+        let log_file = self
             .active_window_mut()
             .terminal_log_files
-            .remove(&terminal_id)
-        {
-            if backing_file.as_ref() != Some(&log_file) {
-                // Best-effort cleanup of temporary terminal files.
-                #[allow(clippy::let_underscore_must_use)]
-                let _ = crate::app::terminal::terminal_backing_fs().remove_file(&log_file);
-            }
+            .remove(&terminal_id);
+        if backing_file.is_some() || log_file.is_some() {
+            let backing = backing_file.clone();
+            self.spawn_off_loop_effect("terminal_backing_cleanup", move || {
+                if let Some(ref path) = backing {
+                    Self::retain_closed_terminal_backing(path);
+                }
+                if let Some(log_file) = log_file {
+                    if backing.as_ref() != Some(&log_file) {
+                        // Best-effort cleanup of temporary terminal files.
+                        #[allow(clippy::let_underscore_must_use)]
+                        let _ = crate::app::terminal::terminal_backing_fs().remove_file(&log_file);
+                    }
+                }
+            });
         }
 
         // The buffer's remembered mode was dropped when its `terminal_buffers`
@@ -432,6 +457,9 @@ impl Editor {
     /// logs, semantic-token bookkeeping, the panel-id mapping, and each
     /// split's open-buffers / focus-history lists.
     fn purge_buffer_state(&mut self, id: BufferId) {
+        // Widget panels painting into this buffer go with it — they are
+        // editor-level state, so nothing below would have touched them.
+        self.drop_widget_panels_for_buffer(id);
         self.windows
             .get_mut(&self.active_window)
             .map(|w| &mut w.buffers)
@@ -483,8 +511,8 @@ impl Editor {
             .expect("active window must have a populated split layout")
             .values_mut()
         {
+            // `remove_buffer` drops the tab and its focus-history entry.
             view_state.remove_buffer(id);
-            view_state.remove_from_history(id);
         }
     }
 
@@ -947,7 +975,7 @@ impl Editor {
         else {
             return;
         };
-        let tabs_width = self.active_window().effective_tabs_width();
+        let tabs_width = self.active_window().split_tabs_width(split_id);
         self.active_window_mut()
             .ensure_active_tab_visible(split_id, active_buffer, tabs_width);
     }
@@ -1170,8 +1198,10 @@ impl Editor {
         // from the left. Wraparound still follows the user's intent
         // (Next wraps right, Prev wraps left) so the animation
         // direction matches the keystroke rather than the idx delta.
-        self.active_window_mut()
-            .animate_tab_switch(active_split, direction.signum());
+        if let Some(area) = self.pane_or_group_content_rect(active_split) {
+            self.active_window_mut()
+                .animate_tab_switch(area, direction.signum());
+        }
 
         match targets[next_idx] {
             TabTarget::Buffer(buffer_id) => {
@@ -1320,7 +1350,7 @@ impl Editor {
     /// a unique `<stem>-closed-<epoch_ms>.txt` so a future terminal that
     /// reuses the same id can't clobber it, then bounds the retained set.
     /// Best-effort throughout — a failure just means that log isn't kept.
-    fn retain_closed_terminal_backing(&self, path: &std::path::Path) {
+    fn retain_closed_terminal_backing(path: &std::path::Path) {
         use std::time::{SystemTime, UNIX_EPOCH};
         let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
             return;
@@ -1335,14 +1365,14 @@ impl Editor {
         let retained = parent.join(format!("{stem}-closed-{epoch_ms}.txt"));
         #[allow(clippy::let_underscore_must_use)]
         let _ = crate::app::terminal::terminal_backing_fs().rename(path, &retained);
-        self.gc_retained_terminal_backings(parent);
+        Self::gc_retained_terminal_backings(parent);
     }
 
     /// Prune the oldest retained (`-closed-`) terminal backing files in a
     /// directory so they don't grow without bound. Ordering uses the epoch
     /// embedded in the filename, so it needs no filesystem metadata. Live
     /// backing files (no `-closed-` marker) are never touched.
-    fn gc_retained_terminal_backings(&self, dir: &std::path::Path) {
+    fn gc_retained_terminal_backings(dir: &std::path::Path) {
         const MAX_RETAINED: usize = 200;
         let Ok(entries) = crate::app::terminal::terminal_backing_fs().read_dir(dir) else {
             return;

@@ -635,6 +635,133 @@ fn test_settings_number_value_click_enters_edit_mode() {
         .unwrap();
 }
 
+/// Clicking the checkbox of a Toggle setting flips the value (issue #1112
+/// regression coverage: the widget-derived hit rects must keep routing a
+/// checkbox click to the toggle action rather than plain row selection).
+#[test]
+fn test_settings_toggle_checkbox_click_flips_value() {
+    let mut harness = EditorTestHarness::new(120, 40).unwrap();
+    harness.open_settings().unwrap();
+
+    // Jump to a Toggle setting that defaults to unchecked.
+    harness
+        .send_key(KeyCode::Char('/'), KeyModifiers::NONE)
+        .unwrap();
+    for c in "ensure final newline".chars() {
+        harness
+            .send_key(KeyCode::Char(c), KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    let (label_col, row) = harness
+        .find_text_on_screen("Ensure Final Newline On Save")
+        .expect("setting visible after search jump");
+    let row_text = harness.screen_row_text(row);
+    assert!(
+        row_text.contains("[ ]"),
+        "toggle starts unchecked:\n{row_text}"
+    );
+    // `screen_row_text` yields char indices which can drift from screen
+    // columns (multi-char cells earlier in the row); anchor on the label,
+    // whose true column `find_text_on_screen` reports, and shift the
+    // char-index of the checkbox by the same offset.
+    let label_idx = row_text.find("Ensure Final Newline On Save").unwrap() as u16;
+    let drift = label_idx - label_col;
+    let checkbox_col = row_text.find(": [").expect("checkbox on the row") as u16 - drift + 2;
+
+    // Click the checkbox glyph itself.
+    harness.mouse_click(checkbox_col + 1, row).unwrap();
+    harness.render().unwrap();
+
+    let after = harness.screen_row_text(row);
+    assert!(
+        after.contains("[v]"),
+        "clicking the checkbox must flip the toggle on:\n{after}"
+    );
+
+    // Discard changes and close.
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+}
+
+/// Clicking the `[value ▼]` button of a Dropdown setting opens the inline
+/// option list (issue #1112 regression coverage, same hit-rect routing as
+/// the toggle test above).
+#[test]
+fn test_settings_dropdown_button_click_opens_options() {
+    let mut harness = EditorTestHarness::new(120, 40).unwrap();
+    harness.open_settings().unwrap();
+
+    harness
+        .send_key(KeyCode::Char('/'), KeyModifiers::NONE)
+        .unwrap();
+    for c in "default line ending".chars() {
+        harness
+            .send_key(KeyCode::Char(c), KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    let (label_col, row) = harness
+        .find_text_on_screen("Default Line Ending")
+        .expect("setting visible after search jump");
+    let row_text = harness.screen_row_text(row);
+    assert!(
+        row_text.contains("▼"),
+        "dropdown starts closed:\n{row_text}"
+    );
+    // Same char-index-vs-column drift correction as the toggle test above.
+    let label_idx = row_text.find("Default Line Ending").unwrap() as u16;
+    let drift = label_idx - label_col;
+    let button_col = row_text.find(": [").expect("dropdown button on the row") as u16 - drift + 2;
+
+    // Click the `[lf ▼]` button.
+    harness.mouse_click(button_col + 1, row).unwrap();
+    harness.render().unwrap();
+
+    // The dropdown is now open: the button shows the ▲ indicator and the
+    // options appear in the pop-over that floats over the cards below.
+    //
+    // **They used to be inline.** The settings painter reserved rows for an
+    // open dropdown's options through `SettingControl::height`, growing the
+    // card and pushing everything under it down; the widget adapter the body
+    // is described through surfaces the same list as the screen-level
+    // pop-over every other dropdown in the editor opens — a plugin panel's,
+    // the web's. Describing the body chose between them, and one dropdown
+    // everywhere is the answer: the list floats, bordered, over the
+    // description rather than reflowing the page around it.
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains('▲'),
+        "dropdown button must show the open indicator:\n{screen}"
+    );
+    assert!(
+        screen.contains("│ crlf"),
+        "clicking the dropdown button must open the option pop-over:\n{screen}"
+    );
+
+    // Close the dropdown, discard, and close settings.
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+}
+
 /// Left arrow on a focused Number control no longer decrements — it now
 /// behaves like every other control (navigates back to Categories), since
 /// numbers are edited by direct typing.
@@ -950,6 +1077,230 @@ fn test_settings_search_result_click_navigates() {
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
 }
 
+/// Reproducer for issue #2860 (mouse desync in scrolled search results):
+/// only the visible result rows are registered in the layout, and
+/// hit-testing used to return the row's viewport slot (0 = first visible)
+/// while the click handler treated it as an absolute result index. Once the
+/// list was scrolled, a click resolved to the result `scroll_offset` rows
+/// above the pointer. After one wheel notch, clicking the top visible row
+/// must jump to exactly the setting named on that row.
+#[test]
+fn test_settings_search_result_click_after_wheel_scroll() {
+    let mut harness = EditorTestHarness::new(120, 40).unwrap();
+    harness.open_settings().unwrap();
+
+    // "line" matches far more settings than fit on one screen.
+    harness
+        .send_key(KeyCode::Char('/'), KeyModifiers::NONE)
+        .unwrap();
+    for c in "line".chars() {
+        harness
+            .send_key(KeyCode::Char(c), KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.render().unwrap();
+
+    // The selected top result carries the "▸ " marker; its position anchors
+    // the results area geometry (each result is 3 rows tall, names start
+    // right after the 2-char indicator).
+    let (marker_col, top_row) = harness
+        .find_text_on_screen("▸ ")
+        .expect("selected search result marker visible");
+    let name_col = marker_col + 2;
+    // Extract the top slot's result name from its row text. Char indices in
+    // `screen_row_text` can drift from screen columns, so cut the row on the
+    // panel borders instead of counting: the results column is the third
+    // `│`-delimited segment. Drop the 2-cell selection indicator (either
+    // "▸ " or blanks — the wheel does not move the selection, so the top row
+    // is usually *not* the selected one) and cut at the first double space.
+    let name_of_top_slot = |harness: &EditorTestHarness| -> String {
+        let row_text = harness.screen_row_text(top_row);
+        let Some(segment) = row_text.split('│').nth(2) else {
+            return String::new();
+        };
+        segment
+            .trim_start_matches([' ', '▸'])
+            .split("  ")
+            .next()
+            .unwrap_or("")
+            .trim()
+            .to_string()
+    };
+    let first_result = name_of_top_slot(&harness);
+    assert!(!first_result.is_empty());
+
+    // One wheel notch over the results area scrolls the list; the top
+    // visible row now shows a different (later) result.
+    harness
+        .mouse_scroll_down(name_col + 5, top_row + 4)
+        .unwrap();
+    harness.render().unwrap();
+    let clicked_name = name_of_top_slot(&harness);
+    assert!(!clicked_name.is_empty());
+    assert_ne!(
+        clicked_name, first_result,
+        "wheel notch must scroll the search results"
+    );
+
+    // Click the top visible row: the jump must land on the setting that row
+    // names, not on the pre-scroll result 0.
+    harness.mouse_click(name_col + 2, top_row).unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains(&format!(">  {}", clicked_name)),
+        "clicking the row showing '{clicked_name}' must select that setting; screen:\n{screen}"
+    );
+
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+}
+
+/// Parse the search header's `(first-last of total)` position readout off
+/// the rendered screen. Picks the first line whose parenthesised group parses
+/// as three numbers, so a description containing " of " can't fool it.
+fn search_result_range(harness: &EditorTestHarness) -> (usize, usize, usize) {
+    let screen = harness.screen_to_string();
+    for line in screen.lines() {
+        let Some(mid) = line.find(" of ") else {
+            continue;
+        };
+        let Some(open) = line[..mid].rfind('(') else {
+            continue;
+        };
+        let Some(close) = line[mid..].find(')').map(|i| i + mid) else {
+            continue;
+        };
+        let inner = &line[open + 1..close];
+        let Some((range, total)) = inner.split_once(" of ") else {
+            continue;
+        };
+        let Some((first, last)) = range.split_once('-') else {
+            continue;
+        };
+        if let (Ok(f), Ok(l), Ok(t)) = (
+            first.trim().parse::<usize>(),
+            last.trim().parse::<usize>(),
+            total.trim().parse::<usize>(),
+        ) {
+            return (f, l, t);
+        }
+    }
+    panic!("search header position readout not on screen:\n{screen}");
+}
+
+/// The mouse wheel scrolls the VIEW ONLY in the settings search results — it
+/// must never move the selection (this revises the wheel-moves-selection
+/// behaviour that had been added for the second half of #2860). Wheeling to
+/// the bottom must still bring the *last* result on screen (the symptom
+/// #2860 reported), while the selection marker stays on the entry the user
+/// left it on and simply scrolls out of sight and back.
+#[test]
+fn test_settings_search_wheel_scrolls_view_without_moving_selection() {
+    let mut harness = EditorTestHarness::new(120, 40).unwrap();
+    harness.open_settings().unwrap();
+
+    harness
+        .send_key(KeyCode::Char('/'), KeyModifiers::NONE)
+        .unwrap();
+    for c in "line".chars() {
+        harness
+            .send_key(KeyCode::Char(c), KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.render().unwrap();
+
+    // The selected result carries the "▸ " marker; initially that is the
+    // first result, at the top of the list.
+    let (marker_col, top_row) = harness
+        .find_text_on_screen("▸ ")
+        .expect("selected search result marker visible");
+    // Name of the entry the "▸ " marker sits on in `row`, or "" when that
+    // row is not the selected one. Char indices in `screen_row_text` can
+    // drift from screen columns, so cut the row on the panel borders (the
+    // results column is the third `│`-delimited segment) rather than
+    // counting columns, then cut the name at the first double space.
+    let selected_entry_in_row = |harness: &EditorTestHarness, row: u16| -> String {
+        let row_text = harness.screen_row_text(row);
+        let Some(segment) = row_text.split('│').nth(2) else {
+            return String::new();
+        };
+        let Some(idx) = segment.find('▸') else {
+            return String::new();
+        };
+        segment[idx + '▸'.len_utf8()..]
+            .split("  ")
+            .next()
+            .unwrap_or("")
+            .trim()
+            .to_string()
+    };
+    let selected_entry = selected_entry_in_row(&harness, top_row);
+    assert!(!selected_entry.is_empty());
+
+    let (first, _, total) = search_result_range(&harness);
+    assert_eq!(first, 1, "list starts at the top");
+    assert!(total > 1, "need a scrollable result list, got {total}");
+
+    let wheel_col = marker_col + 5;
+    let wheel_row = top_row + 4;
+
+    // Wheel down until the view stops moving.
+    let mut prev = harness.screen_to_string();
+    for _ in 0..300 {
+        harness.mouse_scroll_down(wheel_col, wheel_row).unwrap();
+        harness.render().unwrap();
+        let screen = harness.screen_to_string();
+        if screen == prev {
+            break;
+        }
+        prev = screen;
+    }
+
+    // The view reached the very end: the last result is on screen.
+    let (_, last_visible, total_after) = search_result_range(&harness);
+    assert_eq!(total_after, total);
+    assert_eq!(
+        last_visible, total,
+        "wheeling down must scroll the view far enough to show the last result"
+    );
+
+    // ...and the selection did not come along for the ride: it is still on
+    // the first result, which is now scrolled off the top of the viewport,
+    // so no row on screen carries the selection marker.
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains('▸'),
+        "the wheel must not move the selection onto a visible row; screen:\n{screen}"
+    );
+
+    // Wheel back up: the same entry is selected as before any scrolling.
+    let mut prev = harness.screen_to_string();
+    for _ in 0..300 {
+        harness.mouse_scroll_up(wheel_col, wheel_row).unwrap();
+        harness.render().unwrap();
+        let screen = harness.screen_to_string();
+        if screen == prev {
+            break;
+        }
+        prev = screen;
+    }
+
+    let (first_again, _, _) = search_result_range(&harness);
+    assert_eq!(first_again, 1, "wheeling up returns the view to the top");
+    let (_, marker_row_back) = harness
+        .find_text_on_screen("▸ ")
+        .expect("selection marker back in view at the top of the list");
+    assert_eq!(
+        selected_entry_in_row(&harness, marker_row_back),
+        selected_entry,
+        "the wheel must leave the selection on the entry it started on"
+    );
+
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+}
+
 /// Test theme dropdown can be cycled with Enter or Right arrow
 /// BUG: Theme dropdown doesn't cycle - it stays on the same value
 #[test]
@@ -1149,24 +1500,36 @@ fn test_settings_footer_buttons_keyboard_accessible() {
     // Should show modified indicator
     harness.assert_screen_contains("modified");
 
-    // Tab to footer - from settings panel, Tab goes to footer
-    // First button (Layer) should be selected
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    // To the footer: Left leaves the body for the tree, Shift+Tab wraps the
+    // ring to Cancel, and Left walks back to Layer.
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::BackTab, KeyModifiers::SHIFT)
+        .unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
     // Layer button should be selected (has > indicator)
     harness.assert_screen_contains(">[ User ]");
 
-    // Tab through all footer buttons: Layer(0) → Reset(1) → Save(2) → Cancel(3)
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    // Right through the footer: Layer → Reset → Save → Cancel
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
     harness.render().unwrap();
     harness.assert_screen_contains(">[ Reset ]");
 
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
     harness.render().unwrap();
     harness.assert_screen_contains(">[ Save ]");
 
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
     harness.render().unwrap();
 
     // Cancel button should now be selected
@@ -1668,10 +2031,13 @@ fn test_settings_file_explorer_toggles_propagate_to_runtime() {
         .unwrap();
     harness.render().unwrap();
 
-    // Tab to footer then navigate to Save (index 2) and press Enter.
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap(); // Reset
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap(); // Save
+    // To Save: Left leaves the body for the tree, Shift+Tab wraps the ring
+    // to Cancel, Left steps to Save.
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::BackTab, KeyModifiers::SHIFT)
+        .unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
@@ -1989,10 +2355,13 @@ fn test_settings_loads_saved_values_on_reopen() {
     // Should now show 5
     harness.assert_screen_contains("5");
 
-    // Tab to footer (Layer button), then Tab to Save
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap(); // Reset
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap(); // Save
+    // To Save: Left leaves the body for the tree, Shift+Tab wraps the ring
+    // to Cancel, Left steps to Save.
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::BackTab, KeyModifiers::SHIFT)
+        .unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
     // Press Enter to save
@@ -2553,10 +2922,13 @@ fn test_settings_toggle_persists_after_save_and_reopen() {
         screen
     );
 
-    // Save: Tab to footer (Layer), Tab to Save, Enter
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap(); // Reset
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap(); // Save
+    // To Save: Left leaves the body for the tree, Shift+Tab wraps the ring
+    // to Cancel, Left steps to Save.
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::BackTab, KeyModifiers::SHIFT)
+        .unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
@@ -2846,7 +3218,7 @@ fn test_json_editor_delete_key_works() {
     // placeholder was cleared on edit start).
     let screen = harness.screen_to_string();
     assert!(
-        screen.contains("│BC") && !screen.contains("ABC"),
+        screen.contains("BC") && !screen.contains("ABC"),
         "Delete key should remove character at cursor. Expected 'BC', got:\n{}",
         screen
     );
@@ -3041,12 +3413,14 @@ fn test_settings_edit_button_keyboard_navigation() {
     // Open settings
     harness.open_settings().unwrap();
 
-    // Tab to settings panel
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-    harness.render().unwrap();
-
-    // Tab to footer (defaults to Layer button, index 0)
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    // To the footer: Shift+Tab from the tree wraps the ring to Cancel, and
+    // Left walks back to Layer.
+    harness
+        .send_key(KeyCode::BackTab, KeyModifiers::SHIFT)
+        .unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
     // Should show Layer button focused
@@ -3107,13 +3481,14 @@ fn test_settings_edit_button_opens_config_file() {
         "Settings should be open"
     );
 
-    // Navigate to Edit button: Tab -> Tab -> Tab*4 (through all footer buttons)
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap(); // to Settings
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap(); // to Footer (Layer)
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap(); // to Reset
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap(); // to Save
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap(); // to Cancel
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap(); // to Edit
+    // Navigate to Edit: Shift+Tab from the tree wraps the ring to Cancel,
+    // and Right steps to Edit.
+    harness
+        .send_key(KeyCode::BackTab, KeyModifiers::SHIFT)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
     harness.render().unwrap();
 
     // Verify Edit button is focused
@@ -3174,12 +3549,15 @@ fn test_settings_edit_button_blocked_with_pending_changes() {
     // Should show modified indicator
     harness.assert_screen_contains("modified");
 
-    // Navigate to Edit button (Footer now starts at Layer, index 0)
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap(); // to Footer (Layer)
-                                                                 // Tab through Layer -> Reset -> Save -> Cancel -> Edit
-    for _ in 0..4 {
-        harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-    }
+    // Navigate to Edit: Left leaves the body for the tree, Shift+Tab wraps
+    // the ring to Cancel, and Right steps to Edit.
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::BackTab, KeyModifiers::SHIFT)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
     harness.render().unwrap();
 
     // Press Enter to try to activate Edit button
@@ -3611,103 +3989,84 @@ fn test_usability_backtab_backward_navigation() {
     let mut harness = EditorTestHarness::new(100, 40).unwrap();
     harness.open_settings().unwrap();
 
-    // Start in Categories panel. Tab forward to Settings.
+    // Start in the tree. Tab enters the body at its selected card.
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
+    harness.assert_screen_contains(">  Active Keybinding Map");
 
-    // Now in Settings. Shift+Tab should go back to Categories.
+    // Shift+Tab from the first card goes back to the tree.
     harness
         .send_key(KeyCode::BackTab, KeyModifiers::SHIFT)
         .unwrap();
     harness.render().unwrap();
+    harness.assert_screen_not_contains(">  Active Keybinding Map");
 
-    // We should be back in Categories. Tab forward to verify we're at Categories
-    // (Tab from Categories goes to Settings).
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-    harness.render().unwrap();
+    // Shift+Tab from the tree wraps the ring to its last stop, Cancel, and
+    // walks the footer backwards from there: Save, Reset, Layer, Edit.
+    for want in [
+        ">[ Cancel ]",
+        ">[ Save ]",
+        ">[ Reset ]",
+        ">[ User ]",
+        ">[ Edit ]",
+    ] {
+        harness
+            .send_key(KeyCode::BackTab, KeyModifiers::SHIFT)
+            .unwrap();
+        harness.render().unwrap();
+        harness.assert_screen_contains(want);
+    }
 
-    // Tab to Footer
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-    harness.render().unwrap();
-
-    // Should be in Footer - Layer button visible with focus
-    harness.assert_screen_contains(">[ User ]");
-
-    // Shift+Tab from Footer should go to Settings
+    // Shift+Tab from Edit enters the body at its selected card.
     harness
         .send_key(KeyCode::BackTab, KeyModifiers::SHIFT)
         .unwrap();
     harness.render().unwrap();
-
-    // Shift+Tab from Settings should go to Categories
-    harness
-        .send_key(KeyCode::BackTab, KeyModifiers::SHIFT)
-        .unwrap();
-    harness.render().unwrap();
-
-    // Shift+Tab from Categories should wrap to Footer
-    harness
-        .send_key(KeyCode::BackTab, KeyModifiers::SHIFT)
-        .unwrap();
-    harness.render().unwrap();
-
-    // Should be in Footer with Edit button focused (last button when entering backward)
-    harness.assert_screen_contains(">[ Edit ]");
+    harness.assert_screen_not_contains(">[ Edit ]");
+    harness.assert_screen_contains(">  Active Keybinding Map");
 
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
 }
 
-/// Test: Tab in footer visits ALL 5 buttons (Layer, Reset, Save, Cancel, Edit).
-///
-/// Before fix: Footer always started at Save (index 2), skipping Layer and Reset.
-/// After fix: Footer starts at Layer (index 0), Tab visits all 5 buttons.
 #[test]
 fn test_usability_footer_tab_visits_all_buttons() {
     let mut harness = EditorTestHarness::new(100, 40).unwrap();
     harness.open_settings().unwrap();
 
-    // Tab to Settings, then Tab to Footer
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-    harness.render().unwrap();
-
-    // Button 0: Layer
-    harness.assert_screen_contains(">[ User ]");
-
-    // Button 1: Reset
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-    harness.render().unwrap();
-    harness.assert_screen_contains(">[ Reset ]");
-
-    // Button 2: Save
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-    harness.render().unwrap();
-    harness.assert_screen_contains(">[ Save ]");
-
-    // Button 3: Cancel
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    // Shift+Tab from the tree wraps the ring to the footer's last stop.
+    harness
+        .send_key(KeyCode::BackTab, KeyModifiers::SHIFT)
+        .unwrap();
     harness.render().unwrap();
     harness.assert_screen_contains(">[ Cancel ]");
 
-    // Button 4: Edit
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    // Left to the footer's first stop in reading order, Edit.
+    for want in [">[ Save ]", ">[ Reset ]", ">[ User ]"] {
+        harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+        harness.render().unwrap();
+        harness.assert_screen_contains(want);
+    }
+    harness
+        .send_key(KeyCode::BackTab, KeyModifiers::SHIFT)
+        .unwrap();
     harness.render().unwrap();
     harness.assert_screen_contains(">[ Edit ]");
 
-    // Tab again should wrap to Categories
+    // Tab visits all five in reading order: Edit, Layer, Reset, Save, Cancel.
+    for want in [">[ User ]", ">[ Reset ]", ">[ Save ]", ">[ Cancel ]"] {
+        harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+        harness.render().unwrap();
+        harness.assert_screen_contains(want);
+    }
+
+    // Tab again wraps to the tree: no button is focused.
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
-    // Verify we left footer (no > indicator on any button)
-    harness.assert_screen_not_contains(">[ Edit ]");
+    harness.assert_screen_not_contains(">[ Cancel ]");
 
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
 }
 
-/// Test: Left arrow from Settings navigates back to Categories.
-///
-/// Before fix: Left on non-number controls called handle_control_decrement
-/// (which changed dropdown values).
-/// After fix: Left on non-number controls navigates to Categories panel.
 #[test]
 fn test_usability_left_arrow_to_categories() {
     let mut harness = EditorTestHarness::new(100, 40).unwrap();
@@ -3721,14 +4080,13 @@ fn test_usability_left_arrow_to_categories() {
     harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
-    // Verify we're back in Categories by pressing Tab (which goes to Settings)
-    // then Tab again (which goes to Footer)
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    // Verify we're back in the tree: Shift+Tab from it wraps the ring to the
+    // footer's last stop.
+    harness
+        .send_key(KeyCode::BackTab, KeyModifiers::SHIFT)
+        .unwrap();
     harness.render().unwrap();
-
-    // We should be in Footer now
-    harness.assert_screen_contains(">[ User ]");
+    harness.assert_screen_contains(">[ Cancel ]");
 
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
 }
@@ -4065,15 +4423,16 @@ fn test_reset_button_shows_confirmation_dialog() {
     // Should show modified indicator
     harness.assert_screen_contains("modified");
 
-    // Navigate to footer: Tab from Settings goes to Footer (starts at Layer/Project, index 0)
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-    harness.render().unwrap();
-
-    // Go Right from Layer (index 0) to Reset (index 1)
+    // To the footer: Left leaves the body for the tree, Shift+Tab wraps the
+    // ring to its last stop, Cancel; Left twice more reaches Reset.
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
     harness
-        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .send_key(KeyCode::BackTab, KeyModifiers::SHIFT)
         .unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
+    harness.assert_screen_contains(">[ Reset ]");
 
     // Press Enter on Reset button
     harness
@@ -4140,15 +4499,16 @@ fn test_reset_dialog_confirm_discards_changes() {
     // Should show modified indicator
     harness.assert_screen_contains("modified");
 
-    // Navigate to footer: Tab from Settings goes to Footer (starts at Layer/Project, index 0)
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-    harness.render().unwrap();
-
-    // Go Right from Layer (index 0) to Reset (index 1)
+    // To the footer: Left leaves the body for the tree, Shift+Tab wraps the
+    // ring to its last stop, Cancel; Left twice more reaches Reset.
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
     harness
-        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .send_key(KeyCode::BackTab, KeyModifiers::SHIFT)
         .unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+    harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
+    harness.assert_screen_contains(">[ Reset ]");
 
     // Press Enter on Reset button
     harness

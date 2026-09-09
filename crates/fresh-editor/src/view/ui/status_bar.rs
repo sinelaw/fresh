@@ -3,19 +3,14 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use crate::app::types::CellThemeRecorder;
 use crate::app::WarningLevel;
-use crate::config::{StatusBarConfig, StatusBarElement, VirtualSpaceMode};
+use crate::config::{StatusBarElement, VirtualSpaceMode};
 use crate::primitives::display_width::{char_width, str_width};
 use crate::state::EditorState;
-use crate::view::prompt::Prompt;
 use chrono::Timelike;
-use ratatui::layout::Rect;
+use fresh_i18n::t;
 use ratatui::style::{Modifier, Style};
-use ratatui::text::{Line, Span};
-use ratatui::widgets::Paragraph;
-use ratatui::Frame;
-use rust_i18n::t;
+use ratatui::text::Span;
 
 /// Text that both marks a buffer as "edited over a disconnected SSH session"
 /// and styles the prefix in the status bar. Kept as constants so `render_element`
@@ -26,11 +21,14 @@ const SSH_PREFIX_TERMINATOR: &str = "] ";
 /// Stable identity of a *clickable* status-bar segment.
 ///
 /// This is the generic rail that replaces per-element layout fields, hover
-/// enum variants, and bespoke mouse-detective branches. The renderer records
-/// each clickable element's screen area under its `StatusBarClickable` id in
-/// [`StatusBarLayout::clickable`]; the app layer (`mouse_input.rs`) runs a
-/// single hit-test over that list for both hover and click, mapping the id to
-/// an editor `Action` in one place (`dispatch_status_bar_click`).
+/// enum variants, and bespoke mouse-detective branches. Rectangles are read
+/// back off the laid-out tree by `view::shell::status_bar::clickable_rects`,
+/// keyed by this id; the app layer runs a single hit-test over that list for
+/// both hover and click, mapping the id to an editor `Action` in one place
+/// (`dispatch_status_bar_click`).
+///
+/// The paint-time `StatusBarLayout` that used to carry these is gone: the bar
+/// migrated to the shell, and the walk that recorded them had no callers left.
 ///
 /// Wiring a new clickable built-in element is therefore: give it an
 /// `ElementKind`, list it in [`StatusBarRenderer::clickable_for_kind`], and add
@@ -47,11 +45,16 @@ pub enum StatusBarClickable {
     RemoteIndicator,
     WorkspaceTrust,
     ReadOnly,
+    /// The "Update: vX.Y.Z" indicator — click to offer an in-editor update.
+    Update,
+    /// The restart indicator on a terminal buffer whose process quit — click
+    /// to respawn it (resuming the agent conversation when there is one).
+    RestartTerminal,
 }
 
 /// Categorization of how a rendered element should be styled and tracked for click detection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ElementKind {
+pub(crate) enum ElementKind {
     /// Normal text using base status bar colors
     Normal,
     /// Line ending indicator (clickable)
@@ -66,6 +69,8 @@ enum ElementKind {
     WarningBadge,
     /// Update available indicator (highlighted)
     Update,
+    /// Exited-terminal restart indicator (error palette, clickable)
+    TerminalRestart,
     /// Command palette shortcut hint (distinct style)
     Palette,
     /// Status message area (clickable to show history)
@@ -231,6 +236,8 @@ pub enum LspIndicatorState {
     On,
     Off,
     OffDismissed,
+    /// Server is up but not answering requests (issue #2197).
+    Warning,
     Error,
 }
 
@@ -251,6 +258,10 @@ pub struct StatusBarContext<'a> {
     pub keybindings: &'a crate::input::keybindings::KeybindingResolver,
     pub chord_state: &'a [(crossterm::event::KeyCode, crossterm::event::KeyModifiers)],
     pub update_available: Option<&'a str>,
+    /// Lifecycle of an in-progress in-editor self-update; overrides the
+    /// "Update: vX" text with progress/outcome so the indicator itself relays
+    /// the result (no transient status message).
+    pub update_phase: crate::services::release_checker::SelfUpdatePhase,
     pub warning_level: WarningLevel,
     pub general_warning_count: usize,
     /// The clickable status-bar segment the mouse is currently over, if any.
@@ -303,33 +314,28 @@ pub struct StatusBarContext<'a> {
     /// `{trust}` indicator (read from the active authority each frame, so it
     /// never goes stale or vanishes — unlike a per-buffer plugin token).
     pub workspace_trust_level: crate::services::workspace_trust::TrustLevel,
+    /// Set when the active buffer is a terminal whose process has quit and can
+    /// be restarted in place. Drives the `{terminal_restart}` indicator, which
+    /// renders only in that state. `None` for every other buffer — including a
+    /// live terminal, so the indicator never offers to restart a running agent.
+    pub terminal_restart: Option<TerminalRestartState>,
 }
 
-/// Layout information returned from status bar rendering for mouse click detection
-#[derive(Debug, Clone, Default)]
-pub struct StatusBarLayout {
-    /// Every clickable built-in segment drawn this frame, as
-    /// `(id, row, start_col, end_col)`, in render order. One generic list
-    /// instead of a field per indicator — both hover hit-testing and click
-    /// dispatch walk it (see `StatusBarClickable`).
-    pub clickable: Vec<(StatusBarClickable, u16, u16, u16)>,
-    /// Plugin-registered status-bar token areas, keyed by the
-    /// `"<plugin_name>:<token_name>"` registry key (same key the
-    /// editor uses in `status_bar_token_registry`). Populated by the
-    /// renderer when it draws each plugin token. Mouse click dispatch
-    /// (`handle_click_status_bar`) walks this map after the built-in
-    /// indicators; on a hit, it fires the `status_bar_token_clicked`
-    /// hook so the plugin can react. This is what makes the env
-    /// pill, trust chip, and any future plugin chip first-class
-    /// affordances back to their decisions — see
-    /// `docs/internal/trust-env-devcontainer-ux-plan.md`
-    /// §"Path from here to the North Star".
-    pub plugin_token_areas: std::collections::HashMap<String, (u16, u16, u16)>,
-    /// Every rendered element, in screen order, with its semantic name, text and
-    /// cell position. This is the status bar's semantic model: a frontend renders
-    /// it directly (web) instead of scraping the drawn cells, and the TUI cell
-    /// rendering is just one consumer of the same data.
-    pub segments: Vec<StatusSegmentInfo>,
+/// What the `{terminal_restart}` indicator needs to describe the dead process
+/// behind the active buffer. Derived per frame from the window's
+/// `exited_terminals` record.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TerminalRestartState {
+    /// Short program name of the process that died (`claude`, `codex`, …), or
+    /// `None` when the terminal was just a shell.
+    pub program: Option<String>,
+    /// Wait-status exit code, when the platform reported one. Shown only when
+    /// non-zero — a clean exit is the common "the agent finished" case and
+    /// doesn't need a number shouting on the bar.
+    pub exit_code: Option<i32>,
+    /// Whether restarting rejoins an agent conversation rather than starting a
+    /// fresh process. Drives "Resume" vs "Restart" wording.
+    pub resumes_agent: bool,
 }
 
 /// One rendered status-bar element, captured semantically (text + position)
@@ -352,7 +358,7 @@ pub struct StatusSegmentInfo {
 }
 
 /// Map an [`ElementKind`] to the stable semantic name `status_view` uses.
-fn element_kind_name(kind: ElementKind) -> &'static str {
+pub(crate) fn element_kind_name(kind: ElementKind) -> &'static str {
     match kind {
         ElementKind::Lsp => "lsp",
         ElementKind::WarningBadge => "warning",
@@ -362,65 +368,9 @@ fn element_kind_name(kind: ElementKind) -> &'static str {
         ElementKind::RemoteIndicator(_) => "remote",
         ElementKind::WorkspaceTrust(_) => "trust",
         ElementKind::Messages => "message",
+        ElementKind::TerminalRestart => "terminalRestart",
         ElementKind::Custom => "plugin",
         _ => "text",
-    }
-}
-
-/// Which search option checkbox is being hovered
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum SearchOptionsHover {
-    #[default]
-    None,
-    CaseSensitive,
-    WholeWord,
-    Regex,
-    ConfirmEach,
-}
-
-/// Layout information for search options bar hit testing
-#[derive(Debug, Clone, Default)]
-pub struct SearchOptionsLayout {
-    /// Row where the search options are rendered
-    pub row: u16,
-    /// Case Sensitive checkbox area (start_col, end_col)
-    pub case_sensitive: Option<(u16, u16)>,
-    /// Whole Word checkbox area (start_col, end_col)
-    pub whole_word: Option<(u16, u16)>,
-    /// Regex checkbox area (start_col, end_col)
-    pub regex: Option<(u16, u16)>,
-    /// Confirm Each checkbox area (start_col, end_col) - only present in replace mode
-    pub confirm_each: Option<(u16, u16)>,
-}
-
-impl SearchOptionsLayout {
-    /// Check which search option checkbox (if any) is at the given position
-    pub fn checkbox_at(&self, x: u16, y: u16) -> Option<SearchOptionsHover> {
-        if y != self.row {
-            return None;
-        }
-
-        if let Some((start, end)) = self.case_sensitive {
-            if x >= start && x < end {
-                return Some(SearchOptionsHover::CaseSensitive);
-            }
-        }
-        if let Some((start, end)) = self.whole_word {
-            if x >= start && x < end {
-                return Some(SearchOptionsHover::WholeWord);
-            }
-        }
-        if let Some((start, end)) = self.regex {
-            if x >= start && x < end {
-                return Some(SearchOptionsHover::Regex);
-            }
-        }
-        if let Some((start, end)) = self.confirm_each {
-            if x >= start && x < end {
-                return Some(SearchOptionsHover::ConfirmEach);
-            }
-        }
-        None
     }
 }
 
@@ -447,22 +397,12 @@ impl TruncatedPath {
             format!("{}{}", self.prefix, self.suffix)
         }
     }
-
-    /// Get the display length. The ellipsis marker is one separator column
-    /// plus "[...]" regardless of which separator is in use.
-    pub fn display_len(&self) -> usize {
-        if self.truncated {
-            self.prefix.len() + self.sep.len_utf8() + "[...]".len() + self.suffix.len()
-        } else {
-            self.prefix.len() + self.suffix.len()
-        }
-    }
 }
 
 /// The separator a path string is written with: `\` for a Windows-style
 /// path (so it round-trips natively), `/` otherwise. Splitting always
 /// accepts both — this only decides how pieces are re-joined for display.
-fn path_display_sep(path_str: &str) -> char {
+pub(crate) fn path_display_sep(path_str: &str) -> char {
     if path_str.contains('\\') {
         '\\'
     } else {
@@ -615,7 +555,7 @@ pub fn truncate_path(path: &Path, max_len: usize) -> TruncatedPath {
 }
 
 /// Truncate a string to fit within `max_width` display columns, appending "..." if truncated.
-fn truncate_to_width(s: &str, max_width: usize) -> String {
+pub(crate) fn truncate_to_width(s: &str, max_width: usize) -> String {
     let width = str_width(s);
     if width <= max_width {
         return s.to_string();
@@ -657,8 +597,14 @@ const CURSOR_COL_RESERVE: usize = 3;
 /// — rather than bytes or code points — keeps the reported column consistent
 /// with the editor's grapheme-based cursor movement.
 fn cursor_column(buffer: &mut crate::model::buffer::TextBuffer, cursor_position: usize) -> usize {
-    let mut iter = buffer.line_iterator(cursor_position, 80);
-    let line_start = iter.current_position();
+    // The line's real start, not the reader's guess at one. The reader's
+    // backward scan is bounded, and past that bound it reports how far it
+    // looked — which is a column of 65,537 for a cursor anywhere beyond 64 KB
+    // into its line, the same wrong number for every position past it.
+    let line_start = buffer
+        .prev_line_start_within(cursor_position, buffer.len())
+        .unwrap_or(0);
+    let mut iter = buffer.line_iterator(line_start, 80);
     let byte_col = cursor_position.saturating_sub(line_start);
     if byte_col == 0 {
         return 0;
@@ -744,193 +690,26 @@ fn format_cursor_position_compact(line: usize, col: usize, line_count: usize) ->
     }
 }
 
-/// Renders the status bar and prompt/minibuffer
+/// Horizontal scroll (in display cells) for a single-line input rendered
+/// in a viewport `width` cells wide, so the cursor at display column
+/// `cursor_cells` is always visible (issue #2876). Returns 0 while the
+/// cursor fits; otherwise scrolls just enough that the cursor lands on
+/// the viewport's last column.
+///
+/// Invariant (for `width > 0`): `scroll <= cursor_cells` and
+/// `cursor_cells - scroll < width`.
+pub(crate) fn input_hscroll(cursor_cells: usize, width: usize) -> usize {
+    if width == 0 {
+        0
+    } else {
+        cursor_cells.saturating_sub(width - 1)
+    }
+}
+
+/// Renders the status bar.
 pub struct StatusBarRenderer;
 
 impl StatusBarRenderer {
-    /// Render only the status bar (without prompt).
-    ///
-    /// Returns layout information with positions of clickable indicators.
-    pub fn render_status_bar(
-        frame: &mut Frame,
-        area: Rect,
-        ctx: &mut StatusBarContext<'_>,
-        config: &StatusBarConfig,
-        rec: Option<&mut CellThemeRecorder>,
-        // When false, build the full semantic model (`StatusBarLayout.segments` +
-        // indicator rects) but paint no cells — the web renders the status bar
-        // natively from `status_view`. The TUI always passes `true`.
-        draw: bool,
-    ) -> StatusBarLayout {
-        Self::render_status(frame, area, ctx, config, rec, draw)
-    }
-
-    /// Render the prompt/minibuffer
-    pub fn render_prompt(
-        frame: &mut Frame,
-        area: Rect,
-        prompt: &Prompt,
-        theme: &crate::view::theme::Theme,
-    ) {
-        let base_style = Style::default().fg(theme.prompt_fg).bg(theme.prompt_bg);
-
-        // Create spans for the prompt
-        let mut spans = vec![Span::styled(prompt.message.clone(), base_style)];
-
-        // If there's a selection, split the input into parts
-        if let Some((sel_start, sel_end)) = prompt.selection_range() {
-            let input = &prompt.input;
-
-            // Text before selection
-            if sel_start > 0 {
-                spans.push(Span::styled(input[..sel_start].to_string(), base_style));
-            }
-
-            // Selected text (blue background for visibility, cursor remains visible)
-            if sel_start < sel_end {
-                // Use theme colors for selection to ensure consistency across themes
-                let selection_style = Style::default()
-                    .fg(theme.prompt_selection_fg)
-                    .bg(theme.prompt_selection_bg);
-                spans.push(Span::styled(
-                    input[sel_start..sel_end].to_string(),
-                    selection_style,
-                ));
-            }
-
-            // Text after selection
-            if sel_end < input.len() {
-                spans.push(Span::styled(input[sel_end..].to_string(), base_style));
-            }
-        } else {
-            // No selection, render entire input normally
-            spans.push(Span::styled(prompt.input.clone(), base_style));
-        }
-
-        let line = Line::from(spans);
-        let prompt_line = Paragraph::new(line).style(base_style);
-
-        frame.render_widget(prompt_line, area);
-
-        // Set cursor position in the prompt
-        // Use display width (not byte length) for proper handling of:
-        // - Double-width CJK characters
-        // - Zero-width combining characters (Thai diacritics, etc.)
-        let message_width = str_width(&prompt.message);
-        let input_width_before_cursor = str_width(&prompt.input[..prompt.cursor_pos]);
-        let cursor_x = (message_width + input_width_before_cursor) as u16;
-        if cursor_x < area.width {
-            frame.set_cursor_position((area.x + cursor_x, area.y));
-        }
-    }
-
-    /// Render the file open prompt with colorized path
-    /// Shows: "Open: /path/to/current/dir/filename" where the directory part is dimmed
-    /// Long paths are truncated: "/private/[...]/project/" with [...] styled differently
-    pub fn render_file_open_prompt(
-        frame: &mut Frame,
-        area: Rect,
-        prompt: &Prompt,
-        file_open_state: &crate::app::file_open::FileOpenState,
-        theme: &crate::view::theme::Theme,
-    ) {
-        let base_style = Style::default().fg(theme.prompt_fg).bg(theme.prompt_bg);
-        let dir_style = Style::default()
-            .fg(theme.help_separator_fg)
-            .bg(theme.prompt_bg);
-        // Style for the [...] ellipsis - use a more visible color
-        let ellipsis_style = Style::default()
-            .fg(theme.menu_highlight_fg)
-            .bg(theme.prompt_bg);
-
-        let mut spans = Vec::new();
-
-        // "Open: " prefix
-        let open_prompt = t!("file.open_prompt").to_string();
-        spans.push(Span::styled(open_prompt.clone(), base_style));
-
-        // Calculate if we need to truncate
-        // Only truncate if full path + input exceeds 90% of available width
-        let prefix_len = str_width(&open_prompt);
-        let dir_path = file_open_state.current_dir.to_string_lossy();
-        let dir_path_len = dir_path.len() + 1; // +1 for trailing slash
-        let input_len = prompt.input.len();
-        let total_len = prefix_len + dir_path_len + input_len;
-        let threshold = (area.width as usize * 90) / 100;
-
-        // Truncate the path only if total length exceeds 90% of width
-        let truncated = if total_len > threshold {
-            // Calculate how much space we have for the path after truncation
-            let available_for_path = threshold
-                .saturating_sub(prefix_len)
-                .saturating_sub(input_len);
-            truncate_path(&file_open_state.current_dir, available_for_path)
-        } else {
-            // No truncation needed - return full path
-            TruncatedPath {
-                prefix: String::new(),
-                truncated: false,
-                suffix: dir_path.to_string(),
-                sep: path_display_sep(&dir_path),
-            }
-        };
-
-        // Build the directory display with separate spans for styling
-        if truncated.truncated {
-            // Prefix (dimmed)
-            spans.push(Span::styled(truncated.prefix.clone(), dir_style));
-            // Ellipsis "<sep>[...]" (highlighted)
-            spans.push(Span::styled(
-                format!("{}[...]", truncated.sep),
-                ellipsis_style,
-            ));
-            // Suffix with trailing slash (dimmed)
-            let suffix_with_slash = if truncated.suffix.ends_with('/') {
-                truncated.suffix.clone()
-            } else {
-                format!("{}/", truncated.suffix)
-            };
-            spans.push(Span::styled(suffix_with_slash, dir_style));
-        } else {
-            // No truncation - just show the path with trailing slash
-            let path_display = if truncated.suffix.ends_with('/') {
-                truncated.suffix.clone()
-            } else {
-                format!("{}/", truncated.suffix)
-            };
-            spans.push(Span::styled(path_display, dir_style));
-        }
-
-        // User input (the filename part) - normal color
-        spans.push(Span::styled(prompt.input.clone(), base_style));
-
-        let line = Line::from(spans);
-        let prompt_line = Paragraph::new(line).style(base_style);
-
-        frame.render_widget(prompt_line, area);
-
-        // Set cursor position in the prompt
-        // Use display width for proper handling of Unicode characters
-        // We need to calculate the visual width of: "Open: " + dir_display + input[..cursor_pos]
-        let prefix_width = str_width(&open_prompt);
-        let dir_display_width = if truncated.truncated {
-            let suffix_with_slash = if truncated.suffix.ends_with('/') {
-                &truncated.suffix
-            } else {
-                // We already added "/" in the suffix_with_slash above, so approximate
-                &truncated.suffix
-            };
-            str_width(&truncated.prefix) + str_width("/[...]") + str_width(suffix_with_slash) + 1
-        } else {
-            str_width(&truncated.suffix) + 1 // +1 for trailing slash
-        };
-        let input_width_before_cursor = str_width(&prompt.input[..prompt.cursor_pos]);
-        let cursor_x = (prefix_width + dir_display_width + input_width_before_cursor) as u16;
-        if cursor_x < area.width {
-            frame.set_cursor_position((area.x + cursor_x, area.y));
-        }
-    }
-
     /// Render a single element to its text representation.
     /// Returns None if the element has nothing to display.
     fn render_element(
@@ -1077,18 +856,20 @@ impl StatusBarRenderer {
                 })
             }
             StatusBarElement::Diagnostics => {
-                let diagnostics = ctx.state.overlays.all();
                 let mut error_count = 0usize;
                 let mut warning_count = 0usize;
                 let mut info_count = 0usize;
                 let diagnostic_ns = crate::services::lsp::diagnostics::lsp_diagnostic_namespace();
-                for overlay in diagnostics {
-                    if overlay.namespace.as_ref() == Some(&diagnostic_ns) {
-                        match overlay.priority {
-                            100 => error_count += 1,
-                            50 => warning_count += 1,
-                            _ => info_count += 1,
-                        }
+                // Ask for the diagnostics namespace rather than filtering
+                // every overlay on the buffer: this runs on every frame, and
+                // a decorated buffer (a review diff carries an overlay per
+                // line) has tens of thousands of overlays that are not
+                // diagnostics.
+                for overlay in ctx.state.overlays.in_namespace(&diagnostic_ns) {
+                    match overlay.priority {
+                        100 => error_count += 1,
+                        50 => warning_count += 1,
+                        _ => info_count += 1,
                     }
                 }
                 if error_count + warning_count + info_count == 0 {
@@ -1206,10 +987,55 @@ impl StatusBarRenderer {
                 })
             }
             StatusBarElement::Update => {
-                let version = ctx.update_available?;
+                use crate::services::release_checker::SelfUpdatePhase;
+                // A running/finished update owns the indicator text even though
+                // `update_available` is still set (the running process still
+                // sees itself as out of date until a restart).
+                let text = match ctx.update_phase {
+                    SelfUpdatePhase::Running => t!("status.update_running").to_string(),
+                    SelfUpdatePhase::Succeeded => t!("status.update_done").to_string(),
+                    SelfUpdatePhase::ActionRequired => {
+                        t!("status.update_action_required").to_string()
+                    }
+                    SelfUpdatePhase::Failed => t!("status.update_failed").to_string(),
+                    SelfUpdatePhase::Idle => {
+                        let version = ctx.update_available?;
+                        t!("status.update_available", version = version).to_string()
+                    }
+                };
                 Some(RenderedElement {
-                    text: t!("status.update_available", version = version).to_string(),
+                    text,
                     kind: ElementKind::Update,
+                    token_key: None,
+                })
+            }
+            StatusBarElement::TerminalRestart => {
+                // Absent unless the active buffer is a terminal whose process
+                // quit — this is a call to action, not a persistent control.
+                let restart = ctx.terminal_restart.as_ref()?;
+                // "Resume claude" when the restart rejoins the conversation,
+                // "Restart claude" when it re-runs the launch command, and a
+                // bare "Restart terminal" for a plain shell.
+                let text = match (&restart.program, restart.resumes_agent) {
+                    (Some(program), true) => {
+                        t!("status.terminal_resume", program = program).to_string()
+                    }
+                    (Some(program), false) => {
+                        t!("status.terminal_restart", program = program).to_string()
+                    }
+                    (None, _) => t!("status.terminal_restart_shell").to_string(),
+                };
+                // A non-zero code is the signal that something went wrong, so
+                // it rides along; exit 0 (the agent simply finished) doesn't.
+                let text = match restart.exit_code {
+                    Some(code) if code != 0 => {
+                        t!("status.terminal_restart_code", label = text, code = code).to_string()
+                    }
+                    _ => text,
+                };
+                Some(RenderedElement {
+                    text,
+                    kind: ElementKind::TerminalRestart,
                     token_key: None,
                 })
             }
@@ -1395,6 +1221,10 @@ impl StatusBarRenderer {
                     LspIndicatorState::Error => {
                         (theme.diagnostic_error_fg, theme.diagnostic_error_bg)
                     }
+                    LspIndicatorState::Warning => (
+                        theme.status_warning_indicator_fg,
+                        theme.status_warning_indicator_bg,
+                    ),
                     LspIndicatorState::Off => (
                         theme.status_lsp_actionable_fg,
                         theme.status_lsp_actionable_bg,
@@ -1431,9 +1261,39 @@ impl StatusBarRenderer {
                 }
                 style
             }
-            ElementKind::Update => Style::default()
-                .fg(theme.menu_highlight_fg)
-                .bg(theme.menu_dropdown_bg),
+            ElementKind::Update => {
+                // Keep the indicator's distinctive palette, but underline on
+                // hover to signal it's clickable — matching the LSP / read-only
+                // indicators.
+                let mut style = Style::default()
+                    .fg(theme.menu_highlight_fg)
+                    .bg(theme.menu_dropdown_bg);
+                if is_hovering {
+                    style = style.add_modifier(Modifier::UNDERLINED);
+                }
+                style
+            }
+            ElementKind::TerminalRestart => {
+                // The error palette: a dead agent is a state the user has to
+                // act on, and the indicator *is* the action. Hover styling
+                // matches the other clickable indicators.
+                let (fg, bg) = if is_hovering {
+                    (
+                        theme.status_error_indicator_hover_fg,
+                        theme.status_error_indicator_hover_bg,
+                    )
+                } else {
+                    (
+                        theme.status_error_indicator_fg,
+                        theme.status_error_indicator_bg,
+                    )
+                };
+                let mut style = Style::default().fg(fg).bg(bg);
+                if is_hovering {
+                    style = style.add_modifier(Modifier::UNDERLINED);
+                }
+                style
+            }
             // The palette shortcut hint is purely informational — driven
             // by the dedicated `status_palette_*` theme keys (default
             // to the neutral status-bar palette so it blends into the
@@ -1494,7 +1354,7 @@ impl StatusBarRenderer {
     /// The (fg, bg) theme-key strings an element paints with — its non-hover
     /// provenance for the theme inspector, mirroring `element_style`. Hover is
     /// transient so the recorded key is always the element's semantic key.
-    fn element_keys(
+    pub(crate) fn element_keys(
         kind: ElementKind,
         lsp_state: LspIndicatorState,
     ) -> (&'static str, &'static str) {
@@ -1513,6 +1373,10 @@ impl StatusBarRenderer {
             ),
             ElementKind::Lsp => match lsp_state {
                 LspIndicatorState::Error => ("diagnostic.error_fg", "diagnostic.error_bg"),
+                LspIndicatorState::Warning => (
+                    "ui.status_warning_indicator_fg",
+                    "ui.status_warning_indicator_bg",
+                ),
                 LspIndicatorState::Off => {
                     ("ui.status_lsp_actionable_fg", "ui.status_lsp_actionable_bg")
                 }
@@ -1526,6 +1390,10 @@ impl StatusBarRenderer {
                 "ui.status_warning_indicator_bg",
             ),
             ElementKind::Update => ("ui.menu_highlight_fg", "ui.menu_dropdown_bg"),
+            ElementKind::TerminalRestart => (
+                "ui.status_error_indicator_fg",
+                "ui.status_error_indicator_bg",
+            ),
             ElementKind::Palette => ("ui.status_palette_fg", "ui.status_palette_bg"),
             ElementKind::RemoteIndicator(state) => match state {
                 RemoteIndicatorState::Connecting | RemoteIndicatorState::Connected => {
@@ -1555,7 +1423,7 @@ impl StatusBarRenderer {
     /// click + hover rail generic: it's the *only* place that decides
     /// whether a built-in element is clickable. Plugin tokens are handled
     /// separately (they dispatch a hook, not a core `Action`).
-    fn clickable_for_kind(kind: ElementKind) -> Option<StatusBarClickable> {
+    pub(crate) fn clickable_for_kind(kind: ElementKind) -> Option<StatusBarClickable> {
         match kind {
             ElementKind::LineEnding => Some(StatusBarClickable::LineEnding),
             ElementKind::Encoding => Some(StatusBarClickable::Encoding),
@@ -1566,36 +1434,13 @@ impl StatusBarRenderer {
             ElementKind::RemoteIndicator(_) => Some(StatusBarClickable::RemoteIndicator),
             ElementKind::WorkspaceTrust(_) => Some(StatusBarClickable::WorkspaceTrust),
             ElementKind::ReadOnly => Some(StatusBarClickable::ReadOnly),
+            ElementKind::Update => Some(StatusBarClickable::Update),
+            ElementKind::TerminalRestart => Some(StatusBarClickable::RestartTerminal),
             ElementKind::Normal
             | ElementKind::RemoteDisconnected
-            | ElementKind::Update
             | ElementKind::Palette
             | ElementKind::Clock
             | ElementKind::Custom => None,
-        }
-    }
-
-    /// Record an element's screen area for click/hover dispatch. Clickable
-    /// built-ins land in the generic `clickable` list keyed by their
-    /// `StatusBarClickable` id; plugin tokens (`ElementKind::Custom` carrying a
-    /// `token_key`) land in `plugin_token_areas` keyed by their registry key.
-    fn update_layout_for_element(
-        layout: &mut StatusBarLayout,
-        kind: ElementKind,
-        token_key: Option<&str>,
-        row: u16,
-        start_col: u16,
-        end_col: u16,
-    ) {
-        if let Some(id) = Self::clickable_for_kind(kind) {
-            layout.clickable.push((id, row, start_col, end_col));
-        }
-        if kind == ElementKind::Custom {
-            if let Some(key) = token_key {
-                layout
-                    .plugin_token_areas
-                    .insert(key.to_string(), (row, start_col, end_col));
-            }
         }
     }
 
@@ -1674,7 +1519,7 @@ impl StatusBarRenderer {
     /// token key (`Some` only for `ElementKind::Custom`) so the
     /// placement loops can record the screen area under the same key
     /// the plugin registered.
-    fn render_side(
+    pub(crate) fn render_side(
         config_side: &[StatusBarElement],
         ctx: &mut StatusBarContext<'_>,
     ) -> Vec<(Vec<Span<'static>>, usize, ElementKind, Option<String>)> {
@@ -1698,574 +1543,6 @@ impl StatusBarRenderer {
                 (spans, width, kind, token_key)
             })
             .collect()
-    }
-
-    /// Render the normal status bar (config-driven).
-    fn render_status(
-        frame: &mut Frame,
-        area: Rect,
-        ctx: &mut StatusBarContext<'_>,
-        config: &StatusBarConfig,
-        mut rec: Option<&mut CellThemeRecorder>,
-        draw: bool,
-    ) -> StatusBarLayout {
-        let mut layout = StatusBarLayout::default();
-        let base_style = Style::default()
-            .fg(ctx.theme.status_bar_fg)
-            .bg(ctx.theme.status_bar_bg);
-        let available_width = area.width as usize;
-
-        if available_width == 0 || area.height == 0 {
-            return layout;
-        }
-
-        // Lay down the bar's base keys across the whole row so padding / gaps
-        // resolve to the status bar; each element below overwrites its own
-        // cells with their specific keys as it's emitted.
-        let lsp_state = ctx.lsp_indicator_state;
-        if let Some(r) = rec.as_deref_mut() {
-            r.run(
-                area.x,
-                area.y,
-                area.width,
-                Some("ui.status_bar_fg"),
-                Some("ui.status_bar_bg"),
-                "Status Bar",
-            );
-        }
-
-        // Tell the per-element renderer whether the dedicated
-        // RemoteIndicator is on the bar so the Filename branch
-        // can drop its now-redundant `[Container:<id>] ` /
-        // SSH prefix.
-        ctx.remote_indicator_on_bar = config
-            .left
-            .iter()
-            .chain(config.right.iter())
-            .any(|e| matches!(e, StatusBarElement::RemoteIndicator));
-
-        let left_items = Self::render_side(&config.left, ctx);
-        let mut right_items = Self::render_side(&config.right, ctx);
-
-        // Separator drawn between elements, used verbatim from config.
-        // An empty value disables separators and consumes no width.
-        let separator: &str = &config.separator;
-        let separator_width = str_width(separator);
-        // The separator glyph is colored by the theme's dedicated separator
-        // keys so it can be dimmed against the bar; both fall back to the bar.
-        let separator_style = Style::default()
-            .fg(ctx.theme.status_separator_fg)
-            .bg(ctx.theme.status_separator_bg);
-
-        // Reserve a sane minimum for the left side so the buffer name and
-        // cursor position aren't truncated to a single character on narrow
-        // terminals (regression originally reported as
-        // `t  LF  ASCII  Markdown ...`).  Drop low-priority right elements
-        // (configured right-most first) until the remaining right side fits
-        // alongside that minimum left budget.  We never drop the *first*
-        // right element so the user keeps at least one piece of right-side
-        // status if any was configured.
-        let total_right_width: usize = right_items.iter().map(|(_, w, _, _)| *w).sum::<usize>()
-            + separator_width * right_items.len().saturating_sub(1);
-        let left_min_target = available_width
-            .saturating_mul(2)
-            .saturating_div(5) // ~40% of width reserved for left when feasible
-            .min(40); // but never demand more than 40 cols even on wide terminals
-        let right_budget = available_width.saturating_sub(left_min_target + 1);
-        if total_right_width > right_budget && right_items.len() > 1 {
-            let mut current = total_right_width;
-            while current > right_budget && right_items.len() > 1 {
-                if let Some(dropped) = right_items.pop() {
-                    current = current.saturating_sub(dropped.1);
-                    // Also remove the separator that preceded the dropped
-                    // element (always present since we never drop the first)
-                    current = current.saturating_sub(separator_width);
-                } else {
-                    break;
-                }
-            }
-        }
-
-        let right_width: usize = right_items.iter().map(|(_, w, _, _)| *w).sum::<usize>()
-            + separator_width * right_items.len().saturating_sub(1);
-
-        let narrow = available_width < 15;
-        let left_max_width = if narrow {
-            available_width
-        } else if available_width > right_width + 1 {
-            available_width - right_width - 1
-        } else {
-            1
-        };
-
-        // Emit left side, consuming `left_items` so each element's spans move
-        // directly into the output without a clone. Widths are cached so the
-        // truncation check doesn't re-measure text.
-        let mut spans: Vec<Span<'static>> = Vec::new();
-        let mut used_left: usize = 0;
-
-        for (idx, (item_spans, width, kind, token_key)) in left_items.into_iter().enumerate() {
-            let sep_width = if idx == 0 { 0 } else { separator_width };
-            if used_left + sep_width >= left_max_width {
-                break;
-            }
-            if sep_width > 0 {
-                if let Some(r) = rec.as_deref_mut() {
-                    r.run(
-                        area.x + used_left as u16,
-                        area.y,
-                        sep_width as u16,
-                        Some("ui.status_separator_fg"),
-                        Some("ui.status_separator_bg"),
-                        "Status Bar",
-                    );
-                }
-                spans.push(Span::styled(separator.to_string(), separator_style));
-                used_left += sep_width;
-            }
-
-            let remaining = left_max_width - used_left;
-            let start_col = used_left;
-
-            if width <= remaining {
-                // `segments` is consumed only by the web (`status_view`); the
-                // TUI (`draw`) never reads it, so don't allocate the per-segment
-                // text/Vec on the terminal hot path.
-                let seg_text = (!draw).then(|| {
-                    item_spans
-                        .iter()
-                        .map(|s| s.content.as_ref())
-                        .collect::<String>()
-                });
-                spans.extend(item_spans);
-                used_left += width;
-
-                if let Some(r) = rec.as_deref_mut() {
-                    let (fg, bg) = Self::element_keys(kind, lsp_state);
-                    r.run(
-                        area.x + start_col as u16,
-                        area.y,
-                        width as u16,
-                        Some(fg),
-                        Some(bg),
-                        "Status Bar",
-                    );
-                }
-
-                Self::update_layout_for_element(
-                    &mut layout,
-                    kind,
-                    token_key.as_deref(),
-                    area.y,
-                    area.x + start_col as u16,
-                    area.x + (start_col + width) as u16,
-                );
-                if let Some(text) = seg_text {
-                    layout.segments.push(StatusSegmentInfo {
-                        name: element_kind_name(kind),
-                        key: token_key.clone(),
-                        text,
-                        x: area.x + start_col as u16,
-                        w: width as u16,
-                        side: "left",
-                    });
-                }
-            } else {
-                // Overflow: truncate the concatenated text of this element.
-                // Per-span styling is lost for the overflowed slice — we fall
-                // back to whatever `element_style` would have returned.
-                let group_text: String = item_spans.iter().map(|s| s.content.as_ref()).collect();
-                let truncated = truncate_to_width(&group_text, remaining);
-                let truncated_width = str_width(&truncated);
-                let overflow_is_hovering =
-                    Self::clickable_for_kind(kind).is_some_and(|c| Some(c) == ctx.hovered);
-                let overflow_style = Self::element_style(
-                    kind,
-                    ctx.theme,
-                    overflow_is_hovering,
-                    ctx.warning_level,
-                    ctx.lsp_indicator_state,
-                );
-                let seg_text = (!draw).then(|| truncated.clone());
-                spans.push(Span::styled(truncated, overflow_style));
-
-                if let Some(r) = rec.as_deref_mut() {
-                    let (fg, bg) = Self::element_keys(kind, lsp_state);
-                    r.run(
-                        area.x + start_col as u16,
-                        area.y,
-                        truncated_width as u16,
-                        Some(fg),
-                        Some(bg),
-                        "Status Bar",
-                    );
-                }
-                used_left += truncated_width;
-
-                Self::update_layout_for_element(
-                    &mut layout,
-                    kind,
-                    token_key.as_deref(),
-                    area.y,
-                    area.x + start_col as u16,
-                    area.x + (start_col + truncated_width) as u16,
-                );
-                if let Some(text) = seg_text {
-                    layout.segments.push(StatusSegmentInfo {
-                        name: element_kind_name(kind),
-                        key: token_key.clone(),
-                        text,
-                        x: area.x + start_col as u16,
-                        w: truncated_width as u16,
-                        side: "left",
-                    });
-                }
-                break;
-            }
-        }
-
-        if narrow {
-            if used_left < available_width {
-                spans.push(Span::styled(
-                    " ".repeat(available_width - used_left),
-                    base_style,
-                ));
-            }
-            if draw {
-                frame.render_widget(Paragraph::new(Line::from(spans)), area);
-            }
-            return layout;
-        }
-
-        let mut col_offset = used_left;
-        if col_offset + right_width < available_width {
-            let padding = available_width - col_offset - right_width;
-            spans.push(Span::styled(" ".repeat(padding), base_style));
-            col_offset = available_width - right_width;
-        } else if col_offset < available_width {
-            spans.push(Span::styled(" ", base_style));
-            col_offset += 1;
-        }
-
-        let mut current_col = area.x + col_offset as u16;
-        for (idx, (item_spans, width, kind, token_key)) in right_items.into_iter().enumerate() {
-            if idx > 0 && separator_width > 0 {
-                if let Some(r) = rec.as_deref_mut() {
-                    r.run(
-                        current_col,
-                        area.y,
-                        separator_width as u16,
-                        Some("ui.status_separator_fg"),
-                        Some("ui.status_separator_bg"),
-                        "Status Bar",
-                    );
-                }
-                spans.push(Span::styled(separator.to_string(), separator_style));
-                current_col += separator_width as u16;
-            }
-            if let Some(r) = rec.as_deref_mut() {
-                let (fg, bg) = Self::element_keys(kind, lsp_state);
-                r.run(
-                    current_col,
-                    area.y,
-                    width as u16,
-                    Some(fg),
-                    Some(bg),
-                    "Status Bar",
-                );
-            }
-            Self::update_layout_for_element(
-                &mut layout,
-                kind,
-                token_key.as_deref(),
-                area.y,
-                current_col,
-                current_col + width as u16,
-            );
-            if !draw {
-                // Web-only semantic model; skip the allocation on the TUI path.
-                let seg_text: String = item_spans.iter().map(|s| s.content.as_ref()).collect();
-                layout.segments.push(StatusSegmentInfo {
-                    name: element_kind_name(kind),
-                    key: token_key.clone(),
-                    text: seg_text,
-                    x: current_col,
-                    w: width as u16,
-                    side: "right",
-                });
-            }
-            spans.extend(item_spans);
-            current_col += width as u16;
-        }
-
-        if draw {
-            frame.render_widget(Paragraph::new(Line::from(spans)), area);
-        }
-        layout
-    }
-
-    /// Render the search options bar (shown when search prompt is active)
-    ///
-    /// Displays checkboxes for search options with their keyboard shortcuts:
-    /// - Case Sensitive (Alt+C)
-    /// - Whole Word (Alt+W)
-    /// - Regex (Alt+R)
-    /// - Confirm Each (Alt+I) - only shown in replace mode
-    ///
-    /// # Returns
-    /// Layout information for hit testing mouse clicks on checkboxes
-    #[allow(clippy::too_many_arguments)]
-    pub fn render_search_options(
-        frame: &mut Frame,
-        area: Rect,
-        case_sensitive: bool,
-        whole_word: bool,
-        use_regex: bool,
-        confirm_each: Option<bool>, // None = don't show, Some(value) = show with this state
-        theme: &crate::view::theme::Theme,
-        keybindings: &crate::input::keybindings::KeybindingResolver,
-        hover: SearchOptionsHover,
-    ) -> SearchOptionsLayout {
-        use crate::primitives::display_width::str_width;
-
-        let mut layout = SearchOptionsLayout {
-            row: area.y,
-            ..Default::default()
-        };
-
-        // Use menu dropdown background (dark gray) for the options bar
-        let base_style = Style::default()
-            .fg(theme.menu_dropdown_fg)
-            .bg(theme.menu_dropdown_bg);
-
-        // Style for hovered options - use menu hover colors
-        let hover_style = Style::default()
-            .fg(theme.menu_hover_fg)
-            .bg(theme.menu_hover_bg);
-
-        // Helper to look up keybinding for an action. The search-option toggles
-        // live in the SearchPrompt context; fall back to Prompt then Global so a
-        // user override in either still surfaces in the hint.
-        let get_shortcut = |action: &crate::input::keybindings::Action| -> Option<String> {
-            keybindings
-                .get_keybinding_for_action(
-                    action,
-                    crate::input::keybindings::KeyContext::SearchPrompt,
-                )
-                .or_else(|| {
-                    keybindings.get_keybinding_for_action(
-                        action,
-                        crate::input::keybindings::KeyContext::Prompt,
-                    )
-                })
-                .or_else(|| {
-                    keybindings.get_keybinding_for_action(
-                        action,
-                        crate::input::keybindings::KeyContext::Global,
-                    )
-                })
-        };
-
-        // Get keybindings for search options
-        let case_shortcut =
-            get_shortcut(&crate::input::keybindings::Action::ToggleSearchCaseSensitive);
-        let word_shortcut = get_shortcut(&crate::input::keybindings::Action::ToggleSearchWholeWord);
-        let regex_shortcut = get_shortcut(&crate::input::keybindings::Action::ToggleSearchRegex);
-
-        // Build the options display with checkboxes
-        let case_checkbox = if case_sensitive { "[x]" } else { "[ ]" };
-        let word_checkbox = if whole_word { "[x]" } else { "[ ]" };
-        let regex_checkbox = if use_regex { "[x]" } else { "[ ]" };
-
-        // Style for active (checked) options. The toolbar already draws its
-        // base on `menu_dropdown_*` and its hover on `menu_hover_*`, so the
-        // checked state uses the matching `menu_active_*` pair from the same
-        // family — a proper, theme-designed fg/bg pair rather than a mix of
-        // keys meant for different surfaces. Its background is only a subtle
-        // elevation over the toolbar in normal themes (Dracula: cyan on a
-        // slate [68,71,90], not a heavy block), while high-contrast still gets
-        // its bold accessibility highlight. The earlier `menu_highlight_fg` on
-        // `menu_dropdown_bg` collided on Dracula (both [40,42,54]), rendering
-        // the checked checkbox invisible.
-        let active_style = Style::default()
-            .fg(theme.menu_active_fg)
-            .bg(theme.menu_active_bg);
-
-        // Style for keyboard shortcuts - use theme color for consistency
-        let shortcut_style = Style::default()
-            .fg(theme.help_separator_fg)
-            .bg(theme.menu_dropdown_bg);
-
-        // Hovered shortcut style
-        let hover_shortcut_style = Style::default()
-            .fg(theme.menu_hover_fg)
-            .bg(theme.menu_hover_bg);
-
-        let mut spans = Vec::new();
-        let mut current_col = area.x;
-
-        // Left padding
-        spans.push(Span::styled(" ", base_style));
-        current_col += 1;
-
-        // Helper to get style based on hover and checked state
-        let get_checkbox_style = |is_hovered: bool, is_checked: bool| -> Style {
-            if is_hovered {
-                hover_style
-            } else if is_checked {
-                active_style
-            } else {
-                base_style
-            }
-        };
-
-        // Case Sensitive option
-        let case_hovered = hover == SearchOptionsHover::CaseSensitive;
-        let case_start = current_col;
-        let case_label = format!("{} {}", case_checkbox, t!("search.case_sensitive"));
-        let case_shortcut_text = case_shortcut
-            .as_ref()
-            .map(|s| format!(" ({})", s))
-            .unwrap_or_default();
-        let case_full_width = str_width(&case_label) + str_width(&case_shortcut_text);
-
-        spans.push(Span::styled(
-            case_label,
-            get_checkbox_style(case_hovered, case_sensitive),
-        ));
-        if !case_shortcut_text.is_empty() {
-            spans.push(Span::styled(
-                case_shortcut_text,
-                if case_hovered {
-                    hover_shortcut_style
-                } else {
-                    shortcut_style
-                },
-            ));
-        }
-        current_col += case_full_width as u16;
-        layout.case_sensitive = Some((case_start, current_col));
-
-        // Separator
-        spans.push(Span::styled("   ", base_style));
-        current_col += 3;
-
-        // Whole Word option
-        let word_hovered = hover == SearchOptionsHover::WholeWord;
-        let word_start = current_col;
-        let word_label = format!("{} {}", word_checkbox, t!("search.whole_word"));
-        let word_shortcut_text = word_shortcut
-            .as_ref()
-            .map(|s| format!(" ({})", s))
-            .unwrap_or_default();
-        let word_full_width = str_width(&word_label) + str_width(&word_shortcut_text);
-
-        spans.push(Span::styled(
-            word_label,
-            get_checkbox_style(word_hovered, whole_word),
-        ));
-        if !word_shortcut_text.is_empty() {
-            spans.push(Span::styled(
-                word_shortcut_text,
-                if word_hovered {
-                    hover_shortcut_style
-                } else {
-                    shortcut_style
-                },
-            ));
-        }
-        current_col += word_full_width as u16;
-        layout.whole_word = Some((word_start, current_col));
-
-        // Separator
-        spans.push(Span::styled("   ", base_style));
-        current_col += 3;
-
-        // Regex option
-        let regex_hovered = hover == SearchOptionsHover::Regex;
-        let regex_start = current_col;
-        let regex_label = format!("{} {}", regex_checkbox, t!("search.regex"));
-        let regex_shortcut_text = regex_shortcut
-            .as_ref()
-            .map(|s| format!(" ({})", s))
-            .unwrap_or_default();
-        let regex_full_width = str_width(&regex_label) + str_width(&regex_shortcut_text);
-
-        spans.push(Span::styled(
-            regex_label,
-            get_checkbox_style(regex_hovered, use_regex),
-        ));
-        if !regex_shortcut_text.is_empty() {
-            spans.push(Span::styled(
-                regex_shortcut_text,
-                if regex_hovered {
-                    hover_shortcut_style
-                } else {
-                    shortcut_style
-                },
-            ));
-        }
-        current_col += regex_full_width as u16;
-        layout.regex = Some((regex_start, current_col));
-
-        // Show capture group hint when regex is enabled in replace mode
-        if use_regex && confirm_each.is_some() {
-            let hint = " \u{2502} $1,$2,…";
-            spans.push(Span::styled(hint, shortcut_style));
-            current_col += str_width(hint) as u16;
-        }
-
-        // Confirm Each option (only shown in replace mode)
-        if let Some(confirm_value) = confirm_each {
-            let confirm_shortcut =
-                get_shortcut(&crate::input::keybindings::Action::ToggleSearchConfirmEach);
-            let confirm_checkbox = if confirm_value { "[x]" } else { "[ ]" };
-
-            // Separator
-            spans.push(Span::styled("   ", base_style));
-            current_col += 3;
-
-            let confirm_hovered = hover == SearchOptionsHover::ConfirmEach;
-            let confirm_start = current_col;
-            let confirm_label = format!("{} {}", confirm_checkbox, t!("search.confirm_each"));
-            let confirm_shortcut_text = confirm_shortcut
-                .as_ref()
-                .map(|s| format!(" ({})", s))
-                .unwrap_or_default();
-            let confirm_full_width = str_width(&confirm_label) + str_width(&confirm_shortcut_text);
-
-            spans.push(Span::styled(
-                confirm_label,
-                get_checkbox_style(confirm_hovered, confirm_value),
-            ));
-            if !confirm_shortcut_text.is_empty() {
-                spans.push(Span::styled(
-                    confirm_shortcut_text,
-                    if confirm_hovered {
-                        hover_shortcut_style
-                    } else {
-                        shortcut_style
-                    },
-                ));
-            }
-            current_col += confirm_full_width as u16;
-            layout.confirm_each = Some((confirm_start, current_col));
-        }
-
-        // Fill remaining space
-        let current_width = (current_col - area.x) as usize;
-        let available_width = area.width as usize;
-        if current_width < available_width {
-            spans.push(Span::styled(
-                " ".repeat(available_width.saturating_sub(current_width)),
-                base_style,
-            ));
-        }
-
-        let options_line = Paragraph::new(Line::from(spans));
-        frame.render_widget(options_line, area);
-
-        layout
     }
 }
 
@@ -2845,5 +2122,31 @@ mod tests {
         let mut buf = crate::model::buffer::TextBuffer::from_str_test("hello\nworld\n");
         let line_start = buf.line_start_offset(1).unwrap();
         assert_eq!(cursor_column(&mut buf, line_start), 0);
+    }
+
+    /// Invariant of the prompt-input horizontal scroll window (issue #2876):
+    /// for any viewport width > 0 the cursor always lands inside the
+    /// viewport (`cursor - scroll < width`), scrolling never overshoots the
+    /// cursor, and no scrolling happens while the cursor already fits.
+    #[test]
+    fn test_input_hscroll_keeps_cursor_visible() {
+        for width in 1usize..=120 {
+            for cursor in 0usize..=200 {
+                let scroll = input_hscroll(cursor, width);
+                assert!(scroll <= cursor, "scroll {scroll} > cursor {cursor}");
+                assert!(
+                    cursor - scroll < width,
+                    "cursor not visible: cursor={cursor} scroll={scroll} width={width}"
+                );
+                if cursor < width {
+                    assert_eq!(
+                        scroll, 0,
+                        "no scroll needed at cursor={cursor} width={width}"
+                    );
+                }
+            }
+        }
+        // Degenerate zero-width viewport must not underflow.
+        assert_eq!(input_hscroll(50, 0), 0);
     }
 }

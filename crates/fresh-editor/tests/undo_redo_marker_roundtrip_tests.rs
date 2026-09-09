@@ -8,8 +8,6 @@
 // This tests both single-edit (Insert/Delete) and BulkEdit paths at the
 // integration level (EditorState + EventLog + Cursors, no harness).
 
-mod common;
-
 use fresh::model::cursor::Cursors;
 use fresh::model::event::{CursorId, Event, EventLog};
 use fresh::model::filesystem::StdFileSystem;

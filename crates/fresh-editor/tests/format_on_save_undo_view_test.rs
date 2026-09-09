@@ -7,9 +7,7 @@
 // The fix prepends a cursor-restore event to the rewrite batch so undo pins
 // the cursor/view back to where it was before the format.
 
-mod common;
-
-use common::harness::EditorTestHarness;
+use crate::common::harness::EditorTestHarness;
 
 #[test]
 fn undo_of_on_save_rewrite_keeps_view_at_top() {

@@ -1,0 +1,56 @@
+%YAML 1.2
+---
+name: BibTeX Style
+file_extensions:
+  - bst
+scope: source.bibtex-style
+
+contexts:
+  main:
+    - include: comments
+    - include: strings
+    - include: declarations
+    - include: builtins
+    - include: stack-operators
+    - include: numbers
+
+  comments:
+    - match: '%.*$'
+      scope: comment.line.percentage.bibtex-style
+
+  strings:
+    - match: '"'
+      scope: punctuation.definition.string.begin.bibtex-style
+      push:
+        - meta_scope: string.quoted.double.bibtex-style
+        - match: '"'
+          scope: punctuation.definition.string.end.bibtex-style
+          pop: true
+        - match: '\\.'
+          scope: constant.character.escape.bibtex-style
+
+  declarations:
+    - match: '(FUNCTION|MACRO)\s*(\{)([^}]+)(\})'
+      captures:
+        1: keyword.declaration.bibtex-style
+        2: punctuation.section.braces.begin.bibtex-style
+        3: entity.name.function.bibtex-style
+        4: punctuation.section.braces.end.bibtex-style
+    - match: '\b(ENTRY|EXECUTE|FUNCTION|INTEGERS|ITERATE|MACRO|READ|REVERSE|SORT|STRINGS)\b'
+      scope: keyword.declaration.bibtex-style
+
+  builtins:
+    - match: '\b(address|annote|author|booktitle|chapter|crossref|doi|edition|editor|eprint|howpublished|institution|isbn|issn|journal|key|month|note|number|organization|pages|publisher|school|series|title|type|url|volume|year)\b'
+      scope: support.variable.bibtex-style
+    - match: '\b(call\.type|change\.case|chr\.to\.int|cite|duplicate|empty|format\.name|if|int\.to\.chr|int\.to\.str|missing|newline|num\.names|pop|preamble|purify|quote|skip|stack|substring|swap|text\.length|text\.prefix|top|type|warning|while|width|write)\$'
+      scope: support.function.builtin.bibtex-style
+
+  stack-operators:
+    - match: "('[A-Za-z_][A-Za-z0-9_.-]*)(?=\\s|$)"
+      scope: variable.other.quoted.bibtex-style
+    - match: ':=|[=<>+\-*]'
+      scope: keyword.operator.bibtex-style
+
+  numbers:
+    - match: '#-?\d+\b'
+      scope: constant.numeric.bibtex-style

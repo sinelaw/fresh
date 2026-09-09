@@ -75,7 +75,7 @@ impl<'a> InputHandler for FileBrowserInputHandler<'a> {
             // Backspace: if input is empty, go to parent directory
             // Otherwise, delegate to prompt for character deletion
             KeyCode::Backspace if !ctrl => {
-                if self.prompt.input.is_empty() {
+                if self.prompt.input_str().is_empty() {
                     ctx.defer(DeferredAction::FileBrowserGoParent);
                     InputResult::Consumed
                 } else {
@@ -128,8 +128,8 @@ impl<'a> InputHandler for FileBrowserInputHandler<'a> {
                 match c {
                     'a' => {
                         // Select all
-                        self.prompt.selection_anchor = Some(0);
-                        self.prompt.cursor_pos = self.prompt.input.len();
+                        let existing = self.prompt.input_str().to_string();
+                        self.prompt.set_input_selected(existing);
                         InputResult::Consumed
                     }
                     'c' => {
@@ -251,7 +251,7 @@ mod tests {
         handler.handle_key_event(&key(KeyCode::Char('s')), &mut ctx);
         handler.handle_key_event(&key(KeyCode::Char('t')), &mut ctx);
 
-        assert_eq!(prompt.input, "test");
+        assert_eq!(prompt.input_str(), "test");
         // Should have deferred filter updates
         assert!(ctx
             .deferred_actions
@@ -263,7 +263,7 @@ mod tests {
     fn test_backspace_empty_goes_parent() {
         let mut file_state = create_test_file_state();
         let mut prompt = create_test_prompt();
-        prompt.input = String::new();
+        prompt.set_input_plain(String::new());
         let mut handler = FileBrowserInputHandler::new(&mut file_state, &mut prompt);
         let mut ctx = InputContext::new();
 
@@ -279,14 +279,14 @@ mod tests {
     fn test_backspace_with_text_deletes() {
         let mut file_state = create_test_file_state();
         let mut prompt = create_test_prompt();
-        prompt.input = "test".to_string();
-        prompt.cursor_pos = 4;
+        prompt.set_input_plain("test".to_string());
+        prompt.set_cursor_byte(4);
         let mut handler = FileBrowserInputHandler::new(&mut file_state, &mut prompt);
         let mut ctx = InputContext::new();
 
         handler.handle_key_event(&key(KeyCode::Backspace), &mut ctx);
 
-        assert_eq!(prompt.input, "tes");
+        assert_eq!(prompt.input_str(), "tes");
         assert!(ctx
             .deferred_actions
             .iter()

@@ -45,7 +45,7 @@ pub mod process_group;
 pub use buffers::WindowBuffers;
 pub use process_group::{LocalSignaller, ProcessGroupEntry, ProcessGroups, Signaller};
 
-use crate::app::types::{ChromeLayout, WindowLayoutCache};
+use crate::app::types::ChromeLayout;
 use crate::app::window_resources::WindowResources;
 use crate::model::event::{Event, LeafId};
 use crate::services::lsp::diagnostics::AnchoredDiagnostic;
@@ -58,13 +58,23 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+/// Scanning budget for "where does the visible window end".
+///
+/// A drawn row holds at most a pane's width of text, so a screenful of lines
+/// is a few tens of kilobytes; this is generous against that and, unlike the
+/// line count alone, it bounds the answer on a file whose next line break is
+/// megabytes away. Overshooting merely widens a window that is compared
+/// against the cursor's byte, so a generous bound costs nothing but is still a
+/// bound.
+const VISIBLE_WINDOW_SCAN_BYTES: usize = 256 * 1024;
+
 /// A project-rooted unit of editor state.
 ///
 /// After Step 0b every per-subsystem field listed below is owned
 /// outright by the window — there are no warm-swap stashes.
 /// `setActiveWindow` is a pointer write; reads of the active
 /// window's state route through Editor accessors
-/// (`active_layout()`, `split_manager()`, `file_explorer()`, `lsp()`,
+/// (`split_manager()`, `file_explorer()`, `lsp()`,
 /// `panel_ids()`, `file_mod_times()`, …). Cross-window access goes
 /// through `Editor.windows.get(&id)` directly.
 /// A clickable path-link highlighted under a Ctrl+hover in the live terminal
@@ -77,6 +87,78 @@ pub struct TerminalLinkHover {
     pub row: u16,
     /// Column range (0-based char columns) the link spans, for underlining.
     pub cols: std::ops::Range<usize>,
+}
+
+/// A terminal whose process quit while its buffer stayed open as read-only
+/// scrollback, keyed by `BufferId` in [`Window::exited_terminals`].
+///
+/// The exit path drops the buffer↔terminal binding and closes the PTY handle,
+/// so every input a respawn needs — geometry, cwd, backing/log files, launch
+/// and agent-resume argv — is snapshotted here *before* that teardown. That
+/// makes [`Window::restart_terminal_buffer`] a pure function of this record,
+/// exactly like a workspace restore is a pure function of the persisted
+/// terminal entry.
+#[derive(Debug, Clone)]
+pub struct ExitedTerminal {
+    /// The PTY session that died. Kept for the status message and so a
+    /// second exit for the same id can be recognised as stale.
+    pub terminal_id: crate::services::terminal::TerminalId,
+    /// Wait-status exit code, when the platform reported one.
+    pub exit_code: Option<i32>,
+    /// Geometry of the dead PTY, so the reborn one matches its split.
+    pub cols: u16,
+    pub rows: u16,
+    /// Working directory the dead PTY ran in.
+    pub cwd: Option<PathBuf>,
+    /// Scrollback/log files to keep appending to, so a restart continues the
+    /// transcript rather than starting blank.
+    pub backing_path: Option<PathBuf>,
+    pub log_path: Option<PathBuf>,
+    /// Launch argv (`Window::terminal_commands`), absent for a plain shell.
+    pub command: Option<Vec<String>>,
+    /// Agent-resume argv (`Window::terminal_resume_commands`) — the argv that
+    /// rejoins the agent's conversation (`claude --resume <id>`) instead of
+    /// starting a fresh one. Absent for non-agent terminals.
+    pub resume: Option<Vec<String>>,
+    /// Whether the dead terminal was ephemeral (plugin/Orchestrator-created).
+    pub ephemeral: bool,
+    /// Whether the dead terminal's child held a script capability token, so a
+    /// restart mints it a new one instead of bringing the agent back unable to
+    /// drive the editor.
+    pub script_access: bool,
+    /// The tab title as it read *before* the exit marker was appended, so a
+    /// restart can put it back. `None` for an auto-named tab, which re-derives
+    /// its name from the reborn process.
+    pub title: Option<String>,
+}
+
+impl ExitedTerminal {
+    /// Short name of the process that died — the basename of the resume or
+    /// launch argv's program (`claude`, `codex`, …), or `None` for a terminal
+    /// that was just the user's shell.
+    pub fn program_name(&self) -> Option<&str> {
+        // An *empty* resume vector is the plain-shell restore marker, not a
+        // rejoinable agent — fall through to the launch command rather than
+        // reporting no program at all.
+        self.resume
+            .as_ref()
+            .filter(|argv| !argv.is_empty())
+            .or(self.command.as_ref())
+            .and_then(|argv| argv.first())
+            .map(|program| {
+                program
+                    .rsplit(['/', '\\'])
+                    .next()
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or(program.as_str())
+            })
+    }
+
+    /// Whether restarting this terminal rejoins an agent conversation (as
+    /// opposed to re-running the launch command or opening a plain shell).
+    pub fn resumes_agent(&self) -> bool {
+        self.resume.as_ref().is_some_and(|argv| !argv.is_empty())
+    }
 }
 
 /// Per-terminal-buffer editor state, keyed by `BufferId` in
@@ -175,6 +257,33 @@ impl TerminalBuffer {
     }
 }
 
+/// An LSP completion candidate together with the server that offered it.
+///
+/// A language can be served by several servers at once and their results
+/// are merged into one popup, so a candidate on its own is not enough to
+/// act on: `CompletionItem::data` is an opaque handle that only its own
+/// server can interpret, and `completionItem/resolve` — the request that
+/// supplies auto-imports for servers that defer them — is meaningless when
+/// sent anywhere else. Keeping the origin next to the item makes "which
+/// server does this belong to?" answerable wherever the candidate travels.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LspCompletionCandidate {
+    /// The candidate as the server sent it.
+    pub item: lsp_types::CompletionItem,
+
+    /// `LspHandle::id()` of the server that offered `item`, or `None` for
+    /// candidates that came from no server (injected directly in tests).
+    pub server: Option<u64>,
+}
+
+impl LspCompletionCandidate {
+    /// A candidate with no server behind it — nothing can be resolved
+    /// against a server that doesn't exist.
+    pub fn unattributed(item: lsp_types::CompletionItem) -> Self {
+        Self { item, server: None }
+    }
+}
+
 pub struct Window {
     /// Stable identifier. The base window is always `WindowId(1)`.
     pub id: WindowId,
@@ -202,6 +311,17 @@ pub struct Window {
     /// boot, and unlike `root`, which identifies the *directory* rather
     /// than the workspace on it.
     pub stable_id: String,
+
+    /// Whether this window ever adopted an on-disk workspace snapshot.
+    ///
+    /// Set by `apply_workspace_layout`, which is the one door every
+    /// restore path goes through. It answers the single question the
+    /// issue-#2027 save guard could not: an all-virtual snapshot from a
+    /// window that *did* restore is the user having closed everything
+    /// and must be written; the same snapshot from a window that never
+    /// restored is a shell that never held the real content and must
+    /// not overwrite it. Both look identical without this.
+    pub workspace_restored: bool,
 
     /// Canonical absolute path of the project root. Read-only after
     /// construction; closing a window and creating a new one is the
@@ -261,6 +381,13 @@ pub struct Window {
     /// drops the buffer and its log together.
     pub event_logs: HashMap<BufferId, crate::model::event::EventLog>,
 
+    /// File buffers restored as **empty placeholders** because this window's
+    /// authority is remote: reading their content synchronously during restore
+    /// would freeze the single-threaded editor loop over a slow link. The editor
+    /// drains this each tick, reads each file off-loop, and fills the buffer via
+    /// `AsyncMessage::RemoteBufferContentLoaded`. Always empty for local windows.
+    pub(crate) pending_content_load: Vec<(BufferId, PathBuf)>,
+
     /// Status message (shown in this window's status bar). Per-window
     /// because each window has its own context — a save in window A
     /// shouldn't flash a status message into window B's UI. Only the
@@ -294,11 +421,35 @@ pub struct Window {
     /// namespace needed. Starts at 0 per window.
     pub next_lsp_request_id: u64,
 
-    /// Pending LSP completion request ids (multi-server).
-    pub pending_completion_requests: std::collections::HashSet<u64>,
+    /// In-flight LSP completion requests, each mapped to the server it was
+    /// sent to (`LspHandle::id()`). A language can be served by several
+    /// servers at once and every one of them gets its own request, so the
+    /// map is what tells a response which server produced it — the
+    /// candidates it carries are only resolvable against that server.
+    pub pending_completion_requests: std::collections::HashMap<u64, u64>,
 
-    /// Original LSP completion items (for type-to-filter).
-    pub completion_items: Option<Vec<lsp_types::CompletionItem>>,
+    /// Original LSP completion candidates (for type-to-filter), merged
+    /// from every server that answered.
+    pub completion_items: Option<Vec<LspCompletionCandidate>>,
+
+    /// The candidate behind each *LSP row* of the completion popup
+    /// currently on screen, in row order. Rows past the end of this vector
+    /// are buffer-word candidates, which have no LSP item behind them.
+    ///
+    /// Written only by `Editor::build_completion_popup_rows`, from the same
+    /// filtered list it converts into popup rows — so "popup row N" and
+    /// "entry N here" are the same candidate by construction. The accept
+    /// path needs that identity because completion *labels* are not
+    /// unique: with auto-import candidates advertised (#2603) a server
+    /// offers one `HashMap` row per crate exporting one, each with a
+    /// different `use` line.
+    pub completion_popup_lsp_items: Vec<LspCompletionCandidate>,
+
+    /// Id of the in-flight `completionItem/resolve` request, if any. Only
+    /// the answer to *that* request may edit the buffer: a late reply to a
+    /// resolve the user has already moved past would apply an import for a
+    /// candidate that is no longer the accepted one.
+    pub pending_completion_resolve_request: Option<u64>,
 
     /// Scheduled completion-trigger time (debounced quick-suggestions).
     pub scheduled_completion_trigger: Option<std::time::Instant>,
@@ -469,15 +620,13 @@ pub struct Window {
     /// another window's indicator.
     pub remote_reconnect_error: Option<String>,
 
-    /// Window-scoped layout hit-test cache: split-leaf rects, tab
-    /// rects, the file-explorer rect, separators, scrollbars, and
-    /// per-leaf `view_line_mappings` that mouse positioning and
-    /// visual-line motion read. Repopulated by the renderer on every
-    /// frame; stale until the next render after a window switch (the
-    /// post-switch render fills it in before any input handling).
-    /// Editor-chrome rects (status bar, menu, popups, prompt overlay)
-    /// live on `Window::chrome_layout` (also per-window).
-    pub(crate) layout_cache: WindowLayoutCache,
+    /// Each pane's leaf handle, by the pane: the factory the description
+    /// mounts its content and its bars by, and the view of the rows its
+    /// last text pass drew that the content leaf's `text_byte_at` and the
+    /// keyboard's visual-line motion read (`view::shell::buffer_host`). One
+    /// handle per pane for as long as the pane exists, so the leaf is never
+    /// replaced (design §3.7.1).
+    pub(crate) panes: HashMap<LeafId, crate::view::shell::buffer_host::PaneHandle>,
 
     /// Per-window editor-chrome layout cache: status bar, menu,
     /// popups, prompt overlay, full-frame cell-theme map. Each
@@ -502,6 +651,25 @@ pub struct Window {
     /// derived cache, never a source of truth: `Editor::dock` owns the
     /// real placement and `relayout` recomputes this from it.
     pub(crate) dock_cols: u16,
+
+    /// Where the last layout put this window's panes.
+    ///
+    /// **A record from layout, not of a paint.** The painter records nothing
+    /// a layout could answer (the E.1 rule); this is the layout's own answer,
+    /// kept for the callers that ask *between* frames — a terminal's PTY
+    /// sized to its pane, a tab strip's width, the plugin snapshot, the pane
+    /// beside this one — which cannot read the shell tree themselves: it is
+    /// the editor's, it describes only the active window, and a frame may be
+    /// holding it. Every layout that places this window's panes writes it:
+    /// `Editor::render`, `Editor::recompute_layout`,
+    /// `Editor::refresh_pane_rects`, and the layout funnel
+    /// (`Editor::push_layout_geometry`), which lays the active window's frame
+    /// out and every other window's grid offscreen before anything reads
+    /// them. Read through [`Self::visible_panes`] or [`Self::pane_rects`].
+    ///
+    /// Empty until the first layout. `Editor::with_options` runs one, so a
+    /// window that exists has been laid out at least once.
+    pub(crate) pane_rects: crate::view::shell::geometry::PaneRects,
 
     /// Editor-global resources shared by `Arc` clone (config, theme
     /// registry, keybindings, command registry, filesystem authority,
@@ -561,6 +729,12 @@ pub struct Window {
 
     /// Whether a file-explorer rebuild is in flight (debounce flag).
     pub file_explorer_sync_in_progress: bool,
+
+    /// Path an expand-to-path request named while
+    /// `file_explorer_sync_in_progress` was already set. Replayed when the
+    /// in-flight expand lands, so an open that overlaps an earlier one still
+    /// reaches the tree (issue #2988).
+    pub file_explorer_sync_deferred: Option<PathBuf>,
 
     /// Width of the file-explorer panel.
     pub file_explorer_width: crate::config::ExplorerWidth,
@@ -628,6 +802,10 @@ pub struct Window {
     /// `editor.startPrompt` to deliver the prompt result back).
     pub pending_async_prompt_callback: Option<fresh_core::api::JsCallbackId>,
 
+    /// Pending `editor.pickFile` callback id. While set, the Open File
+    /// browser delivers the confirmed path here instead of opening it.
+    pub pending_file_pick_callback: Option<fresh_core::api::JsCallbackId>,
+
     /// Buffer ids the user picked "save before quit" for via the
     /// modified-buffers prompt; consumed in order on quit.
     pub pending_quit_unnamed_save: Vec<BufferId>,
@@ -693,6 +871,18 @@ pub struct Window {
     /// window's LspManager (running, errored, restarting, …).
     pub lsp_server_statuses:
         HashMap<(String, String), crate::services::async_bridge::LspServerStatus>,
+
+    /// Most recent request timeout per `(language, method)`, so a feature
+    /// that came back empty can say *why* it is empty. A request that
+    /// expires is delivered to the feature as "no result", which is how
+    /// issue #2197 got its "F12 reports No definition found" symptom — the
+    /// server never answered at all.
+    ///
+    /// Keyed by method, and consumed once, because the editor also makes
+    /// requests the user did not: without that, a background `inlayHint`
+    /// expiring at t=0 would explain a `definition` the server answered
+    /// correctly and promptly with `[]` at t=2s.
+    pub lsp_request_timeouts: HashMap<(String, String), LspRequestTimeoutRecord>,
 
     /// Plugin-contributed menu items merged into the LSP-Servers popup
     /// (the one opened by clicking the LSP indicator). Keyed by
@@ -821,6 +1011,28 @@ pub struct Window {
     pub terminal_resume_commands:
         std::collections::HashMap<crate::services::terminal::TerminalId, Vec<String>>,
 
+    /// Terminals whose child was handed a `FRESH_CMD_TOKEN` capability token
+    /// (`allowScript`), mapped to the token that terminal's *current*
+    /// incarnation carries.
+    ///
+    /// Membership — not the token value — is what survives a restart: it is
+    /// persisted as the workspace's `script_access` flag and re-minted on
+    /// restore, because the token table is in-memory and process-global, so
+    /// the string a previous run handed out means nothing to this one. The
+    /// value is kept so a respawn can revoke the token its predecessor held
+    /// instead of leaving it in the table for the life of the process.
+    pub terminal_script_tokens:
+        std::collections::HashMap<crate::services::terminal::TerminalId, String>,
+
+    /// Terminals whose process has quit while their buffer stayed open,
+    /// keyed by that buffer. Everything needed to respawn the same process
+    /// in place lives in the record, so a restart doesn't depend on the
+    /// terminal-id-keyed maps surviving the teardown. Populated by
+    /// `handle_terminal_exited`, consumed by
+    /// [`Window::restart_terminal_buffer`], and dropped when the buffer
+    /// closes or comes back live.
+    pub exited_terminals: HashMap<BufferId, ExitedTerminal>,
+
     /// Plugin-development workspace per buffer (temp dir + LSP
     /// configuration for plugin buffers). Buffer-keyed and buffers
     /// are per-window, so the workspace map follows.
@@ -885,6 +1097,10 @@ pub struct Window {
     /// File-explorer context menu state (right-click in the explorer).
     pub file_explorer_context_menu: Option<crate::app::types::FileExplorerContextMenu>,
 
+    /// Close-split confirmation popup state (left-click on a split tab bar's
+    /// `×` button). Offers "Close split" / "Cancel".
+    pub close_split_menu: Option<crate::app::types::CloseSplitMenu>,
+
     /// Theme inspector popup (Ctrl+Right-Click) anchored in this window.
     pub theme_info_popup: Option<crate::app::types::ThemeInfoPopup>,
 
@@ -896,9 +1112,6 @@ pub struct Window {
     /// File-open dialog state (when PromptType::OpenFile is active in
     /// this window's prompt).
     pub file_open_state: Option<crate::app::file_open::FileOpenState>,
-
-    /// Cached layout for the file browser (mouse hit-testing).
-    pub file_browser_layout: Option<crate::view::ui::FileBrowserLayout>,
 
     /// Buffer groups (multiple buffers shown as one tab) in this window.
     pub buffer_groups: HashMap<crate::app::types::BufferGroupId, crate::app::types::BufferGroup>,
@@ -976,18 +1189,41 @@ pub struct Window {
     pub process_groups: ProcessGroups,
 }
 
+/// The last LSP request that expired for a language.
+#[derive(Debug, Clone)]
+pub struct LspRequestTimeoutRecord {
+    /// The server the request was sent to.
+    ///
+    /// The record is keyed by the label the server registered under, which
+    /// for a universal server is `"universal"` rather than any language —
+    /// so the lookup has to be able to ask whether that server's scope
+    /// accepts the buffer's language, the way `is_lsp_server_ready` does.
+    pub server_name: String,
+    /// When the timeout was reported.
+    pub at: std::time::Instant,
+    /// How long it waited.
+    pub timeout: std::time::Duration,
+    /// Timeouts in a row on that server, including this one.
+    pub consecutive: u32,
+}
+
+impl LspRequestTimeoutRecord {
+    /// Whether this timeout is recent enough to explain a request that
+    /// just came back empty. Requests are answered (or expire) one at a
+    /// time, so a few seconds is a generous window.
+    pub fn explains_empty_result(&self) -> bool {
+        self.at.elapsed() < std::time::Duration::from_secs(5)
+    }
+}
+
 /// Apply language-server configuration to a freshly-created
 /// [`LspManager`]: per-language configs, the universal (global)
 /// servers, and the Deno auto-detection override. Shared by every
 /// window's construction so the server set is identical regardless of
 /// how the window came to exist (boot, orchestrator new-session,
 /// disk-restored shell).
-pub(crate) fn configure_lsp_servers(
-    lsp: &mut LspManager,
-    root: &std::path::Path,
-    config: &crate::config::Config,
-) {
-    use crate::types::{LspServerConfig, ProcessLimits};
+pub(crate) fn configure_lsp_servers(lsp: &mut LspManager, config: &crate::config::Config) {
+    use crate::types::LspServerConfig;
 
     // Global master switch — gates auto-start of every server below.
     lsp.set_globally_enabled(config.lsp_enabled);
@@ -1006,24 +1242,9 @@ pub(crate) fn configure_lsp_servers(
         .collect();
     lsp.set_universal_configs(universal_servers);
 
-    // Auto-detect Deno projects: if deno.json or deno.jsonc exists in the
-    // window root, override JS/TS LSP to use `deno lsp` (#1191). Checked
-    // against the window's own root so each workspace gets the detection for
-    // its actual project rather than the process cwd.
-    if root.join("deno.json").exists() || root.join("deno.jsonc").exists() {
-        tracing::info!("Detected Deno project (deno.json found), using deno lsp for JS/TS");
-        let deno_config = LspServerConfig {
-            command: "deno".to_string(),
-            args: Some(vec!["lsp".to_string()]),
-            enabled: true,
-            auto_start: false,
-            process_limits: ProcessLimits::default(),
-            initialization_options: Some(serde_json::json!({"enable": true})),
-            ..Default::default()
-        };
-        lsp.set_language_config("javascript".to_string(), deno_config.clone());
-        lsp.set_language_config("typescript".to_string(), deno_config);
-    }
+    // Project conventions that pick a different server for a language —
+    // `deno lsp` for a workspace with a `deno.json` — live in plugins
+    // (`plugins/deno_lsp.ts`), not here (#2981).
 }
 
 /// Build the [`LspManager`] every window owns: rooted at the window's
@@ -1059,11 +1280,45 @@ pub(crate) fn build_window_lsp(
     lsp.set_path_translation(authority.path_translation.clone());
     lsp.set_workspace_trust(authority.workspace_trust.clone());
 
-    configure_lsp_servers(&mut lsp, root, &resources.config);
+    configure_lsp_servers(&mut lsp, &resources.config);
     lsp
 }
 
+/// Outcome of [`Window::claim_next_key`].
+pub(crate) enum NextKeyClaim {
+    /// A plugin callback was pending: resolve it with this payload.
+    Resolve(
+        fresh_core::api::JsCallbackId,
+        fresh_core::api::KeyEventPayload,
+    ),
+    /// Key capture is active but no callback armed yet — the payload was
+    /// queued for the next `AwaitNextKey`.
+    Buffered,
+    /// No plugin wants the key.
+    NotClaimed,
+}
+
 impl Window {
+    /// Claim a key for the plugin `getNextKey()` machinery, if it wants
+    /// one. Pops the front-most pending callback (the caller resolves it
+    /// with the payload), or buffers the payload when key capture is
+    /// active but no callback is armed yet — closing the race between
+    /// fast typing/paste and the plugin re-arming `getNextKey` between
+    /// iterations. `NotClaimed` leaves the key to the normal pipeline.
+    pub(crate) fn claim_next_key(
+        &mut self,
+        payload: fresh_core::api::KeyEventPayload,
+    ) -> NextKeyClaim {
+        if let Some(callback_id) = self.pending_next_key_callbacks.pop_front() {
+            return NextKeyClaim::Resolve(callback_id, payload);
+        }
+        if self.key_capture_active {
+            self.pending_key_capture_buffer.push_back(payload);
+            return NextKeyClaim::Buffered;
+        }
+        NextKeyClaim::NotClaimed
+    }
+
     /// The currently-open native context menu's shared geometry core, if
     /// any, together with a discriminant identifying which concrete menu it
     /// belongs to.
@@ -1089,6 +1344,9 @@ impl Window {
         if let Some(m) = &self.tab_context_menu {
             return Some((ContextMenuKind::Tab, &m.menu));
         }
+        if let Some(m) = &self.close_split_menu {
+            return Some((ContextMenuKind::CloseSplit, &m.menu));
+        }
         None
     }
 
@@ -1098,19 +1356,25 @@ impl Window {
     }
 
     /// Mutable access to the currently-open native context menu's shared
-    /// geometry core (for highlight navigation from hover / keyboard). Uses
-    /// the same precedence order as [`Window::open_context_menu`].
+    /// geometry core (for highlight navigation from hover / keyboard).
+    /// WHICH menu is open is [`Window::open_context_menu`]'s decision —
+    /// the ONE precedence encoding; this only re-borrows that menu's
+    /// field mutably (the borrow checker rules out returning `&mut`
+    /// straight from the immutable walk, so the kind is resolved first
+    /// and matched exhaustively — a new menu kind fails to compile here
+    /// instead of silently missing from a second hand-copied ladder).
     pub(crate) fn context_menu_core_mut(&mut self) -> Option<&mut crate::app::types::ContextMenu> {
-        if let Some(m) = self.file_explorer_context_menu.as_mut() {
-            return Some(&mut m.menu);
+        use crate::app::types::ContextMenuKind;
+        let kind = self.open_context_menu()?.0;
+        match kind {
+            ContextMenuKind::FileExplorer => self
+                .file_explorer_context_menu
+                .as_mut()
+                .map(|m| &mut m.menu),
+            ContextMenuKind::NewTab => self.new_tab_menu.as_mut().map(|m| &mut m.menu),
+            ContextMenuKind::Tab => self.tab_context_menu.as_mut().map(|m| &mut m.menu),
+            ContextMenuKind::CloseSplit => self.close_split_menu.as_mut().map(|m| &mut m.menu),
         }
-        if let Some(m) = self.new_tab_menu.as_mut() {
-            return Some(&mut m.menu);
-        }
-        if let Some(m) = self.tab_context_menu.as_mut() {
-            return Some(&mut m.menu);
-        }
-        None
     }
 
     /// Item labels of the currently-open native context menu, in display
@@ -1141,6 +1405,13 @@ impl Window {
                 .iter()
                 .map(|i| i.label())
                 .collect(),
+            ContextMenuKind::CloseSplit => self
+                .close_split_menu
+                .as_ref()?
+                .items()
+                .iter()
+                .map(|i| i.label())
+                .collect(),
         })
     }
 
@@ -1150,6 +1421,7 @@ impl Window {
         self.tab_context_menu = None;
         self.new_tab_menu = None;
         self.file_explorer_context_menu = None;
+        self.close_split_menu = None;
     }
 
     /// Apply LSP folding ranges to the named buffer's `folding_ranges`
@@ -1193,7 +1465,11 @@ impl Window {
     pub(crate) fn cancel_pending_lsp_requests(&mut self) {
         self.scheduled_completion_trigger = None;
         if !self.pending_completion_requests.is_empty() {
-            let ids: Vec<u64> = self.pending_completion_requests.drain().collect();
+            let ids: Vec<u64> = self
+                .pending_completion_requests
+                .drain()
+                .map(|(request_id, _server)| request_id)
+                .collect();
             for request_id in ids {
                 tracing::debug!("Canceling pending LSP completion request {}", request_id);
                 self.send_lsp_cancel_request(request_id);
@@ -1236,7 +1512,7 @@ impl Window {
         } else {
             "toggle.tab_bar_hidden"
         };
-        self.set_status_message(rust_i18n::t!(key).to_string());
+        self.set_status_message(fresh_i18n::t!(key).to_string());
     }
 
     /// Toggle this window's status-bar visibility and post a status message.
@@ -1247,7 +1523,7 @@ impl Window {
         } else {
             "toggle.status_bar_hidden"
         };
-        self.set_status_message(rust_i18n::t!(key).to_string());
+        self.set_status_message(fresh_i18n::t!(key).to_string());
     }
 
     /// Toggle this window's prompt-line visibility and post a status message.
@@ -1258,7 +1534,7 @@ impl Window {
         } else {
             "toggle.prompt_line_hidden"
         };
-        self.set_status_message(rust_i18n::t!(key).to_string());
+        self.set_status_message(fresh_i18n::t!(key).to_string());
     }
 
     /// Toggle this window's same-buffer scroll-sync flag and post a
@@ -1270,7 +1546,7 @@ impl Window {
         } else {
             "toggle.scroll_sync_disabled"
         };
-        self.set_status_message(rust_i18n::t!(key).to_string());
+        self.set_status_message(fresh_i18n::t!(key).to_string());
     }
 
     /// Toggle the active buffer's `debug_highlight_mode` (shows byte
@@ -1285,7 +1561,7 @@ impl Window {
             } else {
                 "toggle.debug_mode_off"
             };
-            self.set_status_message(rust_i18n::t!(key).to_string());
+            self.set_status_message(fresh_i18n::t!(key).to_string());
         }
     }
 
@@ -1364,27 +1640,6 @@ impl Window {
     }
 
     /// True iff at least one LSP server attached to the active buffer's
-    /// language advertises `completionItem/resolve`.
-    pub(crate) fn server_supports_completion_resolve(&self) -> bool {
-        let Some(language) = self
-            .buffers
-            .get(&self.active_buffer())
-            .map(|s| s.language.clone())
-        else {
-            return false;
-        };
-        {
-            let lsp = &self.lsp;
-            for sh in lsp.get_handles(&language) {
-                if sh.capabilities.completion_resolve {
-                    return true;
-                }
-            }
-        }
-        false
-    }
-
-    /// True iff at least one LSP server attached to the active buffer's
     /// language advertises `textDocument/rename` (and therefore the
     /// `prepareRename` request, which the editor surfaces only through
     /// the rename feature flag).
@@ -1448,11 +1703,23 @@ impl Window {
         }
     }
 
-    /// Send `completionItem/resolve` for `item` to the first LSP server
-    /// (in language order) that advertises `completion_resolve` for the
-    /// active buffer's language. No-op if no server is running or no
-    /// server supports the resolve.
-    pub(crate) fn send_completion_resolve(&mut self, item: lsp_types::CompletionItem) {
+    /// Send `completionItem/resolve` for `candidate` to **the server that
+    /// offered it**, if that server advertises `completion_resolve`.
+    ///
+    /// Asking any other server is wrong by construction: the item's `data`
+    /// is a private handle minted by its own server, so a different one
+    /// answers with an error or with edits for something else entirely —
+    /// and resolve is where auto-imports come from, so that lands as a
+    /// wrong `use` line in the user's file. The capability question has
+    /// the same shape: "some server for this language resolves" says
+    /// nothing about the one that produced this candidate.
+    ///
+    /// No-op for candidates with no server behind them, or when that
+    /// server is gone or can't resolve.
+    pub(crate) fn send_completion_resolve(&mut self, candidate: &LspCompletionCandidate) {
+        let Some(server) = candidate.server else {
+            return;
+        };
         let Some(language) = self
             .buffers
             .get(&self.active_buffer())
@@ -1463,19 +1730,34 @@ impl Window {
         let request_id = self.alloc_lsp_request_id();
         {
             let lsp = &mut self.lsp;
-            for sh in lsp.get_handles_mut(&language) {
-                if sh.capabilities.completion_resolve {
-                    if let Err(e) = sh.handle.completion_resolve(request_id, item.clone()) {
-                        tracing::warn!(
-                            "Failed to send completionItem/resolve to '{}': {}",
-                            sh.name,
-                            e
-                        );
-                    }
-                    return;
-                }
+            let Some(sh) = lsp
+                .get_handles_mut(&language)
+                .into_iter()
+                .find(|sh| sh.handle.id() == server)
+            else {
+                tracing::debug!("Completion's server is no longer running; not resolving");
+                return;
+            };
+            if !sh.capabilities.completion_resolve {
+                tracing::debug!(
+                    "Server '{}' offered the completion but does not support resolve",
+                    sh.name
+                );
+                return;
+            }
+            if let Err(e) = sh
+                .handle
+                .completion_resolve(request_id, candidate.item.clone())
+            {
+                tracing::warn!(
+                    "Failed to send completionItem/resolve to '{}': {}",
+                    sh.name,
+                    e
+                );
+                return;
             }
         }
+        self.pending_completion_resolve_request = Some(request_id);
     }
 
     /// Apply an event to a buffer + the cursors of a split inside this
@@ -1564,6 +1846,7 @@ impl Window {
                     if vs.keyed_states.contains_key(&buffer_id) {
                         let buf_state = vs.ensure_buffer_state(buffer_id);
                         buf_state.folds.add(
+                            &state.buffer,
                             &mut state.marker_list,
                             start,
                             end,
@@ -1590,6 +1873,30 @@ impl Window {
             .is_some()
     }
 
+    /// Expand any fold on `buffer_id` whose header line the last edit took
+    /// away, across every view state hosting the buffer. Returns `true` when
+    /// a fold was retired, so the caller can flag a redraw.
+    ///
+    /// Runs from the edit path rather than the render path deliberately: the
+    /// folds are view state but the edit that orphans them is buffer state,
+    /// and retiring one changes what the buffer shows, so it belongs with the
+    /// edit that caused it (see [`FoldManager::prune_orphaned`]).
+    pub fn prune_orphaned_folds(&mut self, buffer_id: BufferId) -> bool {
+        self.buffers
+            .with_buffer_and_view_states(buffer_id, |state, vs_map| {
+                let mut pruned = false;
+                for vs in vs_map.values_mut() {
+                    if let Some(buf_state) = vs.keyed_states.get_mut(&buffer_id) {
+                        pruned |= buf_state
+                            .folds
+                            .prune_orphaned(&state.buffer, &mut state.marker_list);
+                    }
+                }
+                pruned
+            })
+            .unwrap_or(false)
+    }
+
     /// Move every supplied split's primary cursor to `position` in
     /// `buffer_id` and re-anchor the viewport to keep it visible.
     /// Caller is responsible for computing `splits` (typically by
@@ -1602,6 +1909,24 @@ impl Window {
         position: usize,
         splits: &[LeafId],
     ) {
+        self.set_buffer_cursor_in_splits_selecting(buffer_id, position, splits, false);
+    }
+
+    /// The same, saying whether the caret takes a selection with it.
+    ///
+    /// `extend` is the pointer sweep over a described page
+    /// (`Editor::drag_moved_the_page_selection`), which is the one caller
+    /// here that is a *gesture* rather than a placement: it anchors on the
+    /// press and every move after it grows the range. Everything else is a
+    /// jump, and a jump collapses — see the goal-column note below, which is
+    /// the same argument.
+    pub fn set_buffer_cursor_in_splits_selecting(
+        &mut self,
+        buffer_id: BufferId,
+        position: usize,
+        splits: &[LeafId],
+        extend: bool,
+    ) {
         self.buffers
             .with_buffer_and_view_states(buffer_id, |state, vs_map| {
                 let mut moved_any = false;
@@ -1609,7 +1934,31 @@ impl Window {
                     let Some(view_state) = vs_map.get_mut(leaf_id) else {
                         continue;
                     };
-                    view_state.cursors.primary_mut().move_to(position, false);
+                    let cursor = view_state.cursors.primary_mut();
+                    cursor.move_to(position, extend);
+                    // An absolute placement is a jump, not a vertical move,
+                    // so it clears the goal column — the same thing every
+                    // other jump in the editor does (`new_sticky_column:
+                    // None` on a diagnostic jump, a search hit, a click).
+                    // Without it the *next* Up/Down snapped the caret back
+                    // to a column the reader left long ago: Tab onto the
+                    // third door card seated the caret on it and one Down
+                    // threw it back into the first.
+                    //
+                    // It is right for every caller of this function, not
+                    // just the one that found it, and the loop is why: this
+                    // writes *every* split showing the buffer, so each of
+                    // those carets has just been teleported to a position
+                    // it did not walk to. A goal column is a memory of
+                    // which column the reader was aiming for while moving
+                    // vertically; keeping it across a jump the reader did
+                    // not make is keeping a memory of somewhere they no
+                    // longer are. The four callers — `setBufferCursor`,
+                    // `scrollToWidget`, a virtual buffer's
+                    // `initialCursorLine`, and the focus↔caret seat — are
+                    // all absolute placements, none of them a vertical
+                    // motion.
+                    cursor.sticky_column = None;
                     view_state.ensure_cursor_visible(&mut state.buffer, &state.marker_list);
                     moved_any = true;
                 }
@@ -1657,8 +2006,8 @@ impl Window {
                 view_state
                     .viewport
                     .scroll_to(&mut state.buffer, target_line);
-                view_state.viewport.top_byte = clamped_byte;
-                view_state.viewport.top_view_line_offset = 0;
+                view_state.viewport.set_top_byte(clamped_byte);
+                view_state.viewport.set_top_view_line_offset(0);
                 view_state.viewport.set_skip_ensure_visible();
             });
     }
@@ -1714,7 +2063,7 @@ impl Window {
                 buf_state.cursors.primary_mut().position = cursor_pos;
                 buf_state.cursors.primary_mut().anchor =
                     file_state.cursor.anchor.map(|a| a.min(max_pos));
-                buf_state.viewport.top_byte = file_state.scroll.top_byte;
+                buf_state.viewport.set_top_byte(file_state.scroll.top_byte);
                 buf_state.viewport.left_column = file_state.scroll.left_column;
                 crate::app::navigation::reconcile_restored_buffer_view(
                     buf_state,
@@ -1724,14 +2073,21 @@ impl Window {
     }
 
     /// Configure `leaf_id`'s viewport for a terminal-buffer
-    /// scrollback view: disable line wrap, clear any pending
-    /// skip-ensure-visible flag, then scroll so the buffer's primary
-    /// cursor (positioned at end-of-buffer when entering scrollback)
-    /// is visible. No-op if the buffer or split is missing.
+    /// scrollback view: enable grid wrap (exact-column rows at the PTY
+    /// width, fresh#2649), clear any pending skip-ensure-visible flag,
+    /// then scroll so the buffer's primary cursor (positioned at
+    /// end-of-buffer when entering scrollback) is visible. No-op if the
+    /// buffer or split is missing.
     pub fn enter_terminal_scrollback_view(&mut self, buffer_id: BufferId, leaf_id: LeafId) {
+        let grid_cols = self.terminal_grid_cols(buffer_id);
         self.buffers
             .with_buffer_and_split(buffer_id, leaf_id, |state, view_state| {
-                view_state.viewport.line_wrap_enabled = false;
+                view_state.viewport.line_wrap_enabled = true;
+                view_state.viewport.grid_wrap = true;
+                view_state.viewport.wrap_indent = false;
+                if let Some(cols) = grid_cols {
+                    view_state.viewport.wrap_column = Some(cols);
+                }
                 view_state.viewport.clear_skip_ensure_visible();
                 view_state.ensure_cursor_visible(&mut state.buffer, &state.marker_list);
             });
@@ -1767,7 +2123,13 @@ impl Window {
                         let buf_state = vs.ensure_buffer_state(buffer_id);
                         buf_state.show_line_numbers = false;
                         buf_state.highlight_current_line = false;
-                        buf_state.viewport.line_wrap_enabled = false;
+                        // Grid wrap (fresh#2649): restored scroll-back lays
+                        // out at the grid width like the live view. The
+                        // width is filled in by `enforce_terminal_grid_wrap`
+                        // once the respawned PTY reports its size.
+                        buf_state.viewport.line_wrap_enabled = true;
+                        buf_state.viewport.grid_wrap = true;
+                        buf_state.viewport.wrap_indent = false;
                     }
                 }
                 state.buffer.set_modified(false);
@@ -1777,55 +2139,56 @@ impl Window {
     }
 
     /// Scroll `leaf_id`'s viewport by `delta` lines (negative = up,
-    /// positive = down). Honours `view_transform_tokens` when present
-    /// (uses view-aware scrolling) and falls back to buffer-based
-    /// `scroll_up` / `scroll_down`. After scrolling, skips
+    /// positive = down). After scrolling, skips
     /// ensure_visible and snaps the viewport top to a fold boundary
     /// if the new top byte landed inside a collapsed fold.
-    /// `tab_size` is needed for view-line tokenization.
-    pub fn scroll_split_by_lines(
-        &mut self,
-        buffer_id: BufferId,
-        leaf_id: LeafId,
-        delta: i32,
-        view_transform_tokens: Option<Vec<fresh_core::api::ViewTokenWire>>,
-        tab_size: usize,
-    ) {
+    pub fn scroll_split_by_lines(&mut self, buffer_id: BufferId, leaf_id: LeafId, delta: i32) {
         self.buffers
             .with_buffer_and_split(buffer_id, leaf_id, |state, view_state| {
                 let soft_breaks = state.collect_soft_break_positions();
                 let virtual_lines = state.collect_virtual_line_positions();
-                let buffer = &mut state.buffer;
-                let top_byte_before = view_state.viewport.top_byte;
-                if let Some(tokens) = view_transform_tokens {
-                    use crate::view::ui::view_pipeline::ViewLineIterator;
-                    let view_lines: Vec<_> =
-                        ViewLineIterator::new(&tokens, false, false, tab_size, false).collect();
+                // Resolved before the mutable buffer borrow below: the
+                // row-space path needs only `&Buffer`.
+                let scroll_geometry = wrap_scroll_geometry(view_state, state);
+                let hidden_ranges = collapsed_hidden_ranges(view_state, state, buffer_id);
+                let top_byte_before = view_state.viewport.top_byte();
+                if let Some(geometry) = scroll_geometry {
+                    // Row arithmetic off the wrap index: no text is read, so a
+                    // wheel event on a file that is one enormous line costs the
+                    // same as on any other. The byte-walking fallback below only
+                    // runs before the index has been built for this geometry.
+                    let index = state
+                        .wrap_indices
+                        .get(&geometry)
+                        .expect("geometry resolved from a built index");
                     view_state
                         .viewport
-                        .scroll_view_lines(&view_lines, delta as isize);
+                        .scroll_visual_rows(index, &state.buffer, delta as isize);
                 } else if delta < 0 {
                     let lines_to_scroll = delta.unsigned_abs() as usize;
                     view_state.viewport.scroll_up(
-                        buffer,
+                        &mut state.buffer,
                         &soft_breaks,
                         &virtual_lines,
+                        &hidden_ranges,
                         lines_to_scroll,
                     );
                 } else {
                     let lines_to_scroll = delta as usize;
                     view_state.viewport.scroll_down(
-                        buffer,
+                        &mut state.buffer,
                         &soft_breaks,
                         &virtual_lines,
+                        &hidden_ranges,
                         lines_to_scroll,
                     );
                 }
                 view_state.viewport.set_skip_ensure_visible();
 
+                let buffer = &mut state.buffer;
                 if let Some(folds) = view_state.keyed_states.get(&buffer_id).map(|bs| &bs.folds) {
                     if !folds.is_empty() {
-                        let top_line = buffer.get_line_number(view_state.viewport.top_byte);
+                        let top_line = buffer.get_line_number(view_state.viewport.top_byte());
                         if let Some(range) = folds
                             .resolved_ranges(buffer, &state.marker_list)
                             .iter()
@@ -1839,8 +2202,8 @@ impl Window {
                             let target_byte = buffer
                                 .line_start_offset(target_line)
                                 .unwrap_or_else(|| buffer.len());
-                            view_state.viewport.top_byte = target_byte;
-                            view_state.viewport.top_view_line_offset = 0;
+                            view_state.viewport.set_top_byte(target_byte);
+                            view_state.viewport.set_top_view_line_offset(0);
                         }
                     }
                 }
@@ -1848,7 +2211,7 @@ impl Window {
                     "scroll_split_by_lines: delta={}, top_byte {} -> {}",
                     delta,
                     top_byte_before,
-                    view_state.viewport.top_byte
+                    view_state.viewport.top_byte()
                 );
             });
     }
@@ -1880,15 +2243,18 @@ impl Window {
             return false;
         };
         let viewport = &mut ps.view_state.active_state_mut().viewport;
+        // The preview loads plain file buffers and exposes no fold controls,
+        // so there are never collapsed regions to skip here.
         if delta < 0 {
             viewport.scroll_up(
                 buffer,
                 &soft_breaks,
                 &virtual_lines,
+                &[],
                 delta.unsigned_abs() as usize,
             );
         } else {
-            viewport.scroll_down(buffer, &soft_breaks, &virtual_lines, delta as usize);
+            viewport.scroll_down(buffer, &soft_breaks, &virtual_lines, &[], delta as usize);
         }
         viewport.set_skip_ensure_visible();
         true
@@ -1978,6 +2344,7 @@ impl Window {
             id,
             label,
             stable_id: crate::workspace::generate_stable_id(),
+            workspace_restored: false,
             root,
             authority,
             file_explorer: None,
@@ -1989,6 +2356,7 @@ impl Window {
             panel_ids: HashMap::new(),
             buffers: WindowBuffers::new(),
             buffer_metadata: HashMap::new(),
+            pending_content_load: Vec::new(),
             terminal_manager: crate::services::terminal::TerminalManager::new(id),
             terminal_buffers: HashMap::new(),
             terminal_backing_files: HashMap::new(),
@@ -2002,8 +2370,10 @@ impl Window {
             prompt: None,
             bridge,
             next_lsp_request_id: 0,
-            pending_completion_requests: std::collections::HashSet::new(),
+            pending_completion_requests: std::collections::HashMap::new(),
             completion_items: None,
+            completion_popup_lsp_items: Vec::new(),
+            pending_completion_resolve_request: None,
             scheduled_completion_trigger: None,
             dabbrev_state: None,
             pending_goto_definition_request: None,
@@ -2033,11 +2403,12 @@ impl Window {
             grouped_subtrees: HashMap::new(),
             composite_buffers: HashMap::new(),
             composite_view_states: HashMap::new(),
-            layout_cache: WindowLayoutCache::default(),
+            panes: HashMap::new(),
             chrome_layout: ChromeLayout::default(),
             terminal_width: 80,
             terminal_height: 24,
             dock_cols: 0,
+            pane_rects: Default::default(),
             preview: None,
             terminal_link_hover: None,
             seen_byte_ranges: HashMap::new(),
@@ -2047,6 +2418,7 @@ impl Window {
             scroll_sync_manager: crate::view::scroll_sync::ScrollSyncManager::new(),
             file_explorer_visible: false,
             file_explorer_sync_in_progress: false,
+            file_explorer_sync_deferred: None,
             file_explorer_width: resources.config.file_explorer.width,
             file_explorer_side: resources.config.file_explorer.side,
             pending_file_explorer_show_hidden: None,
@@ -2068,6 +2440,7 @@ impl Window {
             file_rapid_change_counts: HashMap::new(),
             goto_line_preview: None,
             pending_async_prompt_callback: None,
+            pending_file_pick_callback: None,
             pending_quit_unnamed_save: Vec::new(),
             search_case_sensitive: true,
             search_whole_word: false,
@@ -2086,6 +2459,7 @@ impl Window {
             diagnostic_result_ids: HashMap::new(),
             lsp_progress: HashMap::new(),
             lsp_server_statuses: HashMap::new(),
+            lsp_request_timeouts: HashMap::new(),
             lsp_menu_contributions: HashMap::new(),
             lsp_window_messages: Vec::new(),
             lsp_log_messages: Vec::new(),
@@ -2104,6 +2478,8 @@ impl Window {
             ephemeral_terminals: std::collections::HashSet::new(),
             terminal_commands: std::collections::HashMap::new(),
             terminal_resume_commands: std::collections::HashMap::new(),
+            terminal_script_tokens: std::collections::HashMap::new(),
+            exited_terminals: HashMap::new(),
             plugin_dev_workspaces: HashMap::new(),
             status_bar_values: HashMap::new(),
             mouse_state: crate::app::types::MouseState::default(),
@@ -2125,10 +2501,10 @@ impl Window {
             tab_context_menu: None,
             new_tab_menu: None,
             file_explorer_context_menu: None,
+            close_split_menu: None,
             theme_info_popup: None,
             event_debug: None,
             file_open_state: None,
-            file_browser_layout: None,
             buffer_groups: HashMap::new(),
             buffer_to_group: HashMap::new(),
             next_buffer_group_id: 0,
@@ -2292,6 +2668,379 @@ impl Window {
         }
     }
 
+    /// Width of the tab bar for a *specific* split.
+    ///
+    /// [`effective_tabs_width`](Self::effective_tabs_width) returns the whole
+    /// editor-content width; but in a vertical split each pane's tab strip is
+    /// only as wide as that pane (`tabs_rect.width == split_area.width`).
+    /// Feeding the full width to the tab-scroll math makes a half-width split
+    /// scroll against ~2x its real width, so it under-scrolls and the ">"
+    /// overflow indicator disagrees with what's visible. This returns the
+    /// focused split's real pane width, falling back to
+    /// [`effective_tabs_width`](Self::effective_tabs_width) when the split
+    /// isn't in the current visible layout (e.g. hidden behind a maximized
+    /// sibling).
+    pub fn split_tabs_width(&self, split_id: LeafId) -> u16 {
+        match self.buffers.splits() {
+            Some((mgr, _)) => {
+                let visible = self.visible_panes();
+                let Some((_, _, area)) = visible.iter().find(|(id, _, _)| *id == split_id) else {
+                    return self.effective_tabs_width();
+                };
+                // The split-control (maximize / close) buttons are painted over
+                // the right edge of the tab row; reserve their columns here so
+                // the scroll math measures against the same width the tab bar
+                // actually lays tabs into (fresh#2768). Mirror the show-flags in
+                // `render_split_tab_bar`.
+                let has_multiple_splits = visible.len() > 1;
+                let is_maximized = mgr.is_maximized();
+                let show_maximize = has_multiple_splits || is_maximized;
+                let show_close = has_multiple_splits && !is_maximized;
+                let reserve =
+                    crate::view::ui::tabs::split_control_reserve(show_maximize, show_close);
+                area.width.saturating_sub(reserve)
+            }
+            None => self.effective_tabs_width(),
+        }
+    }
+
+    /// Where the last layout put this window's panes. See the field.
+    pub fn pane_rects(&self) -> &crate::view::shell::geometry::PaneRects {
+        &self.pane_rects
+    }
+
+    /// Retain `rects` as where this window's panes are. Called by every
+    /// layout that placed them; see the field.
+    pub(crate) fn set_pane_rects(&mut self, rects: crate::view::shell::geometry::PaneRects) {
+        self.pane_rects = rects;
+    }
+
+    /// The visible leaves, each with the box the last layout gave it, in the
+    /// tree's order — first child before second, so left to right and top to
+    /// bottom.
+    ///
+    /// The shape `SplitManager::get_visible_buffers` used to answer in, which
+    /// laid the grid out again to say so: only the maximized pane when one is
+    /// maximized, at the whole body; a leaf the layout did not place gets a
+    /// zero rectangle. Which leaves is the model's answer
+    /// (`SplitManager::visible_leaves`); where they are is the retained
+    /// layout's ([`Self::pane_rects`]).
+    pub fn visible_panes(&self) -> Vec<(LeafId, BufferId, ratatui::layout::Rect)> {
+        match self.buffers.splits() {
+            Some((mgr, _)) => self.pane_rects.visible(&mgr.visible_leaves()),
+            None => Vec::new(),
+        }
+    }
+
+    /// Lay this window's grid out offscreen, at the body this window's
+    /// chrome leaves it, and retain where its panes are.
+    ///
+    /// For a window the retained tree does not hold: the shell describes the
+    /// active window's frame only, and the layout funnel sizes every other
+    /// window's terminals too, so their panes come off one offscreen layout
+    /// of the same description the frame would mount (`PaneRects::offscreen`,
+    /// as the session preview does). The body is `editor_content_area`, the
+    /// window's own derivation of the frame's body from its chrome flags —
+    /// the box the scratch grid was laid out in, for every window.
+    ///
+    /// The pane *boxes* are what is read off this. The content slots come
+    /// out too, but without the plugin panel interiors the editor would mount
+    /// (those are the editor's, not the window's), so they are the slots of
+    /// a pane showing a buffer; nothing reads a non-active window's content
+    /// slots.
+    pub(crate) fn layout_panes_offscreen(&mut self) {
+        use crate::view::shell::splits::{PaneChrome, PaneControls, Splits};
+        let Some((mgr, _)) = self.buffers.splits() else {
+            self.pane_rects = Default::default();
+            return;
+        };
+        let is_maximized = mgr.is_maximized();
+        let several = mgr.visible_leaves().len() > 1;
+        let splits = Splits {
+            root: mgr.root().clone(),
+            maximized: mgr.maximized_split().map(LeafId),
+            // Geometry only: no focus is described here.
+            active: None,
+            chrome: self.pane_chrome(PaneChrome {
+                tabs: self.tab_bar_visible,
+                vscroll: self.resources.config.editor.show_vertical_scrollbar,
+                hscroll: self.resources.config.editor.show_horizontal_scrollbar,
+            }),
+            controls: PaneControls {
+                maximize: several || is_maximized,
+                close: several && !is_maximized,
+            },
+            groups: self.pane_groups(),
+            interiors: Default::default(),
+            strips: Default::default(),
+            hover: None,
+            drop_zone: None,
+            hosts: Default::default(),
+        };
+        self.pane_rects =
+            crate::view::shell::geometry::PaneRects::offscreen(&splits, self.editor_content_area());
+    }
+
+    /// Every pane of this window with the buffer it shows — the panes
+    /// *inside* a buffer group included.
+    ///
+    /// A group's leaves are panes of the same grid, dispatched at render time
+    /// into their outer pane's interior, and `SplitManager::visible_leaves`
+    /// does not walk into them because a group's layout lives in a side map.
+    pub(crate) fn panes_with_buffers(&self) -> Vec<(LeafId, BufferId)> {
+        let Some((mgr, _)) = self.buffers.splits() else {
+            return Vec::new();
+        };
+        let mut out = mgr.visible_leaves();
+        for g in self.pane_groups().values() {
+            out.extend(g.visible_leaves());
+        }
+        out
+    }
+
+    /// Each visible pane's leaf handle, for a description of this window's
+    /// grid.
+    ///
+    /// One handle per pane for as long as the pane exists (design §3.7.1):
+    /// a pane seen for the first time gets one, a pane that closed loses
+    /// its. `rowless` names the panes whose content is not the buffer's this
+    /// frame — a described plugin panel, a buffer group's grid — which keep
+    /// their handle but not their rows: nothing draws rows for them, so
+    /// nothing may answer from the rows they drew before.
+    pub(crate) fn pane_hosts(
+        &mut self,
+        rowless: &std::collections::HashSet<LeafId>,
+    ) -> HashMap<LeafId, crate::view::shell::buffer_host::PaneHandle> {
+        // The panes the frame places: the grid's, and the panels of every
+        // active buffer group, which are panes of the same grid mounted in
+        // their outer pane's content slot (`PaneRects` keys them the same
+        // way). A pane keeps its handle while it exists: the whole partition
+        // stays live, a maximized sibling's hidden panes included.
+        let visible: Vec<LeafId> = self
+            .panes_with_buffers()
+            .into_iter()
+            .map(|(leaf, _)| leaf)
+            .collect();
+        let live: Vec<LeafId> = {
+            let Some((mgr, _)) = self.buffers.splits() else {
+                return Default::default();
+            };
+            mgr.root()
+                .visible_leaves()
+                .into_iter()
+                .map(|(l, _)| l)
+                .chain(visible.iter().copied())
+                .collect()
+        };
+        self.retain_pane_handles(|pane| live.contains(&pane));
+        visible
+            .into_iter()
+            .map(|pane| {
+                let h = self.pane_handle_for(pane).clone();
+                if rowless.contains(&pane) {
+                    h.clear_rows();
+                }
+                (pane, h)
+            })
+            .collect()
+    }
+
+    /// Each pane's tab strip, as content — what the tab painter read off the
+    /// window on its way to the cells, read once into a value the tree lays
+    /// out (`shell::tabs::strip`) and the web reads back (`tab_bar_view`).
+    ///
+    /// Only panes with a strip row: an inner leaf of a buffer group has none
+    /// (`PaneChrome::resolve`), and its group's tabs are on the pane that
+    /// holds the group. `hover` is the tab under the pointer, by target,
+    /// pane and whether it is the close button — the frame's, or none for a
+    /// grid nothing points at.
+    pub(crate) fn pane_strips(
+        &self,
+        chrome: &HashMap<LeafId, crate::view::shell::splits::PaneChrome>,
+        hover: Option<(crate::view::split::TabTarget, LeafId, bool)>,
+    ) -> HashMap<LeafId, crate::view::shell::tabs::Strip> {
+        use crate::view::shell::tabs::{Strip, Tab};
+        use crate::view::split::TabTarget;
+        let Some((mgr, vs_map)) = self.buffers.splits() else {
+            return Default::default();
+        };
+        let group_names: HashMap<LeafId, String> = self
+            .grouped_subtrees
+            .iter()
+            .filter_map(|(leaf, node)| match node {
+                crate::view::split::SplitNode::Grouped { name, .. } => Some((*leaf, name.clone())),
+                _ => None,
+            })
+            .collect();
+        let preview = self.preview.map(|(_, b)| b);
+        let preview_label = fresh_i18n::t!("buffer.preview_indicator").to_string();
+        let active_split = mgr.active_split();
+        let mut out = HashMap::new();
+        for (leaf, buffer_id) in mgr.visible_leaves() {
+            if !chrome.get(&leaf).is_some_and(|c| c.tabs) {
+                continue;
+            }
+            let (targets, offset, active) = match vs_map.get(&leaf) {
+                Some(vs) => (
+                    vs.open_buffers.clone(),
+                    vs.tab_scroll_offset,
+                    vs.active_target(),
+                ),
+                None => (
+                    vec![TabTarget::Buffer(buffer_id)],
+                    0,
+                    TabTarget::Buffer(buffer_id),
+                ),
+            };
+            let names = crate::view::ui::tabs::resolve_tab_names(
+                &targets,
+                self.buffers.as_map(),
+                &self.buffer_metadata,
+                &self.composite_buffers,
+                &group_names,
+            );
+            let tabs = targets
+                .iter()
+                .filter_map(|t| {
+                    let name = names.get(t)?.clone();
+                    let (modified, binary) = match t {
+                        TabTarget::Buffer(id) => (
+                            !self.composite_buffers.contains_key(id)
+                                && self.buffers.get(id).is_some_and(|s| s.buffer.is_modified()),
+                            self.buffer_metadata.get(id).is_some_and(|m| m.binary),
+                        ),
+                        TabTarget::Group(_) => (false, false),
+                    };
+                    Some(Tab {
+                        target: *t,
+                        name,
+                        modified,
+                        preview: matches!(t, TabTarget::Buffer(id) if Some(*id) == preview),
+                        binary,
+                    })
+                })
+                .collect();
+            out.insert(
+                leaf,
+                Strip {
+                    tabs,
+                    active: Some(active),
+                    active_pane: leaf == active_split,
+                    hover: hover.and_then(|(t, pane, close)| (pane == leaf).then_some((t, close))),
+                    offset,
+                    preview_label: preview_label.clone(),
+                },
+            );
+        }
+        out
+    }
+
+    /// The pane's handle, made on first sight of the pane.
+    pub(crate) fn pane_handle_for(
+        &mut self,
+        pane: LeafId,
+    ) -> &crate::view::shell::buffer_host::PaneHandle {
+        self.panes
+            .entry(pane)
+            .or_insert_with(|| crate::view::shell::buffer_host::PaneHandle::new(pane))
+    }
+
+    /// The keyboard context the pane's content resolves keys in, as the
+    /// frame settled it on the pane's leaf (`PaneHandle::set_context`).
+    pub(crate) fn pane_context(
+        &self,
+        pane: LeafId,
+    ) -> Option<crate::input::keybindings::KeyContext> {
+        self.panes.get(&pane).map(|h| h.context())
+    }
+
+    /// The view the pane's last text pass settled.
+    pub(crate) fn pane_view(
+        &self,
+        pane: LeafId,
+    ) -> Option<std::cell::Ref<'_, crate::view::shell::buffer_host::PaneView>> {
+        self.panes.get(&pane).map(|h| h.view())
+    }
+
+    /// The caret's screen cell, from whichever pane's last text pass settled
+    /// one it shows — the active pane's, when the window shows a caret at
+    /// all.
+    pub(crate) fn pane_caret(&self) -> Option<(u16, u16)> {
+        self.panes.values().find_map(|h| {
+            let v = h.view();
+            let (x, y) = v.caret.filter(|_| v.caret_shown)?;
+            Some((v.rect.x + x, v.rect.y + y))
+        })
+    }
+
+    /// Forget the caret of every pane but `settled`: the frame's text pass
+    /// placed a caret in those and in no other.
+    pub(crate) fn clear_carets_except(&self, settled: &[LeafId]) {
+        for (pane, h) in &self.panes {
+            if !settled.contains(pane) {
+                h.clear_caret();
+            }
+        }
+    }
+
+    /// Drop the handles of panes that no longer exist.
+    pub(crate) fn retain_pane_handles(&mut self, live: impl Fn(LeafId) -> bool) {
+        self.panes.retain(|pane, _| live(*pane));
+    }
+
+    /// Forget every pane's rows: a setting changed what a row shows, and the
+    /// next frame draws new ones.
+    pub(crate) fn clear_pane_rows(&self) {
+        for h in self.panes.values() {
+            h.clear_rows();
+        }
+    }
+
+    /// The visual column of a byte position within its visual row, in
+    /// `split_id`'s rows as last drawn.
+    pub fn byte_to_visual_column(&self, split_id: LeafId, byte_pos: usize) -> Option<usize> {
+        self.pane_view(split_id)?.byte_to_visual_column(byte_pos)
+    }
+
+    /// Move by visual line using the pane's settled rows.
+    /// Returns (new_position, new_visual_column) or None if at boundary
+    pub fn move_visual_line(
+        &self,
+        split_id: LeafId,
+        current_pos: usize,
+        goal_visual_col: usize,
+        direction: i8, // -1 = up, 1 = down
+    ) -> Option<(usize, usize)> {
+        self.pane_view(split_id)?
+            .move_visual_line(current_pos, goal_visual_col, direction)
+    }
+
+    /// Get the start byte position of the visual row containing the given byte position.
+    /// When `allow_advance` is true and the cursor is already at the row start,
+    /// moves to the previous visual row's start.
+    pub fn visual_line_start(
+        &self,
+        split_id: LeafId,
+        byte_pos: usize,
+        allow_advance: bool,
+    ) -> Option<usize> {
+        self.pane_view(split_id)?
+            .visual_line_start(byte_pos, allow_advance)
+    }
+
+    /// Get the end byte position of the visual row containing the given byte position.
+    /// When `allow_advance` is true and the cursor is already at the row end,
+    /// advances to the next visual row's end.
+    pub fn visual_line_end(
+        &self,
+        split_id: LeafId,
+        byte_pos: usize,
+        allow_advance: bool,
+    ) -> Option<usize> {
+        self.pane_view(split_id)?
+            .visual_line_end(byte_pos, allow_advance)
+    }
+
     /// The split id whose `SplitViewState` owns the currently-focused
     /// cursors/viewport for this window.
     #[inline]
@@ -2449,24 +3198,46 @@ impl Window {
         self.terminal_buffer(buffer_id).is_some()
     }
 
-    /// Terminal buffers never line-wrap (see `resolve_line_wrap_for_buffer`):
-    /// their content is column-formatted, and wrapping a large scrollback turns
-    /// the scrollbar's visual-row index into an O(all-lines) scan every frame,
-    /// freezing the UI (fresh#2608). Heal any per-buffer viewport a global
-    /// line-wrap toggle (or restored state) left enabled — cheap enough to run
-    /// each frame, and a no-op when the window has no terminals.
-    pub(crate) fn enforce_terminal_no_wrap(&mut self) {
-        let terminals = &self.terminal_buffers;
-        if terminals.is_empty() {
+    /// Terminal buffers always line-wrap in *grid* mode (see
+    /// `resolve_line_wrap_for_buffer`): exact-column rows at the PTY grid
+    /// width so scroll-back lays out identically to the live grid
+    /// (fresh#2649). Heal any per-buffer viewport a global line-wrap
+    /// toggle (or restored state) left in another mode — cheap enough to
+    /// run each frame, and a no-op when the window has no terminals.
+    ///
+    /// `wrap_column` (the grid width) is only *filled in* when missing —
+    /// scroll-back entry (`sync_terminal_to_buffer`) sets the capture-time
+    /// width, which must win over the instantaneous PTY width (a split
+    /// that entered scroll-back reserves a scrollbar column, so the PTY
+    /// may be resized one column narrower afterwards while the captured
+    /// content still lays out at the width it was captured at).
+    /// When the *pane* changes width the authority is
+    /// `resize_visible_terminals`, which re-pins it to the new pane width
+    /// on the same funnel that pushes the PTY size.
+    pub(crate) fn enforce_terminal_grid_wrap(&mut self) {
+        if self.terminal_buffers.is_empty() {
             return;
         }
+        // Snapshot grid widths first — `terminal_grid_cols` borrows self
+        // immutably while the healing loop needs the view states mutably.
+        let cols_by_buffer: std::collections::HashMap<BufferId, Option<usize>> = self
+            .terminal_buffers
+            .keys()
+            .map(|&b| (b, self.terminal_grid_cols(b)))
+            .collect();
         let Some(vs_map) = self.buffers.split_view_states_mut() else {
             return;
         };
         for vs in vs_map.values_mut() {
             for (buffer_id, buffer_state) in vs.keyed_states.iter_mut() {
-                if terminals.contains_key(buffer_id) {
-                    buffer_state.viewport.line_wrap_enabled = false;
+                if let Some(cols) = cols_by_buffer.get(buffer_id) {
+                    let vp = &mut buffer_state.viewport;
+                    vp.line_wrap_enabled = true;
+                    vp.grid_wrap = true;
+                    vp.wrap_indent = false;
+                    if vp.wrap_column.is_none() {
+                        vp.wrap_column = *cols;
+                    }
                 }
             }
         }
@@ -2533,6 +3304,89 @@ impl Window {
             (!sanitized.is_empty()).then_some(sanitized)
         });
         crate::app::terminal::combine_terminal_title(pty.as_deref(), osc.as_deref())
+    }
+
+    /// The buffer a pane is showing — the main tree's leaves and a buffer
+    /// group's panels alike.
+    ///
+    /// A pane's identity comes from its node now, but the handlers behind it
+    /// still take a buffer. `split_at_position` answered both at once by
+    /// scanning recorded rectangles; this answers the half a node cannot.
+    pub fn pane_buffer(&self, pane: LeafId) -> Option<BufferId> {
+        let (mgr, _) = self.buffers.splits()?;
+        if let Some(b) = mgr.root().find(pane.into()).and_then(|n| n.buffer_id()) {
+            return Some(b);
+        }
+        self.grouped_subtrees
+            .values()
+            .find_map(|g| g.find(pane.into()).and_then(|n| n.buffer_id()))
+    }
+
+    /// The buffer group each visible pane is showing, by the pane showing it.
+    ///
+    /// A group's layout lives in `grouped_subtrees` rather than in the split
+    /// tree, and is dispatched at render time into the pane's *interior* —
+    /// past its strip and its scrollbar column. This is that dispatch, stated
+    /// once, so the description of the grid and the painter agree about which
+    /// pane holds which group.
+    pub fn pane_groups(&self) -> HashMap<LeafId, crate::view::split::SplitNode> {
+        let Some((mgr, vs_map)) = self.buffers.splits() else {
+            return HashMap::new();
+        };
+        mgr.pane_groups(vs_map, &self.grouped_subtrees)
+    }
+
+    /// Which chrome each of this window's visible panes has, by leaf.
+    ///
+    /// **The one gathering.** `PaneChrome::resolve` is the rule; this is the
+    /// only place the per-pane half of it is read out of the window, so the
+    /// description of the grid and the painter that fills it cannot disagree
+    /// about whether a pane has a strip. `window` is the frame-wide offer —
+    /// the tab bar's visibility and the two scrollbar config flags — which the
+    /// preview embed narrows before calling (it suppresses both bars).
+    ///
+    /// A buffer group's *panel* is not here: it is not one of the split
+    /// manager's leaves, and it resolves where the render loop expands it.
+    pub fn pane_chrome(
+        &self,
+        window: crate::view::shell::splits::PaneChrome,
+    ) -> HashMap<LeafId, crate::view::shell::splits::PaneChrome> {
+        use crate::view::shell::splits::{PaneChrome, PaneKind};
+        let Some((mgr, vs_map)) = self.buffers.splits() else {
+            return HashMap::new();
+        };
+        let mut out: HashMap<LeafId, PaneChrome> = HashMap::new();
+        let resolve = |leaf: LeafId, buffer: BufferId, inner: bool| {
+            let terminal = self
+                .buffer_metadata
+                .get(&buffer)
+                .and_then(|m| m.virtual_mode())
+                .is_some_and(|m| m == "terminal");
+            let kind = PaneKind {
+                inner_group_leaf: inner,
+                suppress_chrome: vs_map.get(&leaf).is_some_and(|vs| vs.suppress_chrome),
+                scrollable: self.buffers.get(&buffer).is_none_or(|s| s.scrollable),
+                terminal_live_grid: terminal && !self.split_terminal_scrollback(leaf, buffer),
+            };
+            (leaf, PaneChrome::resolve(window, kind))
+        };
+        for (leaf, buffer) in mgr.visible_leaves() {
+            let (k, v) = resolve(leaf, buffer, false);
+            out.insert(k, v);
+            // A group's panels are panes too — they sit inside this one's
+            // interior, which is what `inner_group_leaf` says about them.
+            let Some(group) = vs_map.get(&leaf).and_then(|vs| vs.active_group_tab) else {
+                continue;
+            };
+            let Some(node) = self.grouped_subtrees.get(&group) else {
+                continue;
+            };
+            for (inner_leaf, inner_buffer) in node.visible_leaves() {
+                let (k, v) = resolve(inner_leaf, inner_buffer, true);
+                out.insert(k, v);
+            }
+        }
+        out
     }
 
     /// Whether `split` is viewing terminal `buffer_id` in read-only scrollback.
@@ -2630,6 +3484,15 @@ impl Window {
     /// Number of in-flight completion requests for this window.
     pub fn pending_completion_requests_count(&self) -> usize {
         self.pending_completion_requests.len()
+    }
+
+    /// Forget the completion candidates: both the stored LSP items used
+    /// for type-to-filter and the popup-row → item mapping built from
+    /// them. Clearing them together keeps a dismissed popup from leaving
+    /// a mapping behind that a later accept could read.
+    pub fn clear_completion_items(&mut self) {
+        self.completion_items = None;
+        self.completion_popup_lsp_items.clear();
     }
 
     /// Number of stored completion items currently visible in this
@@ -2769,30 +3632,35 @@ impl Window {
     ) {
         use crate::workspace::PersistedFileWorkspace;
 
-        let file_state = match PersistedFileWorkspace::load(path) {
-            Some(state) => state,
-            None => return,
-        };
+        let file_state =
+            match PersistedFileWorkspace::load(path, &self.config().editor.ephemeral_file_patterns)
+            {
+                Some(state) => state,
+                None => return,
+            };
 
         self.restore_buffer_state_in_split(buffer_id, split_id, &file_state);
     }
 
-    /// Save file state when a buffer is closed (for per-file session
-    /// persistence). Walks this window's splits to find one that has
-    /// the buffer; no-op if no split contains it or the buffer isn't
-    /// a real on-disk file.
-    pub fn save_file_state_on_close(&self, buffer_id: BufferId) {
-        use crate::workspace::{
-            PersistedFileWorkspace, SerializedCursor, SerializedFileState, SerializedScroll,
-        };
+    /// Snapshot the per-file session state to persist when a buffer is
+    /// closed. Walks this window's splits to find one that has the buffer;
+    /// `None` if no split contains it or the buffer isn't a real on-disk
+    /// file.
+    ///
+    /// Pure snapshot: the disk write (`PersistedFileWorkspace::save`) is the
+    /// caller's job, off the editor thread — the split is what keeps
+    /// buffer-close from doing filesystem I/O inline.
+    pub fn file_state_on_close_snapshot(
+        &self,
+        buffer_id: BufferId,
+    ) -> Option<(std::path::PathBuf, crate::workspace::SerializedFileState)> {
+        use crate::workspace::{SerializedCursor, SerializedFileState, SerializedScroll};
 
-        let abs_path = match self.buffer_metadata.get(&buffer_id) {
-            Some(metadata) => match metadata.file_path() {
-                Some(path) => path.to_path_buf(),
-                None => return,
-            },
-            None => return,
-        };
+        let abs_path = self
+            .buffer_metadata
+            .get(&buffer_id)?
+            .file_path()?
+            .to_path_buf();
 
         let view_state = self
             .buffers
@@ -2802,15 +3670,8 @@ impl Window {
             .values()
             .find(|vs| vs.has_buffer(buffer_id));
 
-        let view_state = match view_state {
-            Some(vs) => vs,
-            None => return,
-        };
-
-        let buf_state = match view_state.keyed_states.get(&buffer_id) {
-            Some(bs) => bs,
-            None => return,
-        };
+        let view_state = view_state?;
+        let buf_state = view_state.keyed_states.get(&buffer_id)?;
 
         let primary_cursor = buf_state.cursors.primary();
         let file_state = SerializedFileState {
@@ -2830,23 +3691,30 @@ impl Window {
                 })
                 .collect(),
             scroll: SerializedScroll {
-                top_byte: buf_state.viewport.top_byte,
-                top_view_line_offset: buf_state.viewport.top_view_line_offset,
+                top_byte: buf_state.viewport.top_byte(),
+                top_view_line_offset: buf_state.viewport.top_view_line_offset(),
                 left_column: buf_state.viewport.left_column,
             },
             view_mode: Default::default(),
             compose_width: None,
-            // Per-buffer line-number / line-wrap / virtual-space overrides are
-            // workspace-scoped, not part of the cross-project global per-file state.
+            // Per-buffer line-number / line-wrap / virtual-space /
+            // indentation-guide / fold-indicator overrides are workspace-scoped,
+            // not part of the cross-project global per-file state.
             line_numbers: None,
             line_wrap: None,
             virtual_space: None,
+            indentation_guide: None,
+            fold_indicators: None,
+            use_tabs: None,
+            whitespace_indicators: None,
+            tab_indicators: None,
+            highlight_current_line: None,
+            highlight_occurrences: None,
             plugin_state: std::collections::HashMap::new(),
             folds: Vec::new(),
         };
 
-        PersistedFileWorkspace::save(&abs_path, file_state);
-        tracing::debug!("Saved file state on close for {:?}", abs_path);
+        Some((abs_path, file_state))
     }
 
     /// Remove a pending semantic-token request from this window's tracking maps.
@@ -2876,49 +3744,6 @@ impl Window {
             Some(request)
         } else {
             None
-        }
-    }
-
-    /// Move the cursor to a visible position within the current viewport.
-    /// Called after scrollbar operations to ensure the cursor is in view.
-    pub fn move_cursor_to_visible_area(&mut self, split_id: LeafId, buffer_id: BufferId) {
-        let (top_byte, viewport_height) =
-            if let Some(view_state) = self.buffers.splits().and_then(|(_, vs)| vs.get(&split_id)) {
-                (
-                    view_state.viewport.top_byte,
-                    view_state.viewport.height as usize,
-                )
-            } else {
-                return;
-            };
-
-        if let Some(state) = self.buffers.get_mut(&buffer_id) {
-            let buffer_len = state.buffer.len();
-
-            let mut iter = state.buffer.line_iterator(top_byte, 80);
-            let mut bottom_byte = buffer_len;
-
-            for _ in 0..viewport_height {
-                if let Some((pos, line)) = iter.next_line() {
-                    bottom_byte = pos + line.len();
-                } else {
-                    bottom_byte = buffer_len;
-                    break;
-                }
-            }
-
-            if let Some(view_state) = self
-                .split_view_states_mut()
-                .and_then(|vs| vs.get_mut(&split_id))
-            {
-                let cursor_pos = view_state.cursors.primary().position;
-                if cursor_pos < top_byte || cursor_pos > bottom_byte {
-                    let cursor = view_state.cursors.primary_mut();
-                    cursor.position = top_byte;
-                    // Keep the existing sticky_column value so vertical
-                    // navigation preserves column.
-                }
-            }
         }
     }
 
@@ -2965,31 +3790,6 @@ impl Window {
         }
 
         max_byte_pos
-    }
-
-    /// Find the split whose content or scrollbar area contains the
-    /// screen cell `(col, row)`. Returns the split id and its buffer
-    /// id, or `None` when the position falls outside every split's
-    /// content rect and outside every scrollbar gutter.
-    pub fn split_at_position(&self, col: u16, row: u16) -> Option<(LeafId, BufferId)> {
-        for &(split_id, buffer_id, content_rect, scrollbar_rect, _, _) in
-            &self.layout_cache.split_areas
-        {
-            let in_content = col >= content_rect.x
-                && col < content_rect.x + content_rect.width
-                && row >= content_rect.y
-                && row < content_rect.y + content_rect.height;
-            let in_scrollbar = scrollbar_rect.width > 0
-                && scrollbar_rect.height > 0
-                && col >= scrollbar_rect.x
-                && col < scrollbar_rect.x + scrollbar_rect.width
-                && row >= scrollbar_rect.y
-                && row < scrollbar_rect.y + scrollbar_rect.height;
-            if in_content || in_scrollbar {
-                return Some((split_id, buffer_id));
-            }
-        }
-        None
     }
 
     /// If a per-edit diagnostic-pull debounce has fired, send a fresh
@@ -3133,7 +3933,7 @@ impl Window {
 
         // Load from canonical path (for I/O and dedup), detect language from
         // display path (for glob pattern matching against user-visible names).
-        let buffer = crate::model::buffer::Buffer::load_from_file(
+        let buffer = crate::model::buffer::Buffer::load_from_file_for_editing(
             &canonical_path,
             self.config().editor.large_file_threshold_bytes as usize,
             std::sync::Arc::clone(&self.resources.local_filesystem),
@@ -3191,7 +3991,7 @@ impl Window {
         self.set_active_buffer(buffer_id);
 
         let display_name = path.display().to_string();
-        self.set_status_message(rust_i18n::t!("buffer.opened", name = display_name).to_string());
+        self.set_status_message(fresh_i18n::t!("buffer.opened", name = display_name).to_string());
 
         Ok(buffer_id)
     }
@@ -3288,7 +4088,7 @@ impl Window {
             .expect("active window must have a populated split layout")
             .1
             .get(&active_split)
-            .map(|vs| (vs.viewport.top_byte, vs.viewport.height.saturating_sub(2)))
+            .map(|vs| (vs.viewport.top_byte(), vs.viewport.height.saturating_sub(2)))
             .unwrap_or((0, 20));
 
         let state = self.active_state_mut();
@@ -3296,17 +4096,10 @@ impl Window {
 
         let visible_start = top_byte;
         let mut visible_end = top_byte;
-        {
-            let mut line_iter = state.buffer.line_iterator(top_byte, 80);
-            for _ in 0..visible_height {
-                if let Some((line_start, line_content)) = line_iter.next_line() {
-                    visible_end = line_start + line_content.len();
-                } else {
-                    break;
-                }
-            }
-        }
-        visible_end = visible_end.min(state.buffer.len());
+        visible_end = state
+            .buffer
+            .advance_lines_within(top_byte, visible_height as usize, VISIBLE_WINDOW_SCAN_BYTES)
+            .min(state.buffer.len());
         let visible_text = state.get_text_range(visible_start, visible_end);
 
         for mat in regex.find_iter(&visible_text) {
@@ -3406,11 +4199,6 @@ impl Window {
 
     // ---- File-explorer leaf delegators ----
 
-    /// Whether this window's file-explorer panel is visible.
-    pub fn file_explorer_is_visible(&self) -> bool {
-        self.file_explorer_visible && self.file_explorer.is_some()
-    }
-
     /// Extend the file-explorer selection upward.
     pub fn file_explorer_extend_selection_up(&mut self) {
         if let Some(explorer) = self.file_explorer.as_mut() {
@@ -3495,10 +4283,45 @@ impl Window {
         buffer_id: BufferId,
         changes: Vec<lsp_types::TextDocumentContentChangeEvent>,
     ) {
+        let _sent = self.send_lsp_changes_inner(buffer_id, changes, false);
+    }
+
+    /// Whether a `didChange` for this buffer could reach a server at all.
+    ///
+    /// The side-effect-free head of [`Self::send_lsp_changes_inner`]'s guard:
+    /// the metadata exists, LSP is enabled for the buffer, it has a URI to be
+    /// named by, and its state is still around. It deliberately stops short of
+    /// `try_spawn`, which can start a server — this only answers "would that
+    /// call have anywhere to go", never causes one.
+    ///
+    /// It exists so the caller can ask *before* deriving the change set.
+    /// Building one converts byte offsets to LSP's UTF-16 positions, which
+    /// costs a read of the line up to the cursor — 18 MB per keystroke on a
+    /// file that is one long line, measured — and the empty fallback below is
+    /// worse still, since it snapshots the whole document. Both were being
+    /// paid on every edit and then dropped here.
+    pub(crate) fn lsp_change_could_be_sent(&self, buffer_id: BufferId) -> bool {
+        let Some(metadata) = self.buffer_metadata.get(&buffer_id) else {
+            return false;
+        };
+        metadata.lsp_enabled
+            && metadata.file_uri().is_some()
+            && self.buffers.get(&buffer_id).is_some()
+    }
+
+    /// `resync_only` restricts the send to servers whose copy of the document
+    /// is known to have diverged, so a repair pass cannot disturb servers that
+    /// are still in sync (#3038).
+    fn send_lsp_changes_inner(
+        &mut self,
+        buffer_id: BufferId,
+        changes: Vec<lsp_types::TextDocumentContentChangeEvent>,
+        resync_only: bool,
+    ) -> bool {
         const INLAY_HINTS_DEBOUNCE_MS: u64 = 500;
 
         if changes.is_empty() {
-            return;
+            return false;
         }
 
         let metadata = match self.buffer_metadata.get(&buffer_id) {
@@ -3508,13 +4331,13 @@ impl Window {
                     "send_lsp_changes_for_buffer: no metadata for buffer {:?}",
                     buffer_id
                 );
-                return;
+                return false;
             }
         };
 
         if !metadata.lsp_enabled {
             tracing::debug!("send_lsp_changes_for_buffer: LSP disabled for this buffer");
-            return;
+            return false;
         }
 
         let uri = match metadata.file_uri() {
@@ -3523,10 +4346,13 @@ impl Window {
                 tracing::debug!(
                     "send_lsp_changes_for_buffer: no URI for buffer (not a file or URI creation failed)"
                 );
-                return;
+                return false;
             }
         };
         let file_path = metadata.file_path().cloned();
+        // Keyed the way the LSP handle keys its own document tables, so the
+        // desync lookup below matches regardless of how the buffer was opened.
+        let path_for_resync = std::path::PathBuf::from(uri.as_uri().path().as_str());
 
         let language = match self.buffers.get(&buffer_id).map(|s| s.language.clone()) {
             Some(l) => l,
@@ -3535,7 +4361,7 @@ impl Window {
                     "send_lsp_changes_for_buffer: no buffer state for {:?}",
                     buffer_id
                 );
-                return;
+                return false;
             }
         };
 
@@ -3553,12 +4379,12 @@ impl Window {
                 "send_lsp_changes_for_buffer: LSP not running for {} (auto_start disabled)",
                 language
             );
-            return;
+            return false;
         }
 
         let handles_needing_open: Vec<_> = {
             let Some(metadata) = self.buffer_metadata.get(&buffer_id) else {
-                return;
+                return false;
             };
             lsp.get_handles(&language)
                 .into_iter()
@@ -3578,11 +4404,12 @@ impl Window {
                     tracing::debug!(
                         "send_lsp_changes_for_buffer: buffer text not available for didOpen"
                     );
-                    return;
+                    return false;
                 }
             };
 
             let lsp = &mut self.lsp;
+            let mut opened: Vec<u64> = Vec::new();
             for sh in lsp.get_handles_mut(&language) {
                 if handles_needing_open
                     .iter()
@@ -3603,12 +4430,17 @@ impl Window {
                             uri.as_str(),
                             sh.name
                         );
+                        opened.push(sh.handle.id());
                     }
                 }
             }
 
+            // Only a didOpen that was actually queued may be recorded as sent.
+            // Marking a dropped one would leave the buffer permanently invisible
+            // to that server: the task discards every later didChange for a
+            // document it never opened, and nothing would ever retry the open.
             if let Some(metadata) = self.buffer_metadata.get_mut(&buffer_id) {
-                for (_, handle_id) in &handles_needing_open {
+                for handle_id in &opened {
                     metadata.lsp_opened_with.insert(*handle_id);
                 }
             }
@@ -3616,13 +4448,54 @@ impl Window {
             // didOpen already contains the full current buffer content, so we must
             // NOT also send didChange (which carries pre-edit incremental changes).
             // Sending both would corrupt the server's view of the document.
-            return;
+            return false;
         }
+
+        // A server that fell behind far enough for a `didChange` to be dropped
+        // holds a document that no longer matches this buffer. What each server
+        // should be sent is decided by `sync_policy`; assembling the whole
+        // buffer is only worth it if some server is actually going to be sent
+        // it (#3038).
+        use crate::services::lsp::sync_policy::{decide_change_to_send, ChangeToSend, SyncState};
+        let sync_state =
+            |sh: &crate::services::lsp::manager::ServerHandle, text_available| SyncState {
+                desynced: sh.handle.needs_full_resync(&path_for_resync),
+                has_capacity: sh.handle.has_command_capacity(),
+                text_available,
+                resync_only,
+            };
+        let resync_text = self
+            .lsp
+            .get_handles(&language)
+            .iter()
+            .any(|sh| decide_change_to_send(sync_state(sh, true)) == ChangeToSend::FullText)
+            .then(|| {
+                self.buffers
+                    .get(&buffer_id)
+                    .and_then(|s| s.buffer.to_string())
+            })
+            .flatten();
 
         let lsp = &mut self.lsp;
         let mut any_sent = false;
         for sh in lsp.get_handles_mut(&language) {
-            if let Err(e) = sh.handle.did_change(uri.as_uri().clone(), changes.clone()) {
+            let outgoing = match decide_change_to_send(sync_state(sh, resync_text.is_some())) {
+                ChangeToSend::FullText => {
+                    tracing::info!(
+                        "Resending full text of {} to '{}' after a dropped notification",
+                        uri.as_str(),
+                        sh.name
+                    );
+                    vec![lsp_types::TextDocumentContentChangeEvent {
+                        range: None,
+                        range_length: None,
+                        text: resync_text.clone().unwrap_or_default(),
+                    }]
+                }
+                ChangeToSend::Incremental => changes.clone(),
+                ChangeToSend::Skip => continue,
+            };
+            if let Err(e) = sh.handle.did_change(uri.as_uri().clone(), outgoing) {
                 tracing::warn!("Failed to send didChange to '{}': {}", sh.name, e);
             } else {
                 any_sent = true;
@@ -3663,6 +4536,152 @@ impl Window {
                 ));
             }
         }
+
+        any_sent
+    }
+
+    /// Tell every server that had this buffer open that the document is gone.
+    ///
+    /// Without this the server keeps serving a document the editor has thrown
+    /// away — including any unsaved edits the user discarded by closing it —
+    /// and the task's version record keeps the path, so reopening the file
+    /// sends a `didOpen` the task discards as a duplicate and the stale copy
+    /// survives the reopen. `didClose` is what makes the task forget the
+    /// version, so the next open is accepted (#3038).
+    pub(crate) fn notify_lsp_buffer_closed(&mut self, buffer_id: BufferId) {
+        let Some(metadata) = self.buffer_metadata.get(&buffer_id) else {
+            return;
+        };
+        if metadata.lsp_opened_with.is_empty() {
+            return;
+        }
+        let Some(uri) = metadata.file_uri().cloned() else {
+            return;
+        };
+        let opened_with: Vec<u64> = metadata.lsp_opened_with.iter().copied().collect();
+
+        for sh in self.lsp.all_handles_mut() {
+            if !opened_with.contains(&sh.handle.id()) {
+                continue;
+            }
+            if let Err(e) = sh.handle.did_close(uri.as_uri().clone()) {
+                // The handle records the document for a retry from the repair
+                // pass, so a refused close is not the end of it.
+                tracing::warn!("Failed to send didClose to '{}': {}", sh.name, e);
+            }
+        }
+    }
+
+    /// Re-send the full text of any document whose `didChange` stream was
+    /// broken by a dropped notification, once the server's command queue has
+    /// room again.
+    ///
+    /// [`Window::send_lsp_changes_for_buffer`] already promotes the next edit
+    /// to a full-text replacement, but a user who stops typing after the burst
+    /// would otherwise leave the server stuck on a document it can never be
+    /// corrected on. Returns whether anything was resent (#3038).
+    ///
+    /// Cheap on the healthy path: no server has desynced documents, so this is
+    /// one lock and an `is_empty` check per handle.
+    pub(crate) fn resync_desynced_lsp_documents(&mut self) -> bool {
+        // A save the server never saw leaves it having skipped whatever it
+        // only runs on save. The handle kept the text as it was at save time,
+        // so this needs nothing from the buffer.
+        let mut acted = self
+            .lsp
+            .all_handles()
+            .iter()
+            .fold(false, |acted, sh| acted | sh.handle.retry_pending_saves());
+
+        // Only servers with room for the notification are worth doing work
+        // for; the rest are still backed up and would reject it, so they are
+        // left for a later tick rather than rebuilding the payload every frame.
+        let stale: Vec<(u64, std::path::PathBuf)> = self
+            .lsp
+            .all_handles()
+            .iter()
+            .filter(|sh| sh.handle.has_command_capacity())
+            .flat_map(|sh| {
+                let id = sh.handle.id();
+                sh.handle
+                    .desynced_documents()
+                    .into_iter()
+                    .map(move |path| (id, path))
+            })
+            .collect();
+        if stale.is_empty() {
+            return acted;
+        }
+
+        let buffer_for_path = |path: &std::path::Path| {
+            self.buffer_metadata.iter().find_map(|(id, meta)| {
+                meta.file_uri()
+                    .filter(|u| std::path::Path::new(u.as_uri().path().as_str()) == path)
+                    .map(|_| *id)
+            })
+        };
+
+        // A diverged document with no buffer left open cannot be repaired —
+        // there is no text to rebuild it from, and it would otherwise be
+        // retried on every tick for the life of the process. Closing it is the
+        // repair: the server drops its stale copy, and because the task also
+        // forgets the document's version, a later reopen is accepted as a
+        // fresh didOpen carrying the full text.
+        let orphaned: Vec<(u64, std::path::PathBuf)> = stale
+            .iter()
+            .filter(|(_, path)| buffer_for_path(path).is_none())
+            .cloned()
+            .collect();
+        for (handle_id, path) in orphaned {
+            let Some(uri) = crate::services::lsp::manager::path_to_uri(&path) else {
+                continue;
+            };
+            if let Some(sh) = self
+                .lsp
+                .all_handles_mut()
+                .into_iter()
+                .find(|sh| sh.handle.id() == handle_id)
+            {
+                match sh.handle.did_close(uri) {
+                    Ok(()) => {
+                        tracing::info!(
+                            "Closing {} on '{}': its copy diverged and the buffer is gone",
+                            path.display(),
+                            sh.name
+                        );
+                        acted = true;
+                    }
+                    Err(e) => tracing::warn!("Failed to send didClose to '{}': {}", sh.name, e),
+                }
+            }
+        }
+
+        // The send needs a non-empty change list to do anything; the payload
+        // is discarded in favour of the full text as soon as the policy sees
+        // the handle is desynced, so its contents don't matter beyond being a
+        // well-formed no-op edit at the buffer start.
+        let mut buffers: Vec<BufferId> = Vec::new();
+        for (_, path) in &stale {
+            if let Some(id) = buffer_for_path(path) {
+                if !buffers.contains(&id) {
+                    buffers.push(id);
+                }
+            }
+        }
+
+        for buffer_id in buffers {
+            let start = lsp_types::Position::new(0, 0);
+            acted |= self.send_lsp_changes_inner(
+                buffer_id,
+                vec![lsp_types::TextDocumentContentChangeEvent {
+                    range: Some(lsp_types::Range::new(start, start)),
+                    range_length: None,
+                    text: String::new(),
+                }],
+                true,
+            );
+        }
+        acted
     }
 
     /// The open buffer showing `uri`, if any. Diagnostics are keyed by URI but
@@ -3720,8 +4739,6 @@ impl Window {
         for split_id in splits_for_buffer {
             if let Some(view_state) = vs_map.get_mut(&split_id) {
                 view_state.invalidate_layout();
-                view_state.view_transform = None;
-                view_state.view_transform_stale = true;
             }
         }
     }
@@ -3729,9 +4746,17 @@ impl Window {
     /// Adjust cursors in other splits that share the same buffer after
     /// an edit. The split that originated the event already had its
     /// cursors moved by `BufferState::apply`; this method walks every
-    /// other split displaying the same buffer and shifts (or, for a
-    /// `BulkEdit`, resets) their cursors so they don't dangle past
-    /// freshly-deleted text.
+    /// other split displaying the same buffer and shifts their cursors by
+    /// the edit deltas so they keep pointing at the same text instead of
+    /// dangling past freshly-deleted bytes.
+    ///
+    /// Every edit shape funnels through the same `adjust_for_edit` loop,
+    /// `BulkEdit` included. `BulkEdit` used to *assign* the originating
+    /// split's new cursor position to every other split, which teleported
+    /// a second view of the file to wherever the edit happened. Any
+    /// multi-event editing action (transpose, move-line, toggle-comment,
+    /// …) takes the bulk path even with a single cursor, so editing in
+    /// one pane dragged every other pane along (issue #2878).
     pub fn adjust_other_split_cursors_for_event(&mut self, event: &Event) {
         let current_buffer_id = self.active_buffer();
         let buffer_len = self
@@ -3745,22 +4770,6 @@ impl Window {
         let current_split_id = mgr.active_split();
         let splits_for_buffer = mgr.splits_for_buffer(current_buffer_id);
 
-        if let Event::BulkEdit { new_cursors, .. } = event {
-            for split_id in splits_for_buffer {
-                if split_id == current_split_id {
-                    continue;
-                }
-                if let Some(view_state) = vs_map.get_mut(&split_id) {
-                    if let Some((_, pos, _)) = new_cursors.first() {
-                        let new_pos = (*pos).min(buffer_len);
-                        view_state.cursors.primary_mut().position = new_pos;
-                        view_state.cursors.primary_mut().anchor = None;
-                    }
-                }
-            }
-            return;
-        }
-
         let adjustments: Vec<(usize, usize, usize)> = match event {
             Event::Insert { position, text, .. } => {
                 vec![(*position, 0, text.len())]
@@ -3768,6 +4777,11 @@ impl Window {
             Event::Delete { range, .. } => {
                 vec![(range.start, range.len(), 0)]
             }
+            // `edits` is sorted descending by position, which is safe to
+            // replay in order: each adjustment leaves a cursor at or after
+            // the edit it just shifted for, so the comparison against the
+            // next (lower) edit position still reflects pre-edit order.
+            Event::BulkEdit { edits, .. } => edits.clone(),
             Event::Batch { events, .. } => events
                 .iter()
                 .filter_map(|e| match e {
@@ -3793,22 +4807,59 @@ impl Window {
                         .cursors
                         .adjust_for_edit(*edit_pos, *old_len, *new_len);
                 }
+                // A cursor can still sit past the end when the edit shrank
+                // the tail out from under it; clamp so no view holds an
+                // out-of-bounds position.
+                view_state.cursors.map(|cursor| {
+                    cursor.position = cursor.position.min(buffer_len);
+                    cursor.anchor = cursor.anchor.map(|a| a.min(buffer_len));
+                });
             }
         }
     }
 
-    /// Handle scroll events using the active split's viewport.
+    /// The buffer a leaf currently shows.
+    ///
+    /// `SplitManager::buffer_for_split` only knows the leaves in the main
+    /// split tree, so it answers `None` for a grouped buffer's inner panel
+    /// (a Review Diff pane, say) — the leaf still owns a `SplitViewState`,
+    /// it just isn't a node of the tree. Fall back to that view state's own
+    /// active buffer, which is what `effective_active_pair` treats as
+    /// authoritative for those leaves.
+    pub(crate) fn buffer_for_leaf(&self, leaf_id: LeafId) -> Option<BufferId> {
+        let (mgr, vs_map) = self.buffers.splits()?;
+        mgr.buffer_for_split(leaf_id)
+            .or_else(|| vs_map.get(&leaf_id).map(|vs| vs.active_buffer))
+    }
+
+    /// Handle scroll events using the focused split's viewport.
     ///
     /// View events (like `Scroll`) target SplitViewState rather than
     /// EditorState so scroll limits are correct when view transforms
     /// inject extra rows.
     pub(crate) fn handle_scroll_event(&mut self, line_offset: isize) {
-        use crate::view::ui::view_pipeline::ViewLineIterator;
-
-        let Some((mgr, _)) = self.buffers.splits() else {
+        // Guard before resolving the split: `effective_active_pair` asserts
+        // a populated split layout, which this entry point never did.
+        if self.buffers.splits().is_none() {
             return;
-        };
-        let active_split = mgr.active_split();
+        }
+        // The *effective* active split, not the split manager's: when the
+        // focus sits on an inner panel of a grouped buffer, the tree's
+        // active leaf is the group host and scrolling it moves a viewport
+        // the user isn't looking at while the panel stays put.
+        self.handle_scroll_event_for_split(self.effective_active_split(), line_offset);
+    }
+
+    /// Body of [`Self::handle_scroll_event`], for a caller that already
+    /// resolved which leaf it means to scroll.
+    pub(crate) fn handle_scroll_event_for_split(
+        &mut self,
+        active_split: LeafId,
+        line_offset: isize,
+    ) {
+        if self.buffers.splits().is_none() {
+            return;
+        }
 
         if let Some(group) = self
             .scroll_sync_manager
@@ -3834,34 +4885,23 @@ impl Window {
             vec![active_split]
         };
 
-        let tab_size = self.resources.config.editor.tab_size;
         for split_id in splits_to_scroll {
-            let (mgr, vs_map) = self.buffers.splits().expect("splits checked above");
-            let Some(buffer_id) = mgr.buffer_for_split(split_id) else {
+            let Some(buffer_id) = self.buffer_for_leaf(split_id) else {
                 continue;
             };
-
-            let view_transform_tokens = vs_map
-                .get(&split_id)
-                .and_then(|vs| vs.view_transform.as_ref())
-                .map(|vt| vt.tokens.clone());
 
             self.buffers
                 .with_buffer_and_split(buffer_id, split_id, |state, view_state| {
                     let soft_breaks = state.collect_soft_break_positions();
                     let virtual_lines = state.collect_virtual_line_positions();
+                    let hidden_ranges = collapsed_hidden_ranges(view_state, state, buffer_id);
                     let buffer = &mut state.buffer;
-                    if let Some(tokens) = view_transform_tokens {
-                        let view_lines: Vec<_> =
-                            ViewLineIterator::new(&tokens, false, false, tab_size, false).collect();
-                        view_state
-                            .viewport
-                            .scroll_view_lines(&view_lines, line_offset);
-                    } else if line_offset > 0 {
+                    if line_offset > 0 {
                         view_state.viewport.scroll_down(
                             buffer,
                             &soft_breaks,
                             &virtual_lines,
+                            &hidden_ranges,
                             line_offset as usize,
                         );
                     } else {
@@ -3869,6 +4909,7 @@ impl Window {
                             buffer,
                             &soft_breaks,
                             &virtual_lines,
+                            &hidden_ranges,
                             line_offset.unsigned_abs(),
                         );
                     }
@@ -4006,3 +5047,111 @@ impl Window {
 // assertion isn't worth the maintenance, and the same behaviour is
 // already exercised by every `EditorTestHarness::create` path that
 // names a window.
+
+#[cfg(test)]
+mod exited_terminal_tests {
+    use super::ExitedTerminal;
+    use crate::services::terminal::TerminalId;
+
+    fn record(command: Option<&[&str]>, resume: Option<&[&str]>) -> ExitedTerminal {
+        let argv = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        ExitedTerminal {
+            terminal_id: TerminalId(0),
+            exit_code: Some(0),
+            cols: 80,
+            rows: 24,
+            cwd: None,
+            backing_path: None,
+            log_path: None,
+            command: command.map(argv),
+            resume: resume.map(argv),
+            ephemeral: true,
+            script_access: false,
+            title: None,
+        }
+    }
+
+    /// The status-bar indicator names the program that died. The resume argv
+    /// wins over the launch command — that's the process a restart will
+    /// actually run, so it's the one the user is being offered.
+    #[test]
+    fn program_name_prefers_the_resume_argv() {
+        let e = record(
+            Some(&["/opt/bin/claude", "--session-id", "x"]),
+            Some(&["/opt/bin/claude", "--resume", "x"]),
+        );
+        assert_eq!(e.program_name(), Some("claude"));
+        assert!(e.resumes_agent());
+    }
+
+    /// With no resume spec the launch command names the indicator, and the
+    /// wording drops to "restart" rather than "resume".
+    #[test]
+    fn program_name_falls_back_to_the_launch_command() {
+        let e = record(Some(&["npm", "run", "dev"]), None);
+        assert_eq!(e.program_name(), Some("npm"));
+        assert!(!e.resumes_agent());
+    }
+
+    /// A plain shell has no program to name — the indicator says "terminal".
+    #[test]
+    fn a_plain_shell_has_no_program_name() {
+        assert_eq!(record(None, None).program_name(), None);
+    }
+
+    /// An empty resume vector is the "plain shell" restore marker, not a
+    /// rejoinable agent — treating it as one would render "Resume" for a
+    /// terminal that has nothing to resume.
+    #[test]
+    fn an_empty_resume_argv_is_not_an_agent() {
+        let e = record(Some(&["bash"]), Some(&[]));
+        assert!(!e.resumes_agent());
+        assert_eq!(e.program_name(), Some("bash"));
+    }
+}
+
+/// Byte ranges the renderer hides for `buffer_id`'s collapsed folds, in the
+/// form the viewport scroll primitives consume. A scroll that counts these
+/// lines spends its budget on rows nobody sees, so the viewport stalls while
+/// the cursor runs ahead into the hidden region.
+fn collapsed_hidden_ranges(
+    view_state: &crate::view::split::SplitViewState,
+    state: &crate::state::EditorState,
+    buffer_id: BufferId,
+) -> Vec<(usize, usize)> {
+    let Some(folds) = view_state.keyed_states.get(&buffer_id).map(|bs| &bs.folds) else {
+        return Vec::new();
+    };
+    state
+        .fold_ranges(folds)
+        .into_iter()
+        .map(|r| (r.start, r.end))
+        .collect()
+}
+
+/// The wrap-index geometry for a split, when one is already built for it.
+///
+/// `None` means the byte-walking scroll path must be used — before the first
+/// render there is nothing to read row positions from, and building an index
+/// here would trade a cheap walk for an O(buffer) pass.
+fn wrap_scroll_geometry(
+    view_state: &crate::view::split::SplitViewState,
+    state: &crate::state::EditorState,
+) -> Option<crate::view::wrap_index::WrapIndexGeometry> {
+    if !view_state.viewport.line_wrap_enabled || state.wrap_indices.is_empty() {
+        return None;
+    }
+    let inputs = state.pipeline_inputs();
+    let geometry = crate::view::ui::split_rendering::wrap_index_geometry_for(
+        &view_state.viewport,
+        &state.buffer,
+        view_state.viewport.line_wrap_enabled,
+        &crate::state::ViewMode::Source,
+        crate::view::wrap_index::fold_signature(&state.fold_ranges(&view_state.folds)),
+    );
+    state
+        .wrap_indices
+        .get(&geometry)
+        .is_some_and(|index| index.is_built_for(&geometry, inputs))
+        .then_some(geometry)
+}

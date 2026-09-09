@@ -9,7 +9,7 @@ use std::path::PathBuf;
 ///
 ///   1. **before** – stable compose view (conceals active, soft-wrapped)
 ///   2. **mid-frame** – immediately after the buffer edit, before the plugin
-///      has responded with a fresh view_transform
+///      has responded with fresh decorations
 ///   3. **after** – once the plugin async response has been processed
 ///
 /// The assertion is strict: the *only* difference between frames in the content
@@ -96,12 +96,19 @@ fn test_compose_mode_typing_no_flicker() {
     // ── Helpers ─────────────────────────────────────────────────────────
     let (content_start, content_end) = harness.content_area_rows();
     let content_rows = content_end - content_start + 1;
+    // The scrollbar column is dropped: this test is about the text area
+    // settling after an edit, and the track legitimately gains a mark for the
+    // unsaved change the keystroke just made.
     let extract_content = |screen: &str| -> Vec<String> {
         screen
             .lines()
             .skip(content_start)
             .take(content_rows)
-            .map(|l| l.to_string())
+            .map(|l| {
+                let mut chars: Vec<char> = l.chars().collect();
+                chars.pop();
+                chars.into_iter().collect()
+            })
             .collect()
     };
 
@@ -191,7 +198,7 @@ fn test_compose_mode_typing_no_flicker() {
     assert!(
         continuation_rows >= 5,
         "Compose soft-wrapping should produce continuation rows (found {}).  \
-         Is the view_transform active?\n\
+         Is compose soft-wrapping active?\n\
          Content:\n{}",
         continuation_rows,
         before_content.join("\n"),
@@ -199,10 +206,8 @@ fn test_compose_mode_typing_no_flicker() {
 
     // ── Type a single character, then wait for the renderer to settle ──
     //
-    // Step 1: buffer edit. invalidate_layouts_for_buffer clears
-    // view_transform synchronously; the plugin sees lines_changed on
-    // its thread and asynchronously sends back a fresh
-    // SubmitViewTransform.
+    // Step 1: buffer edit. The plugin sees lines_changed on its thread
+    // and asynchronously refreshes its soft breaks and conceals.
     harness
         .editor_mut()
         .handle_key(KeyCode::Char('x'), KeyModifiers::NONE)
@@ -212,7 +217,7 @@ fn test_compose_mode_typing_no_flicker() {
     //
     // The previous version of this test captured a "mid-frame" with a
     // bare `harness.render()` immediately after the keypress. That
-    // bet on the plugin's `view_transform_request` reply arriving
+    // bet on the plugin's async reply arriving
     // inside the same render call (Editor::render drains pending
     // plugin commands non-blockingly partway through). On Linux the
     // QuickJS round-trip happens to land in time; on Windows the
@@ -4585,9 +4590,16 @@ fn test_compose_mode_table_width_respects_file_explorer() {
     std::fs::write(&md_path, &md_content).unwrap();
 
     // Use a wide terminal so the unopened-sidebar path has plenty of room.
+    //
+    // Clear `editor.page_width` so the compose width follows the viewport.
+    // This test is about column widths being recomputed when the *content
+    // area* shrinks, and a fixed page measure (the default since #2967) is
+    // narrower than the pane both before and after the sidebar opens, so the
+    // table would never need to shrink and the regression would go unobserved.
+    let mut config = fresh::config::Config::default();
+    config.editor.page_width = None;
     let mut harness =
-        EditorTestHarness::with_config_and_working_dir(120, 30, Default::default(), project_root)
-            .unwrap();
+        EditorTestHarness::with_config_and_working_dir(120, 30, config, project_root).unwrap();
 
     harness.open_file(&md_path).unwrap();
     harness.render().unwrap();
@@ -4878,4 +4890,123 @@ fn test_compose_mode_table_width_clamped_when_sidebar_opens() {
          editor area.\nScreen:\n{}",
         screen,
     );
+}
+
+/// Regression test for #2968 — "Markdown preview mode doesn't prettify all
+/// elements before doing some edits".
+///
+/// Turning compose on decorates the document from the plugin's `lines_changed`
+/// handler, and the editor marks every line it puts in a batch as *seen* the
+/// moment it hands the batch over. That makes the first batch after the mode
+/// change the only offer those lines get: if the plugin declines it, nothing
+/// redecorates them until an edit or a scroll produces a batch for lines the
+/// editor has not offered before. So the document sits there with its markup
+/// literal — `**bold**` keeping its asterisks — which is exactly what the
+/// issue reports, and why it reads as intermittent.
+///
+/// The plugin declined that batch whenever it read `getBufferInfo()` — served
+/// from the editor's state snapshot — before the editor thread had refreshed
+/// the snapshot past the `setViewMode` it had just applied. Whether it did was
+/// a race between two threads, which is why this reproduced "sometimes" and
+/// only under load.
+///
+/// This test removes the race by pinning the interleaving that loses. Plugin
+/// commands are drained at two points: the editor tick and the pre-layout
+/// drain at the top of `render`. The tick's drain is not exercised here — the
+/// palette's Enter goes in through `handle_key` directly, bypassing the
+/// harness's usual async drain, and from then on the test only renders. Every
+/// compose command therefore lands via the render path, which is precisely the
+/// interleaving the user hits when the plugin's reply arrives between a tick
+/// and the frame that follows it.
+///
+/// Before the fix this test hangs: the batch is dropped, the lines are already
+/// marked seen, no later batch comes, and the raw markup never leaves the
+/// screen. After it, the first frame that can decorate does.
+#[test]
+fn test_compose_first_paint_when_commands_land_on_the_render_path() {
+    use crate::common::harness::{copy_plugin, copy_plugin_lib};
+    use crate::common::tracing::init_tracing_from_env;
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    init_tracing_from_env();
+
+    // Line 1 is the cursor's line, and compose deliberately reveals the markup
+    // of the line the cursor is on. Everything asserted below therefore lives
+    // further down the document, well clear of that reveal.
+    let mut md_content = String::from("# First paint\n\n");
+    for i in 0..40 {
+        md_content.push_str(&format!(
+            "Paragraph {i} has **bold text** and a [link](http://example.com) and `code`.\n\n"
+        ));
+    }
+
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project");
+    std::fs::create_dir(&project_root).unwrap();
+    let plugins_dir = project_root.join("plugins");
+    std::fs::create_dir(&plugins_dir).unwrap();
+    copy_plugin(&plugins_dir, "markdown_compose");
+    copy_plugin_lib(&plugins_dir);
+
+    let md_path = project_root.join("first_paint.md");
+    std::fs::write(&md_path, &md_content).unwrap();
+
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(100, 40, Default::default(), project_root)
+            .unwrap();
+
+    harness.open_file(&md_path).unwrap();
+    harness.render().unwrap();
+
+    // Source mode: the markup is on screen, as written.
+    harness.assert_screen_contains("**bold text**");
+
+    // Drive the palette up to — but not including — the keystroke that runs the
+    // command. These helpers drain async work, which is fine and wanted: the
+    // point of the test starts at the Enter below.
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Toggle Compose/Preview").unwrap();
+    harness
+        .wait_for_screen_contains("Toggle Compose/Preview")
+        .unwrap();
+
+    // Confirm through the editor directly. `send_key` would drain async work
+    // until the plugin thread went quiet, and that drain refreshes the state
+    // snapshot — it would hand the plugin the answer this test is about
+    // whether it needs.
+    harness
+        .editor_mut()
+        .handle_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    // From here on: renders only. No editor tick, so nothing refreshes the
+    // plugin state snapshot behind the scenes; the compose commands and the
+    // decorations they lead to are drained by `render`'s own pre-layout drain,
+    // and the `lines_changed` batch that carries the document's one decoration
+    // pass is fired by the same frame that applied them.
+    //
+    // Waits indefinitely, like the harness's own `wait_until`: a failure here
+    // is a document that never decorates, and the run-level timeout reports it.
+    let mut renders = 0usize;
+    loop {
+        harness.render().unwrap();
+        let screen = harness.screen_to_string();
+        if !screen.contains("**bold text**")
+            && !screen.contains("[link](http://example.com)")
+            && !screen.contains("`code`")
+        {
+            break;
+        }
+        renders += 1;
+        if renders % 200 == 0 {
+            eprintln!("compose has not decorated after {renders} renders — screen:\n{screen}");
+        }
+        // Real time for the plugin thread to answer, matching what the
+        // harness's own waits allow. Not a deadline: the loop above ends on
+        // the screen, not on the clock.
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
 }

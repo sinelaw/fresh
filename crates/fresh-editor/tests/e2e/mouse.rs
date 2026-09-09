@@ -609,12 +609,18 @@ fn extract_scrollbar_thumb_info(
     }
 }
 
-/// Test that dragging the scrollbar updates the cursor position
-/// Bug: When dragging the scrollbar, the cursor stays at its old position
-/// even though the viewport has scrolled. The cursor should be moved to
-/// somewhere within the newly visible area.
+/// Test that dragging the scrollbar scrolls the viewport and leaves the
+/// cursor where the user left it.
+///
+/// This test used to assert the opposite - that the drag pulled the cursor
+/// to the new `top_byte` - which is the behaviour issue #3192 reports as a
+/// bug: the wheel never moved the cursor, and the relocation was invisible
+/// until the next keypress typed onto a line the user never navigated to.
+/// Scrolling is a viewport operation; the ruling is now the wheel's.
+/// `e2e::issue_3192_scrollbar_drag_cursor` covers the same ground from
+/// rendered output.
 #[test]
-fn test_scrollbar_drag_updates_cursor_position() {
+fn test_scrollbar_drag_leaves_cursor_alone() {
     // Initialize tracing
     use tracing_subscriber::EnvFilter;
     let _ = tracing_subscriber::fmt()
@@ -666,19 +672,18 @@ fn test_scrollbar_drag_updates_cursor_position() {
         "Viewport should have scrolled down significantly (was line {initial_top_line}, now line {top_line_after_drag})"
     );
 
-    // VERIFY: Cursor should have moved to be within the visible area
-    // The cursor should no longer be at the beginning of the file
-    // It should be somewhere near the scrolled viewport position
-    assert!(
-        cursor_pos_after_drag > initial_cursor_pos,
-        "Cursor should have moved from position {initial_cursor_pos} after scrollbar drag, but is still at {cursor_pos_after_drag}"
+    // VERIFY: the cursor has not moved. The scroll left it off-screen, which
+    // is exactly the case the old fixup fired on and the wheel never did.
+    assert_eq!(
+        cursor_pos_after_drag, initial_cursor_pos,
+        "Scrollbar drag should leave the cursor at {initial_cursor_pos}, but it moved to {cursor_pos_after_drag}"
     );
 
-    // VERIFY: Cursor should be at the top of the visible area (or close to it)
-    // When scrollbar is dragged, the cursor is moved to top_byte
-    assert_eq!(
+    // VERIFY: and it was not pulled to the top of the new viewport - the
+    // specific relocation #3192 reports.
+    assert_ne!(
         cursor_pos_after_drag, top_byte_after_drag,
-        "Cursor position {cursor_pos_after_drag} should be at the top of the viewport (top_byte={top_byte_after_drag})"
+        "Cursor should not have been relocated to the viewport top (top_byte={top_byte_after_drag})"
     );
 }
 
@@ -778,6 +783,56 @@ fn test_scrollbar_drag_to_absolute_bottom() {
     assert!(
         cursor_pos <= buffer_len,
         "Cursor should not be beyond buffer end. Cursor at {cursor_pos}, buffer length {buffer_len}"
+    );
+}
+
+/// **Hovering a split separator names it, and the name survives the frame.**
+///
+/// The dividers are nodes in the shell's tree now, and the tree reports the
+/// hover. The legacy box walk runs after the tree on the same event, finds
+/// nothing under a divider cell — no chrome box covers it any more — and used
+/// to store that `None` straight over the tree's answer, so the highlight
+/// never appeared. `Editor::hovered` is where the two walks meet.
+#[test]
+fn test_hovering_a_split_separator_names_it() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("split horiz").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+
+    let separators = harness.editor().get_separator_areas().to_vec();
+    assert_eq!(
+        separators.len(),
+        1,
+        "one separator after a horizontal split"
+    );
+    let (split_id, direction, sep_x, sep_y, sep_length) = separators[0];
+
+    harness.mouse_move(sep_x + sep_length / 2, sep_y).unwrap();
+    assert_eq!(
+        harness.editor().hovered(),
+        Some(fresh::app::HoverTarget::SplitSeparator(
+            split_id.into(),
+            direction
+        )),
+        "the pointer is on the separator"
+    );
+
+    // And moving off it gives the answer back to whatever is under the pointer.
+    harness.mouse_move(sep_x + sep_length / 2, 1).unwrap();
+    assert_ne!(
+        harness.editor().hovered(),
+        Some(fresh::app::HoverTarget::SplitSeparator(
+            split_id.into(),
+            direction
+        )),
+        "and off it, it is not"
     );
 }
 
@@ -944,9 +999,15 @@ fn test_vertical_split_separator_drag_resize() {
     );
 }
 
-/// Test that separator drag respects minimum and maximum ratios
+/// Test that separator drag keeps both panes at least the absolute minimum
+/// pane size. The stored ratio is now free to reach the extremes (it is only
+/// clamped to `[0, 1]`); the real guard is applied at layout time, so an
+/// extreme drag pins the *rendered* sibling pane to `MIN_PANE_HEIGHT` rather
+/// than stopping the ratio at a fixed 0.1/0.9.
 #[test]
 fn test_split_separator_drag_respects_limits() {
+    use fresh::view::split::MIN_PANE_HEIGHT;
+
     let mut harness = EditorTestHarness::new(80, 24).unwrap();
 
     // Delay to avoid double-click detection (use config value * 2 for safety margin)
@@ -964,46 +1025,47 @@ fn test_split_separator_drag_respects_limits() {
         .unwrap();
     harness.render().unwrap();
 
+    let (content_first, content_last) = harness.content_area_rows();
+    // `content_first` is where buffer *text* begins; a pane's split rectangle
+    // starts one row higher, at its tab bar. The bottom pane has no tab bar
+    // below it, so `content_last` already aligns with the split-area bottom.
+    let split_area_top = content_first.saturating_sub(1);
     let separators = harness.editor().get_separator_areas().to_vec();
-    let (split_id, _, sep_x, sep_y, sep_length) = separators[0];
+    let (_split_id, _, sep_x, sep_y, sep_length) = separators[0];
 
     // Try to drag separator way beyond reasonable limits
     let start_col = sep_x + sep_length / 2;
 
-    // Drag extremely far down (should clamp to max 0.9)
+    // Drag extremely far down: the first pane grows, but the second pane must
+    // still render at least MIN_PANE_HEIGHT rows (the separator cannot reach
+    // the bottom of the content area).
     harness
         .mouse_drag(start_col, sep_y, start_col, sep_y + 100)
         .unwrap();
+    harness.render().unwrap();
 
-    let max_ratio = harness.editor().get_split_ratio(split_id.into()).unwrap();
+    let sep_y_down = harness.editor().get_separator_areas()[0].3 as usize;
+    let second_pane_height = content_last.saturating_sub(sep_y_down);
     assert!(
-        max_ratio <= 0.9,
-        "Ratio should not exceed 0.9, got {max_ratio}"
-    );
-    assert!(
-        max_ratio >= 0.8,
-        "Ratio should be close to maximum after extreme drag down, got {max_ratio}"
+        second_pane_height >= MIN_PANE_HEIGHT as usize,
+        "After extreme drag down the sibling pane must keep at least {MIN_PANE_HEIGHT} rows, got {second_pane_height}"
     );
 
     // Wait to avoid double-click detection
     std::thread::sleep(double_click_delay);
 
-    // Drag extremely far up (should clamp to min 0.1)
-    let separators_after = harness.editor().get_separator_areas().to_vec();
-    let (_, _, _, sep_y_after, _) = separators_after[0];
-
+    // Drag extremely far up: now the first pane is pinned to the minimum.
+    let sep_y_after = harness.editor().get_separator_areas()[0].3;
     harness
         .mouse_drag(start_col, sep_y_after, start_col, 0)
         .unwrap();
+    harness.render().unwrap();
 
-    let min_ratio = harness.editor().get_split_ratio(split_id.into()).unwrap();
+    let sep_y_up = harness.editor().get_separator_areas()[0].3 as usize;
+    let first_pane_height = sep_y_up.saturating_sub(split_area_top);
     assert!(
-        min_ratio >= 0.1,
-        "Ratio should not be less than 0.1, got {min_ratio}"
-    );
-    assert!(
-        min_ratio <= 0.2,
-        "Ratio should be close to minimum after extreme drag up, got {min_ratio}"
+        first_pane_height >= MIN_PANE_HEIGHT as usize,
+        "After extreme drag up the first pane must keep at least {MIN_PANE_HEIGHT} rows, got {first_pane_height}"
     );
 }
 

@@ -1,6 +1,6 @@
 //! E2E tests for git features (git grep and git find file)
 
-use crate::common::git_test_helper::{DirGuard, GitTestRepo};
+use crate::common::git_test_helper::GitTestRepo;
 use crate::common::harness::EditorTestHarness;
 use crate::common::tracing::init_tracing_from_env;
 use crossterm::event::{KeyCode, KeyModifiers};
@@ -53,8 +53,7 @@ fn test_git_grep_shows_results() {
     repo.setup_git_plugins();
 
     // Change to repo directory so git commands work correctly
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -100,8 +99,7 @@ fn test_git_grep_interactive_updates() {
     repo.setup_git_plugins();
 
     // Change to repo directory so git commands work correctly
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -168,8 +166,7 @@ fn test_git_grep_selection_navigation() {
     repo.setup_git_plugins();
 
     // Change to repo directory so git commands work correctly
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -218,8 +215,7 @@ fn test_git_grep_confirm_jumps_to_location() {
     repo.setup_git_plugins();
 
     // Change to repo directory so git commands work correctly
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -282,8 +278,7 @@ fn test_git_grep_cancel() {
     repo.setup_git_plugins();
 
     // Change to repo directory so git commands work correctly
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -323,8 +318,7 @@ fn test_git_grep_no_matches_is_graceful() {
     repo.setup_git_plugins();
 
     // Change to repo directory so git commands work correctly
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -371,8 +365,7 @@ fn test_git_find_file_shows_results() {
     repo.setup_git_plugins();
 
     // Change to repo directory so git commands work correctly
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -417,8 +410,7 @@ fn test_git_find_file_interactive_filtering() {
     repo.setup_git_plugins();
 
     // Change to repo directory so git commands work correctly
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -485,8 +477,7 @@ fn test_git_find_file_selection_navigation() {
     repo.setup_git_plugins();
 
     // Change to repo directory so git commands work correctly
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -532,8 +523,7 @@ fn test_git_find_file_confirm_opens_file() {
     repo.setup_git_plugins();
 
     // Change to repo directory so git commands work correctly
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -596,8 +586,7 @@ fn test_git_grep_scrolling_many_results() {
     repo.setup_git_plugins();
 
     // Change to repo directory so git commands work correctly
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -641,8 +630,7 @@ fn test_git_find_file_scrolling_many_files() {
     repo.setup_git_plugins();
 
     // Change to repo directory so git commands work correctly
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -690,8 +678,7 @@ fn test_git_commands_via_command_palette() {
     repo.setup_git_plugins();
 
     // Change to repo directory so git commands work correctly
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -735,8 +722,7 @@ fn test_git_grep_opens_correct_file_and_jumps_to_line() {
     repo.setup_git_plugins();
 
     // Change to repo directory so git commands work correctly
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -822,8 +808,7 @@ fn test_git_find_file_actually_opens_file() {
     repo.setup_git_plugins();
 
     // Change to repo directory so git commands work correctly
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -928,8 +913,7 @@ fn test_git_grep_cursor_position_accuracy() {
     repo.setup_git_plugins();
 
     // Change to repo directory so git commands work correctly
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -1010,6 +994,42 @@ fn trigger_git_log(harness: &mut EditorTestHarness) {
     harness.wait_for_screen_contains("switch pane").unwrap();
 }
 
+/// Just the log pane: everything left of the vertical split divider.
+///
+/// The detail pane on the right renders `git show` output, which repeats
+/// the commit's own subject line, so a whole-screen match for a commit
+/// subject finds it there as readily as in the list.
+fn log_pane_of(harness: &EditorTestHarness) -> String {
+    harness
+        .screen_to_string()
+        .lines()
+        .map(|l| l.split('│').next().unwrap_or(""))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Wait until the log pane is *usable*: chrome up **and** commit rows
+/// rendered, `subject` being one the log is known to contain.
+///
+/// The toolbar and the commit list are two widget panels, mounted by two
+/// separate host calls with the plugin building the row entries in
+/// between, so a frame can be painted with the toolbar up and the list
+/// still empty — measurably so: on a 200-commit log the list lands two to
+/// three ticks after the toolbar, and the gap only shrinks (it does not
+/// close) as the log gets shorter. `trigger_git_log` waits for the toolbar
+/// ("Tab switch pane"), which therefore says nothing about the rows, and
+/// waiting for it a second time is satisfied the instant it is checked.
+/// Anything that reads a row — or sends a key meant to move among them —
+/// has to wait for a row.
+fn wait_for_git_log_rows(harness: &mut EditorTestHarness, subject: &str) {
+    let subject = subject.to_string();
+    harness
+        .wait_until(|h| {
+            h.screen_to_string().contains("switch pane") && log_pane_of(h).contains(&subject)
+        })
+        .unwrap();
+}
+
 /// Test git log opens and shows commits
 #[test]
 fn test_git_log_shows_commits() {
@@ -1018,8 +1038,7 @@ fn test_git_log_shows_commits() {
     repo.setup_git_log_plugin();
 
     // Change to repo directory so git commands work correctly
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -1032,13 +1051,8 @@ fn test_git_log_shows_commits() {
     // Trigger git log
     trigger_git_log(&mut harness);
 
-    // Wait for git log to load (sticky toolbar + at least one commit subject)
-    harness
-        .wait_until(|h| {
-            let screen = h.screen_to_string();
-            screen.contains("switch pane") && screen.contains("Initial commit")
-        })
-        .unwrap();
+    // Wait for git log to load: sticky toolbar *and* the commit rows.
+    wait_for_git_log_rows(&mut harness, "Initial commit");
 
     let screen = harness.screen_to_string();
     println!("Git log screen:\n{screen}");
@@ -1070,8 +1084,7 @@ fn test_git_log_cursor_navigation() {
     repo.setup_git_log_plugin();
 
     // Change to repo directory so git commands work correctly
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -1120,8 +1133,7 @@ fn test_git_log_show_commit_detail() {
     repo.setup_git_log_plugin();
 
     // Change to repo directory so git commands work correctly
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -1134,10 +1146,10 @@ fn test_git_log_show_commit_detail() {
     // Trigger git log
     trigger_git_log(&mut harness);
 
-    // Wait for git log to load
-    harness
-        .wait_until(|h| h.screen_to_string().contains("switch pane"))
-        .unwrap();
+    // Wait for git log to load. The rows have to be up before the keys
+    // below: sent at an empty log buffer they move no cursor and open no
+    // commit, and the waits that follow would hang rather than fail.
+    wait_for_git_log_rows(&mut harness, "Initial commit");
 
     // Move cursor to a commit line (down from header)
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
@@ -1170,8 +1182,7 @@ fn test_git_log_q_from_detail_closes_group() {
     repo.setup_typical_project();
     repo.setup_git_log_plugin();
 
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -1210,8 +1221,7 @@ fn test_git_log_close() {
     repo.setup_git_log_plugin();
 
     // Change to repo directory so git commands work correctly
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -1259,8 +1269,7 @@ fn test_git_log_diff_coloring() {
     repo.setup_git_log_plugin();
 
     // Change to repo directory so git commands work correctly
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -1273,10 +1282,10 @@ fn test_git_log_diff_coloring() {
     // Trigger git log
     trigger_git_log(&mut harness);
 
-    // Wait for git log to load
-    harness
-        .wait_until(|h| h.screen_to_string().contains("switch pane"))
-        .unwrap();
+    // Wait for git log to load. The rows have to be up before the keys
+    // below: sent at an empty log buffer they move no cursor and open no
+    // commit, and the waits that follow would hang rather than fail.
+    wait_for_git_log_rows(&mut harness, "Initial commit");
 
     // Move to the commit and show detail
     harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
@@ -1485,8 +1494,7 @@ fn test_git_log_keyboard_scroll_follows_selection() {
     }
 
     repo.setup_git_log_plugin();
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     // Short terminal so the 30 commits clearly overflow the log pane.
     let mut harness = EditorTestHarness::with_config_and_working_dir(
@@ -1498,16 +1506,12 @@ fn test_git_log_keyboard_scroll_follows_selection() {
     .unwrap();
 
     trigger_git_log(&mut harness);
-    harness
-        .wait_until(|h| h.screen_to_string().contains("switch pane"))
-        .unwrap();
 
-    // HEAD (scrollcommit-30) is selected and its row sits at the top of
-    // the pane — visible before any scrolling.
-    assert!(
-        harness.screen_to_string().contains("scrollcommit-30"),
-        "newest commit's row should be visible at the top on open"
-    );
+    // HEAD (scrollcommit-30) is selected on open and its row sits at the
+    // top of the pane, so waiting for that row *is* the precondition the
+    // walk below needs — and it is a precondition to wait for rather than
+    // to assert on: see `wait_for_git_log_rows`.
+    wait_for_git_log_rows(&mut harness, "scrollcommit-30");
 
     // Walk the selection all the way to the oldest commit.
     for _ in 0..(total - 1) {
@@ -1523,17 +1527,12 @@ fn test_git_log_keyboard_scroll_follows_selection() {
         })
         .unwrap();
 
-    // Inspect only the log pane — the column left of the vertical split
-    // divider. The detail pane on the right shows the *previously opened*
-    // commit's diff (its `git show` is async and lags the synchronous
-    // selection), so a whole-screen match would spuriously find the
-    // newest commit's subject there.
+    // Inspect only the log pane: the detail pane on the right shows the
+    // *previously opened* commit's diff (its `git show` is async and lags
+    // the synchronous selection), so a whole-screen match would spuriously
+    // find the newest commit's subject there.
     let screen = harness.screen_to_string();
-    let log_pane: String = screen
-        .lines()
-        .map(|l| l.split('│').next().unwrap_or(""))
-        .collect::<Vec<_>>()
-        .join("\n");
+    let log_pane = log_pane_of(&harness);
 
     // The discriminating check: the newest commit's row must have
     // scrolled off the top. If the viewport never followed the selection
@@ -1569,8 +1568,7 @@ fn test_git_log_mouse_click_updates_selection_for_keyboard_nav() {
     }
 
     repo.setup_git_log_plugin();
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -1621,12 +1619,12 @@ fn test_git_log_mouse_click_updates_selection_for_keyboard_nav() {
     );
 }
 
-/// Regression: in the cursor-driven commit list the selected/highlighted
-/// commit must be the one the cursor is actually on. A 1-based (`cursor_moved`
-/// line) vs 0-based (commit index) mix-up put the selection one row below the
-/// cursor — the status bar showed `Ln 4` (cursor on the 4th row) yet
-/// `Commit 5/8` (the 5th commit). The invariant: cursor on line K ⟺ commit K
-/// selected. Both values are rendered on the status bar, so we assert on them.
+/// Regression: the selected commit is the row the List's selection is on.
+/// When the list rode the buffer's cursor, a 1-based line vs 0-based index
+/// mix-up put the selection one row below the cursor (`Ln 4` beside
+/// `Commit 5/8`). The List's own selection is the one fact now, and its
+/// `select` event's row is the commit the plugin reports; this pins that the
+/// K-th row is the K-th commit.
 #[test]
 fn test_git_log_cursor_line_matches_selected_commit() {
     init_tracing_from_env();
@@ -1639,8 +1637,7 @@ fn test_git_log_cursor_line_matches_selected_commit() {
     }
 
     repo.setup_git_log_plugin();
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -1651,20 +1648,21 @@ fn test_git_log_cursor_line_matches_selected_commit() {
     .unwrap();
 
     trigger_git_log(&mut harness);
-    harness
-        .wait_until(|h| h.screen_to_string().contains("switch pane"))
-        .unwrap();
+    // The rows have to be up before the cursor keys below.
+    wait_for_git_log_rows(&mut harness, "linecommit-08");
 
     // HEAD starts on row 1. Move the cursor down three rows.
     for _ in 0..3 {
         harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     }
+    // Three steps down the List land on the fourth commit, and the plugin
+    // reports the selection as it lands (the `select` event's row).
 
     // Wait for the cursor to settle on line 4 (the status bar's `Ln`
     // segment) — this happens regardless of the bug, so the assertion
     // below fails fast rather than hanging when the selection is wrong.
     harness
-        .wait_until(|h| h.screen_to_string().contains("Ln 4"))
+        .wait_until(|h| h.screen_to_string().contains("Commit 4/8"))
         .unwrap();
 
     // The selection (plugin's `Commit X/Y` status) must match the cursor's
@@ -1672,8 +1670,7 @@ fn test_git_log_cursor_line_matches_selected_commit() {
     let screen = harness.screen_to_string();
     assert!(
         screen.contains("Commit 4/8"),
-        "selected commit must match the cursor's line (Ln 4 ⟹ Commit 4/8), \
-         not be off by one:\n{screen}"
+        "three Downs from HEAD select the fourth commit, not one off:\n{screen}"
     );
 }
 
@@ -1861,8 +1858,7 @@ fn test_git_blame_shows_blocks_with_headers() {
     repo.setup_git_blame_plugin();
 
     // Change to repo directory so git commands work correctly
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -1925,8 +1921,7 @@ fn test_git_blame_cursor_navigation() {
     repo.setup_git_blame_plugin();
 
     // Change to repo directory
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -1976,6 +1971,297 @@ fn test_git_blame_cursor_navigation() {
     assert!(screen.contains("──"));
 }
 
+/// The block header is a band painted the full width of the view, so a
+/// closing `──` after the text would land at a different column on every
+/// header — the summary and author lengths vary — and read as ragged rather
+/// than as a rule. Only the fixed-width leading `──` should survive.
+// TODO: Fix git blame tests on Windows - they fail due to git command output differences
+#[test]
+#[cfg_attr(target_os = "windows", ignore)]
+fn test_git_blame_header_has_no_trailing_rule() {
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    repo.setup_git_blame_plugin();
+
+    let _guard = repo.change_to_repo_dir();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    let file_path = repo.path.join("src/main.rs");
+    harness.open_file(&file_path).unwrap();
+    harness
+        .wait_until(|h| h.get_buffer_content().unwrap().contains("fn main"))
+        .unwrap();
+
+    trigger_git_blame(&mut harness);
+
+    let screen = harness.screen_to_string();
+    let headers: Vec<&str> = screen.lines().filter(|l| l.contains("──")).collect();
+    assert!(
+        !headers.is_empty(),
+        "expected at least one blame header on screen:\n{screen}"
+    );
+
+    for header in headers {
+        let text = header.trim_end();
+        assert!(
+            text.ends_with('"'),
+            "blame header should end with the commit summary's closing quote, but a \
+             trailing rule follows it: {text:?}"
+        );
+        assert_eq!(
+            text.matches("──").count(),
+            1,
+            "blame header should carry only the leading rule: {text:?}"
+        );
+    }
+}
+
+/// Opening blame must leave the line under the cursor on the screen row it
+/// already occupied. Blame is opened to ask about one line, and centring it
+/// — what this used to do — moves that line out from under the reader's eye.
+///
+/// Asserted as a screen row rather than a line number: the cursor already
+/// landed on the right *line* before this, what moved was where that line
+/// was drawn.
+// TODO: Fix git blame tests on Windows - they fail due to git command output differences
+#[test]
+#[cfg_attr(target_os = "windows", ignore)]
+fn test_git_blame_keeps_the_focused_line_on_its_screen_row() {
+    let repo = GitTestRepo::new();
+
+    // Long enough that the view must scroll, so "where the line is drawn" and
+    // "which line it is" come apart.
+    let mut content = String::new();
+    for i in 1..=100 {
+        content.push_str(&format!("Line {i} of the file\n"));
+    }
+    repo.create_file("test.txt", &content);
+    repo.git_add(&["test.txt"]);
+    repo.git_commit("Initial commit");
+    repo.setup_git_blame_plugin();
+
+    let _guard = repo.change_to_repo_dir();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    let file_path = repo.path.join("test.txt");
+    harness.open_file(&file_path).unwrap();
+    harness
+        .wait_until(|h| h.get_buffer_content().unwrap().contains("Line 100"))
+        .unwrap();
+
+    // Walk down to line 90. Following the cursor down leaves it near the
+    // bottom of the viewport — nowhere near the middle, so centring shows up
+    // as a large move rather than a rounding difference.
+    for _ in 0..89 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
+    harness
+        .wait_until(|h| parse_ln(&h.screen_to_string()) == Some(90))
+        .unwrap();
+
+    // "Line 90 of the file" also matches nothing else on screen: "Line 9"
+    // is a prefix of "Line 90", so the trailing words matter.
+    let needle = "Line 90 of the file";
+    let source_row = harness
+        .screen_to_string()
+        .lines()
+        .position(|l| l.contains(needle))
+        .expect("the focused line should be on screen in the source buffer");
+
+    // Not `trigger_git_blame`: that waits for a `──` header to appear, and
+    // this file has one commit, so its only header sits above line 1 — far
+    // off screen at line 90. Waiting for the ready message instead keeps the
+    // check on rendered output without requiring a header in view.
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Git Blame").unwrap();
+    harness.wait_for_screen_contains("Git Blame").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Git blame:"))
+        .unwrap();
+    harness
+        .wait_until(|h| parse_ln(&h.screen_to_string()) == Some(90))
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    let blame_row = screen
+        .lines()
+        .position(|l| l.contains(needle))
+        .unwrap_or_else(|| {
+            panic!("the focused line scrolled off the blame view entirely:\n{screen}")
+        });
+
+    assert_eq!(
+        blame_row, source_row,
+        "the focused line moved from screen row {source_row} to {blame_row} when blame \
+         opened, so the reader has to find it again:\n{screen}"
+    );
+}
+
+/// Holding the focused line's screen row must not scroll a file that
+/// already fits on screen. The source buffer has no header rows, so its row
+/// offset is one smaller than the blame view can deliver, and an unclamped
+/// scroll makes up the difference by pushing the first block's header off
+/// the top — leaving a blame view with no visible header at all.
+// TODO: Fix git blame tests on Windows - they fail due to git command output differences
+#[test]
+#[cfg_attr(target_os = "windows", ignore)]
+fn test_git_blame_does_not_scroll_a_file_that_fits_on_screen() {
+    let repo = GitTestRepo::new();
+
+    // Short enough that every line plus the single header fits in the 40-row
+    // harness with room to spare, so there is nothing to scroll to.
+    let mut content = String::new();
+    for i in 1..=20 {
+        content.push_str(&format!("Line {i}\n"));
+    }
+    repo.create_file("test.txt", &content);
+    repo.git_add(&["test.txt"]);
+    repo.git_commit("Initial commit");
+    repo.setup_git_blame_plugin();
+
+    let _guard = repo.change_to_repo_dir();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    let file_path = repo.path.join("test.txt");
+    harness.open_file(&file_path).unwrap();
+    harness
+        .wait_until(|h| h.get_buffer_content().unwrap().contains("Line 20"))
+        .unwrap();
+
+    // Put the cursor down the file, so a row-preserving scroll would have
+    // something to get wrong.
+    for _ in 0..14 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
+    harness
+        .wait_until(|h| parse_ln(&h.screen_to_string()) == Some(15))
+        .unwrap();
+
+    trigger_git_blame(&mut harness);
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("──"),
+        "the block header scrolled off the top of a file that fits on screen:\n{screen}"
+    );
+    assert!(
+        screen.contains("Line 1\n") || screen.contains("Line 1 "),
+        "the first line scrolled off the top of a file that fits on screen:\n{screen}"
+    );
+}
+
+/// `b` walks into history one commit at a time, so `q` unwinds it the same
+/// way: from one hop deep, the first `q` returns to the blame it came from
+/// and only the second closes the view. Closing outright from several hops
+/// in threw the walk away and meant re-running blame to get back.
+///
+/// Which revision is on screen is the evidence, rather than the status
+/// line's depth counter: at this width the status truncates mid-message
+/// ("... | depth: " with the number cut off), so a depth assertion would
+/// wait for text the terminal never renders.
+// TODO: Fix git blame tests on Windows - they fail due to git command output differences
+#[test]
+#[cfg_attr(target_os = "windows", ignore)]
+fn test_git_blame_q_unwinds_history_before_closing() {
+    let repo = GitTestRepo::new();
+    repo.create_file("src/main.rs", "fn main() {\n    println!(\"v1\");\n}\n");
+    repo.git_add(&["src/main.rs"]);
+    repo.git_commit("Initial commit");
+
+    // Only the middle line changes, so only it carries the second commit —
+    // and only from that line does `b` have a parent to walk to.
+    repo.modify_file("src/main.rs", "fn main() {\n    println!(\"v2\");\n}\n");
+    repo.git_add_all();
+    repo.git_commit("second commit");
+
+    repo.setup_git_blame_plugin();
+
+    let _guard = repo.change_to_repo_dir();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+
+    let file_path = repo.path.join("src/main.rs");
+    harness.open_file(&file_path).unwrap();
+    harness
+        .wait_until(|h| h.get_buffer_content().unwrap().contains("fn main"))
+        .unwrap();
+
+    trigger_git_blame(&mut harness);
+
+    // Land on the line the second commit introduced.
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("v2"))
+        .unwrap();
+
+    // Walk one commit back: the parent revision's text replaces it on screen.
+    harness
+        .send_key(KeyCode::Char('b'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("v1"))
+        .unwrap();
+
+    // First `q`: retraces the hop rather than closing. The view comes back to
+    // the revision it started on, still a blame view.
+    harness
+        .send_key(KeyCode::Char('q'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("v2"))
+        .unwrap();
+    assert!(
+        harness.screen_to_string().contains("──"),
+        "the first `q` should have unwound the `b` hop, not closed the view:\n{}",
+        harness.screen_to_string()
+    );
+
+    // Second `q`: the stack is empty now, so this one closes.
+    harness
+        .send_key(KeyCode::Char('q'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            screen.contains("fn main") && !screen.contains("──")
+        })
+        .unwrap();
+    harness.assert_screen_not_contains("──");
+}
+
 /// Test git blame close with q
 // TODO: Fix git blame tests on Windows - they fail due to git command output differences
 #[test]
@@ -1986,8 +2272,7 @@ fn test_git_blame_close() {
     repo.setup_git_blame_plugin();
 
     // Change to repo directory
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -2053,8 +2338,7 @@ fn test_git_blame_reopen_after_external_close() {
     repo.setup_typical_project();
     repo.setup_git_blame_plugin();
 
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -2133,8 +2417,7 @@ fn test_git_blame_multiple_files_open_simultaneously() {
     repo.setup_typical_project();
     repo.setup_git_blame_plugin();
 
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         140,
@@ -2210,8 +2493,7 @@ fn test_git_blame_go_back_in_history() {
     repo.setup_git_blame_plugin();
 
     // Change to repo directory
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -2295,8 +2577,7 @@ fn test_git_blame_shows_different_commits() {
     repo.setup_git_blame_plugin();
 
     // Change to repo directory
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -2363,8 +2644,7 @@ fn test_git_blame_line_numbers_correct() {
     repo.setup_git_blame_plugin();
 
     // Change to repo directory
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -2447,8 +2727,7 @@ fn test_git_blame_scroll_to_bottom() {
     repo.setup_git_blame_plugin();
 
     // Change to repo directory
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -2528,8 +2807,7 @@ fn test_git_blame_scroll_with_many_virtual_lines() {
     repo.setup_git_blame_plugin();
 
     // Change to repo directory
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     // Small viewport to stress scrolling with virtual lines from blame headers
     let mut harness = EditorTestHarness::with_config_and_working_dir(
@@ -2874,8 +3152,7 @@ fn test_git_blame_original_buffer_not_decorated() {
     repo.setup_git_blame_plugin();
 
     // Change to repo directory
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -2964,8 +3241,7 @@ fn test_git_log_file_view_jk_navigation() {
 
     repo.setup_git_log_plugin();
 
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     // This test detects the read-only file-view buffer via its status-bar
     // entry (`<hash>:notes.txt* [RO]`), rendered by the `{filename}` element.
@@ -3132,8 +3408,7 @@ fn test_git_blame_jumps_to_source_cursor_line() {
     repo.git_commit("Initial commit");
     repo.setup_git_blame_plugin();
 
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         120,
@@ -3222,8 +3497,7 @@ fn test_git_blame_jumps_to_cursor_line_with_multibyte_and_goto() {
     repo.git_commit("Initial commit");
     repo.setup_git_blame_plugin();
 
-    let original_dir = repo.change_to_repo_dir();
-    let _guard = DirGuard::new(original_dir);
+    let _guard = repo.change_to_repo_dir();
 
     let mut harness = EditorTestHarness::with_config_and_working_dir(
         140,

@@ -23,7 +23,7 @@ pub use context_menu::FILE_EXPLORER_CONTEXT_MENU_WIDTH;
 pub use context_menu::NEW_TAB_MENU_WIDTH;
 pub use context_menu::TAB_CONTEXT_MENU_WIDTH;
 pub use context_menu::{
-    ContextMenu, ContextMenuHit, ContextMenuKind, FileExplorerContextMenu,
+    CloseSplitMenu, CloseSplitMenuItem, ContextMenu, ContextMenuKind, FileExplorerContextMenu,
     FileExplorerContextMenuItem, NewTabMenu, NewTabMenuItem, TabContextMenu, TabContextMenuItem,
 };
 
@@ -34,7 +34,7 @@ pub use drag::{TabDragState, TabDropZone};
 pub use hover::HoverTarget;
 
 // layout re-exports
-pub(crate) use layout::{ChromeLayout, WindowLayoutCache};
+pub(crate) use layout::ChromeLayout;
 pub use layout::{OverlayPreviewState, ViewLineMapping};
 
 // lsp_state re-exports

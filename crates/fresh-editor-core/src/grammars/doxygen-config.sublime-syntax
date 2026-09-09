@@ -1,0 +1,48 @@
+%YAML 1.2
+---
+name: Doxygen Config
+scope: source.doxygen-config
+
+contexts:
+  main:
+    - include: comments
+    - include: assignments
+
+  comments:
+    - match: '#.*$'
+      scope: comment.line.number-sign.doxygen-config
+
+  assignments:
+    - match: '^\s*([A-Z][A-Z0-9_]*)(\s*)(\+?=)'
+      captures:
+        1: variable.other.key.doxygen-config
+        3: keyword.operator.assignment.doxygen-config
+      push:
+        - include: values
+        - match: '(?<!\\)$'
+          pop: true
+
+  values:
+    - match: '"'
+      scope: punctuation.definition.string.begin.doxygen-config
+      push:
+        - meta_scope: string.quoted.double.doxygen-config
+        - match: '"'
+          scope: punctuation.definition.string.end.doxygen-config
+          pop: true
+        - match: '\\.'
+          scope: constant.character.escape.doxygen-config
+        - include: substitutions
+    - include: substitutions
+    - match: '\b(?:YES|NO)\b'
+      scope: constant.language.boolean.doxygen-config
+    - match: '\b\d+(?:\.\d+)?\b'
+      scope: constant.numeric.doxygen-config
+    - match: '\\$'
+      scope: punctuation.separator.continuation.doxygen-config
+
+  substitutions:
+    - match: '@[A-Za-z_][A-Za-z0-9_]*@'
+      scope: variable.other.template.doxygen-config
+    - match: '\$\([A-Za-z_][A-Za-z0-9_]*\)'
+      scope: variable.other.doxygen-config

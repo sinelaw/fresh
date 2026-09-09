@@ -273,6 +273,104 @@ function truncate(s: string, maxLen: number): string {
   return result + "...";
 }
 
+/** UTF-16 index of the `pattern` hit in `line` nearest to (at or before)
+ *  `byteHint`, or -1 when the pattern is empty, invalid, or absent.
+ *
+ *  This is how a row learns where its own match sits, and it deliberately
+ *  does NOT convert `match.column` to a UTF-16 index. Three reasons:
+ *
+ *  1. A conversion has to walk the line codepoint by codepoint, and on the
+ *     very files `CONTEXT_HARD_CAP` was written for — 5 000-50 000 char
+ *     minified bundles — that walk is tens of thousands of QuickJS
+ *     iterations per row, per re-render. One `©` anywhere on the line puts
+ *     every row on it onto that path. Native string search is two to three
+ *     orders of magnitude cheaper and is all this needs.
+ *  2. `column` and `context` are not guaranteed to describe the same
+ *     string: `resolveMatchTarget` rewrites `line`/`column` from the live
+ *     interval marker after a jump or replace and leaves `context` at its
+ *     grep-time value. Searching `context` itself cannot drift from it.
+ *  3. A byte offset is never smaller than the UTF-16 index of the same
+ *     position, so `column` is a soundupper bound to search back from —
+ *     which is what makes it useful as a hint without being trusted as a
+ *     position. Picking the hit at or before it is what keeps several
+ *     matches on one line anchored to their own rows.
+ *
+ *  Returns -1 rather than guessing when the pattern isn't on the line at
+ *  all — the stale-row case, where the tree renders the previous search's
+ *  results against the pattern currently being typed. The caller reads
+ *  that as "no anchor" and falls back to the head of the line. */
+function matchIndexNearByteColumn(
+  line: string,
+  pattern: string,
+  isRegex: boolean,
+  caseSensitive: boolean,
+  byteHint: number,
+): number {
+  if (!pattern) return -1;
+  // The hint is a byte offset; clamping to the UTF-16 length keeps it a
+  // valid search position and costs nothing when they coincide.
+  const hint = Math.max(0, Math.min(byteHint, line.length));
+  try {
+    if (!isRegex) {
+      const hay = caseSensitive ? line : line.toLowerCase();
+      const needle = caseSensitive ? pattern : pattern.toLowerCase();
+      const before = hay.lastIndexOf(needle, hint);
+      // Nothing at or before the hint: the byte column overstated the
+      // position past the last hit (a heavily multibyte prefix), so take
+      // the first hit on the line instead of reporting none.
+      return before >= 0 ? before : hay.indexOf(needle);
+    }
+    const re = new RegExp(pattern, caseSensitive ? "g" : "gi");
+    let best = -1;
+    let first = -1;
+    let m;
+    while ((m = re.exec(line)) !== null) {
+      if (m[0].length === 0) {
+        re.lastIndex++;
+        continue;
+      }
+      if (first < 0) first = m.index;
+      if (m.index > hint) break;
+      best = m.index;
+    }
+    return best >= 0 ? best : first;
+  } catch (_e) {
+    // Invalid regex mid-typing: no anchor, same as no hit.
+    return -1;
+  }
+}
+
+/** Codepoint index and length of the `pattern` hit in `text` nearest to
+ *  `preferAt`, or `null` when the pattern is empty, invalid, or doesn't
+ *  occur. A line with several matches yields one row per match, so the
+ *  row anchors on *its own* match rather than always on the first —
+ *  otherwise every row on that line would window to the same place.
+ *
+ *  `highlightMatches` reports UTF-16 indices; those are converted here
+ *  so callers can slice codepoint arrays without splitting a surrogate
+ *  pair. Only ever called on an already-capped window, so the
+ *  conversion walk is bounded. */
+function matchSpanNear(
+  text: string,
+  pattern: string,
+  isRegex: boolean,
+  caseSensitive: boolean,
+  preferAt: number,
+): { start: number; length: number } | null {
+  if (!pattern) return null;
+  const overlays: InlineOverlay[] = [];
+  highlightMatches(text, pattern, isRegex, caseSensitive, overlays);
+  if (overlays.length === 0) return null;
+  let o = overlays[0];
+  for (const cand of overlays) {
+    if (Math.abs(cand.start - preferAt) < Math.abs(o.start - preferAt)) o = cand;
+  }
+  return {
+    start: charLen(text.slice(0, o.start)),
+    length: charLen(text.slice(o.start, o.end)),
+  };
+}
+
 // Get the active field's text
 function getActiveFieldText(): string {
   if (!panel) return "";
@@ -477,12 +575,6 @@ function getViewportWidth(): number {
   return DEFAULT_WIDTH;
 }
 
-function getViewportHeight(): number {
-  const vp = editor.getViewport();
-  if (vp && vp.height > 0) return vp.height;
-  return 30;
-}
-
 // =============================================================================
 // Panel content builder — compact two-line control bar + match tree
 // =============================================================================
@@ -672,27 +764,38 @@ function flatItemKey(item: FlatItem): string {
 // inside the context substring) ride on the relevant segment via
 // its `overlays` field, addressed in char units relative to that
 // segment alone.
-function renderFlatItemEntry(item: FlatItem, W: number): TextPropertyEntry {
-  if (!panel) return { text: "" };
+/** One rendered row: the entry, plus the char span the row exists to show.
+ *
+ *  The span is the host's to act on — it rests the row's window on it when
+ *  the row is wider than the panel, and the reader pans away from there. The
+ *  plugin no longer cuts the string itself: it sends the capped context whole
+ *  and says where the interesting part is, which is what makes panning left
+ *  able to reach the head of the line at all. See `TreeNode.windowAnchor`. */
+type RenderedRow = { entry: TextPropertyEntry; anchor?: TextWindowAnchor };
+
+function renderFlatItemEntry(item: FlatItem, W: number): RenderedRow {
+  if (!panel) return { entry: { text: "" } };
   if (item.type === "file") {
     const group = panel.fileGroups[item.fileIndex];
     const badge = getFileExtBadge(group.relPath);
     const matchCount = group.matches.length;
     const selectedInFile = group.matches.filter(m => m.selected).length;
-    return styledRow(
-      [
-        { text: badge, style: { fg: C.fileIcon, bold: true } },
-        { text: " " },
-        { text: group.relPath, style: { fg: C.filePath } },
-        { text: ` (${selectedInFile}/${matchCount})` },
-      ],
-      {
-        // Host prefix at depth 0: disclosure (▶/▼) + space + checkbox
-        // ([v]/[ ]) + space = 6 cols.
-        padToChars: Math.max(0, W - 6),
-        properties: { type: "file-row", fileIndex: item.fileIndex },
-      },
-    );
+    return {
+      entry: styledRow(
+        [
+          { text: badge, style: { fg: C.fileIcon, bold: true } },
+          { text: " " },
+          { text: group.relPath, style: { fg: C.filePath } },
+          { text: ` (${selectedInFile}/${matchCount})` },
+        ],
+        {
+          // Host prefix at depth 0: disclosure (▶/▼) + space + checkbox
+          // ([v]/[ ]) + space = 6 cols.
+          padToChars: Math.max(0, W - 6),
+          properties: { type: "file-row", fileIndex: item.fileIndex },
+        },
+      ),
+    };
   }
   // Match row. The Tree widget's prefix at depth=1 is 6 cols
   // (4 indent + 2 alignment). Use the remaining width for content.
@@ -710,9 +813,35 @@ function renderFlatItemEntry(item: FlatItem, W: number): TextPropertyEntry {
   // past ~512 chars is invisible anyway.
   const CONTEXT_HARD_CAP = 512;
   const rawCtx = result.match.context;
-  const context = (rawCtx.length > CONTEXT_HARD_CAP
-    ? rawCtx.slice(0, CONTEXT_HARD_CAP)
-    : rawCtx).trim();
+  // Anchor that cap on the *match*, not on the start of the line.
+  // Slicing from 0 threw away the only part of the row anyone opened
+  // it for whenever the match sat past the cap — and the same for the
+  // display-width truncation below (issue #1580: a match at column 257
+  // of a 290-char line rendered as `start xxxx…`, with the matched
+  // text nowhere on screen).
+  //
+  // The anchor is a hit located in `rawCtx` itself, not arithmetic on
+  // `match.column` — see `matchIndexNearByteColumn` for why (bounded
+  // work, and immune to `column` drifting out of step with `context`).
+  // -1 means the pattern is not on this line at all, which happens
+  // routinely: the tree renders the previous search's rows against the
+  // pattern currently being typed. Anchor at 0 then, so the row shows
+  // the head of the line exactly as it did before this feature existed.
+  const anchor = matchIndexNearByteColumn(
+    rawCtx,
+    panel.searchPattern,
+    panel.useRegex,
+    panel.caseSensitive,
+    Math.max(0, (result.match.column || 1) - 1),
+  );
+  const capStart = anchor >= 0 && rawCtx.length > CONTEXT_HARD_CAP
+    ? Math.max(0, Math.min(anchor - CONTEXT_HARD_CAP / 2, rawCtx.length - CONTEXT_HARD_CAP))
+    : 0;
+  const capped = rawCtx.slice(capStart, capStart + CONTEXT_HARD_CAP);
+  // Leading indentation is noise worth trimming when the window starts
+  // at the beginning of the line; a window that already starts mid-line
+  // must not shift further, or the offsets below drift.
+  const context = capStart === 0 ? capped.trim() : capped.replace(/\s+$/, "");
   // Host prefix consumes:
   //   indent (depth=1) = 2
   //   leaf-alignment   = 2 (in lieu of disclosure glyph)
@@ -720,33 +849,63 @@ function renderFlatItemEntry(item: FlatItem, W: number): TextPropertyEntry {
   // Total: 8 cols.
   const innerWidth = Math.max(0, W - 8);
 
-  // Best-effort context budget: enough room for the fixed leading
-  // pieces plus " - " plus the context itself. JS `.length` gives
-  // UTF-16 code-unit counts which match codepoint counts for the
-  // overwhelmingly-ASCII case (paths + line numbers); slight
-  // over-counting on rare non-BMP filenames just trims a little
-  // more of the context, which is fine.
-  const maxCtx = innerWidth - location.length - 3;
-  const displayCtx = truncate(context, Math.max(10, maxCtx));
+  // Where this row's match sits in `context`, after the cap slice and
+  // the leading trim above — used to pick between several hits on the
+  // same line. Exact, since `anchor` is an index into `rawCtx`.
+  const trimmedLead = capStart === 0 ? capped.length - capped.trimStart().length : 0;
+  const matchAt = Math.max(0, anchor) - capStart - trimmedLead;
+  // **The whole capped context goes to the host, not a slice of it.**
+  //
+  // Fitting a row to the panel used to happen here, which meant the row the
+  // host received was already the only thing that could ever be read: there
+  // was nothing to the left of the window's `…` and nothing to the right, so
+  // there was nothing to pan (issue #1580). The host fits the row now, and
+  // this says where the window should rest — so panning left walks back
+  // through the head of the line and panning right runs to its tail.
+  //
+  // The cap is unchanged: `CONTEXT_HARD_CAP` still bounds every per-codepoint
+  // walk below, and it is what bounds how far a pan can travel.
+  const span = panel.searchPattern
+    ? matchSpanNear(context, panel.searchPattern, panel.useRegex, panel.caseSensitive, matchAt)
+    : null;
 
   // Pattern-match highlights inside the context substring. Emitted
   // in segment-local char units; the host shifts them by the
-  // context segment's char start during entry concatenation.
+  // context segment's char start during entry concatenation, and
+  // clips them to the drawn slice.
   const ctxOverlays: InlineOverlay[] = [];
   if (panel.searchPattern) {
-    highlightMatches(displayCtx, panel.searchPattern, panel.useRegex, panel.caseSensitive, ctxOverlays);
+    highlightMatches(context, panel.searchPattern, panel.useRegex, panel.caseSensitive, ctxOverlays);
   }
 
   const segments: StyledSegment[] = [
     { text: location, style: { fg: C.lineNum } },
     { text: " - " },
-    { text: displayCtx, overlays: ctxOverlays },
+    { text: context, overlays: ctxOverlays },
   ];
 
-  return styledRow(segments, {
+  const entry = styledRow(segments, {
     padToChars: innerWidth,
     properties: { type: "match-row", fileIndex: item.fileIndex, matchIndex: item.matchIndex },
   });
+  // The window is addressed to the whole row, so both numbers carry the
+  // leading pieces' width. `location` is a path plus a line number — the
+  // codepoint/UTF-16 distinction only bites on a non-BMP filename, where
+  // being a codepoint or two out moves the resting window by that much and
+  // nothing else.
+  //
+  // `pinned` keeps `path:line - ` in place while the context slides under it:
+  // it is which match this row *is*, and rows that pan it away cannot be told
+  // apart.
+  const pinned = charLen(location) + 3;
+  return {
+    entry,
+    anchor: {
+      pinned,
+      start: pinned + (span ? span.start : 0),
+      len: span ? span.length : 0,
+    },
+  };
 }
 
 // Convert a slice of `FlatItem`s into the corresponding TreeNodes.
@@ -760,7 +919,7 @@ function flatItemsToTreeNodes(
   W: number,
 ): TreeNode[] {
   return flatItems.map((item, i) => {
-    const entry = renderFlatItemEntry(item, W);
+    const { entry, anchor } = renderFlatItemEntry(item, W);
     if (item.type === "file") {
       const k = itemKeys[i];
       if (!panel!.knownFileKeys.has(k)) {
@@ -774,7 +933,12 @@ function flatItemsToTreeNodes(
     }
     const matchSelected = panel!.fileGroups[item.fileIndex]
       .matches[item.matchIndex!].selected;
-    return treeNode(entry, { depth: 1, hasChildren: false, checked: matchSelected });
+    return treeNode(entry, {
+      depth: 1,
+      hasChildren: false,
+      checked: matchSelected,
+      windowAnchor: anchor,
+    });
   });
 }
 
@@ -823,17 +987,15 @@ function buildMatchListSpec(): WidgetSpec {
   const itemKeys = flatItems.map(flatItemKey);
   const nodes = flatItemsToTreeNodes(flatItems, itemKeys, W);
   const selectedIndex = panel.focusPanel === "matches" ? panel.matchIndex : -1;
-  // Tree visible rows = panel viewport height minus the chrome
-  // (line 1 + options row + separator + footer = 4 rows) — same
-  // calculation that sized the previous List.
-  const fixedRows = 5;
-  const visibleRows = Math.max(3, getViewportHeight() - fixedRows);
 
+  // No `visibleRows`: the host auto-sizes the tree to the panel height
+  // minus whatever rows the surrounding chrome occupies. (This used to
+  // be `getViewportHeight() - fixedRows` with a hand-counted chrome
+  // constant that had already drifted from its own comment.)
   return tree({
     nodes,
     itemKeys,
     selectedIndex,
-    visibleRows,
     expandedKeys: [...panel.expandedFileKeys],
     checkable: true,
     key: "matchTree",
@@ -1395,7 +1557,40 @@ async function performSearch(pattern: string, silent?: boolean): Promise<SearchR
 // Panel lifecycle
 // =============================================================================
 
+/** In-flight `openPanel` run, if any (#2953).
+ *
+ * `openPanel` awaits the host round-trip that creates the panel's virtual
+ * buffer, and only learns the buffer id when that resolves. A second
+ * invocation arriving inside that await — pressing `Alt+A` twice, or the
+ * keymap and the palette firing together — used to see the half-built
+ * `panel` object, take the "already open" branch and render the widget tree
+ * into `resultsBufferId === 0`. The host has no buffer 0, so the mount
+ * failed, the panel stayed bound to the bogus id and every later update
+ * failed too: a panel with no search field, no replace field and no footer,
+ * which never repaired itself.
+ *
+ * Opens are therefore serialized. A concurrent caller waits for the run
+ * ahead of it and then applies its own intent (prefill, scope) to the
+ * finished panel, so pressing the key twice ends up exactly where pressing
+ * it twice slowly does. */
+let openPanelInFlight: Promise<void> | null = null;
+
 async function openPanel(opts?: { allFiles?: boolean }): Promise<void> {
+  // Wait out any open already in progress (a chain of them, if the user
+  // leaned on the key), then take the baton.
+  while (openPanelInFlight) {
+    await openPanelInFlight;
+  }
+  const run = openPanelInner(opts);
+  openPanelInFlight = run;
+  try {
+    await run;
+  } finally {
+    if (openPanelInFlight === run) openPanelInFlight = null;
+  }
+}
+
+async function openPanelInner(opts?: { allFiles?: boolean }): Promise<void> {
   // Try to pre-fill search from editor selection
   let prefill = "";
   let sourceBufferPath = "";
@@ -1437,43 +1632,21 @@ async function openPanel(opts?: { allFiles?: boolean }): Promise<void> {
 
   const sourceSplitId = editor.getActiveSplitId();
 
-  panel = {
-    resultsBufferId: 0,
-    sourceSplitId,
-    resultsSplitId: 0,
-    searchResults: [],
-    fileGroups: [],
-    searchPattern: prefill,
-    replaceText: "",
-    fileGlob: "",
-    focusPanel: "query",
-    queryField: "search",
-    optionIndex: 0,
-    matchIndex: 0,
-    caseSensitive: false,
-    useRegex: false,
-    wholeWords: false,
-    allFiles,
-    sourceBufferPath,
-    sourceBufferRelPath,
-    sourceBufferId,
-    viewportWidth: DEFAULT_WIDTH,
-    busy: false,
-    searchPerformed: false,
-    truncated: false,
-    cursorPos: prefill.length,
-    scrollOffset: 0,
-    expandedFileKeys: new Set<string>(),
-    knownFileKeys: new Set<string>(),
-    widgetPanel: null,
-  };
-
   try {
+    // Create the buffer *before* publishing `panel`. Everything that reads
+    // the module-level `panel` — the `resize` hook, `after_file_open`,
+    // `updatePanelContent` — would otherwise be able to observe a panel
+    // whose `resultsBufferId` is still the 0 placeholder and render the
+    // widget tree into a buffer that does not exist (#2953). Assigning only
+    // once the real id is in hand makes that state unrepresentable rather
+    // than merely guarded against.
     const result = await editor.createVirtualBufferInSplit({
       name: "*Search/Replace*",
       mode: "search-replace-list",
       readOnly: true,
-      entries: buildPanelEntries(),
+      // The panel's content is painted by `updatePanelContent()` below, as
+      // a widget tree; the buffer starts empty for the one frame in between.
+      entries: [],
       ratio: 0.6,
       panelId: "search-replace-panel",
       // Opt into the Utility Dock (issue #1796 / Section 2 of
@@ -1490,12 +1663,40 @@ async function openPanel(opts?: { allFiles?: boolean }): Promise<void> {
       // search inputs off-screen, revealing empty space below (#2434).
       scrollable: false,
     });
-    panel.resultsBufferId = result.bufferId;
-    panel.resultsSplitId = result.splitId ?? editor.getActiveSplitId();
+
+    panel = {
+      resultsBufferId: result.bufferId,
+      sourceSplitId,
+      resultsSplitId: result.splitId ?? editor.getActiveSplitId(),
+      searchResults: [],
+      fileGroups: [],
+      searchPattern: prefill,
+      replaceText: "",
+      fileGlob: "",
+      focusPanel: "query",
+      queryField: "search",
+      optionIndex: 0,
+      matchIndex: 0,
+      caseSensitive: false,
+      useRegex: false,
+      wholeWords: false,
+      allFiles,
+      sourceBufferPath,
+      sourceBufferRelPath,
+      sourceBufferId,
+      // Now we have the split, so the real width is available.
+      viewportWidth: getViewportWidth(),
+      busy: false,
+      searchPerformed: false,
+      truncated: false,
+      cursorPos: prefill.length,
+      scrollOffset: 0,
+      expandedFileKeys: new Set<string>(),
+      knownFileKeys: new Set<string>(),
+      widgetPanel: null,
+    };
     editor.debug(`Search/Replace: panel opened, bufferId=${result.bufferId}, splitId=${result.splitId}`);
 
-    // Now we have the split, refresh width
-    panel.viewportWidth = getViewportWidth();
     updatePanelContent();
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);

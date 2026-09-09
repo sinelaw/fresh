@@ -1,9 +1,7 @@
 // Property-based tests using proptest
 // These tests generate random sequences of operations and verify invariants
 
-mod common;
-
-use common::harness::EditorTestHarness;
+use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
 use proptest::prelude::*;
 

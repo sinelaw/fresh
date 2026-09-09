@@ -24,33 +24,47 @@ fn setup_audit_mode_plugin(repo: &GitTestRepo) {
     copy_plugin_lib(&plugins_dir);
 }
 
-/// Open Review Diff via command palette and wait for it to load.
-/// Returns the initial screen string.
-fn open_review_diff(harness: &mut EditorTestHarness) -> String {
-    harness
-        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
-        .unwrap();
-    harness.wait_for_prompt().unwrap();
-    harness.type_text("Review Diff").unwrap();
-    harness.render().unwrap();
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
-    harness.wait_for_prompt_closed().unwrap();
-
+/// Wait until a review panel has *settled* — the toolbar is up **and** the
+/// diff stream behind it has been filled.
+///
+/// The toolbar alone is not that gate. Both bootstraps (`start_review_diff`
+/// and `bootstrapRangeReview`) set the "Generating Review Diff Stream..."
+/// status before their first `git` call and leave it up until
+/// `openReviewPanels` finishes; the toolbar is painted by the
+/// `createBufferGroup` near the *start* of `openReviewPanels`, while the
+/// stream's body is written by the `updateMagitDisplay` that follows and the
+/// status is only replaced by the `updateReviewStatus` after that. So a wait
+/// for "next hunk" on its own resolves on a frame whose diff area is still
+/// blank — observed as `test_range_review_lays_out_every_file` reading an
+/// empty stream with "Generating Review Diff Stream..." still on the status
+/// line.
+///
+/// Requiring both conditions cannot resolve early either: the status is set
+/// before the panels exist, so "toolbar present" and "not generating" are
+/// first true together only once the panels have been filled.
+fn wait_for_review_ready(harness: &mut EditorTestHarness) {
     harness
         .wait_until(|h| {
             let screen = h.screen_to_string();
             if screen.contains("TypeError") || screen.contains("Error:") {
                 panic!("Error loading review diff. Screen:\n{}", screen);
             }
-            // The toolbar ("next hunk") renders immediately, before the diff
-            // stream finishes generating. Also wait for the transient
-            // "Generating Review..." status to clear so tests observe the
-            // actual diff content rather than an empty mid-generation frame.
             screen.contains("next hunk") && !screen.contains("Generating Review")
         })
         .unwrap();
+}
+
+/// Open Review Diff via command palette and wait for it to load.
+/// Returns the initial screen string.
+fn open_review_diff(harness: &mut EditorTestHarness) -> String {
+    // `run_palette_command` waits for the row to be listed before confirming:
+    // this command comes from a plugin, so typing the name and pressing Enter
+    // could fire before it was registered (Quick Open re-filters on input
+    // change only, so a late registration is never picked up on its own).
+    harness.run_palette_command("Review Diff").unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+
+    wait_for_review_ready(harness);
 
     harness.screen_to_string()
 }
@@ -96,6 +110,128 @@ fn start_server(config: Config) {
 "#;
     fs::write(&main_rs, content).unwrap();
     (repo, main_rs)
+}
+
+/// Switch on the git settings that rewrite `git diff`'s output. Each is
+/// something a real user's config may carry, and each on its own is enough to
+/// stop Review Diff's parser producing usable hunks, or to misnumber them: an
+/// external driver prints its own format, a textconv filter diffs converted
+/// text, forced colour wraps every line in escapes, the prefix settings strip
+/// the `a/`/`b/` paths the parser matches on, and `suppressBlankEmpty` takes
+/// the marker off an empty context line.
+///
+/// `core.pager` is deliberately not configured: git only starts a pager when
+/// stdout is a tty, and `editor.spawnProcess` reads through a pipe, so a pager
+/// shim could never run and would protect nothing.
+#[cfg(unix)]
+fn configure_hostile_diff_output(repo: &GitTestRepo) {
+    use std::os::unix::fs::PermissionsExt;
+
+    // Everything the fixture installs lives under `.git/`, which git never
+    // reports as untracked. In the working tree these files would show up as
+    // untracked hunks inside the very panel the assertions read, competing for
+    // the rows the marker has to be visible on.
+    let shim = |name: &str, body: &str| -> String {
+        let path = repo.create_file(name, body);
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755))
+            .expect("make diff shim executable");
+        path.to_string_lossy().into_owned()
+    };
+
+    // A `difft`-style driver: side-by-side text where a patch is expected.
+    let external = shim(
+        ".git/difft",
+        "#!/bin/sh\nprintf '%s\\n' 'src/main.rs --- Rust' '1 fn main() | 1 fn main()'\n",
+    );
+
+    // The textconv filter *keeps* the difference and prepends two header
+    // lines, so an unsuppressed filter yields a perfectly parseable patch
+    // whose hunk line numbers are all off by two. A filter that erased the
+    // change instead would make git emit an empty diff, and the test would
+    // then fail for "no hunks" without ever exercising the line-number
+    // corruption `--no-textconv` exists to prevent -- the corruption that
+    // feeds `buildHunkPatch` and then `git apply`.
+    let textconv = shim(
+        ".git/textconv.sh",
+        "#!/bin/sh\nprintf 'HDR1\\nHDR2\\n'; cat \"$1\"\n",
+    );
+
+    // `.git/info/attributes` binds the driver exactly as a tracked
+    // `.gitattributes` would, without adding a file to the working tree.
+    repo.create_file(".git/info/attributes", "*.rs diff=fresh-test\n");
+
+    set_git_config(
+        repo,
+        &[
+            ("diff.external", external.as_str()),
+            ("diff.fresh-test.textconv", textconv.as_str()),
+            ("color.diff", "always"),
+            ("diff.noprefix", "true"),
+            ("diff.mnemonicPrefix", "true"),
+            // Drops the leading space from an empty context line. The row's
+            // first byte is what the host's diff gutter counts it by, so an
+            // unsuppressed empty line belongs to neither side and every
+            // number below it in the hunk comes out one short.
+            ("diff.suppressBlankEmpty", "true"),
+        ],
+    );
+}
+
+/// Write each `(key, value)` into the repo's local git config.
+#[cfg(unix)]
+fn set_git_config(repo: &GitTestRepo, pairs: &[(&str, &str)]) {
+    use crate::common::git_test_helper::git_command;
+
+    for (key, value) in pairs {
+        let output = git_command(&repo.path)
+            .args(["config", "--local", key, value])
+            .output()
+            .expect("run git config");
+        assert!(
+            output.status.success(),
+            "git config {key} failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+/// The new-file line number the review panel prints in its gutter for the row
+/// carrying `marker`.
+///
+/// A row reads `<old> <new> │ +<content>`, drawn to the right of the
+/// file-list divider, so this scans back from the diff prefix rather than
+/// assuming a column: the rightmost `+` before the marker is the diff
+/// prefix, and the last number in front of it is the new-file number.
+/// Added lines leave the old-number field blank, which is why the last
+/// number is unambiguous.
+#[cfg(unix)]
+fn marker_new_line_number(screen: &str, marker: &str) -> Option<u32> {
+    let row = screen.lines().find(|l| l.contains(marker))?;
+    let (before_marker, _) = row.split_once(marker)?;
+    let (gutter, _) = before_marker.rsplit_once('+')?;
+    // The gutter is the host's: `OLD NEW │`, with the old column blank on
+    // an added row. Take its last number, past the separator.
+    gutter
+        .split_whitespace()
+        .filter_map(|tok| tok.parse::<u32>().ok())
+        .next_back()
+}
+
+/// Stash the working tree so `Review Diff: Stash` has something to show. Reverts the
+/// tree as a side effect, which is what makes the stash the only diff source.
+#[cfg(unix)]
+fn git_stash(repo: &GitTestRepo) {
+    use crate::common::git_test_helper::git_command;
+
+    let output = git_command(&repo.path)
+        .args(["stash", "push", "-m", "review-stash-fixture"])
+        .output()
+        .expect("run git stash");
+    assert!(
+        output.status.success(),
+        "git stash failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -1798,15 +1934,40 @@ fn test_issue2036_refresh_shows_immediate_feedback() {
     // Press `r` once. The very next render must already carry the
     // refresh-in-flight marker — that is the user's only signal that the
     // keystroke landed before the async git calls complete.
+    //
+    // Straight through `Editor::handle_key`, not `send_key`: the harness's
+    // key path drains async work to a fixed point before it returns, and
+    // for this plugin that means the whole `git status` + `git diff` chain.
+    // The refresh would then be over — final status on the status bar,
+    // new lines in the diff — before the first frame this test can look
+    // at, and the wait below would sit forever on a message that had
+    // already been overwritten. That is how this test timed out on CI: the
+    // 10s screen dumps showed the refreshed diff and `Review Diff: 1
+    // hunks` while the wait was still looking for "refreshing".
     harness
-        .send_key(KeyCode::Char('r'), KeyModifiers::NONE)
+        .editor_mut()
+        .handle_key(KeyCode::Char('r'), KeyModifiers::NONE)
         .unwrap();
+
+    // Watch the frames from the keypress on, and stop as soon as either
+    // the feedback shows or the refreshed diff lands without it — never
+    // keep waiting for a state that can no longer arrive. "extra line
+    // three" is one of the lines appended above, so it is on screen only
+    // once the refresh has picked the file change up.
+    let mut saw_feedback = false;
     harness
         .wait_until(|h| {
             let s = h.screen_to_string().to_lowercase();
-            s.contains("refreshing")
+            saw_feedback |= s.contains("refreshing");
+            saw_feedback || s.contains("extra line three")
         })
         .unwrap();
+    assert!(
+        saw_feedback,
+        "`r` must acknowledge the keypress before the async refresh lands; \
+         the refreshed diff appeared with no refresh-in-flight status ever \
+         rendered"
+    );
 
     // The refresh should ultimately complete and the post-refresh status
     // summary (the existing "Review Diff: N hunks" message) should land.
@@ -1855,12 +2016,12 @@ fn test_issue2036_range_refresh_explains_working_tree_excluded() {
     harness.open_file(&main_rs).unwrap();
     harness.render().unwrap();
 
-    // Open Review Range against HEAD~..HEAD.
+    // Open Review Diff: Range against HEAD~..HEAD.
     harness
         .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
     harness.wait_for_prompt().unwrap();
-    harness.type_text("Review Range").unwrap();
+    harness.type_text("Review Diff: Range").unwrap();
     harness.render().unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
@@ -1957,9 +2118,13 @@ fn test_issue2117_discard_hunk_with_no_trailing_newline() {
     harness
         .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
         .unwrap();
-    for _ in 0..10 {
-        harness.tick_and_render().unwrap();
-    }
+    // Wait for the hunk to be on screen rather than pumping a fixed number of
+    // ticks: `tick_and_render` doesn't sleep, so `for _ in 0..10` elapses in
+    // microseconds and gates nothing. `d` on an unloaded panel discards
+    // nothing (or the wrong thing).
+    harness
+        .wait_until(|h| h.screen_to_string().contains("NO_NEWLINE_LINE"))
+        .unwrap();
 
     // `d` opens the confirmation prompt; Enter accepts the default
     // ("Discard hunk").
@@ -1971,9 +2136,34 @@ fn test_issue2117_discard_hunk_with_no_trailing_newline() {
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness.wait_for_prompt_closed().unwrap();
-    for _ in 0..20 {
-        harness.tick_and_render().unwrap();
-    }
+
+    // The discard must actually revert the working tree on disk: the
+    // unterminated added line is gone and the committed lines are restored.
+    // Compare line-ending-agnostically — whether git writes the restored file
+    // back as LF or CRLF depends on the user's core.autocrlf, which the test
+    // leaves at its platform default; that's git's choice, not the feature's.
+    //
+    // Wait for the write instead of reading the file straight after a fixed
+    // `for _ in 0..20 { tick_and_render() }` pump. The discard shells out to
+    // git on the plugin thread; twenty sleepless ticks are microseconds, so
+    // the old form read the file back before the patch had been applied and
+    // failed within a couple of seconds — the Windows failure on this test.
+    //
+    // The wait also terminates on a rendered patch error, so a genuine
+    // regression (the bug this test covers) still fails loudly and quickly
+    // instead of hanging until nextest's timeout.
+    let restored = |h: &EditorTestHarness| {
+        let _ = h;
+        fs::read_to_string(&notes)
+            .map(|s| s.replace("\r\n", "\n") == original)
+            .unwrap_or(false)
+    };
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            restored(h) || screen.contains("Patch failed") || screen.contains("does not apply")
+        })
+        .unwrap();
 
     let screen = harness.screen_to_string();
     assert!(
@@ -1983,16 +2173,1364 @@ fn test_issue2117_discard_hunk_with_no_trailing_newline() {
         screen
     );
 
-    // The discard must actually revert the working tree on disk: the
-    // unterminated added line is gone and the committed lines are restored.
-    // Compare line-ending-agnostically — whether git writes the restored file
-    // back as LF or CRLF depends on the user's core.autocrlf, which the test
-    // leaves at its platform default; that's git's choice, not the feature's.
     let after = fs::read_to_string(&notes).unwrap();
     assert_eq!(
         after.replace("\r\n", "\n"),
         original,
         "Issue #2117: discarding the hunk should restore the committed \
          content (removing the unterminated added line). Got: {after:?}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Oversized changesets
+// ---------------------------------------------------------------------------
+
+/// Open Review Diff: Range on `HEAD~..HEAD` and wait for the stream to render.
+fn open_review_range_head(harness: &mut EditorTestHarness) {
+    // Through `run_palette_command`, which waits for the row to be listed as
+    // a *result* before confirming. "Review Diff: Range" is registered by the
+    // audit_mode plugin and Quick Open re-filters on input change only, so
+    // typing the name and pressing Enter blind fires on whichever row was
+    // selected when the last keystroke landed — running some other command,
+    // after which none of the waits below can resolve.
+    harness.run_palette_command("Review Diff: Range").unwrap();
+
+    // Wait for the *range picker*, not merely for "a prompt". The palette is
+    // itself a prompt, so `wait_for_prompt` is satisfied by the one we just
+    // confirmed — a wait that gates nothing (CONTRIBUTING.md Code §16) and
+    // that leaves the keystrokes below editing the palette's query instead
+    // of the picker's prefilled "HEAD". The label is the picker's own
+    // (`prompt.review_range`), so it can only be on screen once it is open.
+    harness
+        .wait_for_screen_contains("Review (range A..B or commit SHA)")
+        .unwrap();
+
+    // The picker opens prefilled with "HEAD" — clear it and type ours.
+    for _ in 0..8 {
+        harness
+            .send_key(KeyCode::Backspace, KeyModifiers::NONE)
+            .unwrap();
+    }
+    harness.type_text("HEAD~..HEAD").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+    wait_for_review_ready(harness);
+}
+
+/// Review Diff: Range parses Git's patch output, so it has to pin the output format
+/// instead of mistaking a user's reformatted (or empty) diff for no changes.
+#[test]
+#[cfg(unix)]
+fn test_range_review_ignores_external_diff_and_format_settings() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+    setup_audit_mode_plugin(&repo);
+
+    repo.create_file("src/main.rs", "fn main() {}\n");
+    repo.git_add_all();
+    repo.git_commit("first commit");
+
+    repo.create_file(
+        "src/main.rs",
+        "fn main() {\n    // RANGE_EXTERNAL_DIFF_MARKER\n}\n",
+    );
+    repo.git_add_all();
+    repo.git_commit("second commit");
+    configure_hostile_diff_output(&repo);
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    harness.render().unwrap();
+
+    open_review_range_head(&mut harness);
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("RANGE_EXTERNAL_DIFF_MARKER"),
+        "Review Diff: Range should render Git's native patch even when diff.external, \
+         a textconv filter, colour and prefix settings are configured. Screen:\n{screen}"
+    );
+    // The marker is the second line of the new file. Under the textconv filter
+    // git would diff two header lines' worth of extra content and report it as
+    // line 4, which parses cleanly and renders the marker just the same -- the
+    // line number is the only thing that gives the corruption away.
+    assert_eq!(
+        marker_new_line_number(&screen, "RANGE_EXTERNAL_DIFF_MARKER"),
+        Some(2),
+        "Review Diff: Range should number the marker by the real file, not by \
+         textconv output. Screen:\n{screen}"
+    );
+}
+
+/// The same for the working-tree review, which fetches its hunks through a
+/// different set of `git diff` invocations (staged / unstaged / untracked) and
+/// so needs the format pinned independently of the range path.
+#[test]
+#[cfg(unix)]
+fn test_review_diff_ignores_external_diff_and_format_settings() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+    setup_audit_mode_plugin(&repo);
+
+    repo.create_file("src/main.rs", "fn main() {}\n");
+    repo.git_add_all();
+    repo.git_commit("first commit");
+
+    // Leave the change in the working tree: this is the unstaged path.
+    repo.create_file(
+        "src/main.rs",
+        "fn main() {\n    // WORKTREE_EXTERNAL_DIFF_MARKER\n}\n",
+    );
+    configure_hostile_diff_output(&repo);
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    harness.render().unwrap();
+
+    let screen = open_review_diff(&mut harness);
+
+    assert!(
+        screen.contains("WORKTREE_EXTERNAL_DIFF_MARKER"),
+        "Review Diff should render Git's native patch for the working tree even \
+         when diff.external, a textconv filter, colour and prefix settings are \
+         configured. Screen:\n{screen}"
+    );
+    // See the range test: with textconv left on, the patch still parses and the
+    // marker still renders, but every line number is shifted by the filter's
+    // two header lines -- and those numbers are what `buildHunkPatch` hands to
+    // `git apply` when staging or discarding the hunk.
+    assert_eq!(
+        marker_new_line_number(&screen, "WORKTREE_EXTERNAL_DIFF_MARKER"),
+        Some(2),
+        "Review Diff should number the marker by the real file, not by textconv \
+         output. Screen:\n{screen}"
+    );
+}
+
+/// The stash review is the only caller that reaches `git` through the
+/// `range.command` override, so it is the only test that exercises splicing the
+/// format flags into a multi-word sub-command (`stash show`). It is also where
+/// the choice of `-c diff.srcPrefix=` over `--src-prefix=` is load-bearing:
+/// `git stash show` mangles the latter, which would strip the `a/`/`b/` paths
+/// the diff parser matches on.
+#[test]
+#[cfg(unix)]
+fn test_stash_review_ignores_external_diff_and_format_settings() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+    setup_audit_mode_plugin(&repo);
+
+    repo.create_file("src/main.rs", "fn main() {}\n");
+    repo.git_add_all();
+    repo.git_commit("first commit");
+
+    repo.create_file(
+        "src/main.rs",
+        "fn main() {\n    // STASH_EXTERNAL_DIFF_MARKER\n}\n",
+    );
+    git_stash(&repo);
+    configure_hostile_diff_output(&repo);
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    harness.render().unwrap();
+
+    harness.run_palette_command("Review Diff: Stash").unwrap();
+    // The ref prompt opens prefilled with `stash@{0}`, which is the entry we
+    // just pushed, so confirm it as-is. Waiting for *a* prompt would not gate
+    // on it: the palette this command was picked from is itself a prompt and
+    // is still up when the Enter above is dispatched, so `wait_for_prompt`
+    // resolves on the palette and the Enter below can land on it instead of
+    // the ref picker (CONTRIBUTING.md Code §16). The picker's own label
+    // (`prompt.review_stash`) can only be on screen once it is open.
+    harness
+        .wait_for_screen_contains("Review stash (e.g. stash@{0})")
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+    wait_for_review_ready(&mut harness);
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("STASH_EXTERNAL_DIFF_MARKER"),
+        "Review Diff: Stash should render Git's native patch even when diff.external, \
+         colour and prefix settings are configured. Screen:\n{screen}"
+    );
+    assert_eq!(
+        marker_new_line_number(&screen, "STASH_EXTERNAL_DIFF_MARKER"),
+        Some(2),
+        "Review Diff: Stash should number the marker by the real file. Screen:\n{screen}"
+    );
+}
+
+/// `diff.suppressBlankEmpty=true` makes git print an empty context line as
+/// `""` instead of `" "`. Review Diff classifies rows by their first byte, so
+/// such a row used to vanish from the hunk and every row below it was numbered
+/// one too low — the numbers `buildHunkPatch` then hands to `git apply`.
+#[test]
+#[cfg(unix)]
+fn test_review_diff_keeps_blank_context_lines_under_suppress_blank_empty() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+    setup_audit_mode_plugin(&repo);
+
+    // The blank line is inside the hunk's leading context, above the change.
+    repo.create_file(
+        "src/main.rs",
+        "fn main() {\n    let a = 1;\n\n    let b = 2;\n}\n",
+    );
+    repo.git_add_all();
+    repo.git_commit("first commit");
+
+    repo.create_file(
+        "src/main.rs",
+        "fn main() {\n    let a = 1;\n\n    let b = 2;\n    // BLANK_CONTEXT_MARKER\n}\n",
+    );
+    set_git_config(&repo, &[("diff.suppressBlankEmpty", "true")]);
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    harness.render().unwrap();
+
+    let screen = open_review_diff(&mut harness);
+
+    assert!(
+        screen.contains("BLANK_CONTEXT_MARKER"),
+        "Review Diff should render the hunk. Screen:\n{screen}"
+    );
+    // The marker is line 5 of the new file; with the blank context row
+    // dropped it would be counted as line 4.
+    assert_eq!(
+        marker_new_line_number(&screen, "BLANK_CONTEXT_MARKER"),
+        Some(5),
+        "Review Diff should keep the empty context line above the marker and \
+         number the marker by the real file. Screen:\n{screen}"
+    );
+}
+
+/// With `core.quotePath=true` (git's default) a non-ASCII path is quoted and
+/// octal-escaped in every diff header: `diff --git "a/src/a\303\261adido.rs"
+/// ...`. Review Diff matches the unquoted `a/`/`b/` form, so the file used to
+/// list with no hunks at all.
+#[test]
+#[cfg(unix)]
+fn test_review_diff_parses_non_ascii_paths_under_quotepath() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+    setup_audit_mode_plugin(&repo);
+
+    repo.create_file("src/añadido.rs", "fn main() {}\n");
+    repo.git_add_all();
+    repo.git_commit("first commit");
+
+    repo.create_file(
+        "src/añadido.rs",
+        "fn main() {\n    // QUOTEPATH_MARKER\n}\n",
+    );
+    // Pinned explicitly so the test keeps its meaning if git's default moves.
+    set_git_config(&repo, &[("core.quotePath", "true")]);
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    harness.render().unwrap();
+
+    let screen = open_review_diff(&mut harness);
+
+    assert!(
+        screen.contains("QUOTEPATH_MARKER"),
+        "Review Diff should render the hunk of a non-ASCII path even though \
+         git quotes it in the diff headers. Screen:\n{screen}"
+    );
+    assert_eq!(
+        marker_new_line_number(&screen, "QUOTEPATH_MARKER"),
+        Some(2),
+        "Review Diff should number the marker by the real file. Screen:\n{screen}"
+    );
+}
+
+/// Side-by-Side Diff resolves the file's repo-relative path through
+/// `git ls-files`, whose output is quoted under `core.quotePath` just like the
+/// diff headers. A quoted path matches nothing afterwards, so the file was
+/// treated as untracked and the view never opened.
+#[test]
+#[cfg(unix)]
+fn test_side_by_side_diff_parses_non_ascii_paths_under_quotepath() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+    setup_audit_mode_plugin(&repo);
+
+    let path = repo.create_file("src/añadido.rs", "fn main() {}\n");
+    repo.git_add_all();
+    repo.git_commit("first commit");
+
+    repo.create_file(
+        "src/añadido.rs",
+        "fn main() {\n    // SIDE_BY_SIDE_QUOTEPATH_MARKER\n}\n",
+    );
+    set_git_config(&repo, &[("core.quotePath", "true")]);
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        160,
+        50,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    harness.open_file(&path).unwrap();
+    harness.render().unwrap();
+
+    harness.run_palette_command("Side-by-Side Diff").unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            // Fail fast: a failed path lookup reports the file as unchanged
+            // and never opens the view, which would otherwise be a hang.
+            if screen.contains("TypeError")
+                || screen.contains("Error:")
+                || screen.contains("Failed")
+                || screen.contains("No changes")
+            {
+                panic!("Error loading side-by-side diff. Screen:\n{screen}");
+            }
+            screen.contains("OLD (HEAD)") && screen.contains("NEW (Working)")
+        })
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("SIDE_BY_SIDE_QUOTEPATH_MARKER"),
+        "Side-by-Side Diff should show the working-tree change of a non-ASCII \
+         path. Screen:\n{screen}"
+    );
+}
+
+/// A big range (the reported case: `HEAD~100..HEAD`) used to open on a
+/// list of file headers and *no diff at all*. Above a line threshold the
+/// stream rendered exactly one file, and the one it picked came from the
+/// sidebar's dir-grouped order rather than the diff's, so it was rarely
+/// the file at the top of the stream the cursor was parked on.
+///
+/// The threshold is gone — it was compensating for per-frame work in the
+/// host that grew with the buffer's decorations, which is fixed — so what
+/// has to hold now is simply that every file's hunks are in the stream:
+/// the first file's on screen at the top, the last file's reachable by
+/// walking hunks, and no file rendered as a bare header.
+#[test]
+fn test_range_review_lays_out_every_file() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+    setup_audit_mode_plugin(&repo);
+
+    // Two files whose diff order (`src/a/deep.rs` then `src/zeta.rs`, sorted
+    // by path) is *not* the sidebar's order, which groups by directory and
+    // puts plain `src/` above `src/a/`. The stream is emitted in diff order,
+    // so the cursor's first screen is the first file of the diff.
+    repo.create_file("src/a/deep.rs", "fn deep() {}\n");
+    repo.create_file("src/zeta.rs", "fn zeta() {}\n");
+    repo.git_add_all();
+    repo.git_commit("first commit");
+
+    repo.create_file("src/a/deep.rs", "fn deep() {\n    // DEEP_MARKER\n}\n");
+    repo.create_file("src/zeta.rs", "fn zeta() {\n    // ZETA_MARKER\n}\n");
+    repo.git_add_all();
+    repo.git_commit("second commit");
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    harness.render().unwrap();
+
+    open_review_range_head(&mut harness);
+
+    // This is the load-bearing assertion, and it is specific: the sidebar
+    // groups by directory and sorts `src/` above `src/a/`, so its first
+    // file is `src/zeta.rs`, while the diff — which is what the stream
+    // emits and where the cursor starts — begins with `src/a/deep.rs`.
+    // Anything that renders only the sidebar's first file fails here.
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("DEEP_MARKER"),
+        "the stream must open on the first file of the *diff*, not a wall \
+         of headers. Screen:\n{screen}"
+    );
+
+    // `n` walks hunks across file boundaries, into the rest of the diff.
+    let mut crossed = false;
+    for _ in 0..6 {
+        harness
+            .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
+            .unwrap();
+        for _ in 0..5 {
+            harness.tick_and_render().unwrap();
+        }
+        if harness.screen_to_string().contains("ZETA_MARKER") {
+            crossed = true;
+            break;
+        }
+    }
+    let screen = harness.screen_to_string();
+    assert!(
+        crossed,
+        "`n` should cross into the next file of the diff. Screen:\n{screen}"
+    );
+}
+
+/// Clicking the sticky header jumps to the pinned file's first hunk. It
+/// used to find that row by counting hunks and skipping collapsed files —
+/// but collapse is a conceal, so a collapsed file's hunk headers are still
+/// rows in the stream, and the count drifted by exactly the hunks it
+/// skipped. With a collapsed file above, the click landed inside *that*
+/// file instead of the pinned one.
+#[test]
+fn test_sticky_header_jump_survives_a_collapsed_file_above() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+    setup_audit_mode_plugin(&repo);
+
+    // `a_first.rs` sorts before `b_second.rs` in both the diff's order and
+    // the sidebar's, so the collapsed file is reliably the one above.
+    repo.create_file("src/a_first.rs", "fn one() {}\nfn two() {}\n");
+    repo.create_file("src/b_second.rs", "fn three() {}\n");
+    repo.git_add_all();
+    repo.git_commit("Initial commit");
+
+    fs::write(
+        repo.path.join("src/a_first.rs"),
+        "fn one() {\n    // FIRST_CHANGE\n}\nfn two() {\n    // ALSO_FIRST\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        repo.path.join("src/b_second.rs"),
+        "fn three() {\n    // SECOND_CHANGE\n}\n",
+    )
+    .unwrap();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    harness.render().unwrap();
+    open_review_diff(&mut harness);
+
+    let row_containing = |h: &EditorTestHarness, needle: &str, below: u16| -> Option<u16> {
+        (below..40).find(|r| h.screen_row_text(*r).contains(needle))
+    };
+
+    // The stream starts with the section header; the sticky header is the
+    // row above it, past the separator the layout draws between them.
+    let section_row = row_containing(&harness, "UNSTAGED", 0).expect("section header on screen");
+    let sticky_row = section_row - 2;
+
+    // Collapse the first file: step onto its header (the row after the
+    // section header) and press Enter.
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| !h.screen_to_string().contains("FIRST_CHANGE"))
+        .unwrap();
+
+    // Put the cursor in the second file so the sticky header pins it.
+    harness
+        .send_key(KeyCode::Char('.'), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("SECOND_CHANGE"))
+        .unwrap();
+
+    // The status bar's "Hunk N of M" is the plugin's own numbering over the
+    // rows it rendered, so it says where the jump landed without mapping
+    // screen rows to buffer lines — a mapping a collapsed file breaks.
+    // src/b_second.rs is the last file, so its first hunk is the last hunk.
+    harness.mouse_click(2, sticky_row).unwrap();
+    harness
+        .wait_until(|h| hunk_index(&h.screen_to_string()).is_some())
+        .unwrap();
+
+    let screen = harness.screen_to_string();
+    let (current, count) = hunk_index(&screen).expect("status bar reports a hunk index");
+    assert!(
+        count >= 2,
+        "test needs at least two hunks to tell the files apart, got {count}. \
+         Screen:\n{screen}"
+    );
+    assert_eq!(
+        current, count,
+        "clicking the sticky header pinned to src/b_second.rs should land on \
+         its hunk — the last one — but landed on hunk {current} of {count}, \
+         inside the collapsed file above. Screen:\n{screen}"
+    );
+}
+
+/// Parse `Hunk N of M` out of the review status line.
+fn hunk_index(screen: &str) -> Option<(usize, usize)> {
+    let idx = screen.find("Hunk ")?;
+    let rest = &screen[idx + 5..];
+    let (current, rest) = rest.split_once(" of ")?;
+    let count: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+    Some((current.trim().parse().ok()?, count.parse().ok()?))
+}
+
+/// Every file of an ordinary review is laid out too — the same contract,
+/// on the path most reviews take.
+#[test]
+fn test_normal_review_lays_out_every_file() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    setup_audit_mode_plugin(&repo);
+    repo.git_add_all();
+    repo.git_commit("Initial commit");
+
+    fs::write(
+        repo.path.join("src/main.rs"),
+        "fn main() {\n    println!(\"MAIN_MARKER\");\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        repo.path.join("src/utils.rs"),
+        "pub fn format_output(msg: &str) -> String {\n    // UTILS_MARKER\n    msg.to_string()\n}\n",
+    )
+    .unwrap();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    harness.render().unwrap();
+
+    let screen = open_review_diff(&mut harness);
+    assert!(
+        screen.contains("MAIN_MARKER") && screen.contains("UTILS_MARKER"),
+        "both changed files' hunks belong in the stream. Screen:\n{screen}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// FILES sidebar: it owns its scroll window
+// ---------------------------------------------------------------------------
+
+/// A repo with `count` modified `.rs` files — enough of them that the
+/// FILES sidebar's tree cannot show them all at once.
+fn repo_with_many_modified_files(count: usize) -> GitTestRepo {
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    setup_audit_mode_plugin(&repo);
+    for i in 0..count {
+        fs::write(
+            repo.path.join(format!("src/mod_{i:03}.rs")),
+            format!("pub fn f_{i}() {{}}\n"),
+        )
+        .unwrap();
+    }
+    repo.git_add_all();
+    repo.git_commit("Initial commit");
+    for i in 0..count {
+        fs::write(
+            repo.path.join(format!("src/mod_{i:03}.rs")),
+            format!("pub fn f_{i}() {{ /* CHANGED */ }}\n"),
+        )
+        .unwrap();
+    }
+    repo
+}
+
+/// The sidebar's file rows, read out of the left-hand column band the
+/// FILES panel occupies (the diff stream names files too, so the rest of
+/// the row has to be cut away before counting).
+fn sidebar_file_rows(screen: &str, sidebar_cols: usize) -> Vec<String> {
+    screen
+        .lines()
+        .map(|l| l.chars().take(sidebar_cols).collect::<String>())
+        .filter(|l| l.contains("mod_"))
+        .collect()
+}
+
+/// Show the FILES sidebar (the `F` toggle) and settle the frame.
+fn show_files_panel(harness: &mut EditorTestHarness) {
+    harness
+        .send_key(KeyCode::Char('F'), KeyModifiers::SHIFT)
+        .unwrap();
+    harness.tick_and_render().unwrap();
+    harness.tick_and_render().unwrap();
+}
+
+/// Growing the terminal must grow the FILES tree with it. The row budget
+/// is the host's — the panel's live height minus its header and filter
+/// row — so the rows the resize added fill with files instead of staying
+/// blank while files are still unshown.
+#[test]
+fn test_files_panel_fills_its_height_after_a_resize() {
+    init_tracing_from_env();
+    let repo = repo_with_many_modified_files(60);
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    harness.render().unwrap();
+    open_review_diff(&mut harness);
+    show_files_panel(&mut harness);
+
+    let before = sidebar_file_rows(&harness.screen_to_string(), 20).len();
+    assert!(
+        before > 0,
+        "the sidebar should list files to begin with. Screen:\n{}",
+        harness.screen_to_string()
+    );
+
+    harness.resize(120, 55).unwrap();
+    harness.tick_and_render().unwrap();
+
+    let screen = harness.screen_to_string();
+    let after = sidebar_file_rows(&screen, 20).len();
+    assert!(
+        after >= before + 20,
+        "25 rows of new panel height should carry ~25 more files, not stay \
+         blank: {before} rows before the resize, {after} after. Screen:\n{screen}"
+    );
+}
+
+/// Wheeling past the end of the file tree must stop there. The panel
+/// buffer underneath is pinned (`scrollable: false`), so the wheel can't
+/// fall through to it and carry the panel's own header off the top —
+/// which left a blank row at the bottom that nothing could scroll back.
+#[test]
+fn test_files_panel_wheel_past_the_end_keeps_the_header() {
+    use crossterm::event::{MouseEvent, MouseEventKind};
+
+    init_tracing_from_env();
+    let repo = repo_with_many_modified_files(60);
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    harness.render().unwrap();
+    open_review_diff(&mut harness);
+    show_files_panel(&mut harness);
+
+    assert!(
+        harness.screen_to_string().contains("FILES"),
+        "the sidebar starts with its header on screen. Screen:\n{}",
+        harness.screen_to_string()
+    );
+
+    // Well past the bottom of a 60-file tree, so the last events arrive
+    // with the tree already at its bound.
+    for _ in 0..60 {
+        harness
+            .send_mouse(MouseEvent {
+                kind: MouseEventKind::ScrollDown,
+                column: 5,
+                row: 10,
+                modifiers: KeyModifiers::NONE,
+            })
+            .unwrap();
+    }
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("FILES"),
+        "the FILES header must survive a wheel that runs off the end of the \
+         tree — it scrolled off when the wheel fell through to the panel \
+         buffer. Screen:\n{screen}"
+    );
+}
+
+/// The sidebar's scrollbar is the tree's, and it is grabbable: a press on
+/// the track jumps the tree to that position. The bar is painted inside
+/// the panel (the panel reserves the columns for it) because the panel's
+/// buffer is pinned and so reserves no scrollbar column of its own.
+#[test]
+fn test_files_panel_scrollbar_press_scrolls_the_tree() {
+    init_tracing_from_env();
+    let repo = repo_with_many_modified_files(60);
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    harness.render().unwrap();
+    open_review_diff(&mut harness);
+    show_files_panel(&mut harness);
+
+    let screen = harness.screen_to_string();
+    // The panel's right edge: the column of the divider between the
+    // sidebar and the diff, on a row the sidebar is drawing files into.
+    let divider_col = screen
+        .lines()
+        .find(|l| l.chars().take(40).collect::<String>().contains("mod_"))
+        .and_then(|l| l.chars().position(|c| c == '\u{2502}'))
+        .expect("the sidebar is drawn next to the diff") as u16;
+    let track_col = divider_col - 1;
+
+    let before = sidebar_file_rows(&screen, 20);
+    assert!(!before.is_empty());
+
+    // Near the bottom of the track: the tree should jump toward the end
+    // of the list.
+    harness.mouse_click(track_col, 25).unwrap();
+    harness.tick_and_render().unwrap();
+
+    let screen = harness.screen_to_string();
+    let after = sidebar_file_rows(&screen, 20);
+    assert_ne!(
+        before, after,
+        "pressing the sidebar's scrollbar should scroll its tree. \
+         Screen:\n{screen}"
+    );
+}
+
+/// A hunk carrying an empty context line is still numbered by counting
+/// that line.
+///
+/// `diff.suppressBlankEmpty` prints an empty context line as `` rather
+/// than `` ``, and a row's first byte is exactly what the host's diff
+/// gutter classifies it by: with the marker gone the row counts as
+/// neither side, and every number below it in the hunk is one short of
+/// the line the plugin stages and anchors comments to. The two would
+/// then disagree, and the reader would stage a line other than the one
+/// the gutter names.
+#[test]
+#[cfg(unix)]
+fn test_review_diff_numbers_rows_past_an_empty_context_line() {
+    init_tracing_from_env();
+    let repo = GitTestRepo::new();
+    setup_audit_mode_plugin(&repo);
+
+    // The blank line is line 2, inside the hunk and above the change, so
+    // a gutter that skips it misnumbers the marker.
+    repo.create_file(
+        "src/main.rs",
+        "fn main() {\n\n    let x = 1;\n    let y = 2;\n    let z = 3;\n}\n",
+    );
+    repo.git_add_all();
+    repo.git_commit("first commit");
+    repo.create_file(
+        "src/main.rs",
+        "fn main() {\n\n    let x = 1;\n    let y = 2;\n    let z = 4; // BLANK_CONTEXT_MARKER\n}\n",
+    );
+    configure_hostile_diff_output(&repo);
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    harness.render().unwrap();
+
+    let screen = open_review_diff(&mut harness);
+    assert!(
+        screen.contains("BLANK_CONTEXT_MARKER"),
+        "the changed line should be on screen. Screen:\n{screen}"
+    );
+    assert_eq!(
+        marker_new_line_number(&screen, "BLANK_CONTEXT_MARKER"),
+        Some(5),
+        "the marker is line 5 of the working file; a gutter that does not \
+         count the empty context line above it numbers this row 4, and the \
+         reader then stages the line above the one the gutter names. \
+         Screen:\n{screen}"
+    );
+}
+
+/// The FILES sidebar lays its rows out to the width the host gave the
+/// panel, not to a guess.
+///
+/// The panel's geometry was never reported — a pane arriving on screen was
+/// not treated as a change — so the plugin elided rows to a ratio of
+/// whatever viewport it had recorded, and nothing corrected it until a
+/// divider drag. A narrow terminal makes the difference visible: the guess
+/// has a 12-column floor, and rows built to 12 columns in a 10-column
+/// panel are clipped, `…` and status letter included.
+#[test]
+fn test_files_panel_rows_fit_a_narrow_panel() {
+    init_tracing_from_env();
+    let repo = repo_with_many_modified_files(4);
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        40,
+        20,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    harness.render().unwrap();
+    open_review_diff(&mut harness);
+    show_files_panel(&mut harness);
+
+    // Read off the divider rather than assumed: the share of a 40-column
+    // screen is the host's to decide.
+    let sidebar_cols = |h: &EditorTestHarness| -> usize {
+        h.screen_to_string()
+            .lines()
+            .filter_map(|l| l.find('\u{2502}'))
+            .min()
+            .unwrap_or(0)
+    };
+    let settled = |h: &EditorTestHarness| {
+        let rows = sidebar_file_rows(&h.screen_to_string(), sidebar_cols(h));
+        !rows.is_empty() && rows.iter().all(|r| r.trim_end().ends_with(" M"))
+    };
+    // The repaint is coalesced behind a short timer, so the frame the
+    // toggle painted is not the one to assert on.
+    for _ in 0..60 {
+        if settled(&harness) {
+            break;
+        }
+        harness.tick_and_render().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        harness.advance_time(std::time::Duration::from_millis(50));
+    }
+
+    let cols = sidebar_cols(&harness);
+    let screen = harness.screen_to_string();
+    let rows = sidebar_file_rows(&screen, cols);
+    assert!(
+        !rows.is_empty(),
+        "the sidebar should be listing files. Screen:\n{screen}"
+    );
+    for row in &rows {
+        assert!(
+            row.trim_end().ends_with(" M"),
+            "every row keeps its status letter inside the panel — this one \
+             was built too wide and clipped: {row:?}. Screen:\n{screen}"
+        );
+    }
+}
+
+/// The sidebar row carrying the tree's selection band, found by the
+/// background a widget tree paints behind its selected node
+/// (`ui.popup_selection_bg`) within the panel's own columns.
+fn selected_sidebar_row(harness: &EditorTestHarness) -> Option<String> {
+    let selection_bg = harness.editor().theme().popup_selection_bg;
+    let screen = harness.screen_to_string();
+    let divider = screen
+        .lines()
+        .filter_map(|line| line.find('\u{2502}'))
+        .min()? as u16;
+    let area = harness.buffer().area;
+    (0..area.height).find_map(|y| {
+        let washed = (0..divider)
+            .filter(|&x| {
+                harness
+                    .get_cell_style(x, y)
+                    .is_some_and(|style| style.bg == Some(selection_bg))
+            })
+            .count();
+        if washed < 3 {
+            return None;
+        }
+        screen
+            .lines()
+            .nth(y as usize)
+            .map(|line| line.chars().take(divider as usize).collect())
+    })
+}
+
+/// Clicking a file in the sidebar moves the highlight to it — including
+/// from the reading posture, with the keys on the diff.
+///
+/// The click's write recorded a `List` state for a `Tree`, which the tree
+/// ignores in favour of the spec's seed, so the highlight only landed
+/// right when a repaint followed the click — as it does in side-by-side,
+/// where picking a file rebuilds the panel, and does not in the unified
+/// stream.
+#[test]
+fn test_clicking_a_file_moves_the_sidebar_highlight() {
+    init_tracing_from_env();
+    let repo = repo_with_many_modified_files(5);
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    harness.render().unwrap();
+    open_review_diff(&mut harness);
+    show_files_panel(&mut harness);
+    harness.tick_and_render().unwrap();
+
+    // The keys on the diff: reading, not navigating the sidebar.
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    for _ in 0..6 {
+        harness.tick_and_render().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        harness.advance_time(std::time::Duration::from_millis(50));
+    }
+
+    let screen = harness.screen_to_string();
+    let row = screen
+        .lines()
+        .enumerate()
+        .filter(|(_, l)| {
+            l.chars()
+                .take(20)
+                .collect::<String>()
+                .contains("mod_004.rs")
+        })
+        .map(|(y, _)| y as u16)
+        .next()
+        .unwrap_or_else(|| panic!("the sidebar lists mod_004.rs. Screen:\n{screen}"));
+
+    harness.mouse_click(5, row).unwrap();
+    for _ in 0..20 {
+        if selected_sidebar_row(&harness).is_some_and(|r| r.contains("mod_004.rs")) {
+            break;
+        }
+        harness.tick_and_render().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        harness.advance_time(std::time::Duration::from_millis(50));
+    }
+
+    let selected = selected_sidebar_row(&harness);
+    assert!(
+        selected
+            .as_deref()
+            .is_some_and(|r| r.contains("mod_004.rs")),
+        "clicking mod_004.rs should move the sidebar highlight onto it, \
+         not leave it on {selected:?}. Screen:\n{}",
+        harness.screen_to_string()
+    );
+}
+
+/// The highlight follows the *file*, not a row number. The host stores an
+/// absolute index into a node list the sidebar rebuilds whenever the
+/// changeset moves, so without re-pinning from the key the band slides
+/// onto the neighbouring file — and stays there, the current file never
+/// having changed.
+#[test]
+fn test_sidebar_highlight_survives_a_rebuild_above_it() {
+    init_tracing_from_env();
+    let repo = repo_with_many_modified_files(5);
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    harness.render().unwrap();
+    open_review_diff(&mut harness);
+    show_files_panel(&mut harness);
+    harness.tick_and_render().unwrap();
+
+    let screen = harness.screen_to_string();
+    let row = screen
+        .lines()
+        .enumerate()
+        .filter(|(_, l)| {
+            l.chars()
+                .take(20)
+                .collect::<String>()
+                .contains("mod_004.rs")
+        })
+        .map(|(y, _)| y as u16)
+        .next()
+        .unwrap_or_else(|| panic!("the sidebar lists mod_004.rs. Screen:\n{screen}"));
+    harness.mouse_click(5, row).unwrap();
+    harness
+        .wait_until(|h| selected_sidebar_row(h).is_some_and(|r| r.contains("mod_004.rs")))
+        .unwrap();
+
+    // Sorts above every `mod_*`, and the review's watch poll picks it up:
+    // the node list grows a row above the selection.
+    fs::write(repo.path.join("src/lib.rs"), "pub struct Config {}\n").unwrap();
+    harness
+        .wait_until(|h| {
+            h.screen_to_string()
+                .lines()
+                .any(|l| l.chars().take(20).collect::<String>().contains("lib.rs"))
+        })
+        .unwrap();
+    harness.tick_and_render().unwrap();
+
+    let selected = selected_sidebar_row(&harness);
+    assert!(
+        selected
+            .as_deref()
+            .is_some_and(|r| r.contains("mod_004.rs")),
+        "a file appearing above the selection must not slide the highlight \
+         onto its neighbour — it is on {selected:?}. Screen:\n{}",
+        harness.screen_to_string()
+    );
+}
+
+/// The band says "the file you are reading", so it has to survive the tree
+/// losing keyboard focus. The host clears a blurred tree's selection, so
+/// clicking the panel's filter field takes the marker away unless the
+/// plugin puts it back.
+#[test]
+fn test_sidebar_highlight_survives_focusing_the_filter() {
+    init_tracing_from_env();
+    let repo = repo_with_many_modified_files(5);
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    harness.render().unwrap();
+    open_review_diff(&mut harness);
+    show_files_panel(&mut harness);
+    harness.tick_and_render().unwrap();
+
+    let screen = harness.screen_to_string();
+    let file_row = screen
+        .lines()
+        .enumerate()
+        .filter(|(_, l)| {
+            l.chars()
+                .take(20)
+                .collect::<String>()
+                .contains("mod_004.rs")
+        })
+        .map(|(y, _)| y as u16)
+        .next()
+        .unwrap_or_else(|| panic!("the sidebar lists mod_004.rs. Screen:\n{screen}"));
+    harness.mouse_click(5, file_row).unwrap();
+    harness
+        .wait_until(|h| selected_sidebar_row(h).is_some_and(|r| r.contains("mod_004.rs")))
+        .unwrap();
+
+    let filter_row = screen
+        .lines()
+        .position(|l| l.contains("Filter files"))
+        .unwrap_or_else(|| panic!("the sidebar has a filter field. Screen:\n{screen}"))
+        as u16;
+    harness.mouse_click(5, filter_row).unwrap();
+    for _ in 0..10 {
+        harness.tick_and_render().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        harness.advance_time(std::time::Duration::from_millis(50));
+    }
+
+    let selected = selected_sidebar_row(&harness);
+    assert!(
+        selected
+            .as_deref()
+            .is_some_and(|r| r.contains("mod_004.rs")),
+        "focusing the filter field must not take the \"you are here\" band \
+         away — it is on {selected:?}. Screen:\n{}",
+        harness.screen_to_string()
+    );
+}
+
+/// Clicking a sidebar row hands the keys to the sidebar, so the arrows go
+/// on working.
+///
+/// A click that lands on a widget is routed straight to it: the panel's
+/// buffer sees no `mouse_click` and no `buffer_activated`, so a widget
+/// event is the plugin's only word that focus moved. Missing it, the
+/// plugin kept routing arrows to the panel it last knew about — they did
+/// nothing at all, and Enter toggled a fold in the diff instead of opening
+/// the file that had just been clicked.
+#[test]
+fn test_clicking_a_file_hands_the_keys_to_the_sidebar() {
+    init_tracing_from_env();
+    let repo = repo_with_many_modified_files(5);
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    harness.render().unwrap();
+    open_review_diff(&mut harness);
+    show_files_panel(&mut harness);
+    harness.tick_and_render().unwrap();
+
+    let settle = |h: &mut EditorTestHarness| {
+        for _ in 0..8 {
+            h.tick_and_render().unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            h.advance_time(std::time::Duration::from_millis(50));
+        }
+    };
+    let row_of = |h: &EditorTestHarness, name: &str| -> u16 {
+        h.screen_to_string()
+            .lines()
+            .enumerate()
+            .filter(|(_, l)| l.chars().take(20).collect::<String>().contains(name))
+            .map(|(y, _)| y as u16)
+            .next()
+            .unwrap_or_else(|| panic!("no sidebar row for {name}"))
+    };
+
+    // Read the diff for a while — the keys are the diff's.
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    settle(&mut harness);
+
+    // Reach over and click a file.
+    let row = row_of(&harness, "mod_003.rs");
+    harness.mouse_click(5, row).unwrap();
+    settle(&mut harness);
+    assert!(
+        selected_sidebar_row(&harness).is_some_and(|r| r.contains("mod_003.rs")),
+        "the click should select the row it landed on. Screen:\n{}",
+        harness.screen_to_string()
+    );
+
+    // The arrows now belong to the sidebar.
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    settle(&mut harness);
+    assert!(
+        selected_sidebar_row(&harness).is_some_and(|r| r.contains("mod_004.rs")),
+        "Down should step the sidebar to the next file after a click put \
+         the keys there — it is on {:?}. Screen:\n{}",
+        selected_sidebar_row(&harness),
+        harness.screen_to_string()
+    );
+}
+
+/// A repo whose changed files nest, so the sidebar's tree order (a
+/// directory's subdirectories before the files beside them) differs from
+/// the flat path order the stream used to walk.
+fn repo_with_nested_changes() -> GitTestRepo {
+    let repo = GitTestRepo::new();
+    repo.setup_typical_project();
+    setup_audit_mode_plugin(&repo);
+    let paths = [
+        "src/aaa.rs",
+        "src/zzz.rs",
+        "src/nested/mid.rs",
+        "src/nested/deeper/leaf.rs",
+    ];
+    for p in paths {
+        let full = repo.path.join(p);
+        fs::create_dir_all(full.parent().unwrap()).unwrap();
+        fs::write(&full, "pub fn before() {}\n").unwrap();
+    }
+    repo.git_add_all();
+    repo.git_commit("Initial commit");
+    for p in paths {
+        fs::write(repo.path.join(p), "pub fn after() { /* CHANGED */ }\n").unwrap();
+    }
+    repo
+}
+
+/// The stream lists files in the order the sidebar does. The sidebar nests
+/// by directory — subdirectories before the files beside them — so walking
+/// the diff and reading the sidebar have to be the same sequence.
+#[test]
+fn test_stream_file_order_matches_the_sidebar() {
+    init_tracing_from_env();
+    let repo = repo_with_nested_changes();
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        140,
+        40,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    harness.render().unwrap();
+    open_review_diff(&mut harness);
+    show_files_panel(&mut harness);
+    harness.tick_and_render().unwrap();
+
+    let screen = harness.screen_to_string();
+    let divider = screen
+        .lines()
+        .filter_map(|l| l.find('\u{2502}'))
+        .min()
+        .expect("the sidebar is drawn beside the diff");
+
+    // Sidebar: the file rows top to bottom (basenames, as the tree shows).
+    let names = ["aaa.rs", "zzz.rs", "mid.rs", "leaf.rs"];
+    let sidebar: Vec<&str> = screen
+        .lines()
+        .filter_map(|l| {
+            let left: String = l.chars().take(divider).collect();
+            names.iter().find(|n| left.contains(**n)).copied()
+        })
+        .collect();
+
+    // Stream: the file header rows top to bottom, right of the divider.
+    let stream: Vec<&str> = screen
+        .lines()
+        .filter_map(|l| {
+            let right: String = l.chars().skip(divider).collect();
+            if !right.contains("+1 / -1") {
+                return None;
+            }
+            names.iter().find(|n| right.contains(**n)).copied()
+        })
+        .collect();
+
+    assert_eq!(
+        sidebar.len(),
+        names.len(),
+        "every file should be listed in the sidebar. Screen:\n{screen}"
+    );
+    assert_eq!(
+        stream, sidebar,
+        "the stream's files should be in the sidebar's order. Screen:\n{screen}"
+    );
+}
+
+/// Sidebar rows carrying a background of their own, as (row, description).
+/// Two of them means two things claiming to be "the file you are on".
+fn sidebar_marked_rows(harness: &EditorTestHarness) -> Vec<(usize, String)> {
+    let screen = harness.screen_to_string();
+    let divider = screen
+        .lines()
+        .filter_map(|line| line.find('\u{2502}'))
+        .min()
+        .unwrap_or(20) as u16;
+    let mut counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+    let mut rows = Vec::new();
+    for (y, line) in screen.lines().enumerate() {
+        let left: String = line.chars().take(divider as usize).collect();
+        if !left.contains("mod_") {
+            continue;
+        }
+        let bg = format!(
+            "{:?}",
+            harness.get_cell_style(4, y as u16).and_then(|s| s.bg)
+        );
+        *counts.entry(bg.clone()).or_default() += 1;
+        rows.push((y, left, bg));
+    }
+    // The colour most rows share is the panel's ground; anything else is a
+    // marker.
+    let ground = counts
+        .into_iter()
+        .max_by_key(|(_, n)| *n)
+        .map(|(bg, _)| bg)
+        .unwrap_or_default();
+    rows.into_iter()
+        .filter(|(_, _, bg)| *bg != ground)
+        .map(|(y, left, bg)| (y, format!("{left:?} bg={bg}")))
+        .collect()
+}
+
+/// One marker in the sidebar, not two.
+///
+/// The pointer leaves a hover band on whatever row it rests on, and a
+/// terminal only hears about the pointer when it moves — so after clicking
+/// a file and reading on with the keyboard, that band sat on the clicked
+/// row while the selection moved to the file the cursor had reached: two
+/// highlights in two styles, one of them stale. Pointer feedback now ends
+/// when the keyboard takes over, and returns on the next pointer move.
+#[test]
+fn test_sidebar_shows_one_marker_while_the_keyboard_drives() {
+    init_tracing_from_env();
+    let repo = repo_with_many_modified_files(5);
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        Config::default(),
+        repo.path.clone(),
+    )
+    .unwrap();
+    harness.render().unwrap();
+    open_review_diff(&mut harness);
+    show_files_panel(&mut harness);
+    harness.tick_and_render().unwrap();
+
+    let settle = |h: &mut EditorTestHarness| {
+        for _ in 0..8 {
+            h.tick_and_render().unwrap();
+            std::thread::sleep(std::time::Duration::from_millis(50));
+            h.advance_time(std::time::Duration::from_millis(50));
+        }
+    };
+    let row = harness
+        .screen_to_string()
+        .lines()
+        .enumerate()
+        .filter(|(_, l)| {
+            l.chars()
+                .take(20)
+                .collect::<String>()
+                .contains("mod_001.rs")
+        })
+        .map(|(y, _)| y as u16)
+        .next()
+        .expect("the sidebar lists mod_001.rs");
+
+    // Click it and leave the pointer there, as a hand does.
+    harness.mouse_click(5, row).unwrap();
+    settle(&mut harness);
+    harness.mouse_move(5, row).unwrap();
+    settle(&mut harness);
+
+    // Read on with the keyboard, into a later file.
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    settle(&mut harness);
+    for _ in 0..8 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        settle(&mut harness);
+    }
+
+    let marked = sidebar_marked_rows(&harness);
+    assert_eq!(
+        marked.len(),
+        1,
+        "the sidebar should mark one file — the one being read. Marked: \
+         {marked:?}. Screen:\n{}",
+        harness.screen_to_string()
     );
 }

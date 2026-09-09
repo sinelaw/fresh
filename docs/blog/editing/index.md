@@ -21,7 +21,7 @@ Place your cursor on a word, press **Ctrl+W** to select it, then **Ctrl+D** to s
 
 ## Search & Replace
 
-**Ctrl+H** opens find-and-replace with live highlighting as you type. Supports regex with capture groups (`$1`, `$2`), find-in-selection, and a confirm-each toggle.
+**Ctrl+R** opens find-and-replace with live highlighting as you type. Supports regex with capture groups (`$1`, `$2`), find-in-selection, and a confirm-each toggle. (Ctrl+H is deliberately not used: terminals transmit it as Backspace, so Fresh binds it to delete-word-backward instead.)
 
 <div class="showcase-demo">
   <img src="./search-replace/showcase.gif" alt="Search and replace demo" />

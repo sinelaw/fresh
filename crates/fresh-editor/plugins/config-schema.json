@@ -26,12 +26,18 @@
       "type": "boolean",
       "default": true
     },
+    "self_update": {
+      "description": "Offer an interactive in-editor update when a new version is detected\n(default: true). When on, clicking the status-bar update indicator (or\nthe \"Update fresh\" command) prompts to update now; confirming runs the\nupdate locally in the background and logs to the data dir. When off, the\nindicator is passive (it only tells you a version is available). Has no\neffect if `check_for_updates` is false or the install method can't\nself-update.",
+      "type": "boolean",
+      "default": true
+    },
     "editor": {
       "description": "Editor behavior settings (indentation, line numbers, wrapping, etc.)",
       "$ref": "#/$defs/EditorConfig",
       "default": {
         "animations": true,
         "cursor_jump_animation": true,
+        "viewport_edge_fade": true,
         "line_numbers": true,
         "relative_line_numbers": false,
         "highlight_current_line": true,
@@ -53,6 +59,7 @@
           "left": [
             "{trust}",
             "{remote}",
+            "{terminal_restart}",
             "{cursor}",
             "{diagnostics}",
             "{cursor_count}",
@@ -90,6 +97,9 @@
         "whitespace_tabs_leading": true,
         "whitespace_tabs_inner": true,
         "whitespace_tabs_trailing": true,
+        "whitespace_newlines": false,
+        "whitespace_carriage_returns": false,
+        "whitespace_in_selection": true,
         "use_tabs": false,
         "tab_size": 4,
         "auto_indent": true,
@@ -110,6 +120,8 @@
         "enable_inlay_hints": true,
         "enable_semantic_tokens_full": false,
         "diagnostics_inline_text": false,
+        "mouse_wheel_scroll_lines": 3,
+        "smooth_scroll": true,
         "mouse_hover_enabled": true,
         "mouse_hover_delay_ms": 500,
         "double_click_time_ms": 500,
@@ -119,6 +131,9 @@
         "confirm_quit": false,
         "restore_previous_session": true,
         "skip_session_restore_when_files_passed": true,
+        "ephemeral_file_patterns": [
+          "**/.git/**"
+        ],
         "auto_create_empty_buffer_on_last_buffer_close": true,
         "recovery_enabled": true,
         "auto_recovery_save_interval_secs": 2,
@@ -127,7 +142,6 @@
         "keyboard_report_event_types": false,
         "keyboard_report_alternate_keys": true,
         "keyboard_report_all_keys_as_escape_codes": false,
-        "highlight_timeout_ms": 5,
         "snapshot_interval": 100,
         "highlight_context_bytes": 10000,
         "large_file_threshold_bytes": 10485760,
@@ -152,6 +166,13 @@
         "compact_directories": true,
         "tree_indicator_collapsed": ">",
         "tree_indicator_expanded": "▼"
+      }
+    },
+    "sidebar": {
+      "description": "The sidebar column the file explorer is the first section of.",
+      "$ref": "#/$defs/SidebarConfig",
+      "default": {
+        "accordion": "free"
       }
     },
     "file_browser": {
@@ -349,6 +370,7 @@
       "description": "UI locale (language). Use null for auto-detection from environment.",
       "enum": [
         null,
+        "bg",
         "cs",
         "de",
         "en",
@@ -377,6 +399,12 @@
         },
         "cursor_jump_animation": {
           "description": "Enable the cursor-jump trail animation on long cursor moves\n(search jumps, go-to-definition, pane switches). Has no effect\nwhen `animations` is `false`.",
+          "type": "boolean",
+          "default": true,
+          "x-section": "Display"
+        },
+        "viewport_edge_fade": {
+          "description": "Shade the top and bottom rows of each pane, so text meets the\nedge by fading out rather than being cut off mid-line.\n\nThe row hard against the edge is painted a third of the way up\nfrom its background, the one inside it two thirds, and the third\nrow in normally. Constant, not animated — the same rows are\nshaded whether the view is moving or still, so scrolling is a\nplain shift of the text through a fixed gradient.\n\nAn edge shades only where there is something beyond it to trail off\ninto, so the first and last lines of a file are not dimmed for no\nreason, and neither is a file that fits its pane. An edge whose facts\nare missing — a pane with no scrollbar, or a file too large to count\nlines on — is left alone rather than shaded on a guess. So is the edge\nthe cursor is sitting in: the shading helps reading, and the line being\nedited is the one line the reader is certainly looking at.",
           "type": "boolean",
           "default": true,
           "x-section": "Display"
@@ -502,6 +530,7 @@
             "left": [
               "{trust}",
               "{remote}",
+              "{terminal_restart}",
               "{cursor}",
               "{diagnostics}",
               "{cursor_count}",
@@ -576,12 +605,12 @@
           "x-section": "Display"
         },
         "rulers": {
-          "description": "Vertical ruler lines at specific column positions.\nDraws subtle vertical lines to help with line length conventions.\nExample: [80, 120] draws rulers at columns 80 and 120.\nDefault: [] (no rulers)",
+          "description": "Vertical ruler lines at specific column positions.\nDraws subtle vertical lines to help with line length conventions.\nColumns are 1-based *display* columns — screen cells, not characters:\na ruler at 80 marks the 80th display column, the last one text may\noccupy. A tab advances to the next tab stop and a full-width character\n(CJK, most emoji) takes two cells, so on lines containing either, the\nruler column is not the character count the status bar reports; for\nplain ASCII text the two numbers agree.\nIf the column falls inside a full-width character, the guide marks that\ncharacter's first cell, so it stays visible on lines of CJK text.\nValues below 1 are not valid columns and are ignored.\nExample: [80, 120] draws rulers at columns 80 and 120.\nDefault: [] (no rulers)",
           "type": "array",
           "items": {
             "type": "integer",
             "format": "uint",
-            "minimum": 0
+            "minimum": 1
           },
           "default": [],
           "x-section": "Display"
@@ -642,6 +671,24 @@
         },
         "whitespace_tabs_trailing": {
           "description": "Show tab indicators (→) for trailing tabs.\nCan be overridden per-language via `show_whitespace_tabs` in language config.\nDefault: true",
+          "type": "boolean",
+          "default": true,
+          "x-section": "Whitespace"
+        },
+        "whitespace_newlines": {
+          "description": "Show newline indicators (↵) at the end of every line.\nDefault: false",
+          "type": "boolean",
+          "default": false,
+          "x-section": "Whitespace"
+        },
+        "whitespace_carriage_returns": {
+          "description": "Show carriage-return indicators (␍) for the CR half of CRLF line\nendings, next to the newline position. Stray CR bytes that are not\npart of the buffer's line ending always render as `<0D>` escapes.\nDefault: false",
+          "type": "boolean",
+          "default": false,
+          "x-section": "Whitespace"
+        },
+        "whitespace_in_selection": {
+          "description": "Show whitespace indicators (·, →) for whitespace *inside a\nselection*, even when the per-position settings above (or the\n`whitespace_show` master toggle) keep them hidden elsewhere. Makes the\nexact extent of a selection legible without turning indicators on for\nthe whole buffer.\nDefault: true",
           "type": "boolean",
           "default": true,
           "x-section": "Whitespace"
@@ -772,6 +819,20 @@
           "default": false,
           "x-section": "Diagnostics"
         },
+        "mouse_wheel_scroll_lines": {
+          "description": "How many lines one notch of the mouse wheel scrolls.\n\nApplies to every surface the wheel scrolls by lines, not just\nbuffer text. Shift+wheel pans sideways by columns and is\nunaffected. Clamped to at least 1 — a zero would make the wheel\ndead. Default: 3.",
+          "type": "integer",
+          "format": "uint",
+          "minimum": 0,
+          "default": 3,
+          "x-section": "Mouse"
+        },
+        "smooth_scroll": {
+          "description": "Walk a multi-line wheel notch one line at a time instead of\njumping the view by the whole `mouse_wheel_scroll_lines` at once.\n\nThe first line lands immediately, so the view still answers the\nwheel on the same frame; the rest follow at about a line a frame.\nThe walk is paced by the clock, not by frames, so a terminal too\nslow to show it collapses the remainder back into a single jump\nrather than lagging behind the wheel. Has no effect when\n`animations` is `false`, or when a notch is only one line.",
+          "type": "boolean",
+          "default": true,
+          "x-section": "Mouse"
+        },
         "mouse_hover_enabled": {
           "description": "Whether mouse hover triggers LSP hover requests.\nWhen enabled, hovering over code with the mouse will show documentation.\nOn Windows, this also controls the mouse tracking mode: when disabled,\nthe editor uses xterm mode 1002 (cell motion — click, drag, release only);\nwhen enabled, it uses mode 1003 (all motion — full mouse movement tracking).\nMode 1003 generates high event volume on Windows and may cause input\ncorruption on some systems. On macOS and Linux this setting only controls\nLSP hover; the mouse tracking mode is always full motion.\nDefault: true (macOS/Linux), false (Windows)",
           "type": "boolean",
@@ -832,6 +893,17 @@
           "default": true,
           "x-section": "Startup"
         },
+        "ephemeral_file_patterns": {
+          "description": "Files whose per-file state (cursor, scroll, folds, …) is never saved\nand never restored, because something outside the editor rewrites\nthem: a persisted byte offset would land the cursor at an arbitrary\npoint in content that has since been replaced. The default covers\ngit's scratch files (`COMMIT_EDITMSG`, `MERGE_MSG`, `TAG_EDITMSG`,\nrebase todo lists), which git regenerates for every operation.\n\nEntries use the same dialect as `languages.*.filenames`: a literal\nentry matches the file name exactly, an entry with `*`/`?` is a glob\nmatched against the whole path if it names directories (`**/.git/**`)\nand against the file name otherwise (`*.tmp`).\nDefault: `[\"**/.git/**\"]`",
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "**/.git/**"
+          ],
+          "x-section": "Startup"
+        },
         "auto_create_empty_buffer_on_last_buffer_close": {
           "description": "Whether to auto-create a fresh empty `[No Name]` buffer when the\nlast open buffer is closed. When `false`, the editor still creates\nan internal placeholder buffer (it always needs at least one) but\nhides it from the tab bar so the workspace looks blank. Combined\nwith `file_explorer.auto_open_on_last_buffer_close = false`, this\ngives a fully blank workspace where nothing opens automatically.\nDefault: true",
           "type": "boolean",
@@ -883,14 +955,6 @@
           "type": "boolean",
           "default": false,
           "x-section": "Keyboard"
-        },
-        "highlight_timeout_ms": {
-          "description": "Maximum time in milliseconds for syntax highlighting per frame",
-          "type": "integer",
-          "format": "uint64",
-          "minimum": 0,
-          "default": 5,
-          "x-section": "Performance"
         },
         "snapshot_interval": {
           "description": "Undo history snapshot interval (number of edits between snapshots)",
@@ -955,6 +1019,7 @@
           "default": [
             "{trust}",
             "{remote}",
+            "{terminal_restart}",
             "{cursor}",
             "{diagnostics}",
             "{cursor_count}",
@@ -1052,6 +1117,10 @@
           "name": "Update"
         },
         {
+          "value": "{terminal_restart}",
+          "name": "Terminal Restart"
+        },
+        {
           "value": "{palette}",
           "name": "Palette"
         },
@@ -1117,7 +1186,7 @@
       "type": "object",
       "properties": {
         "respect_gitignore": {
-          "description": "Whether to respect .gitignore files",
+          "description": "Whether `.gitignore` rules apply in the file explorer at all.\nWhen disabled, ignored entries are neither hidden nor grayed out and\nthe \"show gitignored files\" toggle below has nothing left to hide.\nDefault: true",
           "type": "boolean",
           "default": true
         },
@@ -1192,6 +1261,32 @@
       "enum": [
         "left",
         "right"
+      ]
+    },
+    "SidebarConfig": {
+      "description": "Sidebar configuration: the column that holds the file explorer and any\nplugin sections mounted under it.",
+      "type": "object",
+      "properties": {
+        "accordion": {
+          "description": "Whether sections open freely (`free`) or one at a time (`exclusive`).\nDefault: free",
+          "$ref": "#/$defs/SidebarAccordion",
+          "default": "free"
+        }
+      }
+    },
+    "SidebarAccordion": {
+      "description": "How the sidebar's sections share the column.",
+      "oneOf": [
+        {
+          "description": "Any number of sections may be open at once; collapsing one gives its\nrows to the sections still open.",
+          "type": "string",
+          "const": "free"
+        },
+        {
+          "description": "One section open at a time: opening a section collapses every other\none, and the dividers are inert.",
+          "type": "string",
+          "const": "exclusive"
+        }
       ]
     },
     "FileBrowserConfig": {
@@ -1323,7 +1418,7 @@
           }
         },
         "action": {
-          "description": "Action to perform (e.g., \"insert_char\", \"move_left\")",
+          "description": "Action to perform (e.g., \"insert_char\", \"move_left\"), or \"unbind\" to\nremove the built-in binding for this key instead of binding anything.",
           "type": "string"
         },
         "args": {
@@ -1455,7 +1550,7 @@
           "default": null
         },
         "textmate_grammar": {
-          "description": "Path to custom TextMate grammar file (optional)\nIf specified, this grammar will be used when highlighter is \"textmate\"",
+          "description": "Path to a custom grammar file for this language (optional).\nLoaded into the grammar registry at startup and associated with this\nlanguage's `extensions`, so files matching them highlight with it.\nOnly Sublime Text `.sublime-syntax` grammars are supported —\nTextMate `.tmLanguage` is a different format syntect cannot load.",
           "type": [
             "string",
             "null"
@@ -1671,7 +1766,7 @@
           "default": null
         },
         "decrease_indent_pattern": {
-          "description": "If the new line's leading text matches, that line is dedented one level.\nExample — a line starting with a closing bracket: `^\\s*[\\}\\]\\)]`.",
+          "description": "If the new line's leading text matches, that line is dedented one level.\nExample — a line starting with a closing bracket: `^\\s*[\\}\\]\\)]`.\n\nAlso fires live while typing: at the keystroke where the pattern first\nmatches the whole line, the line is re-indented one level shallower.\nInclude the statement's terminator in the pattern when the language has\none (e.g. Python's `:`), like VS Code's `decreaseIndentPattern`, so an\nidentifier starting with a keyword never triggers a transient dedent.",
           "type": [
             "string",
             "null"

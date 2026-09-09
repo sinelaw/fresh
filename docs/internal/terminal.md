@@ -116,6 +116,23 @@ Application-cursor mode (DECCKM) switches unmodified arrows to SS3 form, selecte
 from the terminal state at send time. Shift+Tab is emitted for both `Tab+SHIFT`
 and the `BackTab` variant.
 
+A **paste** is not key encoding and does not go through it: every route into a
+live terminal (`Ev::Paste` and the web/daemon pastes via `Editor::paste_text`,
+`Action::TerminalPaste`) ends at `Window::send_terminal_paste`, which reads the
+child's bracketed-paste mode (DECSET 2004, `TerminalState::is_bracketed_paste`)
+the same way key encoding reads DECCKM:
+
+- **2004 on** — the text is wrapped in `ESC[200~` … `ESC[201~`, with `ESC`
+  stripped from the payload so nothing inside it can close the brackets early.
+  This is what keeps a multi-line paste one block: a line editor that asked for
+  the mode reads a bare `\n` as Enter, so unwrapped text submits every line but
+  the tail.
+- **2004 off** — the child cannot tell paste from typing, so it is sent as the
+  keystrokes it would be, line breaks included: `\r`, the byte Enter produces.
+
+`Editor::send_selection_to_terminal` is deliberately *not* a paste — sending a
+selection means running it, so it stays raw and newline-terminated.
+
 ---
 
 ## 5. Incremental scrollback streaming (the core model)

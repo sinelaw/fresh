@@ -98,6 +98,17 @@ pub enum AsyncMessage {
     /// the app-level `RemoteAttachMode::Reconnect` rebuild path.
     RemoteReconnected { connection_id: u64 },
 
+    /// Content for a remote session's placeholder buffer, read off the editor
+    /// loop (see `Window::pending_content_load`). The main loop installs it into
+    /// `window_id`'s `buffer_id`, replacing the empty placeholder — or logs and
+    /// drops it on read error. Keeps remote workspace restore from freezing the
+    /// UI: the buffers appear instantly (empty) and fill in as this arrives.
+    RemoteBufferContentLoaded {
+        window_id: fresh_core::WindowId,
+        buffer_id: fresh_core::BufferId,
+        content: Result<Vec<u8>, String>,
+    },
+
     /// An async `attachRemoteAgent` connect failed — reject the plugin's
     /// promise with `error` (the plugin shows it and creates no window); the
     /// editor stays on its current authority. `reconnect_window` is `Some(id)`
@@ -127,6 +138,22 @@ pub enum AsyncMessage {
         server_name: String,
         /// Capabilities reported by this server
         capabilities: crate::services::lsp::manager::ServerCapabilitySummary,
+    },
+
+    /// A request to an initialized LSP server expired without a reply.
+    ///
+    /// Emitted per timeout so the editor can tell the user that the
+    /// server is not answering, rather than leaving the status bar on
+    /// "ready" while features silently do nothing (issue #2197).
+    LspRequestTimeout {
+        language: String,
+        server_name: String,
+        /// The LSP method that timed out, e.g. `textDocument/hover`.
+        method: String,
+        /// How long the request waited before being cancelled.
+        timeout: std::time::Duration,
+        /// Timeouts on this server since its last answered request.
+        consecutive: u32,
     },
 
     /// LSP server crashed or failed
@@ -548,6 +575,14 @@ pub enum LspServerStatus {
     Starting,
     Initializing,
     Running,
+    /// Initialized and alive, but requests are timing out.
+    ///
+    /// A server can complete `initialize` and then answer nothing — pyright
+    /// 1.1.408 does exactly that (issue #2197) — and the editor used to
+    /// keep reporting "ready" while every hover, definition and diagnostic
+    /// request silently expired after 30s. This status is what makes that
+    /// visible; it reverts to `Running` as soon as a request is answered.
+    Unresponsive,
     Error,
     Shutdown,
 }

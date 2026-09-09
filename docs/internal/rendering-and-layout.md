@@ -19,7 +19,9 @@ Fresh is an **immediate-mode** TUI: there is no retained widget tree and no dirt
 6. Carve the file-explorer sidebar out of the main content area and paint it.
 7. Fire `lines_changed` plugin hooks for newly-visible lines (lets plugins add overlays *before* the content render).
 8. **Render split content**: a single split-borrow of the active window yields the buffers, the split manager, and the view states, and the split renderer paints every visible leaf into the frame buffer. It returns per-leaf layout caches (split areas, tab layouts, view-line mappings, scrollbar areas, …) stored on the window for the next frame's hit-testing.
-9. Post-content passes: cursor-jump animation, viewport-change hooks, popups, modals, menu bar, status bar, context menus, software cursor, dock/overlay painting, then dimming behind modals.
+9. Post-content passes: cursor-jump animation, viewport-change hooks, popups, menu bar, status bar, context menus, software cursor, frame-buffer animations.
+10. Topmost layers, painted after everything above: the dock into its carved column; then the full-screen modals (settings, keybinding editor, event-debug dialog, calibration wizard), each dimming the *whole* frame behind it — the dock included — and centring in the full window rather than in the chrome beside the dock; then the floating widget panel, the theme-info popup, and the blocking workspace-trust prompt. Modals paint *after* the dock so the dock's own pass cannot overpaint their left edge.
+11. Terminal colour-capability conversion (256/16 fallback) over the finished buffer, so every layer — including the dock, the modals, and animation output — goes through it.
 
 ### `RenderStyle`, `EditorRenderConfig`, and rendering into an arbitrary buffer
 

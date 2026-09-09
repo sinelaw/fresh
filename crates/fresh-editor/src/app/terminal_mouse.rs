@@ -22,6 +22,10 @@ impl Window {
         &mut self,
         col: u16,
         row: u16,
+        // The terminal under the pointer and the rectangle its grid occupies,
+        // resolved by `Editor::terminal_pane_at`. Asked there because it is a
+        // question about the shell's tree, which this side cannot see.
+        at: (BufferId, Rect),
         mouse_event: MouseEvent,
         forwarding: crate::config::TerminalMouseForwarding,
     ) -> Option<AnyhowResult<bool>> {
@@ -53,8 +57,7 @@ impl Window {
             return None;
         }
 
-        // Find terminal buffer at this position.
-        let (buffer_id, content_rect) = self.get_terminal_content_area_at_position(col, row)?;
+        let (buffer_id, content_rect) = at;
 
         // `send_terminal_mouse` writes to the *focused* terminal and makes the
         // coordinates relative to `content_rect`, so both must describe the
@@ -161,6 +164,8 @@ impl Window {
         &self,
         col: u16,
         row: u16,
+        // See `try_forward_mouse_to_terminal`.
+        at: (BufferId, Rect),
     ) -> Option<(
         BufferId,
         u16,
@@ -170,7 +175,7 @@ impl Window {
         if !self.focused_terminal_live() {
             return None;
         }
-        let (buffer_id, content_rect) = self.get_terminal_content_area_at_position(col, row)?;
+        let (buffer_id, content_rect) = at;
         // Detection runs even for alternate-screen / mouse-reporting programs:
         // this is only reached for Ctrl-held gestures (see the callers in
         // `terminal_link.rs`, both Ctrl-gated), which `try_forward_mouse_to_terminal`
@@ -203,10 +208,16 @@ impl Window {
     ///
     /// Returns the terminal buffer, the detected link, and the terminal's
     /// OSC 7 working directory (for resolving relative paths).
+    /// `at` is the pane the cell is over and where its content sits, which
+    /// the caller asks the shell tree for — the same parameter, for the same
+    /// reason, as its sibling [`Window::detect_terminal_link_at`]. A `Window`
+    /// cannot see the tree, and the scan this replaces answered "which pane
+    /// covers this cell" out of the painter's record of the last frame.
     pub(crate) fn detect_terminal_scrollback_link_at(
         &self,
         col: u16,
         row: u16,
+        at: (crate::model::event::LeafId, ratatui::layout::Rect),
     ) -> Option<(
         BufferId,
         crate::services::terminal::path_link::DetectedLink,
@@ -222,27 +233,22 @@ impl Window {
             return None;
         }
 
-        let (split_id, content_rect) =
-            self.layout_cache
-                .split_areas
-                .iter()
-                .find_map(|(sid, bid, rect, _, _, _)| {
-                    (*bid == active
-                        && col >= rect.x
-                        && col < rect.x + rect.width
-                        && row >= rect.y
-                        && row < rect.y + rect.height)
-                        .then_some((*sid, *rect))
-                })?;
+        // The scan also checked that the pane it found is showing the active
+        // terminal, which is a question about the model rather than about the
+        // paint.
+        let (split_id, content_rect) = at;
+        if self.pane_buffer(split_id) != Some(active) {
+            return None;
+        }
 
         let state = self.buffers.get(&active)?;
         let gutter_width = state.margins.left_total_width() as u16;
-        let cached_mappings = self.layout_cache.view_line_mappings.get(&split_id).cloned();
+        let cached_mappings = self.pane_view(split_id).map(|v| v.rows.clone());
         let (fallback, compose_width) = self
             .buffers
             .splits()
             .and_then(|(_, vs)| vs.get(&split_id))
-            .map(|vs| (vs.viewport.top_byte, vs.compose_width))
+            .map(|vs| (vs.viewport.top_byte(), vs.compose_width))
             .unwrap_or((0, None));
 
         // `allow_gutter_click = false`: a click in the gutter isn't on a path.
@@ -251,7 +257,7 @@ impl Window {
             row,
             content_rect,
             gutter_width,
-            &cached_mappings,
+            cached_mappings.as_deref(),
             fallback,
             false,
             compose_width,
@@ -282,27 +288,6 @@ impl Window {
         Some((active, link, cwd))
     }
 
-    /// Get the terminal buffer and its content area if the mouse position is over a terminal buffer.
-    /// Returns the buffer ID and content rect if found.
-    fn get_terminal_content_area_at_position(
-        &self,
-        col: u16,
-        row: u16,
-    ) -> Option<(BufferId, Rect)> {
-        for (_, buffer_id, content_rect, _, _, _) in &self.layout_cache.split_areas {
-            // Check if position is within content area.
-            if col >= content_rect.x
-                && col < content_rect.x + content_rect.width
-                && row >= content_rect.y
-                && row < content_rect.y + content_rect.height
-                && self.is_terminal_buffer(*buffer_id)
-            {
-                return Some((*buffer_id, *content_rect));
-            }
-        }
-        None
-    }
-
     /// Forward a mouse event to the terminal PTY.
     /// Converts screen coordinates to terminal-relative coordinates and sends the event.
     fn forward_mouse_to_terminal(
@@ -316,21 +301,8 @@ impl Window {
         let term_col = col.saturating_sub(content_rect.x);
         let term_row = row.saturating_sub(content_rect.y);
 
-        // Convert crossterm MouseEventKind to our TerminalMouseEventKind.
-        let kind = match mouse_event.kind {
-            MouseEventKind::Down(btn) => TerminalMouseEventKind::Down(convert_button(btn)),
-            MouseEventKind::Up(btn) => TerminalMouseEventKind::Up(convert_button(btn)),
-            MouseEventKind::Drag(btn) => TerminalMouseEventKind::Drag(convert_button(btn)),
-            MouseEventKind::Moved => TerminalMouseEventKind::Moved,
-            MouseEventKind::ScrollUp => TerminalMouseEventKind::ScrollUp,
-            MouseEventKind::ScrollDown => TerminalMouseEventKind::ScrollDown,
-            MouseEventKind::ScrollLeft | MouseEventKind::ScrollRight => {
-                // Horizontal scroll not typically supported in terminal mouse protocols.
-                return Ok(false);
-            }
-        };
-
         // Send to terminal.
+        let kind = convert_kind(mouse_event.kind);
         self.send_terminal_mouse(term_col, term_row, kind, mouse_event.modifiers);
 
         // Terminal renders itself, so we need to trigger a render.
@@ -347,6 +319,67 @@ fn convert_button(btn: MouseButton) -> TerminalMouseButton {
     }
 }
 
+/// Convert a crossterm `MouseEventKind` to the kind the PTY encoders speak.
+///
+/// Total: every kind the input parser can produce has a wire representation,
+/// horizontal wheel included (xterm buttons 6 and 7). This used to drop
+/// `ScrollLeft`/`ScrollRight` on the floor — and because the caller reports
+/// "handled" either way, a horizontal wheel over a mouse-tracking terminal
+/// was swallowed rather than falling through to Fresh's own panning.
+fn convert_kind(kind: MouseEventKind) -> TerminalMouseEventKind {
+    match kind {
+        MouseEventKind::Down(btn) => TerminalMouseEventKind::Down(convert_button(btn)),
+        MouseEventKind::Up(btn) => TerminalMouseEventKind::Up(convert_button(btn)),
+        MouseEventKind::Drag(btn) => TerminalMouseEventKind::Drag(convert_button(btn)),
+        MouseEventKind::Moved => TerminalMouseEventKind::Moved,
+        MouseEventKind::ScrollUp => TerminalMouseEventKind::ScrollUp,
+        MouseEventKind::ScrollDown => TerminalMouseEventKind::ScrollDown,
+        MouseEventKind::ScrollLeft => TerminalMouseEventKind::ScrollLeft,
+        MouseEventKind::ScrollRight => TerminalMouseEventKind::ScrollRight,
+    }
+}
+
+#[cfg(test)]
+mod convert_kind_tests {
+    use super::*;
+
+    #[test]
+    fn horizontal_wheel_has_a_wire_representation() {
+        assert_eq!(
+            convert_kind(MouseEventKind::ScrollLeft),
+            TerminalMouseEventKind::ScrollLeft
+        );
+        assert_eq!(
+            convert_kind(MouseEventKind::ScrollRight),
+            TerminalMouseEventKind::ScrollRight
+        );
+    }
+
+    #[test]
+    fn other_kinds_are_unchanged() {
+        assert_eq!(
+            convert_kind(MouseEventKind::Down(MouseButton::Left)),
+            TerminalMouseEventKind::Down(TerminalMouseButton::Left)
+        );
+        assert_eq!(
+            convert_kind(MouseEventKind::Drag(MouseButton::Middle)),
+            TerminalMouseEventKind::Drag(TerminalMouseButton::Middle)
+        );
+        assert_eq!(
+            convert_kind(MouseEventKind::Moved),
+            TerminalMouseEventKind::Moved
+        );
+        assert_eq!(
+            convert_kind(MouseEventKind::ScrollUp),
+            TerminalMouseEventKind::ScrollUp
+        );
+        assert_eq!(
+            convert_kind(MouseEventKind::ScrollDown),
+            TerminalMouseEventKind::ScrollDown
+        );
+    }
+}
+
 impl super::Editor {
     /// Begin a text-selection drag on a terminal split that was showing the
     /// live PTY grid when the mouse went down (see
@@ -355,10 +388,11 @@ impl super::Editor {
     /// Live terminals have no cursor/selection model of their own, so the
     /// split is dropped into read-only scrollback first — exactly the
     /// Ctrl+Space / scroll-up transition. `sync_terminal_to_buffer` pins the
-    /// scrollback viewport to the first byte of the just-appended visible
-    /// screen, making the scrollback view pixel-identical to the grid the
-    /// user aimed at: grid row r is buffer line `top_line + r` and grid
-    /// columns map 1:1 (wrap off, no gutter). That lets both the press
+    /// scrollback viewport to the just-appended visible screen, making the
+    /// scrollback view pixel-identical to the grid the user aimed at: the
+    /// view grid-wraps at the capture-time PTY width (fresh#2649), so grid
+    /// row r is visual row r of the anchored viewport and grid columns map
+    /// 1:1 within a row (no gutter). That lets both the press
     /// origin and the current drag position resolve to exact byte positions
     /// without waiting for a re-render; the standard text-selection drag
     /// machinery then takes over (Ctrl+C copies through the editor
@@ -523,12 +557,19 @@ impl super::Editor {
         {
             return None;
         }
-        let content_rect = self
-            .active_layout()
-            .split_areas
-            .iter()
-            .find(|(sid, bid, _, _, _, _)| *sid == split_id && *bid == buffer_id)
-            .map(|(_, _, rect, _, _, _)| *rect)?;
+        // The pane is named, so its content rectangle is the tree's; the scan
+        // this replaces also checked that the pane still shows this buffer,
+        // which `pane_buffer` answers from the model rather than from the
+        // painter's record of the last frame.
+        let content_rect = self.pane_content_rect(split_id)?;
+        if self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.pane_buffer(split_id))
+            != Some(buffer_id)
+        {
+            return None;
+        }
 
         // Drop into read-only scrollback. The press already focused the
         // split, so the sync pins THIS split's viewport to the grid's row 0.
@@ -559,12 +600,65 @@ impl super::Editor {
         let (_, view_states) = win.buffers.splits()?;
         let vs = view_states.get(&split_id)?;
         let state = win.buffers.get(&buffer_id)?;
-        let (top_line, _) = state.buffer.position_to_line_col(vs.viewport.top_byte);
+        let (top_line, _) = state.buffer.position_to_line_col(vs.viewport.top_byte());
         let grid_row = row.saturating_sub(content_rect.y) as usize;
         // Account for horizontal scroll (a pinned view starts at 0, but an
         // explicit scrollback view may have been scrolled right).
         let grid_col =
             col.saturating_sub(content_rect.x) as usize + vs.viewport.left_column as usize;
+
+        // Grid-wrapped scroll-back (fresh#2649): visual rows are exact-column
+        // wrap segments of the logical lines, so walk the segments from the
+        // viewport anchor to the clicked row instead of assuming one buffer
+        // line per grid row (which was only ever true for unwrapped lines —
+        // a grid row that continued a wrapped line used to resolve to the
+        // wrong buffer line entirely).
+        if vs.viewport.grid_wrap && vs.viewport.line_wrap_enabled {
+            let cols = vs.viewport.grid_cols();
+            let mut remaining = vs.viewport.top_view_line_offset() + grid_row;
+            let mut line_idx = top_line;
+            loop {
+                let Some(bytes) = state.buffer.get_line(line_idx) else {
+                    // Clicked past the buffer's tail: clamp to the end.
+                    return Some(state.buffer.len());
+                };
+                let text = String::from_utf8_lossy(&bytes);
+                let trimmed = text.trim_end_matches(['\n', '\r']);
+                let rows =
+                    crate::view::line_wrap_cache::count_visual_rows_for_text_grid(trimmed, cols)
+                        as usize;
+                if remaining < rows {
+                    let line_start = state.buffer.line_col_to_position(line_idx, 0);
+                    let layout =
+                        crate::view::line_wrap_cache::layout_for_plain_text_grid(trimmed, cols, 4);
+                    // A column past the row's rendered content resolves to
+                    // the row segment's END (the next segment's start, or the
+                    // line end on the last row) — same as click_geometry's
+                    // past-content clamp for ordinary buffer views. It must
+                    // NOT go through `source_byte_at_visual_col`, whose
+                    // out-of-range fallback clamps to the LAST character's
+                    // start byte and would drop the final character from any
+                    // selection whose drag overshoots the text.
+                    let byte_in_line = match layout.get(remaining) {
+                        Some(seg) if grid_col < seg.visual_width() => seg
+                            .source_byte_at_visual_col(grid_col)
+                            .unwrap_or(trimmed.len()),
+                        _ => layout
+                            .get(remaining + 1)
+                            .and_then(|next| next.source_start_byte)
+                            .unwrap_or(trimmed.len()),
+                    };
+                    return Some(
+                        state
+                            .buffer
+                            .snap_to_char_boundary(line_start + byte_in_line.min(trimmed.len())),
+                    );
+                }
+                remaining -= rows;
+                line_idx += 1;
+            }
+        }
+
         let pos = state
             .buffer
             .line_col_to_position(top_line + grid_row, grid_col);

@@ -1,4 +1,22 @@
 {
+  "bg": {
+    "cmd.show_diagnostics_panel": "Показване на панела за диагностика",
+    "cmd.show_diagnostics_panel_desc": "Отваряне на панела за диагностика",
+    "cmd.toggle_diagnostics_panel": "Превключване на панела за диагностика",
+    "cmd.toggle_diagnostics_panel_desc": "Превключване видимостта на панела за диагностика",
+    "status.loaded": "Приставката за панела за диагностика е заредена",
+    "status.failed_to_open": "Неуспешно отваряне на панела за диагностика",
+    "status.closed": "Панелът за диагностика е затворен",
+    "status.jumped_to": "Преминаване към %{file}:%{line}",
+    "status.move_to_diagnostic": "Преместване на курсора към ред с диагностика",
+    "status.showing": "Показване: %{label}",
+    "status.refreshed": "Диагностиката е опреснена",
+    "status.diagnostics_count": "Диагностика: %{count} елемента | a: филтър | RET: преминаване | q: затваряне",
+    "panel.header": "Диагностика (%{filter}):",
+    "panel.no_diagnostics": "Няма диагностични съобщения",
+    "panel.all_files": "Всички Файлове",
+    "panel.current_file": "Текущ Файл"
+  },
   "cs": {
     "cmd.show_diagnostics_panel": "Zobrazit panel diagnostiky",
     "cmd.show_diagnostics_panel_desc": "Otevrit panel diagnostiky",

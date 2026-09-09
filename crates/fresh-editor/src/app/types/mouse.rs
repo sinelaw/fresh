@@ -1,5 +1,4 @@
 use super::drag::TabDragState;
-use super::hover::HoverTarget;
 use crate::config::ExplorerWidth;
 use crate::model::event::{BufferId, ContainerId, LeafId, SplitDirection};
 
@@ -14,8 +13,6 @@ pub struct MouseState {
     pub drag_start_hcol: Option<u16>,
     /// Initial left_column when starting horizontal scrollbar drag
     pub drag_start_left_column: Option<usize>,
-    /// Last mouse position
-    pub last_position: Option<(u16, u16)>,
     /// Mouse hover for LSP: byte position being hovered, timer start, screen
     /// position, and the buffer the mouse is over.
     /// Format: (byte_position, hover_start_instant, screen_x, screen_y, buffer_id)
@@ -50,8 +47,6 @@ pub struct MouseState {
     /// preserves the active variant: a drag that begins in `Percent`
     /// stays in `Percent`, and likewise for `Columns`.
     pub drag_start_explorer_width: Option<ExplorerWidth>,
-    /// Current hover target (if any)
-    pub hover_target: Option<HoverTarget>,
     /// Whether we're currently doing a text selection drag
     pub dragging_text_selection: bool,
     /// The split where text selection started
@@ -64,18 +59,6 @@ pub struct MouseState {
     pub drag_selection_word_end: Option<usize>,
     /// Tab drag state (for drag-to-split functionality)
     pub dragging_tab: Option<TabDragState>,
-    /// Whether we're currently dragging a popup scrollbar (popup index)
-    pub dragging_popup_scrollbar: Option<usize>,
-    /// Initial scroll offset when starting to drag popup scrollbar
-    pub drag_start_popup_scroll: Option<usize>,
-    /// Whether we're currently dragging the prompt's suggestion-list
-    /// scrollbar (Live Grep floating overlay, issue #1796). The
-    /// rect is held in `ChromeLayout::suggestions_scrollbar_rect`
-    /// and the math is shared with the buffer-popup scrollbar via
-    /// `view::ui::scrollbar::ScrollbarState::click_to_offset`.
-    pub dragging_prompt_scrollbar: bool,
-    /// Whether we're currently selecting text in a popup (popup index)
-    pub selecting_in_popup: Option<usize>,
     /// Initial composite scroll_row when starting to drag the scrollbar thumb
     /// Used for composite buffer scrollbar drag
     pub drag_start_composite_scroll_row: Option<usize>,

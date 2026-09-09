@@ -20,9 +20,47 @@
 
 use crate::model::marker::{MarkerId, MarkerList};
 use crate::view::activation::ScopedActivation;
+use crate::view::theme::Theme;
 use fresh_core::api::MarkerActivation;
 use fresh_core::overlay::OverlayNamespace;
+use ratatui::style::Style;
 use std::collections::HashMap;
+
+/// A glyph run drawn at the head of a continuation row, stored the way
+/// `VirtualText` stores its styling: concrete colours in `style` as the
+/// fallback, theme keys kept separate so they re-resolve on every frame
+/// and follow live theme changes.
+///
+/// Its display width never exceeds the break's `indent` — the manager
+/// widens `indent` to fit at insert time (see [`SoftBreakManager::add_full`]),
+/// which is what lets every width consumer keep reading `indent` alone.
+#[derive(Debug, Clone)]
+pub struct SoftBreakPrefix {
+    pub text: String,
+    pub style: Style,
+    pub fg_theme_key: Option<String>,
+    pub bg_theme_key: Option<String>,
+}
+
+impl SoftBreakPrefix {
+    /// Resolve the on-screen `Style` against a live theme. Theme keys win
+    /// over the fallback's colours; modifiers from the fallback survive.
+    /// Same contract as [`crate::view::virtual_text::VirtualText::resolved_style`].
+    pub fn resolved_style(&self, theme: &Theme) -> Style {
+        let mut style = self.style;
+        if let Some(key) = &self.fg_theme_key {
+            if let Some(color) = theme.resolve_theme_key(key) {
+                style = style.fg(color);
+            }
+        }
+        if let Some(key) = &self.bg_theme_key {
+            if let Some(color) = theme.resolve_theme_key(key) {
+                style = style.bg(color);
+            }
+        }
+        style
+    }
+}
 
 /// A soft break point that injects a line break during rendering
 #[derive(Debug, Clone)]
@@ -33,13 +71,46 @@ pub struct SoftBreakPoint {
     /// Marker at the break position (right affinity — shifts with inserted text)
     pub marker_id: MarkerId,
 
-    /// Number of hanging indent spaces to insert after the break
+    /// Total width of the continuation row's indent, in columns. The single
+    /// number every width consumer reads; `prefix` is drawn inside it.
     pub indent: u16,
 
     /// Optional cursor-dependent activation rule, scope stored relative to
     /// the break marker. `None` = always active. Filtered at query time so
     /// cursor movement never mutates the marker set (see view/activation.rs).
     pub activation: Option<ScopedActivation>,
+
+    /// Optional glyph run drawn at the head of the continuation row.
+    /// `None` = the whole indent renders blank.
+    pub prefix: Option<SoftBreakPrefix>,
+}
+
+/// One soft break resolved for a render pass: where to break, how wide the
+/// continuation indent is, and what (if anything) to draw in it.
+///
+/// The token-producing transform takes these rather than raw
+/// `SoftBreakPoint`s so measurement-only callers — the wrap index, the row
+/// count cache — can build the same stream from plain `(position, indent)`
+/// pairs via [`SoftBreakRender::plain`].
+#[derive(Debug, Clone, PartialEq)]
+pub struct SoftBreakRender {
+    pub position: usize,
+    pub indent: u16,
+    /// Continuation-row glyphs and their theme-resolved style. The style is
+    /// `None` when the caller has no theme (measurement paths), which
+    /// changes colour only — never width.
+    pub prefix: Option<(String, Option<Style>)>,
+}
+
+impl SoftBreakRender {
+    /// A break with a blank continuation indent.
+    pub fn plain(position: usize, indent: u16) -> Self {
+        Self {
+            position,
+            indent,
+            prefix: None,
+        }
+    }
 }
 
 impl SoftBreakPoint {
@@ -106,7 +177,34 @@ impl SoftBreakManager {
         indent: u16,
         activation: Option<MarkerActivation>,
     ) {
-        let marker_id = marker_list.create(position, false); // right affinity
+        self.add_full(marker_list, namespace, position, indent, activation, None);
+    }
+
+    /// As [`add_with_activation`](Self::add_with_activation), plus a glyph
+    /// run for the continuation row.
+    ///
+    /// `indent` is widened to the prefix's display width when the caller
+    /// asks for a prefix wider than the indent it declared. `indent` is the
+    /// only width the scroll math and the wrap index ever see, so letting a
+    /// prefix overflow it would put the renderer and those consumers on
+    /// different column counts for the same row.
+    pub fn add_full(
+        &mut self,
+        marker_list: &mut MarkerList,
+        namespace: OverlayNamespace,
+        position: usize,
+        indent: u16,
+        activation: Option<MarkerActivation>,
+        prefix: Option<SoftBreakPrefix>,
+    ) {
+        let marker_id = marker_list.create(position);
+
+        let indent = match &prefix {
+            Some(p) => indent.max(
+                u16::try_from(fresh_core::display_width::str_width(&p.text)).unwrap_or(u16::MAX),
+            ),
+            None => indent,
+        };
 
         let idx = self.breaks.len();
         self.marker_to_idx.insert(marker_id, idx);
@@ -115,6 +213,7 @@ impl SoftBreakManager {
             marker_id,
             indent,
             activation: activation.map(|rule| ScopedActivation::from_absolute(&rule, position)),
+            prefix,
         });
         self.version = self.version.wrapping_add(1);
     }
@@ -201,7 +300,7 @@ impl SoftBreakManager {
     ///
     /// `cursors` are the rendering split's cursor byte positions, used to
     /// evaluate cursor-dependent activation rules. Pass `&[]` for
-    /// cursor-blind consumers (scroll math, `VisualRowIndex`) — they see
+    /// cursor-blind consumers (scroll math, `WrapIndex`) — they see
     /// the canonical "no cursor anywhere" rendering.
     pub fn query_viewport(
         &self,
@@ -232,6 +331,82 @@ impl SoftBreakManager {
         results.sort_by_key(|(pos, _)| *pos);
 
         results
+    }
+
+    /// As [`query_viewport`](Self::query_viewport), but carrying each break's
+    /// continuation prefix — what the token transform needs to actually draw
+    /// the row.
+    ///
+    /// `theme` is `Some` on the drawing path and `None` on measurement paths
+    /// (the per-line layout the scroll math reads). The prefix text is
+    /// emitted either way; only its colour depends on the theme, so both
+    /// paths lay out identical columns. Same split as
+    /// [`crate::view::ui::split_rendering::transforms::resolve_inline_hints`].
+    pub fn query_viewport_rendered(
+        &self,
+        start: usize,
+        end: usize,
+        marker_list: &MarkerList,
+        cursors: &[usize],
+        theme: Option<&Theme>,
+    ) -> Vec<SoftBreakRender> {
+        let mut results: Vec<SoftBreakRender> = self
+            .breaks
+            .iter()
+            .filter_map(|b| {
+                let pos = b.position(marker_list);
+                if let Some(a) = &b.activation {
+                    if !a.is_active(pos, cursors) {
+                        return None;
+                    }
+                }
+                if pos < start || pos >= end {
+                    return None;
+                }
+                Some(SoftBreakRender {
+                    position: pos,
+                    indent: b.indent,
+                    prefix: b
+                        .prefix
+                        .as_ref()
+                        .map(|p| (p.text.clone(), theme.map(|t| p.resolved_style(t)))),
+                })
+            })
+            .collect();
+
+        results.sort_by_key(|b| b.position);
+
+        results
+    }
+
+    /// Earliest soft break in `start..end` whose cursor-dependent activation
+    /// currently differs from the canonical evaluation. See
+    /// `ConcealManager::earliest_cursor_divergence` — same contract.
+    pub fn earliest_cursor_divergence(
+        &self,
+        start: usize,
+        end: usize,
+        marker_list: &MarkerList,
+        cursors: &[usize],
+    ) -> Option<usize> {
+        self.breaks
+            .iter()
+            .filter_map(|b| {
+                let a = b.activation.as_ref()?;
+                let pos = b.position(marker_list);
+                if pos < start || pos >= end {
+                    return None;
+                }
+                (a.is_active(pos, cursors) != a.is_active(pos, &[])).then_some(pos)
+            })
+            .min()
+    }
+
+    /// Number of stored soft breaks. Every viewport query walks all of them
+    /// (see [`query_viewport`](Self::query_viewport)), so this is the size of
+    /// a per-frame scan.
+    pub fn len(&self) -> usize {
+        self.breaks.len()
     }
 
     /// Returns true if there are no soft breaks
@@ -296,6 +471,70 @@ mod tests {
             .map(|(p, _)| p)
             .collect();
         assert_eq!(kept, vec![5, 65]);
+    }
+
+    fn prefix(text: &str) -> SoftBreakPrefix {
+        SoftBreakPrefix {
+            text: text.to_string(),
+            style: Style::default(),
+            fg_theme_key: None,
+            bg_theme_key: None,
+        }
+    }
+
+    /// `indent` is the only width the scroll math and the wrap index ever
+    /// read, so a prefix wider than the indent the plugin declared has to
+    /// grow it — otherwise the renderer would draw a row wider than every
+    /// other consumer believes it to be.
+    #[test]
+    fn test_soft_break_prefix_widens_a_too_narrow_indent() {
+        let mut marker_list = MarkerList::new();
+        marker_list.set_buffer_size(100);
+        let mut manager = SoftBreakManager::new();
+
+        manager.add_full(&mut marker_list, ns(), 10, 1, None, Some(prefix("▌ ")));
+
+        let breaks = manager.query_viewport(0, 100, &marker_list, &[]);
+        assert_eq!(breaks, vec![(10, 2)]);
+    }
+
+    /// An indent wider than the prefix is left alone — the prefix is drawn
+    /// inside it and the rest pads out.
+    #[test]
+    fn test_soft_break_prefix_narrower_than_indent_keeps_the_indent() {
+        let mut marker_list = MarkerList::new();
+        marker_list.set_buffer_size(100);
+        let mut manager = SoftBreakManager::new();
+
+        manager.add_full(&mut marker_list, ns(), 10, 6, None, Some(prefix("▌ ")));
+
+        let breaks = manager.query_viewport(0, 100, &marker_list, &[]);
+        assert_eq!(breaks, vec![(10, 6)]);
+    }
+
+    /// The width-only and render queries must report the same columns for
+    /// the same break: they feed the scroll math and the renderer, and a
+    /// disagreement between those two is what puts the cursor on the wrong
+    /// row.
+    #[test]
+    fn test_soft_break_queries_agree_on_indent() {
+        let mut marker_list = MarkerList::new();
+        marker_list.set_buffer_size(100);
+        let mut manager = SoftBreakManager::new();
+
+        manager.add_full(&mut marker_list, ns(), 10, 1, None, Some(prefix("▌ ")));
+        manager.add(&mut marker_list, ns(), 40, 3);
+
+        let widths = manager.query_viewport(0, 100, &marker_list, &[]);
+        let rendered = manager.query_viewport_rendered(0, 100, &marker_list, &[], None);
+
+        let pairs: Vec<(usize, u16)> = rendered.iter().map(|b| (b.position, b.indent)).collect();
+        assert_eq!(widths, pairs);
+        assert_eq!(
+            rendered[0].prefix.as_ref().map(|(t, _)| t.as_str()),
+            Some("▌ ")
+        );
+        assert_eq!(rendered[1].prefix, None);
     }
 
     #[test]

@@ -32,10 +32,13 @@ pub struct ConcealRange {
     /// Namespace for bulk operations (shared with overlay namespace system)
     pub namespace: OverlayNamespace,
 
-    /// Start marker (left affinity - stays before inserted text)
+    /// Start marker. Right gravity, like every marker `MarkerList::create`
+    /// makes: text inserted exactly at the conceal's start is swallowed by
+    /// the conceal rather than appearing before it.
     pub start_marker: MarkerId,
 
-    /// End marker (right affinity - moves after inserted text)
+    /// End marker, also right gravity: text typed at the conceal's end
+    /// extends it.
     pub end_marker: MarkerId,
 
     /// Optional replacement text to show instead of the concealed content.
@@ -114,8 +117,8 @@ impl ConcealManager {
         replacement: Option<String>,
         activation: Option<MarkerActivation>,
     ) {
-        let start_marker = marker_list.create(range.start, true); // left affinity
-        let end_marker = marker_list.create(range.end, false); // right affinity
+        let start_marker = marker_list.create(range.start);
+        let end_marker = marker_list.create(range.end);
 
         let idx = self.ranges.len();
         self.marker_to_idx.insert(start_marker, idx);
@@ -272,7 +275,7 @@ impl ConcealManager {
     ///
     /// `cursors` are the rendering split's cursor byte positions, used to
     /// evaluate cursor-dependent activation rules. Pass `&[]` for
-    /// cursor-blind consumers (scroll math, `VisualRowIndex`) — they see
+    /// cursor-blind consumers (scroll math, `WrapIndex`) — they see
     /// the canonical "no cursor anywhere" rendering.
     pub fn query_viewport(
         &self,
@@ -282,6 +285,34 @@ impl ConcealManager {
         cursors: &[usize],
     ) -> Vec<(Range<usize>, Option<&str>)> {
         self.query_viewport_excluding(start, end, marker_list, None, cursors)
+    }
+
+    /// Earliest conceal in `start..end` whose cursor-dependent activation
+    /// currently differs from the canonical (cursor-less) evaluation.
+    ///
+    /// The wrap index is canonical, so rows at and after this byte can wrap
+    /// differently on screen than the index says. An anchored build whose
+    /// anchor sits past this byte must re-anchor here — the model's
+    /// `_stable_anchor` — or the frame draws rows the placement never meant.
+    pub fn earliest_cursor_divergence(
+        &self,
+        start: usize,
+        end: usize,
+        marker_list: &MarkerList,
+        cursors: &[usize],
+    ) -> Option<usize> {
+        self.ranges
+            .iter()
+            .filter_map(|r| {
+                let a = r.activation.as_ref()?;
+                let range = r.range(marker_list);
+                if range.start < start || range.start >= end {
+                    return None;
+                }
+                (a.is_active(range.start, cursors) != a.is_active(range.start, &[]))
+                    .then_some(range.start)
+            })
+            .min()
     }
 
     /// Like [`query_viewport`](Self::query_viewport), but skips ranges whose
@@ -353,6 +384,13 @@ impl ConcealManager {
             }
         }
         None
+    }
+
+    /// Number of stored conceal ranges. Every viewport query walks all of
+    /// them (see [`query_viewport_excluding`](Self::query_viewport_excluding)),
+    /// so this is the size of a per-frame scan.
+    pub fn len(&self) -> usize {
+        self.ranges.len()
     }
 
     /// Returns true if there are no conceal ranges

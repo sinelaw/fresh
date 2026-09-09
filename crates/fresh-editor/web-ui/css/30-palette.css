@@ -1,0 +1,125 @@
+  /* Command palette / picker.
+     (web-ui/css — concatenated in filename order into the page's single
+     <style> block by crates/fresh-editor/build.rs; order is load-bearing:
+     later files deliberately override earlier ones.) */
+  /* ---- command palette / picker (native) ---- */
+  .palette{position:absolute;z-index:90;display:flex;flex-direction:column;
+    background:var(--bg2);border:1px solid var(--border);border-radius:8px;box-shadow:0 18px 60px rgba(0,0,0,.6);overflow:hidden}
+  .palette.with-preview{overflow:hidden}
+  /* Centered-modal placement (paletteCentered): float the palette as a modal
+     panel over the whole view instead of the bottom sheet. Placement is CSS-
+     driven — the card is centered by transform and capped by max-width/height,
+     with a `.modal-scrim` behind it (emitted by the palette region filler).
+     A preview overlay keeps its cell-derived width (set inline) so the results
+     column still lines up with the framed preview beside it. */
+  .palette.centered{left:50%;top:50%;bottom:auto;transform:translate(-50%,-50%);
+    z-index:96;width:min(880px,94%);max-width:94%;max-height:84vh;
+    /* Stained-glass: a translucent surface with a heavy backdrop blur so the
+       editor behind it reads through as frosted colour, not a flat panel. */
+    background:color-mix(in srgb, var(--bg2) 68%, transparent);
+    backdrop-filter:blur(22px) saturate(1.7);-webkit-backdrop-filter:blur(22px) saturate(1.7);
+    border:1px solid var(--hairline-strong);box-shadow:0 28px 90px rgba(0,0,0,.62)}
+  /* Roomier list — a min-height keeps the modal a substantial panel even when
+     only a few commands match, instead of collapsing to a tiny box. The cap is
+     a pure viewport fraction (no fixed pixel ceiling) so a tall display shows
+     more rows; the WIDTH stays capped above, which is the point of a palette. */
+  .palette.centered .plist{max-height:66vh;min-height:330px}
+  /* Let the frosted surface show through the header rows (they'd otherwise be
+     painted opaque by their own --bg / --bg2 fills). */
+  .palette.centered .pinput{background:transparent}
+  /* Title bar: label on the left, a close 'x' on the right. */
+  .palette.centered .ptitlebar{display:flex;align-items:center;justify-content:space-between;
+    gap:10px;padding:8px 8px 8px 14px;border-bottom:1px solid var(--hairline);
+    color:var(--fg);font-weight:600;flex:0 0 auto}
+  .palette.centered .ptitlebar .ptbtext{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .palette.centered .ptitlebar .ptbclose{cursor:pointer;color:var(--muted);flex:0 0 auto;
+    width:24px;height:24px;line-height:23px;text-align:center;border-radius:6px;font-size:15px}
+  .palette.centered .ptitlebar .ptbclose:hover{background:var(--hover);color:var(--fg)}
+  .palette .pbody{display:flex;align-items:stretch;min-height:0}
+  .palette .pbody .plist{max-height:none;border-right:1px solid var(--border)}
+  .palette .ppreview{background:var(--bg);overflow:hidden}
+  .palette .ppreview svg.cells{width:100%;height:100%}
+  .palette .pinput{display:flex;align-items:center;gap:8px;padding:7px 12px;border-bottom:1px solid var(--border);background:var(--bg)}
+  .palette .pinput .pmsg{color:var(--muted);white-space:pre;flex:0 0 auto}
+  /* The input line never ellipsises: the TUI already fits the prompt to the row,
+     so we show the query in full and, if it's longer than the box, scroll it to
+     the caret (scrollToCaret) — the terminal's own behaviour — instead of
+     hiding the tail behind a "…". */
+  .palette .pinput .q{flex:1;color:var(--fg);white-space:pre;overflow:hidden;text-overflow:clip}
+  .palette.input-only .pinput .q{flex:1}
+  .palette .pinput .q .caret2{display:inline-block;width:1px;background:#aeafad;animation:blink 1.05s steps(1) infinite}
+  .palette .pinput .status{color:var(--muted)}
+  .palette .pinput .count{color:var(--muted)}
+  .palette .plist{overflow-y:auto;max-height:50vh;padding:4px 0}
+  .palette .prow{display:flex;align-items:center;gap:10px;padding:3px 12px;cursor:default;color:var(--fg)}
+  .palette .prow.sel{background:var(--menuhi);color:#fff}
+  .palette .prow.disabled{color:#6a6a6a}
+  .palette .prow .ptext{flex:0 0 auto}
+  .palette .prow .pdesc{flex:1;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .palette .prow.sel .pdesc{color:#dfe8ff}
+  .palette .prow .pkey{color:var(--muted);border:1px solid #555;border-radius:3px;padding:0 5px}
+  .palette .prow.sel .pkey{color:#fff;border-color:#9bbcf0}
+  .palette .ptitle{padding:6px 12px;color:var(--muted);border-bottom:1px solid #3a3a3a}
+
+  /* ---- file browser (Open File / Save As / Switch Project) ----
+     Same card as the centered palette, with a file-manager interior: a path
+     title, the prompt input, a toolbar of nav shortcuts + toggles, sortable
+     column headers and the entry rows. Everything is native DOM built from
+     `palette.browser`; the row window and every click target are the editor's
+     (see js/50-palette.js). */
+  .palette.filebrowser{width:min(920px,94%)}
+  /* A deep path elides in the MIDDLE: the leading directories shrink with an
+     ellipsis while the last segment — the one that says where you are — never
+     shrinks. (Eliding by flipping the box to `direction:rtl` instead would move
+     the leading "/" to the other end, since a slash is bidi-neutral.) */
+  .palette.filebrowser .fbpath{display:flex;min-width:0;font-family:var(--mono-family)}
+  .palette.filebrowser .fbpath .fbphead{min-width:0;overflow:hidden;text-overflow:ellipsis;
+    white-space:nowrap}
+  .palette.filebrowser .fbpath .fbptail{flex:0 0 auto;white-space:nowrap}
+  .palette.filebrowser .pinput{border-bottom:1px solid var(--hairline)}
+  .palette.filebrowser .fbtools{display:flex;align-items:center;justify-content:space-between;
+    gap:12px;flex-wrap:wrap;padding:7px 12px;border-bottom:1px solid var(--hairline)}
+  .palette.filebrowser .fbnav,.palette.filebrowser .fbtoggles{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+  .palette.filebrowser .fbchip{padding:2px 10px;border-radius:999px;color:var(--fg);cursor:default;
+    border:1px solid var(--hairline);font-family:var(--mono-family)}
+  .palette.filebrowser .fbchip:hover{background:var(--hover)}
+  .palette.filebrowser .fbchip.sel{background:var(--menuhi);color:#fff;border-color:transparent}
+  .palette.filebrowser .fbtoggle{display:flex;align-items:center;gap:6px;padding:2px 10px;border-radius:999px;
+    color:var(--muted);cursor:default;border:1px solid transparent}
+  .palette.filebrowser .fbtoggle:hover{background:var(--hover)}
+  .palette.filebrowser .fbtoggle.on{color:var(--fg)}
+  .palette.filebrowser .fbbox{display:inline-flex;align-items:center;justify-content:center;
+    width:14px;height:14px;border-radius:3px;border:1px solid var(--hairline-strong,var(--border));
+    font-size:10px;line-height:1}
+  .palette.filebrowser .fbtoggle.on .fbbox{background:var(--ui-accent);color:var(--on-ui-accent);border-color:transparent}
+  .palette.filebrowser .fbkey{color:var(--muted);opacity:.8}
+  /* Header and rows share one grid so the columns line up. */
+  .palette.filebrowser .fbhead,.palette.filebrowser .fbrow{
+    display:grid;grid-template-columns:1fr 92px 128px;gap:12px;padding:3px 14px;align-items:center}
+  .palette.filebrowser .fbhead{color:var(--muted);border-bottom:1px solid var(--hairline);
+    padding-top:6px;padding-bottom:6px;font-size:.92em}
+  .palette.filebrowser .fbcol{cursor:default;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .palette.filebrowser .fbcol:hover{color:var(--fg)}
+  .palette.filebrowser .fbcol.sort{color:var(--fg)}
+  .palette.filebrowser .fbcol-size,.palette.filebrowser .fbcol-modified{text-align:right}
+  .palette.filebrowser .fbrows{overflow-y:auto;padding:4px 0;min-height:120px;max-height:56vh}
+  .palette.filebrowser .fbrow{cursor:default;color:var(--fg)}
+  .palette.filebrowser .fbrow:hover{background:var(--hover)}
+  /* Base selection, re-skinned with every other selected row by the polish
+     pass (60-polish.css) — same treatment as `.prow.sel`. */
+  .palette.filebrowser .fbrow.sel{background:var(--menuhi);color:#fff}
+  .palette.filebrowser .fbrow.sel .fbname,.palette.filebrowser .fbrow.sel .fbsize,
+  .palette.filebrowser .fbrow.sel .fbmod{color:inherit}
+  .palette.filebrowser .fbrow.dir .fbname{color:var(--ui-accent)}
+  .palette.filebrowser .fbrow.sel.dir .fbname{color:inherit}
+  /* Entries the filter text doesn't match: the TUI dims them rather than
+     hiding them, so the list never jumps under the cursor. */
+  .palette.filebrowser .fbrow.nomatch{opacity:.45}
+  .palette.filebrowser .fbname{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+    font-family:var(--mono-family)}
+  .palette.filebrowser .fbsize,.palette.filebrowser .fbmod{color:var(--muted);text-align:right;
+    white-space:nowrap;font-variant-numeric:tabular-nums}
+  .palette.filebrowser .fbempty{padding:10px 14px;color:var(--muted)}
+  .palette.filebrowser .fbempty.fberr{color:#ff9b9b}
+  .palette.filebrowser .fbfoot{display:flex;justify-content:flex-end;padding:5px 14px;
+    color:var(--muted);border-top:1px solid var(--hairline)}

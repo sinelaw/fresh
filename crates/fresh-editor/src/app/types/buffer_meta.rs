@@ -1,5 +1,5 @@
 use super::lsp_uri::LspUri;
-use rust_i18n::t;
+use fresh_i18n::t;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
@@ -110,6 +110,14 @@ impl BufferMetadata {
         match &self.kind {
             BufferKind::Virtual { mode } => Some(mode),
             BufferKind::File { .. } => None,
+        }
+    }
+
+    /// Re-point a virtual buffer at a different mode. No-op on a
+    /// file-backed buffer, whose keybindings come from its language.
+    pub fn set_virtual_mode(&mut self, new_mode: impl Into<String>) {
+        if let BufferKind::Virtual { mode } = &mut self.kind {
+            *mode = new_mode.into();
         }
     }
 }

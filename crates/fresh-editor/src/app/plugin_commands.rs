@@ -5,11 +5,11 @@
 use crate::model::cursor::Cursors;
 use crate::model::event::{BufferId, ContainerId, CursorId, Event, LeafId, OverlayFace, SplitId};
 use crate::view::overlay::{OverlayHandle, OverlayNamespace};
-use crate::view::split::SplitViewState;
+use crate::view::split::{BufferViewState, SplitViewState};
 use anyhow::Result as AnyhowResult;
 use fresh_core::api::{
     GrepMatch, JsCallbackId, LayoutHints, MenuPosition, OverlayOptions, PluginResponse,
-    ReplaceResult, ViewTransformPayload,
+    ReplaceResult,
 };
 use std::sync::Arc;
 
@@ -25,6 +25,23 @@ const IGNORED_DIRS: &[&str] = &[
     ".svn",
     ".DS_Store",
 ];
+
+/// Does `item` answer to `needle` — either as its action id or as its
+/// display label?
+///
+/// Menu labels are translated, so a plugin placing a row relative to an
+/// existing one ("after the file-explorer toggle") can only name it
+/// reliably by action. Labels stay accepted for submenus, which have no
+/// action, and for callers that already know the rendered text.
+fn menu_item_matches(item: &crate::config::MenuItem, needle: &str) -> bool {
+    match item {
+        crate::config::MenuItem::Action { label, action, .. } => {
+            action == needle || label == needle
+        }
+        crate::config::MenuItem::Submenu { label, .. } => label == needle,
+        _ => false,
+    }
+}
 
 /// Build `FileSearchOptions` from the common grep parameters.
 fn make_search_opts(
@@ -130,6 +147,101 @@ impl Editor {
             {
                 self.plugin_render_requested = true;
             }
+        }
+    }
+
+    /// Handle SetSyntaxRegions: a plugin-composed buffer says where its
+    /// code is and in what language (see `SyntaxRegion`). Only a virtual
+    /// buffer can be told this — a file has a grammar of its own that a
+    /// plugin must not take away — and each language is resolved here,
+    /// through the catalog, so a region named by a path gets the grammar
+    /// the editor would open that file with.
+    pub(super) fn handle_set_syntax_regions(
+        &mut self,
+        buffer_id: BufferId,
+        regions: Vec<fresh_core::api::SyntaxRegion>,
+    ) {
+        use crate::primitives::highlight_engine::{DeclaredRegion, HighlightEngine};
+
+        let registry = std::sync::Arc::clone(&self.grammar_registry);
+        let window = self
+            .windows
+            .get_mut(&self.active_window)
+            .expect("active window present");
+        let is_virtual = window
+            .buffer_metadata
+            .get(&buffer_id)
+            .is_some_and(|meta| meta.is_virtual());
+        if !is_virtual {
+            tracing::warn!(
+                "SetSyntaxRegions: {:?} is not a plugin-composed buffer; ignored",
+                buffer_id
+            );
+            return;
+        }
+        let mut resolved: std::collections::HashMap<String, Option<usize>> =
+            std::collections::HashMap::new();
+        let declared: Vec<DeclaredRegion> = regions
+            .into_iter()
+            .map(|region| {
+                let syntax_index =
+                    *resolved
+                        .entry(region.language)
+                        .or_insert_with_key(|language| {
+                            let found = registry.embedded_syntax_index(language);
+                            if found.is_none() {
+                                tracing::warn!(
+                                    "SetSyntaxRegions: no grammar for {:?}; its rows stay plain",
+                                    language
+                                );
+                            }
+                            found
+                        });
+                DeclaredRegion {
+                    start: region.start,
+                    end: region.end,
+                    syntax_index,
+                    prefix: region.prefix,
+                    streams: region.streams,
+                }
+            })
+            .collect();
+        if let Some(state) = window.buffer_state_mut(buffer_id) {
+            if state.highlighter.hosts_declared_regions() {
+                state.highlighter.set_declared_regions(declared);
+            } else {
+                state.highlighter =
+                    HighlightEngine::declared_region_host(registry.syntax_set_arc(), declared);
+            }
+            #[cfg(feature = "plugins")]
+            {
+                self.plugin_render_requested = true;
+            }
+        }
+    }
+
+    /// Handle SetCursorLineOverlay command
+    pub(super) fn handle_set_cursor_line_overlay(
+        &mut self,
+        buffer_id: BufferId,
+        options: Option<OverlayOptions>,
+    ) {
+        let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .expect("active window present")
+            .buffer_state_mut(buffer_id)
+        else {
+            tracing::warn!("SetCursorLineOverlay: buffer {:?} not found", buffer_id);
+            return;
+        };
+        state.cursor_line_overlay.set_spec(options);
+        // The bar itself is placed by the next frame's decoration pass —
+        // ask for that frame, since declaring one usually happens while
+        // nothing else is redrawing.
+        #[cfg(feature = "plugins")]
+        {
+            self.plugin_render_requested = true;
         }
     }
 
@@ -566,6 +678,36 @@ impl Editor {
         }
     }
 
+    /// Handle ClearVirtualTextsInRange — per-line *inline* virtual-text clear.
+    pub(super) fn handle_clear_virtual_texts_in_range(
+        &mut self,
+        buffer_id: BufferId,
+        id_prefix: String,
+        start: usize,
+        end: usize,
+        epoch: Option<u64>,
+    ) {
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .expect("active window present")
+            .buffer_state_mut(buffer_id)
+        {
+            // Same stale-range repair as the virtual-line clear above: the
+            // plugin computed `[start, end)` against the `lines_changed` epoch.
+            let (start, end) = match state.map_plugin_range(start, end, epoch) {
+                Some(r) => r,
+                None => return,
+            };
+            state.virtual_texts.clear_inline_in_range(
+                &mut state.marker_list,
+                &id_prefix,
+                start,
+                end,
+            );
+        }
+    }
+
     // ==================== Conceal Commands ====================
 
     /// Handle AddConceal command - add a conceal range that hides or replaces bytes
@@ -752,7 +894,11 @@ impl Editor {
         indent: u16,
         epoch: Option<u64>,
         activation: Option<fresh_core::api::MarkerActivation>,
+        prefix: Option<fresh_core::api::SoftBreakPrefix>,
     ) {
+        use fresh_core::api::OverlayColorSpec;
+        use ratatui::style::{Color, Modifier, Style};
+
         if let Some(state) = self
             .windows
             .get_mut(&self.active_window)
@@ -775,12 +921,44 @@ impl Editor {
                     scope_end,
                 })
             });
-            state.soft_breaks.add_with_activation(
+            // Concrete colours become the fallback style; theme keys are kept
+            // separate so they re-resolve every frame and follow live theme
+            // changes — same split as plugin virtual text (see
+            // `handle_add_virtual_text` above).
+            let prefix = prefix.map(|p| {
+                let mut style = Style::default();
+                let mut fg_theme_key = None;
+                let mut bg_theme_key = None;
+                match p.fg {
+                    Some(OverlayColorSpec::Rgb(r, g, b)) => style = style.fg(Color::Rgb(r, g, b)),
+                    Some(OverlayColorSpec::ThemeKey(k)) => fg_theme_key = Some(k),
+                    None => {}
+                }
+                match p.bg {
+                    Some(OverlayColorSpec::Rgb(r, g, b)) => style = style.bg(Color::Rgb(r, g, b)),
+                    Some(OverlayColorSpec::ThemeKey(k)) => bg_theme_key = Some(k),
+                    None => {}
+                }
+                if p.bold {
+                    style = style.add_modifier(Modifier::BOLD);
+                }
+                if p.italic {
+                    style = style.add_modifier(Modifier::ITALIC);
+                }
+                crate::view::soft_break::SoftBreakPrefix {
+                    text: p.text,
+                    style,
+                    fg_theme_key,
+                    bg_theme_key,
+                }
+            });
+            state.soft_breaks.add_full(
                 &mut state.marker_list,
                 namespace,
                 position,
                 indent,
                 activation,
+                prefix,
             );
             #[cfg(feature = "plugins")]
             {
@@ -834,6 +1012,12 @@ impl Editor {
     // ==================== Menu Commands ====================
 
     /// Handle AddMenuItem command
+    ///
+    /// `position`'s `Before`/`After` neighbour is resolved by
+    /// [`menu_item_matches`] — action id or display label — so a plugin can
+    /// say "after `toggle_file_explorer`" instead of guessing the
+    /// translated label of the row it wants to sit next to. An unmatched
+    /// neighbour appends rather than dropping the row.
     pub(super) fn handle_add_menu_item(
         &mut self,
         menu_label: String,
@@ -841,28 +1025,14 @@ impl Editor {
         position: MenuPosition,
     ) {
         let inserted = self.with_menu_by_label(&menu_label, |menu| {
+            let find = |needle: &str| menu.items.iter().position(|i| menu_item_matches(i, needle));
             let insert_idx = match position {
                 MenuPosition::Top => 0,
                 MenuPosition::Bottom => menu.items.len(),
-                MenuPosition::Before(label) => menu
-                    .items
-                    .iter()
-                    .position(|i| match i {
-                        crate::config::MenuItem::Action { label: l, .. }
-                        | crate::config::MenuItem::Submenu { label: l, .. } => l == &label,
-                        _ => false,
-                    })
-                    .unwrap_or(menu.items.len()),
-                MenuPosition::After(label) => menu
-                    .items
-                    .iter()
-                    .position(|i| match i {
-                        crate::config::MenuItem::Action { label: l, .. }
-                        | crate::config::MenuItem::Submenu { label: l, .. } => l == &label,
-                        _ => false,
-                    })
-                    .map(|i| i + 1)
-                    .unwrap_or(menu.items.len()),
+                MenuPosition::Before(label) => find(&label).unwrap_or(menu.items.len()),
+                MenuPosition::After(label) => {
+                    find(&label).map(|i| i + 1).unwrap_or(menu.items.len())
+                }
             };
             menu.items.insert(insert_idx, item);
             insert_idx
@@ -1016,13 +1186,13 @@ impl Editor {
 
         // Plugin sends arbitrary SplitId — convert to LeafId at the boundary.
         // Go through set_pane_buffer so tree + SVS stay consistent (the
-        // downstream view_state block tweaks open_buffers/view_transform
+        // downstream view_state block tweaks open_buffers/view state
         // further, but the primitive is what keeps the invariant).
         let leaf_id = LeafId(split_id);
         self.active_window_mut().set_pane_buffer(leaf_id, buffer_id);
         tracing::info!("Set split {:?} to buffer {:?}", split_id, buffer_id);
 
-        // Switch per-buffer view state — the new buffer's own view_transform
+        // Switch per-buffer view state — the new buffer's own decorations
         // and compose_width will be restored (or defaults if first time)
         if let Some(view_state) = self
             .windows
@@ -1050,26 +1220,56 @@ impl Editor {
 
     /// Handle SetSplitRatio command.
     ///
-    /// Returns `true` if `split_id` resolved to a resizable split
-    /// container and the ratio was applied, `false` if it pointed at a
-    /// leaf, grouped, or unknown node. Every plugin-visible split id is
-    /// a leaf, so a plugin calling `setSplitRatio` on one must be a
-    /// graceful no-op that reports failure — never a panic that aborts
-    /// the editor (issue #2770).
+    /// Every split id a plugin can obtain is a *leaf* id (`getActiveSplitId`,
+    /// `listSplits`, `BufferInfo.splits`, `createTerminal` all return leaf
+    /// ids), but only a `SplitNode::Split` *container* carries a resizable
+    /// `ratio`. So we resolve the leaf to its parent container and set the
+    /// parent's ratio — that is exactly "resize the pane the plugin is
+    /// pointing at" (it moves the divider between that leaf and its sibling).
+    ///
+    /// Ratio orientation: a parent `Split`'s `ratio` is the fraction of space
+    /// given to its FIRST child (larger ratio => bigger first child, smaller
+    /// second child). A plugin asking to resize "its" leaf resizes that
+    /// parent split; whether the leaf is the first or second child, adjusting
+    /// the parent ratio is the single, well-defined knob for that divider, and
+    /// the stored value is clamped only to the raw `[0.0, 1.0]` range; a sibling
+    /// pane is kept usable by the layout-time min-pane-size guard rather than a
+    /// fixed percentage floor. Callers wanting a specific pane to grow should
+    /// account for which side it sits on.
+    ///
+    /// Returns `true` if the ratio was applied:
+    /// - a leaf id with a resizable parent `Split` → set the parent's ratio;
+    /// - a container id (rare for plugins) → set it directly (legacy behavior);
+    /// - a lone top-level leaf (no parent container) or unknown id → no-op,
+    ///   `false`. Never panics (issue #2770, follow-up to #2774).
     pub(super) fn handle_set_split_ratio(&mut self, split_id: SplitId, ratio: f32) -> bool {
-        // Plugin sends arbitrary SplitId — convert to ContainerId at the boundary
-        let container_id = ContainerId(split_id);
-        let applied = self
+        let manager = self
             .windows
             .get_mut(&self.active_window)
             .and_then(|w| w.split_manager_mut())
-            .expect("active window must have a populated split layout")
-            .set_ratio(container_id, ratio);
+            .expect("active window must have a populated split layout");
+
+        // Try the id as a container directly first (preserves behavior for a
+        // real container id); `set_ratio` is a no-op returning `false` on a
+        // leaf/grouped/unknown node. If that fails, resolve the (leaf) id to
+        // its parent container and set that.
+        let applied = if manager.set_ratio(ContainerId(split_id), ratio) {
+            true
+        } else if let Some(parent) = manager.parent_container_of(LeafId(split_id)) {
+            manager.set_ratio(parent, ratio)
+        } else {
+            false
+        };
+
         if applied {
+            // The two panes either side of the container changed width /
+            // height — reflow through the layout funnel so their terminals
+            // follow, same as the separator drag and `adjust_split_size`.
+            self.relayout();
             tracing::debug!("Set split {:?} ratio to {}", split_id, ratio);
         } else {
             tracing::debug!(
-                "setSplitRatio: split {:?} is not a resizable container; ignoring",
+                "setSplitRatio: split {:?} has no resizable parent container; ignoring",
                 split_id
             );
         }
@@ -1085,6 +1285,8 @@ impl Editor {
             .and_then(|w| w.split_manager_mut())
             .expect("active window must have a populated split layout")
             .distribute_splits_evenly();
+        // Every pane just changed size — reflow through the layout funnel.
+        self.relayout();
         tracing::debug!("Distributed splits evenly");
     }
 
@@ -1094,62 +1296,63 @@ impl Editor {
     /// the inner leaves of all grouped subtrees stored in `grouped_subtrees`,
     /// mirroring `handle_scroll_buffer_to_line` — buffer-group panel buffers
     /// are not represented in `split_manager`'s tree, so the basic lookup
-    /// returns nothing for them.
+    /// returns nothing for them. That walk is
+    /// [`Editor::splits_showing_buffer`], shared with the widget runtime's
+    /// own caret moves so the two cannot drift.
     pub(super) fn handle_set_buffer_cursor(&mut self, buffer_id: BufferId, position: usize) {
-        // Find all splits that display this buffer (main tree + grouped subtrees).
-        let mut splits: Vec<crate::app::LeafId> = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
-            .splits_for_buffer(buffer_id);
-        for node in self.active_window().grouped_subtrees.values() {
-            if let crate::view::split::SplitNode::Grouped { layout, .. } = node {
-                for inner_leaf in layout.leaf_split_ids() {
-                    if let Some(vs) = self
-                        .windows
-                        .get(&self.active_window)
-                        .and_then(|w| w.buffers.splits())
-                        .map(|(_, vs)| vs)
-                        .expect("active window must have a populated split layout")
-                        .get(&inner_leaf)
-                    {
-                        if vs.active_buffer == buffer_id && !splits.contains(&inner_leaf) {
-                            splits.push(inner_leaf);
-                        }
-                    }
-                }
-            }
-        }
-        let active_split = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(mgr, _)| mgr)
-            .expect("active window must have a populated split layout")
-            .active_split();
-
         tracing::debug!(
-            "SetBufferCursor: buffer_id={:?}, position={}, found {} splits: {:?}, active={:?}",
+            "SetBufferCursor: buffer_id={:?}, position={}",
             buffer_id,
             position,
-            splits.len(),
-            splits,
-            active_split
         );
+        self.seat_buffer_cursor(buffer_id, position);
+    }
 
-        if splits.is_empty() {
-            tracing::warn!("No splits found for buffer {:?}", buffer_id);
-        }
-
-        let _ = active_split;
-        if self.active_window().buffers.get(&buffer_id).is_none() {
-            tracing::warn!("Buffer {:?} not found for SetBufferCursor", buffer_id);
+    /// `scrollToWidget`: move the panel's page to the widget the plugin
+    /// names.
+    ///
+    /// A buffer-mounted panel is described, and a *page* panel is one
+    /// viewport the tree owns (`WidgetPanelOptions::page`); "take me to
+    /// this widget" is a command on that window, answered by the layout that
+    /// measured the page (`fresh_ui::behavior::Anchor`). `Top` puts the
+    /// widget's band on the window's top row; `Minimal` moves the window
+    /// only as far as it takes to bring the band into view — following
+    /// focus, where a Tab between two controls of one card should not move
+    /// the page. A panel that is not a page has nothing to scroll: its lists
+    /// window themselves and follow their own selection.
+    pub(super) fn handle_scroll_to_widget(
+        &mut self,
+        buffer_id: BufferId,
+        key: &str,
+        align: fresh_core::api::ScrollAlign,
+    ) {
+        let Some(anchor) = self
+            .widget_registry
+            .panels_for_buffer(buffer_id)
+            .into_iter()
+            .find_map(|pk| self.page_anchors.get(&pk).cloned())
+        else {
+            tracing::debug!("ScrollToWidget: no page panel in buffer {buffer_id:?} for {key:?}");
             return;
+        };
+        let Some(node) = self
+            .widget_registry
+            .panels_for_buffer(buffer_id)
+            .into_iter()
+            .filter_map(|pk| self.widget_registry.get(&pk))
+            .find_map(|p| crate::widgets::find_widget_by_key(&p.spec, key))
+            .and_then(crate::view::shell::widgets::node_key_of)
+        else {
+            tracing::debug!("ScrollToWidget: no widget {key:?} in buffer {buffer_id:?}");
+            return;
+        };
+        match align {
+            fresh_core::api::ScrollAlign::Minimal => anchor.reveal_key(node),
+            fresh_core::api::ScrollAlign::Top => anchor.top_key(node),
         }
-        self.active_window_mut()
-            .set_buffer_cursor_in_splits(buffer_id, position, &splits);
+        // The command is applied by the next layout, which the stale mark
+        // asks for.
+        self.shell_description_stale = true;
     }
 
     /// Handle SetSplitScroll command
@@ -1474,6 +1677,42 @@ impl Editor {
         Ok(())
     }
 
+    /// Handle PreviewFileInSplit: browse a file in `split_id` as the
+    /// editor's single preview tab, without moving focus there.
+    ///
+    /// The two failure modes are deliberately not alike. A split id that
+    /// doesn't resolve is the plugin's bug and is reported (#2769) — the
+    /// same rule `handle_open_file_in_split` follows. A file that won't
+    /// preview is not: a browse walks over whatever the search matched,
+    /// including files that are unreadable, or large enough that loading
+    /// them would have to ask about their encoding
+    /// (`LargeFileEncodingConfirmation`), and neither a dialog nor an error
+    /// belongs in the middle of a live result list. Skip it and log — the
+    /// same thing the explorer's arrow-key preview does — and leave the
+    /// full story for the deliberate open the user makes with Enter.
+    pub(super) fn handle_preview_file_in_split(
+        &mut self,
+        split_id: usize,
+        path: std::path::PathBuf,
+        line: Option<usize>,
+        column: Option<usize>,
+    ) -> AnyhowResult<()> {
+        let target_split = LeafId(SplitId(split_id));
+        if !self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.splits())
+            .is_some_and(|(_, view_states)| view_states.contains_key(&target_split))
+        {
+            anyhow::bail!("previewFileInSplit: split {} does not exist", split_id);
+        }
+
+        if let Err(e) = self.preview_file_in_split(&path, target_split, line, column) {
+            tracing::debug!("previewFileInSplit: skipping preview for {:?}: {}", path, e);
+        }
+        Ok(())
+    }
+
     /// Handle OpenFileInBackground command
     pub(super) fn handle_open_file_in_background(&mut self, path: std::path::PathBuf) {
         // Open file in a new tab without switching to it
@@ -1551,8 +1790,15 @@ impl Editor {
     }
 
     /// Handle CloseBuffer command
-    pub(super) fn handle_close_buffer(&mut self, buffer_id: BufferId) {
-        match self.close_buffer(buffer_id) {
+    pub(super) fn handle_close_buffer(&mut self, buffer_id: BufferId, force: bool) {
+        // `force` skips the unsaved-changes check. A plugin closing a scratch
+        // buffer it authored is discarding its own writes, not the user's.
+        let result = if force {
+            self.force_close_buffer(buffer_id)
+        } else {
+            self.close_buffer(buffer_id)
+        };
+        match result {
             Ok(()) => {
                 tracing::info!("Closed buffer {:?}", buffer_id);
             }
@@ -1833,7 +2079,56 @@ impl Editor {
     /// Sets line number visibility on the specified buffer's per-split view state,
     /// so that different splits showing the same buffer can have independent
     /// line number settings (e.g., source mode shows line numbers, compose hides them).
+    ///
+    /// This is the *user command* channel: it records the same explicit
+    /// per-buffer pin that "Toggle Line Numbers (Current Buffer)" records, so
+    /// vi's `:set number` / `:set nonumber` do what they say even on a buffer
+    /// that is already pinned the other way, and the choice persists with the
+    /// rest of the per-file workspace state. A mode announcing its own default
+    /// must use [`Self::handle_set_line_numbers_default`] instead — see issue
+    /// #2931 for what happens when the two are conflated.
     pub(super) fn handle_set_line_numbers(&mut self, buffer_id: BufferId, enabled: bool) {
+        self.with_active_split_buffer_view(buffer_id, |vs| {
+            vs.line_numbers_override = Some(enabled);
+            vs.show_line_numbers = enabled;
+        });
+    }
+
+    /// Handle SetLineNumbersDefault command
+    ///
+    /// The *mode default* channel, the counterpart of `SetFoldIndicators`:
+    /// writes `line_numbers_plugin_override`, never the user's
+    /// `line_numbers_override`, and `None` withdraws the plugin's opinion.
+    ///
+    /// Markdown compose re-asserts its `false` from `buffer_activated`, which
+    /// fires every time focus returns to a tab that is already open. Writing
+    /// that straight onto the rendered flag erased a pin the user had made
+    /// while composing (issue #2931); keeping it in a field of its own means
+    /// the opinion is deferred rather than destructive, and can be withdrawn
+    /// on the way out without a save/restore dance.
+    pub(super) fn handle_set_line_numbers_default(
+        &mut self,
+        buffer_id: BufferId,
+        enabled: Option<bool>,
+    ) {
+        let default_line_numbers = self.config.editor.line_numbers;
+        self.with_active_split_buffer_view(buffer_id, |vs| {
+            vs.line_numbers_plugin_override = enabled;
+            vs.show_line_numbers = vs.line_numbers_visible(default_line_numbers);
+        });
+    }
+
+    /// Run `f` against `buffer_id`'s view state in the active split, falling
+    /// back to the split's active buffer when this split has no state for that
+    /// buffer yet.
+    ///
+    /// Shared by the two line-number entry points so they cannot drift apart
+    /// on which view state they land on.
+    fn with_active_split_buffer_view(
+        &mut self,
+        buffer_id: BufferId,
+        f: impl FnOnce(&mut BufferViewState),
+    ) {
         let active_split = self
             .windows
             .get(&self.active_window)
@@ -1849,10 +2144,48 @@ impl Editor {
             .get_mut(&active_split)
         {
             if let Some(buf_state) = view_state.buffer_state_mut(buffer_id) {
-                buf_state.show_line_numbers = enabled;
+                f(buf_state);
+            } else {
+                // Buffer not yet in this split — fall back to the active one,
+                // which `SplitViewState` derefs to.
+                f(view_state);
+            }
+        }
+    }
+
+    /// Handle SetFoldIndicators command
+    ///
+    /// Per-(split, buffer) like `SetLineNumbers`, and for the same reason:
+    /// compose mode is itself per-split, so a source-mode split showing the
+    /// same buffer must keep its own gutter.
+    ///
+    /// Writes `fold_indicators_plugin_override`, never the user's
+    /// `fold_indicators_override` — see `BufferViewState` for why those are
+    /// two fields. `None` withdraws the plugin's opinion.
+    pub(super) fn handle_set_fold_indicators(
+        &mut self,
+        buffer_id: BufferId,
+        enabled: Option<bool>,
+    ) {
+        let active_split = self
+            .windows
+            .get(&self.active_window)
+            .and_then(|w| w.buffers.splits())
+            .map(|(mgr, _)| mgr)
+            .expect("active window must have a populated split layout")
+            .active_split();
+        if let Some(view_state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .and_then(|w| w.split_view_states_mut())
+            .expect("active window must have a populated split layout")
+            .get_mut(&active_split)
+        {
+            if let Some(buf_state) = view_state.buffer_state_mut(buffer_id) {
+                buf_state.fold_indicators_plugin_override = enabled;
             } else {
                 // Buffer not yet in this split — fall back to setting on active
-                view_state.show_line_numbers = enabled;
+                view_state.fold_indicators_plugin_override = enabled;
             }
         }
     }
@@ -1864,96 +2197,73 @@ impl Editor {
     /// `EditorState`, so it follows the buffer wherever it's shown — including a
     /// buffer-group detail panel that isn't the focused split, and across the
     /// panel's per-commit buffer retargets.
-    pub(super) fn handle_set_indentation_guide(&mut self, buffer_id: BufferId, enabled: bool) {
+    pub(super) fn handle_set_indentation_guide(
+        &mut self,
+        buffer_id: BufferId,
+        enabled: Option<bool>,
+    ) {
         if let Some(state) = self
             .windows
             .get_mut(&self.active_window)
             .expect("active window present")
             .buffer_state_mut(buffer_id)
         {
-            state.indentation_guide_override = Some(enabled);
+            state.indentation_guide_override = enabled;
         }
     }
 
     /// Handle SetLineWrap command
+    ///
+    /// With no `split_id`, the wrap flag lands on every split showing
+    /// `buffer_id` — including a buffer-group panel, whose leaf is not in
+    /// the main split tree and is never the "active split". Aiming at the
+    /// active split there set the flag on whatever pane happened to be
+    /// focused and left the panel alone, so a panel plugin asking for wrap
+    /// (git-log's commit-detail pane, where a lock-file diff is unreadable
+    /// unwrapped) silently got none. Falls back to the active split when
+    /// the buffer isn't on screen anywhere.
     pub(super) fn handle_set_line_wrap(
-        &mut self,
-        _buffer_id: BufferId,
-        split_id: Option<SplitId>,
-        enabled: bool,
-    ) {
-        let target_split = split_id.map(LeafId).unwrap_or(
-            self.windows
-                .get(&self.active_window)
-                .and_then(|w| w.buffers.splits())
-                .map(|(mgr, _)| mgr)
-                .expect("active window must have a populated split layout")
-                .active_split(),
-        );
-        if let Some(view_state) = self
-            .windows
-            .get_mut(&self.active_window)
-            .and_then(|w| w.split_view_states_mut())
-            .expect("active window must have a populated split layout")
-            .get_mut(&target_split)
-        {
-            view_state.viewport.line_wrap_enabled = enabled;
-        }
-    }
-
-    /// Handle SubmitViewTransform command
-    pub(super) fn handle_submit_view_transform(
         &mut self,
         buffer_id: BufferId,
         split_id: Option<SplitId>,
-        payload: ViewTransformPayload,
+        enabled: bool,
     ) {
-        let target_split = split_id
-            .map(LeafId)
-            .unwrap_or(self.split_manager().active_split());
-        let term_w = self.terminal_width;
-        let term_h = self.terminal_height;
-        let active_id = self.active_window;
-        let view_state = self
-            .windows
-            .get_mut(&active_id)
-            .and_then(|w| w.split_view_states_mut())
-            .expect("active window must have a populated split layout")
-            .entry(target_split)
-            .or_insert_with(|| SplitViewState::with_buffer(term_w, term_h, buffer_id));
-        // Reject stale view transforms — the buffer was edited since the
-        // view_transform_request that produced this response, so the token
-        // source_offsets are from before the edit. Applying them would cause
-        // conceals to appear at wrong positions for one frame (flicker).
-        if view_state.view_transform_stale {
-            tracing::trace!(
-                "Rejecting stale SubmitViewTransform for split {:?}",
-                target_split
-            );
-            return;
-        }
-        view_state.view_transform = Some(payload);
-    }
-
-    /// Handle ClearViewTransform command
-    pub(super) fn handle_clear_view_transform(&mut self, split_id: Option<SplitId>) {
-        let target_split = split_id.map(LeafId).unwrap_or(
-            self.windows
-                .get(&self.active_window)
-                .and_then(|w| w.buffers.splits())
-                .map(|(mgr, _)| mgr)
+        let targets: Vec<LeafId> = match split_id {
+            Some(id) => vec![LeafId(id)],
+            None => {
+                let showing: Vec<LeafId> = self
+                    .windows
+                    .get(&self.active_window)
+                    .and_then(|w| w.buffers.splits())
+                    .map(|(_, vs)| vs)
+                    .expect("active window must have a populated split layout")
+                    .iter()
+                    .filter(|(_, vs)| vs.active_buffer == buffer_id)
+                    .map(|(leaf_id, _)| *leaf_id)
+                    .collect();
+                if showing.is_empty() {
+                    vec![self
+                        .windows
+                        .get(&self.active_window)
+                        .and_then(|w| w.buffers.splits())
+                        .map(|(mgr, _)| mgr)
+                        .expect("active window must have a populated split layout")
+                        .active_split()]
+                } else {
+                    showing
+                }
+            }
+        };
+        for target_split in targets {
+            if let Some(view_state) = self
+                .windows
+                .get_mut(&self.active_window)
+                .and_then(|w| w.split_view_states_mut())
                 .expect("active window must have a populated split layout")
-                .active_split(),
-        );
-        if let Some(view_state) = self
-            .windows
-            .get_mut(&self.active_window)
-            .and_then(|w| w.split_view_states_mut())
-            .expect("active window must have a populated split layout")
-            .get_mut(&target_split)
-        {
-            view_state.view_transform = None;
-            view_state.compose_width = None;
+                .get_mut(&target_split)
+            {
+                view_state.viewport.line_wrap_enabled = enabled;
+            }
         }
     }
 
@@ -2042,6 +2352,113 @@ impl Editor {
         }
     }
 
+    // ==================== Scrollbar Marker Commands ====================
+
+    /// Convert plugin-supplied markers to byte anchors.
+    ///
+    /// Markers addressed by `line` on a buffer whose line count is not known
+    /// yet (a large file before the incremental line scan) are dropped rather
+    /// than anchored at byte 0 — a wrong position is worse than a missing
+    /// mark, and byte-addressed markers work in that regime.
+    fn resolve_scrollbar_markers(
+        state: &crate::state::EditorState,
+        markers: &[fresh_core::api::ScrollbarMarker],
+    ) -> Vec<crate::view::scrollbar_marker::ResolvedMarker> {
+        let buffer_len = state.buffer.len();
+        markers
+            .iter()
+            .filter_map(|m| {
+                crate::view::scrollbar_marker::ResolvedMarker::from_api(m, |line| {
+                    state.buffer.line_start_offset(line)
+                })
+            })
+            .map(|mut m| {
+                m.start = m.start.min(buffer_len);
+                m.end = m.end.map(|e| e.min(buffer_len));
+                m
+            })
+            .collect()
+    }
+
+    /// Handle SetScrollbarMarkers — replace a namespace's whole marker set.
+    pub(super) fn handle_set_scrollbar_markers(
+        &mut self,
+        buffer_id: BufferId,
+        namespace: String,
+        markers: Vec<fresh_core::api::ScrollbarMarker>,
+    ) {
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .expect("active window present")
+            .buffer_state_mut(buffer_id)
+        {
+            let resolved = Self::resolve_scrollbar_markers(state, &markers);
+            let requested = resolved.len();
+            let stored = state.scrollbar_markers.set_markers(&namespace, resolved);
+            if stored < requested {
+                tracing::debug!(
+                    namespace = %namespace,
+                    requested,
+                    stored,
+                    "scrollbar markers truncated at the per-namespace cap"
+                );
+            }
+            #[cfg(feature = "plugins")]
+            {
+                self.plugin_render_requested = true;
+            }
+        }
+    }
+
+    /// Handle SetScrollbarMarkersInRange — replace only the markers anchored
+    /// in `[start, end)`, so a viewport-driven producer can publish the region
+    /// it just scanned without disturbing what it learned elsewhere.
+    pub(super) fn handle_set_scrollbar_markers_in_range(
+        &mut self,
+        buffer_id: BufferId,
+        namespace: String,
+        start: usize,
+        end: usize,
+        markers: Vec<fresh_core::api::ScrollbarMarker>,
+    ) {
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .expect("active window present")
+            .buffer_state_mut(buffer_id)
+        {
+            let resolved = Self::resolve_scrollbar_markers(state, &markers);
+            state
+                .scrollbar_markers
+                .set_markers_in_range(&namespace, start, end, resolved);
+            #[cfg(feature = "plugins")]
+            {
+                self.plugin_render_requested = true;
+            }
+        }
+    }
+
+    /// Handle ClearScrollbarMarkers
+    pub(super) fn handle_clear_scrollbar_markers(
+        &mut self,
+        buffer_id: BufferId,
+        namespace: String,
+    ) {
+        if let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .expect("active window present")
+            .buffer_state_mut(buffer_id)
+        {
+            state.scrollbar_markers.clear_namespace(&namespace);
+            #[cfg(feature = "plugins")]
+            {
+                self.plugin_render_requested = true;
+            }
+        }
+    }
+
     // ==================== Status/Prompt Commands ====================
 
     /// Handle SetStatus command
@@ -2090,7 +2507,7 @@ impl Editor {
             },
         );
         prompt.overlay = floating_overlay;
-        self.active_window_mut().prompt = Some(prompt);
+        self.set_prompt(prompt);
 
         // Fire the prompt_changed hook immediately with empty input
         // This allows plugins to initialize the prompt state
@@ -2126,7 +2543,7 @@ impl Editor {
             initial_value.clone(),
         );
         prompt.overlay = floating_overlay;
-        self.active_window_mut().prompt = Some(prompt);
+        self.set_prompt(prompt);
 
         // Fire the prompt_changed hook immediately with the initial value
         use crate::services::plugins::hooks::HookArgs;
@@ -2137,6 +2554,37 @@ impl Editor {
                 input: initial_value,
             },
         );
+    }
+
+    /// Handle StartFilePickAsync (for the editor.pickFile() API): open
+    /// the native Open File browser — same anchoring and navigation as
+    /// Ctrl+O — but deliver the confirmed path to the plugin callback
+    /// instead of opening it as a buffer. The caller may pin the anchor
+    /// directory and force hidden files visible, for pickers whose
+    /// target files the defaults would put out of reach.
+    pub(super) fn handle_start_file_pick_async(
+        &mut self,
+        label: String,
+        directory: Option<String>,
+        show_hidden: Option<bool>,
+        callback_id: fresh_core::api::JsCallbackId,
+    ) {
+        use crate::view::prompt::PromptType;
+        // start_prompt resolves any dangling pick callback as cancelled
+        // (including one from a pick interrupted by this pick), so this
+        // one is armed only after it runs.
+        self.start_prompt(label, PromptType::OpenFile);
+        self.active_window_mut().pending_file_pick_callback = Some(callback_id);
+        self.prefill_open_file_prompt();
+        let dir_override = directory.map(|d| {
+            let path = std::path::PathBuf::from(d);
+            if path.is_absolute() {
+                path
+            } else {
+                self.working_dir().join(path)
+            }
+        });
+        self.init_file_open_state_at(dir_override, show_hidden);
     }
 
     /// Handle StartPromptAsync command (for editor.prompt() API)
@@ -2151,7 +2599,7 @@ impl Editor {
 
         // Create an async prompt (uses special prompt type)
         use crate::view::prompt::{Prompt, PromptType};
-        self.active_window_mut().prompt = Some(Prompt::with_initial_text(
+        self.set_prompt(Prompt::with_initial_text(
             label,
             PromptType::AsyncPrompt,
             initial_value.clone(),
@@ -2217,7 +2665,7 @@ impl Editor {
             // Track that suggestions were set for this input value.
             // If filter_suggestions is called with the same input, we skip filtering
             // because the plugin has already provided filtered results.
-            prompt.suggestions_set_for_input = Some(prompt.input.clone());
+            prompt.suggestions_set_for_input = Some(prompt.input_str().to_string());
         }
     }
 
@@ -2519,9 +2967,388 @@ impl Editor {
         self.pending_grammar_callbacks.push(callback_id);
     }
 
-    /// Handle GrepProject command: walk files, search buffers/disk, collect matches
+    // ------------------------------------------------------------------
+    // Diff baselines (registerDiffBaseline / diffAgainstBaseline family)
+    // ------------------------------------------------------------------
+
+    /// Allocate a baseline id and, for content-backed baselines, kick the
+    /// off-loop loader. Registration resolves once content is in place, so
+    /// later diff/lines calls never observe a half-loaded entry.
+    pub(super) fn handle_register_diff_baseline(
+        &mut self,
+        buffer_id: BufferId,
+        kind: String,
+        git_ref: Option<String>,
+        callback_id: JsCallbackId,
+    ) {
+        use super::diff_baselines::{BaselineEntry, BaselineSpec};
+
+        let buffer_id = self.resolve_buffer_id(buffer_id);
+        let path = {
+            let Some(state) = self
+                .windows
+                .get_mut(&self.active_window)
+                .expect("active window present")
+                .buffer_state_mut(buffer_id)
+            else {
+                self.plugin_manager
+                    .read()
+                    .unwrap()
+                    .reject_callback(callback_id, format!("Buffer {buffer_id:?} not found"));
+                return;
+            };
+            state.buffer.file_path().map(|p| p.to_path_buf())
+        };
+
+        let spec = match kind.as_str() {
+            "saved" => BaselineSpec::Saved,
+            "disk" | "gitRef" | "gitIndex" => {
+                let Some(path) = path else {
+                    self.plugin_manager.read().unwrap().reject_callback(
+                        callback_id,
+                        "buffer has no file path to baseline against".to_string(),
+                    );
+                    return;
+                };
+                match kind.as_str() {
+                    "disk" => BaselineSpec::Disk { path },
+                    _ => {
+                        let git_ref = match kind.as_str() {
+                            "gitRef" => match git_ref {
+                                Some(r) if !r.trim().is_empty() => Some(r),
+                                _ => {
+                                    self.plugin_manager.read().unwrap().reject_callback(
+                                        callback_id,
+                                        "gitRef baseline requires a ref".to_string(),
+                                    );
+                                    return;
+                                }
+                            },
+                            _ => None, // gitIndex
+                        };
+                        let cwd = path
+                            .parent()
+                            .map(|p| p.to_path_buf())
+                            .unwrap_or_else(|| std::path::PathBuf::from("."));
+                        BaselineSpec::Git {
+                            cwd,
+                            file_path: path,
+                            git_ref,
+                        }
+                    }
+                }
+            }
+            other => {
+                self.plugin_manager
+                    .read()
+                    .unwrap()
+                    .reject_callback(callback_id, format!("unknown baseline kind: {other:?}"));
+                return;
+            }
+        };
+
+        let baseline_id = self.next_diff_baseline_id;
+        self.next_diff_baseline_id += 1;
+        if let Ok(mut inner) = self.diff_baselines.inner.lock() {
+            inner.entries.insert(
+                baseline_id,
+                BaselineEntry {
+                    buffer_id,
+                    spec: spec.clone(),
+                    generation: 0,
+                    content: None,
+                },
+            );
+        }
+
+        // Saved baselines have no content to load: resolve immediately.
+        if matches!(spec, BaselineSpec::Saved) {
+            self.plugin_manager
+                .read()
+                .unwrap()
+                .resolve_callback(callback_id, baseline_id.to_string());
+            return;
+        }
+
+        self.spawn_baseline_load(baseline_id, spec, callback_id, true);
+    }
+
+    /// Shared off-loop launch for registration and refresh loads.
+    fn spawn_baseline_load(
+        &mut self,
+        baseline_id: u64,
+        spec: super::diff_baselines::BaselineSpec,
+        callback_id: JsCallbackId,
+        is_registration: bool,
+    ) {
+        // A handle, not the owning `Arc` — see `OffLoop::handle`: the capability
+        // rides into the spawned task, and an owning reference dropped there at
+        // shutdown would panic the worker.
+        let Some(handle) = self.tokio_runtime.as_ref().map(|rt| rt.handle().clone()) else {
+            self.plugin_manager
+                .read()
+                .unwrap()
+                .reject_callback(callback_id, "No tokio runtime available".to_string());
+            return;
+        };
+        let Some(sender) = self.async_bridge.as_ref().map(|b| b.sender()) else {
+            self.plugin_manager
+                .read()
+                .unwrap()
+                .reject_callback(callback_id, "No async bridge available".to_string());
+            return;
+        };
+        super::plugin_offloop::load_diff_baseline(
+            super::plugin_offloop::OffLoop {
+                filesystem: self.authority().filesystem.clone(),
+                handle,
+                sender,
+            },
+            super::plugin_offloop::BaselineLoadRequest {
+                baseline_id,
+                spec,
+                spawner: self.authority().process_spawner.clone(),
+                store: self.diff_baselines.clone(),
+                callback_id,
+                is_registration,
+            },
+        );
+    }
+
+    /// Diff a buffer's live content against a registered baseline.
+    pub(super) fn handle_diff_against_baseline(
+        &mut self,
+        buffer_id: BufferId,
+        baseline_id: u64,
+        callback_id: JsCallbackId,
+    ) {
+        use super::diff_baselines::{diff_against_saved, BaselineSpec, FIDELITY_EXACT};
+
+        let buffer_id = self.resolve_buffer_id(buffer_id);
+        let store = self.diff_baselines.clone();
+        let Some(state) = self
+            .windows
+            .get_mut(&self.active_window)
+            .expect("active window present")
+            .buffer_state_mut(buffer_id)
+        else {
+            self.plugin_manager
+                .read()
+                .unwrap()
+                .reject_callback(callback_id, format!("Buffer {buffer_id:?} not found"));
+            return;
+        };
+
+        let result: Result<fresh_core::api::DiffBaselineResult, String> = (|| {
+            let inner = store
+                .inner
+                .lock()
+                .map_err(|_| "baseline store poisoned".to_string())?;
+            let entry = inner
+                .entries
+                .get(&baseline_id)
+                .ok_or_else(|| format!("unknown baseline id {baseline_id}"))?;
+            match &entry.spec {
+                BaselineSpec::Saved => Ok(diff_against_saved(&mut state.buffer)),
+                _ => {
+                    let content = entry
+                        .content
+                        .as_ref()
+                        .ok_or_else(|| "baseline content not loaded".to_string())?;
+                    let len = state.buffer.len();
+                    let new_text = state.get_text_range(0, len);
+                    Ok(fresh_core::api::DiffBaselineResult {
+                        revision: state.buffer.version(),
+                        fidelity: FIDELITY_EXACT.to_string(),
+                        hunks: fresh_core::diff::compute_line_diff(&content.text, &new_text),
+                    })
+                }
+            }
+        })();
+
+        let callback = callback_id;
+        match result {
+            Ok(value) => {
+                let json = serde_json::to_string(&value).unwrap_or_else(|_| "null".to_string());
+                self.plugin_manager
+                    .read()
+                    .unwrap()
+                    .resolve_callback(callback, json);
+            }
+            Err(e) => self
+                .plugin_manager
+                .read()
+                .unwrap()
+                .reject_callback(callback, e),
+        }
+    }
+
+    /// Diff two registered baselines against each other (e.g. disk vs
+    /// HEAD, the git-gutter comparison).
+    pub(super) fn handle_diff_baseline_pair(
+        &mut self,
+        old_baseline_id: u64,
+        new_baseline_id: u64,
+        callback_id: JsCallbackId,
+    ) {
+        let result: Result<fresh_core::api::DiffBaselineResult, String> = (|| {
+            let inner = self
+                .diff_baselines
+                .inner
+                .lock()
+                .map_err(|_| "baseline store poisoned".to_string())?;
+            let old = inner
+                .entries
+                .get(&old_baseline_id)
+                .ok_or_else(|| format!("unknown baseline id {old_baseline_id}"))?
+                .content
+                .as_ref()
+                .ok_or_else(|| "old baseline content not loaded".to_string())?;
+            let new = inner
+                .entries
+                .get(&new_baseline_id)
+                .ok_or_else(|| format!("unknown baseline id {new_baseline_id}"))?
+                .content
+                .as_ref()
+                .ok_or_else(|| "new baseline content not loaded".to_string())?;
+            Ok(super::diff_baselines::diff_contents(old, new))
+        })();
+        match result {
+            Ok(value) => {
+                let json = serde_json::to_string(&value).unwrap_or_else(|_| "null".to_string());
+                self.plugin_manager
+                    .read()
+                    .unwrap()
+                    .resolve_callback(callback_id, json);
+            }
+            Err(e) => self
+                .plugin_manager
+                .read()
+                .unwrap()
+                .reject_callback(callback_id, e),
+        }
+    }
+
+    /// Batched baseline line fetch: `(start_line, count)` ranges in, lines
+    /// (without trailing newlines) grouped per range out.
+    pub(super) fn handle_get_baseline_lines(
+        &mut self,
+        baseline_id: u64,
+        ranges: Vec<(u32, u32)>,
+        callback_id: JsCallbackId,
+    ) {
+        use super::diff_baselines::{slice_lines, BaselineContent, BaselineSpec};
+
+        let store = self.diff_baselines.clone();
+        let result: Result<Vec<Vec<String>>, String> = (|| {
+            let inner = store
+                .inner
+                .lock()
+                .map_err(|_| "baseline store poisoned".to_string())?;
+            let entry = inner
+                .entries
+                .get(&baseline_id)
+                .ok_or_else(|| format!("unknown baseline id {baseline_id}"))?;
+            match &entry.spec {
+                BaselineSpec::Saved => {
+                    // Saved baselines have no stored content; materialize the
+                    // saved text for this request. O(file), but Saved-line
+                    // fetches are rare (no shipped consumer renders
+                    // saved-side virtual lines yet).
+                    let buffer_id = entry.buffer_id;
+                    drop(inner);
+                    let state = self
+                        .windows
+                        .get_mut(&self.active_window)
+                        .expect("active window present")
+                        .buffer_state_mut(buffer_id)
+                        .ok_or_else(|| format!("Buffer {buffer_id:?} not found"))?;
+                    let total = state.buffer.saved_total_bytes();
+                    let bytes = state
+                        .buffer
+                        .extract_saved_range(0, total)
+                        .ok_or_else(|| "saved snapshot not readable".to_string())?;
+                    let content =
+                        BaselineContent::new(String::from_utf8_lossy(&bytes).into_owned());
+                    Ok(slice_lines(&content, &ranges))
+                }
+                _ => {
+                    let content = entry
+                        .content
+                        .as_ref()
+                        .ok_or_else(|| "baseline content not loaded".to_string())?;
+                    Ok(slice_lines(content, &ranges))
+                }
+            }
+        })();
+        match result {
+            Ok(value) => {
+                let json = serde_json::to_string(&value).unwrap_or_else(|_| "[]".to_string());
+                self.plugin_manager
+                    .read()
+                    .unwrap()
+                    .resolve_callback(callback_id, json);
+            }
+            Err(e) => self
+                .plugin_manager
+                .read()
+                .unwrap()
+                .reject_callback(callback_id, e),
+        }
+    }
+
+    /// Reload a baseline's content (HEAD moved, file rewritten on disk).
+    pub(super) fn handle_refresh_diff_baseline(
+        &mut self,
+        baseline_id: u64,
+        callback_id: JsCallbackId,
+    ) {
+        use super::diff_baselines::BaselineSpec;
+        let spec = match self.diff_baselines.inner.lock() {
+            Ok(inner) => inner.entries.get(&baseline_id).map(|e| e.spec.clone()),
+            Err(_) => None,
+        };
+        match spec {
+            None => self
+                .plugin_manager
+                .read()
+                .unwrap()
+                .reject_callback(callback_id, format!("unknown baseline id {baseline_id}")),
+            // Saved tracks the live snapshot by construction — nothing to
+            // reload.
+            Some(BaselineSpec::Saved) => self
+                .plugin_manager
+                .read()
+                .unwrap()
+                .resolve_callback(callback_id, "null".to_string()),
+            Some(spec) => self.spawn_baseline_load(baseline_id, spec, callback_id, false),
+        }
+    }
+
+    pub(super) fn handle_release_diff_baseline(&mut self, baseline_id: u64) {
+        if let Ok(mut inner) = self.diff_baselines.inner.lock() {
+            inner.entries.remove(&baseline_id);
+        }
+    }
+
+    /// Handle GrepProject: snapshot what only the editor thread can see, then
+    /// hand the walk-and-search to [`plugin_offloop::grep_project`].
+    ///
+    /// The project walk, the per-file greps and the callback resolution all
+    /// happen on the tokio runtime; a second grep from the same plugin
+    /// supersedes and cancels the first, so a plugin looping on `grepProject`
+    /// collapses instead of queueing.
+    ///
+    /// What stays on the editor thread is the snapshot, and it is not free:
+    /// `search_hybrid_plan` copies the loaded bytes of every *modified* open
+    /// buffer, because the piece tree cannot cross threads. Unmodified buffers
+    /// cost only their id, and unloaded regions of a modified one are recorded
+    /// as file offsets rather than copied — but a large fully-loaded dirty
+    /// buffer is copied in full, once per call. Worth knowing before adding
+    /// anything else to this path.
     pub(super) fn handle_grep_project(
         &mut self,
+        plugin_name: String,
         pattern: String,
         fixed_string: bool,
         case_sensitive: bool,
@@ -2539,10 +3366,7 @@ impl Editor {
             return;
         }
 
-        // Build search options for FileSystem::search_file
         let fs_opts = make_search_opts(fixed_string, case_sensitive, whole_words, max_results);
-
-        // Build regex for open buffer searches (piece tree path still needs it)
         let regex = match crate::model::filesystem::build_search_regex(&pattern, &fs_opts) {
             Ok(re) => re,
             Err(e) => {
@@ -2554,118 +3378,81 @@ impl Editor {
             }
         };
 
-        let query_len = pattern.len();
-        let mut results: Vec<GrepMatch> = Vec::new();
-
-        // Build a map of open buffer paths -> BufferId
-        let mut open_buffer_paths: std::collections::HashMap<std::path::PathBuf, BufferId> =
-            std::collections::HashMap::new();
+        // Snapshot open buffers. Dirty ones become `HybridSearchPlan`s (the
+        // piece tree is not `Send`); clean ones only contribute their id so
+        // matches stay attributable to a buffer.
+        let mut dirty_plans = std::collections::HashMap::new();
+        let mut clean_buffers = std::collections::HashMap::new();
         for (bid, state) in self
             .windows
-            .get(&self.active_window)
-            .map(|w| &w.buffers)
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
             .expect("active window present")
         {
-            if let Some(path) = state.buffer.file_path() {
-                open_buffer_paths.insert(path.to_path_buf(), *bid);
-            }
-        }
-
-        // Collect all project files via FileSystem trait (works for both local and remote)
-        let cwd = self.working_dir().to_path_buf();
-        let cancel = std::sync::atomic::AtomicBool::new(false);
-        let mut file_paths: Vec<std::path::PathBuf> = Vec::new();
-        if let Err(e) = self.authority().filesystem.walk_files(
-            &cwd,
-            IGNORED_DIRS,
-            &cancel,
-            &mut |path, _rel| {
-                file_paths.push(path.to_path_buf());
-                true
-            },
-        ) {
-            tracing::warn!("walk_files failed: {}", e);
-        }
-
-        // Search each file: open buffers via piece tree, others via fs.search_file
-        for file_path in &file_paths {
-            if results.len() >= max_results {
-                break;
-            }
-            let remaining = max_results - results.len();
-
-            if let Some(&bid) = open_buffer_paths.get(file_path) {
-                // Search the open buffer — hybrid search uses fs.search_file
-                // for unloaded regions (avoids transferring large files)
-                if let Some(state) = self
-                    .windows
-                    .get_mut(&self.active_window)
-                    .expect("active window present")
-                    .buffer_state_mut(bid)
-                {
-                    let matches = match state.buffer.search_hybrid(
-                        &pattern,
-                        &fs_opts,
-                        regex.clone(),
-                        remaining,
-                        query_len,
-                    ) {
-                        Ok(m) => m,
-                        Err(_) => continue,
-                    };
-                    let file_str = file_path.to_string_lossy().to_string();
-                    for m in &matches {
-                        results.push(GrepMatch {
-                            file: file_str.clone(),
-                            buffer_id: bid.0,
-                            byte_offset: m.byte_offset,
-                            length: m.length,
-                            line: m.line,
-                            column: m.column,
-                            context: m.context.clone(),
-                        });
-                    }
-                }
-            } else {
-                // Not open — search via FileSystem trait
-                let fs_opts_file =
-                    make_search_opts(fixed_string, case_sensitive, whole_words, remaining);
-                let mut cursor = crate::model::filesystem::FileSearchCursor::new();
-                let mut file_matches = Vec::new();
-                while !cursor.done && file_matches.len() < remaining {
-                    match self.authority().filesystem.search_file(
-                        file_path,
-                        &pattern,
-                        &fs_opts_file,
-                        &mut cursor,
-                    ) {
-                        Ok(batch) => file_matches.extend(batch),
-                        Err(_) => break,
-                    }
-                }
-                if file_matches.is_empty() {
+            let Some(path) = state.buffer.file_path().map(|p| p.to_path_buf()) else {
+                continue;
+            };
+            if state.buffer.is_modified() {
+                if let Some(plan) = state.buffer.search_hybrid_plan() {
+                    dirty_plans.insert(path, (*bid, plan));
                     continue;
                 }
-                let file_str = file_path.to_string_lossy().to_string();
-                for m in file_matches {
-                    results.push(GrepMatch {
-                        file: file_str.clone(),
-                        buffer_id: 0,
-                        byte_offset: m.byte_offset,
-                        length: m.length,
-                        line: m.line,
-                        column: m.column,
-                        context: m.context,
-                    });
-                }
             }
+            clean_buffers.insert(path, *bid);
         }
 
-        let json = serde_json::to_string(&results).unwrap_or_else(|_| "[]".to_string());
-        self.plugin_manager
-            .read()
-            .unwrap()
-            .resolve_callback(callback_id, json);
+        // A handle, not the owning `Arc` — see `OffLoop::handle`: the capability
+        // rides into the spawned task, and an owning reference dropped there at
+        // shutdown would panic the worker.
+        let Some(handle) = self.tokio_runtime.as_ref().map(|rt| rt.handle().clone()) else {
+            self.plugin_manager
+                .read()
+                .unwrap()
+                .reject_callback(callback_id, "No tokio runtime available".to_string());
+            return;
+        };
+        let Some(sender) = self.async_bridge.as_ref().map(|b| b.sender()) else {
+            self.plugin_manager
+                .read()
+                .unwrap()
+                .reject_callback(callback_id, "No async bridge available".to_string());
+            return;
+        };
+
+        // Coalesce per plugin: a plugin looping on `grepProject` (one call per
+        // keystroke, say) collapses to its latest request instead of queueing.
+        // Keyed by plugin because the token used to be a single editor-wide
+        // slot, so any plugin's grep cancelled every other plugin's — and the
+        // loser settled with whatever partial results it happened to hold, with
+        // no way for its caller to tell. The superseded request now rejects
+        // instead, so a caller that really did want both answers hears about it
+        // rather than believing a truncated one.
+        if let Some(prev) = self.grep_project_cancel.remove(&plugin_name) {
+            prev.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        let cancel = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        self.grep_project_cancel
+            .insert(plugin_name, Arc::clone(&cancel));
+
+        super::plugin_offloop::grep_project(
+            super::plugin_offloop::OffLoop {
+                filesystem: self.authority().filesystem.clone(),
+                handle,
+                sender,
+            },
+            super::plugin_offloop::GrepProjectRequest {
+                pattern,
+                opts: fs_opts,
+                regex,
+                max_results,
+                root: self.working_dir().to_path_buf(),
+                ignored_dirs: IGNORED_DIRS,
+                callback_id,
+                dirty_plans,
+                clean_buffers,
+                cancel,
+            },
+        );
     }
 
     // ==================== Pull-Based Streaming Search ====================
@@ -3195,16 +3982,24 @@ impl Editor {
                     if ins_len > del_len {
                         state.marker_list.adjust_for_insert(pos, ins_len - del_len);
                         state.margins.adjust_for_insert(pos, ins_len - del_len);
+                        state
+                            .scrollbar_markers
+                            .adjust_for_insert(pos, ins_len - del_len);
                     } else if del_len > ins_len {
                         state.marker_list.adjust_for_delete(pos, del_len - ins_len);
                         state.margins.adjust_for_delete(pos, del_len - ins_len);
+                        state
+                            .scrollbar_markers
+                            .adjust_for_delete(pos, del_len - ins_len);
                     }
                 } else if del_len > 0 {
                     state.marker_list.adjust_for_delete(pos, del_len);
                     state.margins.adjust_for_delete(pos, del_len);
+                    state.scrollbar_markers.adjust_for_delete(pos, del_len);
                 } else if ins_len > 0 {
                     state.marker_list.adjust_for_insert(pos, ins_len);
                     state.margins.adjust_for_insert(pos, ins_len);
+                    state.scrollbar_markers.adjust_for_insert(pos, ins_len);
                 }
             }
 
@@ -3333,10 +4128,10 @@ impl Editor {
 
     /// Handle StartAnimationVirtualBuffer: resolve the virtual buffer's
     /// current on-screen Rect, then delegate to `handle_start_animation_area`.
-    /// If the rect isn't in the cached split layout yet (common when the
+    /// If the retained layout has no rect for it yet (common when the
     /// buffer was just created and no render pass has placed it), the
     /// request is queued and drained at the top of the next render pass
-    /// once `split_areas` has been recomputed.
+    /// once the frame's layout has placed the panes.
     pub(super) fn handle_start_animation_virtual_buffer(
         &mut self,
         id: u64,

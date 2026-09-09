@@ -57,6 +57,15 @@ pub struct BufferGroup {
     pub panel_buffers: HashMap<String, BufferId>,
     /// All split leaf IDs in this group
     pub panel_splits: HashMap<String, LeafId>,
+    /// Panels currently hidden by `setBufferGroupPanelVisible`.
+    ///
+    /// A hidden panel keeps its buffer and its `SplitViewState` (so its
+    /// content and scroll position survive), but is left out when the
+    /// group's split tree is rebuilt, so nothing is rendered for it and
+    /// no rect routes mouse clicks to it. `layout` always describes the
+    /// group as created — the full set of panels — and is the source
+    /// the tree is rebuilt from.
+    pub hidden_panels: std::collections::HashSet<String>,
     /// The "representative" split that owns the tab entry.
     /// This is typically the first scrollable panel.
     pub representative_split: Option<LeafId>,

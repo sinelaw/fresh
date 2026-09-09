@@ -19,6 +19,10 @@ pub(crate) struct SelectionContext {
     pub block_rects: Vec<(usize, usize, usize, usize)>,
     pub cursor_positions: Vec<usize>,
     pub primary_cursor_position: usize,
+    /// The primary cursor's selection range, when it has a non-empty one.
+    /// Drives occurrence highlighting: a selection suppresses the cursor-word
+    /// highlight and highlights its own matches instead (issue #3011).
+    pub primary_selection: Option<Range<usize>>,
     /// Visual columns the primary cursor sits past its line's content end
     /// (virtual space). 0 unless `editor.virtual_space` is "on".
     pub primary_virtual_cols: usize,

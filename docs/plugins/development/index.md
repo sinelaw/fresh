@@ -136,3 +136,5 @@ editor.on("buffer_save", "onSave");
 - `cursor_moved` - When cursor position changes
 - `render_start` - Before screen renders
 - `lines_changed` - When visible lines change (batched)
+- `config_changed` - After a Settings-UI save or a config reload (see
+  [Plugin Configuration](./config.md#reacting-to-changes))

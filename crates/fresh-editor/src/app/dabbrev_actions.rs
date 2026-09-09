@@ -260,7 +260,7 @@ impl Editor {
             .map(|(_, vs)| vs)
             .expect("active window must have a populated split layout")
             .get(&split_id)
-            .map(|sv| sv.viewport.top_byte)
+            .map(|sv| sv.viewport.top_byte())
             .unwrap_or(0);
         // Estimate bottom by adding a generous window.
         let viewport_bottom_byte = (viewport_top_byte + 8192).min(buffer_len);

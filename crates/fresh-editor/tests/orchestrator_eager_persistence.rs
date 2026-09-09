@@ -337,3 +337,64 @@ fn tagging_a_new_session_persists_it_without_a_quit() {
     // carrying record behind.
     let _ = before;
 }
+
+/// Deleting an in-place session must forget its persisted workspace, or
+/// boot-time discovery rediscovers it and the row "comes back" after a
+/// restart. The orchestrator's Delete/Archive of a session whose directory
+/// stays on disk (a launch / in-place session, unlike a worktree it
+/// `git worktree remove`s) now follows `CloseWindow` with `DeleteWorkspace`.
+/// This pins that the explicit forget — not the window close — is what
+/// removes the registry entry the next launch would otherwise resurrect.
+/// `handle_plugin_command` (the delete's entry point) only exists with the
+/// `plugins` feature, so gate the test the same way its siblings are.
+#[cfg(feature = "plugins")]
+#[test]
+fn deleting_an_in_place_session_forgets_its_persisted_workspace() {
+    use fresh_core::api::PluginCommand;
+
+    let sandbox = tempfile::tempdir().unwrap();
+    let proj_a = sandbox.path().join("a");
+    let proj_b = sandbox.path().join("b");
+    let data_home = sandbox.path().join("data-home");
+    std::fs::create_dir_all(&proj_a).unwrap();
+    std::fs::create_dir_all(&proj_b).unwrap();
+    std::fs::create_dir_all(&data_home).unwrap();
+    // Unique tmp roots, so the global workspace registry has no stale entry.
+    let proj_a = proj_a.canonicalize().unwrap();
+    let proj_b = proj_b.canonicalize().unwrap();
+    let file_a = proj_a.join("hello.txt");
+    std::fs::write(&file_a, "hi").unwrap();
+
+    let dir_context = DirectoryContext::for_testing(&data_home);
+    let mut e = editor_in(&proj_a, &dir_context);
+    let win_a = e.active_window_id();
+    e.open_file(&file_a).unwrap();
+
+    // A second window, then switch to it: the switch checkpoints A into the
+    // registry (and leaves A non-active, non-last so it can be closed).
+    let win_b = e.create_window_at(proj_b.clone(), "b".into());
+    e.set_active_window(win_b);
+    assert!(
+        Workspace::load(&proj_a).unwrap().is_some(),
+        "precondition: switching away persisted A's workspace"
+    );
+
+    // Closing the window alone does NOT forget the persisted workspace —
+    // exactly why a deleted in-place row used to reappear after a restart.
+    e.handle_plugin_command(PluginCommand::CloseWindow { id: win_a })
+        .unwrap();
+    assert!(
+        Workspace::load(&proj_a).unwrap().is_some(),
+        "CloseWindow alone leaves the registry entry that discovery resurrects"
+    );
+
+    // The explicit forget is what makes the deletion stick across a restart.
+    e.handle_plugin_command(PluginCommand::DeleteWorkspace {
+        root: proj_a.clone(),
+    })
+    .unwrap();
+    assert!(
+        Workspace::load(&proj_a).unwrap().is_none(),
+        "a deleted in-place session must be forgotten so a restart can't rediscover it"
+    );
+}

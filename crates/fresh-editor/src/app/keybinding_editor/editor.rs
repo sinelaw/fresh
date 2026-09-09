@@ -1,6 +1,8 @@
 //! KeybindingEditor - the main editor state and logic.
 
-use super::helpers::{format_chord_keys, key_code_to_config_name, modifiers_to_config_names};
+use super::helpers::{
+    canonical_context, format_chord_keys, key_code_to_config_name, modifiers_to_config_names,
+};
 use super::types::*;
 use crate::config::{Config, Keybinding};
 use crate::input::command_registry::CommandRegistry;
@@ -8,7 +10,7 @@ use crate::input::keybindings::{
     format_keybinding, normalize_key, Action, KeyContext, KeybindingResolver,
 };
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-use rust_i18n::t;
+use fresh_i18n::t;
 use std::collections::{HashMap, HashSet};
 
 /// The main keybinding editor state
@@ -79,9 +81,6 @@ pub struct KeybindingEditor {
     pub display_rows: Vec<DisplayRow>,
     /// Sections that are manually collapsed (by plugin name, None = builtin)
     pub collapsed_sections: HashSet<Option<String>>,
-
-    /// Layout info for mouse hit testing (updated during render)
-    pub layout: KeybindingEditorLayout,
 
     /// Mouse interaction state for the table scrollbar (press/drag/release).
     pub scrollbar_mouse: crate::view::ui::scrollbar::ScrollbarMouse,
@@ -192,7 +191,6 @@ impl KeybindingEditor {
             mode_contexts,
             display_rows: Vec::new(),
             collapsed_sections,
-            layout: KeybindingEditorLayout::default(),
             scrollbar_mouse: crate::view::ui::scrollbar::ScrollbarMouse::default(),
         };
 
@@ -210,19 +208,40 @@ impl KeybindingEditor {
         let mut bindings = Vec::new();
         let mut seen: HashMap<(String, String), usize> = HashMap::new(); // (key_display, context) -> index
 
-        // First, load bindings from the active keymap
+        // `unbind` entries remove built-in rows; they are not rows themselves.
+        let removed: HashSet<(String, String)> = config
+            .keybindings
+            .iter()
+            .filter(|kb| kb.is_unbind())
+            .filter_map(|kb| Self::keybinding_to_resolved(kb, BindingSource::Custom, resolver))
+            .map(|entry| (entry.key_display, entry.context))
+            .collect();
+
+        // First, load bindings from the active keymap. `resolve_keymap`
+        // returns the inheritance chain parent-first, and the resolver takes
+        // the last write for a given key+context — so a keymap that overrides
+        // an inherited binding must *replace* the parent's row here, not add a
+        // second one. Otherwise `emacs` (which inherits `default`) listed both
+        // "Ctrl+S → Save file" and "Ctrl+S → Find", only one of which fires.
         let map_bindings = config.resolve_keymap(&config.active_keybinding_map);
         for kb in &map_bindings {
             if let Some(entry) = Self::keybinding_to_resolved(kb, BindingSource::Keymap, resolver) {
                 let key = (entry.key_display.clone(), entry.context.clone());
-                let idx = bindings.len();
-                seen.insert(key, idx);
-                bindings.push(entry);
+                if removed.contains(&key) {
+                    continue;
+                }
+                if let Some(&existing_idx) = seen.get(&key) {
+                    bindings[existing_idx] = entry;
+                } else {
+                    let idx = bindings.len();
+                    seen.insert(key, idx);
+                    bindings.push(entry);
+                }
             }
         }
 
         // Then, load custom bindings (these override keymap bindings)
-        for kb in &config.keybindings {
+        for kb in config.keybindings.iter().filter(|kb| !kb.is_unbind()) {
             if let Some(entry) = Self::keybinding_to_resolved(kb, BindingSource::Custom, resolver) {
                 let key = (entry.key_display.clone(), entry.context.clone());
                 if let Some(&existing_idx) = seen.get(&key) {
@@ -248,8 +267,9 @@ impl KeybindingEditor {
                 for ((key_code, modifiers), action) in context_bindings {
                     let key_display = format_keybinding(key_code, modifiers);
                     let seen_key = (key_display.clone(), context_str.clone());
-                    // Skip if already overridden by a user custom binding
-                    if seen.contains_key(&seen_key) {
+                    // Skip if already overridden by a user custom binding,
+                    // or removed with an `unbind` entry.
+                    if seen.contains_key(&seen_key) || removed.contains(&seen_key) {
                         continue;
                     }
                     let command = action.to_qualified_action_str();
@@ -265,6 +285,7 @@ impl KeybindingEditor {
                         key_code: *key_code,
                         modifiers: *modifiers,
                         is_chord: false,
+                        chord_keys: Vec::new(),
                         plugin_name: Some(section.clone()),
                         command_name: None,
                         original_config: None,
@@ -288,6 +309,7 @@ impl KeybindingEditor {
                     key_code: KeyCode::Null,
                     modifiers: KeyModifiers::NONE,
                     is_chord: false,
+                    chord_keys: Vec::new(),
                     plugin_name: None,
                     command_name: None,
                     original_config: None,
@@ -312,6 +334,7 @@ impl KeybindingEditor {
                         key_code: KeyCode::Null,
                         modifiers: KeyModifiers::NONE,
                         is_chord: false,
+                        chord_keys: Vec::new(),
                         plugin_name,
                         command_name: Some(cmd.get_localized_name()),
                         original_config: None,
@@ -364,7 +387,13 @@ impl KeybindingEditor {
         source: BindingSource,
         _resolver: &KeybindingResolver,
     ) -> Option<ResolvedBinding> {
-        let context = kb.when.as_deref().unwrap_or("normal").to_string();
+        // Canonicalise the `when` spelling. `KeyContext` accepts aliases
+        // (`file_explorer` / `fileExplorer`, `search_prompt` / `searchPrompt`,
+        // `composite_buffer` / `compositeBuffer`) and `default.json` uses both,
+        // so a raw string here would split one context into two: two rows for
+        // the same key, and an edit dialog whose dropdown can't find the
+        // context it was opened on — silently reassigning it on save.
+        let context = canonical_context(kb.when.as_deref().unwrap_or("normal"));
 
         // Store the qualified form (e.g. `menu_open:File`) on ResolvedBinding
         // so the dropdown round-trips faithfully and "still-bound" checks
@@ -390,6 +419,7 @@ impl KeybindingEditor {
                 key_code: KeyCode::Null,
                 modifiers: KeyModifiers::NONE,
                 is_chord: true,
+                chord_keys: kb.keys.clone(),
                 plugin_name: None,
                 command_name: None,
                 original_config,
@@ -415,6 +445,7 @@ impl KeybindingEditor {
                 key_code,
                 modifiers,
                 is_chord: false,
+                chord_keys: Vec::new(),
                 plugin_name: None,
                 command_name: None,
                 original_config,
@@ -445,10 +476,13 @@ impl KeybindingEditor {
             actions.push(format!("menu_open:{}", name));
         }
 
-        // Keybinding maps: the four built-ins plus user-defined.
-        let mut keymaps: Vec<String> = ["default", "emacs", "vscode", "macos"]
-            .map(String::from)
-            .to_vec();
+        // Keybinding maps: every built-in plus user-defined. Sourced from
+        // `KeybindingMapName::BUILTIN_OPTIONS` so the dropdown can't drift
+        // out of sync with the settings picker (it used to omit `macos-gui`).
+        let mut keymaps: Vec<String> = crate::config::KeybindingMapName::BUILTIN_OPTIONS
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect();
         keymaps.extend(config.keybinding_maps.keys().cloned());
         keymaps.sort();
         keymaps.dedup();
@@ -756,17 +790,15 @@ impl KeybindingEditor {
 
     /// Cycle context filter
     pub fn cycle_context_filter(&mut self) {
-        let mut contexts = vec![
-            ContextFilter::All,
-            ContextFilter::Specific("global".to_string()),
-            ContextFilter::Specific("normal".to_string()),
-            ContextFilter::Specific("prompt".to_string()),
-            ContextFilter::Specific("popup".to_string()),
-            ContextFilter::Specific("completion".to_string()),
-            ContextFilter::Specific("file_explorer".to_string()),
-            ContextFilter::Specific("menu".to_string()),
-            ContextFilter::Specific("terminal".to_string()),
-        ];
+        // Canonical spellings, matching `ResolvedBinding::context` — the filter
+        // compares the two directly, so `file_explorer` here would select
+        // nothing now that rows carry `fileExplorer`.
+        let mut contexts = vec![ContextFilter::All];
+        contexts.extend(
+            EditBindingState::base_context_options()
+                .into_iter()
+                .map(ContextFilter::Specific),
+        );
         // Add mode contexts dynamically
         for mode_ctx in &self.mode_contexts {
             contexts.push(ContextFilter::Specific(mode_ctx.clone()));
@@ -814,13 +846,16 @@ impl KeybindingEditor {
         self.edit_dialog = None;
     }
 
-    /// Delete the selected binding.
+    /// Delete the selected binding: it is gone, and the key falls through to
+    /// whatever else binds it.
     ///
     /// * **Custom** bindings are removed outright (tracked in `pending_removes`
     ///   or dropped from `pending_adds` when added in the same session).
-    /// * **Keymap** bindings cannot be removed from the built-in map, so a
-    ///   custom `noop` override is created for the same key, which shadows the
-    ///   default binding in the resolver.
+    /// * **Keymap** and **plugin** bindings live in read-only maps, so the
+    ///   removal is recorded as an `unbind` entry in the user config, which
+    ///   the resolver applies by taking the built-in binding out of scope.
+    ///
+    /// To make a key do *nothing* instead, see [`Self::disable_selected`].
     ///
     /// Returns `DeleteResult` indicating what happened.
     pub fn delete_selected(&mut self) -> DeleteResult {
@@ -830,9 +865,29 @@ impl KeybindingEditor {
 
         match self.bindings[idx].source {
             BindingSource::Custom => self.delete_custom_binding(idx),
-            // Keymap and plugin defaults can't be removed from their source
-            // map, so both shadow the key with a custom `noop` override —
-            // identical handling, hence one arm.
+            BindingSource::Keymap | BindingSource::Plugin => self.remove_builtin_binding(idx),
+            BindingSource::Unbound => DeleteResult::CannotDelete,
+        }
+    }
+
+    /// Disable the selected binding: a `noop` override for the same
+    /// key+context, so the key does nothing there — including whatever a
+    /// broader context or the parent keymap bound underneath it. That is the
+    /// difference from [`Self::delete_selected`], which lets the key fall
+    /// through. A custom binding is rewritten to `noop` in place.
+    pub fn disable_selected(&mut self) -> DeleteResult {
+        let Some(idx) = self.selected_binding_index() else {
+            return DeleteResult::NothingSelected;
+        };
+
+        match self.bindings[idx].source {
+            BindingSource::Custom => {
+                if self.bindings[idx].action == "noop" {
+                    return DeleteResult::CannotDelete;
+                }
+                self.retire_custom_config_entry(idx);
+                self.override_binding_with_noop(idx)
+            }
             BindingSource::Keymap | BindingSource::Plugin => self.override_binding_with_noop(idx),
             BindingSource::Unbound => DeleteResult::CannotDelete,
         }
@@ -842,8 +897,22 @@ impl KeybindingEditor {
     /// when it was added this session, otherwise record it in `pending_removes`
     /// so the save drops it from the persisted config.
     fn delete_custom_binding(&mut self, idx: usize) -> DeleteResult {
+        let action_name = self.bindings[idx].action.clone();
+        self.retire_custom_config_entry(idx);
+
+        self.bindings.remove(idx);
+        self.has_changes = true;
+
+        self.readd_as_unbound_if_orphaned(action_name);
+        self.apply_filters();
+        DeleteResult::CustomRemoved
+    }
+
+    /// Take the config entry behind the custom row at `idx` out of the save:
+    /// drop it from `pending_adds` when it was added this session, otherwise
+    /// queue it in `pending_removes`. The row itself is left to the caller.
+    fn retire_custom_config_entry(&mut self, idx: usize) {
         let binding = &self.bindings[idx];
-        let action_name = binding.action.clone();
 
         // Use the original config-level Keybinding if available (for bindings
         // loaded from config), otherwise reconstruct it. This avoids lossy
@@ -858,6 +927,9 @@ impl KeybindingEditor {
             kb.action == config_kb.action
                 && kb.key == config_kb.key
                 && kb.modifiers == config_kb.modifiers
+                // Chords carry an empty key/modifiers pair — compare the
+                // sequence too, or any two of them look like the same binding.
+                && kb.keys == config_kb.keys
                 && kb.when == config_kb.when
         });
         if let Some(pos) = found_in_adds {
@@ -865,24 +937,17 @@ impl KeybindingEditor {
         } else {
             self.pending_removes.push(config_kb);
         }
-
-        self.bindings.remove(idx);
-        self.has_changes = true;
-
-        self.readd_as_unbound_if_orphaned(action_name);
-        self.apply_filters();
-        DeleteResult::CustomRemoved
     }
 
-    /// Shadow a built-in keymap or plugin binding with a custom `noop` override
-    /// for the same key+context — the underlying map can't be edited in place,
-    /// so the override masks the default in the resolver.
-    fn override_binding_with_noop(&mut self, idx: usize) -> DeleteResult {
+    /// The config entry that addresses the built-in binding at `idx`
+    /// (same key or chord, same context) with `action`.
+    fn config_entry_for_builtin(&self, idx: usize, action: &str) -> Keybinding {
         let binding = &self.bindings[idx];
-        let action_name = binding.action.clone();
-
-        // Build a noop custom override for the same key+context.
-        let noop_kb = Keybinding {
+        // A chord is written back as its `keys` sequence — a chord has no
+        // single key/modifiers pair, and emitting an empty one produced an
+        // entry the resolver drops, so the keymap chord stayed live (the
+        // editor reported it disabled and nothing changed).
+        Keybinding {
             key: if binding.is_chord {
                 String::new()
             } else {
@@ -893,15 +958,40 @@ impl KeybindingEditor {
             } else {
                 modifiers_to_config_names(binding.modifiers)
             },
-            keys: Vec::new(),
-            action: "noop".to_string(),
+            keys: binding.chord_keys.clone(),
+            action: action.to_string(),
             args: HashMap::new(),
             when: if binding.context.is_empty() {
                 None
             } else {
                 Some(binding.context.clone())
             },
-        };
+        }
+    }
+
+    /// Remove a built-in keymap or plugin binding: queue an `unbind` entry for
+    /// its key+context and drop the row. The resolver takes the binding out
+    /// of scope when the config is saved, so the key falls through to
+    /// whatever else binds it.
+    fn remove_builtin_binding(&mut self, idx: usize) -> DeleteResult {
+        let action_name = self.bindings[idx].action.clone();
+        let unbind_kb = self.config_entry_for_builtin(idx, Keybinding::UNBIND_ACTION);
+        self.pending_adds.push(unbind_kb);
+
+        self.bindings.remove(idx);
+        self.has_changes = true;
+
+        self.readd_as_unbound_if_orphaned(action_name);
+        self.apply_filters();
+        DeleteResult::KeymapRemoved
+    }
+
+    /// Shadow the binding at `idx` with a custom `noop` override for the same
+    /// key+context: the key does nothing there, and the row shows the
+    /// override so it can be deleted again.
+    fn override_binding_with_noop(&mut self, idx: usize) -> DeleteResult {
+        let action_name = self.bindings[idx].action.clone();
+        let noop_kb = self.config_entry_for_builtin(idx, "noop");
         self.pending_adds.push(noop_kb);
 
         // Replace the entry with a noop custom entry in the display.
@@ -915,6 +1005,7 @@ impl KeybindingEditor {
             key_code: self.bindings[idx].key_code,
             modifiers: self.bindings[idx].modifiers,
             is_chord: self.bindings[idx].is_chord,
+            chord_keys: self.bindings[idx].chord_keys.clone(),
             plugin_name: self.bindings[idx].plugin_name.clone(),
             command_name: None,
             original_config: None,
@@ -923,7 +1014,7 @@ impl KeybindingEditor {
 
         self.readd_as_unbound_if_orphaned(action_name);
         self.apply_filters();
-        DeleteResult::KeymapOverridden
+        DeleteResult::Disabled
     }
 
     /// After a delete/override, if no binding remains for `action_name`, push an
@@ -943,6 +1034,7 @@ impl KeybindingEditor {
             key_code: KeyCode::Null,
             modifiers: KeyModifiers::NONE,
             is_chord: false,
+            chord_keys: Vec::new(),
             plugin_name: None,
             command_name: None,
             original_config: None,
@@ -963,7 +1055,7 @@ impl KeybindingEditor {
             } else {
                 modifiers_to_config_names(binding.modifiers)
             },
-            keys: Vec::new(),
+            keys: binding.chord_keys.clone(),
             action,
             args,
             when: if binding.context.is_empty() {
@@ -979,7 +1071,11 @@ impl KeybindingEditor {
     pub fn apply_edit_dialog(&mut self) -> Option<String> {
         let dialog = self.edit_dialog.take()?;
 
-        if dialog.key_code.is_none() || dialog.action_text.is_empty() {
+        // A chord keeps its sequence in `chord_keys` and leaves `key_code`
+        // empty, so "has a key" means either of the two.
+        if (dialog.key_code.is_none() && dialog.chord_keys.is_empty())
+            || dialog.action_text.is_empty()
+        {
             self.edit_dialog = Some(dialog);
             return Some(t!("keybinding_editor.error_key_action_required").to_string());
         }
@@ -1003,10 +1099,26 @@ impl KeybindingEditor {
             return Some(err_msg);
         }
 
-        let key_code = dialog.key_code.unwrap();
+        // The user re-recorded a key only if `key_code` is set; otherwise this
+        // is a chord being re-pointed at a different action, and the sequence
+        // must survive the round-trip (writing `key_code_to_config_name` of a
+        // placeholder produced the unparseable `"key": "Null"`).
+        let chord_keys = if dialog.key_code.is_some() {
+            Vec::new()
+        } else {
+            dialog.chord_keys.clone()
+        };
+        let is_chord = !chord_keys.is_empty();
+        let key_code = dialog.key_code.unwrap_or(KeyCode::Null);
         let modifiers = dialog.modifiers;
-        let key_name = key_code_to_config_name(key_code);
-        let modifier_names = modifiers_to_config_names(modifiers);
+        let (key_name, modifier_names) = if is_chord {
+            (String::new(), Vec::new())
+        } else {
+            (
+                key_code_to_config_name(key_code),
+                modifiers_to_config_names(modifiers),
+            )
+        };
 
         // Split the qualified form (e.g. `menu_open:File`) into bare action +
         // args so the written Keybinding actually parses back to the right
@@ -1016,7 +1128,7 @@ impl KeybindingEditor {
         let new_binding = Keybinding {
             key: key_name,
             modifiers: modifier_names,
-            keys: Vec::new(),
+            keys: chord_keys.clone(),
             action: bare_action.clone(),
             args: args.clone(),
             when: Some(dialog.context.clone()),
@@ -1027,7 +1139,11 @@ impl KeybindingEditor {
         self.has_changes = true;
 
         // Update display
-        let key_display = format_keybinding(&key_code, &modifiers);
+        let key_display = if is_chord {
+            format_chord_keys(&chord_keys)
+        } else {
+            format_keybinding(&key_code, &modifiers)
+        };
         let action_display =
             KeybindingResolver::format_action_from_str_with_args(&bare_action, &args);
 
@@ -1046,7 +1162,8 @@ impl KeybindingEditor {
             source: BindingSource::Custom,
             key_code,
             modifiers,
-            is_chord: false,
+            is_chord,
+            chord_keys,
             plugin_name: preserved_plugin_name,
             command_name: None,
             original_config: None,
@@ -1134,7 +1251,20 @@ mod tests {
     use crate::input::buffer_mode::ModeRegistry;
 
     fn make_editor(extra_menus: &[&str]) -> KeybindingEditor {
-        let config = Config::default();
+        make_editor_with_config(Config::default(), extra_menus)
+    }
+
+    /// An editor over the `emacs` keymap — the only built-in keymap with
+    /// chord bindings, so the chord paths below need it explicitly.
+    fn make_emacs_editor() -> KeybindingEditor {
+        let config = Config {
+            active_keybinding_map: "emacs".into(),
+            ..Config::default()
+        };
+        make_editor_with_config(config, &[])
+    }
+
+    fn make_editor_with_config(config: Config, extra_menus: &[&str]) -> KeybindingEditor {
         let resolver = KeybindingResolver::new(&config);
         let mode_registry = ModeRegistry::new();
         let cmd_registry = CommandRegistry::new();
@@ -1192,7 +1322,7 @@ mod tests {
     #[test]
     fn dropdown_lists_builtin_keybinding_maps() {
         let editor = make_editor(&[]);
-        for map in ["default", "emacs", "vscode", "macos"] {
+        for map in crate::config::KeybindingMapName::BUILTIN_OPTIONS {
             let qualified = format!("switch_keybinding_map:{}", map);
             assert!(
                 editor.available_actions.contains(&qualified),
@@ -1246,6 +1376,7 @@ mod tests {
             key_code: KeyCode::Char('f'),
             modifiers: KeyModifiers::ALT,
             is_chord: false,
+            chord_keys: Vec::new(),
             plugin_name: None,
             command_name: None,
             original_config: None,
@@ -1257,6 +1388,240 @@ mod tests {
             Some("File"),
             "the variant name must land in args.name, got {:?}",
             kb.args
+        );
+    }
+
+    /// The display row showing binding `idx`.
+    fn select_row(editor: &KeybindingEditor, idx: usize) -> usize {
+        editor
+            .display_rows
+            .iter()
+            .position(|r| matches!(r, DisplayRow::Binding(i) if *i == idx))
+            .expect("the binding has a visible row")
+    }
+
+    /// The `Ctrl+X Ctrl+S` row in the emacs keymap.
+    fn emacs_save_chord(editor: &KeybindingEditor) -> usize {
+        editor
+            .bindings
+            .iter()
+            .position(|b| b.is_chord && b.action == "save")
+            .expect("the emacs keymap binds save to the C-x C-s chord")
+    }
+
+    #[test]
+    fn chord_rows_keep_their_key_sequence() {
+        let editor = make_emacs_editor();
+        let idx = emacs_save_chord(&editor);
+        let keys = &editor.bindings[idx].chord_keys;
+        assert_eq!(
+            keys.len(),
+            2,
+            "a chord row must carry its full sequence, got {:?}",
+            keys
+        );
+        assert_eq!(keys[0].key, "x");
+        assert_eq!(keys[1].key, "s");
+    }
+
+    #[test]
+    fn deleting_a_keymap_chord_writes_an_unbind_entry_and_drops_the_row() {
+        let mut editor = make_emacs_editor();
+        let idx = emacs_save_chord(&editor);
+        editor.selected = select_row(&editor, idx);
+        assert_eq!(editor.delete_selected(), DeleteResult::KeymapRemoved);
+
+        assert!(
+            !editor
+                .bindings
+                .iter()
+                .any(|b| b.is_chord && b.action == "save"),
+            "a deleted keymap row must be gone, not shown as an override"
+        );
+        let unbind = editor
+            .get_custom_bindings()
+            .into_iter()
+            .find(|kb| kb.is_unbind())
+            .expect("deleting a keymap binding queues an unbind entry");
+        assert!(unbind.key.is_empty(), "a chord entry has no single key");
+        assert_eq!(
+            unbind
+                .keys
+                .iter()
+                .map(|k| k.key.as_str())
+                .collect::<Vec<_>>(),
+            vec!["x", "s"],
+            "the entry must name the chord it removes"
+        );
+        assert_eq!(unbind.when.as_deref(), Some("normal"));
+        assert!(
+            !editor
+                .get_custom_bindings()
+                .iter()
+                .any(|kb| kb.action == "noop"),
+            "delete must not write a noop override"
+        );
+    }
+
+    #[test]
+    fn an_unbind_entry_hides_the_keymap_row_on_reload() {
+        // What the editor shows after the save above is persisted: the
+        // removed chord is absent, and the unbind entry is not a row.
+        let mut config = Config {
+            active_keybinding_map: "emacs".into(),
+            ..Config::default()
+        };
+        config.keybindings.push(
+            serde_json::from_value(serde_json::json!({
+                "keys": [{"key": "x", "modifiers": ["ctrl"]}, {"key": "s", "modifiers": ["ctrl"]}],
+                "action": "unbind", "when": "normal"
+            }))
+            .unwrap(),
+        );
+        let editor = make_editor_with_config(config, &[]);
+        assert!(
+            !editor
+                .bindings
+                .iter()
+                .any(|b| b.is_chord && b.action == "save"),
+            "the removed chord must not come back on reload"
+        );
+        assert!(
+            !editor.bindings.iter().any(|b| b.action == "unbind"),
+            "an unbind entry is a removal, not a binding row"
+        );
+        assert!(
+            editor.bindings.iter().any(|b| b.action == "save"),
+            "the action stays listed (single-key or unbound) so it can be rebound"
+        );
+    }
+
+    #[test]
+    fn disabling_a_chord_writes_a_chord_shaped_noop() {
+        // Regression: the noop override was written with an empty `key` and
+        // no `keys`, so the resolver dropped it as an invalid binding — the
+        // editor said "disabled" and C-x C-s kept saving.
+        let mut editor = make_emacs_editor();
+        let idx = emacs_save_chord(&editor);
+        editor.selected = select_row(&editor, idx);
+        assert_eq!(editor.disable_selected(), DeleteResult::Disabled);
+
+        let noop = editor
+            .get_custom_bindings()
+            .into_iter()
+            .find(|kb| kb.action == "noop")
+            .expect("deleting a keymap binding queues a noop override");
+        assert!(
+            noop.key.is_empty(),
+            "a chord override has no single key, got {:?}",
+            noop.key
+        );
+        assert_eq!(
+            noop.keys.iter().map(|k| k.key.as_str()).collect::<Vec<_>>(),
+            vec!["x", "s"],
+            "the override must name the chord it disables"
+        );
+    }
+
+    #[test]
+    fn editing_a_chord_without_re_recording_keeps_the_chord() {
+        // Regression: the dialog seeded `key_code` with the chord's
+        // placeholder `KeyCode::Null`, so saving wrote `"key": "Null"` and
+        // destroyed the binding.
+        let mut editor = make_emacs_editor();
+        let idx = emacs_save_chord(&editor);
+        editor.edit_dialog = Some(EditBindingState::new_edit(idx, &editor.bindings[idx]));
+        assert!(
+            editor.apply_edit_dialog().is_none(),
+            "the edit must validate"
+        );
+
+        let written = editor
+            .get_custom_bindings()
+            .into_iter()
+            .find(|kb| kb.action == "save")
+            .expect("applying the dialog queues the edited binding");
+        assert!(
+            written.key.is_empty(),
+            "a preserved chord must not be written as a single key, got {:?}",
+            written.key
+        );
+        assert_eq!(
+            written
+                .keys
+                .iter()
+                .map(|k| k.key.as_str())
+                .collect::<Vec<_>>(),
+            vec!["x", "s"],
+        );
+        assert!(
+            editor.bindings[idx].is_chord,
+            "the row stays a chord after the edit"
+        );
+    }
+
+    #[test]
+    fn an_overriding_keymap_replaces_the_inherited_row() {
+        // `emacs` inherits `default` and rebinds Ctrl+S from Save to Find.
+        // Only the winning action may be listed, or the editor advertises a
+        // binding that never fires. Matched on the parsed key rather than
+        // `key_display`, which renders as "⌃S" on macOS and "Ctrl+S" elsewhere.
+        let editor = make_emacs_editor();
+        let ctrl_s: Vec<&str> = editor
+            .bindings
+            .iter()
+            .filter(|b| {
+                !b.is_chord
+                    && b.key_code == KeyCode::Char('s')
+                    && b.modifiers == KeyModifiers::CONTROL
+                    && b.context == "normal"
+            })
+            .map(|b| b.action.as_str())
+            .collect();
+        assert_eq!(
+            ctrl_s,
+            vec!["search"],
+            "Ctrl+S must list only the emacs action, not the inherited one"
+        );
+    }
+
+    #[test]
+    fn dropdown_context_options_cover_every_keymap_context() {
+        // Every context the built-in keymaps actually use must be pickable in
+        // the add/edit dialog: a binding whose context isn't offered can't be
+        // authored, and editing one falls back to "normal" — silently
+        // reassigning it on save. Read off the keymaps rather than a hand
+        // written list, which is how four of them went missing.
+        let dialog = EditBindingState::new_add();
+        let config = Config::default();
+        for map_name in crate::config::KeybindingMapName::BUILTIN_OPTIONS {
+            for kb in config.resolve_keymap(map_name) {
+                let ctx = canonical_context(kb.when.as_deref().unwrap_or("normal"));
+                assert!(
+                    dialog.context_options.contains(&ctx),
+                    "keymap `{}` binds `{}` in context `{}`, which the dialog \
+                     dropdown does not offer",
+                    map_name,
+                    kb.action,
+                    ctx,
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn context_spellings_are_folded_together() {
+        // `default.json` writes both `fileExplorer` and `file_explorer`. Rows
+        // must land on one canonical spelling, or the same context shows up
+        // twice and the dropdown can't match either.
+        let editor = make_editor(&[]);
+        assert!(
+            editor.bindings.iter().all(|b| b.context != "file_explorer"),
+            "the alias spelling must be folded into `fileExplorer`"
+        );
+        assert!(
+            editor.bindings.iter().any(|b| b.context == "fileExplorer"),
+            "file-explorer bindings should still be listed"
         );
     }
 }

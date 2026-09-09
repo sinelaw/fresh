@@ -5,7 +5,9 @@
 //! key recording, conflict detection, and keymap management.
 
 mod editor;
-mod helpers;
+// `pub(crate)` for the config-name serialiser: `keybindings::parse_key` is its
+// exact inverse, and `config_names_round_trip` holds the two together.
+pub(crate) mod helpers;
 mod types;
 
 pub use editor::KeybindingEditor;

@@ -1,15 +1,15 @@
 # Web UI theme checklist
 
 Purpose: an exhaustive, element-by-element visual checklist for **building and
-reviewing a web theme** (`web-ui/css/9x-theme-*.css` + tokens in
-`web-ui/js/15-theme.js`). Every native chrome surface the web UI renders is
+reviewing a web theme** (`crates/fresh-editor/web-ui/css/9x-theme-*.css` + tokens in
+`crates/fresh-editor/web-ui/js/15-theme.js`). Every native chrome surface the web UI renders is
 listed with the visual dimensions that must be deliberately styled —
 **surface/fill, text, secondary text, font, padding, margin, gaps, borders /
 hairlines, radius, icons, shadow, and the hover / selected / disabled / focused
 states**. Walk it top-to-bottom against a live build in each theme; anything you
 can't tick is an unstyled or mis-styled element.
 
-See `web-ui/README.md` §"Web themes" for the mechanism and
+See `crates/fresh-editor/web-ui/README.md` §"Web themes" for the mechanism and
 [web-ui.md](web-ui.md) for the architecture. The buffer interior is **not** a
 theme surface — it is painted from the editor's **TUI colour theme** (see
 [config-themes-settings.md](config-themes-settings.md)); this doc covers the
@@ -20,11 +20,11 @@ own (pane background, caret, scrollbar, separators).
 
 ## 0. How to use this
 
-1. Build and serve (`web-ui/test/run.sh` starts the bridge; or `fresh --web`).
+1. Build and serve (`crates/fresh-editor/web-ui/test/run.sh` starts the bridge; or `fresh --web`).
 2. Switch to the theme under review (the top-right pill, `Ctrl/Cmd+Alt+T`, or
    `window.fresh.setWebTheme('name')` from the console).
 3. Drive every surface into view (menus, palette, settings, popups, the dock,
-   context menus, the trust dialog…). `web-ui/test/drive.mjs` exercises all of
+   context menus, the trust dialog…). `crates/fresh-editor/web-ui/test/drive.mjs` exercises all of
    them and drops screenshots in `$SHOTS`; capturing per-theme screenshots there
    is the fastest way to review.
 4. For each element below, verify **every** listed dimension in **both** the
@@ -426,7 +426,7 @@ Desktop chrome is replaced with touch bars; verify the theme's tokens still read
 - [ ] **No black chips**: grep the rendered UI for any control still on `--bg`.
 - [ ] **No cell/SVG leakage**: chrome is native HTML; only `svg.cells` (buffer)
   and `.ficon` (decorative) are SVG.
-- [ ] **Playwright suite green** (`web-ui/test/run.sh`): the theme assertions
+- [ ] **Playwright suite green** (`crates/fresh-editor/web-ui/test/run.sh`): the theme assertions
   (body class, bezel/title-bar swap, buffer-stays-monospace, density, switcher)
   plus the 140+ chrome assertions.
 - [ ] **Cosmos unchanged**: the default theme is byte-for-byte identical (its
@@ -436,7 +436,7 @@ Desktop chrome is replaced with touch bars; verify the theme's tokens still read
 
 ## 25. Screenshot-observed detail catalog
 
-Concrete elements pulled from per-theme screenshots (`web-ui/test/drive.mjs`
+Concrete elements pulled from per-theme screenshots (`crates/fresh-editor/web-ui/test/drive.mjs`
 `$SHOTS`, plus focused captures of the title bar, tabs, toolbar, popup, context
 menu and the dock in each view mode). These are the easy-to-miss bits — verify
 each renders correctly and legibly in the theme under review.

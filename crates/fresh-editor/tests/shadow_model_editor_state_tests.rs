@@ -3,9 +3,7 @@
 // These tests exercise the full editor pipeline via EditorTestHarness::send_key(),
 // including undo/redo and bulk edit operations (MoveLineUp/Down).
 
-mod common;
-
-use common::harness::EditorTestHarness;
+use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
 use proptest::prelude::*;
 

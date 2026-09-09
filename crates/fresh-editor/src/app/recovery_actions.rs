@@ -10,6 +10,8 @@
 use anyhow::Result as AnyhowResult;
 
 use crate::model::event::BufferId;
+use fresh_core::WindowId;
+use std::path::PathBuf;
 
 use super::Editor;
 
@@ -31,77 +33,311 @@ impl Editor {
         Ok(self.recovery_service.lock().unwrap().start_session()?)
     }
 
-    /// End the recovery session cleanly (call on normal shutdown)
+    /// End the recovery session cleanly (call on normal shutdown).
+    ///
+    /// Spans every workspace: exiting closes them all, and flushing only the
+    /// active one is what let a quit from a clean workspace delete another's
+    /// unsaved work (issue #3189).
     pub fn end_recovery_session(&mut self) -> AnyhowResult<()> {
         let hot_exit = self.config.editor.hot_exit;
 
         if hot_exit {
-            // Force all modified buffers to be re-saved by marking them pending,
-            // then reuse the existing periodic recovery save logic.
-            for (_, state) in self
-                .windows
-                .get_mut(&self.active_window)
-                .map(|w| &mut w.buffers)
-                .expect("active window present")
-            {
+            // Matters most for background workspaces: a buffer edited and
+            // switched away from inside the auto-save interval has nothing on
+            // disk at all until this runs.
+            for window in self.windows.values_mut() {
+                for (_, state) in &mut window.buffers {
+                    if state.buffer.is_modified() {
+                        state.buffer.set_recovery_pending(true);
+                    }
+                }
+            }
+            for window_id in self.window_ids_sorted() {
+                self.with_window_retargeted(window_id, |editor| {
+                    editor.save_pending_recovery_buffers()
+                })?;
+            }
+        }
+
+        // With `hot_exit` off nothing is preserved — the quit prompt has
+        // already forced every live buffer to be saved or discarded — but the
+        // accounting still protects a workspace never materialized here.
+        let preserve_ids = self.recovery_ids_to_preserve();
+        let known_ids = self.live_recovery_ids();
+        Ok(self
+            .recovery_service
+            .lock()
+            .unwrap()
+            .end_session_accounting(&preserve_ids, &known_ids)?)
+    }
+
+    /// Flush a workspace's unsaved buffers before it is dropped.
+    ///
+    /// `close_window` asks nothing about unsaved changes — that confirmation
+    /// belongs to the Orchestrator UI driving the close, not to a function the
+    /// plugin calls once the user has decided. This layer's job is only to
+    /// leave the content somewhere recoverable (issue #3189).
+    ///
+    /// Gated on `hot_exit` to match [`Editor::end_recovery_session`]: with it
+    /// off, recovery is a crash net a clean exit clears, so writing content
+    /// nothing will offer back is just litter.
+    pub(crate) fn flush_window_recovery(&mut self, window_id: WindowId) -> AnyhowResult<usize> {
+        if !self.config.editor.hot_exit || !self.windows.contains_key(&window_id) {
+            return Ok(0);
+        }
+        if let Some(window) = self.windows.get_mut(&window_id) {
+            for (_, state) in &mut window.buffers {
                 if state.buffer.is_modified() {
                     state.buffer.set_recovery_pending(true);
                 }
             }
-            self.save_pending_recovery_buffers()?;
-
-            // Collect recovery IDs for buffers that should survive this session
-            let preserve_ids = self.recovery_ids_to_preserve();
-            Ok(self
-                .recovery_service
-                .lock()
-                .unwrap()
-                .end_session_preserving(&preserve_ids)?)
-        } else {
-            Ok(self.recovery_service.lock().unwrap().end_session()?)
         }
+        self.with_window_retargeted(window_id, |editor| editor.save_pending_recovery_buffers())
     }
 
-    /// Collect recovery IDs for all buffers that should be preserved across sessions.
+    /// Collect recovery IDs for all buffers that should be preserved across
+    /// sessions, across every open workspace.
     fn recovery_ids_to_preserve(&self) -> Vec<String> {
         let hot_exit = self.config.editor.hot_exit;
+        if !hot_exit {
+            return Vec::new();
+        }
 
-        self.active_window()
-            .buffer_metadata
-            .iter()
-            .filter_map(|(buffer_id, meta)| {
+        let mut out = Vec::new();
+        for window in self.windows.values() {
+            for (buffer_id, meta) in window.buffer_metadata.iter() {
                 if meta.hidden_from_tabs || meta.is_virtual() {
-                    return None;
+                    continue;
                 }
-                if !hot_exit {
-                    return None;
-                }
-                let state = self
-                    .windows
-                    .get(&self.active_window)
-                    .map(|w| &w.buffers)
-                    .expect("active window present")
-                    .get(buffer_id)?;
+                let Some(state) = window.buffers.get(buffer_id) else {
+                    continue;
+                };
                 if !state.buffer.is_modified() {
-                    return None;
+                    continue;
                 }
-                let path = meta.file_path()?;
+                let Some(path) = meta.file_path() else {
+                    continue;
+                };
                 let is_unnamed = path.as_os_str().is_empty();
                 if is_unnamed && state.buffer.total_bytes() == 0 {
-                    return None;
+                    continue;
                 }
                 // Use stored recovery_id, or compute from path for file-backed buffers
-                meta.recovery_id.clone().or_else(|| {
-                    let file_path = state.buffer.file_path().map(|p| p.to_path_buf());
-                    Some(
-                        self.recovery_service
-                            .lock()
-                            .unwrap()
-                            .get_buffer_id(file_path.as_deref()),
-                    )
-                })
+                if let Some(id) = meta.recovery_id.clone().or_else(|| {
+                    state
+                        .buffer
+                        .file_path()
+                        .filter(|p| !p.as_os_str().is_empty())
+                        .map(crate::services::recovery::path_hash)
+                }) {
+                    out.push(id);
+                }
+            }
+        }
+        out
+    }
+
+    /// The "accounted for" set for [`RecoveryService::end_session_accounting`]:
+    /// an entry here that is not preserved was resolved during the session and
+    /// is safe to delete. An entry outside it was never in memory here, so
+    /// this session has no standing to throw it away.
+    fn live_recovery_ids(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        for window in self.windows.values() {
+            for (buffer_id, meta) in window.buffer_metadata.iter() {
+                if let Some(id) = &meta.recovery_id {
+                    out.push(id.clone());
+                    continue;
+                }
+                // File-backed buffers derive their id from the path, so a
+                // buffer that never needed a recovery save still owns the
+                // entry a previous session may have written for that file.
+                let Some(state) = window.buffers.get(buffer_id) else {
+                    continue;
+                };
+                if let Some(path) = state.buffer.file_path() {
+                    if !path.as_os_str().is_empty() {
+                        out.push(crate::services::recovery::path_hash(path));
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    /// Which open workspace a recovery entry belongs to.
+    ///
+    /// The stamp is authoritative; it survives a file opened from outside its
+    /// root and separates workspaces sharing a worktree. Unstamped entries
+    /// fall back to longest-root-prefix, right for the ordinary case.
+    ///
+    /// `None` — no open workspace claims it — is left strictly alone: never
+    /// adopted elsewhere, never deleted, since nothing here can say the user
+    /// is done with it.
+    fn recovery_entry_owner(
+        &self,
+        entry: &crate::services::recovery::RecoveryEntry,
+    ) -> Option<WindowId> {
+        if let Some(workspace_id) = entry.metadata.workspace_id.as_deref() {
+            return self
+                .windows
+                .iter()
+                .find(|(_, w)| w.stable_id == workspace_id)
+                .map(|(id, _)| *id);
+        }
+        let path = entry.metadata.original_path.as_ref()?;
+        self.windows
+            .iter()
+            .filter(|(_, w)| path.starts_with(&w.root))
+            .max_by_key(|(_, w)| w.root.as_os_str().len())
+            .map(|(id, _)| *id)
+    }
+
+    /// Restore this workspace's own leftover recovery entries into it, on
+    /// activation, so unsaved work returns to the workspace it was done in
+    /// rather than whichever one is in front (issue #3189).
+    ///
+    /// Reads entries rather than consuming them: each stays on disk backed by
+    /// a live modified buffer, leaving the exit accounting to decide its fate.
+    /// A workspace the user never visits is never touched, which is what keeps
+    /// its work when only some are activated.
+    ///
+    /// `claim_unowned` widens the net to entries no workspace claims. Set
+    /// only for the one startup pass, where the old behaviour opened
+    /// everything in the foreground workspace and dropping those silently
+    /// would be the regression; `false` later, or each workspace in turn would
+    /// adopt its own copy of the same unattributable entry.
+    pub(crate) fn adopt_recovery_for_active_window(
+        &mut self,
+        claim_unowned: bool,
+    ) -> AnyhowResult<usize> {
+        use crate::services::recovery::RecoveryResult;
+
+        let entries = self.recovery_service.lock().unwrap().list_recoverable()?;
+        if entries.is_empty() {
+            return Ok(0);
+        }
+        let active = self.active_window;
+        let already_open: std::collections::HashSet<PathBuf> = self
+            .active_window()
+            .buffers
+            .iter()
+            .filter_map(|(_, state)| state.buffer.file_path().map(|p| p.to_path_buf()))
+            .collect();
+
+        let mine: Vec<_> = entries
+            .into_iter()
+            .filter(|entry| match self.recovery_entry_owner(entry) {
+                Some(owner) => owner == active,
+                None => claim_unowned,
             })
-            .collect()
+            .filter(|entry| {
+                entry
+                    .metadata
+                    .original_path
+                    .as_ref()
+                    .is_none_or(|p| !already_open.contains(p))
+            })
+            .collect();
+
+        let mut adopted = 0;
+        for entry in mine {
+            let loaded = self.recovery_service.lock().unwrap().load_recovery(&entry);
+            let (path, text) = match loaded {
+                Ok(RecoveryResult::Recovered {
+                    original_path,
+                    content,
+                }) => (
+                    original_path,
+                    String::from_utf8_lossy(&content).into_owned(),
+                ),
+                Ok(RecoveryResult::RecoveredChunks {
+                    original_path,
+                    chunks,
+                }) => {
+                    // Large file: the entry holds deltas against what is on
+                    // disk, so open the file and replay them in reverse (later
+                    // offsets first) so earlier edits don't shift them.
+                    let Ok(buffer_id) = self.open_file(&original_path) else {
+                        tracing::warn!("Recovery adopt failed to open {}", original_path.display());
+                        continue;
+                    };
+                    {
+                        let state = self.active_state_mut();
+                        for chunk in chunks.into_iter().rev() {
+                            let text = String::from_utf8_lossy(&chunk.content).into_owned();
+                            if chunk.original_len > 0 {
+                                state
+                                    .buffer
+                                    .delete(chunk.offset..chunk.offset + chunk.original_len);
+                            }
+                            state.buffer.insert(chunk.offset, &text);
+                        }
+                        state.buffer.set_modified(true);
+                        state.buffer.set_recovery_pending(false);
+                        state.wrap_indices.damage_all();
+                    }
+                    self.active_event_log_mut().clear_saved_position();
+                    if let Some(meta) = self.active_window_mut().buffer_metadata.get_mut(&buffer_id)
+                    {
+                        meta.recovery_id = Some(entry.id.clone());
+                    }
+                    self.sync_lsp_after_recovery_replay(buffer_id);
+                    adopted += 1;
+                    tracing::info!(
+                        "Adopted chunked recovery entry {} into workspace {}",
+                        entry.id,
+                        active
+                    );
+                    continue;
+                }
+                Ok(other) => {
+                    tracing::debug!("Recovery adopt skipped {}: {:?}", entry.id, other);
+                    continue;
+                }
+                Err(e) => {
+                    tracing::warn!("Recovery adopt failed to load {}: {}", entry.id, e);
+                    continue;
+                }
+            };
+
+            let buffer_id = match path {
+                Some(ref path) => match self.open_file(path) {
+                    Ok(buffer_id) => buffer_id,
+                    Err(e) => {
+                        tracing::warn!("Recovery adopt failed to open {}: {}", path.display(), e);
+                        continue;
+                    }
+                },
+                None => self.new_buffer(),
+            };
+            {
+                let state = self.active_state_mut();
+                let total = state.buffer.total_bytes();
+                state.buffer.delete(0..total);
+                state.buffer.insert(0, &text);
+                state.buffer.set_modified(true);
+                state.buffer.set_recovery_pending(false);
+                // Wholesale replacement, never described as edit damage.
+                // See `WrapIndex::damage_all`.
+                state.wrap_indices.damage_all();
+            }
+            self.active_event_log_mut().clear_saved_position();
+            if let Some(meta) = self.active_window_mut().buffer_metadata.get_mut(&buffer_id) {
+                // Keep writing to the same entry, and make it *accounted* so
+                // the exit path can resolve it rather than treating it as
+                // orphaned forever.
+                meta.recovery_id = Some(entry.id.clone());
+            }
+            self.sync_lsp_after_recovery_replay(buffer_id);
+            adopted += 1;
+            tracing::info!(
+                "Adopted recovery entry {} into workspace {}",
+                entry.id,
+                active
+            );
+        }
+        Ok(adopted)
     }
 
     /// Check if there are files to recover from a crash
@@ -120,150 +356,14 @@ impl Editor {
         Ok(self.recovery_service.lock().unwrap().list_recoverable()?)
     }
 
-    /// Recover all buffers from recovery files
-    /// Returns the number of buffers recovered
+    /// Recover buffers left by a crash into the workspace they came from.
+    ///
+    /// The startup half of the per-workspace scheme: the foreground workspace
+    /// claims its own; every other one claims its own when activated. This
+    /// used to open every entry into whichever workspace was in front, so a
+    /// crash reshuffled unsaved work between projects (issue #3189).
     pub fn recover_all_buffers(&mut self) -> AnyhowResult<usize> {
-        use crate::services::recovery::RecoveryResult;
-
-        let entries = self.recovery_service.lock().unwrap().list_recoverable()?;
-        let mut recovered_count = 0;
-
-        for entry in entries {
-            let accepted = self
-                .recovery_service
-                .lock()
-                .unwrap()
-                .accept_recovery(&entry);
-            match accepted {
-                Ok(RecoveryResult::Recovered {
-                    original_path,
-                    content,
-                }) => {
-                    // Full content recovery (new/small buffers)
-                    let text = String::from_utf8_lossy(&content).into_owned();
-
-                    if let Some(path) = original_path {
-                        // Open the file path (this creates the buffer)
-                        match self.open_file(&path) {
-                            Ok(buffer_id) => {
-                                // Replace buffer content with recovered content
-                                {
-                                    let state = self.active_state_mut();
-                                    let total = state.buffer.total_bytes();
-                                    state.buffer.delete(0..total);
-                                    state.buffer.insert(0, &text);
-                                    // Mark as modified since it differs from disk
-                                    state.buffer.set_modified(true);
-                                }
-                                // Invalidate the event log's saved position so undo
-                                // can't incorrectly clear the modified flag
-                                self.active_event_log_mut().clear_saved_position();
-                                // Recovery replay mutates the buffer directly —
-                                // push the new content to LSP so tokens and
-                                // positions don't drift against an on-disk base.
-                                self.sync_lsp_after_recovery_replay(buffer_id);
-                                recovered_count += 1;
-                                tracing::info!("Recovered buffer: {}", path.display());
-                            }
-                            Err(e) => {
-                                // Check if this is a large file encoding confirmation error
-                                if let Some(confirmation) = e.downcast_ref::<
-                                    crate::model::buffer::LargeFileEncodingConfirmation,
-                                >() {
-                                    self.start_large_file_encoding_confirmation(confirmation);
-                                } else {
-                                    tracing::warn!("Failed to recover buffer {}: {}", path.display(), e);
-                                }
-                            }
-                        }
-                    } else {
-                        // Unsaved buffer - create new buffer with recovered content
-                        let buffer_id = self.new_buffer();
-                        {
-                            let state = self.active_state_mut();
-                            state.buffer.insert(0, &text);
-                            state.buffer.set_modified(true);
-                        }
-                        // Invalidate the event log's saved position so undo
-                        // can't incorrectly clear the modified flag
-                        self.active_event_log_mut().clear_saved_position();
-                        self.sync_lsp_after_recovery_replay(buffer_id);
-                        recovered_count += 1;
-                        tracing::info!("Recovered unsaved buffer");
-                    }
-                }
-                Ok(RecoveryResult::RecoveredChunks {
-                    original_path,
-                    chunks,
-                }) => {
-                    // Chunked recovery for large files - apply chunks directly
-                    if let Ok(buffer_id) = self.open_file(&original_path) {
-                        {
-                            let state = self.active_state_mut();
-
-                            // Apply chunks in reverse order to preserve offsets
-                            // Each chunk: delete original_len bytes at offset, then insert content
-                            for chunk in chunks.into_iter().rev() {
-                                let text = String::from_utf8_lossy(&chunk.content).into_owned();
-                                if chunk.original_len > 0 {
-                                    state
-                                        .buffer
-                                        .delete(chunk.offset..chunk.offset + chunk.original_len);
-                                }
-                                state.buffer.insert(chunk.offset, &text);
-                            }
-
-                            // Mark as modified since it differs from disk
-                            state.buffer.set_modified(true);
-                        }
-                        // Invalidate the event log's saved position so undo
-                        // can't incorrectly clear the modified flag
-                        self.active_event_log_mut().clear_saved_position();
-                        self.sync_lsp_after_recovery_replay(buffer_id);
-                        recovered_count += 1;
-                        tracing::info!("Recovered buffer with chunks: {}", original_path.display());
-                    }
-                }
-                Ok(RecoveryResult::OriginalFileModified { id, original_path }) => {
-                    tracing::warn!(
-                        "Recovery file {} skipped: original file {} was modified",
-                        id,
-                        original_path.display()
-                    );
-                    // Keep the recovery file so the user can manually inspect it.
-                    // Show a warning so the user knows unsaved changes exist.
-                    let name = original_path
-                        .file_name()
-                        .unwrap_or_default()
-                        .to_string_lossy();
-                    self.set_status_message(format!(
-                        "{} changed on disk; unsaved changes not restored",
-                        name
-                    ));
-                }
-                Ok(RecoveryResult::Corrupted { id, reason }) => {
-                    tracing::warn!("Recovery file {} corrupted: {}", id, reason);
-                }
-                Ok(RecoveryResult::NotFound { id }) => {
-                    tracing::warn!("Recovery file {} not found", id);
-                }
-                Err(e) => {
-                    tracing::warn!("Failed to recover {}: {}", entry.id, e);
-                }
-            }
-        }
-
-        Ok(recovered_count)
-    }
-
-    /// Discard all recovery files (user decided not to recover)
-    /// Returns the number of recovery files deleted
-    pub fn discard_all_recovery(&mut self) -> AnyhowResult<usize> {
-        Ok(self
-            .recovery_service
-            .lock()
-            .unwrap()
-            .discard_all_recovery()?)
+        self.adopt_recovery_for_active_window(true)
     }
 
     /// Restore only the hot-exit content from the previous clean exit:
@@ -273,11 +373,10 @@ impl Editor {
     /// the user does not lose in-progress work just because they asked
     /// to skip restoring the workspace layout.
     ///
-    /// Unlike [`Editor::recover_all_buffers`], this path uses
-    /// `load_recovery` and leaves the recovery files in place so the
-    /// current session's hot-exit pipeline keeps owning them (the files
-    /// are cleaned up on the next clean shutdown via
-    /// `end_session_preserving`).
+    /// Like [`Editor::recover_all_buffers`], this uses `load_recovery` and
+    /// leaves the recovery files in place, so the current session's hot-exit
+    /// pipeline keeps owning them and the next clean shutdown decides their
+    /// fate (`end_session_accounting`).
     ///
     /// Returns the number of buffers restored.
     pub fn try_restore_hot_exit_buffers(&mut self) -> AnyhowResult<usize> {
@@ -311,6 +410,9 @@ impl Editor {
                                     state.buffer.insert(0, &text);
                                     state.buffer.set_modified(true);
                                     state.buffer.set_recovery_pending(false);
+                                    // Wholesale replacement, never described as
+                                    // edit damage. See `WrapIndex::damage_all`.
+                                    state.wrap_indices.damage_all();
                                 }
                                 self.active_event_log_mut().clear_saved_position();
                                 self.sync_lsp_after_recovery_replay(buffer_id);
@@ -418,6 +520,19 @@ impl Editor {
 
     /// Perform auto-recovery-save for all modified buffers if needed.
     /// Called frequently (every frame); rate-limited by `auto_recovery_save_interval_secs`.
+    ///
+    /// Sweeps every workspace. An active-window-only sweep left a
+    /// backgrounded buffer with recovery data no newer than the last tick it
+    /// was on screen for, so a crash — which, unlike a clean exit, gets no
+    /// chance to flush — lost everything typed since (issue #3189).
+    ///
+    /// Close to free: a background window's buffers cannot go
+    /// `recovery_pending` again without edits, and edits only happen while
+    /// active, so each is written once after the switch and then skipped.
+    ///
+    /// One editor-wide tick off the active window's clock, with every window's
+    /// stamp advanced together so a later switch doesn't re-tick on a stale
+    /// timer.
     pub fn auto_recovery_save_dirty_buffers(&mut self) -> AnyhowResult<usize> {
         if !self.recovery_service.lock().unwrap().is_enabled() {
             return Ok(0);
@@ -434,8 +549,16 @@ impl Editor {
             return Ok(0);
         }
 
-        let saved = self.save_pending_recovery_buffers()?;
-        self.active_window_mut().last_auto_recovery_save = self.time_source.now();
+        let mut saved = 0;
+        for window_id in self.window_ids_sorted() {
+            saved += self.with_window_retargeted(window_id, |editor| {
+                editor.save_pending_recovery_buffers()
+            })?;
+        }
+        let now = self.time_source.now();
+        for window in self.windows.values_mut() {
+            window.last_auto_recovery_save = now;
+        }
         Ok(saved)
     }
 
@@ -573,10 +696,21 @@ impl Editor {
             }
         };
 
-        self.recovery_service
-            .lock()
-            .unwrap()
-            .delete_buffer_recovery(&recovery_id)?;
+        // The deletes (exists + remove_file + a chunk-directory scan) are
+        // disk I/O — off-loop. The recovery-service mutex is taken inside the
+        // spawned effect so a slow disk stalls the runtime worker, not the
+        // editor thread. Failure is logged, not returned: the stale recovery
+        // file costs one spurious recovery prompt, never a hung close.
+        let recovery_service = std::sync::Arc::clone(&self.recovery_service);
+        self.spawn_off_loop_effect("delete_buffer_recovery", move || {
+            let result = recovery_service
+                .lock()
+                .unwrap()
+                .delete_buffer_recovery(&recovery_id);
+            if let Err(e) = result {
+                tracing::warn!("off-loop recovery delete failed: {}", e);
+            }
+        });
 
         // Clear recovery_pending since buffer is now saved
         if let Some(state) = self
@@ -602,6 +736,9 @@ impl Editor {
         recovery_id: &str,
         path: Option<&std::path::Path>,
     ) -> AnyhowResult<bool> {
+        // Read before the mutable borrow of the buffer state below: the entry
+        // is stamped with the workspace that owns it (issue #3189).
+        let workspace_id = self.active_window().stable_id.clone();
         let state = match self
             .windows
             .get_mut(&self.active_window)
@@ -628,7 +765,7 @@ impl Editor {
                 .collect();
             let original_size = state.buffer.original_file_size().unwrap_or(0);
             let final_size = state.buffer.total_bytes();
-            self.recovery_service.lock().unwrap().save_buffer(
+            self.recovery_service.lock().unwrap().save_buffer_owned(
                 recovery_id,
                 recovery_chunks,
                 path,
@@ -636,6 +773,7 @@ impl Editor {
                 line_count,
                 original_size,
                 final_size,
+                Some(&workspace_id),
             )?;
         } else {
             let total_bytes = state.buffer.total_bytes();
@@ -649,7 +787,7 @@ impl Editor {
             let chunks = vec![crate::services::recovery::types::RecoveryChunk::new(
                 0, 0, content,
             )];
-            self.recovery_service.lock().unwrap().save_buffer(
+            self.recovery_service.lock().unwrap().save_buffer_owned(
                 recovery_id,
                 chunks,
                 path,
@@ -657,6 +795,7 @@ impl Editor {
                 line_count,
                 0,
                 total_bytes,
+                Some(&workspace_id),
             )?;
         }
 

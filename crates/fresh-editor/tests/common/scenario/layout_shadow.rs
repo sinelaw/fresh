@@ -6,7 +6,7 @@
 //! double-width chars, virtual lines, and other surprise inputs the
 //! editor's actual layout handles.
 //!
-//! Today's shadow only computes `viewport.top_byte` (always 0 — no
+//! Today's shadow only computes `viewport.top_byte()` (always 0 — no
 //! scroll math), `gutter_width` (line-count-driven), and leaves
 //! `hardware_cursor` and `visible_byte_range` as None. Expanding the
 //! shadow to model wrap math + scroll math is straightforward but

@@ -386,7 +386,7 @@ fn test_ctrl_up_scrolls_view_up() {
     // Record cursor position before scroll
     let cursor_pos_before = harness.cursor_position();
     let (_, screen_y_before) = harness.screen_cursor_position();
-    let top_byte_before = harness.editor().active_viewport().top_byte;
+    let top_byte_before = harness.editor().active_viewport().top_byte();
     eprintln!(
         "BEFORE: cursor_pos={}, screen_y={}, top_byte={}",
         cursor_pos_before, screen_y_before, top_byte_before
@@ -396,11 +396,11 @@ fn test_ctrl_up_scrolls_view_up() {
     harness
         .send_key(KeyCode::Up, KeyModifiers::CONTROL)
         .unwrap();
-    let top_byte_after_key = harness.editor().active_viewport().top_byte;
+    let top_byte_after_key = harness.editor().active_viewport().top_byte();
     eprintln!("AFTER KEY (before render): top_byte={}", top_byte_after_key);
 
     harness.render().unwrap();
-    let top_byte_after_render = harness.editor().active_viewport().top_byte;
+    let top_byte_after_render = harness.editor().active_viewport().top_byte();
     eprintln!("AFTER RENDER: top_byte={}", top_byte_after_render);
 
     // Cursor buffer position should NOT change

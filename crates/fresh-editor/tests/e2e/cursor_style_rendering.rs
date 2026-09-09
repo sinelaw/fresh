@@ -107,3 +107,54 @@ fn test_steady_block_skips_reversed_with_hardware_cursor() {
          when hardware cursor is available, but style was {style:?}"
     );
 }
+
+/// **A cell the terminal inverts has to say what colour it is.**
+///
+/// With a block cursor in a terminal, the editor draws nothing at the caret
+/// — it leaves the cell to the hardware cursor, which paints it by inverting
+/// the cell's own two colours. Past the last character of a line no span had
+/// ever covered the cell, so it carried only the ground's background: the
+/// foreground half was `Reset`, i.e. *the terminal's* default foreground.
+/// Inverting a cell whose foreground is the terminal's default draws the
+/// block in that colour — white, in a terminal with a dark profile — so on
+/// the `light` theme the cursor at end-of-line was white on white and simply
+/// disappeared. (The same in a daemon session, for the same reason: the same
+/// cells reach the same terminal.)
+///
+/// The ground now states both halves, so an end-of-line cursor inverts to
+/// the theme's own foreground on its own background.
+#[test]
+fn end_of_line_cursor_cell_states_both_halves_of_the_ground() {
+    let mut config = Config::default();
+    config.theme = "light".into();
+    let mut harness = EditorTestHarness::with_config(80, 24, config).unwrap();
+    // The caret ends up one cell past the last character: end of line, which
+    // is where nothing used to be painted.
+    harness.type_text("hello").unwrap();
+    harness.render().unwrap();
+
+    let (cx, cy) = harness.screen_cursor_position();
+    let style = harness
+        .get_cell_style(cx, cy)
+        .expect("the cursor should be at a valid cell");
+    assert_eq!(
+        style.fg,
+        Some(ratatui::style::Color::Rgb(0, 0, 0)),
+        "the cell an end-of-line cursor inverts must name the editor's \
+         foreground, not fall through to the terminal's"
+    );
+    // The other half was never missing: here it is the current line's tint
+    // (the caret's line is highlighted by default) rather than the plain
+    // white ground, and either way it is a colour rather than `Reset`. What
+    // matters is that the pair is complete, so the inversion is defined.
+    assert_eq!(
+        style.bg,
+        Some(ratatui::style::Color::Rgb(245, 245, 245)),
+        "the cursor's line carries the current-line tint"
+    );
+    assert_ne!(
+        style.bg,
+        Some(ratatui::style::Color::Reset),
+        "a ground with an unstated half is what the inversion falls through"
+    );
+}

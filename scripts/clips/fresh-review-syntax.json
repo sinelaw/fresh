@@ -1,0 +1,92 @@
+{
+  "name": "fresh-review-syntax",
+
+  "_note": [
+    "Run assets/fresh-review-syntax/make-repo.sh first; it builds the",
+    "repo `workdir` points at, and Review Diff reads the working tree, so the",
+    "diff on screen IS that repo's uncommitted state. Re-run it before every",
+    "capture: review mode drops a .review session dir in the tree it reviews.",
+    "",
+    "The band rows come off the UI tree (bin/tui-tree on a Dump UI Tree of",
+    "this same screen): chrome_column is menu 0, tabs 1, review keys 2-3,",
+    "divider 4, the Review Diff header 5, divider 6, and pane:4 — the diff",
+    "stream itself — rows 7..48, with the status bar on 49. Everything a",
+    "beat frames is a row of that one pane."
+  ],
+
+  "capture": {
+    "geometry": "64x50",
+    "font": "JetBrains Mono 21",
+    "screen": "1600x2200x24",
+    "display": ":99",
+    "workdir": "~/repos/fresh/target/clips/fresh-review-syntax-repo",
+    "copy_dirs": {
+      "~/repos/fresh/scripts/clips/assets/fresh-review-syntax/fresh":
+        "{scratch}/config/fresh"
+    },
+    "env": {
+      "XDG_CONFIG_HOME": "{scratch}/config",
+      "XDG_DATA_HOME": "{scratch}/data-{pane}",
+      "XDG_STATE_HOME": "{scratch}/state-{pane}",
+      "XDG_RUNTIME_DIR": "{scratch}/run-{pane}"
+    },
+    "keys": [
+      {"key": "ctrl+p"},
+      {"sleep": 1},
+      {"type": "Review Diff"},
+      {"sleep": 1.5},
+      {"key": "Return"},
+      {"sleep": 8}
+    ],
+    "panes": {
+      "before": {
+        "argv": ["~/.local/bin/fresh", "--no-restore", "--no-upgrade-check"],
+        "settle": 12
+      },
+      "after": {
+        "argv": ["~/repos/fresh/target/debug/fresh", "--no-restore",
+                 "--no-upgrade-check"],
+        "settle": 18
+      }
+    }
+  },
+
+  "render": {
+    "size": [1080, 1080],
+    "fps": 60,
+    "rows": 50,
+    "cols": 64,
+    "title": "fresh · syntax inside the diff",
+    "labels": {"before": "BEFORE", "after": "AFTER"},
+    "intro_caption": ["Same review, same repo",
+                      "the diff is code now, and reads as code"],
+    "outro_caption": ["fresh", "github.com/sinelaw/fresh"],
+    "timing": {"intro": 1.9, "zoom": 0.7, "hold": 1.5, "pan": 0.35,
+               "outro": 0.9},
+    "theme": {
+      "bg": [21, 22, 30],
+      "caption_bg": [30, 31, 41],
+      "panel_border": [56, 58, 74],
+      "muted": [140, 142, 160],
+      "fg": [240, 240, 246],
+      "before": [255, 85, 85],
+      "after": [80, 250, 123]
+    },
+    "annotations": [
+      {"rows": [20, 28], "cols": [0.2, 62.5],
+       "head": "It knows it is Python",
+       "sub": "the hunk is coloured in the language of the file it came from"},
+      {"rows": [9, 17], "cols": [0.2, 62.5],
+       "head": "One docstring, six rows",
+       "sub": "each side of a hunk is its own parser, streamed past the other"},
+      {"rows": [31, 36], "cols": [0.2, 62.5],
+       "head": "The word diff still wins",
+       "sub": "what changed inside the line stays on top of the colour"},
+      {"rows": [37, 48], "cols": [0.2, 62.5],
+       "head": "Next file, next language",
+       "sub": "Rust under Python, in the one composed buffer"}
+    ]
+  },
+
+  "encode": {"crf": 18, "preset": "slow"}
+}

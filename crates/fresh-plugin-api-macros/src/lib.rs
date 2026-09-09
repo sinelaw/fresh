@@ -468,6 +468,7 @@ fn rust_to_typescript(ty: &Type, attrs: &[Attribute]) -> String {
 
                 // Types renamed by ts-rs — map Rust name to TypeScript name
                 "CompositeHunk" => "TsCompositeHunk".to_string(),
+                "SyntaxRegion" => "TsSyntaxRegion".to_string(),
                 "CreateCompositeBufferOptions" => "TsCreateCompositeBufferOptions".to_string(),
                 "Suggestion" => "PromptSuggestion".to_string(),
                 "LspMenuItem" => "TsLspMenuItem".to_string(),

@@ -99,8 +99,13 @@ pub(crate) fn kubectl_exec_argv(
 /// bytes from stdin and `exec` them, then the agent keeps reading stdin for
 /// protocol messages. Byte-count framing avoids any dependency on a remote
 /// shell or here-doc support — identical to the SSH bootstrap.
+///
+/// Text mode stdin can miscount, buffer decode is crossplatform.
 pub(crate) fn agent_bootstrap_pycode() -> String {
-    format!("import sys;exec(sys.stdin.read({}))", AGENT_SOURCE.len())
+    format!(
+        "import sys;exec(sys.stdin.buffer.read({}).decode())",
+        AGENT_SOURCE.len()
+    )
 }
 
 /// How the carrier's stderr is wired.
@@ -407,7 +412,10 @@ mod tests {
         let code = agent_bootstrap_pycode();
         assert_eq!(
             code,
-            format!("import sys;exec(sys.stdin.read({}))", AGENT_SOURCE.len())
+            format!(
+                "import sys;exec(sys.stdin.buffer.read({}).decode())",
+                AGENT_SOURCE.len()
+            )
         );
         // No shell metacharacters that would need quoting under `kubectl --`.
         assert!(!code.contains('\''));

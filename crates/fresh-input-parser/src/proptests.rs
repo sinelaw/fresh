@@ -72,9 +72,13 @@ proptest! {
 
     /// A well-formed **SGR mouse** report parses to exactly one mouse event with
     /// the right 0-indexed coordinates, at every split point, with no leak.
+    ///
+    /// `Cb` stops at 127: bit 7 selects xterm's buttons 8-15, which have no
+    /// `MouseEventKind` counterpart and are deliberately dropped. That range is
+    /// covered by `high_button_reports_are_dropped_without_leaking`.
     #[test]
     fn wellformed_sgr_mouse_parses_at_any_split(
-        cb in 0u16..=255, cx in 1u16..=4000, cy in 1u16..=4000,
+        cb in 0u16..=127, cx in 1u16..=4000, cy in 1u16..=4000,
         press in any::<bool>(), cut in 0usize..64,
     ) {
         let final_byte = if press { 'M' } else { 'm' };
@@ -94,9 +98,12 @@ proptest! {
     /// A well-formed **X10 mouse** report (three coordinate bytes, each a valid
     /// `value + 32` byte `>= 0x20`) parses to exactly one mouse event at every
     /// split point, with no structural leak.
+    ///
+    /// The button byte stops at 0x9f for the same reason `Cb` stops at 127 in
+    /// the SGR property above: `0xa0` is where bit 7 — buttons 8-15 — starts.
     #[test]
     fn wellformed_x10_mouse_parses_at_any_split(
-        b0 in 0x20u8..=0xff, b1 in 0x20u8..=0xff, b2 in 0x20u8..=0xff,
+        b0 in 0x20u8..=0x9f, b1 in 0x20u8..=0xff, b2 in 0x20u8..=0xff,
         cut in 0usize..8,
     ) {
         let seq = [0x1b, b'[', b'M', b0, b1, b2];
@@ -107,6 +114,31 @@ proptest! {
 
         prop_assert_eq!(structural_char_leaks(&ev), 0, "leak: {:?}", ev);
         prop_assert_eq!(mouse_events(&ev).len(), 1, "expected 1 mouse event, got {:?}", ev);
+    }
+
+    /// **Unrepresentable buttons are dropped, never leaked.** Bit 7 of `Cb`
+    /// selects xterm's buttons 8-15, which `MouseEventKind` cannot express, so
+    /// both encodings must swallow the report whole rather than alias it onto
+    /// Left/Middle/Right (or, with bit 6 also set, onto the wheel). Emitting no
+    /// event must not weaken the #2745 invariant, which holds for *every* `Cb`:
+    /// the report's bytes are still consumed, at every split point.
+    #[test]
+    fn high_button_reports_are_dropped_without_leaking(
+        cb in 128u16..=255, cx in 1u16..=4000, cy in 1u16..=4000,
+        b0 in 0xa0u8..=0xff, b1 in 0x20u8..=0xff, b2 in 0x20u8..=0xff,
+        cut in 0usize..64,
+    ) {
+        let sgr = format!("\x1b[<{cb};{cx};{cy}M").into_bytes();
+        let x10 = vec![0x1b, b'[', b'M', b0, b1, b2];
+        for seq in [sgr, x10] {
+            let cut = cut % (seq.len() + 1);
+            let mut p = InputParser::new();
+            let mut ev = p.parse(&seq[..cut]);
+            ev.extend(p.parse(&seq[cut..]));
+
+            prop_assert_eq!(structural_char_leaks(&ev), 0, "leak: {:?} (seq {:02x?})", ev, seq);
+            prop_assert_eq!(mouse_events(&ev).len(), 0, "expected no mouse event, got {:?}", ev);
+        }
     }
 
     /// Ground-state **printable ASCII text** (no `ESC`) passes through 1:1 — one
@@ -133,7 +165,7 @@ proptest! {
     #[test]
     fn truncated_x10_then_sgr_resyncs(
         prefix_coords in proptest::collection::vec(0x20u8..=0xff, 0..3),
-        cb in 0u16..=255, cx in 1u16..=4000, cy in 1u16..=4000, cut in 0usize..64,
+        cb in 0u16..=127, cx in 1u16..=4000, cy in 1u16..=4000, cut in 0usize..64,
     ) {
         let mut seq = vec![0x1b, b'[', b'M'];
         seq.extend_from_slice(&prefix_coords); // 0..=2 coord bytes: truncated
@@ -164,7 +196,7 @@ proptest! {
     fn sgr_mouse_amid_esc_free_noise(
         pre in proptest::collection::vec(0x20u8..=0x7e, 0..64),
         post in proptest::collection::vec(0x20u8..=0x7e, 0..64),
-        cb in 0u16..=255, cx in 1u16..=4000, cy in 1u16..=4000,
+        cb in 0u16..=127, cx in 1u16..=4000, cy in 1u16..=4000,
     ) {
         let mut seq = pre.clone();
         seq.extend_from_slice(format!("\x1b[<{cb};{cx};{cy}M").as_bytes());
@@ -173,7 +205,7 @@ proptest! {
 
         prop_assert_eq!(ev.len(), pre.len() + 1 + post.len(), "events: {:?}", ev);
         for (e, &b) in ev.iter().zip(pre.iter()) {
-            prop_assert_eq!(e, &Event::Key(KeyEvent::new(KeyCode::Char(b as char), KeyModifiers::empty())));
+            prop_assert_eq!(e, &Event::key(KeyEvent::new(KeyCode::Char(b as char), KeyModifiers::empty())));
         }
         match &ev[pre.len()] {
             Event::Mouse(me) => {
@@ -183,7 +215,7 @@ proptest! {
             other => prop_assert!(false, "expected mouse at index {}, got {:?}", pre.len(), other),
         }
         for (e, &b) in ev[pre.len() + 1..].iter().zip(post.iter()) {
-            prop_assert_eq!(e, &Event::Key(KeyEvent::new(KeyCode::Char(b as char), KeyModifiers::empty())));
+            prop_assert_eq!(e, &Event::key(KeyEvent::new(KeyCode::Char(b as char), KeyModifiers::empty())));
         }
     }
 

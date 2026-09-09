@@ -1,0 +1,18 @@
+{
+  "theme": "builtin://dracula",
+  "check_for_updates": false,
+  "plugins": {
+    "welcome_screen": {
+      "enabled": true
+    },
+    "dashboard": {
+      "enabled": false
+    },
+    "git_heatmap": {
+      "enabled": false
+    },
+    "vi_mode": {
+      "enabled": false
+    }
+  }
+}

@@ -420,29 +420,24 @@ impl Write for CaptureBuffer {
 /// ```
 pub fn strip_osc8(s: &str) -> String {
     let mut result = String::with_capacity(s.len());
-    let bytes = s.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        // ESC ] 8 ; — standard OSC 8 start
-        if i + 3 < bytes.len()
-            && bytes[i] == 0x1b
-            && bytes[i + 1] == b']'
-            && bytes[i + 2] == b'8'
-            && bytes[i + 3] == b';'
-        {
-            i += 4;
-            // Skip until BEL (\x07)
-            while i < bytes.len() && bytes[i] != 0x07 {
-                i += 1;
-            }
-            if i < bytes.len() {
-                i += 1; // skip BEL
-            }
-        } else {
-            result.push(bytes[i] as char);
-            i += 1;
+    // Walk by string slices rather than bytes: a cell symbol is UTF-8 and
+    // pushing `bytes[i] as char` mojibakes every multi-byte glyph (`×`
+    // became `Ã` + U+0097, which also inflated the caller's byte-length
+    // "is this a multi-cell chunk?" test and made it eat the next column).
+    // The OSC 8 markers are all ASCII, so the byte indices `find` returns
+    // are always char boundaries.
+    let mut rest = s;
+    while let Some(start) = rest.find("\x1b]8;") {
+        result.push_str(&rest[..start]);
+        let after = &rest[start + "\x1b]8;".len()..];
+        match after.find('\x07') {
+            Some(bel) => rest = &after[bel + 1..],
+            // Unterminated sequence: everything after the marker is
+            // escape payload, so drop it.
+            None => return result,
         }
     }
+    result.push_str(rest);
     result
 }
 
@@ -641,6 +636,12 @@ impl EditorTestHarness {
         if !config_was_provided {
             config.editor.auto_indent = false; // Disable for simpler testing
             config.editor.auto_close = false; // Disable for simpler testing
+                                              // Auto-surround is a distinct behaviour (typing a delimiter over a
+                                              // selection wraps it) and has to be turned off explicitly. It used
+                                              // to be disabled as a side effect of `auto_close = false`, because
+                                              // the surround path resolved its pair through the auto-close
+                                              // table; it no longer does.
+            config.editor.auto_surround = false; // Disable for simpler testing
             config.editor.animations = false;
         }
         // Always force the prompt line to be visible in tests so layout-
@@ -665,25 +666,27 @@ impl EditorTestHarness {
         }
         config.check_for_updates = false; // Disable update checking in tests
 
+        // From here to `Editor::for_test` below we write the two
+        // *process-global* registries the editor derives from config — the
+        // i18n locale (`fresh_i18n::set_locale`) and the user indentation
+        // rules (`config::reload_indent_overrides`, which clears
+        // `indent_rules::USER_RULES` before re-registering its own). Cargo
+        // runs the test functions of one binary in parallel threads, so
+        // without a discipline around them a harness built here flips the
+        // locale out from under a test asserting on Spanish UI, or wipes
+        // the `[languages.<id>.indent]` rule a config-indent test just
+        // registered — both intermittent, both depending only on when some
+        // unrelated test happens to build its editor.
+        //
+        // The read side is what every construction takes; tests that need
+        // one of those globals to hold still take the write side for their
+        // whole body (`common::global_state::pin_config_globals`). Readers
+        // do not exclude each other, so ordinary tests still build editors
+        // in parallel; the guard drops the moment the editor exists.
+        let globals_guard = crate::common::global_state::guard_harness_construction();
+
         // Initialize i18n with the config's locale before creating the editor
         // This ensures menu defaults are created with the correct translations.
-        //
-        // TODO(flakiness): this mutates a *process-global* locale
-        // (`rust_i18n::set_locale`). Cargo runs all test functions in one
-        // process in parallel, so harness-created tests can race each other:
-        // a German-locale harness can flip the global to `de` while an
-        // unrelated test is asserting on English UI strings, producing
-        // intermittent failures like
-        // `e2e::locale::test_default_locale_shows_english_search_options`
-        // when the full suite is run in parallel. (The tests in
-        // `tests/e2e/locale.rs` use a module-local mutex, which serializes
-        // them against each other but not against the rest of the suite.)
-        //
-        // Pre-exists this branch; see master for identical parallel-run
-        // failures. A robust fix means either moving rust_i18n locale into
-        // a thread-local, or holding a *global* (process-wide) test lock
-        // around every harness-driven render. Not worth the scope creep
-        // from this perf fix; flagging here so the next reader knows.
         fresh::i18n::init_with_config(config.locale.as_option());
         config.editor.double_click_time_ms = 10; // Fast double-click for faster tests
         t.phase("config_and_i18n");
@@ -757,6 +760,10 @@ impl EditorTestHarness {
         )?;
 
         t.phase("Editor::for_test");
+
+        // Both config-derived globals are now written; let a waiting
+        // `pin_config_globals` through.
+        drop(globals_guard);
 
         // Process any pending plugin commands
         editor.process_async_messages();
@@ -1131,6 +1138,28 @@ impl EditorTestHarness {
         Ok(())
     }
 
+    /// Deliver a key **without** draining the async work it kicks off.
+    ///
+    /// [`Self::send_key`] settles all plugin work before returning, which is
+    /// what most tests want — but it also makes every plugin command look
+    /// atomic, so a test can never express "the user pressed the key again
+    /// before the first press finished". Real frames don't wait: the editor
+    /// pumps input and plugin completions on the same loop, so two presses a
+    /// few milliseconds apart both reach the plugin thread while the first
+    /// command is still awaiting a host round-trip.
+    ///
+    /// Use this to reproduce re-entrancy bugs (e.g. #2953, opening the
+    /// Search & Replace panel twice), then settle with `wait_until` /
+    /// `wait_for_async_quiescence` and assert on the rendered screen.
+    pub fn send_key_without_drain(
+        &mut self,
+        code: KeyCode,
+        modifiers: KeyModifiers,
+    ) -> AnyhowResult<()> {
+        self.editor.handle_key(code, modifiers)?;
+        Ok(())
+    }
+
     /// Send the same key press multiple times without rendering after each one
     /// This is optimized for tests that need to send many keys in a row (e.g., scrolling)
     /// Only renders once at the end, which is much faster than calling send_key() in a loop
@@ -1185,45 +1214,98 @@ impl EditorTestHarness {
     /// printable chars) with keys handled synchronously by a
     /// host-side bypass (e.g. `Shift+arrow`, `Ctrl+C/V`).
     ///
-    /// The drain is bounded — at most ~200 ms wall-clock — so a
-    /// genuinely-stuck plugin doesn't hang the test forever. In
-    /// practice the loop exits in microseconds: the plugin
-    /// thread schedules its work immediately, and the bridge
-    /// drains within a single `process_async_messages` call.
+    /// We need both:
+    ///  (1) `pending_plugin_actions` to be empty — the plugin
+    ///      thread has finished every action queued by this
+    ///      keypress and any follow-on dispatch the action
+    ///      itself triggered.
+    ///  (2) the async bridge to be quiet for one extra
+    ///      iteration — to catch the `WidgetCommand` that a
+    ///      completed plugin action just pushed.
+    ///
+    /// (1) is waited out indefinitely, per CONTRIBUTING.md Testing §3:
+    /// wait for the state change, and let `cargo nextest` bound the test
+    /// from outside. It carried a cap of its own twice — ~200 ms, then
+    /// 10 s — and both were a *timeout inside a test* hidden behind every
+    /// `send_key`/`type_text`. On a loaded CI runner an action that
+    /// needed longer than the cap left the drain early, so the caller's
+    /// next assertion sampled a pre-action frame: a key that "did
+    /// nothing", a click whose effect never applied, and then a
+    /// `wait_until` for a state that could no longer arrive — a 3-minute
+    /// kill whose screen dump shows a plausible-looking stale frame and
+    /// says nothing about why. Raising the cap only made that rarer,
+    /// which is worse: the same flake, harder to catch.
+    ///
+    /// A genuinely stuck plugin callback now hangs this test until
+    /// nextest kills it, and says so on stderr every
+    /// `STUCK_REPORT_INTERVAL` while it waits — the one channel that
+    /// survives into a killed test's output. That is a loud, correct
+    /// failure in place of a quiet, wrong assertion.
+    ///
+    /// (2) keeps a short bound of its own, and that one is not a
+    /// timeout: legitimately continuous message sources — PTY output,
+    /// timer-driven plugin polls — never go quiet, so it bounds a wait
+    /// for silence that may never come rather than one for a state
+    /// change that must.
     fn drain_async_work(&mut self) {
-        const MAX_ITERS: usize = 200; // ~200ms at 1ms per iter
         const SLEEP_PER_ITER: std::time::Duration = std::time::Duration::from_millis(1);
-        // We need both:
-        //  (1) `pending_plugin_actions` to be empty — the plugin
-        //      thread has finished every action queued by this
-        //      keypress and any follow-on dispatch the action
-        //      itself triggered.
-        //  (2) the async bridge to be quiet for one extra
-        //      iteration — to catch the `WidgetCommand` that a
-        //      completed plugin action just pushed.
+        /// How often an in-flight action reports itself while (1) waits.
+        const STUCK_REPORT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
+        /// Iterations of (2) to tolerate before concluding the source is
+        /// continuous rather than settling.
+        const TAIL_ITERS: usize = 200;
+        const QUIET_ITERS: usize = 2;
+
+        let start = std::time::Instant::now();
+        let mut last_report = start;
         let mut quiet_iters = 0;
-        for _ in 0..MAX_ITERS {
+        let mut tail_iters = 0;
+        loop {
             let had_messages = self.editor.process_async_messages();
-            let pending_empty = self.editor.pending_plugin_actions_is_empty();
-            if pending_empty && !had_messages {
-                quiet_iters += 1;
-                if quiet_iters >= 2 {
-                    return;
-                }
-            } else {
+
+            if !self.editor.pending_plugin_actions_is_empty() {
                 quiet_iters = 0;
-            }
-            if !pending_empty {
+                tail_iters = 0;
+                if last_report.elapsed() >= STUCK_REPORT_INTERVAL {
+                    last_report = std::time::Instant::now();
+                    // stderr, not just tracing: CI runs with tracing
+                    // disabled, and this is the only channel that
+                    // survives into a failed/killed test's output.
+                    eprintln!(
+                        "drain_async_work: plugin actions still in-flight after {:.1}s — \
+                         still waiting.",
+                        start.elapsed().as_secs_f64()
+                    );
+                    tracing::warn!(
+                        elapsed_s = start.elapsed().as_secs_f64(),
+                        "drain_async_work still waiting on plugin actions"
+                    );
+                }
                 // Give the plugin thread time to actually run the
                 // queued action(s) before re-checking. This is
                 // real wall-clock — there's no fake-time path for
                 // cross-thread receivers.
                 std::thread::sleep(SLEEP_PER_ITER);
+                continue;
+            }
+
+            if had_messages {
+                // Messages are still flowing: keep draining at full
+                // speed rather than pacing, so a terminal's PTY output
+                // doesn't add a sleep to every keypress.
+                quiet_iters = 0;
+            } else {
+                quiet_iters += 1;
+                if quiet_iters >= QUIET_ITERS {
+                    return;
+                }
+                std::thread::sleep(SLEEP_PER_ITER);
+            }
+            tail_iters += 1;
+            if tail_iters >= TAIL_ITERS {
+                return;
             }
         }
-        tracing::warn!(
-            "drain_async_work hit iteration cap; pending plugin actions may still be in-flight"
-        );
     }
 
     /// Simulate a mouse event
@@ -1231,6 +1313,42 @@ impl EditorTestHarness {
         // Delegate to the editor's handle_mouse method (just like main.rs does)
         self.editor.handle_mouse(mouse_event)?;
         Ok(())
+    }
+
+    /// Send a mouse event and report **whether the editor asked for a
+    /// frame** — without drawing one.
+    ///
+    /// Every other input helper on this harness ends in `self.render()`, and
+    /// that is a lie the real editor never tells. `main.rs` repaints only when
+    /// `Editor::handle_mouse` returns `true`; a frame nobody asked for is a
+    /// frame that never happens. Because the suite always renders, it can
+    /// assert what a frame *contains* and is structurally blind to the whole
+    /// class of "the state changed and nothing requested a repaint" — the bug
+    /// where the pixels are right in the test and stale on the user's screen.
+    ///
+    /// Three of those have shipped on the retained-UI migration alone: a
+    /// described panel's hover, a `widgets::List`'s own hover write (which
+    /// produces no message, so `Dispatched::changed` computed from
+    /// `!msgs.is_empty()` missed it), and `update_lsp_hover_state` dismissing
+    /// a tooltip and reporting nothing. Every one of them passed the suite.
+    ///
+    /// So this helper deliberately does **not** render: the answer is the
+    /// assertion. Existing helpers keep their `render()` — a test that wants
+    /// the screen should keep using them.
+    pub fn send_mouse_reporting_render(&mut self, mouse_event: MouseEvent) -> anyhow::Result<bool> {
+        self.editor.handle_mouse(mouse_event)
+    }
+
+    /// [`Self::send_mouse_reporting_render`] for a bare pointer motion — the
+    /// gesture that carries hover, and therefore the one the missing-repaint
+    /// bugs all hid in.
+    pub fn mouse_move_reporting_render(&mut self, col: u16, row: u16) -> anyhow::Result<bool> {
+        self.send_mouse_reporting_render(MouseEvent {
+            kind: MouseEventKind::Moved,
+            column: col,
+            row,
+            modifiers: KeyModifiers::empty(),
+        })
     }
 
     /// Simulate a mouse click at specific coordinates
@@ -1253,6 +1371,34 @@ impl EditorTestHarness {
         self.send_mouse(mouse_up)?;
         // Drain async plugin actions kicked off by the click —
         // same rationale as `send_key`'s drain.
+        self.drain_async_work();
+        self.render()?;
+        Ok(())
+    }
+
+    /// A click with a frame drawn between the press and the release, as the
+    /// real loop does.
+    ///
+    /// `mouse_click` sends both halves back to back, which no running editor
+    /// ever does — the main loop repaints whenever a press changed anything.
+    /// That gap matters for any surface whose press and release are handled
+    /// separately: the tree is rebuilt in between, so a handler closing over
+    /// state from the frame the press landed on is holding a stale answer by
+    /// the time the release arrives. Use this to test such a pair.
+    pub fn mouse_click_with_repaint(&mut self, col: u16, row: u16) -> anyhow::Result<()> {
+        self.send_mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: col,
+            row,
+            modifiers: KeyModifiers::empty(),
+        })?;
+        self.render()?;
+        self.send_mouse(MouseEvent {
+            kind: MouseEventKind::Up(MouseButton::Left),
+            column: col,
+            row,
+            modifiers: KeyModifiers::empty(),
+        })?;
         self.drain_async_work();
         self.render()?;
         Ok(())
@@ -1398,9 +1544,38 @@ impl EditorTestHarness {
     /// per-key `type_text` path and from `Ctrl+V`). Routes through the
     /// editor's real `handle_input_event` so floating-panel / dock
     /// paste routing is exercised.
+    /// Deliver a raw key event through the editor's real
+    /// `handle_input_event`, preserving its [`KeyEventKind`].
+    ///
+    /// Unlike [`Self::send_key`], which calls `handle_key` directly, this goes
+    /// through the same dispatch the event loops use — so it exercises the
+    /// press/repeat/release gate that decides whether a key event is a
+    /// keystroke at all. Tests that feed terminal bytes through `InputParser`
+    /// must use this; `send_key` cannot express a release.
+    pub fn send_key_event(&mut self, key_event: crossterm::event::KeyEvent) -> anyhow::Result<()> {
+        self.editor
+            .handle_input_event(fresh::server::input_parser::Event::key(key_event))?;
+        self.drain_async_work();
+        self.render()?;
+        Ok(())
+    }
+
+    /// Deliver a full [`KeyPress`], so a test can supply the keyboard-layout
+    /// character a non-US terminal reports alongside the physical chord.
+    pub fn send_key_press(
+        &mut self,
+        press: fresh::server::input_parser::KeyPress,
+    ) -> anyhow::Result<()> {
+        self.editor
+            .handle_input_event(fresh::server::input_parser::Event::Key(press))?;
+        self.drain_async_work();
+        self.render()?;
+        Ok(())
+    }
+
     pub fn send_paste(&mut self, text: &str) -> anyhow::Result<()> {
         self.editor
-            .handle_input_event(crossterm::event::Event::Paste(text.to_string()))?;
+            .handle_input_event(fresh::server::input_parser::Event::Paste(text.to_string()))?;
         self.drain_async_work();
         self.render()?;
         Ok(())
@@ -1408,9 +1583,34 @@ impl EditorTestHarness {
 
     /// Force a render cycle and capture output
     pub fn render(&mut self) -> anyhow::Result<()> {
+        let before = fresh::test_api::frame_counters();
         self.terminal.draw(|frame| {
             self.editor.render(frame);
         })?;
+        // A visible text pane is placed once, formatted once, and has its
+        // rows built once per frame — the invariant the retained-mode
+        // migration rests on (`split_rendering::instrument`). Asserted on
+        // every frame the corpus renders.
+        let frame = fresh::test_api::frame_counters().since(before);
+        assert_eq!(
+            frame.view_data_builds,
+            frame.buffer_layouts + frame.composite_builds,
+            "a frame built a pane's rows more than once: {frame:?}"
+        );
+        assert_eq!(
+            frame.buffer_layouts, frame.pane_placements,
+            "a frame formatted a pane it did not place, or placed one it did not format: {frame:?}"
+        );
+        // **The provenance gate** (design §3.7.9): the only painter-written
+        // cells are inside host leaves. Asserted on every frame the corpus
+        // renders, so a painter that is not a leaf's cannot come back.
+        let provenance = self.editor.cells_provenance();
+        assert!(
+            provenance.painter_outside_hosts.is_empty(),
+            "a painter wrote cells outside every host leaf: {:?}; the frame's hosts were {:?}",
+            &provenance.painter_outside_hosts[..provenance.painter_outside_hosts.len().min(8)],
+            provenance.hosts
+        );
         Ok(())
     }
 
@@ -1618,7 +1818,7 @@ impl EditorTestHarness {
     /// Get text at specific cell position
     pub fn get_cell(&self, x: u16, y: u16) -> Option<String> {
         let buffer = self.buffer();
-        let pos = buffer.index_of(x, y);
+        let pos = Self::cell_index(buffer, x, y)?;
         buffer
             .content
             .get(pos)
@@ -1628,8 +1828,31 @@ impl EditorTestHarness {
     /// Get the style (color, modifiers) of a specific cell
     pub fn get_cell_style(&self, x: u16, y: u16) -> Option<ratatui::style::Style> {
         let buffer = self.buffer();
-        let pos = buffer.index_of(x, y);
+        let pos = Self::cell_index(buffer, x, y)?;
         buffer.content.get(pos).map(|cell| cell.style())
+    }
+
+    /// The buffer offset of a cell, or `None` when the cell is off screen.
+    ///
+    /// **`Buffer::index_of` panics off the area**, so the two accessors above
+    /// could not answer `None` for a cell outside the screen even though their
+    /// signatures promise to: they reached the `content.get(pos)` that would
+    /// have said so only for coordinates that were already in range. A test
+    /// walking outward from a border it found on screen — "the cells just past
+    /// the panel's right edge" — therefore aborted with a ratatui panic
+    /// instead of reading the one cell that was actually there
+    /// (`code_tour_dock::test_selection_highlight_stays_inside_the_panel`).
+    ///
+    /// Off-screen is a real answer here, not an error: a cell the terminal
+    /// does not have cannot carry a style, and `is_scrollbar_thumb_at` and its
+    /// siblings already read that `None` as "no".
+    fn cell_index(buffer: &ratatui::buffer::Buffer, x: u16, y: u16) -> Option<usize> {
+        let area = buffer.area;
+        let inside = x >= area.x
+            && y >= area.y
+            && x < area.x.saturating_add(area.width)
+            && y < area.y.saturating_add(area.height);
+        inside.then(|| buffer.index_of(x, y))
     }
 
     /// Check if a cell at the given position is a scrollbar thumb.
@@ -1720,7 +1943,7 @@ impl EditorTestHarness {
             if let Some(cell) = buffer.content.get(pos) {
                 let sym = cell.symbol();
                 let stripped = strip_osc8(sym);
-                if stripped.len() > 1 {
+                if stripped.chars().count() > 1 {
                     // This is a multi-char OSC 8 chunk — it contains chars
                     // from this cell and the next cell(s). Push the stripped
                     // content and skip the extra cells.
@@ -2436,7 +2659,7 @@ impl EditorTestHarness {
 
     /// Get the top line number currently visible in the viewport
     pub fn top_line_number(&mut self) -> usize {
-        let top_byte = self.editor.active_viewport().top_byte;
+        let top_byte = self.editor.active_viewport().top_byte();
         self.editor
             .active_state_mut()
             .buffer
@@ -2445,12 +2668,17 @@ impl EditorTestHarness {
 
     /// Get the top byte position of the viewport
     pub fn top_byte(&self) -> usize {
-        self.editor.active_viewport().top_byte
+        self.editor.active_viewport().top_byte()
     }
 
     /// Get the top view line offset (number of view lines to skip)
     pub fn top_view_line_offset(&self) -> usize {
-        self.editor.active_viewport().top_view_line_offset
+        self.editor.active_viewport().top_view_line_offset()
+    }
+
+    /// The viewport's horizontal scroll offset, in columns.
+    pub fn left_column(&self) -> usize {
+        self.editor.active_viewport().left_column
     }
 
     /// Get the viewport height (number of content lines that can be displayed)
@@ -2645,8 +2873,15 @@ impl EditorTestHarness {
     /// the ~50ms real sleep per tick this is a window of genuine silence.
     pub fn wait_for_async_quiescence(&mut self, idle_ticks: usize) -> anyhow::Result<()> {
         const WAIT_SLEEP: std::time::Duration = std::time::Duration::from_millis(50);
-        // Bound the wait so a genuinely stuck pipeline fails loudly instead of
-        // hanging the suite. Matches the spirit of the other wait_* helpers.
+        // Unlike `drain_async_work`'s wait for a pending action — which is a
+        // state change that must arrive, and so waits indefinitely — silence
+        // is not guaranteed to come at all: a terminal's PTY output and
+        // timer-driven plugin polls keep the pipeline legitimately busy
+        // forever (see `terminal.rs`, which waits here). So this stays
+        // bounded, and gives up out loud: a caller that wanted quiescence
+        // and got the bound instead is about to assert against a frame the
+        // plugin has not caught up to, and must be able to see that in the
+        // output rather than infer it from a puzzling assertion.
         const MAX_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
 
         let start = std::time::Instant::now();
@@ -2662,6 +2897,20 @@ impl EditorTestHarness {
             std::thread::sleep(WAIT_SLEEP);
             self.advance_time(WAIT_SLEEP);
             if start.elapsed() > MAX_WAIT {
+                // stderr, not just tracing: CI runs with tracing disabled,
+                // and this is the only channel that survives into a
+                // failed/killed test's output.
+                eprintln!(
+                    "wait_for_async_quiescence: pipeline still busy after {:.1}s — \
+                     giving up short of {idle_ticks} idle ticks. The next assertion \
+                     may observe a frame the plugin has not caught up to.",
+                    start.elapsed().as_secs_f64()
+                );
+                tracing::warn!(
+                    idle_ticks,
+                    elapsed_s = start.elapsed().as_secs_f64(),
+                    "wait_for_async_quiescence gave up before the pipeline went quiet"
+                );
                 break;
             }
         }
@@ -2703,6 +2952,97 @@ impl EditorTestHarness {
     /// Wait for prompt to close (no longer prompting)
     pub fn wait_for_prompt_closed(&mut self) -> anyhow::Result<()> {
         self.wait_until(|h| !h.editor().is_prompting())
+    }
+
+    /// Run a command palette command by name, waiting for the palette to
+    /// actually offer it before confirming.
+    ///
+    /// The naive form of this — open palette, `type_text(name)`, `Enter` —
+    /// is a race, and one that bites hardest for plugin-registered commands.
+    /// Quick Open recomputes its suggestion list only when the *input*
+    /// changes (`app/prompt_lifecycle.rs::update_quick_open_suggestions`),
+    /// never on a render or an editor tick. So:
+    ///
+    ///   * Pressing Enter right after typing fires on whichever row happened
+    ///     to be selected when the last keystroke was processed. Locally the
+    ///     filter resolves in the same frame and it always works; on a loaded
+    ///     runner it need not, and some *other* command runs instead.
+    ///   * If the command's plugin hasn't finished `registerCommand` by the
+    ///     time the last character lands, the row never appears — and because
+    ///     no tick re-filters, it never will. A later `wait_until` for that
+    ///     row then blocks forever, which is a 180 s nextest timeout with no
+    ///     failed assertion to point at.
+    ///
+    /// So this waits for the command to be *registered and filtered in*
+    /// before pressing Enter, retyping the query if the registration landed
+    /// late (the retype is what re-runs the filter). The wait is indefinite
+    /// per CONTRIBUTING.md Testing §3; a command that is never registered
+    /// still times out externally, but its periodic screen dumps show the
+    /// palette with the query typed and no matching row — which names the
+    /// problem instead of hiding it.
+    ///
+    /// `name` must be a prefix of the command's displayed title (matching is
+    /// on the rendered row, so `"Git Gutter"` finds `"Git Gutter: Refresh"`).
+    pub fn run_palette_command(&mut self, name: &str) -> anyhow::Result<()> {
+        self.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)?;
+        self.wait_for_prompt()?;
+        self.type_text(name)?;
+        self.wait_for_palette_command(name)?;
+        self.send_key(KeyCode::Enter, KeyModifiers::NONE)?;
+        Ok(())
+    }
+
+    /// Wait until the open command palette lists `name` as a *result*, not
+    /// merely as the echoed query.
+    ///
+    /// The query line echoes what was typed, so "the name is on screen" is
+    /// true the moment typing lands, whether or not the palette has filtered
+    /// its list yet — a wait that cannot fail and therefore gates nothing
+    /// (CONTRIBUTING.md Code §16). Requiring the name *twice* — once as the
+    /// query, once as the row Enter is about to activate — is what makes it
+    /// a real gate.
+    ///
+    /// Retypes the last character each time round the loop, because the
+    /// suggestion list is only rebuilt on input change: without that, a
+    /// command registered by a plugin after the initial `type_text` would
+    /// never be filtered in and the wait could not resolve.
+    pub fn wait_for_palette_command(&mut self, name: &str) -> anyhow::Result<()> {
+        const POLL: std::time::Duration = std::time::Duration::from_millis(50);
+        const SCREEN_DUMP_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
+
+        let name = name.to_string();
+        let last = name.chars().next_back().expect("command name is non-empty");
+        let listed = |h: &Self| h.screen_to_string().matches(&name).count() >= 2;
+
+        let start = std::time::Instant::now();
+        let mut last_dump = start;
+        loop {
+            if listed(self) {
+                return Ok(());
+            }
+            // One tick's worth of async progress (plugin loads, command
+            // registrations), then re-run the filter against the registry as
+            // it stands now — retyping is the only thing that rebuilds the
+            // suggestion list.
+            self.tick_and_render()?;
+            self.send_key(KeyCode::Backspace, KeyModifiers::NONE)?;
+            self.type_text(&last.to_string())?;
+            if listed(self) {
+                return Ok(());
+            }
+
+            let now = std::time::Instant::now();
+            if now.duration_since(last_dump) >= SCREEN_DUMP_INTERVAL {
+                eprintln!(
+                    "wait_for_palette_command({name:?}) still pending after {:.1}s — screen:\n{}",
+                    now.duration_since(start).as_secs_f64(),
+                    self.screen_to_string()
+                );
+                last_dump = now;
+            }
+            std::thread::sleep(POLL);
+            self.advance_time(POLL);
+        }
     }
 
     /// Open the settings dialog via command palette

@@ -7,9 +7,7 @@
 
 #![cfg(feature = "plugins")]
 
-mod common;
-
-use common::harness::{EditorTestHarness, HarnessOptions};
+use crate::common::harness::{EditorTestHarness, HarnessOptions};
 use fresh::config::Config;
 use fresh::config_io::DirectoryContext;
 use std::path::{Path, PathBuf};

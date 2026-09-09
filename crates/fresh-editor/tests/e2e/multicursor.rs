@@ -2211,3 +2211,218 @@ fn test_add_cursors_to_line_ends_keeps_existing_multi_cursors() {
     harness.render().unwrap();
     harness.assert_buffer_content("alpha!\nbeta!\ngamma!");
 }
+
+/// Issue #3125: typing a closing delimiter over an auto-closed one is a
+/// *skip-over* — the cursor steps past the `)` that auto-close already put
+/// there rather than inserting a second one. That worked with a single cursor
+/// but was dropped entirely once a second cursor was live: the keystroke did
+/// nothing at all, leaving every cursor inside the parens, so the next
+/// character landed there too (`a.open(;)` instead of `a.open();`).
+#[test]
+fn test_type_over_auto_closed_paren_with_multiple_cursors() {
+    use crate::common::harness::HarnessOptions;
+    use crossterm::event::{KeyCode, KeyModifiers};
+    use fresh::config::Config;
+
+    // The harness disables auto-indent/auto-close unless it is handed a
+    // config, and this is a test about what auto-close does.
+    let mut config = Config::default();
+    config.editor.auto_indent = true;
+    config.editor.auto_close = true;
+    let mut harness =
+        EditorTestHarness::create(100, 24, HarnessOptions::new().with_config(config)).unwrap();
+    harness
+        .load_buffer_from_text_named("mc.cpp", "a\na\n")
+        .unwrap();
+
+    // End of line 1, then a second cursor on line 2 (Ctrl+Alt+Down).
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::CONTROL | KeyModifiers::ALT)
+        .unwrap();
+    // Guard against the test passing vacuously with a single cursor.
+    harness.assert_screen_contains("2 cursors");
+
+    // `(` auto-closes at both cursors.
+    harness.type_text(".open(").unwrap();
+    harness.assert_buffer_content("a.open()\na.open()\n");
+
+    // The `)` is already there, so this must move both cursors past it and
+    // leave the text alone — not be ignored.
+    harness.type_text(")").unwrap();
+    harness.assert_buffer_content("a.open()\na.open()\n");
+
+    // Which is what puts the `;` after the parens rather than inside them.
+    harness.type_text(";").unwrap();
+    harness.assert_buffer_content("a.open();\na.open();\n");
+    harness.assert_screen_contains("a.open();");
+}
+
+/// A cursor stepping over an auto-closed `)` must land past it even when
+/// another cursor, on an earlier line, has no `)` to step over and inserts
+/// one instead (#3166).
+///
+/// The skip-over's `MoveCursor` was emitted in pre-edit coordinates while
+/// the bulk applier took it as post-edit (the cursor owns no `Insert`), so
+/// the earlier cursor's inserted byte left the skipping cursor one short:
+/// `a(;)`. The reverse ordering — the skipping cursor on the earlier line —
+/// already worked and must keep working.
+#[test]
+fn test_type_over_auto_closed_paren_when_earlier_cursor_inserts() {
+    use crate::common::harness::HarnessOptions;
+    use crossterm::event::{KeyCode, KeyModifiers};
+    use fresh::config::Config;
+
+    // `a()` first: `End` lands after the `)`, so one `Left` puts the cursor
+    // between the parens before the second cursor is added below it.
+    for (fixture, a_first, expected) in [
+        ("xx\na()\n", false, "xx);\na();\n"),
+        ("a()\nxx\n", true, "a();\nxx);\n"),
+    ] {
+        let mut config = Config::default();
+        config.editor.auto_indent = true;
+        config.editor.auto_close = true;
+        let mut harness =
+            EditorTestHarness::create(100, 24, HarnessOptions::new().with_config(config)).unwrap();
+        harness
+            .load_buffer_from_text_named("mix.cpp", fixture)
+            .unwrap();
+
+        // Column 3 of line 1 — the end of `xx`, or between `(` and `)` of
+        // `a()` — then a second cursor on line 2 at the same column, which
+        // is the other of the two.
+        harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+        if a_first {
+            harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
+        }
+        harness.assert_screen_contains("Ln 1, Col 3");
+        harness
+            .send_key(KeyCode::Down, KeyModifiers::CONTROL | KeyModifiers::ALT)
+            .unwrap();
+        harness.assert_screen_contains("2 cursors");
+
+        // One cursor inserts the `)`, the other steps over its own. The
+        // buffer looks the same on master (only the stepping cursor's
+        // position differs), so this is a guard on the setup, not the
+        // evidence: that is the `;` below.
+        harness.type_text(")").unwrap();
+        let after_paren = fixture.replacen("xx", "xx)", 1);
+        harness.assert_buffer_content(&after_paren);
+
+        // Which only shows once the next character lands: after the parens
+        // on both lines, not inside them on one.
+        harness.type_text(";").unwrap();
+        harness.assert_buffer_content(expected);
+        harness.assert_screen_contains("a();");
+        harness.assert_screen_contains("xx);");
+    }
+}
+
+/// A plain click ends multi-cursor editing; a Shift-click, which extends
+/// the selection, does not (#3125).
+///
+/// Before, a click moved only the primary cursor and kept the others —
+/// possibly off-screen — so the next keystroke still edited every one of
+/// them.
+#[test]
+fn test_plain_click_collapses_multiple_cursors() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    // ≥100 columns so the status bar has room for "N cursors".
+    let mut harness = EditorTestHarness::new(100, 24).unwrap();
+    harness
+        .load_buffer_from_text("foo bar\nfoo baz\nfoo qux\n")
+        .unwrap();
+
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::CONTROL | KeyModifiers::ALT)
+        .unwrap();
+    harness.assert_screen_contains("2 cursors");
+
+    // Shift-click extends the primary's selection and keeps both cursors.
+    let (col, row) = harness.find_text_on_screen("foo baz").unwrap();
+    harness.mouse_shift_click(col + 3, row).unwrap();
+    harness.assert_screen_contains("2 cursors");
+    harness.assert_screen_contains("Ln 2, Col 4");
+
+    // A plain click elsewhere collapses to one cursor, at the click.
+    let (col, row) = harness.find_text_on_screen("foo qux").unwrap();
+    harness.mouse_click(col + 3, row).unwrap();
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("cursors"),
+        "expected a single cursor after a plain click, got:\n{screen}"
+    );
+    harness.assert_screen_contains("Ln 3, Col 4");
+
+    // Which is what makes the next keystroke land in exactly one place.
+    harness.type_text("Z").unwrap();
+    harness.assert_buffer_content("foo bar\nfoo baz\nfooZ qux\n");
+    harness.assert_screen_contains("fooZ qux");
+
+    // The survivor is a normal cursor: adding below it works. (It is the
+    // lowest id, as after Esc; a kept higher id would be overwritten by
+    // the next add, whose id is allocated from the cursor count.)
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::CONTROL | KeyModifiers::ALT)
+        .unwrap();
+    harness.assert_screen_contains("2 cursors");
+}
+
+/// The status bar's line number must follow the primary cursor when cursors
+/// are added or removed, not only when one is moved (#3167).
+///
+/// `primary_cursor_line_number` is a cache that `MoveCursor` refreshed but
+/// `AddCursor` / `RemoveCursor` and the multi-cursor bulk-edit path did not,
+/// so after `Ctrl+Alt+Down` the bar kept the old cursor's line next to the
+/// new cursor's column, and the first arrow key appeared to jump two lines.
+#[test]
+fn test_status_bar_line_follows_added_and_removed_cursors() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    // ≥100 columns so the status bar has room for "N cursors".
+    let mut harness = EditorTestHarness::new(100, 24).unwrap();
+    harness.load_buffer_from_text("abcd\nabcd\nabcd\n").unwrap();
+    harness.assert_screen_contains("Ln 1, Col 1");
+
+    // Each added cursor becomes the primary: the bar must report its line
+    // before any real cursor movement.
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::CONTROL | KeyModifiers::ALT)
+        .unwrap();
+    harness.assert_screen_contains("2 cursors");
+    harness.assert_screen_contains("Ln 2, Col 1");
+
+    harness
+        .send_key(KeyCode::Down, KeyModifiers::CONTROL | KeyModifiers::ALT)
+        .unwrap();
+    harness.assert_screen_contains("3 cursors");
+    harness.assert_screen_contains("Ln 3, Col 1");
+
+    // A real move still tracks.
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+    harness.assert_screen_contains("Ln 3, Col 2");
+
+    // A multi-cursor edit goes through the bulk path, which writes cursor
+    // positions directly: Enter at all three cursors puts the primary (the
+    // one that was on line 3) on line 6.
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.assert_buffer_content("abcd\n\nabcd\n\nabcd\n\n");
+    harness.assert_screen_contains("3 cursors");
+    harness.assert_screen_contains("Ln 6, Col 1");
+
+    // Collapsing back to one cursor hands the primary role to the original
+    // cursor, which is on line 2 now.
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("cursors"),
+        "expected a single cursor after Esc, got:\n{screen}"
+    );
+    harness.assert_screen_contains("Ln 2, Col 1");
+}

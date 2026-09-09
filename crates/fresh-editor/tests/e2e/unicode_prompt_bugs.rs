@@ -321,46 +321,47 @@ fn test_multibyte_backspace_in_replace_prompt() {
 
 /// Test backspace on multi-byte character in settings text input
 /// Bug #466: Should not crash when deleting multi-byte chars in settings
-/// This test validates that the TextInputState handles UTF-8 correctly
+/// This test validates that the editing engine every settings text field
+/// runs on — the widget kinds' `TextEdit` — handles UTF-8 correctly
 #[test]
 fn test_bug_466_unicode_deletion_in_settings() {
-    use fresh::view::controls::text_input::TextInputState;
+    use fresh::view::ui::TextEdit;
 
-    // Test the TextInputState directly since UI navigation is complex
-    let mut state = TextInputState::new("Test");
+    // Test the engine directly since UI navigation is complex
+    let mut state = TextEdit::single_line();
 
     // Insert a multi-byte character
-    state.insert('ş'); // Turkish s-cedilla (2 bytes)
+    state.insert_char('ş'); // Turkish s-cedilla (2 bytes)
     assert_eq!(state.value(), "ş");
-    assert_eq!(state.cursor_byte(), 2); // Should be at byte position 2 (after the 2-byte char)
+    assert_eq!(state.flat_cursor_byte(), 2); // Should be at byte position 2 (after the 2-byte char)
 
     // Insert another character - this should NOT crash
-    state.insert('a');
+    state.insert_char('a');
     assert_eq!(state.value(), "şa");
-    assert_eq!(state.cursor_byte(), 3); // 2 bytes for ş + 1 byte for a
+    assert_eq!(state.flat_cursor_byte(), 3); // 2 bytes for ş + 1 byte for a
 
     // Backspace should delete 'a'
     state.backspace();
     assert_eq!(state.value(), "ş");
-    assert_eq!(state.cursor_byte(), 2);
+    assert_eq!(state.flat_cursor_byte(), 2);
 
     // Backspace should delete 'ş' entirely (not just 1 byte)
     state.backspace();
     assert_eq!(state.value(), "");
-    assert_eq!(state.cursor_byte(), 0);
+    assert_eq!(state.flat_cursor_byte(), 0);
 
     // Test with CJK characters (3 bytes each)
-    state.insert('日');
-    state.insert('本');
+    state.insert_char('日');
+    state.insert_char('本');
     assert_eq!(state.value(), "日本");
-    assert_eq!(state.cursor_byte(), 6); // 3 + 3 bytes
+    assert_eq!(state.flat_cursor_byte(), 6); // 3 + 3 bytes
 
     // Move left should move to previous character boundary
     state.move_left();
-    assert_eq!(state.cursor_byte(), 3); // At start of 本
+    assert_eq!(state.flat_cursor_byte(), 3); // At start of 本
 
     // Insert in the middle
-    state.insert('X');
+    state.insert_char('X');
     assert_eq!(state.value(), "日X本");
 
     // Delete (forward) should delete 本

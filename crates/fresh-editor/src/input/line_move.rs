@@ -324,7 +324,7 @@ pub(crate) fn move_lines(
     };
 
     let mut applied_regions = Vec::new();
-    let line_ending = state.buffer.line_ending().as_str();
+    let line_ending = state.buffer.line_ending().insertion_str();
     let line_ending_len = line_ending.len();
     for region in &move_regions {
         let block_start = match region.direction {

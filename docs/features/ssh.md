@@ -13,6 +13,13 @@ The URL form is the only one that accepts a non-standard port and is
 the only one where the user is optional (it defaults to `$USER` /
 `$USERNAME`).
 
+The `ssh://` scheme is claimed exclusively: an argument starting with
+`ssh://` is always treated as a remote spec, and a malformed one
+(missing path, bad port, or no user when neither `$USER` nor
+`$USERNAME` is set) is an error at startup — it never falls back to
+opening a local file. A genuine local file whose name starts with
+`ssh://` can still be opened as `./ssh://...`.
+
 ```bash
 # scp-style: open a specific file
 fresh deploy@server.example.com:/etc/nginx/nginx.conf

@@ -1,4 +1,10 @@
 {
+  "bg": {
+    "status.restoring_packages": "Възстановяване на NuGet пакети за %{project}...",
+    "status.restore_completed": "Възстановяването на NuGet приключи за %{project}",
+    "status.restore_failed": "Възстановяването на NuGet се провали: %{error}",
+    "status.restore_error": "NuGet грешка при възстановяване: %{error}"
+  },
   "cs": {
     "status.restoring_packages": "Obnovuji balicky NuGet pro %{project}...",
     "status.restore_completed": "Obnoveni NuGet dokonceno pro %{project}",

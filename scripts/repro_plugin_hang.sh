@@ -16,7 +16,7 @@
 # hung process, so you can see WHERE it is stuck.
 #
 # Usage:
-#   cargo test --no-run --all-features --test e2e_tests   # build first
+#   cargo test --no-run --all-features --test all_tests   # build first
 #   scripts/repro_plugin_hang.sh                          # defaults below
 #   TESTS="e2e::plugins::live_diff::test_live_diff_clears_after_commit" \
 #     ITERS=15 PAR=8 STRESS=8 TIMEOUT=30 scripts/repro_plugin_hang.sh
@@ -28,7 +28,7 @@ set -u
 BIN="${BIN:-$(ls -t target/debug/deps/e2e_tests-* 2>/dev/null | grep -v '\.d$' | head -1)}"
 if [ -z "${BIN:-}" ] || [ ! -x "$BIN" ]; then
   echo "e2e_tests binary not found; build it first:" >&2
-  echo "  cargo test --no-run --all-features --test e2e_tests" >&2
+  echo "  cargo test --no-run --all-features --test all_tests" >&2
   exit 1
 fi
 
