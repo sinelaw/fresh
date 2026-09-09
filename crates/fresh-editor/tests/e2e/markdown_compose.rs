@@ -1065,14 +1065,14 @@ fn test_compose_mode_mouse_scroll_to_bottom() {
 
     // Wait for the last line of the README to be visible after scrolling.
     harness
-        .wait_until_stable(|h| h.screen_to_string().contains("GPL-2.0"))
+        .wait_until_stable(|h| h.screen_to_string().contains("GPL-3.0"))
         .unwrap();
 
-    // The very last line of the README is "...GNU General Public License v2.0 (GPL-2.0)."
+    // The very last line of the README is "...GNU General Public License v3.0 (GPL-3.0)."
     // It should be visible on screen after scrolling to the bottom.
     let screen = harness.screen_to_string();
     assert!(
-        screen.contains("GPL-2.0"),
+        screen.contains("GPL-3.0"),
         "After scrolling to the bottom, the last line of the README should be visible.\n\
          Screen:\n{}",
         screen,

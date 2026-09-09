@@ -160,7 +160,7 @@ pub fn build_from_model(menus: &[Menu], app_name: &str, context: &MenuContext) -
         Some(AboutMetadata {
             name: Some(app_name.to_string()),
             version: Some(env!("CARGO_PKG_VERSION").to_string()),
-            copyright: Some("GPL-2.0".to_string()),
+            copyright: Some("GPL-3.0".to_string()),
             ..Default::default()
         }),
     ));

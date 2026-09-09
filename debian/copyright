@@ -5,15 +5,15 @@ Source: https://github.com/sinelaw/fresh
 
 Files: *
 Copyright: 2024-2026 Noam Lewis <i9uqoqj7k@mozmail.com>
-License: GPL-2.0
+License: GPL-3.0
 
 Files: debian/*
 Copyright: 2026 Noam Lewis <i9uqoqj7k@mozmail.com>
-License: GPL-2.0
+License: GPL-3.0
 
-License: GPL-2.0
- This program is free software; you can redistribute it and/or modify
- it under the terms of the GNU General Public License version 2 as
+License: GPL-3.0
+ This program is free software: you can redistribute it and/or modify
+ it under the terms of the GNU General Public License version 3 as
  published by the Free Software Foundation.
  .
  This program is distributed in the hope that it will be useful,
@@ -25,4 +25,4 @@ License: GPL-2.0
  along with this program. If not, see <http://www.gnu.org/licenses/>.
  .
  On Debian systems, the complete text of the GNU General Public
- License version 2 can be found in `/usr/share/common-licenses/GPL-2'.
+ License version 3 can be found in `/usr/share/common-licenses/GPL-3'.

@@ -346,4 +346,4 @@ To disable both upgrade checks and telemetry, use `--no-upgrade-check` or set `c
 
 Copyright (c) Noam Lewis
 
-This project is licensed under the GNU General Public License v2.0 (GPL-2.0).
+This project is licensed under the GNU General Public License v3.0 (GPL-3.0).

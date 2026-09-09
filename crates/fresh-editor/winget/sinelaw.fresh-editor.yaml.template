@@ -17,7 +17,7 @@ PublisherSupportUrl: https://github.com/sinelaw/fresh/issues
 Author: Noam Lewis
 PackageName: fresh-editor
 PackageUrl: https://github.com/sinelaw/fresh
-License: GPL-2.0
+License: GPL-3.0
 LicenseUrl: https://github.com/sinelaw/fresh/blob/main/LICENSE
 Copyright: Copyright (c) sinelaw
 ShortDescription: A modern terminal-based text editor with TypeScript plugin support

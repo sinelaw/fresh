@@ -2,7 +2,7 @@
 <component type="desktop-application">
   <id>io.github.sinelaw.fresh</id>
   <metadata_license>CC0-1.0</metadata_license>
-  <project_license>GPL-2.0-only</project_license>
+  <project_license>GPL-3.0-only</project_license>
   <name>Fresh</name>
   <summary>A lightweight, fast terminal-based text editor with LSP support</summary>
   <description>

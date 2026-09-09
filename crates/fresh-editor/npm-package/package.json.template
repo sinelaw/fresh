@@ -6,7 +6,7 @@
     "type": "git",
     "url": "https://github.com/sinelaw/fresh.git"
   },
-  "license": "Apache-2.0",
+  "license": "GPL-3.0-only",
   "bin": {
     "fresh": "run-fresh.js"
   },
