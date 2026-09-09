@@ -2,6 +2,12 @@
 
 Thanks for contributing!
 
+## License
+
+fresh is licensed under GPL-3.0-or-later.
+
+By contributing, you agree that your contributions are licensed under GPL-3.0-or-later, and that they may be relicensed in the future at the maintainer's discretion.
+
 ## Workspace Structure
 
 | Crate | Purpose |
