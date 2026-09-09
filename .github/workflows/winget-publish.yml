@@ -21,6 +21,9 @@ jobs:
     env:
       VERSION: ${{ inputs.version }}
       GH_TOKEN: ${{ secrets.WINGET_TOKEN }}
+      # Unbuffered, or python's prints all flush at the end and the step that
+      # failed is reported forty lines below git's reason for failing.
+      PYTHONUNBUFFERED: "1"
     steps:
       - uses: actions/checkout@v6
 
