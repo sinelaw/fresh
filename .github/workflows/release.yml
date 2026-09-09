@@ -674,6 +674,12 @@ jobs:
           }
           echo "$TAG is now the latest release."
 
+      # An earlier attempt of this run may have failed and marked the release
+      # "do not install". This one passed, so that has to come off with the
+      # promotion rather than by hand -- v0.5.1 shipped still wearing it.
+      - name: Take back a failed-validation notice
+        run: python3 scripts/validation-notice.py strip "$TAG"
+
   # A release that fails validation cannot be withdrawn: immutable releases lock
   # the tag and freeze the assets, so there is nothing to delete and nothing to
   # fix in place. What is left is to say so, on the release itself, rather than
@@ -693,25 +699,12 @@ jobs:
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       TAG: ${{ needs.plan.outputs.tag }}
-      VERSION: ${{ needs.plan.outputs.version }}
+      RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
       - uses: actions/checkout@v6
 
       - name: Say on the release that it failed validation
-        run: |
-          run_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          gh release view "$TAG" --json body -q .body > body.md
-          {
-            echo "> [!CAUTION]"
-            echo "> **This release failed its own validation and must not be installed.**"
-            echo "> It remains a pre-release: \`fresh\` will not offer it, and the latest"
-            echo "> release is unchanged. See [the run that rejected it]($run_url)."
-            echo
-            cat body.md
-          } > annotated.md
-          gh release edit "$TAG" \
-            --title "fresh-editor ${VERSION} — FAILED VALIDATION, do not install" \
-            --notes-file annotated.md
+        run: python3 scripts/validation-notice.py add "$TAG" "$RUN_URL"
 
   # Publish to Homebrew tap
   publish-homebrew:
