@@ -1054,7 +1054,7 @@ fn test_compose_mode_mouse_scroll_to_bottom() {
         .unwrap();
 
     // Scroll down aggressively with mouse wheel.
-    // README.md is ~278 lines; with compose wrapping at 80 cols it will be
+    // README.md is ~359 lines; with compose wrapping at 80 cols it will be
     // even more visual lines.  Each scroll event moves ~3 lines, so 200
     // scroll events should be more than enough to reach the bottom.
     let (content_start, content_end) = harness.content_area_rows();
@@ -1065,14 +1065,15 @@ fn test_compose_mode_mouse_scroll_to_bottom() {
 
     // Wait for the last line of the README to be visible after scrolling.
     harness
-        .wait_until_stable(|h| h.screen_to_string().contains("GPL-3.0"))
+        .wait_until_stable(|h| h.screen_to_string().contains("SPDX-License-Identifier"))
         .unwrap();
 
-    // The very last line of the README is "...GNU General Public License v3.0 (GPL-3.0)."
-    // It should be visible on screen after scrolling to the bottom.
+    // The very last line of the README is "SPDX-License-Identifier: GPL-3.0-or-later",
+    // and that marker appears nowhere else in the file.  It should be visible on
+    // screen after scrolling to the bottom.
     let screen = harness.screen_to_string();
     assert!(
-        screen.contains("GPL-3.0"),
+        screen.contains("SPDX-License-Identifier"),
         "After scrolling to the bottom, the last line of the README should be visible.\n\
          Screen:\n{}",
         screen,

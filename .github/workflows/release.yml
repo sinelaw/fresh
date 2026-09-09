@@ -384,7 +384,7 @@ jobs:
             desc "A modern terminal-based text editor with plugin support"
             homepage "https://github.com/sinelaw/fresh"
             version "${VERSION}"
-            license "GPL-3.0-only"
+            license "GPL-3.0-or-later"
 
             on_macos do
               on_intel do

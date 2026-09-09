@@ -7,7 +7,7 @@ pkgver=VERSION_PLACEHOLDER
 pkgrel=1
 pkgdesc="A lightweight, fast terminal-based text editor with LSP support and TypeScript plugins"
 url="https://sinelaw.github.io/fresh/"
-license=("GPL-3.0-only")
+license=("GPL-3.0-or-later")
 arch=('x86_64' 'aarch64')
 
 source_x86_64=("fresh-editor-${pkgver}-x86_64.tar.xz::https://github.com/sinelaw/fresh/releases/download/v${pkgver}/fresh-editor-x86_64-unknown-linux-gnu.tar.xz"
