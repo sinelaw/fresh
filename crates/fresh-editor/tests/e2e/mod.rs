@@ -276,6 +276,7 @@ pub mod restored_terminal_focus;
 pub mod save_as_language_detection;
 pub mod save_nonexistent_directory;
 pub mod scroll_clearing;
+pub mod scroll_offset_wrap_off;
 #[cfg(feature = "plugins")]
 pub mod scrollbar_markers;
 pub mod scrolling;
