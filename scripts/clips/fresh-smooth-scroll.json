@@ -1,0 +1,371 @@
+{
+  "name": "fresh-smooth-scroll",
+  "capture": {
+    "geometry": "76x20",
+    "font": "JetBrains Mono 16",
+    "screen": "1400x800x24",
+    "display": ":99",
+    "backend": "xwd",
+    "settle": 14,
+    "copy_files": [
+      "~/repos/fresh/crates/fresh-editor/src/app/mouse_input.rs"
+    ],
+    "copy_dirs": {
+      "~/repos/fresh/scripts/clips/assets/fresh-smooth-scroll/fresh": "{scratch}/config/fresh"
+    },
+    "env": {
+      "XDG_CONFIG_HOME": "{scratch}/config",
+      "XDG_DATA_HOME": "{scratch}/data-{pane}",
+      "XDG_STATE_HOME": "{scratch}/state-{pane}",
+      "XDG_RUNTIME_DIR": "{scratch}/run-{pane}",
+      "LANG": "C.UTF-8",
+      "LC_ALL": "C.UTF-8"
+    },
+    "keys": [
+      {
+        "sleep": 1.5
+      },
+      {
+        "shot": "top"
+      },
+      {
+        "record": "scroll",
+        "seconds": 3.6,
+        "fps": 30
+      },
+      {
+        "sleep": 0.4
+      },
+      {
+        "click": {
+          "col": 38,
+          "row": 11,
+          "button": 5,
+          "settle": 0.0
+        }
+      },
+      {
+        "click": {
+          "col": 38,
+          "row": 11,
+          "button": 5,
+          "settle": 0.0
+        }
+      },
+      {
+        "click": {
+          "col": 38,
+          "row": 11,
+          "button": 5,
+          "settle": 0.0
+        }
+      },
+      {
+        "click": {
+          "col": 38,
+          "row": 11,
+          "button": 5,
+          "settle": 0.0
+        }
+      },
+      {
+        "click": {
+          "col": 38,
+          "row": 11,
+          "button": 5,
+          "settle": 0.0
+        }
+      },
+      {
+        "click": {
+          "col": 38,
+          "row": 11,
+          "button": 5,
+          "settle": 0.0
+        }
+      },
+      {
+        "click": {
+          "col": 38,
+          "row": 11,
+          "button": 5,
+          "settle": 0.0
+        }
+      },
+      {
+        "click": {
+          "col": 38,
+          "row": 11,
+          "button": 5,
+          "settle": 0.0
+        }
+      },
+      {
+        "click": {
+          "col": 38,
+          "row": 11,
+          "button": 5,
+          "settle": 0.0
+        }
+      },
+      {
+        "click": {
+          "col": 38,
+          "row": 11,
+          "button": 5,
+          "settle": 0.0
+        }
+      },
+      {
+        "click": {
+          "col": 38,
+          "row": 11,
+          "button": 5,
+          "settle": 0.0
+        }
+      },
+      {
+        "click": {
+          "col": 38,
+          "row": 11,
+          "button": 5,
+          "settle": 0.0
+        }
+      },
+      {
+        "click": {
+          "col": 38,
+          "row": 11,
+          "button": 5,
+          "settle": 0.0
+        }
+      },
+      {
+        "click": {
+          "col": 38,
+          "row": 11,
+          "button": 5,
+          "settle": 0.0
+        }
+      },
+      {
+        "click": {
+          "col": 38,
+          "row": 11,
+          "button": 5,
+          "settle": 0.0
+        }
+      },
+      {
+        "click": {
+          "col": 38,
+          "row": 11,
+          "button": 5,
+          "settle": 0.0
+        }
+      },
+      {
+        "click": {
+          "col": 38,
+          "row": 11,
+          "button": 5,
+          "settle": 0.0
+        }
+      },
+      {
+        "click": {
+          "col": 38,
+          "row": 11,
+          "button": 5,
+          "settle": 0.0
+        }
+      },
+      {
+        "click": {
+          "col": 38,
+          "row": 11,
+          "button": 5,
+          "settle": 0.0
+        }
+      },
+      {
+        "click": {
+          "col": 38,
+          "row": 11,
+          "button": 5,
+          "settle": 0.0
+        }
+      },
+      {
+        "click": {
+          "col": 38,
+          "row": 11,
+          "button": 5,
+          "settle": 0.0
+        }
+      },
+      {
+        "click": {
+          "col": 38,
+          "row": 11,
+          "button": 5,
+          "settle": 0.0
+        }
+      },
+      {
+        "click": {
+          "col": 38,
+          "row": 11,
+          "button": 5,
+          "settle": 0.0
+        }
+      },
+      {
+        "click": {
+          "col": 38,
+          "row": 11,
+          "button": 5,
+          "settle": 0.0
+        }
+      },
+      {
+        "click": {
+          "col": 38,
+          "row": 11,
+          "button": 5,
+          "settle": 0.0
+        }
+      },
+      {
+        "click": {
+          "col": 38,
+          "row": 11,
+          "button": 5,
+          "settle": 0.0
+        }
+      },
+      {
+        "sleep": 0.6
+      },
+      {
+        "shot": "mid"
+      }
+    ],
+    "panes": {
+      "buf": {
+        "argv": [
+          "~/repos/fresh/target/release/fresh",
+          "--no-restore",
+          "--no-upgrade-check",
+          "mouse_input.rs"
+        ]
+      }
+    },
+    "grab_fps": 0
+  },
+  "render": {
+    "size": [
+      1600,
+      900
+    ],
+    "fps": 60,
+    "rows": 20,
+    "cols": 76,
+    "header_height": 96,
+    "title": "fresh 0.5.0",
+    "labels": {
+      "solo": "NEW"
+    },
+    "cursor": false,
+    "note_size": 22,
+    "intro_caption": [
+      "",
+      ""
+    ],
+    "outro_caption": [
+      "fresh",
+      "github.com/sinelaw/fresh"
+    ],
+    "timing": {
+      "title": 0,
+      "intro": 0.4,
+      "zoom": 0.4,
+      "hold": 1.4,
+      "pan": 0.25,
+      "outro": 0.45
+    },
+    "theme": {
+      "bg": [
+        18,
+        19,
+        26
+      ],
+      "caption_bg": [
+        28,
+        29,
+        40
+      ],
+      "panel_border": [
+        68,
+        71,
+        90
+      ],
+      "muted": [
+        150,
+        157,
+        192
+      ],
+      "fg": [
+        248,
+        248,
+        242
+      ],
+      "after": [
+        80,
+        250,
+        123
+      ]
+    },
+    "vignette": {
+      "edge": 0.012,
+      "side": 0.0
+    },
+    "annotations": [
+      {
+        "shots": "scroll",
+        "rows": [
+          1,
+          9
+        ],
+        "cols": [
+          0,
+          76
+        ],
+        "camera": "fit",
+        "hold": 2.9,
+        "note": "smooth scrolling",
+        "note_at": "below-right"
+      },
+      {
+        "shot": "mid",
+        "rows": [
+          1,
+          8
+        ],
+        "cols": [
+          0,
+          60
+        ],
+        "camera": "fit",
+        "hold": 1.6,
+        "note": "shaded edge",
+        "note_at": "below-right"
+      }
+    ],
+    "caption_height": 0
+  },
+  "encode": {
+    "crf": 18,
+    "preset": "slow"
+  }
+}
