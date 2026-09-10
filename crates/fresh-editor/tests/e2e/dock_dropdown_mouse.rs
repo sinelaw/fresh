@@ -1,4 +1,4 @@
-//! The Orchestrator dock's dropdowns — "New Task… ▾" and the row context
+//! The Orchestrator dock's dropdowns — the header's `⋯` menu and the row context
 //! menu's "Move to Folder…" — must be usable with the mouse: clicking an
 //! option picks it, and clicking away dismisses the menu.
 //!
@@ -50,7 +50,7 @@ fn open_dock(h: &mut EditorTestHarness) {
     h.wait_until(|h| h.screen_to_string().contains("Toggle Dock"))
         .unwrap();
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("Orchestrator") && h.editor().is_dock_focused())
+    h.wait_until(|h| h.screen_to_string().contains("+ New") && h.editor().is_dock_focused())
         .unwrap();
 }
 
@@ -86,20 +86,19 @@ fn launch(root: PathBuf) -> EditorTestHarness {
     h
 }
 
-/// Open the "New Task… ▾" dropdown by clicking its button.
-fn open_new_task_dropdown(h: &mut EditorTestHarness) {
-    let new_row = row_of(h, "New Task");
-    h.mouse_click(4, new_row).unwrap();
+/// Open the header's `⋯` menu by clicking its glyph.
+fn open_dock_menu(h: &mut EditorTestHarness) {
+    let (mcol, mrow) = pos_of(h, "⋯");
+    h.mouse_click(mcol, mrow).unwrap();
     h.wait_until(|h| h.screen_to_string().contains("New Folder"))
         .unwrap();
 }
 
-/// Create a folder named `name` through the "New Task… ▾" dropdown, with
+/// Create a folder named `name` through the `⋯` menu (its first row), with
 /// the "organize the current session under it" checkbox switched off, so
 /// the folder starts empty.
 fn create_empty_folder(h: &mut EditorTestHarness, name: &str) {
-    open_new_task_dropdown(h);
-    h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    open_dock_menu(h);
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
     h.wait_until(|h| h.screen_to_string().contains("Folder name"))
         .unwrap();
@@ -148,17 +147,17 @@ fn move_to_folder_dropdown_option_is_clickable() {
     .unwrap();
 }
 
-/// Clicking an option in the "New Task… ▾" dropdown activates it.
+/// Clicking an option in the `⋯` menu activates it.
 ///
 /// Not a reproducer — this dropdown anchors high enough in the dock that
 /// the old base-row byte mapping happened to line up, so it kept working
 /// while the move menu did not. It guards the sibling path against the
 /// same class of drift.
 #[test]
-fn new_task_dropdown_option_is_clickable() {
+fn dock_menu_option_is_clickable() {
     let (_tmp, root) = setup_project("alphaproj");
     let mut h = launch(root);
-    open_new_task_dropdown(&mut h);
+    open_dock_menu(&mut h);
 
     let (fcol, frow) = pos_of(&h, "New Folder");
     h.mouse_click(fcol, frow).unwrap();
@@ -182,7 +181,7 @@ fn dock_dropdown_dismisses_on_click_outside() {
     // The menu is gone and the dock is still there behind it.
     h.wait_until(|h| {
         let s = h.screen_to_string();
-        !s.contains("Top level") && s.contains("New Task")
+        !s.contains("Top level") && s.contains("+ New")
     })
     .unwrap();
 }

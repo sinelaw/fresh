@@ -414,6 +414,10 @@ pub enum WidgetInstanceState {
         /// click commits the live selection.
         restore: Option<i32>,
     },
+    /// `Radio` instance state: the host-owned selected index.
+    /// Authoritative after first render; the spec's `selected_index`
+    /// is a seed only.
+    Radio { selected_index: i32 },
     /// `DualList` instance state: the host-owned ordered included set
     /// plus which column is active and each column's cursor. The
     /// included order is the widget's meaningful output; the spec's

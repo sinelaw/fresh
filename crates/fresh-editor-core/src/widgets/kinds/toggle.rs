@@ -109,11 +109,19 @@ impl WidgetImpl for Toggle {
                 label,
                 is_focused,
                 *label_width,
+                ctx.label_align,
                 panel_width,
                 ctx.marker_gutter,
             )
         } else {
-            let entry = render_toggle(*checked, label, is_focused, ctx.marker_gutter);
+            let entry = render_toggle(
+                *checked,
+                label,
+                is_focused,
+                ctx.marker_gutter,
+                *label_width,
+                panel_width,
+            );
             let end = entry.text.len();
             (entry, (0, end))
         };

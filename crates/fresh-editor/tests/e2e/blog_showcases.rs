@@ -3363,10 +3363,10 @@ fn blog_showcase_fresh_0_4_0_ssh_session() {
     snap(&mut h, &mut s, Some("Enter"), 110);
     hold(&mut h, &mut s, 4, 75);
 
-    // --- Switch to the SSH backend by clicking the "Run in: … SSH" tab. -----
+    // --- Switch to the SSH backend by clicking the "Run in" radio's SSH. ----
     let (ssh_col, ssh_row) = h
-        .find_text_on_screen("SSH")
-        .expect("the 'Run in:' tab row should offer an SSH backend");
+        .find_text_on_screen("( ) SSH")
+        .expect("the 'Run in' radio should offer an SSH backend");
     snap_mouse(&mut h, &mut s, None, (ssh_col, ssh_row), 100);
     h.mouse_click(ssh_col, ssh_row).unwrap();
     h.wait_until(|h| h.screen_to_string().contains("Remote Path"))
@@ -3374,10 +3374,10 @@ fn blog_showcase_fresh_0_4_0_ssh_session() {
     snap_mouse(&mut h, &mut s, Some("Click"), (ssh_col, ssh_row), 90);
     hold(&mut h, &mut s, 2, 55);
 
-    // Enter on the already-active SSH tab dives into the first field (Host).
-    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    // Tab from the radio into the first SSH field (Host).
+    h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     h.render().unwrap();
-    snap(&mut h, &mut s, Some("Enter"), 65);
+    snap(&mut h, &mut s, Some("Tab"), 65);
 
     // --- Host: the fake hostname + the throwaway sshd's port. ---------------
     let host_value = format!("{}:{}", sup::DEMO_HOST, server.port);

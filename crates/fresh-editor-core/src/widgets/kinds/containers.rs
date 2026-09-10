@@ -730,6 +730,9 @@ fn collect_labeled_section(
     // reaches the child.
     let section_ctx = RenderContext {
         avail_height: ctx.avail_height.map(|h| h.saturating_sub(2)),
+        // A float the child hangs off starts at this section's border,
+        // two columns left of the child (see `RenderContext::popup_escape`).
+        popup_escape: 2,
         ..ctx
     };
     let mut child_out = render_collected(child, prev, next_state, section_ctx, inner_width);

@@ -6349,6 +6349,7 @@ impl Editor {
             hovered_item_key: self.widget_registry.hover_keys(&key).1,
             hovered_popup_row: String::new(),
             marker_gutter: false,
+            label_align: Default::default(),
             avail_height: None,
             scrollbar_reveal: None,
             // **The panel's keymap: its buffer's mode.** A pane-mounted
@@ -6440,6 +6441,7 @@ impl Editor {
             hovered_item_key: panel.hovered_item_key.clone(),
             hovered_popup_row: panel.hovered_popup_row.clone(),
             marker_gutter: panel.focus_marker,
+            label_align: panel.label_align,
             avail_height: self.floating_panel_inner_height(slot),
             // **The dock's bars are overlay bars.** Every other panel draws
             // one whenever its content overflows; the dock's appears while

@@ -2189,6 +2189,24 @@ pub enum ButtonKind {
     Danger,
 }
 
+/// Which way a form control's label sits in its `label_width` column.
+///
+/// A panel-wide property, set at mount (`MountFloatingWidget.label_align`)
+/// and read by every `Text` / `Dropdown` / `Toggle` / `Number` that pads
+/// its label to a column — alignment only means something relative to
+/// the siblings sharing that column, so it is not a per-control field.
+/// `Left` is what every panel rendered before the option existed.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, rename_all = "camelCase")]
+pub enum LabelAlign {
+    /// `Name      : [ … ]` — the label starts the column, padding after.
+    #[default]
+    Left,
+    /// `     Name : [ … ]` — padding first, so the colons form one edge.
+    Right,
+}
+
 /// Declarative widget tree. Each variant is one node; nested
 /// composition is via `Row { children }` / `Col { children }`.
 ///
@@ -2355,6 +2373,41 @@ pub enum WidgetSpec {
         /// taller than its window. Defaults to `0`.
         #[serde(default)]
         scroll_offset: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        key: Option<String>,
+    },
+    /// Inline single-select option group, rendered as
+    /// `label: (•) A   ( ) B   ( ) C` — every option visible in the
+    /// row, the selected one filled. The right shape for a short, fixed
+    /// choice a form asks about (a backend, a scope); a longer or
+    /// open-ended set is a `Dropdown`. Left/Right cycle the selection,
+    /// Home/End jump it, a click on an option selects it; Up/Down walk
+    /// the surrounding form like Tab.
+    ///
+    /// Like `Dropdown`, the *selected index* is host-owned instance
+    /// state after first render; the spec's `selected_index` is a seed
+    /// only. Every change fires `widget_event { event_type: "change",
+    /// payload: { index, value } }`; plugins can also set it via
+    /// `WidgetMutation::SetRadio`.
+    Radio {
+        /// The selectable options, in display order.
+        options: Vec<String>,
+        /// Initial selected index into `options`. Read at first render
+        /// only; instance state takes over thereafter. Clamped to
+        /// `[0, options.len())`.
+        #[serde(default)]
+        selected_index: i32,
+        /// Optional label rendered before the options. Empty = omitted.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        label: String,
+        /// Whether this widget has visual focus. Initial-only once the
+        /// host owns focus.
+        #[serde(default)]
+        focused: bool,
+        /// Pad the label to this display width so a column of controls
+        /// aligns their option cells. `0` = no padding.
+        #[serde(default)]
+        label_width: u32,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
     },
@@ -2974,6 +3027,24 @@ pub enum WidgetSpec {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
     },
+    /// One row of static text — the hint under a field, a status line,
+    /// a read-only summary. Not focusable, never a hit. `style` colours
+    /// the text (a dim `fg`, italic); `label_width` indents it into a
+    /// form's field column (the column a sibling control's `[` opens
+    /// at for the same `label_width`), so a field's hint sits under its
+    /// value with no column arithmetic in the plugin.
+    Label {
+        text: String,
+        #[ts(type = "Partial<OverlayOptions>")]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        style: Option<OverlayOptions>,
+        /// Indent into the field column of a form whose controls share
+        /// this label width. `0` = flush left.
+        #[serde(default)]
+        label_width: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        key: Option<String>,
+    },
     /// Imperative-virtual-buffer escape hatch. The plugin supplies
     /// `TextPropertyEntry[]` exactly as it would for
     /// `setVirtualBufferContent`; the host inlines those entries into
@@ -3085,11 +3156,13 @@ impl WidgetSpec {
             | WidgetSpec::Dropdown { key, .. }
             | WidgetSpec::DualList { key, .. }
             | WidgetSpec::HintBar { key, .. }
+            | WidgetSpec::Label { key, .. }
             | WidgetSpec::LabeledSection { key, .. }
             | WidgetSpec::List { key, .. }
             | WidgetSpec::Number { key, .. }
             | WidgetSpec::Overlay { key, .. }
             | WidgetSpec::Popup { key, .. }
+            | WidgetSpec::Radio { key, .. }
             | WidgetSpec::Raw { key, .. }
             | WidgetSpec::Row { key, .. }
             | WidgetSpec::Spacer { key, .. }
@@ -3256,6 +3329,9 @@ pub enum WidgetMutation {
     /// Set a `Dropdown` widget's selected index (instance state).
     /// Clamped to `[0, options.len())` on the next render.
     SetDropdown { widget_key: String, index: i32 },
+    /// Set a `Radio` widget's selected index (instance state).
+    /// Clamped to `[0, options.len())`.
+    SetRadio { widget_key: String, index: i32 },
     /// Replace a `DualList` widget's ordered included set (instance
     /// state). Values not present in the widget's `options` are
     /// dropped on the next render.
@@ -5752,6 +5828,10 @@ pub enum PluginCommand {
         /// false) so existing panels render unchanged.
         #[serde(default)]
         focus_marker: bool,
+        /// How this panel's form controls align their labels within the
+        /// shared `label_width` column. See [`LabelAlign`].
+        #[serde(default)]
+        label_align: LabelAlign,
         /// Native modal-frame title. When `Some`, a centered panel draws a
         /// title bar into its top border (the declarative dialog's shell,
         /// drawn by the host — not faked with a `labeledSection` inside the

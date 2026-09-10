@@ -434,6 +434,8 @@ pub struct CompletionPopup {
 /// setting `completions_visible_rows`; 0 falls back to the default so the
 /// orchestrator's existing `text({...})` calls Just Work.
 ///
+/// `lead` puts the candidates under the value: see [`completion_lead`].
+///
 /// Pulled out of the collector because the *description* needs the same rows,
 /// and a second copy of the windowing would be a second place for it to drift
 /// from the scroll offset the collector persists. Pure — no `out`, no
@@ -445,7 +447,7 @@ pub fn completion_popup(
     selected_idx: usize,
     navigated: bool,
     prev_scroll: u32,
-    marker_gutter: bool,
+    lead: usize,
 ) -> Option<CompletionPopup> {
     if completions.is_empty() {
         return None;
@@ -489,7 +491,7 @@ pub fn completion_popup(
             navigated && i == selected_idx,
             popup_total,
             thumb,
-            marker_gutter,
+            lead,
         ));
     }
     rows.push(render_completion_bottom_border(popup_total));
@@ -498,6 +500,19 @@ pub fn completion_popup(
         scroll,
         visible,
     })
+}
+
+/// **Where a candidate row's text starts, so it sits under the value.**
+///
+/// `value_col` is the display column of the value's first char within the
+/// field's own row — after the focus gutter and a form's `label: [` — and
+/// `escape` how many columns left of that row the popup's left border
+/// starts (`2` inside a `LabeledSection`, whose `│ ` chrome the popup
+/// re-adds; `0` at the panel edge). The row lays `│`, `lead` spaces and two
+/// leading chars before the text, so this is the `lead` that lands it on
+/// `value_col`.
+pub fn completion_lead(value_col: u32, escape: u32) -> usize {
+    (value_col + escape).saturating_sub(3) as usize
 }
 
 /// Emit a focused Text widget's completion popup as floating overlay
@@ -518,7 +533,7 @@ fn emit_completion_overlays(
     selected_idx: usize,
     navigated: bool,
     prev_scroll: u32,
-    marker_gutter: bool,
+    lead: usize,
 ) -> u32 {
     let Some(popup) = completion_popup(
         completions,
@@ -527,7 +542,7 @@ fn emit_completion_overlays(
         selected_idx,
         navigated,
         prev_scroll,
-        marker_gutter,
+        lead,
     ) else {
         return 0;
     };
@@ -961,6 +976,9 @@ fn render_widget_text(
         completion_navigated: prev_completion_navigated,
     } = resolve(value, cursor_byte, multiline, key, prev);
     let new_scroll;
+    // Where the value starts on the row, for the completion list to line
+    // up under; a multi-line field has no completions, so the seed is moot.
+    let mut value_col: u32 = if ctx.marker_gutter { 3 } else { 1 };
     if multiline {
         let effective_value = effective_editor.value();
         let effective_cursor = if is_focused {
@@ -1046,6 +1064,7 @@ fn render_widget_text(
             block_caret,
             spec_sel,
             label_width,
+            ctx.label_align,
             is_focused,
             key,
             ctx.marker_gutter,
@@ -1055,6 +1074,7 @@ fn render_widget_text(
         // (the first painted value char), so a caret that walks into
         // the hidden head brings the view with it.
         new_scroll = line.scroll;
+        value_col = line.value_col;
         if let Some(byte_in_row) = line.caret {
             out.focus_cursor = Some(FocusCursor {
                 buffer_row: 0,
@@ -1076,7 +1096,7 @@ fn render_widget_text(
         prev_completion_idx,
         prev_completion_navigated,
         prev_completion_scroll,
-        ctx.marker_gutter,
+        completion_lead(value_col, ctx.popup_escape),
     );
     // **What this walk decides about a text field is two numbers.**
     //
@@ -1278,6 +1298,10 @@ pub struct SingleLine {
     /// The horizontal window `render_text_input` chose — the first painted
     /// value char, to hand back on the next render.
     pub scroll: u32,
+    /// Display column of the value's first char within `entry.text` —
+    /// after the gutter and the `label: [` — where a completion list
+    /// lines its candidates up ([`completion_lead`]).
+    pub value_col: u32,
 }
 
 /// **The single-line field's row: label column, value cell, focus gutter,
@@ -1306,6 +1330,7 @@ pub fn single_line(
     block_caret: bool,
     spec_sel: (i32, i32),
     label_width: u32,
+    label_align: fresh_core::api::LabelAlign,
     is_focused: bool,
     key: Option<&str>,
     marker_gutter: bool,
@@ -1336,7 +1361,7 @@ pub fn single_line(
             "[  ]".len(),
             panel_width,
         );
-        composed_label = format!("{}:", fit_label(label, lw));
+        composed_label = format!("{}:", fit_label(label, lw, label_align));
         &composed_label
     } else {
         label
@@ -1428,11 +1453,15 @@ pub fn single_line(
         },
     });
     ensure_trailing_newline(&mut entry);
+    let value_col = crate::primitives::display_width::str_width(
+        &entry.text[..(marker_bytes + rendered.inner_byte_start).min(entry.text.len())],
+    ) as u32;
     SingleLine {
         entry,
         caret: cursor_in_row,
         hit,
         scroll: rendered.scroll_chars,
+        value_col,
     }
 }
 

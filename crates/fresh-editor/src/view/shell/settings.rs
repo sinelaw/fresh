@@ -940,6 +940,7 @@ fn control(c: &Card, band: &str) -> Node<UiMsg> {
             keyboard: true,
             hovered_key: None,
             marker_gutter: false,
+            label_align: Default::default(),
             hovered_item_key: String::new(),
             hovered_popup_row: hovered_popup_row.clone(),
             avail_height: None,

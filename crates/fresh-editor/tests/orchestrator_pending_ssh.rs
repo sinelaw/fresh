@@ -69,7 +69,7 @@ fn ssh_submit_is_non_blocking_and_shows_connecting_row() {
     // body's first field (Host) and type a host.
     h.send_key(KeyCode::BackTab, KeyModifiers::NONE).unwrap();
     h.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("Host  ("))
+    h.wait_until(|h| h.screen_to_string().contains("Host:"))
         .unwrap();
     h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     h.type_text("dead-host").unwrap();

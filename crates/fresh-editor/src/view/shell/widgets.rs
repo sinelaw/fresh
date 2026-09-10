@@ -183,6 +183,9 @@ pub struct Ctx<'a> {
     pub hovered_key: Option<String>,
     /// Whether focusable controls reserve the `▸ ` gutter.
     pub marker_gutter: bool,
+    /// Which way form controls align their labels in the shared column.
+    /// Panel-wide, as `marker_gutter` is; see `api::LabelAlign`.
+    pub label_align: fresh_core::api::LabelAlign,
     /// The `List`/`Tree` row the pointer is over. Every row of one list
     /// shares the list's own key, so the row identity travels separately.
     pub hovered_item_key: String,
@@ -276,6 +279,7 @@ impl Ctx<'static> {
 
             hovered_key: None,
             marker_gutter: false,
+            label_align: Default::default(),
             hovered_item_key: String::new(),
             hovered_popup_row: String::new(),
             avail_height: None,
@@ -866,6 +870,22 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
         WidgetSpec::HintBar { entries, .. } => {
             entry_row(&crate::widgets::render_hint_bar(entries), &cx.surface)
         }
+        // A static row: the same formatter as the runtime, no hit.
+        WidgetSpec::Label {
+            text,
+            style,
+            label_width,
+            ..
+        } => entry_row(
+            &crate::widgets::render_label(
+                text,
+                style.as_ref(),
+                *label_width,
+                cx.marker_gutter,
+                width as u32,
+            ),
+            &cx.surface,
+        ),
         // Entries the plugin wrote, inlined without interpretation. That is
         // the variant's whole contract, and it is one row per entry.
         WidgetSpec::Raw { entries, .. } => col().children(
@@ -912,6 +932,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                 label,
                 is_focused,
                 *label_width,
+                cx.label_align,
                 resolved
                     .draft
                     .as_ref()
@@ -1043,6 +1064,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                     label,
                     is_focused,
                     *label_width,
+                    cx.label_align,
                     width as u32,
                     cx.marker_gutter,
                 ),
@@ -1052,6 +1074,8 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                         label,
                         is_focused,
                         cx.marker_gutter,
+                        *label_width,
+                        width as u32,
                     );
                     let end = e.text.len();
                     (e, (0, end))
@@ -1078,6 +1102,60 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                     owner_key: None,
                 },
             )
+        }
+        // **One row, one hit per option.** The runtime told the options
+        // apart by comparing a clicked byte against a range per option;
+        // `entry_row_hits` splits the row at those same edges so each
+        // `(•) name` cell is its own target, and the kind's `on_pointer`
+        // owns the index — the plugin sees the `change`, never the click.
+        WidgetSpec::Radio {
+            options,
+            selected_index,
+            label,
+            focused,
+            label_width,
+            key,
+        } => {
+            use crate::widgets::kinds::radio as rd;
+            let key = key.as_deref();
+            let is_focused = match key.is_some_and(|k| !k.is_empty()) {
+                true => cx.is_focused(key),
+                false => *focused,
+            };
+            let selected = rd::resolve(options, *selected_index, key, cx.states);
+            let mut rendered = crate::widgets::render_radio(
+                options,
+                selected,
+                label,
+                is_focused,
+                *label_width,
+                cx.label_align,
+                cx.marker_gutter,
+            );
+            if cx.is_hovered(key) && !is_focused {
+                crate::widgets::apply_hover_band(&mut rendered.entry);
+            }
+            let widget_key = key.unwrap_or("").to_string();
+            let hits: Vec<_> = rendered
+                .option_ranges
+                .iter()
+                .enumerate()
+                .map(|(index, range)| {
+                    (
+                        *range,
+                        crate::widgets::WidgetEvent {
+                            row_target: false,
+                            context_click: false,
+                            widget_key: widget_key.clone(),
+                            widget_kind: "radio",
+                            payload: serde_json::json!({ "index": index }),
+                            event_type: "radio_select",
+                            owner_key: None,
+                        },
+                    )
+                })
+                .collect();
+            entry_row_hits(&rendered.entry, cx.slot, &cx.surface, &hits)
         }
         // **The first interactive variant, and the seam the rest ride.**
         //
@@ -2156,6 +2234,8 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                     hover_popup_row: "",
                     markdown: cx.markdown,
                     marker_gutter: cx.marker_gutter,
+                    label_align: cx.label_align,
+                    popup_escape: 0,
                     avail_height: cx.avail_height,
                     // A markdown Text has no rows to pan.
                     h_pan: None,
@@ -2321,6 +2401,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                 label,
                 is_focused,
                 *label_width,
+                cx.label_align,
                 st.open,
                 *scroll_offset,
                 cx.marker_gutter,
@@ -2452,13 +2533,14 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
             let label_s = label.clone();
             let placeholder_s = placeholder.clone();
             let key_s = key.map(|k| k.to_string());
-            let (fw, mvc, fullw, bc, sel, lw, gutter, w32) = (
+            let (fw, mvc, fullw, bc, sel, lw, la, gutter, w32) = (
                 *field_width,
                 *max_visible_chars,
                 *full_width,
                 *block_caret,
                 (*sel_start, *sel_end),
                 *label_width,
+                cx.label_align,
                 cx.marker_gutter,
                 width as u32,
             );
@@ -2474,12 +2556,16 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                     bc,
                     sel,
                     lw,
+                    la,
                     is_focused,
                     key_s.as_deref(),
                     gutter,
                     w32,
                 )
             };
+            // Measured once, before the builder moves into the window: the
+            // value's column does not depend on the window.
+            let value_col = build_line(st.scroll).value_col;
             // One hit or none — an unkeyed field emits none, because a hit
             // with no widget to name could not say what it focused — and the
             // caret's marker rides in the same split, exactly as
@@ -2516,6 +2602,9 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                     },
                 )
             };
+            // The candidates line up under the value: its column is the
+            // row's to say, and where the float starts is the site's.
+            let lead = tx::completion_lead(value_col, site.escape as u32);
             let Some(popup) = tx::completion_popup(
                 &st.completions,
                 *completions_visible_rows,
@@ -2523,7 +2612,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                 st.completion_index,
                 st.completion_navigated,
                 st.completion_scroll,
-                cx.marker_gutter,
+                lead,
             ) else {
                 return field;
             };
@@ -3908,6 +3997,7 @@ mod tests {
 
             hovered_key: None,
             marker_gutter: false,
+            label_align: Default::default(),
             hovered_item_key: String::new(),
             hovered_popup_row: String::new(),
             avail_height: None,
@@ -4378,6 +4468,7 @@ mod tests {
                 prev_focus_key: &c.focus_key,
                 auto_focus_first: false,
                 marker_gutter: c.marker_gutter,
+                label_align: c.label_align,
                 hover_key: c.hovered_key.as_deref().unwrap_or(""),
                 ..Default::default()
             },
@@ -4438,6 +4529,7 @@ mod tests {
                 button("Go", Some("go"), false, false),
                 Ctx {
                     marker_gutter: true,
+                    label_align: Default::default(),
                     ..cx()
                 },
             ),
@@ -4626,6 +4718,82 @@ mod tests {
         for (label, spec, c) in cases {
             assert_eq!(tree_text(&spec, &c), runtime_text(&spec, &c), "{label}");
         }
+    }
+
+    fn radio(selected: i32, label_width: u32) -> WidgetSpec {
+        WidgetSpec::Radio {
+            // Short enough to fit `WIDTH` with the gutter or the label column
+            // on — the description clips at the width, the runtime does not.
+            options: vec!["Local".into(), "SSH".into(), "K8s".into()],
+            selected_index: selected,
+            label: "Run in".into(),
+            focused: false,
+            label_width,
+            key: Some("r".into()),
+        }
+    }
+
+    /// A radio says what the runtime says it says: unfocused, focused (the
+    /// band), hovered, under a marker gutter, and with a right-aligned label
+    /// column.
+    #[test]
+    fn a_radio_renders_what_the_runtime_renders() {
+        let cases: Vec<(&str, WidgetSpec, Ctx<'static>)> = vec![
+            ("plain", radio(1, 0), cx()),
+            (
+                "focused",
+                radio(0, 0),
+                Ctx {
+                    focus_key: "r".into(),
+                    ..cx()
+                },
+            ),
+            (
+                "hovered",
+                radio(2, 0),
+                Ctx {
+                    hovered_key: Some("r".into()),
+                    ..cx()
+                },
+            ),
+            (
+                "gutter",
+                radio(0, 0),
+                Ctx {
+                    marker_gutter: true,
+                    ..cx()
+                },
+            ),
+            (
+                "right-aligned label",
+                radio(0, 8),
+                Ctx {
+                    label_align: fresh_core::api::LabelAlign::Right,
+                    ..cx()
+                },
+            ),
+        ];
+        for (label, spec, c) in cases {
+            assert_eq!(tree_text(&spec, &c), runtime_text(&spec, &c), "{label}");
+        }
+    }
+
+    /// **One target per option.** The runtime told the options apart by a
+    /// byte range each; the description splits the row at the same edges,
+    /// so a press on `SSH` names index 1 and nothing else.
+    #[test]
+    fn a_radios_options_are_separate_targets() {
+        let spec = radio(0, 0);
+        let c = cx();
+        let shown = tree_text(&spec, &c);
+        assert_eq!(shown, vec!["Run in: (•) Local   ( ) SSH   ( ) K8s"]);
+        let out = crate::widgets::render_spec(&spec, c.states, "", WIDTH as u32);
+        let indices: Vec<i64> = out
+            .hits
+            .iter()
+            .map(|h| h.event.payload["index"].as_i64().unwrap())
+            .collect();
+        assert_eq!(indices, vec![0, 1, 2]);
     }
 
     /// **The chip, and only the chip.** In form layout a click on the label
@@ -4945,6 +5113,7 @@ mod tests {
             let marked = Ctx {
                 focus_key: "t".into(),
                 marker_gutter: true,
+                label_align: Default::default(),
                 ..cx()
             };
             assert_eq!(
@@ -6641,6 +6810,7 @@ mod tests {
         let focused = Ctx {
             focus_key: "field".into(),
             marker_gutter: true,
+            label_align: Default::default(),
             ..cx()
         };
         let want = crate::widgets::render_spec_with_options(
@@ -6651,6 +6821,7 @@ mod tests {
                 prev_focus_key: "field",
                 auto_focus_first: false,
                 marker_gutter: true,
+                label_align: Default::default(),
                 ..Default::default()
             },
         )
@@ -7206,6 +7377,7 @@ mod tests {
             hovered_item_key: String::new(),
             hovered_popup_row: String::new(),
             marker_gutter: false,
+            label_align: Default::default(),
             avail_height: None,
             scrollbar_reveal: None,
             keymap: None,

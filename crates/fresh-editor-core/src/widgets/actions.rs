@@ -45,6 +45,7 @@ fn leaf_key_matches(spec: &WidgetSpec, target: &str) -> bool {
         // through).
         | WidgetSpec::Dropdown { key: Some(k), .. }
         | WidgetSpec::Number { key: Some(k), .. }
+        | WidgetSpec::Radio { key: Some(k), .. }
         | WidgetSpec::DualList { key: Some(k), .. } => k == target,
         _ => false,
     }
@@ -296,6 +297,7 @@ impl ContainsKey for WidgetSpec {
             | WidgetSpec::Text { key, .. }
             | WidgetSpec::List { key, .. }
             | WidgetSpec::Tree { key, .. }
+            | WidgetSpec::Radio { key, .. }
             | WidgetSpec::Raw { key, .. } => key.as_deref() == Some(widget_key),
             _ => false,
         };

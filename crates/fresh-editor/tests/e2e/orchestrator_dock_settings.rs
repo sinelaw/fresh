@@ -62,20 +62,18 @@ fn open_dock(h: &mut EditorTestHarness) {
     h.wait_until(|h| h.screen_to_string().contains("Toggle Dock"))
         .unwrap();
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("Orchestrator") && h.editor().is_dock_focused())
+    h.wait_until(|h| h.screen_to_string().contains("+ New") && h.editor().is_dock_focused())
         .unwrap();
 }
 
-/// Expand the dock's collapsible "Filters" section, which holds the
-/// density button and the two checkboxes.
-fn expand_filters(h: &mut EditorTestHarness) {
-    let screen = h.screen_to_string();
-    let frow = screen
-        .lines()
-        .position(|l| l.contains("Filters"))
-        .unwrap_or_else(|| panic!("screen missing 'Filters':\n{screen}")) as u16;
-    h.mouse_click(3, frow).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("Manage"))
+/// Open the dock header's `⋯` menu, which holds the density rows and the
+/// two show switches (the applied ones wear a `●`).
+fn open_dock_menu(h: &mut EditorTestHarness) {
+    let (mcol, mrow) = h
+        .find_text_on_screen("⋯")
+        .unwrap_or_else(|| panic!("screen missing '⋯':\n{}", h.screen_to_string()));
+    h.mouse_click(mcol, mrow).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Manage workspaces"))
         .unwrap();
 }
 
@@ -88,9 +86,10 @@ fn default_view_setting_opens_dock_compact() {
     let mut h = EditorTestHarness::with_config_and_working_dir(120, 32, config, root).unwrap();
     h.render().unwrap();
     open_dock(&mut h);
-    h.wait_until(|h| h.screen_to_string().contains("view: compact"))
+    open_dock_menu(&mut h);
+    h.wait_until(|h| h.screen_to_string().contains("● compact view"))
         .unwrap();
-    h.assert_screen_not_contains("view: card");
+    h.assert_screen_not_contains("● card view");
 }
 
 /// No setting ⇒ compact density. The dock is a switcher first, and one line
@@ -103,9 +102,10 @@ fn default_view_setting_absent_opens_dock_compact() {
     let mut h = EditorTestHarness::with_config_and_working_dir(120, 32, config, root).unwrap();
     h.render().unwrap();
     open_dock(&mut h);
-    h.wait_until(|h| h.screen_to_string().contains("view: compact"))
+    open_dock_menu(&mut h);
+    h.wait_until(|h| h.screen_to_string().contains("● compact view"))
         .unwrap();
-    h.assert_screen_not_contains("view: card");
+    h.assert_screen_not_contains("● card view");
 }
 
 #[test]
@@ -114,13 +114,14 @@ fn default_view_setting_card_opens_dock_card() {
     let mut h = EditorTestHarness::with_config_and_working_dir(120, 32, config, root).unwrap();
     h.render().unwrap();
     open_dock(&mut h);
-    h.wait_until(|h| h.screen_to_string().contains("view: card"))
+    open_dock_menu(&mut h);
+    h.wait_until(|h| h.screen_to_string().contains("● card view"))
         .unwrap();
 }
 
-/// The two Filters checkboxes start where the settings say: "all
-/// worktrees" checked, "show empty" unchecked — the inverse of both
-/// shipped defaults, so a stuck default would fail this.
+/// The two show switches start where the settings say: "all worktrees"
+/// on, "show empty" off — the inverse of both shipped defaults, so a
+/// stuck default would fail this.
 #[test]
 fn filter_checkbox_settings_seed_the_dock() {
     let (_tmp, root, config) = setup(serde_json::json!({
@@ -130,10 +131,10 @@ fn filter_checkbox_settings_seed_the_dock() {
     let mut h = EditorTestHarness::with_config_and_working_dir(120, 32, config, root).unwrap();
     h.render().unwrap();
     open_dock(&mut h);
-    expand_filters(&mut h);
+    open_dock_menu(&mut h);
     h.wait_until(|h| {
         let s = h.screen_to_string();
-        s.contains("[v] all worktrees") && s.contains("[ ] show empty")
+        s.contains("● all worktrees") && s.contains("show empty") && !s.contains("● show empty")
     })
     .unwrap();
 }
@@ -147,7 +148,7 @@ fn auto_open_setting_shows_dock_unfocused_at_startup() {
     let mut h = EditorTestHarness::with_config_and_working_dir(120, 32, config, root).unwrap();
     h.render().unwrap();
     h.editor_mut().fire_ready_hook();
-    h.wait_until(|h| h.screen_to_string().contains("Filters"))
+    h.wait_until(|h| h.screen_to_string().contains("+ New"))
         .unwrap();
     assert!(
         !h.editor().is_dock_focused(),
@@ -175,6 +176,6 @@ fn auto_open_defaults_off() {
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
     // A dock auto-opened at ready would have stayed mounted behind the
     // toggle; with auto-open off there is nothing left on screen.
-    h.wait_until(|h| !h.screen_to_string().contains("Filters"))
+    h.wait_until(|h| !h.screen_to_string().contains("+ New"))
         .unwrap();
 }

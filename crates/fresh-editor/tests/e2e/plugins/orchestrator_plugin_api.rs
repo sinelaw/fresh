@@ -191,7 +191,7 @@ fn harness() -> (tempfile::TempDir, EditorTestHarness) {
 /// on render alone can land before the dock is listening).
 fn open_dock(h: &mut EditorTestHarness) {
     run_command(h, "Orchestrator: Toggle Dock");
-    h.wait_until(|h| h.screen_to_string().contains("Orchestrator") && h.editor().is_dock_focused())
+    h.wait_until(|h| h.screen_to_string().contains("+ New") && h.editor().is_dock_focused())
         .unwrap();
 }
 
@@ -219,35 +219,29 @@ fn dock_column(screen: &str) -> String {
         .join("\n")
 }
 
-/// Click the toolbar's density button, which sits beside "Filters" rather
-/// than inside it. Used to put the dock in card density — the opposite of
-/// the compact default — so a probe that switches it *to* compact has
-/// somewhere to switch from.
-fn click_view_button(h: &mut EditorTestHarness) {
-    let screen = h.screen_to_string();
-    // Click the button itself, not the start of its row — the density button
-    // shares the toolbar row with "Filters", which owns the left edge.
-    let (vrow, vcol) = screen
-        .lines()
-        .enumerate()
-        .find_map(|(r, l)| {
-            l.find("view:")
-                .map(|b| (r as u16, l[..b].chars().count() as u16))
-        })
-        .unwrap_or_else(|| panic!("screen missing 'view:':\n{screen}"));
+/// Put the dock in card density through the `⋯` menu's "card view" row, so
+/// the probe has a density to change from. The menu is closed again after.
+fn set_card_view(h: &mut EditorTestHarness) {
+    open_dock_menu(h);
+    let (vcol, vrow) = h
+        .find_text_on_screen("card view")
+        .unwrap_or_else(|| panic!("screen missing 'card view':\n{}", h.screen_to_string()));
     h.mouse_click(vcol + 1, vrow).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("● card view"))
+        .unwrap();
+    h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| !h.screen_to_string().contains("Manage workspaces"))
+        .unwrap();
 }
 
-/// Expand the dock's collapsible "Filters" section, which holds the project
-/// control and the two checkboxes.
-fn expand_filters(h: &mut EditorTestHarness) {
-    let screen = h.screen_to_string();
-    let frow = screen
-        .lines()
-        .position(|l| l.contains("Filters"))
-        .unwrap_or_else(|| panic!("screen missing 'Filters':\n{screen}")) as u16;
-    h.mouse_click(3, frow).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("Manage"))
+/// Open the dock header's `⋯` menu, which holds the density rows (the
+/// applied one wears a `●`), the show switches and the project scope.
+fn open_dock_menu(h: &mut EditorTestHarness) {
+    let (mcol, mrow) = h
+        .find_text_on_screen("⋯")
+        .unwrap_or_else(|| panic!("screen missing '⋯':\n{}", h.screen_to_string()));
+    h.mouse_click(mcol, mrow).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Manage workspaces"))
         .unwrap();
 }
 
@@ -328,21 +322,20 @@ fn list_folders_reports_the_tree_the_dock_renders() {
     .unwrap();
 }
 
-/// `setDockView` flips the density the dock's own "view" button flips.
+/// `setDockView` flips the density the dock's own `⋯` menu rows flip.
 #[test]
 fn set_dock_view_switches_the_dock_to_compact() {
     let (_tmp, mut h) = harness();
     open_dock(&mut h);
     // Start from card, so the probe has a density to change.
-    click_view_button(&mut h);
-    h.wait_until(|h| h.screen_to_string().contains("view: card"))
-        .unwrap();
+    set_card_view(&mut h);
 
     run_command(&mut h, "Probe Compact View");
 
-    h.wait_until(|h| h.screen_to_string().contains("view: compact"))
+    open_dock_menu(&mut h);
+    h.wait_until(|h| h.screen_to_string().contains("● compact view"))
         .unwrap();
-    h.assert_screen_not_contains("view: card");
+    h.assert_screen_not_contains("● card view");
 }
 
 /// `setDockFilter` drives the dock's search box: a needle nothing matches

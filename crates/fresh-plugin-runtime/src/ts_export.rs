@@ -178,6 +178,7 @@ fn get_type_decl(type_name: &str) -> Option<String> {
         "ScrollAlign" => Some(fresh_core::api::ScrollAlign::decl(&cfg)),
         "HintEntry" => Some(fresh_core::api::HintEntry::decl(&cfg)),
         "ButtonKind" => Some(fresh_core::api::ButtonKind::decl(&cfg)),
+        "LabelAlign" => Some(fresh_core::api::LabelAlign::decl(&cfg)),
         "WidgetAction" => Some(fresh_core::api::WidgetAction::decl(&cfg)),
         "WidgetMutation" => Some(fresh_core::api::WidgetMutation::decl(&cfg)),
         "TreeNode" => Some(fresh_core::api::TreeNode::decl(&cfg)),
@@ -404,6 +405,7 @@ const DEPENDENCY_TYPES: &[&str] = &[
     // Widget library types (see docs/internal/plugin-widget-library-design.md)
     "HintEntry",          // Used by WidgetSpec::HintBar
     "ButtonKind",         // Used by WidgetSpec::Button.intent
+    "LabelAlign",         // Used by mountFloatingWidget's labelAlign option
     "TreeNode",           // Used by WidgetSpec::Tree.nodes
     "TextWindowAnchor",   // Used by TreeNode::windowAnchor
     "WidgetSpec",         // Used by mountWidgetPanel/updateWidgetPanel

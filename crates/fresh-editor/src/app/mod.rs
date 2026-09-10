@@ -1688,6 +1688,10 @@ pub(crate) struct FloatingWidgetState {
     /// (`MountFloatingWidget.focus_marker`); the Orchestrator New
     /// Session form uses it.
     pub focus_marker: bool,
+    /// How this panel's form controls align their labels in the shared
+    /// `label_width` column. Opt-in at mount
+    /// (`MountFloatingWidget.label_align`); `Left` renders as before.
+    pub label_align: fresh_core::api::LabelAlign,
     /// Native modal-frame chrome: when `Some`, a `Centered` panel draws
     /// a **title bar** into its top border (left-aligned title text,
     /// styled like the frame). The content `WidgetSpec` is unchanged and
@@ -2278,6 +2282,7 @@ mod tests {
             scrollbar_flash_until: None,
             fullscreen: false,
             focus_marker: false,
+            label_align: Default::default(),
             title: None,
             closable: false,
             hovered_widget_key: String::new(),

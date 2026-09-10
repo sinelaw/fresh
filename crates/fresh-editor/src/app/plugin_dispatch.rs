@@ -2004,6 +2004,7 @@ impl Editor {
                 height_pct,
                 as_dock,
                 focus_marker,
+                label_align,
                 title,
                 closable,
                 start_blurred,
@@ -2017,6 +2018,7 @@ impl Editor {
                     height_pct,
                     as_dock,
                     focus_marker,
+                    label_align,
                     title,
                     closable,
                     start_blurred,
@@ -5573,6 +5575,18 @@ impl Editor {
                     }
                 }
             }
+            WidgetMutation::SetRadio { widget_key, index } => {
+                // Radio selected index is host-owned instance state; clamp
+                // to the option set and write it. The trailing rerender
+                // repaints. No `change` event (matches SetDropdown).
+                if let Some(panel) = self.widget_registry.get_mut(panel_key) {
+                    if let Some(spec) = crate::widgets::find_widget_by_key(&panel.spec, &widget_key)
+                    {
+                        let state = crate::widgets::kinds::radio::set_index_state(spec, index);
+                        panel.instance_states.insert(widget_key.clone(), state);
+                    }
+                }
+            }
             WidgetMutation::SetDualIncluded {
                 widget_key,
                 included,
@@ -5767,6 +5781,7 @@ impl Editor {
         height_pct: u8,
         as_dock: bool,
         focus_marker: bool,
+        label_align: fresh_core::api::LabelAlign,
         // Native modal-frame chrome for a centered panel (ignored for the
         // dock / anchored). See `FloatingWidgetState::{title,closable}`.
         title: Option<String>,
@@ -5835,6 +5850,7 @@ impl Editor {
             scrollbar_flash_until: None,
             fullscreen: false,
             focus_marker,
+            label_align,
             // The native modal frame is a centered-modal affordance; the dock
             // (left companion) and anchored (context-menu) placements never
             // draw a title bar or close button, so drop the chrome there.
@@ -5856,6 +5872,7 @@ impl Editor {
             let theme_guard = self.theme.read().unwrap();
             super::widget_runtime::render_floating_spec(
                 focus_marker,
+                label_align,
                 &spec,
                 &prev,
                 &prev_painted,
@@ -5949,6 +5966,7 @@ impl Editor {
             scrollbar_flash_until: None,
             fullscreen: false,
             focus_marker: false,
+            label_align: Default::default(),
             title: None,
             closable: false,
             hovered_widget_key: String::new(),
@@ -5968,6 +5986,7 @@ impl Editor {
             let theme_guard = self.theme.read().unwrap();
             super::widget_runtime::render_floating_spec(
                 false,
+                Default::default(),
                 &spec,
                 &prev,
                 &prev_painted,
@@ -6050,6 +6069,7 @@ impl Editor {
             .unwrap_or_default();
         let panel_width = self.floating_panel_inner_width(slot);
         let focus_marker = self.panel(slot).map(|f| f.focus_marker).unwrap_or(false);
+        let label_align = self.panel(slot).map(|f| f.label_align).unwrap_or_default();
         // Carry the live hover through a plugin-driven update, so a spec
         // refresh under a stationary pointer doesn't drop the highlight.
         let hover_key = self
@@ -6068,6 +6088,7 @@ impl Editor {
             let theme_guard = self.theme.read().unwrap();
             super::widget_runtime::render_floating_spec(
                 focus_marker,
+                label_align,
                 &spec,
                 &prev,
                 &prev_painted,

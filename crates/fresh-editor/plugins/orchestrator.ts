@@ -26,12 +26,14 @@ import {
   hintBar,
   divider,
   key as widgetKey,
+  label,
   labeledSection,
   list,
   raw,
   row,
   wrappingRow,
   overlay,
+  radio,
   spacer,
   styledRow,
   text,
@@ -389,12 +391,16 @@ let remoteInFlightId: number | null = null;
 // pod via `kubectl exec`, or a devcontainer). The New Session dialog shows a
 // "Run in:" tab row so the user picks one and the body swaps to its fields.
 type SessionBackend = "local" | "ssh" | "kubernetes" | "devcontainer";
+// Where the New Workspace form can put a session — its `Run in` choice. A
+// devcontainer is a property of a project, not of where a machine is, so it
+// is not one of these (a session that has one still carries the kind in its
+// remote facet).
+type FormBackend = "local" | "ssh" | "kubernetes";
 
-const SESSION_BACKENDS: { id: SessionBackend; label: string; key: string }[] = [
-  { id: "local", label: editor.t("backend.local"), key: "type-local" },
-  { id: "ssh", label: editor.t("backend.ssh"), key: "type-ssh" },
-  { id: "kubernetes", label: editor.t("backend.kubernetes"), key: "type-kubernetes" },
-  { id: "devcontainer", label: editor.t("backend.devcontainer"), key: "type-devcontainer" },
+const SESSION_BACKENDS: { id: FormBackend; label: string }[] = [
+  { id: "local", label: editor.t("backend.local") },
+  { id: "ssh", label: editor.t("backend.ssh") },
+  { id: "kubernetes", label: editor.t("backend.kubernetes") },
 ];
 
 interface NewSessionForm {
@@ -410,10 +416,10 @@ interface NewSessionForm {
   // separate dialogs with separate submit functions, and the current-workspace
   // one silently dropped the agent-resume argv.
   target: RunAgentTarget;
-  // Which backend the session runs in (the "Run in:" tab selection). Drives
-  // which field set `buildFormSpec` renders and which submit path runs.
-  // Only meaningful (and only rendered) when `target === "new"`.
-  backend: SessionBackend;
+  // Which backend the session runs in (the `Run in` radio). Drives which
+  // field set `buildFormSpec` renders and which submit path runs. Only
+  // meaningful (and only rendered) when `target === "new"`.
+  backend: FormBackend;
   // --- SSH backend fields (rendered only when backend === "ssh") ---
   // Host as `host`, `user@host[:port]`, or a pasted `ssh://…` (user optional);
   // remote path to root the session at; optional identity file; and free-form
@@ -456,9 +462,11 @@ interface NewSessionForm {
   // created on a freshly-cut branch (`git worktree add -b <newBranch>`).
   // Empty ⇒ use the "Checkout branch" value (or the default) instead.
   newBranch: { value: string; cursor: number };
-  // Whether the collapsible "Advanced…" section (worktree toggle +
-  // branch fields) is expanded. Starts collapsed on every open.
-  advancedExpanded: boolean;
+  // The agent selector is on `custom…`: picked from the dropdown, or
+  // implied by a command no preset spells. Reveals the command field —
+  // and keeps it revealed while the user types a command that happens to
+  // spell a preset, so the field they are typing in does not vanish.
+  agentCustom: boolean;
   // Whether to create a new git worktree under
   // `<XDG>/orchestrator/<slug>/<session>/` (true) or run the
   // session directly inside `projectPath` (false). Enabled
@@ -738,12 +746,13 @@ interface OpenDialogState {
   // with a `●`; this is just where ↑/↓ currently sit before Enter
   // commits. Only meaningful while `projectMenuOpen`.
   projectMenuIndex: number;
-  // Dock-only: the collapsible "Filters" section under the toolbar is
-  // expanded. When false the view/project/worktree/trivial controls are
-  // hidden, leaving just the "New Task…" dropdown and the search input.
-  filtersExpanded: boolean;
-  // Dock-only: a transient toolbar dropdown (the "New Task…" create menu
-  // or a session's "Move to folder…" menu), or null when none is open. A
+  // Dock-only: the search row is open. `/` (or the header's `/ search`)
+  // opens it; Esc on an empty field, or leaving the dock, closes it. A
+  // non-empty filter keeps the row on screen regardless — the row says
+  // what the list is filtered by, so it cannot go while a filter applies.
+  searchOpen: boolean;
+  // Dock-only: a transient toolbar dropdown (the header's `⋯` menu or a
+  // session's "Move to folder…" menu), or null when none is open. A
   // `list` the keyboard drives itself; the plugin hears `select` and
   // `activate` on `DOCK_MENU_KEY`, and the dock mode's Esc closes it.
   dockMenu: DockDropdown | null;
@@ -763,7 +772,7 @@ interface OpenDialogState {
 // A transient dock toolbar dropdown. `index` is the keyboard cursor into
 // the menu's option list. `move` also carries the session being filed.
 type DockDropdown =
-  | { kind: "new"; index: number }
+  | { kind: "main"; index: number }
   | { kind: "move"; sessionId: number; index: number };
 let openDialog: OpenDialogState | null = null;
 let openPanel: FloatingWidgetPanel | null = null;
@@ -826,7 +835,10 @@ const DOCK_WIDTH_FRACTION = 0.28;
 // multiplication sign the file explorer's close button and the host's
 // native modal `[×]` use — not the ASCII letter x — so all three close
 // affordances read identically.
-const DOCK_CLOSE_GLYPH = "×";
+// The header's menu affordance: everything that is a *setting* of the dock
+// (density, what to show, the project scope), folder creation, and hiding
+// the dock itself, behind one glyph. See docs/internal/orchestrator-ux-redesign.md §2.4.
+const DOCK_MORE_GLYPH = "⋯";
 
 // Responsive default dock width: ~`DOCK_WIDTH_FRACTION` of the terminal,
 // clamped to [`DOCK_MIN`..`DOCK_MAX`]. Re-evaluated on resize so the dock
@@ -4070,7 +4082,7 @@ function openControlRoom(
     projectFilter: asDock ? lastDockProjectFilter : null,
     projectMenuOpen: false,
     projectMenuIndex: 0,
-    filtersExpanded: false,
+    searchOpen: false,
     dockMenu: null,
     dockSelKey: null,
     dockNodes: [],
@@ -4240,75 +4252,6 @@ function closeOpenDialog(): void {
 // live in the modal picker (reached via the dock's "Manage" button);
 // the dock itself is a lean switcher with no destructive controls.
 
-// Extract the single mnemonic letter from a keybinding label like
-// "Alt+O" / "⌥O" → "o". Returns "" when the binding isn't a single
-// trailing letter (so callers show no mnemonic rather than guessing).
-function mnemonicLetter(label: string | null): string {
-  if (!label) return "";
-  const m = label.match(/([A-Za-z])\s*$/);
-  return m ? m[1].toLowerCase() : "";
-}
-
-// The dock's top label row, styled as a menu bar (menu fg on menu bg)
-// spanning the full dock width. The accelerator that focuses the dock
-// (default Alt+O, looked up live so a rebind is honoured) supplies the
-// mnemonic: the matching letter in "Orchestrator" is underlined — but
-// only when the binding really is a single letter that appears in the
-// title, never a hardcoded "O".
-function dockTitleRow(): WidgetSpec {
-  const title = editor.t("dock.title");
-  const base = { fg: "ui.menu_fg", bg: "ui.menu_bg" };
-  const mnem = mnemonicLetter(
-    editor.getKeybindingLabel("toggle_dock_focus", "normal"),
-  );
-  const idx = mnem ? title.toLowerCase().indexOf(mnem) : -1;
-  const segments: Entry[] = [];
-  if (idx >= 0) {
-    if (idx > 0) segments.push({ text: title.slice(0, idx), style: base });
-    segments.push({
-      text: title.slice(idx, idx + 1),
-      style: { ...base, underline: true, bold: true },
-    });
-    segments.push({ text: title.slice(idx + 1), style: base });
-  } else {
-    segments.push({ text: title, style: { ...base, bold: true } });
-  }
-  // Title on the left, the `[ × ]` hide button hard against the right
-  // edge, and a flex spacer between them. The spacer is sized by the host
-  // against the dock's *actual* content width (including a user drag), so
-  // the button stays pinned to the edge without the plugin guessing the
-  // width — the previous "pad past the screen width and let the host clip"
-  // trick can't right-align anything, since the clipped tail is exactly
-  // where the button would sit.
-  //
-  // The bar background rides on the first inline piece's whole-entry
-  // `style`: a Row's inline collapse keeps the leading child's entry style
-  // for the merged line (and each child's own overlays on top of it), so
-  // `base` tints the title, the spacer, and the button alike — the menu-bar
-  // strip still spans the dock, and the button's focus/hover styling still
-  // paints over it.
-  return row(
-    raw([
-      styledRow(segments as Parameters<typeof styledRow>[0], { style: base }),
-    ]),
-    flexSpacer(),
-    // Hide the dock, mirroring the file explorer's title-bar `×`: `bare`
-    // renders the glyph alone, and `hoverStyle` gives it the shared
-    // close-affordance highlight the tab and explorer `×` already wear.
-    //
-    // Mouse-only (`focusable: false`) for the same reason the explorer's is:
-    // the dock's Tab cycle belongs to the session list and its controls, and
-    // the keyboard already has "Orchestrator: Toggle Dock" and the View-menu
-    // entry to hide it.
-    button(DOCK_CLOSE_GLYPH, {
-      key: "dock-close",
-      focusable: false,
-      bare: true,
-      hoverStyle: { fg: "ui.tab_close_hover_fg" },
-    }),
-  );
-}
-
 // Option keys for the dock's project dropdown, in display order. Index 0
 // is always "All projects" (the empty-string key); the rest are the
 // projects with a session in the worktree/trivial-filtered set. The
@@ -4365,9 +4308,9 @@ function openProjectMenu(): void {
   const keys = projectMenuKeys();
   const applied = openDialog.projectFilter;
   const idx = applied === null ? 0 : Math.max(0, keys.indexOf(applied));
-  // The project control lives in the collapsible Filters section; make
-  // sure it's open so the dropdown (and its anchor button) are visible.
-  openDialog.filtersExpanded = true;
+  // One dropdown at a time: the scope list replaces the `⋯` menu it may
+  // have been picked from.
+  openDialog.dockMenu = null;
   openDialog.projectMenuOpen = true;
   openDialog.projectMenuIndex = clampMenuIndex(idx, keys.length);
   // Render the menu first so its list exists in the spec, *then* move
@@ -4455,25 +4398,36 @@ function buildDockSpec(): WidgetSpec {
     ? dockTree.keys.indexOf(openDialog.dockSelKey)
     : -1;
 
-  const newLabel = editor.t("dock.new_btn");
-  // The "New Task…" button and the search field share one row, wrapping
-  // the search below the button when the dock is too narrow to hold both.
-  // The button renders as "[ <label> ]" (label + 4 cols); size the search
-  // field to fill the rest of a default-width dock, floored so it stays
-  // usable — and so the two overflow (and wrap) on a narrow/dragged dock.
-  // The host wraps against the *actual* rendered width, so this estimate
-  // only needs to be close for the default-dock case.
-  const newBtnCols = newLabel.length + 4;
+  // The action row: `[ + New ]` on the left, `/ search` and `⋯` on the
+  // right. Four header controls collapse to two: `+ New` goes straight to
+  // the dialog (folder creation moved into `⋯`, where the rare thing costs
+  // the extra click), and every *setting* lives behind `⋯`.
   const dockCols = dockContentCols(dockDefaultWidth());
-  const SEARCH_MIN_FIELD = 10;
-  const searchField = Math.max(SEARCH_MIN_FIELD, dockCols - newBtnCols - 4);
-  const toolbarWraps = newBtnCols + 1 + searchField + 2 > dockCols;
-  const worktreeLabel = editor.t("dock.all_worktrees");
-  const trivialLabel = editor.t("dock.show_empty");
-  const projWord = openDialog.projectFilter === null
-    ? editor.t("list.scope_all")
-    : editor.pathBasename(openDialog.projectFilter);
-
+  // Search on demand: the filter row appears when asked for, or while a
+  // filter applies (the row says what the list is filtered by).
+  const searchVisible = openDialog.searchOpen || openDialog.filter.value !== "";
+  // `/ [field]`, the match count when a needle is typed.
+  const searchField = Math.max(10, dockCols - 14);
+  const total = openDialog.filter.value === "" ? filtered.length : filterSessions("").length;
+  const searchRow: WidgetSpec[] = searchVisible
+    ? [row(
+      text({
+        value: openDialog.filter.value,
+        cursorByte: openDialog.filter.cursor,
+        label: "/",
+        placeholder: editor.t("dock.filter_placeholder"),
+        fieldWidth: searchField,
+        key: "filter",
+      }),
+      flexSpacer(),
+      label(
+        openDialog.filter.value === ""
+          ? ""
+          : editor.t("dock.search_count", { n: String(filtered.length), total: String(total) }),
+        { style: { fg: "ui.menu_disabled_fg" } },
+      ),
+    )]
+    : [];
   // The hints belong to the dock only while it has keyboard focus
   // (req: hide them when the editor owns the keyboard). A blurred dock
   // gives the row back to the tree.
@@ -4507,53 +4461,12 @@ function buildDockSpec(): WidgetSpec {
       ];
   const bottomRows = bottom.length;
 
-  // The collapsible Filters section: a header row plus, when open, the
-  // project / worktree / trivial controls and Manage.
-  //
-  // Density rides on the header, NOT inside the collapsed body: flipping
-  // card↔compact is a view control the user reaches for constantly, and
-  // burying it under a "Filters" disclosure both hid it and mislabelled
-  // it (a layout is not a filter). It sits beside the Filters toggle so
-  // it is one click away whether or not the section is open.
-  const filtersArrow = openDialog.filtersExpanded ? "▾ " : "▸ ";
-  const filterHeader = row(
-    button(filtersArrow + editor.t("dock.filters"), { key: "filters-toggle" }),
-    spacer(1),
-    button(editor.t("dock.view_btn", { view: dockView }), { key: "view-toggle" }),
-    flexSpacer(),
-  );
-  const filterBody: WidgetSpec[] = openDialog.filtersExpanded
-    ? [
-      row(
-        flexSpacer(),
-        button(editor.t("dock.project_btn", { word: projWord }), { key: "project-menu" }),
-      ),
-      // The project dropdown floats just under its toolbar button.
-      ...(openDialog.projectMenuOpen ? [dockProjectMenu()] : []),
-      row(
-        toggle(openDialog.showWorktrees, worktreeLabel, { key: "worktree-show" }),
-        flexSpacer(),
-      ),
-      row(
-        toggle(!openDialog.hideTrivial, trivialLabel, { key: "hide-trivial" }),
-        flexSpacer(),
-      ),
-      row(
-        button(editor.t("dock.move_btn"), { key: "move-session" }),
-        flexSpacer(),
-        button(editor.t("dock.manage"), { key: "manage" }),
-      ),
-    ]
-    : [];
-
-  // Size the tree to fill the dock. Top chrome is variable: title, the
-  // New+search toolbar (1 row, or 2 when the search wraps below the
-  // button on a narrow dock), filter header, divider — plus the expanded
-  // filter body rows when open. The tree soaks up the rest.
+  // Size the tree to fill the dock. Top chrome is the action row, the
+  // search row while it is open, and the divider. The tree soaks up the
+  // rest.
   const screen = editor.getScreenSize();
   const innerH = Math.max(8, screen.height > 0 ? screen.height : 30);
-  const toolbarRows = toolbarWraps ? 2 : 1;
-  const chromeRows = 3 + toolbarRows + filterBody.length + bottomRows;
+  const chromeRows = 2 + searchRow.length + bottomRows;
   const listRows = Math.max(MIN_LIST_ROWS, innerH - chromeRows);
   openDialog.listVisibleRows = listRows;
   // Rows of chrome above the tree (everything in chromeRows except the
@@ -4576,24 +4489,30 @@ function buildDockSpec(): WidgetSpec {
     : [];
 
   return col(
-    dockTitleRow(),
-    // New-task button + search on one row; a narrow dock wraps the search
-    // to its own row beneath the button (pieces are never split).
-    wrappingRow(
-      button(newLabel, { intent: "primary", key: "new-session" }),
-      spacer(1),
-      text({
-        value: openDialog.filter.value,
-        cursorByte: openDialog.filter.cursor,
-        placeholder: editor.t("dock.filter_placeholder"),
-        fieldWidth: searchField,
-        key: "filter",
+    row(
+      button(editor.t("dock.new"), { intent: "primary", key: "new-session" }),
+      flexSpacer(),
+      // `/ search`: the key and the word. Mouse-only — the keyboard has
+      // `/` — so the Tab ring stays `+ New`, `⋯`, the field, the list.
+      button(editor.t("dock.search_btn"), {
+        key: "search-toggle",
+        bare: true,
+        focusable: false,
+        style: { fg: "ui.menu_disabled_fg" },
+        hoverStyle: { fg: "ui.help_key_fg" },
+      }),
+      spacer(2),
+      button(DOCK_MORE_GLYPH, {
+        key: "dock-menu",
+        bare: true,
+        hoverStyle: { fg: "ui.help_key_fg" },
       }),
     ),
-    // The "New Task…" create dropdown floats just under its button.
-    ...(openDialog.dockMenu?.kind === "new" ? [dockNewMenu()] : []),
-    filterHeader,
-    ...filterBody,
+    // The `⋯` menu and the project (scope) dropdown float just under the
+    // action row.
+    ...(openDialog.dockMenu?.kind === "main" ? [dockMainMenu()] : []),
+    ...(openDialog.projectMenuOpen ? [dockProjectMenu()] : []),
+    ...searchRow,
     // The "Move to folder…" dropdown floats over the tree without
     // reflowing it.
     ...(openDialog.dockMenu?.kind === "move" ? [dockMoveMenu()] : []),
@@ -4661,8 +4580,8 @@ function dockTreeExpandedKeys(t: DockTree): string[] {
 }
 
 // ---------------------------------------------------------------------
-// Dock toolbar dropdowns — the "New Task…" create menu and a session's
-// "Move to folder…" menu. Both reuse the project dropdown's mechanics:
+// Dock toolbar dropdowns — the header's `⋯` menu and a session's "Move to
+// folder…" menu. Both reuse the project dropdown's mechanics:
 // an `overlay(labeledSection(...))` around a `list` keyed `DOCK_MENU_KEY`,
 // whose ↑/↓ and Enter are the list's own and reach the plugin as `select`
 // and `activate`; Esc is the dock mode's. The `●` marks the
@@ -4670,16 +4589,31 @@ function dockTreeExpandedKeys(t: DockTree): string[] {
 // ---------------------------------------------------------------------
 
 interface MenuOption {
-  key: string; // action key, e.g. "new:task" / "move:df3"
+  key: string; // action key, e.g. "main:folder" / "move:df3"
   label: string;
   marked?: boolean;
 }
 
-// Options for the "New Task…" create dropdown.
-function dockNewOptions(): MenuOption[] {
+// Options for the header's `⋯` menu: the rare creation (a folder), the
+// modal picker, then the dock's settings — density, what to show (the `●`
+// marks what is on), the project scope — and hiding the dock. The title
+// row and its `×` were absorbed here: closing the dock is rare, and the
+// accelerator that opens it (`Alt+O` by default, looked up live) undoes it.
+function dockMainOptions(): MenuOption[] {
+  if (!openDialog) return [];
+  const projWord = openDialog.projectFilter === null
+    ? editor.t("list.scope_all")
+    : editor.pathBasename(openDialog.projectFilter);
+  const hideKey = editor.getKeybindingLabel("toggle_dock_focus", "normal") ?? "";
   return [
-    { key: "new:task", label: editor.t("dock.new_menu_task") },
-    { key: "new:folder", label: editor.t("dock.new_menu_folder") },
+    { key: "main:folder", label: editor.t("dock.new_menu_folder") },
+    { key: "main:manage", label: editor.t("dock.menu_manage") },
+    { key: "main:view:compact", label: editor.t("dock.menu_view_compact"), marked: dockView === "compact" },
+    { key: "main:view:card", label: editor.t("dock.menu_view_card"), marked: dockView === "card" },
+    { key: "main:empty", label: editor.t("dock.show_empty"), marked: !openDialog.hideTrivial },
+    { key: "main:worktrees", label: editor.t("dock.all_worktrees"), marked: openDialog.showWorktrees },
+    { key: "main:scope", label: editor.t("dock.menu_scope", { word: projWord }) },
+    { key: "main:hide", label: editor.t("dock.menu_hide", { key: hideKey }).trimEnd() },
   ];
 }
 
@@ -4708,7 +4642,7 @@ function dockMoveOptions(sessionId: number): MenuOption[] {
 function dockMenuOptions(): MenuOption[] {
   const m = openDialog?.dockMenu;
   if (!m) return [];
-  return m.kind === "new" ? dockNewOptions() : dockMoveOptions(m.sessionId);
+  return m.kind === "main" ? dockMainOptions() : dockMoveOptions(m.sessionId);
 }
 
 // A dropdown/context-menu row. Menu entries are *rows in a list*, not
@@ -4789,12 +4723,12 @@ function dockDropdownOverlay(label: string, opts: MenuOption[], cursor: number):
   );
 }
 
-function dockNewMenu(): WidgetSpec {
+function dockMainMenu(): WidgetSpec {
   const cursor = clampMenuIndex(
-    openDialog?.dockMenu?.kind === "new" ? openDialog.dockMenu.index : 0,
-    dockNewOptions().length,
+    openDialog?.dockMenu?.kind === "main" ? openDialog.dockMenu.index : 0,
+    dockMainOptions().length,
   );
-  return dockDropdownOverlay(editor.t("dock.menu_new_label"), dockNewOptions(), cursor);
+  return dockDropdownOverlay(editor.t("dock.title"), dockMainOptions(), cursor);
 }
 
 function dockMoveMenu(): WidgetSpec {
@@ -4844,15 +4778,39 @@ function acceptDockMenu(index?: number): void {
 function runDockMenuOption(optKey: string): void {
   if (!openDialog) return;
   const menu = openDialog.dockMenu;
-  if (optKey === "new:task") {
-    closeDockMenu();
-    dockBlurred = true;
-    openForm({ fromPicker: true });
-    return;
-  }
-  if (optKey === "new:folder") {
+  if (optKey === "main:folder") {
     closeDockMenu();
     openCreateFolderDialog(null);
+    return;
+  }
+  if (optKey === "main:manage") {
+    closeDockMenu();
+    openControlRoom();
+    return;
+  }
+  // The settings flip in place and the menu stays up, so a second choice
+  // is one key away; its `●` marks move with the flip. Each goes through
+  // the published verb, so the menu and a script take the same path.
+  if (optKey === "main:view:compact" || optKey === "main:view:card") {
+    apiSetDockView(optKey === "main:view:card" ? "card" : "compact");
+    return;
+  }
+  if (optKey === "main:empty") {
+    toggleHideTrivial();
+    return;
+  }
+  if (optKey === "main:worktrees") {
+    toggleShowWorktrees();
+    return;
+  }
+  if (optKey === "main:scope") {
+    closeDockMenu();
+    openProjectMenu();
+    return;
+  }
+  if (optKey === "main:hide") {
+    closeDockMenu();
+    closeOpenDialog();
     return;
   }
   if (optKey.startsWith("move:") && menu?.kind === "move") {
@@ -6466,8 +6424,12 @@ registerHandler("orchestrator_open_new_from_picker", () => {
 
 registerHandler("orchestrator_focus_filter", () => {
   if (!openDialog || !openPanel) return;
+  if (dockMode) {
+    openDockSearch();
+    dockFocus = "filter";
+    return;
+  }
   openPanel.setFocusKey("filter");
-  if (dockMode) dockFocus = "filter";
 });
 
 // Space (rebindable): toggle the highlighted row in/out of the bulk
@@ -6615,77 +6577,49 @@ function rebuildFormFocusCycle(): void {
     formFocusIndex = 0;
     return;
   }
-  // Tab cycle (mirrors the host's tabbable, which now skips non-active
-  // radio options): the *active* "Run in:" tab, then the active
-  // backend's fields, then the shared Session Name / Agent Command,
-  // then the buttons. ←/→ moves within the radio groups, never Tab —
-  // so each group is a single Tab stop.
-  // The target switch leads the cycle in both modes; everything
-  // workspace-shaped after it exists only while creating one.
-  const cycle: string[] = ["target_dropdown"];
+  // Tab cycle, mirroring `buildFormSpec`'s render order exactly (the host's
+  // tabbable set): the target switch, then — when creating — the `Run in`
+  // radio (one stop: ←/→ moves within it), the backend's fields and the
+  // name; then the agent selector and what it reveals, the worktree group,
+  // the agent's switches, and the buttons.
   // Bind once: `form` is a mutable module-level slot, so TypeScript drops the
   // non-null narrowing across every call below.
   const f = form;
-  if (f.target === "current") {
-    // `cmd` renders inline here (no Advanced fold in this shape), so it is a
-    // Tab stop right after the selector that fills it — and, crucially, a
-    // *reachable* focus target for the "custom…" preset, which hands focus to
-    // it. Without the entry the setFocusKey was dropped and focus fell back to
-    // the top of the form, so the next ←/→ silently flipped "Launch in".
-    cycle.push("agent_dropdown", "cmd");
-    const agent = activeAgentEntry();
-    if (agent?.auto) cycle.push("auto_mode");
-    if (agent?.prompt) cycle.push("start_prompt");
-    cycle.push("create-visit", "cancel");
-    formFocusCycle = cycle;
-    if (formFocusIndex >= cycle.length) formFocusIndex = 0;
-    return;
-  }
-  const activeBackend = SESSION_BACKENDS.find((b) => b.id === f.backend);
-  if (activeBackend) cycle.push(activeBackend.key);
-  if (form.backend === "local") {
-    const worktreeEnabled = form.projectPathIsGit !== false;
-    const effectiveCreateWorktree = worktreeEnabled && form.createWorktree;
-    // The agent selector is a single stop after Session Name. The Agent Command
-    // field moved under the Advanced fold (a power-user override the dropdown
-    // fills), so it's a Tab stop there, not in the body.
-    cycle.push("project_path", "name", "agent_dropdown");
-    // Agent-specific controls sit between the selector and the Advanced fold,
-    // matching `agentOptionsFields`' render order (Auto mode, then Start prompt).
-    const agent = activeAgentEntry();
-    if (agent?.auto) cycle.push("auto_mode");
-    if (agent?.prompt) cycle.push("start_prompt");
-    // The "Advanced…" header is always a Tab stop; its folded fields join the
-    // cycle only while expanded, in render order: Agent Command, Teach Fresh
-    // CLI, worktree, "Checkout branch" (a stop on any git path — it drives the
-    // in-place checkout when no worktree is created), then "New branch name"
-    // (only when cutting a worktree).
-    cycle.push("advanced_toggle");
-    if (form.advancedExpanded) {
-      cycle.push("cmd");
-      if (agent?.systemPrompt) cycle.push("teach_fresh_cli");
-      if (worktreeEnabled) cycle.push("worktree");
-      if (worktreeEnabled) cycle.push("branch");
-      if (effectiveCreateWorktree) cycle.push("new_branch");
+  const creating = f.target === "new";
+  const cycle: string[] = ["target_dropdown"];
+  if (creating) {
+    cycle.push("backend");
+    switch (f.backend) {
+      case "local":
+        cycle.push("project_path");
+        break;
+      case "ssh":
+        cycle.push("ssh_host", "ssh_path", "ssh_identity", "ssh_options");
+        break;
+      case "kubernetes":
+        cycle.push("k8s_target");
+        if (f.k8sTarget.value.trim().length === 0) {
+          cycle.push("k8s_context", "k8s_namespace", "k8s_pod", "k8s_workspace");
+        }
+        break;
     }
-  } else if (form.backend === "devcontainer") {
-    cycle.push("project_path", "name", "cmd");
-  } else if (form.backend === "ssh") {
-    cycle.push("ssh_host", "ssh_path", "ssh_identity", "ssh_options", "name", "cmd");
-  } else if (form.backend === "kubernetes") {
-    cycle.push("k8s_target");
-    if (form.k8sTarget.value.trim().length === 0) {
-      cycle.push("k8s_context", "k8s_namespace", "k8s_pod", "k8s_workspace");
-    }
-    cycle.push("name", "cmd");
+    cycle.push("name");
   }
-  // On remote backends the agent selector sits just before the (still-inline)
-  // Agent Command field. Local already placed `agent_dropdown` explicitly.
-  const cmdIdx = cycle.indexOf("cmd");
-  if (cmdIdx >= 0 && !cycle.includes("agent_dropdown")) {
-    cycle.splice(cmdIdx, 0, "agent_dropdown");
+  cycle.push("agent_dropdown");
+  // The command field is a stop only while it is shown — and it is shown
+  // whenever the preset hands focus to it, so that focus is never dropped.
+  if (cmdVisible()) cycle.push("cmd");
+  const agent = agentOptionsApply() ? activeAgentEntry() : null;
+  if (agent?.prompt) cycle.push("start_prompt");
+  if (creating && f.backend === "local" && f.projectPathIsGit !== false) {
+    cycle.push("worktree", "branch");
+    if (f.createWorktree) cycle.push("new_branch");
   }
-  cycle.push("create-visit", "create-bg", "cancel");
+  if (agent?.auto) cycle.push("auto_mode");
+  if (agent?.systemPrompt) cycle.push("teach_fresh_cli");
+  cycle.push("create-visit");
+  if (creating) cycle.push("create-bg");
+  cycle.push("cancel");
   formFocusCycle = cycle;
   if (formFocusIndex >= cycle.length) formFocusIndex = 0;
 }
@@ -7092,28 +7026,27 @@ function agentPresets(): AgentPreset[] {
 // known agent / the empty shell, else "custom…" (covers a typed command or an
 // agent with extra args). Drives the dropdown's active highlight.
 function activeAgentPresetKey(): string {
+  if (form?.agentCustom) return "agent-preset-custom";
   const current = form ? form.cmd.value.trim() : "";
   const match = agentPresets().find((p) => !p.custom && p.cmd === current);
   return match ? match.key : "agent-preset-custom";
 }
 
 // Apply a dropdown choice: a normal preset fills the command field; the
-// "custom…" entry just moves focus to that field so the user can type, leaving
-// any existing text in place.
+// "custom…" entry reveals that field and moves focus to it so the user can
+// type, leaving any existing text in place.
 function applyAgentPreset(p: AgentPreset): void {
   if (!form) return;
   if (p.custom) {
-    // Hand focus to the free-text command field so the user can type. On local
-    // that field lives under Advanced, so expand the fold first; otherwise the
-    // `cmd` key isn't in the focus cycle and the setFocusKey would be dropped.
-    if (form.backend === "local") form.advancedExpanded = true;
-    // Focus must be set *after* the re-render — re-mounting the spec resets
-    // host focus, which would otherwise clobber the setFocusKey.
+    form.agentCustom = true;
+    // Focus must be set *after* the re-render — the field has to exist
+    // before it can be focused, and re-mounting the spec resets host focus.
     renderForm();
     formPanel?.setFocusKey("cmd");
     snapFormFocusTo("cmd");
     return;
   }
+  form.agentCustom = false;
   form.cmd.value = p.cmd;
   form.cmd.cursor = p.cmd.length;
   // The Text widget's content is host-authoritative; push the new value into
@@ -7490,28 +7423,22 @@ const SUBTITLE_VALUE_STYLE = { fg: "ui.help_key_fg", bold: true } as const;
 
 // === New Session: session-type ("Run in:") tabs + per-backend fields =======
 
-// Switch the New Session form to a different backend tab: swap the body,
-// rebuild the Tab cycle, and land focus back on the chosen tab so repeated
-// Tab/Enter or ←/→ feels stable.
-function selectBackend(backend: SessionBackend): void {
+// Switch the New Workspace form to a different backend: swap the body and
+// rebuild the Tab cycle. Focus stays on the `Run in` radio, which is where
+// the choice was made (←/→ or a click on an option).
+function selectBackend(backend: FormBackend): void {
   if (!form || !formPanel || form.backend === backend) return;
   form.backend = backend;
   form.lastError = null;
   closeCompletion();
   renderForm();
-  const tab = SESSION_BACKENDS.find((b) => b.id === backend);
-  if (tab) {
-    formPanel.setFocusKey(tab.key);
-    snapFormFocusTo(tab.key);
-  }
+  snapFormFocusTo("backend");
 }
 
-// The first focusable input of a backend's body — where Enter on the active
-// tab dives to (skipping the other tab buttons).
-function firstBodyFieldKey(backend: SessionBackend): string {
+// The first input of a backend's body — where the form lands focus on open.
+function firstBodyFieldKey(backend: FormBackend): string {
   switch (backend) {
     case "local":
-    case "devcontainer":
       return "project_path";
     case "ssh":
       return "ssh_host";
@@ -7520,9 +7447,73 @@ function firstBodyFieldKey(backend: SessionBackend): string {
   }
 }
 
-// "Run in:" tab row. One button per backend; the active one is `primary`. The
-// body below (`backendBodyFields`) swaps to match. The tab buttons carry keys
-// (`type-local` …) so they sit in the form's Tab cycle; ←/→ also switches.
+// === The form grid ==========================================================
+//
+// One rule does most of the work: every control shares `FORM_LABEL_W` and
+// the panel is mounted with `labelAlign: "right"`, so every `[` — inputs,
+// dropdowns, the radio's first option — opens on one column, and a control
+// without a label of its own (a chip-first toggle, a hint under a field)
+// indents into that same column. No boxes: the alignment does the grouping.
+// See docs/internal/orchestrator-ux-redesign.md §3.
+
+// The label column, in cells. Wide enough for the longest English label
+// ("New branch name"); a longer translation is trimmed to the column with `…`.
+const FORM_LABEL_W = 15;
+
+// Drop the trailing colon some labels carry — the control adds its own.
+function formLabel(key: string): string {
+  return editor.t(key).replace(/[:：]\s*$/, "");
+}
+
+// Several labels spell a hint in a trailing parenthetical — `Host  ([user@]
+// host[:port])`, `Target  (.fresh/k8s.json — optional)` — in every locale.
+// The grid has no room for it beside the label, so split it: the word goes
+// in the label column and the hint under the field (design §3.7).
+function splitLabel(key: string): { label: string; hint: string } {
+  const s = editor.t(key);
+  const m = /^(.*?)\s*[(（](.*)[)）]\s*$/.exec(s);
+  return m ? { label: m[1].trim(), hint: m[2].trim() } : { label: s.trim(), hint: "" };
+}
+
+// A hint's text as a note: the `↳` / `ⓘ` some strings already lead with is
+// the note's own glyph, so it is not doubled.
+function noteText(s: string): string {
+  return s.replace(/^\s*[↳ⓘ]\s*/, "").replace(/\s+·\s+/g, " · ");
+}
+
+const NOTE_STYLE = { fg: "ui.menu_disabled_fg", italic: true } as const;
+
+// One row under a field, in the field column: `↳ hint`.
+function fieldNote(text: string, style: Partial<OverlayOptions> = NOTE_STYLE): WidgetSpec {
+  return label(`↳ ${noteText(text)}`, { labelWidth: FORM_LABEL_W, style });
+}
+
+// One row of the grid: `<label>: [ value ]`, plus an optional note under it.
+function field(
+  lbl: string,
+  slot: { value: string; cursor: number },
+  o: { key?: string; placeholder?: string; note?: string },
+): WidgetSpec[] {
+  const out: WidgetSpec[] = [
+    text({
+      value: slot.value,
+      cursorByte: slot.cursor,
+      label: lbl,
+      placeholder: o.placeholder,
+      fullWidth: true,
+      labelWidth: FORM_LABEL_W,
+      key: o.key,
+    }),
+  ];
+  if (o.note) out.push(fieldNote(o.note));
+  return out;
+}
+
+// A form toggle: chip-first, indented into the field column.
+function formToggle(checked: boolean, lbl: string, key: string): WidgetSpec {
+  return toggle(checked, lbl, { key, labelWidth: FORM_LABEL_W });
+}
+
 // The dialog's top-level switch: run the agent in the workspace you're in, or
 // make a new one for it. Everything workspace-shaped below is conditioned on
 // this, so "current" collapses the form down to the old Run-Agent dialog.
@@ -7532,45 +7523,26 @@ function targetRow(): WidgetSpec {
     [editor.t("run_agent.target_current"), editor.t("run_agent.target_new")],
     {
       selectedIndex: sel === "current" ? 0 : 1,
-      label: editor.t("form.launch_in").replace(/:\s*$/, ""),
+      label: formLabel("form.launch_in"),
+      labelWidth: FORM_LABEL_W,
       key: "target_dropdown",
     },
   );
 }
 
-function backendTabsRow(): WidgetSpec {
-  const sel: SessionBackend = form ? form.backend : "local";
-  const parts: WidgetSpec[] = [
-    {
-      kind: "raw",
-      entries: [styledRow([{ text: editor.t("form.run_in"), style: { fg: "ui.menu_disabled_fg" } }])],
-    },
-  ];
-  for (const b of SESSION_BACKENDS) {
-    parts.push(spacer(1));
-    // Only the active tab is a Tab stop; ←/→ moves within the group.
-    // So Tab advances one stop per group, not one per option (and the
-    // `▸` focus marker only ever lands on the active tab).
-    parts.push(button(b.label, {
-      key: b.key,
-      intent: b.id === sel ? "primary" : undefined,
-      focusable: b.id === sel,
-    }));
-  }
-  parts.push(flexSpacer());
-  parts.push({
-    kind: "raw",
-    entries: [styledRow([{ text: editor.t("form.switch_type"), style: { fg: "ui.menu_disabled_fg", italic: true } }])],
+// `Run in`: a radio — a mutually exclusive choice, drawn as one. The host
+// owns the selection (←/→, Home/End, a click on an option) and reports each
+// move as a `change`, which `selectBackend` answers by swapping the body.
+function backendRow(): WidgetSpec {
+  const sel: FormBackend = form ? form.backend : "local";
+  return radio(SESSION_BACKENDS.map((b) => b.label), {
+    selectedIndex: Math.max(0, SESSION_BACKENDS.findIndex((b) => b.id === sel)),
+    label: formLabel("form.run_in"),
+    labelWidth: FORM_LABEL_W,
+    key: "backend",
   });
-  return row(...parts);
 }
 
-// "Agent:" preset row above the Agent Command field. One button per known
-// agent (plus the default plain `terminal`); picking one fills the command.
-// Agents that resume across restarts are tagged with `↻`, and the row spells
-// that out — so a user discovers both that `claude` is an option and that it
-// gets special session handling. The resume tag only shows for the local
-// backend, the one where resume is wired today.
 // Agent selector: a single dropdown of the preset labels (terminal, the
 // known agents, custom…). ←/→ or ↑/↓ over it cycles; the change event maps
 // the chosen index back to a preset and applies it (fills the command field).
@@ -7580,184 +7552,121 @@ function agentPresetRow(): WidgetSpec {
   const selectedIndex = Math.max(0, presets.findIndex((p) => p.key === activeKey));
   return dropdown(presets.map((p) => p.label), {
     selectedIndex,
-    // Strip the trailing colon from the shared "Agent:" label — the dropdown
-    // widget adds its own separator, so the raw string renders "Agent::".
-    label: editor.t("form.agent").replace(/:\s*$/, ""),
+    label: formLabel("form.agent"),
+    labelWidth: FORM_LABEL_W,
     key: "agent_dropdown",
   });
 }
 
-// Agent-specific controls shown below the Agent Command field: a "Start
-// prompt" box (for agents that take a launch prompt) and an "Auto mode"
-// checkbox (for agents with a bypass-approvals flag). Both are local-only —
-// remote backends don't route through `resolveAgentLaunch` — and adapt to the
-// resolved agent: a bare terminal / unknown command shows neither, opencode
-// shows only the prompt (no auto flag), etc.
-// "Agent Command" text input — the raw command the workspace launches. The
-// agent dropdown fills it, so it's a power-user override: folded into Advanced
-// on the local backend, shown inline on remote backends (no Advanced fold).
-function cmdField(): WidgetSpec {
-  return labeledSection({
-    label: editor.t("form.agent_command"),
-    child: text({
-      value: form!.cmd.value,
-      cursorByte: form!.cmd.cursor,
-      // Clearing the field falls back to the backend default: a bare local
-      // terminal (the host resolves `$SHELL`), or — for SSH — letting ssh
-      // spawn the remote login shell. The placeholder names that default.
-      placeholder: form!.backend === "ssh"
-        ? editor.t("form.cmd_placeholder_ssh")
-        : editor.t("form.agent_terminal"),
-      fullWidth: true,
-      key: "cmd",
-    }),
+// The raw launch command is revealed by the dropdown: it shows once the agent
+// is `custom…` — picked, or implied by a command no preset spells — and a
+// preset fills it, so there is nothing to see otherwise.
+function cmdVisible(): boolean {
+  return !!form && activeAgentPresetKey() === "agent-preset-custom";
+}
+
+function cmdField(): WidgetSpec[] {
+  return field(formLabel("form.agent_command"), form!.cmd, {
+    key: "cmd",
+    // Clearing the field falls back to the backend default: a bare local
+    // terminal (the host resolves `$SHELL`), or — for SSH — letting ssh
+    // spawn the remote login shell. The placeholder names that default.
+    placeholder: form!.backend === "ssh"
+      ? editor.t("form.cmd_placeholder_ssh")
+      : editor.t("form.agent_terminal"),
   });
 }
 
-function agentOptionsFields(): WidgetSpec[] {
-  // Agent options are wired for the local backend and for "run in the current
-  // workspace" (which is always local to the window you're in).
-  if (!form || (form.target === "new" && form.backend !== "local")) return [];
+// Agent options are wired for the local backend and for "run in the current
+// workspace" (which is always local to the window you're in).
+function agentOptionsApply(): boolean {
+  return !!form && (form.target === "current" || form.backend === "local");
+}
+
+// "Start prompt": for an agent that takes a launch prompt. Sits right under
+// the agent it is handed to.
+function startPromptFields(): WidgetSpec[] {
+  if (!form || !agentOptionsApply()) return [];
+  if (!activeAgentEntry()?.prompt) return [];
+  return field(formLabel("form.start_prompt"), form.startPrompt, {
+    key: "start_prompt",
+    // Single-line to stay consistent with the form's keyboard model (Enter
+    // advances focus, Ctrl+Enter submits); the whole prompt is handed to
+    // the agent as one launch argument.
+    placeholder: editor.t("form.start_prompt_placeholder"),
+  });
+}
+
+// "Auto mode" / "Teach the agent the Fresh CLI": the agent's own switches,
+// each shown only for an agent that has the flag or strategy behind it.
+function agentSwitchFields(): WidgetSpec[] {
+  if (!form || !agentOptionsApply()) return [];
   const entry = activeAgentEntry();
   if (!entry) return [];
-  const fields: WidgetSpec[] = [];
+  const out: WidgetSpec[] = [];
   if (entry.auto) {
-    fields.push(
-      toggle(form.autoMode, editor.t("form.auto_mode"), { key: "auto_mode" }),
-    );
+    out.push(formToggle(form.autoMode, editor.t("form.auto_mode"), "auto_mode"));
   }
-  // "Teach Fresh CLI" lives under the Advanced fold (see `advancedSection`),
-  // so it stays hidden by default even though it's enabled by default.
-  if (entry.prompt) {
-    fields.push(
-      labeledSection({
-        label: editor.t("form.start_prompt"),
-        child: text({
-          value: form.startPrompt.value,
-          cursorByte: form.startPrompt.cursor,
-          placeholder: editor.t("form.start_prompt_placeholder"),
-          fullWidth: true,
-          // Single-line to stay consistent with the form's keyboard model
-          // (Enter advances focus, Ctrl+Enter submits); the whole prompt is
-          // handed to the agent as one launch argument.
-          key: "start_prompt",
-        }),
-      }),
-    );
+  if (entry.systemPrompt) {
+    out.push(formToggle(form.teachFreshCli, editor.t("form.teach_fresh_cli"), "teach_fresh_cli"));
   }
-  return fields;
+  return out;
 }
 
-// Local backend: Project Path + linked-worktree hint. The worktree toggle
-// and branch fields moved into the collapsible `advancedSection()`.
+// Local backend: Project Path, with the linked-worktree hint under it.
 function localBodyFields(): WidgetSpec[] {
   if (!form) return [];
-  const fields: WidgetSpec[] = [
-    labeledSection({
-      label: editor.t("form.project_path"),
-      child: text({
-        value: form.projectPath.value,
-        cursorByte: form.projectPath.cursor,
-        // Label the placeholder explicitly as the default-if-blank so
-        // it can't be mistaken for a real prefilled value (it's also
-        // rendered dim-italic, but that's invisible in a plain
-        // capture). Submitting with the field empty uses this path.
-        placeholder: form.defaultProjectPath
-          ? editor.t("form.project_path_default", { path: form.defaultProjectPath })
-          : editor.t("form.detecting_project_root"),
-        fullWidth: true,
-        key: "project_path",
-      }),
-    }),
-  ];
+  const fields = field(formLabel("form.project_path"), form.projectPath, {
+    key: "project_path",
+    // Label the placeholder explicitly as the default-if-blank so it can't
+    // be mistaken for a real prefilled value. Submitting with the field
+    // empty uses this path.
+    placeholder: form.defaultProjectPath
+      ? editor.t("form.project_path_default", { path: form.defaultProjectPath })
+      : editor.t("form.detecting_project_root"),
+  });
   if (form.projectPathIsLinkedWorktree === true) {
-    fields.push({
-      kind: "raw",
-      entries: [
-        styledRow([
-          {
-            text: form.createWorktree
-              ? editor.t("form.linked_worktree_uncheck")
-              : editor.t("form.linked_worktree_attach"),
-            style: { fg: "ui.help_key_fg", italic: true },
-          },
-        ]),
-      ],
-    });
+    fields.push(
+      fieldNote(
+        form.createWorktree
+          ? editor.t("form.linked_worktree_uncheck")
+          : editor.t("form.linked_worktree_attach"),
+        { fg: "ui.help_key_fg", italic: true },
+      ),
+    );
   }
   return fields;
 }
 
-// Collapsible "Advanced…" section (local backend). Collapsed → just the
-// clickable header. Expanded → header + the worktree toggle (moved out of the
-// always-visible body) + the "Checkout branch" and "New branch name" fields.
-// Keeping these behind a fold keeps the common case (accept the defaults)
-// compact while still exposing full git control.
-function advancedSection(): WidgetSpec[] {
+// The worktree group (local backend): the toggle, then what it reveals.
+// Disclosure is value-driven — the branch field shows on any git path (it
+// drives an in-place checkout when no worktree is cut), the new-branch field
+// only while a worktree is being created — so there is no fold to open.
+function worktreeFields(): WidgetSpec[] {
   if (!form) return [];
-  const expanded = form.advancedExpanded;
-  // Disclosure triangles (▶ collapsed / ▼ expanded), deliberately NOT the
-  // focus caret `▸`: reusing that glyph would make the fold header read as a
-  // second focused control (both to a user scanning for the caret and to the
-  // e2e focus-model assertions that require exactly one `▸` on screen).
-  const header = button(
-    `${expanded ? "▼" : "▶"} ${editor.t("form.advanced")}`,
-    { key: "advanced_toggle" },
-  );
-  if (!expanded) return [header];
-
   const worktreeEnabled = form.projectPathIsGit !== false;
-  const effectiveCreateWorktree = worktreeEnabled && form.createWorktree;
-  const fields: WidgetSpec[] = [header];
-
-  // "Agent Command" — the raw launch command. The agent dropdown fills it, so
-  // it lives here as a power-user override rather than cluttering the body.
-  fields.push(cmdField());
-
-  // "Teach Fresh CLI" — enabled by default, but folded away here so it doesn't
-  // clutter the common case. Only meaningful for an agent with a systemPrompt
-  // injection strategy (a bare terminal / unknown command can't be "taught").
-  if (activeAgentEntry()?.systemPrompt) {
-    fields.push(
-      toggle(form.teachFreshCli, editor.t("form.teach_fresh_cli"), {
-        key: "teach_fresh_cli",
+  const on = worktreeEnabled && form.createWorktree;
+  const out: WidgetSpec[] = [spacer(0)];
+  if (!worktreeEnabled) {
+    // Not a git path: say so where the toggle would be, and stop.
+    out.push(
+      label(editor.t("form.create_worktree_disabled"), {
+        labelWidth: FORM_LABEL_W,
+        style: { fg: "editor.whitespace_indicator_fg" },
+      }),
+      fieldNote(editor.t("form.disabled_non_git").replace(/^\s*[(（]|[)）]\s*$/g, ""), {
+        fg: "editor.whitespace_indicator_fg",
+        italic: true,
       }),
     );
+    return out;
   }
-
-  // Worktree toggle: a checkbox on a git path, else a disabled hint.
-  fields.push(
-    worktreeEnabled
-      ? toggle(effectiveCreateWorktree, editor.t("form.create_worktree"), {
-          key: "worktree",
-        })
-      : {
-          kind: "raw",
-          entries: [
-            styledRow([
-              {
-                text: editor.t("form.create_worktree_disabled"),
-                style: { fg: "editor.whitespace_indicator_fg" },
-              },
-              {
-                text: editor.t("form.disabled_non_git"),
-                style: { fg: "editor.whitespace_indicator_fg", italic: true },
-              },
-            ]),
-          ],
-        },
-  );
-
-  // "Checkout branch" — an existing branch to check out. Editable for ANY git
-  // path (inert only on a non-git path): with a worktree it's the base the
-  // worktree is cut from / checked out to; without one it drives an in-place
-  // `git checkout` in the project dir. The placeholder reflects which.
-  const branchInert = !worktreeEnabled;
+  out.push(formToggle(on, editor.t("form.create_worktree"), "worktree"));
+  // "Checkout branch" — an existing branch: with a worktree it's the base
+  // the worktree is cut from / checked out to; without one it drives an
+  // in-place `git checkout` in the project dir. The placeholder says which.
   let branchPlaceholder: string;
-  if (!worktreeEnabled) {
-    branchPlaceholder = editor.t("form.branch_no_git");
-  } else if (!effectiveCreateWorktree) {
-    // In-place checkout: blank keeps the current branch.
+  if (!on) {
     branchPlaceholder = editor.t("form.branch_checkout_inplace");
   } else if (!form.defaultBranch) {
     branchPlaceholder = editor.t("form.detecting_default_branch");
@@ -7766,114 +7675,42 @@ function advancedSection(): WidgetSpec[] {
   } else {
     branchPlaceholder = form.defaultBranch;
   }
-  fields.push(
-    labeledSection({
-      label: editor.t("form.checkout_branch"),
-      child: text({
-        value: form.branch.value,
-        cursorByte: form.branch.cursor,
-        placeholder: branchPlaceholder,
-        fullWidth: true,
-        key: branchInert ? undefined : "branch",
-      }),
+  out.push(
+    ...field(formLabel("form.checkout_branch"), form.branch, {
+      key: "branch",
+      placeholder: branchPlaceholder,
     }),
   );
-
   // "New branch name" — creates the worktree on a freshly-cut branch. Only
-  // meaningful when a worktree is being created (there's no isolated tree to
-  // safely branch into in-place), so it's inert otherwise.
-  fields.push(
-    labeledSection({
-      label: editor.t("form.new_branch"),
-      child: text({
-        value: form.newBranch.value,
-        cursorByte: form.newBranch.cursor,
-        placeholder: effectiveCreateWorktree
-          ? ""
-          : editor.t("form.new_branch_worktree_only"),
-        fullWidth: true,
-        key: effectiveCreateWorktree ? "new_branch" : undefined,
-      }),
-    }),
-  );
-
-  return fields;
+  // meaningful when a worktree is being created, so it appears with it.
+  if (on) {
+    const nb = splitLabel("form.new_branch");
+    out.push(...field(nb.label, form.newBranch, { key: "new_branch", placeholder: nb.hint }));
+  }
+  return out;
 }
 
-// Devcontainer backend: a Project Path that contains a `.devcontainer/`.
-function devcontainerBodyFields(): WidgetSpec[] {
-  if (!form) return [];
-  return [
-    labeledSection({
-      label: editor.t("form.project_path"),
-      child: text({
-        value: form.projectPath.value,
-        cursorByte: form.projectPath.cursor,
-        placeholder: form.defaultProjectPath
-          ? editor.t("form.project_path_default", { path: form.defaultProjectPath })
-          : editor.t("form.devcontainer_path_placeholder"),
-        fullWidth: true,
-        key: "project_path",
-      }),
-    }),
-    {
-      kind: "raw",
-      entries: [
-        styledRow([
-          {
-            text: editor.t("form.devcontainer_hint"),
-            style: { fg: "ui.menu_disabled_fg", italic: true },
-          },
-        ]),
-      ],
-    },
-  ];
-}
-
-// SSH backend: host (`[user@]host[:port]`), remote path, optional identity
-// file, and free-form extra ssh arguments.
+// SSH backend: host, remote path, identity file, extra ssh arguments. The
+// examples that lived in the labels' parentheticals and in the value slots
+// sit under their fields instead — a value slot shows a value.
 function sshBodyFields(): WidgetSpec[] {
   if (!form) return [];
   return [
-    labeledSection({
-      label: editor.t("form.ssh_host_label"),
-      child: text({
-        value: form.sshHost.value,
-        cursorByte: form.sshHost.cursor,
-        placeholder: editor.t("form.ssh_host_placeholder"),
-        fullWidth: true,
-        key: "ssh_host",
-      }),
+    ...field(splitLabel("form.ssh_host_label").label, form.sshHost, {
+      key: "ssh_host",
+      note: editor.t("form.ssh_host_placeholder"),
     }),
-    labeledSection({
-      label: editor.t("form.ssh_remote_path_label"),
-      child: text({
-        value: form.sshPath.value,
-        cursorByte: form.sshPath.cursor,
-        placeholder: editor.t("form.ssh_remote_path_placeholder"),
-        fullWidth: true,
-        key: "ssh_path",
-      }),
+    ...field(formLabel("form.ssh_remote_path_label"), form.sshPath, {
+      key: "ssh_path",
+      note: editor.t("form.ssh_remote_path_placeholder"),
     }),
-    labeledSection({
-      label: editor.t("form.ssh_identity_label"),
-      child: text({
-        value: form.sshIdentity.value,
-        cursorByte: form.sshIdentity.cursor,
-        placeholder: editor.t("form.ssh_identity_placeholder"),
-        fullWidth: true,
-        key: "ssh_identity",
-      }),
+    ...field(splitLabel("form.ssh_identity_label").label, form.sshIdentity, {
+      key: "ssh_identity",
+      placeholder: editor.t("form.ssh_identity_placeholder"),
     }),
-    labeledSection({
-      label: editor.t("form.ssh_options_label"),
-      child: text({
-        value: form.sshOptions.value,
-        cursorByte: form.sshOptions.cursor,
-        placeholder: editor.t("form.ssh_options_placeholder"),
-        fullWidth: true,
-        key: "ssh_options",
-      }),
+    ...field(splitLabel("form.ssh_options_label").label, form.sshOptions, {
+      key: "ssh_options",
+      placeholder: editor.t("form.ssh_options_placeholder"),
     }),
   ];
 }
@@ -7882,84 +7719,42 @@ function sshBodyFields(): WidgetSpec[] {
 function k8sBodyFields(): WidgetSpec[] {
   if (!form) return [];
   const hasTarget = form.k8sTarget.value.trim().length > 0;
-  const fields: WidgetSpec[] = [
-    labeledSection({
-      label: editor.t("form.k8s_target_label"),
-      child: text({
-        value: form.k8sTarget.value,
-        cursorByte: form.k8sTarget.cursor,
-        placeholder: editor.t("form.k8s_target_placeholder"),
-        fullWidth: true,
-        key: "k8s_target",
-      }),
-    }),
-  ];
+  const target = splitLabel("form.k8s_target_label");
+  const fields = field(target.label, form.k8sTarget, {
+    key: "k8s_target",
+    placeholder: editor.t("form.k8s_target_placeholder"),
+    note: target.hint,
+  });
   if (!hasTarget) {
     fields.push(
-      labeledSection({
-        label: editor.t("form.k8s_context_label"),
-        child: text({
-          value: form.k8sContext.value,
-          cursorByte: form.k8sContext.cursor,
-          placeholder: editor.t("form.k8s_context_placeholder"),
-          fullWidth: true,
-          key: "k8s_context",
-        }),
+      ...field(splitLabel("form.k8s_context_label").label, form.k8sContext, {
+        key: "k8s_context",
+        placeholder: editor.t("form.k8s_context_placeholder"),
       }),
-      labeledSection({
-        label: editor.t("form.k8s_namespace_label"),
-        child: text({
-          value: form.k8sNamespace.value,
-          cursorByte: form.k8sNamespace.cursor,
-          placeholder: editor.t("form.k8s_namespace_placeholder"),
-          fullWidth: true,
-          key: "k8s_namespace",
-        }),
+      ...field(formLabel("form.k8s_namespace_label"), form.k8sNamespace, {
+        key: "k8s_namespace",
+        placeholder: editor.t("form.k8s_namespace_placeholder"),
       }),
-      labeledSection({
-        label: editor.t("form.k8s_pod_label"),
-        child: text({
-          value: form.k8sPod.value,
-          cursorByte: form.k8sPod.cursor,
-          placeholder: editor.t("form.k8s_pod_placeholder"),
-          fullWidth: true,
-          key: "k8s_pod",
-        }),
+      ...field(formLabel("form.k8s_pod_label"), form.k8sPod, {
+        key: "k8s_pod",
+        placeholder: editor.t("form.k8s_pod_placeholder"),
       }),
-      labeledSection({
-        label: editor.t("form.k8s_workspace_label"),
-        child: text({
-          value: form.k8sWorkspace.value,
-          cursorByte: form.k8sWorkspace.cursor,
-          placeholder: editor.t("form.k8s_workspace_placeholder"),
-          fullWidth: true,
-          key: "k8s_workspace",
-        }),
+      ...field(formLabel("form.k8s_workspace_label"), form.k8sWorkspace, {
+        key: "k8s_workspace",
+        placeholder: editor.t("form.k8s_workspace_placeholder"),
       }),
     );
   }
-  fields.push({
-    kind: "raw",
-    entries: [
-      styledRow([
-        {
-          text: editor.t("form.k8s_hint"),
-          style: { fg: "ui.menu_disabled_fg", italic: true },
-        },
-      ]),
-    ],
-  });
+  fields.push(fieldNote(editor.t("form.k8s_hint")));
   return fields;
 }
 
-// The backend-specific top fields, chosen by the active "Run in:" tab.
+// The backend-specific top fields, chosen by the `Run in` radio.
 function backendBodyFields(): WidgetSpec[] {
   if (!form) return [];
   switch (form.backend) {
     case "local":
       return localBodyFields();
-    case "devcontainer":
-      return devcontainerBodyFields();
     case "ssh":
       return sshBodyFields();
     case "kubernetes":
@@ -7967,23 +7762,17 @@ function backendBodyFields(): WidgetSpec[] {
   }
 }
 
-// While a submit is in flight the dialog is *disabled*: the editable fields and
-// the backend tabs are replaced with a read-only summary and only Cancel stays
-// actionable (Create is shown disabled). It holds until the attach resolves —
-// success closes the dialog, failure flips `submitting` back off and re-renders
-// the editable form with the error. Applies to every backend (a fresh `openForm`
+// While a submit is in flight the dialog is *disabled*: the editable fields
+// are replaced with a read-only summary and only Cancel stays actionable
+// (Create is shown disabled). It holds until the attach resolves — success
+// closes the dialog, failure flips `submitting` back off and re-renders the
+// editable form with the error. Applies to every backend (a fresh `openForm`
 // always starts with `submitting = false`, so the next open is reset).
 function buildConnectingView(): WidgetSpec {
   if (!form) return col();
-  const roRow = (label: string, value: string): WidgetSpec => ({
-    kind: "raw",
-    entries: [
-      styledRow([
-        { text: `${label}: `, style: { fg: "ui.menu_disabled_fg", bold: true } },
-        { text: value || "—", style: { fg: "ui.menu_disabled_fg" } },
-      ]),
-    ],
-  });
+  const dim = { fg: "ui.menu_disabled_fg" } as const;
+  const roRow = (lbl: string, value: string): WidgetSpec =>
+    label(`${lbl}: ${value || "—"}`, { style: dim });
   const rows: WidgetSpec[] = [];
   if (form.backend === "ssh") {
     rows.push(roRow(editor.t("form.ro_run_in"), editor.t("backend.ssh")));
@@ -7995,7 +7784,7 @@ function buildConnectingView(): WidgetSpec {
     const pod = form.k8sPod.value.trim();
     rows.push(roRow(editor.t("form.ro_pod"), form.k8sTarget.value.trim() || `${ns}/${pod}`));
   } else {
-    rows.push(roRow(editor.t("form.ro_run_in"), form.backend === "devcontainer" ? editor.t("backend.devcontainer") : editor.t("backend.local")));
+    rows.push(roRow(editor.t("form.ro_run_in"), editor.t("backend.local")));
     rows.push(roRow(editor.t("form.ro_project"), form.projectPath.value.trim() || form.defaultProjectPath));
   }
   const name = form.name.value.trim();
@@ -8004,25 +7793,15 @@ function buildConnectingView(): WidgetSpec {
   const remote = form.backend === "ssh" || form.backend === "kubernetes";
   return col(
     // The "ORCHESTRATOR :: New Workspace" title is native modal-frame
-    // chrome now (set on the panel at mount time and kept across the
+    // chrome (set on the panel at mount time and kept across the
     // connecting-state re-render), so no in-body banner is drawn here.
     ...rows,
     spacer(0),
-    {
-      kind: "raw",
-      entries: [
-        styledRow([
-          {
-            text: remote ? editor.t("form.connecting") : editor.t("form.creating_workspace"),
-            style: { fg: "ui.menu_disabled_fg", bold: true, italic: true },
-          },
-          {
-            text: editor.t("form.press_cancel_abort"),
-            style: { fg: "ui.menu_disabled_fg", italic: true },
-          },
-        ]),
-      ],
-    },
+    label(
+      (remote ? editor.t("form.connecting") : editor.t("form.creating_workspace")) +
+        editor.t("form.press_cancel_abort"),
+      { style: NOTE_STYLE },
+    ),
     spacer(0),
     wrappingRow(
       button(editor.t("form.btn_cancel"), { intent: "danger", key: "cancel" }),
@@ -8057,8 +7836,6 @@ function formIsSubmittable(): boolean {
         form.defaultProjectPath ||
         localProjectDefault()
       );
-    case "devcontainer":
-      return !!(form.projectPath.value.trim() || form.defaultProjectPath);
     case "ssh":
       return form.sshHost.value.trim().length > 0;
     case "kubernetes":
@@ -8071,99 +7848,76 @@ function formIsSubmittable(): boolean {
 
 function buildFormSpec(): WidgetSpec {
   if (!form) return col();
-  // Disabled/connecting state: read-only summary + Cancel-only (item 3).
+  // Disabled/connecting state: read-only summary + Cancel-only.
   if (form.submitting) return buildConnectingView();
 
   const creating = form.target === "new";
-  const children: WidgetSpec[] = [
-    // The title + border are native modal-frame chrome drawn by the host
-    // (see `openForm`), so the spec starts straight at the target switch.
-    targetRow(),
-    spacer(0),
-  ];
+  const local = creating && form.backend === "local";
+  // The title + border are native modal-frame chrome drawn by the host
+  // (see `openForm`), so the spec starts straight at the target switch.
+  const children: WidgetSpec[] = [targetRow()];
   if (creating) {
     children.push(
-      // === "Run in:" session-type tabs. ==========================
-      backendTabsRow(),
+      backendRow(),
       spacer(0),
-      // === Backend-specific top fields (swap with the tab). ======
       ...backendBodyFields(),
-      // === Workspace Name. ======================================
-      // Labels are plain — the input's own focused-bg styling (set by
-      // the host based on the panel's focus_key) is the authoritative
-      // focus cue.
-      labeledSection({
-        label: editor.t("form.workspace_name"),
-        child: text({
-          value: form.name.value,
-          cursorByte: form.name.cursor,
-          // Concrete default (e.g. "session-3") rather than the
-          // literal `(auto-generated)` — the user sees the exact
-          // name an empty submit would create. Empty while the
-          // ref probe runs.
-          placeholder: form.defaultSessionName || editor.t("form.auto_generating"),
-          fullWidth: true,
-          key: "name",
-        }),
+      ...field(formLabel("form.workspace_name"), form.name, {
+        key: "name",
+        // Concrete default (e.g. "session-3") rather than the literal
+        // `(auto-generated)` — the user sees the exact name an empty
+        // submit would create. Empty while the ref probe runs.
+        placeholder: form.defaultSessionName || editor.t("form.auto_generating"),
       }),
     );
   }
-  children.push(
-    agentPresetRow(),
-    // The command box stays inline wherever there's no Advanced fold to hold
-    // it: on remote backends, and whenever we're running in the current
-    // workspace (the fold is workspace-shaped, so it's gone entirely). Only a
-    // local *new workspace* moves it into Advanced (via `advancedSection`).
-    //
-    // It has to be reachable in current-workspace mode: the agent list ends in
-    // "custom…", and picking it with nowhere to type left the form claiming an
-    // agent the user could not actually name.
-    ...(!creating || form.backend !== "local" ? [cmdField()] : []),
-    // Agent-specific controls (Auto mode / Start prompt), adaptive to the
-    // resolved agent. Empty for a bare terminal / unknown command.
-    ...agentOptionsFields(),
-  );
-  // Worktree + branch controls create a workspace, so the whole Advanced fold
-  // is meaningless when running in the current one.
-  if (creating && form.backend === "local") {
-    children.push(...advancedSection());
-  }
-  // Remote backends connect asynchronously and the dialog stays open until the
-  // session is real (see `runRemoteAttach`). The in-flight "connecting" state
-  // is rendered by `buildConnectingView` (the early return above), so nothing
-  // is needed here for it.
+  children.push(agentPresetRow());
+  if (cmdVisible()) children.push(...cmdField());
+  children.push(...startPromptFields());
+  // Worktree + branch controls create a workspace, so the whole group is
+  // meaningless when running in the current one.
+  if (local) children.push(...worktreeFields());
+  const switches = agentSwitchFields();
+  if (switches.length > 0) children.push(spacer(0), ...switches);
+  // Remote backends connect asynchronously and the dialog stays open until
+  // the session is real (see `runRemoteAttach`); the in-flight state is
+  // `buildConnectingView` (the early return above).
   if (form.lastError) {
-    children.push(spacer(0));
-    children.push({
-      kind: "raw",
-      entries: [
-        styledRow([
-          {
-            text: editor.t("form.error_prefix"),
-            style: { fg: "ui.status_error_indicator_fg", bold: true },
-          },
-          { text: form.lastError },
-        ]),
-      ],
-    });
+    children.push(
+      spacer(0),
+      label(editor.t("form.error_prefix") + form.lastError, {
+        labelWidth: FORM_LABEL_W,
+        style: { fg: "ui.status_error_indicator_fg", bold: true },
+      }),
+    );
   }
+  // === The footer. ==========================================================
+  // Buttons stay buttons — `[ Label ]` is what says "this acts" everywhere in
+  // the TUI — and each carries its accelerator beside it. wrappingRow so the
+  // buttons reflow onto a second line on a narrow form instead of the last
+  // one being clipped off the right edge. Running in the current workspace
+  // creates nothing, so there is no foreground/background pair to offer —
+  // just "Run".
+  // A button and its accelerator wrap as one unit (a nested row is never
+  // split), so a narrow form never strands an `Esc` on a line of its own.
+  const withAccel = (b: WidgetSpec, k: string): WidgetSpec =>
+    row(b, label(k, { style: NOTE_STYLE }));
+  const cancel = withAccel(
+    button(editor.t("form.btn_cancel"), { intent: "danger", key: "cancel" }),
+    "Esc",
+  );
   children.push(
     spacer(0),
-    // === Button row. =============================================
-    // wrappingRow so Cancel / Create Session reflow onto a second line
-    // on a narrow form instead of "Create Session" being clipped off the
-    // right edge. The wrap path ignores the leading flex spacer (and
-    // trims a blank that would lead a line), so the pair left-packs.
-    // Running in the current workspace creates nothing, so there is no
-    // foreground/background distinction to offer — just "Run".
     creating
       ? wrappingRow(
-        button(editor.t("form.btn_create"), {
-          intent: "primary",
-          key: "create-visit",
-          disabled: !formIsSubmittable(),
-          focusable: true,
-        }),
+        withAccel(
+          button(editor.t("form.btn_create"), {
+            intent: "primary",
+            key: "create-visit",
+            disabled: !formIsSubmittable(),
+            focusable: true,
+          }),
+          "^⏎",
+        ),
         spacer(2),
         button(editor.t("form.btn_create_bg"), {
           key: "create-bg",
@@ -8171,30 +7925,28 @@ function buildFormSpec(): WidgetSpec {
           focusable: true,
         }),
         spacer(2),
-        button(editor.t("form.btn_cancel"), { intent: "danger", key: "cancel" }),
+        cancel,
       )
       : wrappingRow(
-        button(editor.t("run_agent.btn_run"), {
-          intent: "primary",
-          key: "create-visit",
-          focusable: true,
-        }),
+        withAccel(
+          button(editor.t("run_agent.btn_run"), {
+            intent: "primary",
+            key: "create-visit",
+            focusable: true,
+          }),
+          "^⏎",
+        ),
         spacer(2),
-        button(editor.t("form.btn_cancel"), { intent: "danger", key: "cancel" }),
+        cancel,
       ),
     spacer(0),
-    // === Footer: keybinding helper, centered. ====================
+    // The keys the buttons don't spell: how to move, and what ↑↓ do here.
     row(
       flexSpacer(),
       hintBar([
         { keys: "Tab", label: editor.t("hint.form_next") },
-        { keys: "S-Tab", label: editor.t("hint.form_prev") },
         { keys: "←→", label: editor.t("hint.form_change") },
         { keys: "↑↓", label: editor.t("hint.form_suggest") },
-        { keys: "Space", label: editor.t("hint.form_toggle") },
-        { keys: "Enter", label: editor.t("hint.form_advance") },
-        { keys: "^Enter", label: editor.t("hint.form_create") },
-        { keys: "Esc", label: editor.t("hint.form_close") },
       ]),
       flexSpacer(),
     ),
@@ -8259,7 +8011,7 @@ function openForm(options?: { fromPicker?: boolean; target?: RunAgentTarget }): 
     teachFreshCli: true,
     branch: { value: "", cursor: 0 },
     newBranch: { value: "", cursor: 0 },
-    advancedExpanded: false,
+    agentCustom: !agentPresets().some((p) => !p.custom && p.cmd === lastCmd.trim()),
     // Default checkbox state is `true` (the historical behaviour
     // of "always create a worktree"); the renderer demotes this
     // to `false` automatically when the resolved Project Path is
@@ -8311,6 +8063,9 @@ function mountFormPanel(focusKey?: string): void {
     // a plain terminal capture (driveable by automation) and the
     // layout stays constant as Tab moves focus between controls.
     focusMarker: true,
+    // The form grid: labels right-aligned into one column so every value
+    // cell opens on the same column (see `FORM_LABEL_W`).
+    labelAlign: "right",
     // The dialog's title + border are now native modal-frame chrome
     // (drawn by the host around the WidgetSpec) rather than the in-body
     // "ORCHESTRATOR :: New Workspace" banner, and `closable` renders a
@@ -9020,8 +8775,10 @@ function captureCreateSpec(f: NewSessionForm): CaptureResult {
     });
   }
 
-  // devcontainer — no runtime plugin-to-plugin attach yet.
-  return { ok: false, error: editor.t("err.devcontainer_unsupported") };
+  // Every `FormBackend` has returned above; this keeps the compiler honest
+  // when one is added.
+  const unreachable: never = f.backend;
+  return unreachable;
 }
 
 // `attachRemoteAgent` rejects with an Error whose message is the host's
@@ -11014,9 +10771,29 @@ function focusDockControl(key: string): void {
   openPanel.setFocusKey(key);
 }
 
+// Open the dock's search row and put the keyboard in it.
+function openDockSearch(): void {
+  if (!dockMode || !openDialog || !openPanel) return;
+  openDialog.searchOpen = true;
+  // The field has to exist in the spec before it can take focus.
+  openPanel.update(buildDockSpec());
+  focusDockControl("filter");
+}
+
+// Leave the search: an empty field closes the row; a needle stays applied
+// (the row stays with it) and the keyboard goes back to the list.
+function leaveDockSearch(): void {
+  if (!dockMode || !openDialog || !openPanel) return;
+  if (openDialog.filter.value === "") {
+    openDialog.searchOpen = false;
+    openPanel.update(buildDockSpec());
+  }
+  focusDockControl("sessions");
+}
+
 // `/` — to the filter, from anywhere in the dock.
 registerHandler("orchestrator_dock_filter", () => {
-  if (dockMode && openPanel) focusDockControl("filter");
+  openDockSearch();
 });
 
 // Esc — closes an open dropdown; otherwise returns from the filter to the
@@ -11026,7 +10803,7 @@ registerHandler("orchestrator_dock_escape", () => {
   const menu = dockOpenMenu();
   if (menu === "menu") return closeDockMenu();
   if (menu === "project") return closeProjectMenu();
-  if (pickerFocusKey === "filter") return focusDockControl("sessions");
+  if (pickerFocusKey === "filter") return leaveDockSearch();
   editor.floatingPanelControl(openPanel.id(), "blur", 0);
 });
 
@@ -11211,22 +10988,11 @@ registerHandler("orchestrator_form_key_home", () => dispatchFormKey("Home"));
 registerHandler("orchestrator_form_key_end", () => dispatchFormKey("End"));
 // When a "Run in:" type tab is focused, ←/→ moves between tabs (switching the
 // backend) rather than a text cursor. Returns true if it consumed the key.
-function switchTabIfFocused(delta: 1 | -1): boolean {
-  if (!form) return false;
-  const idx = SESSION_BACKENDS.findIndex((b) => b.key === formFocusedKey());
-  if (idx < 0) return false;
-  const next = (idx + delta + SESSION_BACKENDS.length) % SESSION_BACKENDS.length;
-  selectBackend(SESSION_BACKENDS[next].id);
-  return true;
-}
-registerHandler("orchestrator_form_key_left", () => {
-  if (switchTabIfFocused(-1)) return;
-  dispatchFormKey("Left");
-});
-registerHandler("orchestrator_form_key_right", () => {
-  if (switchTabIfFocused(1)) return;
-  dispatchFormKey("Right");
-});
+// ←/→ go to the host: on the `Run in` radio and the dropdowns they move the
+// selection (the widget reports a `change`); in a text field they move the
+// caret.
+registerHandler("orchestrator_form_key_left", () => dispatchFormKey("Left"));
+registerHandler("orchestrator_form_key_right", () => dispatchFormKey("Right"));
 registerHandler("orchestrator_form_key_up", () => {
   // Popup-open: dispatch straight through so the host moves
   // the popup-selection cursor.
@@ -11548,6 +11314,17 @@ editor.on("widget_event", (e) => {
       agentDropdownOpen = payload.open === true;
       return;
     }
+    if (e.event_type === "change" && e.widget_key === "backend") {
+      // The `Run in` radio moved (←/→, Home/End, or a click on an option):
+      // the host owns the selection and reports the new index.
+      const payload = (e.payload ?? {}) as Record<string, unknown>;
+      const index = payload.index;
+      if (typeof index === "number") {
+        const next = SESSION_BACKENDS[index];
+        if (next) selectBackend(next.id);
+      }
+      return;
+    }
     if (e.event_type === "change" && e.widget_key === "target_dropdown") {
       // Flipping the target reshapes the whole form: "new" reveals the
       // backend tabs, Project Path, Workspace Name and the Advanced fold;
@@ -11652,6 +11429,9 @@ editor.on("widget_event", (e) => {
         // Editing the command changes which agent it resolves to, and thus
         // whether the Auto mode / Start prompt controls appear — re-lay-out.
         if (field === "cmd") {
+          // Typing a command is `custom…` by definition — keep the field
+          // even if what was typed happens to spell a preset.
+          form.agentCustom = true;
           rebuildFormFocusCycle();
           renderForm();
         }
@@ -11717,29 +11497,6 @@ editor.on("widget_event", (e) => {
       return;
     }
     if (e.event_type === "activate") {
-      // "Run in:" type tabs. Enter/click on a *different* tab switches the
-      // backend; on the *already-active* tab it means "move on" — advance
-      // focus into the body (otherwise Enter would dead-end on the tab).
-      const tab = SESSION_BACKENDS.find((b) => b.key === e.widget_key);
-      if (tab) {
-        if (form.backend !== tab.id) {
-          selectBackend(tab.id);
-        } else if (formPanel) {
-          // Already on this tab — Enter means "dive into the fields": jump
-          // past the other tab buttons straight to this backend's first input.
-          const firstField = firstBodyFieldKey(form.backend);
-          formPanel.setFocusKey(firstField);
-          snapFormFocusTo(firstField);
-        }
-        return;
-      }
-      if (e.widget_key === "advanced_toggle") {
-        // Fold / unfold the Advanced section (worktree + branch fields).
-        form.advancedExpanded = !form.advancedExpanded;
-        rebuildFormFocusCycle();
-        renderForm();
-        return;
-      }
       if (e.widget_key === "create-visit") {
         // Gate: a Create with no required input is a no-op (the button is
         // also rendered disabled, but Enter-on-button could still reach here).
@@ -11794,6 +11551,9 @@ editor.on("widget_event", (e) => {
         // clicking away from a menu dismisses it.
         openDialog.projectMenuOpen = false;
         openDialog.dockMenu = null;
+        // The search row goes with them — unless a needle keeps it (a
+        // dive keeps the filter, see below), which the render decides.
+        openDialog.searchOpen = false;
         // Leaving the dock resets the filter so re-entering always
         // shows the full session list. A stale filter (e.g. an old
         // "/gamma") otherwise silently hides sessions on the next
@@ -12031,17 +11791,28 @@ editor.on("widget_event", (e) => {
     }
     if (e.event_type === "activate" && e.widget_key === "new-session") {
       if (dockMode) {
-        // "New Task… ▾" is a dropdown: toggle the create menu (New Task…
-        // / New Folder…) rather than opening the form directly.
-        if (openDialog.dockMenu?.kind === "new") closeDockMenu();
-        else openDockMenu({ kind: "new", index: 0 });
+        // `+ New` goes straight to the dialog — a centered modal in its
+        // own slot, so the dock stays visible behind it.
+        dockBlurred = true;
+        openForm({ fromPicker: true });
         return;
       }
       closeOpenDialog();
       openForm({ fromPicker: true });
       return;
     }
-    // The "New Task…" / "Move to folder…" dropdown list: ↑/↓ move its
+    // The header's `/ search` → open the search row and type.
+    if (e.event_type === "activate" && e.widget_key === "search-toggle") {
+      openDockSearch();
+      return;
+    }
+    // The header's `⋯` → toggle its menu.
+    if (e.event_type === "activate" && e.widget_key === "dock-menu") {
+      if (openDialog.dockMenu?.kind === "main") closeDockMenu();
+      else openDockMenu({ kind: "main", index: 0 });
+      return;
+    }
+    // The `⋯` / "Move to folder…" dropdown list: ↑/↓ move its
     // cursor, Enter runs the cursor's option, a click runs the clicked one.
     if (isListEvent(e, DOCK_MENU_KEY)) {
       const payload = (e.payload ?? {}) as Record<string, unknown>;
@@ -12051,20 +11822,6 @@ editor.on("widget_event", (e) => {
       } else if (e.event_type === "activate") {
         acceptDockMenu(idx >= 0 ? idx : undefined);
       }
-      return;
-    }
-    // Title-bar `[ × ]` → hide the dock, the same teardown Esc and
-    // "Orchestrator: Toggle Dock" run. Guarded on `dockMode` because the
-    // modal picker shares this handler and wears the host's own native
-    // close button instead.
-    if (e.event_type === "activate" && e.widget_key === "dock-close") {
-      if (dockMode) closeOpenDialog();
-      return;
-    }
-    // Toggle the collapsible Filters section.
-    if (e.event_type === "activate" && e.widget_key === "filters-toggle") {
-      openDialog.filtersExpanded = !openDialog.filtersExpanded;
-      if (openPanel) openPanel.update(buildDockSpec());
       return;
     }
     // Host-owned tree expansion changed (a disclosure click or →/← on a
@@ -12084,35 +11841,6 @@ editor.on("widget_event", (e) => {
         // re-balances and the hints stay pinned to the dock's bottom.
         if (dockMode && openPanel) openPanel.update(buildDockSpec());
       }
-      return;
-    }
-    // Dock "Manage" → open the full modal picker (lifecycle actions
-    // Stop/Archive/Delete + bulk-select) *beside* the dock. The dock
-    // stays mounted in its own slot, dimmed and passive, and Esc on the
-    // picker hands control back to it (`openControlRoom` parks the dock
-    // in `dockPanel` when one is showing).
-    if (e.event_type === "activate" && e.widget_key === "manage") {
-      openControlRoom();
-      return;
-    }
-    // Filters panel "Move…" button → the same Move-to-Folder dropdown
-    // the row context menu offers, for the highlighted/current session.
-    if (e.event_type === "activate" && e.widget_key === "move-session") {
-      openMoveToFolderForCurrent();
-      return;
-    }
-    // Dock "view" button → flip card ⇄ compact density. Routed through the
-    // published verb so the button and a script take the same path (which
-    // also pins the override, so a later re-open doesn't undo the flip).
-    if (e.event_type === "activate" && e.widget_key === "view-toggle") {
-      apiSetDockView(dockView === "card" ? "compact" : "card");
-      return;
-    }
-    // Dock project dropdown: the toolbar button toggles the menu open,
-    // and each option button picks a project (empty suffix = all).
-    if (e.event_type === "activate" && e.widget_key === "project-menu") {
-      if (openDialog.projectMenuOpen) closeProjectMenu();
-      else openProjectMenu();
       return;
     }
     // The project dropdown list, the same way.

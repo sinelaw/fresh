@@ -42,4 +42,5 @@ pub use render::{
     FocusCursor, MarkdownCtx, NumberEdit, OverlayRow, PanelPopup, RenderContext, RenderOptions,
     RenderOutput, RenderedTreeRow, ResolvedPanel, DROPDOWN_VISIBLE_OPTIONS,
 };
+pub use render::{field_column_indent, render_label, render_radio, RenderedRadio, RADIO_GAP};
 pub use text_click::{row_byte_to_value_byte, value_byte_from_hit};
