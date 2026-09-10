@@ -460,7 +460,10 @@ impl Editor {
             key,
             panel,
             crate::widgets::kinds::Viewport::default(),
-            "Space",
+            &crate::input::keybindings::KeySeq::one(crate::input::keybindings::Key::new(
+                crossterm::event::KeyCode::Char(' '),
+                crossterm::event::KeyModifiers::NONE,
+            )),
             &mut fx,
         );
         self.rerender_widget_panel(&panel_key);

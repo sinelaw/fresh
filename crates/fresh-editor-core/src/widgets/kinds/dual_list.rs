@@ -45,20 +45,27 @@ impl WidgetImpl for DualList {
         widget_key: &str,
         panel: &mut crate::widgets::WidgetPanelState,
         _viewport: super::Viewport,
-        key: &str,
+        key: &crate::keys::KeySeq,
         fx: &mut super::KeyFx,
     ) -> super::KeyDisposition {
-        let op = match key {
-            "Up" => DualOp::CursorMove(-1),
-            "Down" => DualOp::CursorMove(1),
-            "PageUp" | "S-Up" => DualOp::Reorder(-1),
-            "PageDown" | "S-Down" => DualOp::Reorder(1),
-            "Left" => DualOp::SwitchColumn(false),
-            "Right" => DualOp::SwitchColumn(true),
-            "Space" => DualOp::MoveAcross,
-            "S-Right" => DualOp::Carry(true),
-            "S-Left" => DualOp::Carry(false),
-            "Enter" => {
+        use crossterm::event::{KeyCode, KeyModifiers};
+        const SHIFT: KeyModifiers = KeyModifiers::SHIFT;
+        let Some(key) = key.single() else {
+            return super::KeyDisposition::Pass;
+        };
+        let op = match (key.code(), key.mods()) {
+            (KeyCode::Up, m) if m.is_empty() => DualOp::CursorMove(-1),
+            (KeyCode::Down, m) if m.is_empty() => DualOp::CursorMove(1),
+            (KeyCode::PageUp, m) if m.is_empty() => DualOp::Reorder(-1),
+            (KeyCode::PageDown, m) if m.is_empty() => DualOp::Reorder(1),
+            (KeyCode::Up, SHIFT) => DualOp::Reorder(-1),
+            (KeyCode::Down, SHIFT) => DualOp::Reorder(1),
+            (KeyCode::Left, m) if m.is_empty() => DualOp::SwitchColumn(false),
+            (KeyCode::Right, m) if m.is_empty() => DualOp::SwitchColumn(true),
+            (KeyCode::Char(' '), m) if m.is_empty() => DualOp::MoveAcross,
+            (KeyCode::Right, SHIFT) => DualOp::Carry(true),
+            (KeyCode::Left, SHIFT) => DualOp::Carry(false),
+            (KeyCode::Enter, m) if m.is_empty() => {
                 fx.focus_advance = Some(1);
                 return super::KeyDisposition::Consumed;
             }

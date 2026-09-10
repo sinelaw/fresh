@@ -33,54 +33,68 @@ impl WidgetImpl for Number {
         widget_key: &str,
         panel: &mut crate::widgets::WidgetPanelState,
         _viewport: super::Viewport,
-        key: &str,
+        key: &crate::keys::KeySeq,
         fx: &mut super::KeyFx,
     ) -> super::KeyDisposition {
         use super::KeyDisposition::{Consumed, Pass, PassAfter};
+        use crossterm::event::KeyCode;
+        let Some(key) = key.single() else {
+            return Pass;
+        };
+        let bare = key.mods().is_empty();
         if editing(widget_key, panel) {
-            return match key {
-                "Enter" => {
+            return match key.code() {
+                KeyCode::Enter if bare => {
                     commit(spec, widget_key, panel, fx);
                     Consumed
                 }
-                "Escape" => {
+                KeyCode::Esc if bare => {
                     cancel(widget_key, panel);
                     Consumed
                 }
                 // The commit is the field's; the advance is the surface's.
-                "Tab" | "Shift+Tab" => {
+                KeyCode::Tab | KeyCode::BackTab if bare => {
                     commit(spec, widget_key, panel, fx);
                     PassAfter
                 }
-                "C-a" => {
+                _ if super::ctrl_char(key, 'a') => {
                     with_draft(widget_key, panel, |e| e.select_all());
                     Consumed
                 }
                 // A draft has no vertical axis and no words to type; these
                 // keys are swallowed rather than handed to the surface, so a
                 // half-typed value is never left behind by a page move.
-                "Space" | "Up" | "Down" | "PageUp" | "PageDown" => Consumed,
-                _ => match super::text::key_name_to_event(key) {
-                    Some(event) => {
-                        with_draft(widget_key, panel, |e| {
-                            crate::primitives::text_key::apply_text_key(
-                                e,
-                                &event,
-                                crate::primitives::text_key::TextKeyContext::single_line(),
-                            );
-                        });
-                        Consumed
-                    }
-                    None => Pass,
-                },
+                KeyCode::Char(' ')
+                | KeyCode::Up
+                | KeyCode::Down
+                | KeyCode::PageUp
+                | KeyCode::PageDown
+                    if bare =>
+                {
+                    Consumed
+                }
+                _ if super::text_caret(key) => {
+                    with_draft(widget_key, panel, |e| {
+                        crate::primitives::text_key::apply_text_key(
+                            e,
+                            &key.to_key_event(),
+                            crate::primitives::text_key::TextKeyContext::single_line(),
+                        );
+                    });
+                    Consumed
+                }
+                _ => Pass,
             };
         }
         // Up/Right increment, Down/Left decrement — matching the
         // ◂/▸ glyphs (the reverse of a list's Up = select-previous).
-        let steps = match key {
-            "Up" | "Right" => 1,
-            "Down" | "Left" => -1,
-            "Enter" => {
+        if !bare {
+            return Pass;
+        }
+        let steps = match key.code() {
+            KeyCode::Up | KeyCode::Right => 1,
+            KeyCode::Down | KeyCode::Left => -1,
+            KeyCode::Enter => {
                 begin_edit(spec, widget_key, panel, None);
                 return Consumed;
             }
@@ -534,9 +548,12 @@ mod tests {
         }
     }
 
+    /// Tests name a key the way a plugin or a config would; the one parser
+    /// turns it into the press the kind actually sees.
     fn key(spec: &WidgetSpec, panel: &mut WidgetPanelState, k: &str) -> (KeyDisposition, KeyFx) {
         let mut fx = KeyFx::default();
-        let d = behavior(spec).on_key(spec, "n", panel, Default::default(), k, &mut fx);
+        let seq: crate::keys::KeySeq = k.parse().expect("test key name parses");
+        let d = behavior(spec).on_key(spec, "n", panel, Default::default(), &seq, &mut fx);
         (d, fx)
     }
 

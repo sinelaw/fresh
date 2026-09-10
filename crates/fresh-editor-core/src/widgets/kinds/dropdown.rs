@@ -21,24 +21,29 @@ impl WidgetImpl for Dropdown {
         widget_key: &str,
         panel: &mut crate::widgets::WidgetPanelState,
         _viewport: super::Viewport,
-        key: &str,
+        key: &crate::keys::KeySeq,
         fx: &mut super::KeyFx,
     ) -> super::KeyDisposition {
         use super::KeyDisposition::{Consumed, Pass};
+        use crossterm::event::KeyCode;
+        // Every key a dropdown answers is unmodified.
+        let Some(key) = key.single().filter(|k| k.mods().is_empty()) else {
+            return Pass;
+        };
         if !is_open(widget_key, panel) {
             // Closed: arrows cycle the value in place (matching the
             // ◂/▸ glyphs), Enter/Space open the option popup —
             // everything else bubbles to the panel dispatch.
-            return match key {
-                "Up" | "Left" => {
+            return match key.code() {
+                KeyCode::Up | KeyCode::Left => {
                     cycle_selection(spec, widget_key, panel, -1, fx);
                     Consumed
                 }
-                "Down" | "Right" => {
+                KeyCode::Down | KeyCode::Right => {
                     cycle_selection(spec, widget_key, panel, 1, fx);
                     Consumed
                 }
-                "Enter" | "Space" => {
+                KeyCode::Enter | KeyCode::Char(' ') => {
                     set_open(spec, widget_key, panel, true, fx);
                     Consumed
                 }
@@ -48,30 +53,30 @@ impl WidgetImpl for Dropdown {
         // Open: Up/Down move the (live) selection and Home/End jump it,
         // Enter/Space commit-and-close, Esc puts back the selection the
         // list opened on and closes.
-        match key {
-            "Up" => {
+        match key.code() {
+            KeyCode::Up => {
                 cycle_selection(spec, widget_key, panel, -1, fx);
                 Consumed
             }
-            "Down" => {
+            KeyCode::Down => {
                 cycle_selection(spec, widget_key, panel, 1, fx);
                 Consumed
             }
-            "Home" => {
+            KeyCode::Home => {
                 set_selection(spec, widget_key, panel, 0, fx);
                 Consumed
             }
-            "End" => {
+            KeyCode::End => {
                 set_selection(spec, widget_key, panel, i32::MAX, fx);
                 Consumed
             }
-            "Enter" | "Space" => {
+            KeyCode::Enter | KeyCode::Char(' ') => {
                 // The selection is already live (Up/Down fired
                 // `change`); closing just dismisses the list.
                 set_open(spec, widget_key, panel, false, fx);
                 Consumed
             }
-            "Escape" => {
+            KeyCode::Esc => {
                 if let Some(WidgetInstanceState::Dropdown {
                     restore: Some(at), ..
                 }) = panel.instance_states.get(widget_key)

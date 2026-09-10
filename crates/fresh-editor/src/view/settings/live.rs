@@ -28,71 +28,55 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use fresh_core::api::WidgetSpec;
 
 use super::items::SettingControl;
+use crate::input::keybindings::{Key, KeySeq};
 use crate::widgets::kinds::{behavior, KeyDisposition, KeyFx, Viewport};
 use crate::widgets::{WidgetInstanceState, WidgetPanelState};
 
-/// What a key is to a widget kind: one of the named keys the kinds'
-/// vocabulary distinguishes, or text to type.
+/// What a key is to a widget kind: a press its vocabulary distinguishes, or
+/// text to type.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum KeyName {
-    Named(String),
+    Press(Key),
     Text(String),
 }
 
-/// The name a widget kind knows a key by — the same spelling the panel
-/// router hands `Editor::handle_widget_key` (`"S-Left"`, `"C-a"`,
-/// `"Shift+Tab"`, `"Space"`), plus `"Escape"`, which the router resolves
-/// before it names anything because a panel's Escape is its own.
+/// The press a widget kind knows a keystroke as.
+///
+/// **This used to format a name** — `"S-Left"`, `"C-a"`, `"Shift+Tab"` — into
+/// a string the kinds then re-matched, a third copy of the panel router's own
+/// formatter. It builds the value now, so the settings surface and the panel
+/// router cannot disagree about what a keystroke is.
+///
+/// Each arm keeps the modifier *masking* the spelling used to imply: an arrow
+/// key carried only Ctrl and Shift into its name, and a character chord only
+/// Ctrl and Alt, so a stray Alt on an arrow did not turn it into a key the
+/// kinds decline. Dropping that would be a behaviour change wearing a
+/// refactor's clothes.
 pub fn key_name(ev: &KeyEvent) -> Option<KeyName> {
-    let ctrl = ev.modifiers.contains(KeyModifiers::CONTROL);
+    const CARET: KeyModifiers = KeyModifiers::CONTROL.union(KeyModifiers::SHIFT);
+    const CHORD: KeyModifiers = KeyModifiers::CONTROL.union(KeyModifiers::ALT);
     let shift = ev.modifiers.contains(KeyModifiers::SHIFT);
-    let alt = ev.modifiers.contains(KeyModifiers::ALT);
-    let named = |s: &str| Some(KeyName::Named(s.to_string()));
+    let press = |code, mods| Some(KeyName::Press(Key::new(code, mods)));
     match ev.code {
-        KeyCode::Esc => named("Escape"),
-        KeyCode::Tab if shift => named("Shift+Tab"),
-        KeyCode::Tab => named("Tab"),
-        KeyCode::BackTab => named("Shift+Tab"),
-        KeyCode::Enter => named("Enter"),
-        KeyCode::Backspace | KeyCode::Delete if ctrl => {
-            let base = if ev.code == KeyCode::Backspace {
-                "Backspace"
-            } else {
-                "Delete"
-            };
-            Some(KeyName::Named(format!("C-{base}")))
+        KeyCode::Esc | KeyCode::Enter | KeyCode::PageUp | KeyCode::PageDown => {
+            press(ev.code, KeyModifiers::NONE)
         }
-        KeyCode::Backspace => named("Backspace"),
-        KeyCode::Delete => named("Delete"),
-        KeyCode::PageUp => named("PageUp"),
-        KeyCode::PageDown => named("PageDown"),
+        KeyCode::Tab | KeyCode::BackTab => press(ev.code, ev.modifiers & KeyModifiers::SHIFT),
+        KeyCode::Backspace | KeyCode::Delete => {
+            press(ev.code, ev.modifiers & KeyModifiers::CONTROL)
+        }
         KeyCode::Home
         | KeyCode::End
         | KeyCode::Left
         | KeyCode::Right
         | KeyCode::Up
-        | KeyCode::Down => {
-            let base = match ev.code {
-                KeyCode::Home => "Home",
-                KeyCode::End => "End",
-                KeyCode::Left => "Left",
-                KeyCode::Right => "Right",
-                KeyCode::Up => "Up",
-                _ => "Down",
-            };
-            Some(KeyName::Named(format!(
-                "{}{}{base}",
-                if ctrl { "C-" } else { "" },
-                if shift { "S-" } else { "" }
-            )))
+        | KeyCode::Down => press(ev.code, ev.modifiers & CARET),
+        KeyCode::Char(' ') if ev.modifiers.intersection(CHORD).is_empty() => {
+            press(KeyCode::Char(' '), KeyModifiers::NONE)
         }
-        KeyCode::Char(c) if ctrl || alt => Some(KeyName::Named(format!(
-            "{}{}{}",
-            if ctrl { "C-" } else { "" },
-            if alt { "A-" } else { "" },
-            c.to_ascii_lowercase()
-        ))),
-        KeyCode::Char(' ') => named("Space"),
+        KeyCode::Char(c) if !ev.modifiers.intersection(CHORD).is_empty() => {
+            press(KeyCode::Char(c.to_ascii_lowercase()), ev.modifiers & CHORD)
+        }
         KeyCode::Char(c) => {
             let ch = if shift {
                 c.to_uppercase().next().unwrap_or(c)
@@ -117,21 +101,39 @@ pub struct Outcome {
 pub fn key(store: &mut WidgetPanelState, spec: &WidgetSpec, key: &str, ev: &KeyEvent) -> Outcome {
     let mut fx = KeyFx::default();
     let disposition = match key_name(ev) {
-        Some(KeyName::Named(name)) => {
-            behavior(spec).on_key(spec, key, store, Viewport::from_spec(spec), &name, &mut fx)
-        }
+        Some(KeyName::Press(press)) => behavior(spec).on_key(
+            spec,
+            key,
+            store,
+            Viewport::from_spec(spec),
+            &KeySeq::one(press),
+            &mut fx,
+        ),
         Some(KeyName::Text(text)) => behavior(spec).on_text(spec, key, store, &text, &mut fx),
         None => KeyDisposition::Pass,
     };
     Outcome { disposition, fx }
 }
 
-/// Hand a named key to the control's kind — a surface's own decision
-/// (`"Enter"` to activate, `"Escape"` to leave) rather than a keystroke.
-pub fn named(store: &mut WidgetPanelState, spec: &WidgetSpec, key: &str, name: &str) -> Outcome {
+/// The presses a *surface* makes on a control's behalf, as values rather
+/// than names. These are the settings UI's own decisions — commit this edit,
+/// leave this dropdown — not keystrokes the user made.
+pub const ENTER: Key = Key::plain(KeyCode::Enter);
+pub const ESCAPE: Key = Key::plain(KeyCode::Esc);
+pub const SPACE: Key = Key::plain(KeyCode::Char(' '));
+
+/// Hand a press to the control's kind — a surface's own decision (Enter to
+/// activate, Escape to leave) rather than a keystroke the user made.
+pub fn named(store: &mut WidgetPanelState, spec: &WidgetSpec, key: &str, press: Key) -> Outcome {
     let mut fx = KeyFx::default();
-    let disposition =
-        behavior(spec).on_key(spec, key, store, Viewport::from_spec(spec), name, &mut fx);
+    let disposition = behavior(spec).on_key(
+        spec,
+        key,
+        store,
+        Viewport::from_spec(spec),
+        &KeySeq::one(press),
+        &mut fx,
+    );
     Outcome { disposition, fx }
 }
 
@@ -427,27 +429,31 @@ mod tests {
     }
 
     #[test]
-    fn keys_are_named_as_the_kinds_know_them() {
+    /// The settings surface and the widget vocabulary agree about what a
+    /// keystroke *is*. The expected side is written as a name and resolved by
+    /// the one parser, so this asserts agreement between two vocabularies
+    /// rather than restating a formatter's output.
+    fn keys_are_the_presses_the_kinds_know() {
         let n = |c, m| key_name(&ev(c, m));
         assert_eq!(
             n(KeyCode::Esc, KeyModifiers::NONE),
-            Some(KeyName::Named("Escape".into()))
+            Some(KeyName::Press(Key::parse("Escape", None).unwrap()))
         );
         assert_eq!(
             n(KeyCode::Left, KeyModifiers::CONTROL | KeyModifiers::SHIFT),
-            Some(KeyName::Named("C-S-Left".into()))
+            Some(KeyName::Press(Key::parse("C-S-Left", None).unwrap()))
         );
         assert_eq!(
             n(KeyCode::BackTab, KeyModifiers::SHIFT),
-            Some(KeyName::Named("Shift+Tab".into()))
+            Some(KeyName::Press(Key::parse("Shift+Tab", None).unwrap()))
         );
         assert_eq!(
             n(KeyCode::Char('a'), KeyModifiers::CONTROL),
-            Some(KeyName::Named("C-a".into()))
+            Some(KeyName::Press(Key::parse("C-a", None).unwrap()))
         );
         assert_eq!(
             n(KeyCode::Char(' '), KeyModifiers::NONE),
-            Some(KeyName::Named("Space".into()))
+            Some(KeyName::Press(Key::parse("Space", None).unwrap()))
         );
         assert_eq!(
             n(KeyCode::Char('x'), KeyModifiers::SHIFT),

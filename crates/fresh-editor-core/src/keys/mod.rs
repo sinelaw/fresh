@@ -378,6 +378,19 @@ impl Key {
         Self { code, mods }.normalized()
     }
 
+    /// An unmodified press, usable in a `const`.
+    ///
+    /// `new` cannot be const (its normalisation branches), and the surfaces
+    /// that name a key they are pressing on the user's behalf want one.
+    /// Restricted to no modifiers, which is exactly the case that needs no
+    /// normalisation: only Shift folds into a code.
+    pub const fn plain(code: KeyCode) -> Self {
+        Self {
+            code,
+            mods: KeyModifiers::NONE,
+        }
+    }
+
     /// What was struck. Always canonical — see the type's own note.
     pub fn code(&self) -> KeyCode {
         self.code
@@ -406,7 +419,15 @@ impl Key {
     /// that would otherwise have to remember it.
     fn normalized(self) -> Self {
         match (self.code, self.mods.contains(KeyModifiers::SHIFT)) {
+            // `BackTab` *is* Shift+Tab, so a Shift beside it is redundant —
+            // and a terminal may or may not send it. Folding both directions
+            // is what makes "one keystroke, one value" true rather than true
+            // for the spellings someone happened to test.
             (KeyCode::Tab, true) => Self {
+                code: KeyCode::BackTab,
+                mods: self.mods.difference(KeyModifiers::SHIFT),
+            },
+            (KeyCode::BackTab, true) => Self {
                 code: KeyCode::BackTab,
                 mods: self.mods.difference(KeyModifiers::SHIFT),
             },
@@ -742,19 +763,25 @@ mod tests {
     /// registered under one could not match a key that arrived as another.
     #[test]
     fn the_spellings_of_shift_tab_are_one_keystroke() {
-        let spellings = ["BackTab", "S-Tab", "Shift+Tab"];
+        let spellings = ["BackTab", "S-BackTab", "S-Tab", "Shift+Tab", "S-Shift+Tab"];
         let parsed: Vec<_> = spellings.iter().map(|s| Key::parse(s, None)).collect();
         assert!(parsed[0].is_some());
         assert!(
             parsed.windows(2).all(|w| w[0] == w[1]),
             "{spellings:?} parsed as {parsed:?}"
         );
-        // And Shift is folded into the code rather than left beside it, so
-        // there is only one value to match against.
-        assert_eq!(
+        // And Shift is folded into the code rather than left beside it, from
+        // either direction, so there is only one value to match against —
+        // whether the terminal sends `Tab`+Shift, `BackTab`, or `BackTab`
+        // with a redundant Shift still set.
+        for built in [
             Key::new(KeyCode::Tab, KeyModifiers::SHIFT),
-            Key::parse("Shift+Tab", None).unwrap()
-        );
+            Key::new(KeyCode::BackTab, KeyModifiers::SHIFT),
+            Key::new(KeyCode::BackTab, KeyModifiers::NONE),
+        ] {
+            assert_eq!(built, Key::parse("Shift+Tab", None).unwrap());
+            assert_eq!(built.mods(), KeyModifiers::NONE);
+        }
     }
 
     /// An uppercase *bare character* carries Shift — what `["F", …]` in a

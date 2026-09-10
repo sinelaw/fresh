@@ -26,31 +26,40 @@ impl WidgetImpl for Text {
         widget_key: &str,
         panel: &mut crate::widgets::WidgetPanelState,
         _viewport: super::Viewport,
-        key: &str,
+        key: &crate::keys::KeySeq,
         fx: &mut super::KeyFx,
     ) -> super::KeyDisposition {
         use super::KeyDisposition::{Consumed, Pass, PassAfter};
+        use crossterm::event::KeyCode;
+        let Some(key) = key.single() else {
+            return Pass;
+        };
+        let bare = key.mods().is_empty();
         // The completion popup claims its keys first, and only while
         // showing.
-        if matches!(key, "Tab" | "Up" | "Down" | "Enter" | "Escape")
+        if bare
+            && matches!(
+                key.code(),
+                KeyCode::Tab | KeyCode::Up | KeyCode::Down | KeyCode::Enter | KeyCode::Esc
+            )
             && completions_open(widget_key, panel)
         {
-            return match key {
-                "Up" => {
+            return match key.code() {
+                KeyCode::Up => {
                     move_completion_index(spec, widget_key, panel, -1);
                     Consumed
                 }
-                "Down" => {
+                KeyCode::Down => {
                     move_completion_index(spec, widget_key, panel, 1);
                     Consumed
                 }
-                "Escape" => {
+                KeyCode::Esc => {
                     // First Esc only closes the popup — the form stays
                     // open. (A second Esc, with no popup, cancels.)
                     dismiss_completions(widget_key, panel, fx);
                     Consumed
                 }
-                "Enter" | "Tab" => {
+                KeyCode::Enter | KeyCode::Tab => {
                     if completion_navigated(widget_key, panel) {
                         // The user stepped into the dropdown (↑/↓/wheel)
                         // so a row is highlighted — accept it. The host
@@ -84,20 +93,26 @@ impl WidgetImpl for Text {
         let WidgetSpec::Text { rows, .. } = spec else {
             return Pass;
         };
-        match key {
-            "Up" | "Down" | "PageUp" | "PageDown" if *rows <= 1 => Pass,
-            "Up" | "Down" | "Left" | "Right" | "Backspace" | "Delete" | "Home" | "End" | "S-Up"
-            | "S-Down" | "S-Left" | "S-Right" | "S-Home" | "S-End" | "C-Left" | "C-Right"
-            | "C-S-Left" | "C-S-Right" | "C-Backspace" | "C-Delete" => {
+        match key.code() {
+            KeyCode::Up | KeyCode::Down | KeyCode::PageUp | KeyCode::PageDown
+                if *rows <= 1 && bare =>
+            {
+                Pass
+            }
+            // **One predicate where twenty names used to be.** The list here
+            // was the cross product of eight codes and four modifier sets,
+            // written out by hand — which is why `C-S-Home` was missing from
+            // it. `super::text_caret` is that set, stated once.
+            _ if super::text_caret(key) => {
                 text_key(spec, widget_key, panel, key, fx);
                 Consumed
             }
-            "PageUp" | "PageDown" => {
+            KeyCode::PageUp | KeyCode::PageDown if bare => {
                 // Multi-line: page the caret (the viewport follows
                 // it), one row of overlap like the lists so the user
                 // keeps a visual anchor across pages.
                 let page = rows.saturating_sub(1).max(1) as i32;
-                let down = key == "PageDown";
+                let down = key.code() == KeyCode::PageDown;
                 clear_user_scrolled(widget_key, panel);
                 apply_edit(spec, widget_key, panel, fx, |editor| {
                     for _ in 0..page.unsigned_abs() {
@@ -110,20 +125,20 @@ impl WidgetImpl for Text {
                 });
                 Consumed
             }
-            "Enter" => {
+            KeyCode::Enter if bare => {
                 if *rows <= 1 {
                     // Form policy (submit / picker-activate / advance)
                     // belongs to the panel.
                     return Pass;
                 }
-                text_key(spec, widget_key, panel, "Enter", fx);
+                text_key(spec, widget_key, panel, key, fx);
                 Consumed
             }
-            "Space" => {
+            KeyCode::Char(' ') if bare => {
                 insert_str_edit(spec, widget_key, panel, " ", fx);
                 Consumed
             }
-            "C-c" => {
+            _ if super::ctrl_char(key, 'c') => {
                 // Copy is consumed even with an empty selection so it
                 // doesn't fall through to the buffer's copy path.
                 if let Some(text) = selected_text(widget_key, panel) {
@@ -131,7 +146,7 @@ impl WidgetImpl for Text {
                 }
                 Consumed
             }
-            "C-x" => {
+            _ if super::ctrl_char(key, 'x') => {
                 if let Some(text) = selected_text(widget_key, panel) {
                     fx.clipboard_copy = Some(text);
                     // On a read-only / markdown document, Cut degrades
@@ -145,14 +160,14 @@ impl WidgetImpl for Text {
                 }
                 Consumed
             }
-            "C-a" => {
+            _ if super::ctrl_char(key, 'a') => {
                 // SelectAll moves the cursor to end-of-value and sets
                 // anchor at start; `apply_edit` skips the change event
                 // when nothing moved.
                 apply_edit(spec, widget_key, panel, fx, |editor| editor.select_all());
                 Consumed
             }
-            "C-z" => {
+            _ if super::ctrl_char(key, 'z') => {
                 // Engine undo (history lives in the TextEdit itself);
                 // routing through apply_edit fires `change` with the
                 // restored value so a plugin mirror stays in sync.
@@ -161,7 +176,7 @@ impl WidgetImpl for Text {
                 });
                 Consumed
             }
-            "C-y" => {
+            _ if super::ctrl_char(key, 'y') => {
                 apply_edit(spec, widget_key, panel, fx, |editor| {
                     editor.redo();
                 });
@@ -1592,11 +1607,11 @@ pub fn text_key(
     spec: &WidgetSpec,
     widget_key: &str,
     panel: &mut crate::widgets::WidgetPanelState,
-    key: &str,
+    key: crate::keys::Key,
     fx: &mut super::KeyFx,
 ) {
     let (is_markdown, is_read_only) = mode(spec);
-    if key == "Enter" {
+    if key.code() == crossterm::event::KeyCode::Enter {
         if is_markdown {
             fx.events.push(("activate".into(), json!({})));
             return;
@@ -1609,9 +1624,12 @@ pub fn text_key(
         });
         return;
     }
-    let Some(event) = key_name_to_event(key) else {
-        return;
-    };
+    // **No re-parse.** This used to take the key back apart from its name,
+    // through a private table that was a fourth copy of the vocabulary. The
+    // press is already a value; the shared text-key table speaks
+    // `KeyEvent`, so the conversion is a total function rather than a lookup
+    // that could fail to recognise a key the caller had just matched.
+    let event = key.to_key_event();
     if is_read_only && key_mutates(&event) {
         return;
     }
@@ -1627,45 +1645,6 @@ pub fn text_key(
             crate::primitives::text_key::TextKeyContext::multiline(true),
         );
     });
-}
-
-/// Re-hydrate a widget key name back into a `KeyEvent` so text
-/// fields can share the editor's text-key table rather than their
-/// own dispatch. Only the named keys the router forwards to text
-/// fields are recognized; `"Enter"` is handled by the caller.
-pub(super) fn key_name_to_event(name: &str) -> Option<crossterm::event::KeyEvent> {
-    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-    // Peel `C-` / `S-` / `A-` prefixes (in any order) so shift-selection
-    // and word-motion chords reach the shared text-key table — a
-    // markdown document view needs `S-Down` to extend the selection.
-    let mut modifiers = KeyModifiers::NONE;
-    let mut rest = name;
-    loop {
-        if let Some(r) = rest.strip_prefix("C-") {
-            modifiers |= KeyModifiers::CONTROL;
-            rest = r;
-        } else if let Some(r) = rest.strip_prefix("S-") {
-            modifiers |= KeyModifiers::SHIFT;
-            rest = r;
-        } else if let Some(r) = rest.strip_prefix("A-") {
-            modifiers |= KeyModifiers::ALT;
-            rest = r;
-        } else {
-            break;
-        }
-    }
-    let code = match rest {
-        "Backspace" => KeyCode::Backspace,
-        "Delete" => KeyCode::Delete,
-        "Left" => KeyCode::Left,
-        "Right" => KeyCode::Right,
-        "Up" => KeyCode::Up,
-        "Down" => KeyCode::Down,
-        "Home" => KeyCode::Home,
-        "End" => KeyCode::End,
-        _ => return None,
-    };
-    Some(KeyEvent::new(code, modifiers))
 }
 
 /// Whether routing `event` through `apply_text_key` would mutate the

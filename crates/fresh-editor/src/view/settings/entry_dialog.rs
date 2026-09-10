@@ -1318,12 +1318,12 @@ impl EntryDialogState {
         };
         match self.current_item().map(|i| &i.control) {
             Some(SettingControl::Toggle { .. }) => {
-                let o = live::named(&mut self.controls, &spec, &path, "Enter");
+                let o = live::named(&mut self.controls, &spec, &path, live::ENTER);
                 self.absorb(&path, &o.fx.events);
             }
             Some(SettingControl::Number { .. } | SettingControl::Dropdown { .. }) => {
                 self.controls.focus_key = path.clone();
-                let o = live::named(&mut self.controls, &spec, &path, "Enter");
+                let o = live::named(&mut self.controls, &spec, &path, live::ENTER);
                 self.absorb(&path, &o.fx.events);
             }
             Some(SettingControl::Text { .. } | SettingControl::Json { .. }) => {
@@ -1599,8 +1599,8 @@ impl EntryDialogState {
                         | SettingControl::Map { .. }
                         | SettingControl::ObjectArray { .. },
                     ) => None,
-                    Some(SettingControl::Dropdown { .. }) => Some("Escape"),
-                    _ => Some("Enter"),
+                    Some(SettingControl::Dropdown { .. }) => Some(live::ESCAPE),
+                    _ => Some(live::ENTER),
                 };
                 if let Some(name) = name {
                     let o = live::named(&mut self.controls, &spec, &path, name);
@@ -1625,7 +1625,7 @@ impl EntryDialogState {
                     self.current_item().map(|i| &i.control),
                     Some(SettingControl::Number { .. } | SettingControl::Dropdown { .. })
                 ) {
-                    let o = live::named(&mut self.controls, &spec, &path, "Escape");
+                    let o = live::named(&mut self.controls, &spec, &path, live::ESCAPE);
                     self.absorb(&path, &o.fx.events);
                 }
             }

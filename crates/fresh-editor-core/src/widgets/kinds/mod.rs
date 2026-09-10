@@ -41,6 +41,57 @@ use std::collections::HashMap;
 
 use fresh_core::api::WidgetSpec;
 
+use crate::keys::KeySeq;
+
+/// **The widget vocabulary, named once.**
+///
+/// Each kind used to spell these out as string literals in its own `match` —
+/// `"Enter" | "Space"`, twenty caret-key names in a row — so the set a kind
+/// answered was written down nowhere and could drift from the set the router
+/// produced with no compile error. These predicates are that set, stated
+/// where every kind can reach it.
+mod vocab {
+    use crate::keys::Key;
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    /// The two keys that activate a focused control. Space is the
+    /// conventional one for a checkbox or button; Enter is the form's.
+    pub fn activates(key: Key) -> bool {
+        key.mods().is_empty() && matches!(key.code(), KeyCode::Enter | KeyCode::Char(' '))
+    }
+
+    /// A Ctrl chord on a letter — the clipboard, undo and select-all keys a
+    /// text field claims for itself.
+    pub fn ctrl_char(key: Key, c: char) -> bool {
+        key.mods() == KeyModifiers::CONTROL && key.code() == KeyCode::Char(c)
+    }
+
+    /// The caret and edit keys a text surface answers, under any combination
+    /// of Shift (extend the selection) and Ctrl (step or delete by word).
+    ///
+    /// This one predicate replaces the twenty-name list `Text::on_key` used to
+    /// carry. The names were the cross product of eight codes and four
+    /// modifier sets written out by hand, which is why `C-S-Home` was missing
+    /// from it and `S-Delete` was never considered.
+    pub fn text_caret(key: Key) -> bool {
+        const CARET: KeyModifiers = KeyModifiers::CONTROL.union(KeyModifiers::SHIFT);
+        key.mods().difference(CARET).is_empty()
+            && matches!(
+                key.code(),
+                KeyCode::Left
+                    | KeyCode::Right
+                    | KeyCode::Up
+                    | KeyCode::Down
+                    | KeyCode::Home
+                    | KeyCode::End
+                    | KeyCode::Backspace
+                    | KeyCode::Delete
+            )
+    }
+}
+
+pub(crate) use vocab::{activates, ctrl_char, text_caret};
+
 use super::registry::WidgetInstanceState;
 use super::render::{CollectedOutput, RenderContext};
 
@@ -281,13 +332,19 @@ pub trait WidgetImpl: Sync {
     /// on `fx` — the dispatcher rerenders and fires them after the
     /// handler returns. `viewport` is the window the key acts inside
     /// (paging), handed down rather than looked up — see [`Viewport`].
+    /// `key` is a [`KeySeq`] rather than a single press because the wire it
+    /// arrives on can carry an emacs-style chord. No kind binds one today, so
+    /// every implementation below opens by asking for
+    /// [`KeySeq::single`] — which makes "this kind answers single presses
+    /// only" a statement rather than an accident, and leaves a chord to fall
+    /// through exactly as an unrecognised key always has.
     fn on_key(
         &self,
         _spec: &WidgetSpec,
         _widget_key: &str,
         _panel: &mut crate::widgets::WidgetPanelState,
         _viewport: Viewport,
-        _key: &str,
+        _key: &KeySeq,
         _fx: &mut KeyFx,
     ) -> KeyDisposition {
         KeyDisposition::Pass
