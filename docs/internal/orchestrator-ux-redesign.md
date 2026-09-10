@@ -1,8 +1,8 @@
 # Orchestrator dock & dialogs — UX redesign
 
-> _Design note. Status: **PARTLY IMPLEMENTED** — §2 (dock) and §3 (dialogs)
-> ship; §4 (SSH host picker) and §5 (machines) do not. See
-> "Implementation status" at the end. The "Today" blocks are transcripts
+> _Design note. Status: **IMPLEMENTED** — §2 (dock, including the §2.3
+> attention line), §3 (dialogs), §4 (SSH host picker) and §5 (machines)
+> ship. See "Implementation status" at the end. The "Today" blocks are transcripts
 > captured by driving Fresh 0.5.1 by hand in tmux; they are the evidence
 > for every decision that follows, and describe the surfaces as they were
 > before §2 and §3 landed._
@@ -741,16 +741,43 @@ Dock (§2): the header is `[ + New ]` … `/ search` `⋯`; `+ New` opens the
 dialog directly; the `⋯` menu holds New Folder, Manage workspaces, the
 density rows, the two show switches, the project scope and Hide dock (the
 title row and its `×` are gone, §2.4); search is on demand (§2.5) with a
-match count. The attention line (§2.3) is not built — it needs the
-five-state `agentState` this note deliberately does not design.
+match count. The dock opens by default (`autoOpenDock: true`; blurred,
+so the editor keeps the keyboard).
+
+Attention (§2.3): `agentState` is now five states — `working` (recent
+output, or an OSC "running" marker), `blocked` (quiet, and the last
+screen lines look like a question: y/n, approve, press Enter, a
+numbered choice), `done` (quiet after a burst of ≥1.5 s of output that
+happened while the window was not active — cleared on activation),
+`idle`, `unknown` (no output yet / terminal exited). Rows carry `●` /
+`*` / `✓` / `·` / `?`; a folder row rolls its members up as `●n ✓n`;
+the header shows `● N need you · ✓ N done` only while either is
+non-zero. `blocked` and `done` are heuristics over the output stream —
+good enough for the attention line, never a guarantee — and the
+patterns are a fixed list in the plugin (a versioned, fetchable rule
+set is still open).
 
 Dialogs (§3): one grid for New Workspace and Run Agent (§3.4–3.6);
 `Run in` is a radio; no boxes; hints under fields (§3.7); disclosure is
 value-driven (the command field follows `custom…`, the branch fields
 follow the worktree toggle) so the `Advanced…` fold is gone; footer
 buttons keep `[ Label ]` and carry their accelerator; Devcontainer left the
-`Run in` set. Placeholders still carry some instructions (`Project Path`,
-`SSH options`); moving those under the field is a follow-up.
+`Run in` set; instructions moved from placeholders to `↳` hints under
+the fields.
 
-Not built: the SSH host picker (§4) and the machine registry, `Add
-Machine` and `Machines` (§5).
+SSH host picker (§4): `Host` is a dropdown over the aliases of
+`~/.ssh/config` (multi-alias `Host` lines, `Include` followed,
+wildcard patterns dropped, first value wins) with the resolved
+`user@hostname:port` as its hint, and `Other host…` last to reveal the
+manual fields; with no config the manual fields show alone.
+
+Machines (§5): a registry at `<data dir>/orchestrator/machines.json`
+(never `~/.ssh/config`); `Add Machine` / `Edit Machine` with a `Kind`
+radio, `[ Test ]` (ssh `BatchMode` with an 8 s timeout, or `kubectl
+get pods`) whose result is a `✓ connected · uname · git · cores` or
+`✗ …` label with a hint, and `[ Save anyway ]` after a failure; the
+`Machines` list with `[ Add ] [ New workspace ] [ Edit ] [ Test ]
+[ Remove ]`; and, once any machine is saved, the dialogs collapse
+`Run in` to one `Machine` control (Local, saved machines, ssh-config
+hosts, `Other host…`, `Kubernetes…`, `Add machine…`) with
+`[v] Remember this machine as [ name ]` under a manual host.

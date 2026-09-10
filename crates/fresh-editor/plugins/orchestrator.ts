@@ -55,14 +55,23 @@ const editor = getEditor();
 // A session's coarse activity, inferred from its agent terminal:
 //   "working" — the terminal emitted output within the last
 //               IDLE_AFTER_MS (the agent is actively producing).
-//   "idle"    — quiet: waiting for input, finished, exited, or just
-//               sitting. Also the honest default before we've seen any
-//               output, since we have no evidence of work yet.
-// This is deliberately only two states: it's all the terminal-output
-// signal can honestly support. We don't poll the process, so "working"
-// means "printing", not "alive" — an agent that goes quiet to think
-// reads as idle until it prints again.
-type AgentState = "working" | "idle";
+//   "blocked" — quiet, and the last screen lines look like a question
+//               the agent is waiting on (y/n, approve, press Enter…).
+//               The one state that needs the user right now.
+//   "done"    — quiet after a real burst of work that happened while
+//               the user was looking elsewhere: there is something new
+//               to review. Cleared the moment the window is activated.
+//   "idle"    — quiet with nothing pending: sitting at a prompt the
+//               user already saw, or never did anything since they
+//               last looked.
+//   "unknown" — no terminal output ever (or the terminal exited): we
+//               have no evidence either way.
+// We don't poll the process, so "working" means "printing", not
+// "alive" — an agent that goes quiet to think reads as idle/blocked
+// until it prints again. `blocked` and `done` are heuristics over the
+// output stream (see `sessionState`) — good enough to drive the dock's
+// attention line, never a guarantee.
+type AgentState = "working" | "blocked" | "done" | "idle" | "unknown";
 
 // One row in the completion popup. `kind: "history"` items
 // render with a leading `↶` marker + italic styling so the user
@@ -129,6 +138,16 @@ interface AgentSession {
   // is the real signal; `state` is just `Date.now() - lastOutputAt`
   // bucketed against IDLE_AFTER_MS.
   lastOutputAt: number | null;
+  // The last few non-blank lines the agent terminal printed, oldest
+  // first (capped at RECENT_LINES). `sessionState` matches these against
+  // BLOCKED_PATTERNS to tell a "waiting on you" prompt from plain idle.
+  recentLines?: string[];
+  // `true` once the agent has produced a sustained burst of output
+  // (≥ WORK_MIN_MS) while its window was NOT the active one — i.e.
+  // there is something the user hasn't seen yet. Cleared on activation.
+  workedSinceSeen?: boolean;
+  // Start of the current output burst (ms), for the WORK_MIN_MS check.
+  burstStartAt?: number;
   // Wall-clock ms when orchestrator.new fired createWindow.
   createdAt: number;
   // `true` when this row is a worktree discovered on disk (via
@@ -1488,11 +1507,21 @@ function buildDockTree(filtered: number[], activeId: number): DockTree {
     for (const c of childFoldersOf(fid)) n += countRec(c.id);
     return n;
   };
+  // Every session under a folder, recursively — for the attention
+  // roll-up (`●2 ✓1`) on the folder row.
+  const membersRec = (fid: string): number[] => {
+    const out = [...(membersByFolder.get(fid) ?? [])];
+    for (const c of childFoldersOf(fid)) out.push(...membersRec(c.id));
+    return out;
+  };
   const searching = (openDialog?.filter.value ?? "") !== "";
 
   const emitFolder = (f: DockFolder, depth: number): void => {
     nodes.push(
-      treeNode(folderNodeEntry(f, countRec(f.id)), { depth, hasChildren: true }),
+      treeNode(folderNodeEntry(f, countRec(f.id), attentionCounts(membersRec(f.id))), {
+        depth,
+        hasChildren: true,
+      }),
     );
     keys.push(folderNodeKey(f.id));
     model.push({ kind: "folder", folderId: f.id });
@@ -1528,15 +1557,29 @@ function buildDockTree(filtered: number[], activeId: number): DockTree {
   return { nodes, keys, model };
 }
 
-// One tree row for a folder: a folder glyph, the (bold) name, and the
-// recursive session count in dim parentheses.
-function folderNodeEntry(f: DockFolder, count: number): TextPropertyEntry {
+// One tree row for a folder: a folder glyph, the (bold) name, the
+// recursive session count in dim parentheses, and — so a collapsed
+// folder can't hide a workspace that needs you — the roll-up of its
+// members' blocked (`●n`) and done (`✓n`) counts in the state colours.
+function folderNodeEntry(
+  f: DockFolder,
+  count: number,
+  rollup: { blocked: number; done: number } = { blocked: 0, done: 0 },
+): TextPropertyEntry {
   const segs: Entry[] = [
     { text: FOLDER_GLYPH + " ", style: { fg: "ui.menu_disabled_fg" } },
     { text: f.name, style: { bold: true } },
   ];
   if (count > 0) {
     segs.push({ text: `  (${count})`, style: { fg: "ui.menu_disabled_fg" } });
+  }
+  if (rollup.blocked > 0) {
+    const sym = STATE_SYMBOL.blocked;
+    segs.push({ text: `  ${sym.glyph}${rollup.blocked}`, style: { fg: sym.fg, bold: true } });
+  }
+  if (rollup.done > 0) {
+    const sym = STATE_SYMBOL.done;
+    segs.push({ text: `  ${sym.glyph}${rollup.done}`, style: { fg: sym.fg, bold: true } });
   }
   return styledRow(segs as Parameters<typeof styledRow>[0]);
 }
@@ -2095,19 +2138,90 @@ async function refreshDiscoveredWorktrees(): Promise<void> {
 // 5s is a reasonable middle.
 const IDLE_AFTER_MS = 5000;
 
-// Coarse activity for a session, derived purely from how recently its
-// terminal produced output. This is the single source of truth — the
-// stored `state` field is just a cache of this for persistence/sorting.
-// No output ever (or no terminal) ⇒ idle: we have no evidence of work.
+// An output burst has to last at least this long before a quiet session
+// counts as "done" (something to review). Shorter bursts are prompt
+// redraws, a single echoed keystroke, a status line — not work.
+const WORK_MIN_MS = 1500;
+
+// How many trailing terminal lines `sessionState` inspects for a
+// waiting-on-you prompt. Agents draw their question plus a short menu
+// (`❯ 1. Yes  2. No`) so a handful of lines is enough.
+const RECENT_LINES = 6;
+
+// Lines that mean "the agent is waiting on the user". Generic across
+// Claude Code, Codex, Aider, Gemini, and a plain shell `read -p`: a
+// yes/no tail, an approval question, a "press Enter", a numbered
+// choice menu, or an explicit "waiting for input". Matched against the
+// last RECENT_LINES lines only, so an old question scrolled off-screen
+// can't keep a row blocked forever.
+const BLOCKED_PATTERNS: RegExp[] = [
+  /\(y\/n\)|\[y\/n\]|\(yes\/no\)|\[y\/N\]|\[Y\/n\]/i,
+  /\bdo you want to\b/i,
+  /\b(proceed|continue|allow|approve|confirm|accept)\?/i,
+  /\bpress (enter|return)\b/i,
+  /[❯>]\s*1[.)]\s*yes/i,
+  /\bdon'?t ask again\b/i,
+  /\bwaiting for (your )?(input|approval|confirmation)\b/i,
+  /\besc(ape)? to cancel\b/i,
+];
+
+// Does the agent terminal's recent output end in a question for the user?
+function agentWaitsForInput(s: AgentSession): boolean {
+  const lines = s.recentLines ?? [];
+  return lines.some((l) => BLOCKED_PATTERNS.some((re) => re.test(l)));
+}
+
+// Coarse activity for a session, derived from how recently its terminal
+// produced output plus two heuristics over what it printed. This is the
+// single source of truth — the stored `state` field is just a cache of
+// this for persistence/sorting.
 function sessionState(s: AgentSession): AgentState {
   // An explicit OSC activity signal (shell integration / progress) is
   // authoritative over the output-timing heuristic: a command running keeps
-  // the workspace "working" even while it prints nothing, and a finished
-  // command flips it idle at once rather than riding out IDLE_AFTER_MS.
+  // the workspace "working" even while it prints nothing.
   if (s.oscRunning === true) return "working";
-  if (s.oscRunning === false) return "idle";
-  if (s.lastOutputAt === null) return "idle";
-  return Date.now() - s.lastOutputAt < IDLE_AFTER_MS ? "working" : "idle";
+  // No output ever: a window with no agent terminal has nothing to wait
+  // on (idle); one that has a terminal we haven't heard from — or whose
+  // terminal exited — is a blank ("unknown").
+  if (s.lastOutputAt === null) return s.terminalId === null ? "idle" : "unknown";
+  // A finished OSC command flips out of "working" at once rather than
+  // riding out IDLE_AFTER_MS; otherwise recent output means working.
+  if (s.oscRunning !== false && Date.now() - s.lastOutputAt < IDLE_AFTER_MS) {
+    return "working";
+  }
+  // Quiet. A question on screen needs the user regardless of anything
+  // else; otherwise unseen work is "done" until they look at it.
+  if (agentWaitsForInput(s)) return "blocked";
+  if (s.workedSinceSeen && s.id !== editor.activeWindow()) return "done";
+  return "idle";
+}
+
+// How many live sessions currently need the user / have unseen work —
+// the numbers on the dock's attention line and in the folder roll-ups.
+function attentionCounts(ids: Iterable<number>): { blocked: number; done: number } {
+  let blocked = 0;
+  let done = 0;
+  for (const id of ids) {
+    const s = orchestratorSessions.get(id);
+    if (!s || s.discovered || s.pending) continue;
+    const st = sessionState(s);
+    if (st === "blocked") blocked++;
+    else if (st === "done") done++;
+  }
+  return { blocked, done };
+}
+
+// Record one terminal line for the blocked-prompt heuristic. Blank lines
+// and pure control noise are skipped so a redraw can't push the real
+// question out of the window; the buffer is capped at RECENT_LINES.
+function noteRecentLine(s: AgentSession, line: string): void {
+  const clean = line.replace(/\x1b\[[0-9;?]*[ -\/]*[@-~]/g, "").trim();
+  if (clean === "") return;
+  const lines = s.recentLines ?? [];
+  if (lines[lines.length - 1] === clean) return;
+  lines.push(clean);
+  if (lines.length > RECENT_LINES) lines.splice(0, lines.length - RECENT_LINES);
+  s.recentLines = lines;
 }
 
 // Age is shown at DAY granularity on purpose. A finer (s/m/h) counter ticks
@@ -2152,10 +2266,15 @@ interface StatusSymbol {
 const STATE_SYMBOL: Record<AgentState, StatusSymbol> = {
   // In progress — amber/warning, an asterisk reads as "busy/spinner".
   working: { glyph: "*", fg: "diagnostic.warning_fg" },
-  // Quiet / waiting — a small dim dot. Deliberately understated: idle is
-  // the resting state, so it shouldn't draw the eye the way a green
-  // check (which reads as "done/success") did.
+  // Needs you — a solid red dot, the only glyph meant to pull the eye.
+  blocked: { glyph: "●", fg: "diagnostic.error_fg" },
+  // Unseen finished work — a green check: something to review.
+  done: { glyph: "✓", fg: "ui.file_status_added_fg" },
+  // Quiet / nothing pending — a small dim dot. Deliberately understated:
+  // idle is the resting state, so it shouldn't draw the eye.
   idle: { glyph: "·", fg: "ui.menu_disabled_fg" },
+  // No signal at all (never printed, or the terminal exited).
+  unknown: { glyph: "?", fg: "ui.menu_disabled_fg" },
 };
 
 // Width of the left status margin: glyph + trailing space.
@@ -2781,10 +2900,17 @@ function buildPreviewEntries(
   const isActive = s.id === activeId;
   // The focused window is labelled "active"; everything else shows its
   // live working/idle activity (recomputed from the output timestamp).
+  const st = sessionState(s);
   const stateText = isActive
     ? editor.t("preview.state_active")
-    : sessionState(s) === "working"
+    : st === "working"
     ? editor.t("preview.state_working")
+    : st === "blocked"
+    ? editor.t("preview.state_blocked")
+    : st === "done"
+    ? editor.t("preview.state_done")
+    : st === "unknown"
+    ? editor.t("preview.state_unknown")
     : editor.t("preview.state_idle");
   const headerEntries: { text: string; style?: Record<string, unknown> }[] = [
     {
@@ -4395,6 +4521,33 @@ function pickProject(optionKey: string): void {
 // with ungrouped sessions at the top level. Lifecycle actions
 // (Stop/Archive/Delete) and bulk-select live in the modal picker,
 // reached from the Filters section's "Manage" button.
+// The dock's attention line (§2.3): how many workspaces need the user
+// and how many finished unseen work, in the same glyph + colour the rows
+// use. Both halves are optional; the separator only appears between two.
+function dockAttentionRow(att: { blocked: number; done: number }): WidgetSpec {
+  const parts: WidgetSpec[] = [];
+  if (att.blocked > 0) {
+    const sym = STATE_SYMBOL.blocked;
+    parts.push(
+      label(`${sym.glyph} ${editor.t("dock.need_you", { n: String(att.blocked) })}`, {
+        style: { fg: sym.fg, bold: true },
+      }),
+    );
+  }
+  if (att.done > 0) {
+    if (parts.length > 0) {
+      parts.push(label(" · ", { style: { fg: "ui.menu_disabled_fg" } }));
+    }
+    const sym = STATE_SYMBOL.done;
+    parts.push(
+      label(`${sym.glyph} ${editor.t("dock.done_count", { n: String(att.done) })}`, {
+        style: { fg: sym.fg, bold: true },
+      }),
+    );
+  }
+  return row(spacer(1), ...parts, flexSpacer());
+}
+
 function buildDockSpec(): WidgetSpec {
   if (!openDialog) return col();
   const filtered = openDialog.filteredIds;
@@ -4484,7 +4637,11 @@ function buildDockSpec(): WidgetSpec {
   // rest.
   const screen = editor.getScreenSize();
   const innerH = Math.max(8, screen.height > 0 ? screen.height : 30);
-  const chromeRows = 2 + searchRow.length + bottomRows;
+  // §2.3 attention line: `● 2 need you · ✓ 1 done`, only when there is
+  // something to say — a dock with nothing pending stays as tall as before.
+  const att = attentionCounts(orchestratorSessions.keys());
+  const attentionRow: WidgetSpec[] = att.blocked > 0 || att.done > 0 ? [dockAttentionRow(att)] : [];
+  const chromeRows = 2 + searchRow.length + attentionRow.length + bottomRows;
   const listRows = Math.max(MIN_LIST_ROWS, innerH - chromeRows);
   openDialog.listVisibleRows = listRows;
   // Rows of chrome above the tree (everything in chromeRows except the
@@ -4531,6 +4688,7 @@ function buildDockSpec(): WidgetSpec {
     ...(openDialog.dockMenu?.kind === "main" ? [dockMainMenu()] : []),
     ...(openDialog.projectMenuOpen ? [dockProjectMenu()] : []),
     ...searchRow,
+    ...attentionRow,
     // The "Move to folder…" dropdown floats over the tree without
     // reflowing it.
     ...(openDialog.dockMenu?.kind === "move" ? [dockMoveMenu()] : []),
@@ -11207,8 +11365,8 @@ export type WorkspaceSummary = {
   projectPath: string;
   /** Checked-out branch, when known. */
   branch?: string;
-  /** Whether the agent in this workspace is producing output right now. */
-  agentState: "working" | "idle";
+  /** Coarse agent activity: working, blocked (waiting on the user), done (unseen finished work), idle, or unknown. */
+  agentState: AgentState;
   /** Terminal tab title — in practice the agent's command line, since the
    *  launcher titles the tab with it. Empty when the pane has no title. */
   title: string;
@@ -13418,6 +13576,9 @@ editor.on("active_window_changed", () => {
   const s = orchestratorSessions.get(editor.activeWindow());
   if (s) {
     s.activatedAt = Date.now();
+    // Looking at the window is "seeing" its work: a `done` row goes back
+    // to idle the moment the user switches in.
+    s.workedSinceSeen = false;
     // Switching into a workspace counts as activity for the dock's recency
     // order (persisted at day granularity).
     markSessionActiveToday(s);
@@ -13503,8 +13664,31 @@ editor.on("terminal_output", (payload) => {
     // Stamp the moment of output. `sessionState` turns this into
     // working/idle; the cached `state` is updated so persistence and
     // any non-render reader see a fresh value too.
-    s.lastOutputAt = Date.now();
+    const now = Date.now();
+    // Burst bookkeeping for the "done" state: a run of output with gaps
+    // shorter than IDLE_AFTER_MS is one burst; once it has lasted
+    // WORK_MIN_MS while the user was looking at another window, there is
+    // unseen work. Output while the window is active is seen as it
+    // happens, so it never arms the flag (and clears a stale one).
+    if (s.lastOutputAt === null || now - s.lastOutputAt >= IDLE_AFTER_MS) {
+      s.burstStartAt = now;
+    }
+    if (s.id === editor.activeWindow()) {
+      s.workedSinceSeen = false;
+    } else if (now - (s.burstStartAt ?? now) >= WORK_MIN_MS) {
+      s.workedSinceSeen = true;
+    }
+    s.lastOutputAt = now;
     s.state = "working";
+    // Keep the trailing lines of the agent terminal for the blocked-prompt
+    // heuristic — only the session's own terminal, so a side shell can't
+    // make the row look blocked.
+    if (
+      (s.terminalId === null || s.terminalId === payload.terminal_id) &&
+      typeof payload.last_line === "string"
+    ) {
+      noteRecentLine(s, payload.last_line);
+    }
     // Terminal output is activity — feed the dock's day-granularity recency
     // order (persists at most once per session per day).
     markSessionActiveToday(s);
@@ -13549,7 +13733,10 @@ editor.on("terminal_exit", (payload) => {
     // terminal in the same window is still printing, the next
     // `terminal_output` re-marks it working within the debounce window.
     s.lastOutputAt = null;
-    s.state = "idle";
+    s.state = "unknown";
+    s.recentLines = [];
+    s.workedSinceSeen = false;
+    s.burstStartAt = undefined;
     // The terminal is gone, so any running OSC marker is stale — clear it so
     // a command that never emitted its "done" marker (killed, detached)
     // doesn't leave the row stuck "working".
