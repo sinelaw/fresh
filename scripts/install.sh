@@ -227,8 +227,24 @@ download_verified() {
         *)       log_warn "Download of $(basename "$1") failed (HTTP $_dl)."; return 1 ;;
     esac
 
-    sums=$(curl -fsSL "$1.sha256" 2>/dev/null || true)
-    [ -n "$sums" ] || log_error "no .sha256 published for $(basename "$1"); refusing to install unverified bytes."
+    # The sidecar is metered exactly like the artifact above, so it gets the same
+    # status handling. Collapsing every failure into "not published" was both
+    # wrong and fatal: a throttled request killed the install outright, skipping
+    # the fallback chain, and told the user the release was unsigned. Only a 404
+    # is that claim; everything else returns and lets a fallback method run.
+    # -s here where the artifact above has a progress meter: 112 bytes of
+    # checksum render one, which reads as a second download failing to start.
+    _sum_code=$(curl -sSL -w '%{http_code}' "$1.sha256" -o "$2.sha256") || _sum_code=000
+    case "$_sum_code" in
+        2??) ;;
+        403|429) log_warn "GitHub is rate limiting downloads from this network (HTTP $_sum_code); retry shortly."; rm -f "$2.sha256"; return 1 ;;
+        404)     log_error "no .sha256 published for $(basename "$1"); refusing to install unverified bytes." ;;
+        000)     log_warn "Could not reach GitHub for the checksum of $(basename "$1")."; rm -f "$2.sha256"; return 1 ;;
+        *)       log_warn "Checksum fetch for $(basename "$1") failed (HTTP $_sum_code)."; rm -f "$2.sha256"; return 1 ;;
+    esac
+    sums=$(cat "$2.sha256")
+    rm -f "$2.sha256"
+    [ -n "$sums" ] || log_error "the .sha256 for $(basename "$1") is empty; refusing to install unverified bytes."
 
     expected=$(printf '%s\n' "$sums" | awk 'NR==1 {print $1}')
     actual=$(sha256_of "$2") || log_error "need sha256sum or shasum to verify the download; install coreutils and retry."

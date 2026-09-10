@@ -3,6 +3,9 @@
 
 name: Flatpak Build
 
+permissions:
+  contents: read
+
 on:
   workflow_call:
     inputs:
@@ -60,7 +63,7 @@ jobs:
           cp scripts/write-install-receipt.sh crates/fresh-editor/scripts/
 
       - name: Build Flatpak
-        uses: flatpak/flatpak-github-actions/flatpak-builder@v6
+        uses: flatpak/flatpak-github-actions/flatpak-builder@79327416609af08178ad73b352877e51450790b3 # v6
         with:
           manifest-path: crates/fresh-editor/flatpak/io.github.sinelaw.fresh.yml
           bundle: fresh-editor-${{ inputs.version }}-x86_64.flatpak

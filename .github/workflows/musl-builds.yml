@@ -4,6 +4,9 @@
 
 name: Musl Builds
 
+permissions:
+  contents: read
+
 on:
   workflow_call:
   workflow_dispatch:
@@ -30,7 +33,7 @@ jobs:
           submodules: recursive
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch
         with:
           targets: ${{ matrix.target }}
 
@@ -44,8 +47,11 @@ jobs:
           sudo apt-get install -y musl-tools
           # For aarch64 cross-compilation
           if [ "${{ matrix.target }}" = "aarch64-unknown-linux-musl" ]; then
-            # Install cross for easier cross-compilation
-            cargo install cross --git https://github.com/cross-rs/cross
+            # `--locked` so a patch release of one of cross's own dependencies
+            # cannot enter the toolchain that builds our release binaries. The
+            # revision itself is still the default branch; pinning it needs
+            # someone to confirm which one aarch64 requires.
+            cargo install cross --locked --git https://github.com/cross-rs/cross
           fi
 
       - name: Build release binary

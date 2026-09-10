@@ -1,5 +1,8 @@
 name: FreeBSD Builds
 
+permissions:
+  contents: read
+
 on:
   workflow_call:
   workflow_dispatch:
@@ -14,7 +17,7 @@ jobs:
 
       - name: Build in FreeBSD
         id: build
-        uses: vmactions/freebsd-vm@v1
+        uses: vmactions/freebsd-vm@8b0f1a8fc0ea0def307835c258940ca358fe6480 # v1
         with:
           usesh: true
           # rsync is the default, ensuring target/ and archives come back to the host

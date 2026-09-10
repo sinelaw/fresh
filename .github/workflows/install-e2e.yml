@@ -39,5 +39,7 @@ jobs:
         distro: [ubuntu, debian, fedora, alpine, arch]
     steps:
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - name: Install and run
         run: ./scripts/test-install-e2e.sh ${{ matrix.distro }}

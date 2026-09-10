@@ -1,5 +1,8 @@
 name: CI
 
+permissions:
+  contents: read
+
 on:
   pull_request:
   push:
@@ -17,6 +20,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
 
+# Every checkout here sets `persist-credentials: false`: these jobs compile and
+# run the pull request's own code — a build.rs, a proc macro, a test — and the
+# default checkout leaves the job token in `.git/config` for that code to read.
 jobs:
   fmt:
     name: fmt
@@ -24,8 +30,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - name: Cache Cargo dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - name: check formatting
         run: cargo fmt -- --check
   clippy:
@@ -34,8 +42,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - name: Cache Cargo dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       # Plain `cargo clippy` fails the build only on error-level diagnostics
       # (deny-by-default lints, the crate's `#![deny(clippy::let_underscore_must_use)]`,
       # or compile errors) — clippy *warnings* do not fail it. The previous
@@ -52,8 +62,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - name: Install Rust nightly
-        uses: dtolnay/rust-toolchain@nightly
+        uses: dtolnay/rust-toolchain@be39649afda95dbf70f87cce95f68b8d5797b296 # nightly branch
       - name: Run cargo doc
         run: cargo doc --no-deps --all-features
         env:
@@ -63,8 +75,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - name: Cache Cargo dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - name: Generate schema
         run: cargo run --features dev-bins --bin generate_schema > /tmp/config-schema.json
       - name: Check schema is up-to-date
@@ -75,8 +89,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - name: Cache Cargo dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - name: Check build without plugins feature
         run: cargo check --no-default-features --features runtime --all-targets
 
@@ -90,6 +106,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - name: Lint install.sh
         run: shellcheck -S warning -s sh scripts/install.sh
       - name: Failure modes
@@ -110,12 +128,14 @@ jobs:
       # - run: vcpkg install openssl:x64-windows-static-md
       #   if: runner.os == 'Windows'
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch
       - name: Cache Cargo dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@c3ec0de9ae7f1019cea21aa96aa0a895b9552063 # v2
         with:
           tool: cargo-nextest
       # Install Vulkan + Xvfb for headless GPU testing (Linux only).
@@ -155,6 +175,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - name: Install actionlint
         env:
           VERSION: 1.7.7
@@ -168,3 +190,17 @@ jobs:
         env:
           SHELLCHECK_OPTS: -S warning
         run: ./actionlint -no-color -oneline -shellcheck shellcheck
+
+  supply-chain:
+    name: supply-chain audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@c3ec0de9ae7f1019cea21aa96aa0a895b9552063 # v2
+        with:
+          tool: cargo-deny
+      - name: Check advisories, sources and licenses
+        run: cargo deny --all-features check advisories sources licenses
