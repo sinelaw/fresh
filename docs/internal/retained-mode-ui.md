@@ -347,18 +347,61 @@ the widget text projection* below.
 
 ### Delete the widget text projection
 
-Open, and unblocked. Everything the projection produced is either replaced by
-the tree or read by nothing. What goes: `WidgetPanelState::{painted, boxes}`
-and the `mount`/`update_side_effects` arguments that carry them; `render_spec`,
-`render_floating_spec`, `render_panel_spec` and `render_collected` with every
-kind's collector arm; `layout_box.rs` (`LayoutBox`, `BoxScroll`, `focus_ring`,
-`hit_path`); `render_button` and the `Frame`-sharing test that justified
-keeping it; `Text::on_wheel`'s document branch and the `scroll` /
-`user_scrolled` fields whose only reader it was; the `entries` mirror on
-`FloatingWidgetState` and with it `Spot::{content_rows, content_cols}`. Then
-`app/chrome/`'s two hover reactions move beside their surfaces and the module
-goes. The exit property: **no description build runs a renderer** — assert it
-by making `render_collected` not exist.
+**Narrowed, by decision.** The projection has two kinds of output, and only
+one of them is dead.
+
+Its **text** — `RenderOutput::entries` — is load-bearing for a pane-mounted
+panel: the panel's *buffer* is those rows (`set_virtual_buffer_content`),
+code-tour reads that buffer back (`getBufferText`, in `lineRangeBytes`) to
+place its step highlight, and the page's reading row and the status bar's
+`Ln`/`Col` ride on it — "the mirror follows rather than leads". So
+`render_collected` stays as the mirror's producer, and `render_button` stays
+as the mirror's text formatter (it already reads `Frame::BUTTON`; the
+duplication the stylesheet work set out to end is gone). It runs on mount and
+update, never inside a description build: **no description build runs a
+renderer** holds today. Deriving the mirror from the tree's own rows is its
+own project — the same capability the gutter-as-runs and the web's remaining
+projections wait on — and a prerequisite for deleting the collector outright.
+
+Its **geometry** — the box arena and the hit ranges — has no reader left, and
+that deletion is open. An attempt to do it by scripted, compiler-driven
+statement removal corrupted `containers.rs` and `render.rs` twice and was
+reverted; it needs to be done per file with the text in view. The map:
+
+- `CollectedOutput::{shift_channels, absorb_child, push_self_box}` in
+  `render.rs`: the `boxes`/`hits`/`painted` legs of the first two, all of the
+  third; the `focus_ring(&collected.boxes)` → `tabbable` derivation in
+  `render_spec`'s assembly; the `PaintedWindow` folds around lines 494–575.
+- `RenderOutput::{hits, tabbable, painted, boxes}` and
+  `CollectedOutput::{hits, boxes, painted, self_scroll}`.
+- `containers.rs`: the three assemblers' `hits: &mut Vec<HitArea>` /
+  `out_boxes: &mut Vec<LayoutBox>` parameters (`assemble_inline_row`,
+  `assemble_wrapped_row`, `zip_row_blocks`) and every argument at their
+  call sites; `RowPiece::hits`; the `hits`/`boxes`/`painted` locals in
+  `collect_row`, `collect_col`, `collect_section` and their struct fields;
+  the `painted` assertions in its tests.
+- Per kind: `out.hits.push(HitArea { .. })`, `out.push_self_box(..)`,
+  `out.self_scroll = Some(BoxScroll { .. })`, `out.painted.insert(..)` in
+  `list.rs`, `tree.rs`, `text.rs`, `button.rs`, `toggle.rs`, `number.rs`,
+  `dual_list.rs`, `dropdown.rs`, `popup.rs`, `hint_bar.rs`, `raw.rs`,
+  `spacer.rs`, `divider.rs`, `window_embed.rs`, `component.rs`.
+- `registry.rs`: `HitArea`, `PaintedWindow`, `WidgetPanelState::{painted,
+  boxes}`, `painted_viewport`, the `&mut PaintedWindow` accessor, and the
+  `painted`/`boxes` parameters of `mount` and `update_side_effects`;
+  `widgets/mod.rs`'s re-exports; `layout_box.rs` whole.
+- Host: the five mount/update sites in `plugin_dispatch.rs` and the
+  re-render tail in `widget_runtime.rs` pass `out.painted`/`out.boxes` —
+  drop the arguments; `widget_viewport`'s `painted_viewport` fallback (the
+  spec's `Viewport::from_spec` is what remains); `painted_panel_height`
+  and `widget_panels_with_stale_height`, which must read the pane's height
+  from the tree instead; `Text::on_wheel`'s document branch, which reads an
+  arena nothing fills.
+- Then `FloatingWidgetState::entries` (read only by `panel_description`'s
+  `Host` fallback), `Spot::{content_rows, content_cols}` and the painted
+  branches of `Panel::{height, anchored_width}` — every described box says
+  `Auto` — and the `painter::{centered, anchored}` parity tests that pin the
+  painted arithmetic. And `app/chrome/`'s two hover reactions move beside
+  their surfaces, and the module goes.
 
 ### The status bar does layout by hand
 
