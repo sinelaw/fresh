@@ -230,22 +230,22 @@ The `key` field of a binding takes one of the names below.
 
 | Name | Key |
 |---|---|
-| `enter` | `Enter` |
-| `backspace` | `Backspace` |
+| `enter`, `ret`, `return` | `Enter` |
+| `backspace`, `bs` | `Backspace` |
 | `delete`, `del` | `Delete` |
 | `insert`, `ins` | `Insert` |
 | `tab` | `Tab` |
-| `backtab` | `BackTab` |
+| `backtab`, `shift+tab` | `BackTab` |
 | `escape`, `esc` | `Esc` |
-| `space` | the space bar |
+| `space`, `spc` | the space bar |
 | `left` | `Left` |
 | `right` | `Right` |
 | `up` | `Up` |
 | `down` | `Down` |
 | `home` | `Home` |
 | `end` | `End` |
-| `pageup` | `PageUp` |
-| `pagedown` | `PageDown` |
+| `pageup`, `pgup` | `PageUp` |
+| `pagedown`, `pgdn` | `PageDown` |
 | `capslock` | `CapsLock` |
 | `scrolllock` | `ScrollLock` |
 | `numlock` | `NumLock` |
