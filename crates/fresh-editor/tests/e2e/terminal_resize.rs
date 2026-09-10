@@ -1,6 +1,108 @@
 use crate::common::harness::EditorTestHarness;
 use tempfile::TempDir;
 
+/// The resize shortcut must reach the layout while the dock's PTY owns focus.
+/// Observe both the rendered dock boundary and the size reported by its shell.
+#[test]
+#[cfg(unix)]
+fn test_kitty_split_resize_in_focused_terminal_dock() {
+    use crossterm::event::{KeyCode, KeyModifiers};
+    use fresh::config::{Config, Keybinding, TerminalShellConfig};
+    use fresh::server::input_parser::{Event, InputParser};
+
+    fn send_bytes(harness: &mut EditorTestHarness, bytes: &[u8]) {
+        for event in InputParser::new().parse(bytes) {
+            if let Event::Key(press) = event {
+                harness.send_key_press(press).unwrap();
+            }
+        }
+    }
+
+    fn probe(harness: &mut EditorTestHarness, tag: &str) -> (usize, u16) {
+        harness.type_text(tag).unwrap();
+        harness
+            .send_key(KeyCode::Enter, KeyModifiers::NONE)
+            .unwrap();
+        let marker = format!("SIZE_{tag}_");
+        harness.wait_for_screen_contains(&marker).unwrap();
+        let screen = harness.screen_to_string();
+        let (row, line) = screen
+            .lines()
+            .enumerate()
+            .find(|(_, line)| line.contains(&marker))
+            .unwrap();
+        let height = line
+            .split_once(&marker)
+            .unwrap()
+            .1
+            .split('_')
+            .next()
+            .unwrap()
+            .parse()
+            .unwrap();
+        (row, height)
+    }
+
+    let temp = TempDir::new().unwrap();
+    let file = temp.path().join("editor.txt");
+    std::fs::write(&file, "EDITOR_UNCHANGED\n").unwrap();
+    let mut config = Config::default();
+    config.terminal.shell = Some(TerminalShellConfig {
+        command: "/bin/sh".into(),
+        args: vec![
+            "-c".into(),
+            "stty -echo; printf 'READY\\n'; \
+             while IFS= read -r line; do \
+               [ \"$line\" = exit ] && break; \
+               set -- $(stty size); \
+               printf '\\033[2J\\033[HSIZE_%s_%s_%s\\n' \"$line\" \"$1\" \"$2\"; \
+             done; printf 'STOPPED\\n'"
+                .into(),
+        ],
+    });
+    for (key, action) in [("l", "increase_split_size"), ("k", "decrease_split_size")] {
+        config.keybindings.push(Keybinding {
+            key: key.into(),
+            modifiers: vec!["ctrl".into(), "shift".into(), "super".into()],
+            keys: Vec::new(),
+            action: action.into(),
+            args: Default::default(),
+            when: Some("terminal".into()),
+        });
+    }
+    let mut harness =
+        EditorTestHarness::with_config_and_working_dir(130, 42, config, temp.path().to_path_buf())
+            .unwrap();
+    harness.open_file(&file).unwrap();
+    harness.run_palette_command("Split Vertical").unwrap();
+    harness
+        .run_palette_command("Open Terminal in Utility Dock")
+        .unwrap();
+    harness.wait_for_screen_contains("READY").unwrap();
+    let before = probe(&mut harness, "before");
+    send_bytes(&mut harness, b"\x1b[108;14u");
+    let increased = probe(&mut harness, "increased");
+    // Native IncreaseSplitSize grows the parent's FIRST child (the editors),
+    // so the bottom dock gets shorter, irrespective of which child has focus.
+    assert!(increased.0 > before.0, "dock boundary must move down");
+    assert!(
+        increased.1 < before.1,
+        "shell must receive the shorter PTY size"
+    );
+    send_bytes(&mut harness, b"\x1b[107;14u");
+    assert_eq!(probe(&mut harness, "restored"), before);
+    let screen = harness.screen_to_string();
+    assert_eq!(screen.matches("EDITOR_UNCHANGED").count(), 2);
+    assert_eq!(screen.matches("editor.txt").count(), 2);
+    harness.type_text("exit").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_screen_contains("STOPPED").unwrap();
+    harness.run_palette_command("Close Buffer").unwrap();
+    harness.assert_screen_contains("EDITOR_UNCHANGED");
+}
+
 /// Test that viewport uses full available area after terminal resize at startup
 ///
 /// This test reproduces a bug where:
