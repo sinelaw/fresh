@@ -156,10 +156,26 @@ fn auto_open_setting_shows_dock_unfocused_at_startup() {
     );
 }
 
-/// Auto-open is opt-in: the ready hook alone leaves the dock closed.
+/// Auto-open is the default: the ready hook alone brings the dock up,
+/// unfocused — a switcher nobody knows to open is not one.
 #[test]
-fn auto_open_defaults_off() {
+fn auto_open_defaults_on() {
     let (_tmp, root, config) = setup(serde_json::json!({}));
+    let mut h = EditorTestHarness::with_config_and_working_dir(120, 32, config, root).unwrap();
+    h.render().unwrap();
+    h.editor_mut().fire_ready_hook();
+    h.wait_until(|h| h.screen_to_string().contains("+ New"))
+        .unwrap();
+    assert!(
+        !h.editor().is_dock_focused(),
+        "the auto-opened dock must not steal keyboard focus"
+    );
+}
+
+/// `autoOpenDock: false` keeps the dock closed until it is toggled.
+#[test]
+fn auto_open_can_be_switched_off() {
+    let (_tmp, root, config) = setup(serde_json::json!({ "autoOpenDock": false }));
     let mut h = EditorTestHarness::with_config_and_working_dir(120, 32, config, root).unwrap();
     h.render().unwrap();
     h.editor_mut().fire_ready_hook();

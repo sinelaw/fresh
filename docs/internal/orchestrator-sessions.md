@@ -321,7 +321,7 @@ the generated settings widgets.
 
 | Setting               | Default  | Effect                                              |
 | --------------------- | -------- | --------------------------------------------------- |
-| `autoOpenDock`        | `false`  | Open the dock (unfocused) on the `ready` event.      |
+| `autoOpenDock`        | `true`   | Open the dock (unfocused) on the `ready` event.      |
 | `defaultView`         | `"card"` | Density the dock opens at: `card` or `compact`.      |
 | `showAllWorktrees`    | `false`  | Initial state of the "all worktrees" checkbox.       |
 | `showEmptyWorkspaces` | `true`   | Initial state of the "show empty" checkbox (i.e. `hideTrivial = !showEmptyWorkspaces`). |

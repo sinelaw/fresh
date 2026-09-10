@@ -948,10 +948,13 @@ let lastDockProjectFilter: string | null = null;
 // (the "view" button, the two Filters checkboxes) still win for the rest
 // of the session — they set the `*Override` / `last*` values above —
 // they just no longer decide where the dock starts.
+// On by default: the dock is how workspaces and their agents are seen at
+// all, and a switcher nobody knows to open is not one. It opens unfocused,
+// so the keyboard stays with the editor.
 editor.defineConfigBoolean("autoOpenDock", {
-  default: false,
+  default: true,
   description:
-    "Open the workspace dock automatically when Fresh starts. The dock opens unfocused, so typing still goes to the editor.",
+    "Open the workspace dock automatically when Fresh starts. The dock opens unfocused, so typing still goes to the editor. Off keeps it hidden until Orchestrator: Toggle Dock.",
 });
 editor.defineConfigEnum("defaultView", {
   values: ["compact", "card"] as const,
@@ -13402,7 +13405,7 @@ editor.on("ready", () => {
   // fight. Like the pending-workspace case, the dock comes up *blurred*:
   // it's a switcher, not something to type into, so the keyboard stays
   // with whatever the editor restored.
-  if (dockSettings().autoOpenDock === true) showDockUnfocused();
+  if (dockSettings().autoOpenDock !== false) showDockUnfocused();
 });
 
 // Grace window after a session becomes active during which terminal
