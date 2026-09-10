@@ -672,6 +672,17 @@ impl Editor {
                 .send_lsp_changes_for_buffer(buffer_id, full_content_change);
         }
 
+        // This path does not go through `apply_event_to_active_buffer`, so the
+        // `seen_byte_ranges` maintenance that runs there for a single event
+        // never runs here — and a bulk edit is exactly where it is needed. A
+        // line whose *text* is unchanged keeps its range, so it stays "seen"
+        // and is never re-offered, while its per-line decorations have already
+        // been shifted off it by the edit (Enter at the end of a line moves
+        // that line's end-anchored decorations onto the line below, where the
+        // next pass clears them). One re-fire of the viewport, on the same rule
+        // the single-event path uses.
+        self.handle_refresh_lines(buffer_id);
+
         Some(bulk_edit)
     }
 

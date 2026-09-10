@@ -637,22 +637,51 @@ pub(super) fn inject_virtual_lines(
 struct InlineHintCell {
     text: String,
     style: Option<ViewTokenStyle>,
-    /// See [`InlineHint::pad_to_column`]; the cell is padded on emit.
+    /// See [`InlineHint::pad_to_column`].
     pad_to_column: Option<u32>,
 }
 
-/// The splice's output, carrying the column its current row has reached.
+/// The splice's output, carrying the column its current row has reached and the
+/// hints waiting for that row to end.
 ///
-/// Only a `pad_to_column` hint reads it, but every push has to maintain it, so
-/// it lives on the sink rather than being recomputed per hint. Advances match
-/// `WrapMachine`'s, since the two measure the same rows.
+/// Only a `pad_to_column` hint reads the column, but every push has to maintain
+/// it, so it lives on the sink rather than being recomputed per hint. Advances
+/// match `WrapMachine`'s, since the two measure the same rows.
 struct SplicedRow {
     tokens: Vec<ViewTokenWire>,
     col: usize,
+    /// Hints waiting for the end of the row they were anchored in.
+    row_end: Vec<(String, Option<ViewTokenStyle>, u32)>,
 }
 
 impl SplicedRow {
+    /// Emit a hint at the end of the row its anchor fell in, rather than at the
+    /// anchor. Deferred until [`Self::push`] reaches the row's end.
+    fn defer_to_row_end(&mut self, text: String, style: Option<ViewTokenStyle>, target: u32) {
+        self.row_end.push((text, style, target));
+    }
+
+    fn flush_row_end(&mut self) {
+        for (text, style, target) in std::mem::take(&mut self.row_end) {
+            let end = self.col + crate::primitives::visual_layout::visual_width(&text, self.col);
+            let pad = (target as usize).saturating_sub(end);
+            let cell = format!("{}{text}", " ".repeat(pad));
+            self.col += crate::primitives::visual_layout::visual_width(&cell, self.col);
+            self.tokens.push(ViewTokenWire {
+                source_offset: None,
+                kind: ViewTokenWireKind::Text(cell),
+                style,
+            });
+        }
+    }
+
     fn push(&mut self, token: ViewTokenWire) {
+        if matches!(
+            token.kind,
+            ViewTokenWireKind::Newline | ViewTokenWireKind::Break
+        ) {
+            self.flush_row_end();
+        }
         match &token.kind {
             ViewTokenWireKind::Newline | ViewTokenWireKind::Break => self.col = 0,
             ViewTokenWireKind::Text(s) => {
@@ -662,20 +691,6 @@ impl SplicedRow {
             ViewTokenWireKind::BinaryByte(_) => self.col += 4,
         }
         self.tokens.push(token);
-    }
-
-    /// `text` left-padded to end at `target`, or `default_pad` in front of it
-    /// when no target is set. Over-long rows get no padding rather than a
-    /// negative one — their edge is open, which the emitter already allows for.
-    fn padded(&self, text: &str, target: Option<u32>, default_pad: &str) -> String {
-        match target {
-            None => format!("{default_pad}{text}"),
-            Some(target) => {
-                let end = self.col + crate::primitives::visual_layout::visual_width(text, self.col);
-                let pad = (target as usize).saturating_sub(end);
-                format!("{}{text}", " ".repeat(pad))
-            }
-        }
     }
 }
 
@@ -694,8 +709,8 @@ pub struct InlineHint {
     /// would have to assume one, and a snapshot that disagrees with the live
     /// marker makes the index lay out a line the renderer never draws.
     pub gravity: crate::view::virtual_text::MarkerGravity,
-    /// Left-pad the hint so it ends at this column of its row. See
-    /// [`splice_inline_virtual_text`].
+    /// Draw the hint at the END of the row its anchor falls in, left-padded to
+    /// end at this column. See [`splice_inline_virtual_text`].
     pub pad_to_column: Option<u32>,
     /// `None` when the caller passed no theme — the scroll-math and index
     /// paths, where only the cell's *width* matters and nothing is drawn.
@@ -812,6 +827,7 @@ pub fn splice_inline_virtual_text(
     let mut out = SplicedRow {
         tokens: Vec::with_capacity(tokens.len()),
         col: 0,
+        row_end: Vec::new(),
     };
     // Whether nothing of this line's own source has been emitted yet. Only
     // used to recognise a newline that *is* the whole line — an empty line —
@@ -842,12 +858,10 @@ pub fn splice_inline_virtual_text(
                         }
                         seg_start = anchor;
                         for (text, style, target) in hints {
-                            let cell = out.padded(text, *target, "");
-                            let cell = match target {
-                                Some(_) => cell,
-                                None => format!("{cell} "),
-                            };
-                            out.push(virt(cell, style.clone()));
+                            match target {
+                                Some(t) => out.defer_to_row_end(text.clone(), style.clone(), *t),
+                                None => out.push(virt(format!("{text} "), style.clone())),
+                            }
                         }
                     }
                     seg.push(ch);
@@ -860,8 +874,14 @@ pub fn splice_inline_virtual_text(
                         });
                         seg_start = token_start + byte_idx;
                         for hint in hints {
-                            let cell = out.padded(&hint.text, hint.pad_to_column, " ");
-                            out.push(virt(cell, hint.style.clone()));
+                            match hint.pad_to_column {
+                                Some(t) => {
+                                    out.defer_to_row_end(hint.text.clone(), hint.style.clone(), t)
+                                }
+                                None => {
+                                    out.push(virt(format!(" {}", hint.text), hint.style.clone()))
+                                }
+                            }
                         }
                     }
                 }
@@ -888,13 +908,14 @@ pub fn splice_inline_virtual_text(
                 let empty_line = anchor_is_newline && line_start_cell;
                 if let Some(hints) = before.get(&anchor) {
                     for (text, style, target) in hints {
-                        let padded = match (target, anchor_is_newline, empty_line) {
-                            // A target column supersedes the convention: the
-                            // caller is placing a column, not trailing a word.
-                            (Some(t), _, _) => out.padded(text, Some(*t), ""),
-                            (None, _, true) => text.clone(),
-                            (None, true, false) => format!(" {text} "),
-                            (None, false, _) => format!("{text} "),
+                        if let Some(t) = target {
+                            out.defer_to_row_end(text.clone(), style.clone(), *t);
+                            continue;
+                        }
+                        let padded = match (anchor_is_newline, empty_line) {
+                            (_, true) => text.clone(),
+                            (true, false) => format!(" {text} "),
+                            (false, _) => format!("{text} "),
                         };
                         out.push(virt(padded, style.clone()));
                     }
@@ -903,8 +924,12 @@ pub fn splice_inline_virtual_text(
                 out.push(token);
                 if let Some(hints) = after_hints {
                     for hint in hints {
-                        let cell = out.padded(&hint.text, hint.pad_to_column, " ");
-                        out.push(virt(cell, hint.style.clone()));
+                        match hint.pad_to_column {
+                            Some(t) => {
+                                out.defer_to_row_end(hint.text.clone(), hint.style.clone(), t)
+                            }
+                            None => out.push(virt(format!(" {}", hint.text), hint.style.clone())),
+                        }
                     }
                 }
             }
@@ -914,6 +939,7 @@ pub fn splice_inline_virtual_text(
         }
     }
 
+    out.flush_row_end();
     out.tokens
 }
 

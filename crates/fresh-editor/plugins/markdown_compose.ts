@@ -416,8 +416,6 @@ function emitCodeRails(
   blockIndent: number,
 ): void {
   const contentEnd = lineContentEndByte(lineContent, byteStart);
-  // Past the terminator, so `contentEnd < lineEndByte` means "has one".
-  const lineEndByte = charToByte(lineContent, lineContent.length, byteStart);
   const text = lineContent.replace(/\r?\n$/, "");
   const blockMeasure = Math.max(4, measure - blockIndent);
   const inner = codeInnerWidth(blockMeasure);
@@ -458,40 +456,26 @@ function emitCodeRails(
     // Only the first row has the block's indent as real text ahead of it.
     const railLead = r === 0 ? "" : " ".repeat(blockIndent);
 
+    const rowStartByte = charToByte(lineContent, blockIndent + row.start, byteStart);
     editor.addVirtualTextStyled(
-      bufferId, `${CODE_RAIL_ID_PREFIX}${byteStart}:${r}:l`,
-      charToByte(lineContent, blockIndent + row.start, byteStart),
+      bufferId, `${CODE_RAIL_ID_PREFIX}${byteStart}:${r}:l`, rowStartByte,
       railLead + RAIL_GLYPH + " ".repeat(railIndent), codeFrameStyle, true,
     );
 
     const pad = inner - displayWidth(rowText) - railIndent;
     if (pad < 0) continue; // unbreakable over-long row: leave the edge open
 
-    // The line break is the only anchor an edit at the end of the line cannot
-    // orphan: deleting the last character would collapse an `after` hint onto
-    // the break, which renders on the NEXT row, and an insertion there would
-    // outrun it. Right gravity carries this one along instead. `pad` is
-    // unchanged — the end-of-line hint's trailing space falls outside the
-    // frame, on slack `codeFrameWidth` already holds back. Residual: the
-    // padding is still a pass stale, so the edge breathes a column.
-    // Soft-broken rows and an unterminated line have no break to hang it on.
-    const atLineEnd = row.end === body.length && contentEnd < lineEndByte;
-    if (atLineEnd) {
-      editor.addVirtualTextStyled(
-        bufferId, `${CODE_RAIL_ID_PREFIX}${byteStart}:${r}:r`, contentEnd,
-        RAIL_GLYPH, railColumn, true,
-      );
-      continue;
-    }
-
-    // By code point, not `end - 1`: that byte can land inside a multi-byte glyph.
-    const lastChar = Array.from(rowText).pop() as string;
-    const lastCharStart = charToByte(
-      lineContent, blockIndent + row.end - lastChar.length, byteStart,
-    );
+    // The closing rail hangs off the row's FIRST byte, not its last character
+    // and not its line break: `padToColumn` draws it at the row's end anyway,
+    // so the anchor's only job is to name the row — and this is the one byte in
+    // the row that an edit at the row's end cannot move. A rail anchored at the
+    // end drifts: typing there outruns it, deleting there orphans it onto the
+    // line break, and pressing Enter there carries it onto the NEXT line, whose
+    // own clear then deletes it for good (the line it belongs to is textually
+    // unchanged, so it is never re-offered to put it back).
     editor.addVirtualTextStyled(
-      bufferId, `${CODE_RAIL_ID_PREFIX}${byteStart}:${r}:r`, lastCharStart,
-      RAIL_GLYPH, railColumn, false,
+      bufferId, `${CODE_RAIL_ID_PREFIX}${byteStart}:${r}:r`, rowStartByte,
+      RAIL_GLYPH, railColumn, true,
     );
   }
 }
