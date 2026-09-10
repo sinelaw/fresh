@@ -7481,6 +7481,15 @@ function noteText(s: string): string {
   return s.replace(/^\s*[↳ⓘ]\s*/, "").replace(/\s+·\s+/g, " · ");
 }
 
+// A placeholder that carries an instruction in a trailing parenthetical —
+// `pod name (kubectl get pods)`, `HEAD  (no origin configured)` — splits the
+// same way a label does: the example stays in the value slot, the
+// instruction goes under the field. A value slot shows a value (design §3.7).
+function splitPlaceholder(s: string): { placeholder: string; note: string } {
+  const m = /^(.*?)\s*[(（](.*)[)）]\s*$/.exec(s);
+  return m ? { placeholder: m[1].trim(), note: m[2].trim() } : { placeholder: s.trim(), note: "" };
+}
+
 const NOTE_STYLE = { fg: "ui.menu_disabled_fg", italic: true } as const;
 
 // One row under a field, in the field column: `↳ hint`.
@@ -7492,7 +7501,7 @@ function fieldNote(text: string, style: Partial<OverlayOptions> = NOTE_STYLE): W
 function field(
   lbl: string,
   slot: { value: string; cursor: number },
-  o: { key?: string; placeholder?: string; note?: string },
+  o: { key?: string; placeholder?: string; note?: string | undefined },
 ): WidgetSpec[] {
   const out: WidgetSpec[] = [
     text({
@@ -7566,14 +7575,14 @@ function cmdVisible(): boolean {
 }
 
 function cmdField(): WidgetSpec[] {
+  // Clearing the field falls back to the backend default: a bare local
+  // terminal (the host resolves `$SHELL`), or — for SSH — letting ssh
+  // spawn the remote login shell. The placeholder names that default.
+  const ssh = splitPlaceholder(editor.t("form.cmd_placeholder_ssh"));
   return field(formLabel("form.agent_command"), form!.cmd, {
     key: "cmd",
-    // Clearing the field falls back to the backend default: a bare local
-    // terminal (the host resolves `$SHELL`), or — for SSH — letting ssh
-    // spawn the remote login shell. The placeholder names that default.
-    placeholder: form!.backend === "ssh"
-      ? editor.t("form.cmd_placeholder_ssh")
-      : editor.t("form.agent_terminal"),
+    placeholder: form!.backend === "ssh" ? ssh.placeholder : editor.t("form.agent_terminal"),
+    note: form!.backend === "ssh" ? ssh.note : undefined,
   });
 }
 
@@ -7616,14 +7625,13 @@ function agentSwitchFields(): WidgetSpec[] {
 // Local backend: Project Path, with the linked-worktree hint under it.
 function localBodyFields(): WidgetSpec[] {
   if (!form) return [];
+  // The value slot shows the default itself (dim, as every placeholder is);
+  // the note under it says that blank means this path. Submitting with the
+  // field empty uses it.
   const fields = field(formLabel("form.project_path"), form.projectPath, {
     key: "project_path",
-    // Label the placeholder explicitly as the default-if-blank so it can't
-    // be mistaken for a real prefilled value. Submitting with the field
-    // empty uses this path.
-    placeholder: form.defaultProjectPath
-      ? editor.t("form.project_path_default", { path: form.defaultProjectPath })
-      : editor.t("form.detecting_project_root"),
+    placeholder: form.defaultProjectPath || editor.t("form.detecting_project_root"),
+    note: form.defaultProjectPath ? editor.t("form.project_path_note") : undefined,
   });
   if (form.projectPathIsLinkedWorktree === true) {
     fields.push(
@@ -7650,7 +7658,7 @@ function worktreeFields(): WidgetSpec[] {
   if (!worktreeEnabled) {
     // Not a git path: say so where the toggle would be, and stop.
     out.push(
-      label(editor.t("form.create_worktree_disabled"), {
+      label(`[ ] ${editor.t("form.create_worktree_short")}`, {
         labelWidth: FORM_LABEL_W,
         style: { fg: "editor.whitespace_indicator_fg" },
       }),
@@ -7661,31 +7669,33 @@ function worktreeFields(): WidgetSpec[] {
     );
     return out;
   }
-  out.push(formToggle(on, editor.t("form.create_worktree"), "worktree"));
+  out.push(formToggle(on, editor.t("form.create_worktree_short"), "worktree"));
   // "Checkout branch" — an existing branch: with a worktree it's the base
   // the worktree is cut from / checked out to; without one it drives an
-  // in-place `git checkout` in the project dir. The placeholder says which.
-  let branchPlaceholder: string;
+  // in-place `git checkout` in the project dir. The value slot shows the
+  // default branch (a value); what blank means goes under the field.
+  let branch: { placeholder: string; note: string };
   if (!on) {
-    branchPlaceholder = editor.t("form.branch_checkout_inplace");
+    branch = { placeholder: "", note: editor.t("form.branch_checkout_inplace") };
   } else if (!form.defaultBranch) {
-    branchPlaceholder = editor.t("form.detecting_default_branch");
+    branch = { placeholder: editor.t("form.detecting_default_branch"), note: "" };
   } else if (form.defaultBranchIsHeadFallback) {
-    branchPlaceholder = editor.t("form.branch_head_fallback");
+    branch = splitPlaceholder(editor.t("form.branch_head_fallback"));
   } else {
-    branchPlaceholder = form.defaultBranch;
+    branch = { placeholder: form.defaultBranch, note: "" };
   }
   out.push(
     ...field(formLabel("form.checkout_branch"), form.branch, {
       key: "branch",
-      placeholder: branchPlaceholder,
+      placeholder: branch.placeholder,
+      note: branch.note || undefined,
     }),
   );
   // "New branch name" — creates the worktree on a freshly-cut branch. Only
   // meaningful when a worktree is being created, so it appears with it.
   if (on) {
     const nb = splitLabel("form.new_branch");
-    out.push(...field(nb.label, form.newBranch, { key: "new_branch", placeholder: nb.hint }));
+    out.push(...field(nb.label, form.newBranch, { key: "new_branch", note: nb.hint }));
   }
   return out;
 }
@@ -7710,7 +7720,8 @@ function sshBodyFields(): WidgetSpec[] {
     }),
     ...field(splitLabel("form.ssh_options_label").label, form.sshOptions, {
       key: "ssh_options",
-      placeholder: editor.t("form.ssh_options_placeholder"),
+      placeholder: splitPlaceholder(editor.t("form.ssh_options_placeholder")).placeholder,
+      note: splitPlaceholder(editor.t("form.ssh_options_placeholder")).note,
     }),
   ];
 }
@@ -7722,8 +7733,7 @@ function k8sBodyFields(): WidgetSpec[] {
   const target = splitLabel("form.k8s_target_label");
   const fields = field(target.label, form.k8sTarget, {
     key: "k8s_target",
-    placeholder: editor.t("form.k8s_target_placeholder"),
-    note: target.hint,
+    note: editor.t("form.k8s_target_note"),
   });
   if (!hasTarget) {
     fields.push(
@@ -7737,7 +7747,8 @@ function k8sBodyFields(): WidgetSpec[] {
       }),
       ...field(formLabel("form.k8s_pod_label"), form.k8sPod, {
         key: "k8s_pod",
-        placeholder: editor.t("form.k8s_pod_placeholder"),
+        placeholder: splitPlaceholder(editor.t("form.k8s_pod_placeholder")).placeholder,
+        note: splitPlaceholder(editor.t("form.k8s_pod_placeholder")).note,
       }),
       ...field(formLabel("form.k8s_workspace_label"), form.k8sWorkspace, {
         key: "k8s_workspace",
