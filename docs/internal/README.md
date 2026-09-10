@@ -61,6 +61,7 @@ other docs assume.
 | [plugins.md](plugins.md) | Sandboxed TypeScript plugins on a QuickJS thread, the `PluginCommand` protocol and one-frame lag, the provider pattern, the declarative widget runtime, parallel package loading, the git-based marketplace, and the sandbox/security trade-offs. |
 | [remote-authority-trust.md](remote-authority-trust.md) | The `Authority` backend slot (local / SSH / docker-exec / kubectl-exec), the remote agent and filesystem, heartbeat/reconnect, devcontainers, the k8s transport, Workspace Trust, and the live env provider — with a clear shipped-vs-planned line. |
 | [orchestrator-sessions.md](orchestrator-sessions.md) | The Orchestrator/Dock for many concurrent workspaces/agent sessions, session persistence and the Live/Dormant lifecycle, and the dock UX design versus what ships today. |
+| [orchestrator-ux-redesign.md](orchestrator-ux-redesign.md) | **Proposed** visual redesign of the Orchestrator dock and the New Workspace / Run Agent dialogs, with hand-captured transcripts of today's layout as the evidence: the alignment grid, the `+ New` / `⋯` header, an `~/.ssh/config`-driven host picker, and a machine registry (Add Machine / Machines). |
 | [terminal.md](terminal.md) | The integrated terminal: PTY spawning, the embedded `fresh-winterm` VT emulator (and why custom), live/scrollback per-buffer state, mouse/links/OSC52, and restore-on-reconnect. |
 
 ### Configuration, features & quality
