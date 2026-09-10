@@ -2939,9 +2939,9 @@ fn handle_duplicate_line(
     cursors: &Cursors,
     events: &mut Vec<Event>,
     estimated_line_length: usize,
+    above: bool,
 ) {
-    // Duplicate the current line (or selected lines) below
-    // Process cursors in reverse order to avoid position shifts
+    // Keep one copy per cursor, including cursors whose line ranges overlap.
     let mut cursor_data: Vec<_> = cursors
         .iter()
         .filter_map(|(cursor_id, cursor)| {
@@ -2975,43 +2975,66 @@ fn handle_duplicate_line(
             }
         })
         .collect();
-    cursor_data.sort_by_key(|(_, start, _)| std::cmp::Reverse(*start));
+    cursor_data.sort_by_key(|(_, start, end)| if above { *start } else { *end });
 
+    let line_ending = state.buffer.line_ending().insertion_str();
+    let mut inserted_before = 0;
+    let mut previous_position = None;
+    let mut lower_position_shift = 0;
+    let mut copies = Vec::with_capacity(cursor_data.len());
     for (cursor_id, line_start, line_end) in cursor_data {
-        let line_text = state.get_text_range(line_start, line_end);
-        let line_ending = state.buffer.line_ending().insertion_str();
-        // If the line doesn't end with a newline, prepend one
-        let has_trailing_newline = line_text.ends_with('\n') || line_text.ends_with("\r\n");
-        let insert_text = if has_trailing_newline {
-            line_text
+        let mut text = state.get_text_range(line_start, line_end);
+        let has_trailing_newline = text.ends_with('\n');
+        let position = if above { line_start } else { line_end };
+        if previous_position != Some(position) {
+            lower_position_shift = inserted_before;
+            previous_position = Some(position);
+        }
+        let separator = if has_trailing_newline {
+            0
         } else {
-            format!("{}{}", line_ending, line_text)
+            line_ending.len()
         };
-        let insert_len = insert_text.len();
+        if !has_trailing_newline {
+            if above {
+                text.push_str(line_ending);
+            } else {
+                text.insert_str(0, line_ending);
+            }
+        }
+        let copy_start = position + inserted_before + if above { 0 } else { separator };
+        let cursor = cursors.get(cursor_id).expect("duplicate cursor exists");
+        // Bulk edits add the lower-position shift to an explicit move only
+        // when that cursor's insertion is at its original position. Anchors
+        // are always final coordinates.
+        let implicit_shift = if position == cursor.position {
+            lower_position_shift
+        } else {
+            0
+        };
+        let new_position = copy_start + (cursor.position - line_start) - implicit_shift;
+        let new_anchor = cursor
+            .anchor
+            .map(|anchor| copy_start + (anchor - line_start));
+        inserted_before += text.len();
+        copies.push((cursor_id, position, text, new_position, new_anchor));
+    }
+
+    // Equal-position insertions prepend too: emit them in reverse copy order.
+    for (cursor_id, position, text, new_position, new_anchor) in copies.into_iter().rev() {
+        let old_position = position + text.len();
         events.push(Event::Insert {
-            position: line_end,
-            text: insert_text,
+            position,
+            text,
             cursor_id,
         });
-
-        // Move cursor to start of the newly duplicated line.
-        // After the Insert, apply_insert places cursor at line_end + insert_len.
-        // The new line starts at line_end (if original had trailing newline)
-        // or line_end + line_ending.len() (if we prepended a newline).
-        let new_line_start = if has_trailing_newline {
-            line_end
-        } else {
-            line_end + line_ending.len()
-        };
-        let cursor = cursors.get(cursor_id);
-        let old_sticky = cursor.and_then(|c| c.sticky_column);
         events.push(Event::MoveCursor {
             cursor_id,
-            old_position: line_end + insert_len,
-            new_position: new_line_start,
+            old_position,
+            new_position,
             old_anchor: None,
-            new_anchor: None,
-            old_sticky_column: old_sticky,
+            new_anchor,
+            old_sticky_column: None,
             new_sticky_column: None,
         });
     }
@@ -3561,7 +3584,11 @@ pub fn action_to_events(
         }
 
         Action::DuplicateLine => {
-            handle_duplicate_line(state, cursors, &mut events, estimated_line_length);
+            handle_duplicate_line(state, cursors, &mut events, estimated_line_length, false);
+        }
+
+        Action::DuplicateLineAbove => {
+            handle_duplicate_line(state, cursors, &mut events, estimated_line_length, true);
         }
 
         Action::Recenter => {
