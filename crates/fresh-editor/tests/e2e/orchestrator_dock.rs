@@ -4386,9 +4386,10 @@ fn mouse_click_on_dock_filter_moves_the_keyboard_into_the_dock() {
         "the editor click should have blurred the dock"
     );
 
-    // The filter field, reached with the mouse rather than with "/".
-    let row = row_of(&h, "Search") as u16;
-    let col = col_in_row(&h, row, "Search") as u16;
+    // The search, reached with the mouse rather than with "/": the header's
+    // `/ search` opens the field and puts the keyboard in it.
+    let row = row_of(&h, "/ search") as u16;
+    let col = col_in_row(&h, row, "/ search") as u16;
     h.mouse_click(col + 1, row).unwrap();
     h.render().unwrap();
     // Asserted before a key is sent, and deliberately: with the keyboard

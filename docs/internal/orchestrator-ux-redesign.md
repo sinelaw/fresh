@@ -1,9 +1,11 @@
 # Orchestrator dock & dialogs — UX redesign
 
-> _Design note. Status: **PROPOSED** — none of this ships. The "Today"
-> blocks are transcripts captured by driving Fresh 0.5.1 by hand in tmux;
-> they are the evidence for every decision that follows, not a description
-> of a problem that has been fixed._
+> _Design note. Status: **PARTLY IMPLEMENTED** — §2 (dock) and §3 (dialogs)
+> ship; §4 (SSH host picker) and §5 (machines) do not. See
+> "Implementation status" at the end. The "Today" blocks are transcripts
+> captured by driving Fresh 0.5.1 by hand in tmux; they are the evidence
+> for every decision that follows, and describe the surfaces as they were
+> before §2 and §3 landed._
 
 Purpose: record a visual redesign of the Orchestrator's two surfaces — the
 **dock panel** and the **New Workspace / Run Agent dialogs** — plus two new
@@ -709,3 +711,46 @@ title here says **workspace** accordingly.
 - **Does a saved machine's identity outlive its `~/.ssh/config` twin?**
   A host can exist in both stores with different settings. The picker shows
   both; which wins when the names collide is not designed here.
+
+---
+
+## 8. Implementation status
+
+What landed, by section, and what it was built on. The rule throughout
+was to add the missing pieces to the widget library and reach for them
+from `orchestrator.ts`, never to hand-roll a look in the plugin.
+
+Widget library (`crates/fresh-editor-core/src/widgets`):
+
+- **`Radio` kind** (§3.2): `label: (•) A   ( ) B`, host-owned selection,
+  ←/→ and Home/End, one click target per option, `change {index, value}`,
+  `WidgetMutation::SetRadio`; the shell adapter paints what the runtime
+  paints (parity-tested).
+- **`Label` kind**: one row of static text — a field's hint, a status
+  line, a read-only summary — styled and indentable into a form's field
+  column. It replaces every `Raw` the dialogs used for prose.
+- **Right-aligned label gutter** (§3.3): `labelAlign: "right"` at mount,
+  honoured by `Text`, `Toggle`, `Number`, `Dropdown` and `Radio` through
+  one `label_width`; a chip-first `Toggle` and a `Label` indent into the
+  same column, and a `Text` field's completion list lines its candidates
+  up under the value wherever the value sits.
+- Lists and trees already painted a scrollbar on overflow (§1); nothing
+  to add.
+
+Dock (§2): the header is `[ + New ]` … `/ search` `⋯`; `+ New` opens the
+dialog directly; the `⋯` menu holds New Folder, Manage workspaces, the
+density rows, the two show switches, the project scope and Hide dock (the
+title row and its `×` are gone, §2.4); search is on demand (§2.5) with a
+match count. The attention line (§2.3) is not built — it needs the
+five-state `agentState` this note deliberately does not design.
+
+Dialogs (§3): one grid for New Workspace and Run Agent (§3.4–3.6);
+`Run in` is a radio; no boxes; hints under fields (§3.7); disclosure is
+value-driven (the command field follows `custom…`, the branch fields
+follow the worktree toggle) so the `Advanced…` fold is gone; footer
+buttons keep `[ Label ]` and carry their accelerator; Devcontainer left the
+`Run in` set. Placeholders still carry some instructions (`Project Path`,
+`SSH options`); moving those under the field is a follow-up.
+
+Not built: the SSH host picker (§4) and the machine registry, `Add
+Machine` and `Machines` (§5).
