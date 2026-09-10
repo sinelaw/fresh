@@ -96,6 +96,15 @@ pub enum UiMsg {
 /// comparable, and tests compare facts.
 #[derive(Clone, Debug, PartialEq)]
 pub enum UiFact {
+    /// A key a panel's mode claimed as the start (or middle) of a chord.
+    ///
+    /// The prefix itself lives on the window, beside the one the buffer's own
+    /// route keeps, because a panel's mode *is* its buffer's mode — one
+    /// keymap, so one half-typed sequence. See `panel::Keymap::chord`.
+    ChordPending {
+        code: crossterm::event::KeyCode,
+        modifiers: crossterm::event::KeyModifiers,
+    },
     /// A press landed on a plugin widget, carrying what that press means.
     ///
     /// **What replaces the byte-range scan.** The runtime recorded a
