@@ -1737,6 +1737,57 @@ pub fn parse_key_press(s: &str) -> Option<Key> {
     parse_key_seq(s)?.single()
 }
 
+/// One press as the config's split-field form spells it.
+///
+/// The inverse of the `key` + `modifiers` pair `parse_key` reads, so a
+/// compact `chord` string can be rewritten into the shape the loaders already
+/// understand rather than teaching each of them a second spelling.
+fn key_press_of(key: Key) -> crate::config::KeyPress {
+    use fresh_editor_core::keys::canonical_name;
+    crate::config::KeyPress {
+        key: canonical_name(key.code())
+            .map(str::to_string)
+            .unwrap_or_else(|| match key.code() {
+                KeyCode::Char(c) => c.to_string(),
+                KeyCode::F(n) => format!("f{n}"),
+                other => format!("{other:?}"),
+            }),
+        modifiers: crate::app::keybinding_editor::helpers::modifiers_to_config_names(key.mods()),
+    }
+}
+
+/// Rewrite a compact `chord` entry into the split-field form.
+///
+/// **Desugaring, not a fourth code path.** The three loaders below each
+/// already decide "chord or single key" from `keys` and `key`; teaching all
+/// of them about a third spelling is how a vocabulary grows the seams this
+/// module exists to remove. A compact entry becomes the entry it is
+/// equivalent to, once, here — so everything downstream sees the shape it
+/// always saw and cannot tell which spelling the user wrote.
+///
+/// The split fields win when both are present, so an entry that sets them is
+/// never reinterpreted.
+fn desugar(binding: &crate::config::Keybinding) -> std::borrow::Cow<'_, crate::config::Keybinding> {
+    use std::borrow::Cow;
+    if binding.chord.is_empty() || !binding.keys.is_empty() || !binding.key.is_empty() {
+        return Cow::Borrowed(binding);
+    }
+    let Some(seq) = parse_key_seq(&binding.chord) else {
+        warn_invalid_key(&binding.chord, &binding.action);
+        return Cow::Borrowed(binding);
+    };
+    let mut out = binding.clone();
+    match seq.single() {
+        Some(key) => {
+            let press = key_press_of(key);
+            out.key = press.key;
+            out.modifiers = press.modifiers;
+        }
+        None => out.keys = seq.keys().iter().map(|k| key_press_of(*k)).collect(),
+    }
+    Cow::Owned(out)
+}
+
 fn warn_invalid_key(key: &str, action: &str) {
     tracing::warn!(
         "Invalid keybinding in config: unknown key \"{key}\" for action \"{action}\" (binding ignored)"
@@ -1801,6 +1852,7 @@ impl KeybindingResolver {
     /// Load default bindings from a vector of keybinding definitions (into default_bindings/default_chord_bindings)
     fn load_default_bindings_from_vec(&mut self, bindings: &[crate::config::Keybinding]) {
         for binding in bindings {
+            let binding = &*desugar(binding);
             // Determine context from "when" clause
             let context = if let Some(ref when) = binding.when {
                 KeyContext::from_when_clause(when).unwrap_or(KeyContext::Normal)
@@ -1914,6 +1966,7 @@ impl KeybindingResolver {
     /// Load custom bindings from a vector of keybinding definitions (into bindings/chord_bindings)
     fn load_bindings_from_vec(&mut self, bindings: &[crate::config::Keybinding]) {
         for binding in bindings {
+            let binding = &*desugar(binding);
             // Determine context from "when" clause
             let context = if let Some(ref when) = binding.when {
                 KeyContext::from_when_clause(when).unwrap_or(KeyContext::Normal)
@@ -3485,6 +3538,117 @@ impl KeybindingResolver {
 #[cfg(test)]
 mod tests {
 
+    /// **A compact entry binds exactly what its split-field equivalent binds.**
+    ///
+    /// The point of the new spelling is that it is *only* a spelling: a config
+    /// written either way must produce the same resolver. Asserting on the
+    /// resolved action rather than on the desugaring is what makes that a
+    /// claim about behaviour instead of about a rewrite.
+    #[test]
+    fn a_compact_entry_binds_what_its_split_field_equivalent_binds() {
+        fn resolver_for(b: crate::config::Keybinding) -> KeybindingResolver {
+            let mut config = crate::config::Config::default();
+            config.keybindings.push(b);
+            KeybindingResolver::new(&config)
+        }
+        fn entry(action: &str) -> crate::config::Keybinding {
+            crate::config::Keybinding {
+                key: String::new(),
+                modifiers: Vec::new(),
+                keys: Vec::new(),
+                chord: String::new(),
+                action: action.to_string(),
+                args: std::collections::HashMap::new(),
+                when: Some("normal".to_string()),
+            }
+        }
+        // Single press: "C-S-Left" against key + modifiers.
+        let compact = resolver_for(crate::config::Keybinding {
+            chord: "C-S-Left".into(),
+            ..entry("save")
+        });
+        let split = resolver_for(crate::config::Keybinding {
+            key: "left".into(),
+            modifiers: vec!["ctrl".into(), "shift".into()],
+            ..entry("save")
+        });
+        let ev = KeyEvent::new(KeyCode::Left, KeyModifiers::CONTROL | KeyModifiers::SHIFT);
+        assert_eq!(compact.resolve(&ev, KeyContext::Normal), Action::Save);
+        assert_eq!(
+            compact.resolve(&ev, KeyContext::Normal),
+            split.resolve(&ev, KeyContext::Normal)
+        );
+
+        // Chord: "C-x C-s" against the `keys` array.
+        let press = |k: &str, m: Vec<String>| crate::config::KeyPress {
+            key: k.to_string(),
+            modifiers: m,
+        };
+        let compact = resolver_for(crate::config::Keybinding {
+            chord: "C-x C-s".into(),
+            ..entry("save")
+        });
+        let split = resolver_for(crate::config::Keybinding {
+            keys: vec![
+                press("x", vec!["ctrl".into()]),
+                press("s", vec!["ctrl".into()]),
+            ],
+            ..entry("save")
+        });
+        let ctrl_x = KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL);
+        let ctrl_s = KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL);
+        for r in [&compact, &split] {
+            assert_eq!(
+                r.resolve_chord(&[], &ctrl_x, KeyContext::Normal),
+                ChordResolution::Partial
+            );
+            assert_eq!(
+                r.resolve_chord(
+                    &[(KeyCode::Char('x'), KeyModifiers::CONTROL)],
+                    &ctrl_s,
+                    KeyContext::Normal
+                ),
+                ChordResolution::Complete(Action::Save)
+            );
+        }
+    }
+
+    /// The split fields win when an entry carries both, so a config that
+    /// already sets them is never reinterpreted by the new field.
+    ///
+    /// Asserted in a mode context of its own, where nothing else is bound —
+    /// in `normal` the built-in keymap already binds most chords, so "the
+    /// compact form did not bind this" could not be told apart from "the
+    /// keymap did".
+    #[test]
+    fn the_split_fields_take_precedence_over_the_compact_form() {
+        let mut config = crate::config::Config::default();
+        config.keybindings.push(crate::config::Keybinding {
+            key: "left".into(),
+            modifiers: Vec::new(),
+            keys: Vec::new(),
+            chord: "C-S-Right".into(),
+            action: "save".to_string(),
+            args: std::collections::HashMap::new(),
+            when: Some("mode:precedence".to_string()),
+        });
+        let r = KeybindingResolver::new(&config);
+        let ctx = KeyContext::Mode("precedence".to_string());
+        assert_eq!(
+            r.explicit_binding(&KeyEvent::new(KeyCode::Left, KeyModifiers::NONE), &ctx),
+            Some(Action::Save),
+            "the split fields are what bound"
+        );
+        assert_eq!(
+            r.explicit_binding(
+                &KeyEvent::new(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT),
+                &ctx
+            ),
+            None,
+            "and the compact field was ignored, not also applied"
+        );
+    }
+
     /// **The two surface syntaxes name the same keystrokes.** A key reachable
     /// through the config's split fields (`"key": "pageup", "modifiers":
     /// ["ctrl"]`) must be the same value as the compact form a plugin mode or
@@ -3635,6 +3799,7 @@ mod tests {
             key: "asterisk".to_string(),
             modifiers: vec!["ctrl".to_string()],
             keys: Vec::new(),
+            chord: String::new(),
             action: "duplicate_line".to_string(),
             args: HashMap::new(),
             when: None,
@@ -3660,6 +3825,7 @@ mod tests {
             key: "kp_enter".to_string(),
             modifiers: vec!["ctrl".to_string()],
             keys: Vec::new(),
+            chord: String::new(),
             action: "duplicate_line".to_string(),
             args: HashMap::new(),
             when: None,
@@ -3668,6 +3834,7 @@ mod tests {
             key: "kp_begin".to_string(),
             modifiers: Vec::new(),
             keys: Vec::new(),
+            chord: String::new(),
             action: "select_all".to_string(),
             args: HashMap::new(),
             when: None,
@@ -3844,6 +4011,7 @@ mod tests {
             key: "no_such_key_name".to_string(),
             modifiers: vec!["ctrl".to_string()],
             keys: Vec::new(),
+            chord: String::new(),
             action: "duplicate_line".to_string(),
             args: HashMap::new(),
             when: None,
@@ -3862,6 +4030,7 @@ mod tests {
                     modifiers: Vec::new(),
                 },
             ],
+            chord: String::new(),
             action: "save".to_string(),
             args: HashMap::new(),
             when: None,
@@ -3871,6 +4040,7 @@ mod tests {
             key: "f6".to_string(),
             modifiers: Vec::new(),
             keys: Vec::new(),
+            chord: String::new(),
             action: "save".to_string(),
             args: HashMap::new(),
             when: None,
@@ -4016,6 +4186,7 @@ mod tests {
             key: "p".to_string(),
             modifiers: vec!["shift".to_string()],
             keys: Vec::new(),
+            chord: String::new(),
             action: "save".to_string(),
             args: HashMap::new(),
             when: Some("normal".to_string()),
@@ -4060,6 +4231,7 @@ mod tests {
             key: "f".to_string(),
             modifiers: vec!["alt".to_string(), "shift".to_string()],
             keys: Vec::new(),
+            chord: String::new(),
             action: "save".to_string(),
             args: HashMap::new(),
             when: Some("normal".to_string()),
@@ -4433,6 +4605,7 @@ mod tests {
             key: "esc".to_string(),
             modifiers: vec![],
             keys: vec![],
+            chord: String::new(),
             action: "quit".to_string(), // Override Esc in popup context to quit
             args: HashMap::new(),
             when: Some("popup".to_string()),
@@ -4489,6 +4662,7 @@ mod tests {
             key: "f".to_string(),
             modifiers: vec!["ctrl".to_string()],
             keys: vec![],
+            chord: String::new(),
             action: "command_palette".to_string(),
             args: HashMap::new(),
             when: None, // Default to normal context
@@ -4550,6 +4724,7 @@ mod tests {
             key: "h".to_string(),
             modifiers: vec!["alt".to_string()],
             keys: vec![],
+            chord: String::new(),
             action: "command_palette".to_string(),
             args: HashMap::new(),
             when: None,
@@ -4582,6 +4757,7 @@ mod tests {
             key: "h".to_string(),
             modifiers: vec!["alt".to_string()],
             keys: vec![],
+            chord: String::new(),
             action: "command_palette".to_string(),
             args: HashMap::new(),
             when: Some("global".to_string()),
@@ -4610,6 +4786,7 @@ mod tests {
             key: "n".to_string(),
             modifiers: vec!["alt".to_string()],
             keys: vec![],
+            chord: String::new(),
             action: "move_down".to_string(),
             args: HashMap::new(),
             when: Some("global".to_string()),
@@ -4618,6 +4795,7 @@ mod tests {
             key: "n".to_string(),
             modifiers: vec!["alt".to_string()],
             keys: vec![],
+            chord: String::new(),
             action: "move_word_right".to_string(),
             args: HashMap::new(),
             when: Some("normal".to_string()),
@@ -5037,6 +5215,7 @@ mod tests {
             key: "f".to_string(),
             modifiers: vec!["alt".to_string()],
             keys: vec![],
+            chord: String::new(),
             action: "move_word_right".to_string(),
             args: HashMap::new(),
             when: Some("normal".to_string()),
@@ -5055,6 +5234,7 @@ mod tests {
             key: "f2".to_string(),
             modifiers: vec![],
             keys: vec![],
+            chord: String::new(),
             action: "menu_open".to_string(),
             args: [(
                 "name".to_string(),

@@ -252,6 +252,7 @@ fn test_lsp_enabled_false_still_allows_manual_start() -> anyhow::Result<()> {
         key: "r".to_string(),
         modifiers: vec!["alt".to_string()],
         keys: vec![],
+        chord: String::new(),
         action: "lsp_restart".to_string(),
         args: std::collections::HashMap::new(),
         when: None,

@@ -746,6 +746,7 @@ fn test_switch_keybinding_map_via_action_persists() {
             key: "F9".to_string(),
             modifiers: vec![],
             keys: vec![],
+            chord: String::new(),
             action: "switch_keybinding_map".to_string(),
             args: std::collections::HashMap::from([(
                 "map".to_string(),
