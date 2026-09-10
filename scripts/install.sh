@@ -232,7 +232,9 @@ download_verified() {
     # wrong and fatal: a throttled request killed the install outright, skipping
     # the fallback chain, and told the user the release was unsigned. Only a 404
     # is that claim; everything else returns and lets a fallback method run.
-    _sum_code=$(curl -SL -w '%{http_code}' "$1.sha256" -o "$2.sha256") || _sum_code=000
+    # -s here where the artifact above has a progress meter: 112 bytes of
+    # checksum render one, which reads as a second download failing to start.
+    _sum_code=$(curl -sSL -w '%{http_code}' "$1.sha256" -o "$2.sha256") || _sum_code=000
     case "$_sum_code" in
         2??) ;;
         403|429) log_warn "GitHub is rate limiting downloads from this network (HTTP $_sum_code); retry shortly."; rm -f "$2.sha256"; return 1 ;;
