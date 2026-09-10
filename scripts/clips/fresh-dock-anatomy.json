@@ -285,16 +285,16 @@
       "what the layout built, laid out"
     ],
     "timing": {
-      "intro": 1.5,
-      "explode": 1.4,
-      "survey": 1.7,
-      "move": 0.5,
-      "hold": 1.7,
-      "dive": 0.9,
-      "rise": 0.6,
-      "regroup": 0.55,
-      "implode": 1.0,
-      "outro": 1.2
+      "intro": 0.75,
+      "explode": 0.7,
+      "survey": 0.85,
+      "move": 0.25,
+      "hold": 0.85,
+      "dive": 0.45,
+      "rise": 0.3,
+      "regroup": 0.275,
+      "implode": 0.5,
+      "outro": 0.6
     }
   },
   "encode": {
