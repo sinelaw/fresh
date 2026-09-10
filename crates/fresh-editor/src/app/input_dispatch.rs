@@ -619,6 +619,7 @@ impl Editor {
             hovered_key: Some(hovered).filter(|k| !k.is_empty()),
             hovered_item_key: hovered_item,
             hovered_popup_row: String::new(),
+            reveal: self.prose_reveal_for(&key),
             marker_gutter: false,
             avail_height: None,
             scrollbar_reveal: None,

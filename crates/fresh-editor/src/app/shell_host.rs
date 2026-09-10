@@ -1314,6 +1314,7 @@ pub mod shell_theme {
         format!("{fg}/{bg}")
     }
 
+
     /// The same, with text attributes the theme does not carry.
     pub fn attrs(fg: &str, bg: &str, attrs: &[&str]) -> String {
         Ink {
@@ -1982,6 +1983,84 @@ impl Editor {
         }
     }
 
+    /// The panel a widget fact's `Slot` names — the same resolution the
+    /// `WidgetFocus` applier makes, with the pane-mounted case added: a
+    /// pane's panel is the one mounted on the buffer that pane shows.
+    pub(crate) fn panel_key_of_slot(
+        &self,
+        slot: &crate::view::shell::widgets::Slot,
+    ) -> Option<crate::widgets::PanelKey> {
+        use crate::view::shell::widgets::Slot;
+        match slot {
+            Slot::Dock => self.panel(crate::app::PanelSlot::Dock),
+            Slot::Floating => self.panel(crate::app::PanelSlot::Floating),
+            Slot::Sidebar(i) => self.panel(crate::app::PanelSlot::Sidebar(*i)),
+            _ => None,
+        }
+        .map(|p| p.panel_key.clone())
+        .or_else(|| match slot {
+            Slot::PromptToolbar => self.prompt_toolbar_key(),
+            Slot::Pane(leaf) => {
+                let buffer = self
+                    .window_panes()
+                    .into_iter()
+                    .find(|(l, _)| l == leaf)
+                    .map(|(_, b)| b)?;
+                self.widget_registry
+                    .panels_for_buffer(buffer)
+                    .into_iter()
+                    .next()
+            }
+            _ => None,
+        })
+    }
+
+    /// Put a markdown document's caret on `byte`, extending the selection
+    /// from its anchor when `extend`, and ask the run's viewport to bring the
+    /// row holding that byte into its window. The row is layout's answer —
+    /// the tree wrapped the text — which is why the reveal goes through the
+    /// anchor rather than through a scroll the host computes.
+    pub(crate) fn move_prose_caret(
+        &mut self,
+        panel_key: &crate::widgets::PanelKey,
+        widget: &str,
+        byte: usize,
+        extend: bool,
+    ) {
+        let moved = match self
+            .widget_registry
+            .get_mut(panel_key)
+            .and_then(|p| p.instance_states.get_mut(widget))
+        {
+            Some(crate::widgets::WidgetInstanceState::Text { editor, .. }) => {
+                match extend {
+                    true => editor.set_cursor_from_flat_selecting(byte),
+                    false => editor.set_cursor_from_flat(byte),
+                }
+                true
+            }
+            _ => false,
+        };
+        if !moved {
+            return;
+        }
+        self.prose_reveal_for(panel_key)
+            .reveal_byte(crate::view::shell::widgets::prose_run_key(widget), byte);
+        self.shell_description_stale = true;
+    }
+
+    /// The length of a markdown document's text, for a drag past its end.
+    fn prose_len(&self, panel_key: &crate::widgets::PanelKey, widget: &str) -> usize {
+        match self
+            .widget_registry
+            .get(panel_key)
+            .and_then(|p| p.instance_states.get(widget))
+        {
+            Some(crate::widgets::WidgetInstanceState::Text { editor, .. }) => editor.value().len(),
+            _ => 0,
+        }
+    }
+
     /// Apply a positional fact — the half of a message that never becomes a
     /// keybinding.
     fn apply_ui_fact(&mut self, fact: crate::view::shell::msg::UiFact, ev: EventFacts) {
@@ -2171,6 +2250,49 @@ impl Editor {
             // The plugin is told, exactly as `deliver_widget_hit`'s
             // click-to-focus told it, because a plugin that mirrors focus
             // cannot tell a click from a Tab and should not have to.
+            // **A press on a markdown document's prose, as a byte of the
+            // document.** The run answered `Event::text_byte` from the rows
+            // layout shaped, so there is no line and no arena to resolve
+            // against: focus the widget if the press did not land on the
+            // focused one, put the caret on the byte (extending from the
+            // anchor when Shift was held), and remember that the press is
+            // live so the run's captured moves extend from here.
+            UiFact::WidgetProsePress {
+                slot,
+                widget,
+                byte,
+                mods,
+            } => {
+                let Some(pk) = self.panel_key_of_slot(&slot) else {
+                    return;
+                };
+                if self.widget_registry.focus_key(&pk) != Some(widget.as_str()) {
+                    self.apply_ui_fact(
+                        UiFact::WidgetFocus {
+                            slot,
+                            widget: widget.clone(),
+                        },
+                        ev,
+                    );
+                }
+                self.move_prose_caret(&pk, &widget, byte, mods.shift);
+                self.prose_drag = Some((pk, widget));
+            }
+            UiFact::WidgetProseDrag { widget, byte, .. } => {
+                let Some((pk, w)) = self.prose_drag.clone() else {
+                    return;
+                };
+                if w != widget {
+                    return;
+                }
+                // Past the text is the end of it: a drag that leaves the last
+                // row selects to the document's end, as it did in the buffer.
+                let target = byte.unwrap_or_else(|| self.prose_len(&pk, &w));
+                self.move_prose_caret(&pk, &w, target, true);
+            }
+            UiFact::WidgetProseRelease { .. } => {
+                self.prose_drag = None;
+            }
             UiFact::WidgetFocus { slot, widget } => {
                 use crate::view::shell::widgets::Slot;
                 let key = match slot {

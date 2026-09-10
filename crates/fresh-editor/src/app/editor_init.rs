@@ -720,7 +720,8 @@ impl Editor {
             dock_resizing: false,
             sidebar_sections: vec![sidebar::SidebarSection::explorer()],
             sidebar_drag: None,
-            widget_text_drag: None,
+            prose_drag: None,
+            prose_reveal: std::cell::RefCell::new(HashMap::new()),
             widget_panel_render_heights: std::collections::HashMap::new(),
         };
 

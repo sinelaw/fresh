@@ -1488,11 +1488,17 @@ pub struct Editor {
     pub(crate) sidebar_sections: Vec<sidebar::SidebarSection>,
     /// The divider drag in progress, if a section header holds the pointer.
     pub(crate) sidebar_drag: Option<sidebar::SidebarDrag>,
-    /// In-flight mouse drag-to-select on a widget markdown/text document:
-    /// armed by the press that placed the caret, extended on every Drag,
-    /// cleared on button-up. `anchor_flat` is the press position as a
-    /// flat byte offset into the widget's shadow TextEdit value.
-    pub(crate) widget_text_drag: Option<WidgetTextDrag>,
+    /// A markdown document's press, while it is held: which panel and widget
+    /// the run's captured moves extend a selection in. Not a pointer grab —
+    /// routing is the tree's capture; this only says a press is live, which
+    /// a `Move` event cannot say for itself.
+    pub(crate) prose_drag: Option<(crate::widgets::PanelKey, String)>,
+    /// One reveal anchor per mounted panel — see `panel::Interior::reveal`.
+    /// Kept here rather than on the panel's registry state because an
+    /// `Anchor` is the tree's and the registry cannot see the tree.
+    pub(crate) prose_reveal: std::cell::RefCell<
+        HashMap<crate::widgets::PanelKey, std::rc::Rc<fresh_ui::behavior::anchor::Anchor>>,
+    >,
     /// Row budget each buffer-mounted widget panel was last rendered
     /// against, so a panel whose split has since changed size can be
     /// re-rendered once — and only once — against the new one. Comparing
@@ -1504,12 +1510,6 @@ pub struct Editor {
 }
 
 /// See [`Editor::widget_text_drag`].
-#[derive(Debug, Clone)]
-pub(crate) struct WidgetTextDrag {
-    pub panel: crate::widgets::PanelKey,
-    pub widget: String,
-    pub anchor_flat: usize,
-}
 
 /// Sentinel `BufferId` registered with the widget registry for the
 /// floating panel — never appears in the editor's buffer table, so

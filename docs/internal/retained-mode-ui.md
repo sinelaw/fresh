@@ -267,76 +267,98 @@ those nodes dispatch *to*, plus two hover reactions.
 
 ### The markdown document view
 
-**This is the keystone: it is the only open item that unblocks others.**
+**Landed.** `WidgetSpec::Text { markdown: true, rows > 1 }` was the last widget
+kind whose description ran the old immediate-mode renderer inside `build` — a
+full re-shape of the document per frame, to recover a caret row — and the
+reason the text projection outlived every other consumer. It is a wrapped run
+in a viewport now, and the design is worth recording because four other
+things had to move for it.
 
-`WidgetSpec::Text { markdown: true, rows > 1 }` is the last widget kind whose
-description is produced by running the old immediate-mode renderer.
-`view::shell::widgets` clones the spec, forces `rows` to the document's full
-line count, and calls `render_collected` **inside `build`** — a complete shadow
-re-shape of the whole document, unwindowed, every frame, purely to recover the
-caret row and the row count. Its output also populates
-`WidgetPanelState::{painted, boxes}`, the old text-projection arena.
+**The shape.** `kinds::text::markdown_document` renders the document as *one*
+styled entry with the NBSP indentation normalised back to breakable spaces;
+`entry_runs` turns it into runs; `text_runs(...).wrapping(Wrap::Hanging)`
+inside a `viewport` lets layout wrap it at the width it settled on. A byte of
+that string is the one coordinate everything shares. The caret is a one-byte
+`selection_bytes` wash in the surface's ink plus `reversed` — the block caret
+this surface always had — and a live selection is a wider wash that replaces
+it. The run carries `prose_run_key(widget)`; the viewport keeps the widget's
+own key, where the window facts and the focus ring expect it.
 
-The library half is complete: `Node::cursor_byte`, `Node::selection_bytes`,
-`Wrap::Hanging`, `Anchor::reveal_byte` and `Ui::text_rows` all ship. So does the
-editor-side producer — `kinds::text::markdown_document` yields the document as
-one unwrapped styled entry with the NBSP indentation normalised back to
-breakable spaces, with tests pinning both properties — and it has **no
-production caller**.
+**The state holds the document.** `resolve_panel` carries states and never
+seeded one, and the kind's renderer — which did — no longer runs for a
+described panel. So `carry_instance_states` seeds a markdown document's
+`Text` state from the same rendered text the run displays, and re-seeds it
+when that text changes; a width change is not a text change any more. Copy
+yields the document. `resolve_described_panel` has no bail-out left.
 
-What is left, all editor-side:
+**A press and a drag are the run's.** A press answers `Event::text_byte` from
+the rows layout shaped and raises `UiFact::WidgetProsePress { byte, mods }`;
+the run captures the pointer, moves raise `WidgetProseDrag { byte }` (`None`
+past the text means the end), and the release raises `WidgetProseRelease`.
+The applier moves the caret by byte — extending from the anchor for Shift or
+a drag — and the host keeps only `prose_drag: Option<(PanelKey, String)>`,
+which says a press is live because a `Move` cannot say so itself. That is not
+a grab: routing is the tree's capture. `PointerGrab`, `pointer_grab()`,
+`WidgetTextDrag`, `handle_mouse_drag` and the arena-backed press and drag
+functions are deleted.
 
-1. Swap the arm to `viewport(text_runs(...).wrap(Hanging))`, with the caret and
-   selection as byte splits of the runs rather than row overlays.
-2. **Rendered-row key motion.** `Up`/`Down`/`Home`/`End` here mean rendered
-   rows, and `kinds::text::text_key` has a `WidgetPanelState` and no width —
-   the sole reason the shadow editor exists. `fresh-editor-core` cannot depend
-   on `fresh-ui`, so the resolution is host-side: read `Ui::text_rows`, convert
-   the key to a target byte, tell the kind to move its caret there. Character
-   and word motion, selection and copy stay the kind's and stay logical.
-3. The state's `TextEdit` holds the **document**, not its reflow, so copy yields
-   the document. `scroll`/`user_scrolled` become the viewport's.
-4. Retire the two box-arena readers: the prose drag
-   (`Editor::handle_widget_text_selection_drag`) and `Text::on_wheel`'s document
-   branch.
+**Vertical keys are the host's.** `Up`/`Down`/`Home`/`End` (with or without
+`S-`) mean rendered rows, and `kinds::text::text_key` has neither the width
+nor the tree — the sole reason the shadow editor over the reflowed rows
+existed. `Editor::prose_vertical_key` runs before the kind's `on_key`: it reads
+`Ui::text_rows_in(panel root, run key)`, resolves the target with `cell_of` /
+`byte_of`, and moves the caret by byte, selecting for `S-`. Everything else on
+the surface — character and word motion, selection, Copy — stays the kind's
+and stays logical.
 
-**What it clears on its own.** The chain runs through the arena's *readers*,
-and they are all markdown's:
+**The reveal is the tree's.** After a key move the row holding the caret may be
+outside the window, and which row that is only layout knows. The host keeps
+one `Rc<Anchor>` per panel (`Editor::prose_reveal`, a `RefCell` map — an
+`Anchor` binds to its element on mount, so a fresh one each frame would bind
+to nothing), the viewport is `anchor_to` it, and the applier calls
+`Anchor::reveal_byte(run key, byte)`.
 
-- the last `render_collected` call inside a description build — after which no
-  build runs a renderer, which is the property that makes the purity check
-  (*Instrumentation*) worth building;
-- `spec_has_markdown_document` and its bail-out in `resolve_described_panel`;
-- both editor-side readers of `boxes` — the prose drag and `Text::on_wheel`'s
-  document branch — and with the drag, `Editor::widget_text_drag`;
-- `PointerGrab::WidgetText`, which is the **last remaining variant**, so the
-  enum, `pointer_grab()` and the grab arms in `mouse_input.rs` go with it;
-- the shadow `TextEdit` over reflowed rows.
+**Three library pieces, each with its caller in the same change:**
 
-**What it does not clear on its own, and what does.** The arena's *writer*
-was not markdown's. `resolve_described_panel` had a second bail-out: an
-**anchored** floating panel (a plugin's context menu) took its width from the
-mirror's widest row, because its interior is built by a `layout_reader` that
-needs a number before it can produce one, and under `Sizing::Auto` a rule
-inside it — `"─".repeat(width)` — came out frame-wide and set the very width
-it had been asked about. That bail-out is retired: a rule is a ground the
-backend tiles (`Node::rule`, `Draw::Rule`), sized by layout, and the anchored
-box says `Auto` like every other described box. Three more fills of the same
-shape went with it — the body row, a tinted entry's fill row, and a list or
-tree with no row count — each a `Flex` on a column's cross axis, which is
-measured at the whole extent whether or not that extent is definite; each is
-`Auto` now, and the column's `Stretch` widens it to what the box settled on.
-`an_anchored_popup_is_as_wide_as_its_widest_row_not_its_rule` pins the
-production menu's shape.
+- `Ui::text_rows_in(root, key)` — `text_rows` searched from a subtree, the
+  same standing as `item_window_in`: a widget's key is unique only inside the
+  panel that owns it.
+- **A captured pointer still reports the byte under it.** While a gesture
+  holds the pointer the path ends at that gesture, which has no text; the
+  routing now asks the deepest descendant under the pointer that answers
+  (`text_byte_under`). Without it a drag could start by byte and never grow.
+- **A wash carries its attributes.** The fold laid a wash's background only;
+  a wash that names `reversed` is a block caret, and one that dropped its
+  attributes could not be.
 
-So the text projection's only remaining writer *is* markdown's: once this
-item lands, `painted`/`boxes`, `render_collected`, `layout_box.rs` and
-`render_button` have no caller. `app/chrome/` loses its grab here and still
-needs its two hover reactions moved before the module goes.
+**Pinned by:** `a_markdown_documents_state_holds_the_document_not_its_reflow`,
+`keys_over_a_markdown_document_move_by_the_rows_the_wrap_made`,
+`a_press_on_the_prose_places_the_caret_by_byte_and_a_drag_selects`,
+`the_caret_lands_on_the_row_the_wrap_put_it_on_after_a_width_change`,
+`a_keyless_markdown_document_is_a_wrapped_run_and_nothing_else` (the welcome
+screen's code sample), `a_captured_move_reports_the_byte_under_it` and
+`text_rows_are_read_from_the_subtree_that_owns_the_key`.
 
-Consumers: code-tour's prose column (keyed, full caret/selection/drag/copy) and
-the welcome screen's code sample (keyless, read-only — check early whether it
-needs steps 2–4 at all).
+**What it leaves for the deletion that follows.** With both bail-outs gone,
+the text projection has no writer: `WidgetPanelState::{painted, boxes}`,
+`render_collected`, `layout_box.rs` and `render_button` have no caller, and
+`Text::on_wheel`'s document branch reads an arena nothing fills. See *Delete
+the widget text projection* below.
+
+### Delete the widget text projection
+
+Open, and unblocked. Everything the projection produced is either replaced by
+the tree or read by nothing. What goes: `WidgetPanelState::{painted, boxes}`
+and the `mount`/`update_side_effects` arguments that carry them; `render_spec`,
+`render_floating_spec`, `render_panel_spec` and `render_collected` with every
+kind's collector arm; `layout_box.rs` (`LayoutBox`, `BoxScroll`, `focus_ring`,
+`hit_path`); `render_button` and the `Frame`-sharing test that justified
+keeping it; `Text::on_wheel`'s document branch and the `scroll` /
+`user_scrolled` fields whose only reader it was; the `entries` mirror on
+`FloatingWidgetState` and with it `Spot::{content_rows, content_cols}`. Then
+`app/chrome/`'s two hover reactions move beside their surfaces and the module
+goes. The exit property: **no description build runs a renderer** — assert it
+by making `render_collected` not exist.
 
 ### The status bar does layout by hand
 
@@ -492,8 +514,9 @@ becomes theme-file data. Nothing depends on either.
 
 ### Smaller residue
 
-- The pointer's legacy walk (see *The one asymmetry*), whose last members are
-  the markdown drag, the terminal's own mouse and the multi-click detector.
+- The pointer's legacy walk (see *The one asymmetry*), whose members are now
+  the terminal's own mouse and the multi-click detector; the markdown drag was
+  its last grab and is the run's own capture.
 - `Paint::Lit` — the theme-provenance escape hatch, still live in the fold. An
   item whose ink resolved to literal colours files nothing, so it is a blank
   *tier* in the audit rather than a blank surface.

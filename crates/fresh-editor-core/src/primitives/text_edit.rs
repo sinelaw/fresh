@@ -175,6 +175,19 @@ impl TextEdit {
     /// land the caret between the codepoints of a single cluster — Thai
     /// combining marks, emoji ZWJ sequences, flags — matching how
     /// `move_left`/`move_right` traverse the value.
+    /// [`Self::set_cursor_from_flat`] that **extends** rather than clears: the
+    /// anchor stays where it was, or is planted at the current caret if there
+    /// was none — the byte-addressed form of every `move_*_selecting`. What a
+    /// host does with a target it resolved itself (a rendered row above, a
+    /// drag's current cell) when the key or the pointer held Shift.
+    pub fn set_cursor_from_flat_selecting(&mut self, byte: usize) {
+        let anchor = self
+            .selection_anchor
+            .unwrap_or((self.cursor_row, self.cursor_col));
+        self.set_cursor_from_flat(byte);
+        self.selection_anchor = Some(anchor);
+    }
+
     pub fn set_cursor_from_flat(&mut self, byte: usize) {
         self.clear_selection();
         let total = self.value().len();

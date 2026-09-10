@@ -942,6 +942,7 @@ fn control(c: &Card, band: &str) -> Node<UiMsg> {
             marker_gutter: false,
             hovered_item_key: String::new(),
             hovered_popup_row: hovered_popup_row.clone(),
+            reveal: fresh_ui::behavior::anchor::Anchor::new(),
             avail_height: None,
             scrollbar_reveal: None,
             surface: surface.clone(),

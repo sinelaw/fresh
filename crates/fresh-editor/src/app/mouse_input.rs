@@ -248,10 +248,10 @@ impl Editor {
         }
 
         match mouse_event.kind {
-            MouseEventKind::Drag(MouseButton::Left) => {
-                self.handle_mouse_drag(col, row)?;
-                needs_render = true;
-            }
+            // A drag the tree declined moves nothing: every press-to-release
+            // gesture is a node's own capture now, and the last one that was
+            // not — the markdown document's drag-to-select — is the run's.
+            MouseEventKind::Drag(MouseButton::Left) => {}
             MouseEventKind::Up(MouseButton::Left) => {
                 // Release is GRAB-KEYED like the Drag arm: the derived
                 // `pointer_grab` names which press-to-release routing is
@@ -267,7 +267,6 @@ impl Editor {
                 // Blanket sweep: every remaining drag flag drops here,
                 // so no grab can outlive its release even if its
                 // finalizer above was skipped.
-                self.widget_text_drag = None;
                 self.clear_active_window_drag_state();
 
                 // The separator's reflow was here, keyed on its grab. It is
@@ -905,9 +904,8 @@ impl Editor {
         row: u16,
         mouse_event: crossterm::event::MouseEvent,
     ) -> Option<AnyhowResult<bool>> {
-        let chrome_drag_active = super::chrome::pointer_grab(self).is_some();
         let context_menu_open = self.active_window().context_menu_core().is_some();
-        if !chrome_drag_active && !context_menu_open {
+        if !context_menu_open {
             let forwarding = self.config.terminal.mouse_forwarding;
             // Which terminal, and where its grid is: a question about the
             // shell's tree, so it is asked on this side and handed down.
@@ -927,53 +925,6 @@ impl Editor {
     }
 
     /// Handle mouse drag event
-    pub(super) fn handle_mouse_drag(&mut self, col: u16, row: u16) -> AnyhowResult<()> {
-        use super::chrome::PointerGrab;
-        // THE grab slot: the press-to-release owner derived from live
-        // drag state (`chrome::pointer_grab`) routes every motion —
-        // no re-hit-testing mid-drag (the btop-resize ruling), no
-        // hand-ordered flag ladder. `pointer_grab`'s check order
-        // preserves the old ladder's precedence.
-        let Some(grab) = super::chrome::pointer_grab(self) else {
-            return Ok(());
-        };
-        // Mouse-modal overlay: the only legitimate drags are the grabs the
-        // old ladder ran ahead of the swallow (dock resize, widget text,
-        // widget scrollbar). Anything else — text selection in the buffer, a
-        // buffer scrollbar behind the overlay — is swallowed so the buffer
-        // stays put.
-        //
-        // The overlay's own result-list scrollbar used to be on this list.
-        // It is not a grab any more: the list is a `fresh-ui` viewport and
-        // `hit.rs` owns its thumb, capturing the pointer itself for the
-        // duration of the drag, so nothing reaches this walk to be let
-        // through.
-        if self.overlay_prompt_active() && !matches!(grab, PointerGrab::WidgetText) {
-            return Ok(());
-        }
-        #[allow(clippy::single_match, clippy::match_single_binding)]
-        match grab {
-            // Drag-to-select on a widget markdown/text document: armed by the
-            // press that placed the caret; every Drag extends the selection to
-            // the pointer.
-            PointerGrab::WidgetText => {
-                self.handle_widget_text_selection_drag(col, row);
-            } // A panel's list scrollbar was an arm here — the dock's and the
-              // modal's, then a buffer-mounted panel's. A described panel's
-              // list is a viewport and `hit.rs` captures the pointer for its
-              // own thumb, so the drag never reaches this walk.
-              // The split separator's and the file explorer's width drags were
-              // here, and so were both of a pane's scrollbars. All four are
-              // nodes that capture the pointer, so their moves arrive as
-              // `UiFact::GripDrag` / `UiFact::PaneScrollbarDrag` and never reach
-              // this walk. The buffer's text selection and the live terminal
-              // grid's selection intent were the last two: the pane's content
-              // leaf captures the pointer on its press, so they arrive as
-              // `UiFact::PaneContentDrag` (`Editor::drag_pane_content`).
-        }
-
-        Ok(())
-    }
 
     /// Clear all in-progress drag state on the active window's mouse state.
     /// The active text/popup selection is intentionally preserved — only the

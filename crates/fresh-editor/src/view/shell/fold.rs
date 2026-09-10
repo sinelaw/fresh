@@ -568,8 +568,9 @@ fn tile(buf: &mut Buffer, r: Rect, g: &str, style: Style, clip: Rect) {
     }
 }
 
-/// Lay `style`'s background over `r`, keeping each cell's symbol, foreground
-/// and modifiers — the region form of a run that inherits its background.
+/// Lay `style`'s background and attributes over `r`, keeping each cell's
+/// symbol and foreground — the region form of a run that inherits its
+/// background.
 fn wash(buf: &mut Buffer, r: Rect, style: Style, clip: Rect) {
     let Some(bg) = style.bg else {
         return;
@@ -577,7 +578,12 @@ fn wash(buf: &mut Buffer, r: Rect, style: Style, clip: Rect) {
     let area = intersect(intersect(r, clip), buf.area);
     for y in area.y..area.y.saturating_add(area.height) {
         for x in area.x..area.x.saturating_add(area.width) {
-            buf[(x, y)].set_bg(bg);
+            let cell = &mut buf[(x, y)];
+            cell.set_bg(bg);
+            // The ink's attributes are part of the ground it lays: a wash
+            // that names `reversed` is a block caret, and one that dropped
+            // its attributes could not be.
+            cell.set_style(Style::default().add_modifier(style.add_modifier));
         }
     }
 }

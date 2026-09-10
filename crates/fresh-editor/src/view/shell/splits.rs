@@ -1602,6 +1602,7 @@ fn panel_content(id: LeafId, i: super::panel::Interior, active: bool) -> Node<Ui
                 marker_gutter: i.marker_gutter,
                 hovered_item_key: i.hovered_item_key.clone(),
                 hovered_popup_row: i.hovered_popup_row.clone(),
+                reveal: i.reveal.clone(),
                 // **A page's lists take their natural height**: the page is
                 // the window, not each list. Every other panel's lists window
                 // themselves to the pane.

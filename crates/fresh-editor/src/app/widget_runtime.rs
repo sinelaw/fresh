@@ -153,31 +153,6 @@ fn spec_has_auto_sized_list(spec: &fresh_core::api::WidgetSpec) -> bool {
     spec.children().any(spec_has_auto_sized_list)
 }
 
-/// Whether `spec` contains a **markdown document view** — a multi-row `Text`
-/// with `markdown: true`.
-///
-/// The one widget a described panel does not fully describe. Its rows come
-/// from `render_collected` called *inside* the description build (§6e's
-/// remaining double render, whose replacement is S8's wrapped viewport), and
-/// two host paths still read the box arena that produces them:
-/// `Editor::handle_widget_text_selection_drag`, which is what makes the
-/// prose drag-selectable, and `Text::on_wheel`'s document branch. Both go
-/// silently dead against an empty arena, so a panel holding one keeps the
-/// collector.
-fn spec_has_markdown_document(spec: &fresh_core::api::WidgetSpec) -> bool {
-    use fresh_core::api::WidgetSpec;
-    if matches!(
-        spec,
-        WidgetSpec::Text {
-            markdown: true,
-            rows,
-            ..
-        } if *rows > 1
-    ) {
-        return true;
-    }
-    spec.children().any(spec_has_markdown_document)
-}
 
 fn find_scrollable_widget_key(spec: &fresh_core::api::WidgetSpec) -> Option<String> {
     let meta = crate::widgets::kinds::behavior(spec).box_meta(spec);
@@ -299,21 +274,16 @@ impl Editor {
         // (native by-index delivery passes `None`).
         if fx.place_caret {
             if let Some(byte) = clicked_byte {
-                if let Some(line) = hit.payload.get("mdLine").and_then(|v| v.as_u64()) {
-                    self.position_markdown_text_cursor_from_click(
-                        panel_key,
-                        &hit.widget_key,
-                        line as usize,
-                        byte,
-                    );
-                } else {
-                    self.reposition_widget_text_cursor_from_click(
-                        panel_key,
-                        &hit.widget_key,
-                        byte,
-                        &hit.payload,
-                    );
-                }
+                // A markdown document's press does not come this way any
+                // more: the run answers a press with a byte of the document
+                // (`UiFact::WidgetProsePress`), and the arena row this
+                // branch resolved `mdLine` against is gone.
+                self.reposition_widget_text_cursor_from_click(
+                    panel_key,
+                    &hit.widget_key,
+                    byte,
+                    &hit.payload,
+                );
             }
         }
         // Apply the handler's effects — the same interpretation the key
@@ -1011,9 +981,7 @@ impl Editor {
         let Some(state) = self.widget_registry.get(panel_key) else {
             return false;
         };
-        if spec_has_markdown_document(&state.spec) {
-            return false;
-        }
+        let ink = self.markdown_ink();
         let out = crate::widgets::resolve_panel(
             &state.spec,
             &state.instance_states,
@@ -1024,6 +992,7 @@ impl Editor {
             // discarded `autoFocusFirst: false` on every repaint of
             // exactly the panels the tree has already taken over.
             state.auto_focus_first,
+            Some(ink.ctx()),
         );
         // The row budget this panel was resolved against, for the resize
         // bookkeeping that decides when a pane-mounted panel has to be
@@ -1211,6 +1180,74 @@ impl Editor {
         }
     }
 
+    /// `Up`, `Down`, `Home` and `End` — with or without `S-` — over a markdown
+    /// document, resolved to a byte of the document from the rows the tree
+    /// wrapped it into (`Ui::text_rows_in`, then `cell_of` and `byte_of`),
+    /// and applied as a caret move the kind never sees. Returns whether the
+    /// key was one of those over such a widget.
+    ///
+    /// This is what the shadow editor over the reflowed rows existed to do:
+    /// give a key handler with no width something to count rows in. The
+    /// rows are layout's now, so the handler that has the tree does the
+    /// counting, and the document's state holds the document.
+    fn prose_vertical_key(
+        &mut self,
+        panel_key: &crate::widgets::PanelKey,
+        widget: &fresh_core::api::WidgetSpec,
+        widget_key: &str,
+        key: &str,
+    ) -> bool {
+        use fresh_ui::render::prim::{byte_of, cell_of};
+        if !matches!(widget, fresh_core::api::WidgetSpec::Text { markdown: true, rows, .. } if *rows > 1)
+        {
+            return false;
+        }
+        let (extend, base) = match key.strip_prefix("S-") {
+            Some(rest) => (true, rest),
+            None => (false, key),
+        };
+        if !matches!(base, "Up" | "Down" | "Home" | "End") {
+            return false;
+        }
+        let byte = match self
+            .widget_registry
+            .get(panel_key)
+            .and_then(|p| p.instance_states.get(widget_key))
+        {
+            Some(crate::widgets::WidgetInstanceState::Text { editor, .. }) => {
+                editor.flat_cursor_byte()
+            }
+            _ => return false,
+        };
+        let Some(mut ui) = self.shell_ui.take() else {
+            return false;
+        };
+        let rows = self
+            .panel_subtree_root(&ui, panel_key)
+            .and_then(|root| {
+                ui.text_rows_in(root, &crate::view::shell::widgets::prose_run_key(widget_key))
+            });
+        self.shell_ui = Some(ui);
+        let Some((whole, rows)) = rows else {
+            return false;
+        };
+        if rows.is_empty() {
+            return true;
+        }
+        let (row, col) = cell_of(&rows, &whole, byte);
+        let last = rows.len() - 1;
+        let target = match base {
+            "Home" => rows[row].src.start,
+            "End" => rows[row].src.end,
+            "Up" if row == 0 => 0,
+            "Up" => byte_of(&rows, &whole, row - 1, col as i32).unwrap_or(rows[row - 1].src.end),
+            "Down" if row == last => whole.len(),
+            _ => byte_of(&rows, &whole, row + 1, col as i32).unwrap_or(rows[row + 1].src.end),
+        };
+        self.move_prose_caret(panel_key, widget_key, target, extend);
+        true
+    }
+
     fn handle_widget_key(&mut self, panel_key: &crate::widgets::PanelKey, key: &str) {
         // Smart key dispatch — route to the right specialized
         // handler based on focused widget kind. See WidgetAction::Key
@@ -1231,6 +1268,15 @@ impl Editor {
         if !focus_key.is_empty() {
             let widget = crate::widgets::find_widget_by_key(&panel.spec, &focus_key).cloned();
             if let Some(widget) = widget {
+                // **A rendered-row move over a markdown document is the
+                // host's.** `Up`/`Down`/`Home`/`End` there mean the rows the
+                // wrap produced, and the kind has neither the width nor the
+                // tree; the host reads the rows layout shaped and hands the
+                // kind a byte. Everything else on that surface stays the
+                // kind's and stays logical.
+                if self.prose_vertical_key(panel_key, &widget, &focus_key, key) {
+                    return;
+                }
                 let mut fx = crate::widgets::kinds::KeyFx::default();
                 let viewport = self.widget_viewport(panel_key, &widget, &focus_key);
                 let disposition = match self.widget_registry.get_mut(panel_key) {
@@ -2848,106 +2894,6 @@ impl Editor {
         self.with_focused_text_editor(panel_key, |editor| editor.set_cursor_from_flat(value_byte));
     }
 
-    /// Flat byte offset of `(line, byte_in_line)` within `value`,
-    /// clamping the line into range and the byte onto a char boundary
-    /// of that line. Newlines count one byte each, matching
-    /// [`TextEdit::flat_cursor_byte`](crate::primitives::text_edit::TextEdit).
-    fn markdown_line_byte_to_flat(value: &str, line: usize, byte_in_line: usize) -> usize {
-        let mut flat = 0usize;
-        for (i, l) in value.split('\n').enumerate() {
-            if i == line {
-                let mut b = byte_in_line.min(l.len());
-                while b > 0 && !l.is_char_boundary(b) {
-                    b -= 1;
-                }
-                return flat + b;
-            }
-            flat += l.len() + 1;
-        }
-        value.len()
-    }
-
-    /// A press on a markdown document row: focus already moved (the
-    /// caller's tabbable path), so place the caret at the clicked byte
-    /// of rendered line `line`, re-arm keep-caret-visible, and arm
-    /// drag-to-select anchored at the press.
-    pub(super) fn position_markdown_text_cursor_from_click(
-        &mut self,
-        panel_key: &crate::widgets::PanelKey,
-        widget_key: &str,
-        line: usize,
-        byte_in_line: usize,
-    ) {
-        let is_focused = self
-            .widget_registry
-            .get(panel_key)
-            .map(|p| p.focus_key == widget_key)
-            .unwrap_or(false);
-        if !is_focused {
-            return;
-        }
-        let Some(flat) = ({
-            let panel = self.widget_registry.get(panel_key);
-            panel.and_then(|p| match p.instance_states.get(widget_key) {
-                Some(crate::widgets::WidgetInstanceState::Text { editor, .. }) => Some(
-                    Self::markdown_line_byte_to_flat(&editor.value(), line, byte_in_line),
-                ),
-                _ => None,
-            })
-        }) else {
-            return;
-        };
-        self.clear_focused_text_user_scrolled(panel_key);
-        let moved = self.with_focused_text_editor(panel_key, |editor| {
-            editor.set_cursor_from_flat(flat);
-        });
-        // A click that lands on the caret's own cell still dismisses an
-        // existing selection: `set_cursor_from_flat` cleared the anchor,
-        // but `with_focused_text_editor` saw no cursor/value change, so
-        // repaint explicitly.
-        if !moved {
-            self.rerender_widget_panel(panel_key);
-        }
-        self.widget_text_drag = Some(super::WidgetTextDrag {
-            panel: panel_key.clone(),
-            widget: widget_key.to_string(),
-            anchor_flat: flat,
-        });
-    }
-
-    /// Extend the drag selection of an armed widget-text drag to
-    /// `(line, byte_in_line)`: caret moves there, anchor stays at the
-    /// press position. Selection-only — no `change` event fires.
-    pub(super) fn extend_widget_text_selection_to(
-        &mut self,
-        drag: &super::WidgetTextDrag,
-        line: usize,
-        byte_in_line: usize,
-    ) {
-        let Some(panel) = self.widget_registry.get_mut(&drag.panel) else {
-            return;
-        };
-        let Some(crate::widgets::WidgetInstanceState::Text { editor, .. }) =
-            panel.instance_states.get_mut(&drag.widget)
-        else {
-            return;
-        };
-        let value = editor.value();
-        let head = Self::markdown_line_byte_to_flat(&value, line, byte_in_line);
-        // Anchor (row, col) from its flat offset: park the cursor there
-        // momentarily to reuse the flat→(row, col) clamping, then move
-        // the cursor to the head and re-attach the anchor.
-        editor.set_cursor_from_flat(drag.anchor_flat);
-        let anchor_rc = (editor.cursor_row, editor.cursor_col);
-        editor.set_cursor_from_flat(head);
-        editor.selection_anchor = if head != drag.anchor_flat {
-            Some(anchor_rc)
-        } else {
-            None
-        };
-        self.rerender_widget_panel(&drag.panel);
-    }
-
     /// Apply a non-printable editing key to the focused text widget —
     /// the host shell over the kind-owned `kinds::text::text_key`
     /// (the shared text-key table, read-only gating, and markdown
@@ -2979,18 +2925,6 @@ impl Editor {
         }
     }
 
-    /// Clear the focused Text widget's `user_scrolled` flag (re-arming
-    /// keep-caret-visible). Returns true when the flag was set.
-    fn clear_focused_text_user_scrolled(&mut self, panel_key: &crate::widgets::PanelKey) -> bool {
-        let Some(panel) = self.widget_registry.get_mut(panel_key) else {
-            return false;
-        };
-        let focus_key = panel.focus_key.clone();
-        if focus_key.is_empty() {
-            return false;
-        }
-        crate::widgets::kinds::text::clear_user_scrolled(&focus_key, panel)
-    }
 
     /// Insert printable / IME-committed text at the focused text
     /// widget's cursor. Same path for single-line and multi-line —
@@ -3485,64 +3419,7 @@ impl Editor {
     /// — the same geometry wheel routing hit-tests — then hands the
     /// caret move to the runtime. Rows above/below the region clamp to
     /// its edges so a drag that overshoots keeps selecting.
-    pub(super) fn handle_widget_text_selection_drag(&mut self, col: u16, row: u16) {
-        use crate::primitives::display_width::grapheme_byte_at_visual_column;
-        let Some(drag) = self.widget_text_drag.clone() else {
-            return;
-        };
-        let Some(panel) = self.widget_registry.get(&drag.panel) else {
-            return;
-        };
-        let Some(buffer_id) = panel.buffer_id else {
-            return;
-        };
-        let Some(region) = panel
-            .boxes
-            .iter()
-            .find(|b| b.scroll.is_some() && b.key.as_deref() == Some(drag.widget.as_str()))
-            .cloned()
-        else {
-            return;
-        };
-        let Some(rect) = self.pane_content_rect_for_buffer(buffer_id) else {
-            return;
-        };
-        let (top_line, gutter) = self
-            .buffers()
-            .get(&buffer_id)
-            .map(|s| (0usize, s.margins.left_total_width() as u16))
-            .unwrap_or((0, 0));
-        // Buffer row under the pointer, clamped into the region's row
-        // band (dragging past either edge selects to the visible edge).
-        let Some(sc) = region.scroll else { return };
-        let brow = top_line + usize::from(row.max(rect.y) - rect.y);
-        let rel_row = brow
-            .saturating_sub(region.row as usize)
-            .min(region.height.saturating_sub(1) as usize);
-        let line = (sc.offset + rel_row).min(sc.total.saturating_sub(1));
-        // Byte within the rendered line, from the pointer's display
-        // column within the widget's region.
-        let widget_col = usize::from(col.saturating_sub(rect.x).saturating_sub(gutter))
-            .saturating_sub(region.col as usize);
-        let line_text = self
-            .widget_registry
-            .get(&drag.panel)
-            .and_then(|p| match p.instance_states.get(&drag.widget) {
-                Some(crate::widgets::WidgetInstanceState::Text { editor, .. }) => Some(
-                    editor
-                        .value()
-                        .split('\n')
-                        .nth(line)
-                        .unwrap_or_default()
-                        .to_string(),
-                ),
-                _ => None,
-            })
-            .unwrap_or_default();
-        let byte_in_line = grapheme_byte_at_visual_column(&line_text, widget_col);
-        self.extend_widget_text_selection_to(&drag, line, byte_in_line);
-    }
-
+    
     /// Right-click hit-test against a floating widget panel. Resolves the
     /// cell under the cursor to a widget and — only when it lands on a
     /// `list` row — fires a `widget_event` with `event_type: "context"`
@@ -4220,6 +4097,283 @@ mod tests {
     ///
     /// The same panel outside a slot, with no described interior, keeps the
     /// collector: the assertion at the end is the half that must not change.
+    // ---- the markdown document view -----------------------------------
+
+    /// A markdown document as the prose column of a dock panel: long enough
+    /// to wrap into several rows at the dock's width.
+    fn prose_spec(key: Option<&str>) -> WidgetSpec {
+        WidgetSpec::Text {
+            value: "The quick brown fox jumps over the lazy dog while the five boxing \
+                    wizards jump quickly and vexed nymphs blow jugs of fun at dusk."
+                .into(),
+            cursor_byte: -1,
+            focused: false,
+            label: String::new(),
+            placeholder: None,
+            rows: 4,
+            field_width: 0,
+            max_visible_chars: 0,
+            full_width: false,
+            completions: Vec::new(),
+            completions_visible_rows: 0,
+            block_caret: false,
+            sel_start: -1,
+            sel_end: -1,
+            label_width: 0,
+            read_only: true,
+            markdown: true,
+            key: key.map(str::to_string),
+        }
+    }
+
+    /// Mount a prose panel in the dock **with no collector output at all** —
+    /// the state the description needs is seeded by `resolve_panel`, not by
+    /// a render — and lay the frame out once.
+    fn mount_prose_panel(editor: &mut Editor, key: &crate::widgets::PanelKey, spec: WidgetSpec) {
+        let focus = match &spec {
+            WidgetSpec::Text { key: Some(k), .. } => k.clone(),
+            _ => String::new(),
+        };
+        editor.widget_registry.mount(
+            key.clone(),
+            crate::app::PanelSlot::Dock.buffer_id(),
+            spec,
+            Default::default(),
+            focus,
+            Default::default(),
+            Vec::new(),
+            true,
+            false,
+            false,
+        );
+        editor.dock = Some(dock_panel(key.clone()));
+        editor.rerender_widget_panel(key);
+        frame_the_shell(editor);
+    }
+
+    fn prose_rows(
+        editor: &mut Editor,
+        key: &crate::widgets::PanelKey,
+    ) -> (String, Vec<fresh_ui::render::prim::Row>) {
+        let mut ui = editor.shell_ui.take().expect("a laid-out tree");
+        let out = editor.panel_subtree_root(&ui, key).and_then(|root| {
+            ui.text_rows_in(root, &crate::view::shell::widgets::prose_run_key("prose"))
+        });
+        editor.shell_ui = Some(ui);
+        out.expect("the prose run's rows")
+    }
+
+    fn prose_editor(
+        editor: &Editor,
+        key: &crate::widgets::PanelKey,
+    ) -> crate::primitives::text_edit::TextEdit {
+        match editor
+            .widget_registry
+            .get(key)
+            .and_then(|p| p.instance_states.get("prose"))
+        {
+            Some(crate::widgets::WidgetInstanceState::Text { editor, .. }) => editor.clone(),
+            other => panic!("expected the prose's Text state, got {other:?}"),
+        }
+    }
+
+    fn prose_rect(editor: &Editor) -> ratatui::layout::Rect {
+        let ui = editor.shell_ui.as_ref().expect("a laid-out tree");
+        crate::view::shell::rect_of(
+            ui,
+            &crate::view::shell::widgets::prose_run_key("prose"),
+            ratatui::layout::Rect::new(0, 0, 80, 24),
+        )
+        .expect("the prose run has a rectangle")
+    }
+
+    /// **The document's state holds the document.** No renderer ran; the
+    /// `TextEdit` the caret and Copy address is the rendered document — one
+    /// string, the same bytes at every width — and the tree wrapped it.
+    #[test]
+    fn a_markdown_documents_state_holds_the_document_not_its_reflow() {
+        let (mut editor, _t) = make_editor();
+        let key = crate::widgets::PanelKey::new("tour", 1);
+        mount_prose_panel(&mut editor, &key, prose_spec(Some("prose")));
+        let ink = editor.markdown_ink();
+        let doc = crate::widgets::kinds::text::markdown_document(
+            match prose_spec(None) {
+                WidgetSpec::Text { value, .. } => value,
+                _ => unreachable!(),
+            }
+            .as_str(),
+            crate::widgets::RenderContext {
+                markdown: Some(ink.ctx()),
+                ..Default::default()
+            },
+        )
+        .text;
+        assert_eq!(
+            prose_editor(&editor, &key).value(),
+            doc.trim_end_matches('\n'),
+            "the state is the document — no newline the wrap put there"
+        );
+        let (whole, rows) = prose_rows(&mut editor, &key);
+        assert_eq!(whole, prose_editor(&editor, &key).value(), "and the run shows that string");
+        assert!(rows.len() >= 3, "wrapped into rows at the dock's width: {}", rows.len());
+        let panel = editor.widget_registry.get(&key).expect("the panel");
+        assert!(
+            panel.boxes.is_empty() && panel.painted.is_empty(),
+            "no text projection ran for it"
+        );
+    }
+
+    /// **`Up`/`Down`/`Home`/`End` move by rendered row, resolved host-side.**
+    /// The kind never sees them: the host reads the rows the tree shaped and
+    /// puts the caret on the byte one row down at the same column.
+    #[test]
+    fn keys_over_a_markdown_document_move_by_the_rows_the_wrap_made() {
+        use fresh_ui::render::prim::byte_of;
+        let (mut editor, _t) = make_editor();
+        let key = crate::widgets::PanelKey::new("tour", 1);
+        mount_prose_panel(&mut editor, &key, prose_spec(Some("prose")));
+        let (whole, rows) = prose_rows(&mut editor, &key);
+        assert_eq!(prose_editor(&editor, &key).flat_cursor_byte(), 0);
+
+        editor.handle_widget_key(&key, "Down");
+        let one_down = byte_of(&rows, &whole, 1, 0).expect("row 1 col 0");
+        assert_eq!(prose_editor(&editor, &key).flat_cursor_byte(), one_down, "Down: one rendered row");
+        assert!(one_down > 0 && one_down < whole.len());
+
+        editor.handle_widget_key(&key, "End");
+        assert_eq!(prose_editor(&editor, &key).flat_cursor_byte(), rows[1].src.end, "End: the row's last byte");
+        editor.handle_widget_key(&key, "Home");
+        assert_eq!(prose_editor(&editor, &key).flat_cursor_byte(), rows[1].src.start, "Home: the row's first byte");
+
+        editor.handle_widget_key(&key, "S-Down");
+        let two_down = byte_of(&rows, &whole, 2, 0).expect("row 2 col 0");
+        let e = prose_editor(&editor, &key);
+        assert_eq!(e.flat_cursor_byte(), two_down);
+        assert_eq!(
+            e.selection_flat_range(),
+            Some((rows[1].src.start, two_down)),
+            "S-Down extends from the anchor"
+        );
+
+        editor.handle_widget_key(&key, "Up");
+        editor.handle_widget_key(&key, "Up");
+        let e = prose_editor(&editor, &key);
+        assert_eq!(e.flat_cursor_byte(), 0, "two rows up from row 2 is the start");
+        assert_eq!(e.selection_flat_range(), None, "a plain move drops the selection");
+    }
+
+    /// **A press places the caret by the byte under the pointer, and the drag
+    /// is the run's own capture.** No arena, no line number: `Event::text_byte`
+    /// from the rows layout shaped, and the release ends it.
+    #[test]
+    fn a_press_on_the_prose_places_the_caret_by_byte_and_a_drag_selects() {
+        use fresh_ui::render::prim::byte_of;
+        use fresh_ui::{Input, Mods, MouseButton, Point};
+        let (mut editor, _t) = make_editor();
+        let key = crate::widgets::PanelKey::new("tour", 1);
+        mount_prose_panel(&mut editor, &key, prose_spec(Some("prose")));
+        let (whole, rows) = prose_rows(&mut editor, &key);
+        let r = prose_rect(&editor);
+
+        editor.shell_dispatch(Input::press(
+            Point::new(r.x as i32, r.y as i32 + 1),
+            MouseButton::Left,
+            Mods::NONE,
+        ));
+        assert_eq!(
+            prose_editor(&editor, &key).flat_cursor_byte(),
+            rows[1].src.start,
+            "a press on row 1's first cell"
+        );
+        assert!(editor.prose_drag.is_some(), "the press is live");
+
+        editor.shell_dispatch(Input::Move {
+            pos: Point::new(r.x as i32 + 3, r.y as i32 + 2),
+            mods: Mods::NONE,
+        });
+        let to = byte_of(&rows, &whole, 2, 3).expect("row 2 col 3");
+        assert_eq!(
+            prose_editor(&editor, &key).selection_flat_range(),
+            Some((rows[1].src.start, to)),
+            "the drag extends the selection to the byte under the pointer"
+        );
+
+        editor.shell_dispatch(Input::release(
+            Point::new(r.x as i32 + 3, r.y as i32 + 2),
+            MouseButton::Left,
+            Mods::NONE,
+        ));
+        assert!(editor.prose_drag.is_none(), "the release ends it");
+        assert_eq!(
+            prose_editor(&editor, &key).selection_flat_range(),
+            Some((rows[1].src.start, to)),
+            "and the selection stands"
+        );
+    }
+
+    /// **A caret placed by byte lands on the row the wrap put it on, after a
+    /// width change.** The caret is a byte of the document; which row that is
+    /// changes with the width, and the tree — not a second wrap — answers.
+    #[test]
+    fn the_caret_lands_on_the_row_the_wrap_put_it_on_after_a_width_change() {
+        use fresh_ui::render::prim::cell_of;
+        let (mut editor, _t) = make_editor();
+        let key = crate::widgets::PanelKey::new("tour", 1);
+        mount_prose_panel(&mut editor, &key, prose_spec(Some("prose")));
+        let (whole, narrow) = prose_rows(&mut editor, &key);
+        assert!(narrow.len() >= 4);
+        let byte = narrow[2].src.start + 2;
+        editor.move_prose_caret(&key, "prose", byte, false);
+        frame_the_shell(&mut editor);
+        assert_eq!(cell_of(&narrow, &whole, byte).0, 2, "on row 2 at the narrow width");
+
+        // Widen the dock: the same bytes wrap into fewer rows.
+        if let Some(d) = editor.dock.as_mut() {
+            d.placement = crate::app::PanelPlacement::LeftDock { width_cols: 60 };
+        }
+        editor.shell_description_stale = true;
+        let dock = ratatui::layout::Rect::new(0, 0, 60, 24);
+        let chrome = ratatui::layout::Rect::new(60, 0, 20, 24);
+        let shell = editor.shell_frame((Some(dock), chrome));
+        editor.lay_out_shell_tree(shell, fresh_ui::Size::new(80, 24));
+
+        let (whole2, wide) = prose_rows(&mut editor, &key);
+        assert_eq!(whole2, whole, "the same string");
+        assert!(wide.len() < narrow.len(), "fewer rows: {} < {}", wide.len(), narrow.len());
+        let row = cell_of(&wide, &whole2, byte).0;
+        assert!(row < 2, "the byte moved up to row {row}");
+
+        // And the caret is painted there: a one-byte wash on that row, inside
+        // the run's rectangle.
+        let r = prose_rect(&editor);
+        let ui = editor.shell_ui.as_ref().unwrap();
+        let washes: Vec<_> = ui
+            .spec()
+            .items
+            .iter()
+            .filter(|i| matches!(i.draw, fresh_ui::Draw::Wash))
+            .filter(|i| i.rect.x >= r.x as i32 && i.rect.x < (r.x + r.width) as i32)
+            .map(|i| i.rect.y - r.y as i32)
+            .collect();
+        assert_eq!(washes, vec![row as i32], "the caret wash is on the wrap's row");
+    }
+
+    /// **A keyless document is a wrapped run and nothing else** — the welcome
+    /// screen's code sample: no state to seed, no caret, no gesture, and a key
+    /// aimed at the panel has nothing to move.
+    #[test]
+    fn a_keyless_markdown_document_is_a_wrapped_run_and_nothing_else() {
+        let (mut editor, _t) = make_editor();
+        let key = crate::widgets::PanelKey::new("welcome", 1);
+        mount_prose_panel(&mut editor, &key, prose_spec(None));
+        let panel = editor.widget_registry.get(&key).expect("the panel");
+        assert!(panel.instance_states.is_empty(), "nothing to seed without a key");
+        let ui = editor.shell_ui.as_ref().unwrap();
+        assert!(ui.find_by_key(&crate::view::shell::widgets::prose_run_key("prose")).is_none());
+        editor.handle_widget_key(&key, "Down");
+        assert!(editor.widget_registry.get(&key).unwrap().instance_states.is_empty());
+    }
+
     #[test]
     fn a_described_panel_resolves_instead_of_rendering() {
         let (mut editor, _t) = make_editor();

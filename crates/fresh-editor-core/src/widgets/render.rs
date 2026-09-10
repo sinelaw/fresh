@@ -761,6 +761,7 @@ pub fn resolve_panel(
     prev: &HashMap<String, WidgetInstanceState>,
     prev_focus_key: &str,
     auto_focus_first: bool,
+    md: Option<MarkdownCtx<'_>>,
 ) -> ResolvedPanel {
     let mut tabbable = Vec::new();
     collect_tabbable(spec, &mut tabbable);
@@ -772,7 +773,7 @@ pub fn resolve_panel(
         String::new()
     };
     let mut instance_states = HashMap::new();
-    carry_instance_states(spec, prev, &mut instance_states);
+    carry_instance_states(spec, prev, md, &mut instance_states);
     ResolvedPanel {
         instance_states,
         focus_key,
@@ -789,15 +790,62 @@ pub fn resolve_panel(
 fn carry_instance_states(
     spec: &WidgetSpec,
     prev: &HashMap<String, WidgetInstanceState>,
+    md: Option<MarkdownCtx<'_>>,
     out: &mut HashMap<String, WidgetInstanceState>,
 ) {
     if let Some(k) = super::kinds::behavior(spec).box_meta(spec).key {
+        // **A markdown document's state holds the document.** The kind's
+        // renderer used to seed a `TextEdit` over the *reflowed* rows, and a
+        // described panel no longer runs that renderer — so the document is
+        // seeded here, from the same rendered text the wrapped run displays,
+        // and re-seeded when that text changes (a new value): the caret is a
+        // byte of this string and a byte into a different string means
+        // nothing. A width change is not a text change any more; the wrap is
+        // layout's, and the bytes are the same at every width.
+        if let WidgetSpec::Text {
+            markdown: true,
+            rows,
+            value,
+            ..
+        } = spec
+        {
+            if *rows > 1 {
+                let doc = super::kinds::text::markdown_document(
+                    value,
+                    RenderContext {
+                        markdown: md,
+                        ..Default::default()
+                    },
+                )
+                .text;
+                let doc = doc.trim_end_matches('\n');
+                let carried = match prev.get(&k) {
+                    Some(WidgetInstanceState::Text { editor, .. }) if editor.value() == doc => {
+                        prev.get(&k).cloned()
+                    }
+                    _ => None,
+                };
+                out.insert(
+                    k,
+                    carried.unwrap_or_else(|| WidgetInstanceState::Text {
+                        editor: crate::primitives::text_edit::TextEdit::with_text(doc),
+                        scroll: 0,
+                        completions: Vec::new(),
+                        completion_selected_index: 0,
+                        completion_scroll_offset: 0,
+                        completion_navigated: false,
+                        user_scrolled: false,
+                    }),
+                );
+                return;
+            }
+        }
         if let Some(stored) = prev.get(&k) {
             out.insert(k, stored.clone());
         }
     }
     for c in spec.children() {
-        carry_instance_states(c, prev, out);
+        carry_instance_states(c, prev, md, out);
     }
 }
 
@@ -8624,7 +8672,7 @@ pub mod tests {
             },
         );
         let rendered = render_spec(&spec, &prev, "dd", 40);
-        let resolved = resolve_panel(&spec, &prev, "dd", true);
+        let resolved = resolve_panel(&spec, &prev, "dd", true, None);
         assert_eq!(resolved.focus_key, rendered.focus_key);
         assert_eq!(resolved.tabbable, rendered.tabbable);
         assert_eq!(resolved.tabbable, vec!["btn", "dd"]);
@@ -8647,8 +8695,8 @@ pub mod tests {
              not a seed"
         );
         // The focus clamp: a key that is not in the ring falls to the first.
-        assert_eq!(resolve_panel(&spec, &prev, "nosuch", true).focus_key, "btn");
-        assert_eq!(resolve_panel(&spec, &prev, "nosuch", false).focus_key, "");
+        assert_eq!(resolve_panel(&spec, &prev, "nosuch", true, None).focus_key, "btn");
+        assert_eq!(resolve_panel(&spec, &prev, "nosuch", false, None).focus_key, "");
     }
 
     #[test]

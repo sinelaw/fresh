@@ -242,6 +242,8 @@ pub struct Ctx<'a> {
     /// the pan has to be applied where they are fitted. Empty for a surface
     /// with no plugin panel behind it (`Ctx::plain`).
     pub h_pan: &'a std::collections::HashMap<String, i32>,
+    /// See `panel::Interior::reveal`.
+    pub reveal: std::rc::Rc<fresh_ui::behavior::anchor::Anchor>,
 }
 
 /// The empty instance-state map, for a spec with no host state behind it.
@@ -278,6 +280,7 @@ impl Ctx<'static> {
             marker_gutter: false,
             hovered_item_key: String::new(),
             hovered_popup_row: String::new(),
+            reveal: fresh_ui::behavior::anchor::Anchor::new(),
             avail_height: None,
             scrollbar_reveal: None,
             surface: panel_surface(),
@@ -591,6 +594,15 @@ pub fn widget_node_key(k: &str) -> fresh_ui::Key {
 /// ([`spec_state_key`]), else the widget namespace ([`widget_node_key`]).
 /// `None` for an unkeyed widget. What the host hands an `Anchor` to move a
 /// page to a widget.
+/// The key a markdown document's **run** carries — distinct from the
+/// viewport's, which keeps the widget's own key (`spec_state_key`) so the
+/// window facts and the focus ring find it where every other widget's is.
+/// The run is what `Ui::text_rows_in` and `Anchor::reveal_byte` address:
+/// the rows are the run's, and a viewport has none.
+pub(crate) fn prose_run_key(widget_key: &str) -> fresh_ui::Key {
+    fresh_ui::Key::Str(format!("widget_run:{widget_key}").into())
+}
+
 pub fn node_key_of(spec: &WidgetSpec) -> Option<fresh_ui::Key> {
     spec_state_key(spec).or_else(|| spec.key().map(widget_node_key))
 }
@@ -797,6 +809,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                 hovered_key: cx.hovered_key.clone(),
                 hovered_item_key: cx.hovered_item_key.clone(),
                 hovered_popup_row: cx.hovered_popup_row.clone(),
+                reveal: cx.reveal.clone(),
                 ..*cx
             };
             let r = row().children(
@@ -2092,69 +2105,22 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                 _ => col().children([entry_row(&fmt::text_area_label(label), &cx.surface), body]),
             }
         }
-        // **The one text field still built by the collector: a markdown
-        // document view.**
+        // **A markdown document is a wrapped run in a viewport.** The whole
+        // rendered document is one logical string (`markdown_document`, the
+        // indent already breakable), wrapped by *layout* at the width it
+        // settled on, with a byte of that string as the one coordinate the
+        // caret, the selection, a press and the key path share. The caret is
+        // a one-byte wash and a selection is a wider one — the block caret
+        // this surface always had, said as a byte rather than a row overlay.
+        // A press answers with `Event::text_byte`, the run captures the
+        // pointer for the drag, and `Up`/`Down` are resolved host-side from
+        // the rows the tree shaped (`Editor::prose_vertical_key`). The
+        // document's state holds the document, so Copy yields it.
         //
-        // `markdown: true` with more than one row is a different renderer —
-        // `kinds::text::render_markdown_text_area` — and it is the wrapping
-        // engine the plain text area is not: it parses the source, reflows it
-        // to the panel width, and keeps a *shadow* editor over the reflowed
-        // text so the caret, the selection and Copy address rendered lines
-        // rather than source lines. A row is therefore not a function of a
-        // line, which is exactly what lets the arm above format only the rows
-        // it draws; here the document has to be reflowed before anyone knows
-        // how many rows there are or which line each one came from.
-        //
-        // So the collector is asked for the whole document: its `rows` is the
-        // window, and handing it one as tall as the text makes it emit every
-        // line and clamp its own scroll to zero, after which `List::windowed`
-        // windows the result. **That is a full immediate-mode render per
-        // frame**, and it is the last one on this path.
-        //
-        // **`fresh-ui` now has the two pieces the end-state document §6.2
-        // named, and they are not enough.** A wrapped run answers a press with
-        // a byte of its logical string (`Event::text_byte`) and places a caret
-        // stated as one (`Node::cursor_byte`); both read one mapping, the
-        // `src` range each wrapped row carries. Three things still stand
-        // between that and `viewport(text_runs(parsed).wrap(Word))` here, and
-        // none is a missing line of glue:
-        //
-        // 1. **The caret this view wants is not a hardware cursor**, which is
-        //    what `cursor_byte` places — see `caret_row` below for why. Its
-        //    block caret and its selection band are *styling by logical byte*,
-        //    which `text_runs` already does: split the runs at the caret and
-        //    at the selection ends, before the wrap, and the wrap cuts across
-        //    them. So `cursor_byte` is not the piece this arm was missing.
-        //
-        // 2. **`Up`/`Down`/`Home`/`End`/`S-Down` here mean *rendered* rows**,
-        //    not source lines — that is the whole reason the shadow editor
-        //    holds the reflowed text: the key path (`kinds::text::text_key`)
-        //    has a `WidgetPanelState` and no width, and the reflowed text is
-        //    how render-time knowledge reaches it. `text_byte` answers at
-        //    press time and `cursor_byte` at paint time; neither answers
-        //    "which byte is one rendered row below this one" from a key
-        //    handler. `Ui::text_rows` is now that third thing — the rows
-        //    layout shaped, at the width *it* settled, not the `width` this
-        //    function is handed (which §6.6 is separately retiring) — so what
-        //    is left here is publishing them into the `WidgetPanelState` the
-        //    key path reads and deleting the shadow wrap, which is editor-side
-        //    work rather than a missing library piece.
-        //
-        // 3. **This text is deliberately not text `fresh-ui` may wrap.**
-        //    `parse_markdown` preserves leading whitespace as NBSP so the
-        //    markdown parser does not read an indented line as a code block
-        //    (`fresh-editor-core/src/markdown.rs`, "Preserve leading
-        //    whitespace (as NBSP)"),
-        //    and `wrap_styled_lines` then treats NBSP as space-like for both
-        //    breaking and the hanging indent. `fresh-ui`'s wrap breaks on
-        //    `' '` only — correctly, since NBSP exists to *prevent* a break —
-        //    so handing it this text would lose every list continuation's
-        //    indent and turn indented items into unbreakable words. Teaching
-        //    the library to break at NBSP would be wrong for every other
-        //    wrapped surface in the editor.
-        //
-        // Among the bundled plugins only `code-tour.ts` (the step body) asks
-        // for it, so the cost is real but narrow.
+        // This was the last widget kind whose description ran the old
+        // immediate-mode renderer inside `build` — a full re-shape of the
+        // document per frame, to recover a caret row — and the reason the
+        // text projection outlived every other consumer.
         WidgetSpec::Text {
             rows,
             label,
@@ -2162,148 +2128,109 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
             key,
             ..
         } if *rows > 1 => {
-            // As many lines as the text has, from whichever of the two is
-            // authoritative — instance state once it exists, the spec before.
-            let lines = key
-                .as_deref()
-                .filter(|k| !k.is_empty())
-                .and_then(|k| cx.states.get(k))
-                .and_then(|st| match st {
-                    crate::widgets::WidgetInstanceState::Text { editor, .. } => {
-                        Some(editor.line_count())
-                    }
-                    _ => None,
-                })
-                .unwrap_or_else(|| value.split('\n').count());
-            let mut whole = spec.clone();
-            if let WidgetSpec::Text { rows: r, .. } = &mut whole {
-                *r = (lines as u32).max(*rows);
-            }
-            let mut scratch = std::collections::HashMap::new();
-            let mut out = crate::widgets::render::render_collected(
-                &whole,
-                cx.states,
-                &mut scratch,
+            use fresh_ui::{Event, GestureKind, MouseButton};
+            let doc = crate::widgets::kinds::text::markdown_document(
+                value,
                 crate::widgets::RenderContext {
-                    focus_key: &cx.focus_key,
-                    hover_key: cx.hovered_key.as_deref().unwrap_or(""),
-                    hover_item_key: &cx.hovered_item_key,
-                    hover_popup_row: "",
                     markdown: cx.markdown,
-                    marker_gutter: cx.marker_gutter,
-                    avail_height: cx.avail_height,
-                    // A markdown Text has no rows to pan.
-                    h_pan: None,
-                    // A shadow render of ONE markdown Text, for its
-                    // reflowed rows and its caret: no list, no window,
-                    // nothing to carry.
-                    prev_painted: None,
+                    ..Default::default()
                 },
-                width as u32,
             );
-            let head = usize::from(!label.is_empty());
-            // **Where the caret is, from the shadow editor rather than from
-            // `focus_cursor`.** A markdown document deliberately publishes no
-            // `focus_cursor` — a hardware cursor here moves the panel
-            // *buffer's* real cursor, and the buffer viewport following it
-            // scrolled the whole panel out from under the document
-            // (`render.rs::markdown_text_caret_follows_focus_and_paints_block_caret`
-            // pins that). Its caret paints as a reversed cell in the row
-            // instead. So the row the caret is on comes from the shadow editor
-            // the render above just wrote into `scratch`, whose lines *are*
-            // the reflowed rows; reading `focus_cursor` here only ever
-            // produced `None`, and with it a list that never followed its
-            // caret.
-            let caret_row = key
-                .as_deref()
-                .filter(|k| !k.is_empty())
-                .filter(|k| cx.is_focused(Some(k)))
-                .and_then(|k| scratch.get(k))
-                .and_then(|st| match st {
-                    crate::widgets::WidgetInstanceState::Text { editor, .. } => {
-                        Some(editor.cursor_row)
-                    }
-                    _ => None,
-                });
-            // **The rows are formatted once and built for the window only.**
-            // Formatting the whole document is what asking the collector for
-            // it costs, and it is padding and overlay arithmetic per line;
-            // building a node per line is what would actually scale badly, and
-            // `List::windowed` is the same window `widgets::List` gives every
-            // other kind here. Its rows are one cell each, so its item scroll
-            // *is* the row scroll the runtime had.
-            let mut body_rows = out.entries.split_off(head);
-            // **The window is the box; the padding under a short document is
-            // not part of it.** The line count above is a guess whenever the
-            // widget is unkeyed — `value.split('\n')` counts a fenced block's
-            // ``` delimiters, which the render does not draw — and the
-            // collector pads its output to whatever height it was told, so
-            // the welcome page's nine-line sample came back eleven rows tall
-            // in a nine-row box and grew a scrollbar over a document that
-            // fits. Padding past the box is never content: it is trimmed,
-            // and never below the box's own height, so a document that
-            // really is taller still scrolls.
-            while body_rows.len() > (*rows).max(1) as usize
-                && body_rows.last().is_some_and(|e| e.text.trim().is_empty())
-            {
-                body_rows.pop();
-            }
-            let rows_src = std::rc::Rc::new(body_rows);
-            let hits = std::rc::Rc::new(out.hits.clone());
-            let n = rows_src.len();
-            let slot = cx.slot;
-            let surface = cx.surface.clone();
-            let sel = caret_row.and_then(|r| r.checked_sub(head));
-            let list = fresh_ui::List::windowed(n, |i| fresh_ui::Key::Str(i.to_string().into()), {
-                let rows_src = rows_src.clone();
-                move |i| {
-                    let mine: Vec<((usize, usize), crate::widgets::WidgetEvent)> = hits
-                        .iter()
-                        .filter(|h| h.buffer_row as usize == i + head)
-                        .map(|h| ((h.byte_start, h.byte_end), h.event.clone()))
-                        .collect();
-                    // No caret marker: the zero-width node `row_pieces`
-                    // places one at is what a non-modal surface's *hardware*
-                    // cursor follows, and this surface must not have one —
-                    // see `caret_row` above. The block caret is already an
-                    // inline overlay on the row.
-                    match mine.is_empty() {
-                        true => entry_row(&rows_src[i], &surface),
-                        false => row_pieces(
-                            &rows_src[i],
-                            slot,
-                            &surface,
-                            &mine,
-                            None,
-                            Fill::ToRowEnd,
-                            false,
-                        ),
-                    }
-                }
-            })
-            .focusable(false)
-            .scrollbar_when(cx.scrollbar_reveal)
-            .scrollbar_theme(bar_ink())
-            // The rows carry their own colours — a focused field paints its
-            // own background band per row — so the list's row states must not
-            // paint over them.
-            .row_theme({
-                let plain = cx.surface.to_string();
-                move |_, _| plain.clone()
+            let text_len = doc.text.trim_end_matches('\n').len();
+            let wk = key.as_deref().filter(|k| !k.is_empty());
+            let editor = wk.and_then(|k| cx.states.get(k)).and_then(|st| match st {
+                crate::widgets::WidgetInstanceState::Text { editor, .. } => Some(editor),
+                _ => None,
             });
-            // "Selected" here means "the rendered row the caret is on", which
-            // is what the list reveals when it *moves* — a wheel is a
-            // statement about the window and does not fight it. That is the
-            // whole of the runtime's follow-the-caret and its `user_scrolled`
-            // flag, which the collector cannot do here anyway: it is asked for
-            // the document at its full height, so its own scroll clamps to
-            // zero and the window is entirely this list's.
-            let list = list.selection(sel);
-            let body = keyed(fresh_ui::ComponentExt::node(list), spec_state_key(spec))
-                .h(Sizing::Cells(*rows as u16));
-            match head {
-                0 => body,
-                _ => col().children([entry_row(&out.entries[0], &cx.surface), body]),
+            let mut run = text_runs(
+                entry_runs(&doc, &[], &cx.surface)
+                    .into_iter()
+                    .map(|(_, r)| r),
+            )
+            .wrapping(fresh_ui::desc::Wrap::Hanging);
+            if let Some(k) = wk {
+                run = run.key(prose_run_key(k));
+            }
+            if let (Some(k), Some(ed)) = (wk, editor) {
+                if cx.is_focused(Some(k)) {
+                    let caret = ed.flat_cursor_byte().min(text_len);
+                    let (range, ink) = match ed.selection_flat_range() {
+                        Some((a, b)) if a != b => (
+                            a.min(b).min(text_len)..a.max(b).min(text_len),
+                            "ui.popup_selection_fg/ui.popup_selection_bg".to_string(),
+                        ),
+                        _ => {
+                            let next = doc.text[caret..]
+                                .chars()
+                                .next()
+                                .map(|c| caret + c.len_utf8())
+                                .unwrap_or(caret);
+                            (
+                                caret..next.min(text_len),
+                                cx.surface.clone().plus(Attrs::REVERSED).to_string(),
+                            )
+                        }
+                    };
+                    run = run.selection_bytes(range, ink);
+                }
+            }
+            let body = match wk {
+                None => run,
+                Some(k) => {
+                    let slot = cx.slot;
+                    let (kp, km, kr) = (k.to_string(), k.to_string(), k.to_string());
+                    fresh_ui::gesture(run)
+                        .on(
+                            GestureKind::Press,
+                            std::rc::Rc::new(move |e: &Event| {
+                                if e.button != MouseButton::Left {
+                                    return None;
+                                }
+                                let byte = e.text_byte?;
+                                e.capture_pointer();
+                                e.stop();
+                                Some(UiMsg::Ui(super::msg::UiFact::WidgetProsePress {
+                                    slot,
+                                    widget: kp.clone(),
+                                    byte,
+                                    mods: e.mods,
+                                }))
+                            }),
+                        )
+                        .on(
+                            GestureKind::Move,
+                            std::rc::Rc::new(move |e: &Event| {
+                                Some(UiMsg::Ui(super::msg::UiFact::WidgetProseDrag {
+                                    slot,
+                                    widget: km.clone(),
+                                    byte: e.text_byte,
+                                }))
+                            }),
+                        )
+                        .on(
+                            GestureKind::Release,
+                            std::rc::Rc::new(move |e: &Event| {
+                                e.stop();
+                                Some(UiMsg::Ui(super::msg::UiFact::WidgetProseRelease {
+                                    slot,
+                                    widget: kr.clone(),
+                                }))
+                            }),
+                        )
+                }
+            };
+            let port = fresh_ui::viewport(body)
+                .anchor_to(cx.reveal.clone())
+                .h(Sizing::Cells(*rows as u16))
+                .scrollbar_when(cx.scrollbar_reveal)
+                .scrollbar_theme(bar_ink());
+            let port = keyed(port, spec_state_key(spec));
+            match label.is_empty() {
+                true => port,
+                false => col().children([
+                    entry_row(&TextPropertyEntry::text(label), &cx.surface),
+                    port,
+                ]),
             }
         }
         // **The first of the five collected variants to stop being collected.**
@@ -3954,6 +3881,7 @@ mod tests {
             marker_gutter: false,
             hovered_item_key: String::new(),
             hovered_popup_row: String::new(),
+            reveal: fresh_ui::behavior::anchor::Anchor::new(),
             avail_height: None,
             scrollbar_reveal: None,
             surface: panel_surface(),
@@ -7267,6 +7195,7 @@ mod tests {
             hovered_key: None,
             hovered_item_key: String::new(),
             hovered_popup_row: String::new(),
+            reveal: fresh_ui::behavior::anchor::Anchor::new(),
             marker_gutter: false,
             avail_height: None,
             scrollbar_reveal: None,

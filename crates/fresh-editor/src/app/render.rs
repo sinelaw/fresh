@@ -6348,6 +6348,7 @@ impl Editor {
             },
             hovered_item_key: self.widget_registry.hover_keys(&key).1,
             hovered_popup_row: String::new(),
+            reveal: self.prose_reveal_for(&key),
             marker_gutter: false,
             avail_height: None,
             scrollbar_reveal: None,
@@ -6403,6 +6404,20 @@ impl Editor {
     /// is the same question without the clone, and the surfaces that route a
     /// press by it (`view::shell::dock::column`,
     /// `render_floating_widget_panel`) must keep asking the same one.
+    /// The reveal anchor a panel's markdown document is scrolled through —
+    /// the same one every frame, because an anchor binds to its element on
+    /// mount and a new one each frame would bind to nothing.
+    pub(crate) fn prose_reveal_for(
+        &self,
+        key: &crate::widgets::PanelKey,
+    ) -> std::rc::Rc<fresh_ui::behavior::anchor::Anchor> {
+        self.prose_reveal
+            .borrow_mut()
+            .entry(key.clone())
+            .or_insert_with(fresh_ui::behavior::anchor::Anchor::new)
+            .clone()
+    }
+
     pub(crate) fn panel_interior(
         &self,
         slot: crate::app::PanelSlot,
@@ -6439,6 +6454,7 @@ impl Editor {
             hovered_key: Some(panel.hovered_widget_key.clone()).filter(|k| !k.is_empty()),
             hovered_item_key: panel.hovered_item_key.clone(),
             hovered_popup_row: panel.hovered_popup_row.clone(),
+            reveal: self.prose_reveal_for(&key),
             marker_gutter: panel.focus_marker,
             avail_height: self.floating_panel_inner_height(slot),
             // **The dock's bars are overlay bars.** Every other panel draws
