@@ -391,11 +391,11 @@ let remoteInFlightId: number | null = null;
 // pod via `kubectl exec`, or a devcontainer). The New Session dialog shows a
 // "Run in:" tab row so the user picks one and the body swaps to its fields.
 type SessionBackend = "local" | "ssh" | "kubernetes" | "devcontainer";
-// Where the New Workspace form can put a session — its `Run in` choice. A
-// devcontainer is a property of a project, not of where a machine is, so it
-// is not one of these (a session that has one still carries the kind in its
-// remote facet).
-type FormBackend = "local" | "ssh" | "kubernetes";
+// Where the New Workspace form can put a session. `Run in` offers the three
+// hosts; a devcontainer is a property of a project rather than of where a
+// machine is, so it is reachable only from the Machine control (design
+// §5.1), as its own group below the machines.
+type FormBackend = "local" | "ssh" | "kubernetes" | "devcontainer";
 
 const SESSION_BACKENDS: { id: FormBackend; label: string }[] = [
   { id: "local", label: editor.t("backend.local") },
@@ -431,6 +431,15 @@ interface NewSessionForm {
   // Host control is the plain `sshHost` field.
   sshHosts: SshConfigHost[];
   sshPick: number;
+  // A saved machine chosen in the Machine control (design §5.1), or null:
+  // then `backend` and the host fields say where. `machinePick` indexes
+  // `machineOptions()`.
+  machineId: string | null;
+  machinePick: number;
+  // `Remember this machine` (§5.2): save a hand-typed host or cluster to the
+  // registry on submit, under `rememberAs` (blank = a name from the target).
+  remember: boolean;
+  rememberAs: { value: string; cursor: number };
   sshPath: { value: string; cursor: number };
   sshIdentity: { value: string; cursor: number };
   sshOptions: { value: string; cursor: number };
@@ -6587,7 +6596,7 @@ let openFormDropdown: string | null = null;
 // picker. Enter on any of them is the widget's own (open / commit), which
 // `activate()` would drop.
 function formDropdownFocused(): boolean {
-  return ["target_dropdown", "agent_dropdown", "ssh_host_pick"].includes(formFocusedKey());
+  return ["target_dropdown", "agent_dropdown", "ssh_host_pick", "machine"].includes(formFocusedKey());
 }
 
 function rebuildFormFocusCycle(): void {
@@ -6607,21 +6616,32 @@ function rebuildFormFocusCycle(): void {
   const creating = f.target === "new";
   const cycle: string[] = ["target_dropdown"];
   if (creating) {
-    cycle.push("backend");
+    cycle.push(formUsesMachines() ? "machine" : "backend");
     switch (f.backend) {
       case "local":
+      case "devcontainer":
         cycle.push("project_path");
         break;
       case "ssh":
-        if (f.sshHosts.length > 0) cycle.push("ssh_host_pick");
+        if (f.machineId) {
+          cycle.push("ssh_path");
+          break;
+        }
+        if (f.sshHosts.length > 0 && !formUsesMachines()) cycle.push("ssh_host_pick");
         if (sshOther()) cycle.push("ssh_host", "ssh_identity", "ssh_options");
         cycle.push("ssh_path");
+        if (sshOther()) cycle.push(...rememberKeys());
         break;
       case "kubernetes":
+        if (f.machineId) {
+          cycle.push("k8s_workspace");
+          break;
+        }
         cycle.push("k8s_target");
         if (f.k8sTarget.value.trim().length === 0) {
           cycle.push("k8s_context", "k8s_namespace", "k8s_pod", "k8s_workspace");
         }
+        cycle.push(...rememberKeys());
         break;
     }
     cycle.push("name");
@@ -7460,11 +7480,13 @@ function selectBackend(backend: FormBackend): void {
 function firstBodyFieldKey(backend: FormBackend): string {
   switch (backend) {
     case "local":
+    case "devcontainer":
       return "project_path";
     case "ssh":
+      if (form?.machineId) return "ssh_path";
       return form && form.sshHosts.length > 0 ? "ssh_host_pick" : "ssh_host";
     case "kubernetes":
-      return "k8s_target";
+      return form?.machineId ? "k8s_workspace" : "k8s_target";
   }
 }
 
@@ -7757,7 +7779,7 @@ interface MachineDialogState {
   testToken: number;
   error: string;
   // Where the dialog came from, to go back to on close.
-  returnTo: "machines" | null;
+  returnTo: "machines" | "form" | null;
 }
 
 const MACHINE_DIALOG_MODE = "orchestrator-machine-dialog";
@@ -7765,7 +7787,7 @@ let machineDialog: MachineDialogState | null = null;
 let machinePanel: FloatingWidgetPanel | null = null;
 let machineFocusKey = "machine-name";
 
-function openMachineDialog(existing: Machine | null, returnTo: "machines" | null): void {
+function openMachineDialog(existing: Machine | null, returnTo: "machines" | "form" | null): void {
   yieldDockToDialog();
   const m = existing;
   machineDialog = {
@@ -7809,6 +7831,13 @@ function closeMachineDialog(reopen: boolean): void {
   editor.setEditorMode(null);
   if (reopen && returnTo === "machines") {
     openMachinesDialog();
+    return;
+  }
+  if (reopen && returnTo === "form") {
+    // Back to the New Workspace form, on the machine just saved (or on
+    // whatever it was on, after a cancel).
+    dockBlurred = true;
+    openForm({ fromPicker: true });
     return;
   }
   restoreDockAfterDialog();
@@ -7966,6 +7995,7 @@ function saveMachineDialog(): void {
   // An existing machine keeps its last test when this session did not run one.
   if (!m.lastTest && d.id) m.lastTest = machineById(d.id)?.lastTest ?? null;
   upsertMachine(m);
+  if (d.returnTo === "form") pendingFormMachine = m.id;
   closeMachineDialog(true);
 }
 
@@ -8045,9 +8075,10 @@ function handleMachineDialogEvent(e: WidgetEvt): void {
 const MACHINES_MODE = "orchestrator-machines";
 let machinesPanel: FloatingWidgetPanel | null = null;
 let machinesState: { index: number; focus: string } | null = null;
-// A machine picked in the Machines dialog for `New workspace here`: the form
-// opens with it chosen (`null` = local).
-let pendingFormMachine: string | null = null;
+// A machine picked for the next form to open on — `Machines ▸ New workspace
+// here`, or one just added from the form (`null` = Local, `undefined` =
+// nobody asked, so the last one used applies).
+let pendingFormMachine: string | null | undefined = undefined;
 
 interface MachinesRow {
   key: string;
@@ -8490,6 +8521,226 @@ function targetRow(): WidgetSpec {
   );
 }
 
+// === The Machine control (design §5.1) =====================================
+//
+// Once saved machines exist, `Run in` and the host field collapse into one
+// dropdown: Local, the saved machines, the hosts `~/.ssh/config` names,
+// `Other host…`, a manual Kubernetes target, the devcontainer in this
+// project, and `Add machine…`. Without any, the form keeps the `Run in`
+// radio and the host picker.
+
+interface MachineOption {
+  key: string;
+  label: string;
+  kind: "local" | "machine" | "sshhost" | "other" | "k8s" | "devcontainer" | "add";
+  machine?: Machine;
+  hostIndex?: number;
+}
+
+function formUsesMachines(): boolean {
+  return loadMachines().length > 0;
+}
+
+function machineOptions(): MachineOption[] {
+  const out: MachineOption[] = [{ key: "local", label: editor.t("machine.local"), kind: "local" }];
+  for (const m of loadMachines()) out.push({ key: m.id, label: m.name, kind: "machine", machine: m });
+  (form?.sshHosts ?? []).forEach((h, i) => {
+    out.push({ key: `host:${h.alias}`, label: h.alias, kind: "sshhost", hostIndex: i });
+  });
+  out.push({ key: "other", label: editor.t("form.ssh_other_host"), kind: "other" });
+  out.push({ key: "k8s", label: editor.t("form.k8s_manual"), kind: "k8s" });
+  out.push({ key: "devcontainer", label: editor.t("backend.devcontainer"), kind: "devcontainer" });
+  out.push({ key: "add", label: editor.t("machine.add"), kind: "add" });
+  return out;
+}
+
+// What the picked option resolves to, for the note under the control.
+function machineOptionNote(o: MachineOption): string {
+  switch (o.kind) {
+    case "local":
+      return editor.t("machine.local_summary");
+    case "machine":
+      return `${machineKindTag(o.machine!)} · ${machineSummary(o.machine!)}`;
+    case "sshhost":
+      return form ? sshResolvedTarget(form.sshHosts[o.hostIndex!]) : "";
+    case "devcontainer":
+      return editor.t("machine.devcontainer_summary");
+    default:
+      return "";
+  }
+}
+
+// The Machine control moved: set the backend and the host state the option
+// stands for. `Add machine…` leaves the form for the dialog, which comes
+// back here with the new machine chosen.
+function applyMachinePick(index: number): void {
+  if (!form) return;
+  const opts = machineOptions();
+  const o = opts[index];
+  if (!o) return;
+  if (o.kind === "add") {
+    cancelForm();
+    openMachineDialog(null, "form");
+    return;
+  }
+  form.machinePick = index;
+  form.machineId = null;
+  switch (o.kind) {
+    case "local":
+      form.backend = "local";
+      break;
+    case "machine":
+      form.backend = o.machine!.kind;
+      form.machineId = o.machine!.id;
+      break;
+    case "sshhost":
+      form.backend = "ssh";
+      form.sshPick = o.hostIndex!;
+      break;
+    case "other":
+      form.backend = "ssh";
+      form.sshPick = form.sshHosts.length;
+      break;
+    case "k8s":
+      form.backend = "kubernetes";
+      break;
+    case "devcontainer":
+      form.backend = "devcontainer";
+      break;
+  }
+  form.lastError = null;
+  closeCompletion();
+}
+
+// Open on the machine a caller asked for (`undefined` = nobody asked; `null`
+// = Local), else the last one used.
+function seedFormMachine(): void {
+  if (!form || !formUsesMachines()) return;
+  const asked = pendingFormMachine;
+  pendingFormMachine = undefined;
+  const last = editor.getGlobalState("orchestrator.last_machine");
+  const want = asked !== undefined ? asked : typeof last === "string" ? last : null;
+  if (!want) return;
+  const idx = machineOptions().findIndex((o) => o.key === want);
+  if (idx > 0) applyMachinePick(idx);
+}
+
+function machineRow(): WidgetSpec[] {
+  const opts = machineOptions();
+  const pick = Math.min(form!.machinePick, opts.length - 1);
+  const out: WidgetSpec[] = [
+    dropdown(opts.map((o) => o.label), {
+      selectedIndex: pick,
+      label: editor.t("form.machine"),
+      labelWidth: FORM_LABEL_W,
+      key: "machine",
+    }),
+  ];
+  const note = machineOptionNote(opts[pick]);
+  if (note) out.push(fieldNote(note));
+  return out;
+}
+
+// A saved SSH machine: the connection is the machine's; only where the
+// workspace is rooted is asked.
+function machineSshFields(): WidgetSpec[] {
+  const m = form?.machineId ? machineById(form.machineId) : null;
+  if (!form || !m) return [];
+  return field(formLabel("form.ssh_remote_path_label"), form.sshPath, {
+    key: "ssh_path",
+    placeholder: m.path,
+    note: m.path ? undefined : editor.t("form.ssh_remote_path_placeholder"),
+  });
+}
+
+function machineK8sFields(): WidgetSpec[] {
+  const m = form?.machineId ? machineById(form.machineId) : null;
+  if (!form || !m) return [];
+  return field(formLabel("form.k8s_workspace_label"), form.k8sWorkspace, {
+    key: "k8s_workspace",
+    placeholder: m.path || editor.t("form.k8s_workspace_placeholder"),
+  });
+}
+
+// Devcontainer: the project that carries the `.devcontainer/`.
+function devcontainerBodyFields(): WidgetSpec[] {
+  if (!form) return [];
+  return field(formLabel("form.project_path"), form.projectPath, {
+    key: "project_path",
+    placeholder: form.defaultProjectPath || editor.t("form.devcontainer_path_placeholder"),
+    note: editor.t("form.devcontainer_hint"),
+  });
+}
+
+// A name for a remembered machine when the user gives none: the host of an
+// ssh target, the pod or namespace of a cluster.
+function rememberDefaultName(): string {
+  if (!form) return "";
+  if (form.backend === "ssh") {
+    return parseSshTarget(form.sshHost.value).dest.replace(/^[^@]*@/, "");
+  }
+  return form.k8sPod.value.trim() || form.k8sNamespace.value.trim();
+}
+
+// `[v] Remember this machine` / `as [name]` (§5.2), under a hand-typed host
+// or cluster.
+function rememberFields(): WidgetSpec[] {
+  if (!form) return [];
+  const out: WidgetSpec[] = [
+    spacer(0),
+    formToggle(form.remember, editor.t("form.remember_machine"), "remember"),
+  ];
+  if (form.remember) {
+    out.push(
+      ...field(editor.t("form.remember_as"), form.rememberAs, {
+        key: "remember_name",
+        placeholder: rememberDefaultName(),
+      }),
+    );
+  }
+  return out;
+}
+
+function rememberKeys(): string[] {
+  return form?.remember ? ["remember", "remember_name"] : ["remember"];
+}
+
+// On submit: save what was typed as a machine, so the next workspace picks
+// it from the list.
+function rememberMachineFromForm(f: NewSessionForm): void {
+  if (!f.remember || f.machineId) return;
+  const name = f.rememberAs.value.trim() || rememberDefaultName();
+  if (!name) return;
+  const base = { id: newMachineId(), name, lastTest: null };
+  if (f.backend === "ssh") {
+    const other = f.sshHosts.length === 0 || f.sshPick >= f.sshHosts.length;
+    if (!other) return;
+    upsertMachine({
+      ...base,
+      kind: "ssh",
+      target: f.sshHost.value.trim(),
+      identity: f.sshIdentity.value.trim(),
+      options: f.sshOptions.value.trim(),
+      context: "",
+      namespace: "",
+      pod: "",
+      path: f.sshPath.value.trim(),
+    });
+  } else if (f.backend === "kubernetes") {
+    upsertMachine({
+      ...base,
+      kind: "kubernetes",
+      target: "",
+      identity: "",
+      options: "",
+      context: f.k8sContext.value.trim(),
+      namespace: f.k8sNamespace.value.trim(),
+      pod: f.k8sPod.value.trim(),
+      path: f.k8sWorkspace.value.trim(),
+    });
+  }
+}
+
 // `Run in`: a radio — a mutually exclusive choice, drawn as one. The host
 // owns the selection (←/→, Home/End, a click on an option) and reports each
 // move as a `change`, which `selectBackend` answers by swapping the body.
@@ -8674,7 +8925,19 @@ function sshBodyFields(): WidgetSpec[] {
     }),
   ];
   const out: WidgetSpec[] = [];
-  if (form.sshHosts.length === 0) {
+  if (formUsesMachines()) {
+    // The Machine control already offers the config hosts (§5.1): a picked
+    // one needs nothing more here, `Other host…` needs the manual fields.
+    if (sshOther()) {
+      out.push(
+        ...field(editor.t("form.ssh_target_label"), form.sshHost, {
+          key: "ssh_host",
+          note: editor.t("form.ssh_host_note"),
+        }),
+        ...manual(),
+      );
+    }
+  } else if (form.sshHosts.length === 0) {
     out.push(
       ...field(hostLabel, form.sshHost, {
         key: "ssh_host",
@@ -8711,6 +8974,7 @@ function sshBodyFields(): WidgetSpec[] {
       note: editor.t("form.ssh_remote_path_placeholder"),
     }),
   );
+  if (sshOther()) out.push(...rememberFields());
   return out;
 }
 
@@ -8745,6 +9009,7 @@ function k8sBodyFields(): WidgetSpec[] {
     );
   }
   fields.push(fieldNote(splitPlaceholder(noteText(editor.t("form.k8s_hint"))).placeholder));
+  fields.push(...rememberFields());
   return fields;
 }
 
@@ -8755,9 +9020,11 @@ function backendBodyFields(): WidgetSpec[] {
     case "local":
       return localBodyFields();
     case "ssh":
-      return sshBodyFields();
+      return form.machineId ? machineSshFields() : sshBodyFields();
     case "kubernetes":
-      return k8sBodyFields();
+      return form.machineId ? machineK8sFields() : k8sBodyFields();
+    case "devcontainer":
+      return devcontainerBodyFields();
   }
 }
 
@@ -8773,22 +9040,30 @@ function buildConnectingView(): WidgetSpec {
   const roRow = (lbl: string, value: string): WidgetSpec =>
     label(`${lbl}: ${value || "—"}`, { style: dim });
   const rows: WidgetSpec[] = [];
+  const machine = form.machineId ? machineById(form.machineId) : null;
   if (form.backend === "ssh") {
-    rows.push(roRow(editor.t("form.ro_run_in"), editor.t("backend.ssh")));
+    rows.push(roRow(editor.t("form.ro_run_in"), machine ? machine.name : editor.t("backend.ssh")));
     rows.push(
       roRow(
         editor.t("form.ro_host"),
-        sshOther() ? form.sshHost.value.trim() : sshResolvedTarget(form.sshHosts[form.sshPick]),
+        machine
+          ? machine.target
+          : sshOther()
+          ? form.sshHost.value.trim()
+          : sshResolvedTarget(form.sshHosts[form.sshPick]),
       ),
     );
     if (form.sshPath.value.trim()) rows.push(roRow(editor.t("form.ro_remote_path"), form.sshPath.value.trim()));
   } else if (form.backend === "kubernetes") {
-    rows.push(roRow(editor.t("form.ro_run_in"), editor.t("backend.kubernetes")));
-    const ns = form.k8sNamespace.value.trim();
-    const pod = form.k8sPod.value.trim();
-    rows.push(roRow(editor.t("form.ro_pod"), form.k8sTarget.value.trim() || `${ns}/${pod}`));
+    rows.push(roRow(editor.t("form.ro_run_in"), machine ? machine.name : editor.t("backend.kubernetes")));
+    const ns = machine ? machine.namespace : form.k8sNamespace.value.trim();
+    const pod = machine ? machine.pod : form.k8sPod.value.trim();
+    rows.push(roRow(editor.t("form.ro_pod"), (machine ? "" : form.k8sTarget.value.trim()) || `${ns}/${pod}`));
   } else {
-    rows.push(roRow(editor.t("form.ro_run_in"), editor.t("backend.local")));
+    rows.push(roRow(
+      editor.t("form.ro_run_in"),
+      form.backend === "devcontainer" ? editor.t("backend.devcontainer") : editor.t("backend.local"),
+    ));
     rows.push(roRow(editor.t("form.ro_project"), form.projectPath.value.trim() || form.defaultProjectPath));
   }
   const name = form.name.value.trim();
@@ -8840,10 +9115,13 @@ function formIsSubmittable(): boolean {
         form.defaultProjectPath ||
         localProjectDefault()
       );
+    case "devcontainer":
+      return !!(form.projectPath.value.trim() || form.defaultProjectPath);
     case "ssh":
-      return sshChosenHost().length > 0;
+      return !!form.machineId || sshChosenHost().length > 0;
     case "kubernetes":
       return (
+        !!form.machineId ||
         form.k8sTarget.value.trim().length > 0 ||
         form.k8sPod.value.trim().length > 0
       );
@@ -8862,7 +9140,7 @@ function buildFormSpec(): WidgetSpec {
   const children: WidgetSpec[] = [targetRow()];
   if (creating) {
     children.push(
-      backendRow(),
+      ...(formUsesMachines() ? machineRow() : [backendRow()]),
       spacer(0),
       ...backendBodyFields(),
       ...field(formLabel("form.workspace_name"), form.name, {
@@ -8989,6 +9267,10 @@ function openForm(options?: { fromPicker?: boolean; target?: RunAgentTarget }): 
     sshHost: { value: "", cursor: 0 },
     sshHosts: sshConfigHosts(),
     sshPick: 0,
+    machineId: null,
+    machinePick: 0,
+    remember: false,
+    rememberAs: { value: "", cursor: 0 },
     sshPath: { value: "", cursor: 0 },
     sshIdentity: { value: "", cursor: 0 },
     sshOptions: { value: "", cursor: 0 },
@@ -9034,6 +9316,9 @@ function openForm(options?: { fromPicker?: boolean; target?: RunAgentTarget }): 
     completion: { field: null, items: [], selectedIndex: 0, anchor: "", token: 0 },
   };
   formPanel = new FloatingWidgetPanel();
+  // A machine chosen elsewhere (`Machines ▸ New workspace here`, a machine
+  // just added from this form) or the last one used opens the form on it.
+  seedFormMachine();
   mountFormPanel();
   // Kick off the placeholder probes (canonical repo root,
   // default branch, next session name) against the editor's
@@ -9750,6 +10035,39 @@ function captureCreateSpec(f: NewSessionForm): CaptureResult {
         displayLabel: sessionName || f.defaultSessionName,
       }),
     };
+  }
+
+  if (f.machineId) {
+    // A saved machine: the connection is the record's; the form only says
+    // where the workspace is rooted (blank = the machine's default path).
+    const m = machineById(f.machineId);
+    if (!m) return { ok: false, error: editor.t("machine.err_gone") };
+    if (m.kind === "ssh") {
+      return buildSshSpec({
+        ...agentOptions,
+        host: m.target,
+        name: sessionName,
+        cmd,
+        remotePath: f.sshPath.value.trim() || m.path,
+        identity: m.identity,
+        extraArgs: m.options ? m.options.split(/\s+/) : [],
+      });
+    }
+    if (m.pod.startsWith("-l")) return { ok: false, error: editor.t("machine.err_selector_launch") };
+    return buildK8sSpec({
+      target: "",
+      context: m.context,
+      namespace: m.namespace,
+      pod: m.pod,
+      workspace: f.k8sWorkspace.value.trim() || m.path,
+      name: sessionName,
+      cmd,
+    });
+  }
+
+  if (f.backend === "devcontainer") {
+    // No runtime plugin-to-plugin attach yet.
+    return { ok: false, error: editor.t("err.devcontainer_unsupported") };
   }
 
   if (f.backend === "kubernetes") {
@@ -10590,6 +10908,13 @@ async function submitForm(visit: boolean): Promise<void> {
     renderForm();
     return;
   }
+  // A hand-typed host or cluster the user asked to keep becomes a machine
+  // now, and whatever ran is what the next form opens on.
+  rememberMachineFromForm(form);
+  editor.setGlobalState(
+    "orchestrator.last_machine",
+    form.machineId ?? (form.backend === "local" ? "local" : ""),
+  );
   await startPendingWorkspace(captured.spec, { visit });
 }
 
@@ -12341,6 +12666,27 @@ editor.on("widget_event", (e) => {
       }
       return;
     }
+    if (e.event_type === "change" && e.widget_key === "machine") {
+      // The Machine control moved (design §5.1): the option decides the
+      // backend and the host state; the body follows.
+      const payload = (e.payload ?? {}) as Record<string, unknown>;
+      const index = payload.index;
+      if (typeof index === "number" && index !== form.machinePick) {
+        applyMachinePick(index);
+        // `Add machine…` closed the form for its dialog.
+        if (!form) return;
+        rebuildFormFocusCycle();
+        renderForm();
+      }
+      return;
+    }
+    if (e.event_type === "toggle" && e.widget_key === "remember") {
+      const checked = (e.payload as { checked?: unknown })?.checked;
+      form.remember = typeof checked === "boolean" ? checked : !form.remember;
+      rebuildFormFocusCycle();
+      renderForm();
+      return;
+    }
     if (e.event_type === "change" && e.widget_key === "ssh_host_pick") {
       // The Host picker moved: a config host hides the manual fields,
       // `Other host…` reveals them.
@@ -12405,6 +12751,8 @@ editor.on("widget_event", (e) => {
         ? form.branch
         : field === "new_branch"
         ? form.newBranch
+        : field === "remember_name"
+        ? form.rememberAs
         : field === "ssh_host"
         ? form.sshHost
         : field === "ssh_path"
