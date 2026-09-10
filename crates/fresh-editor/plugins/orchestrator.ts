@@ -6569,13 +6569,20 @@ const HISTORY_CAP = 100;
 /// keys this form actually binds it stays in sync.
 let formFocusCycle: string[] = [];
 let formFocusIndex = 0;
-// Mirror of the Agent dropdown's option pop-over open/closed state, kept in
-// sync from the host's `dropdown_open` widget_event (fired on every open/close
-// — keyboard, trigger click, or an option pick). The form's Enter/Escape key
-// handlers read it to route those keys correctly: an open pop-over swallows
-// Enter/Escape into the list (commit / dismiss), a closed one lets them
-// activate / cancel the dialog.
-let agentDropdownOpen = false;
+// Which of the form's dropdowns has its option pop-over open (`null` for
+// none), kept in sync from the host's `dropdown_open` widget_event (fired on
+// every open/close — keyboard, trigger click, or an option pick). The form's
+// Enter/Escape key handlers read it to route those keys correctly: an open
+// pop-over swallows Enter/Escape into the list (commit / dismiss), a closed
+// one lets them activate / cancel the dialog.
+let openFormDropdown: string | null = null;
+
+// The form's dropdowns: the target switch, the agent selector, the SSH host
+// picker. Enter on any of them is the widget's own (open / commit), which
+// `activate()` would drop.
+function formDropdownFocused(): boolean {
+  return ["target_dropdown", "agent_dropdown", "ssh_host_pick"].includes(formFocusedKey());
+}
 
 function rebuildFormFocusCycle(): void {
   if (!form) {
@@ -8664,7 +8671,7 @@ function closeForm(): void {
     formPanel = null;
   }
   form = null;
-  agentDropdownOpen = false;
+  openFormDropdown = null;
   editor.setEditorMode(null);
 }
 
@@ -11122,13 +11129,13 @@ registerHandler("orchestrator_form_key_enter", () => {
     dispatchFormKey("Enter");
     return;
   }
-  // Focused Agent dropdown: Enter opens the option pop-over (and, when it's
+  // A focused dropdown: Enter opens the option pop-over (and, when it's
   // already open, commits the highlighted option and closes). `activate()` is
   // a no-op on a Dropdown, so route the raw key to the host's smart-key
   // dispatch instead — `set_dropdown_open` / the open-list short-circuit
   // handle both directions. (Mouse click on the `[value ▼]` trigger already
   // opens it via the host's `dropdown_toggle` hit.)
-  if (formFocusedKey() === "agent_dropdown") {
+  if (formDropdownFocused()) {
     dispatchFormKey("Enter");
     return;
   }
@@ -11159,11 +11166,11 @@ registerHandler("orchestrator_form_key_escape", () => {
     dispatchFormKey("Escape");
     return;
   }
-  // An open Agent dropdown pop-over swallows the first Escape: route it to
-  // the host's dropdown short-circuit (which closes the list) instead of
+  // An open dropdown pop-over swallows the first Escape: route it to the
+  // host's dropdown short-circuit (which closes the list) instead of
   // cancelling the dialog. A second Escape — now that the list is closed —
   // falls through to `cancelForm` below.
-  if (agentDropdownOpen && formFocusedKey() === "agent_dropdown") {
+  if (openFormDropdown !== null && formFocusedKey() === openFormDropdown) {
     dispatchFormKey("Escape");
     return;
   }
@@ -11493,15 +11500,15 @@ editor.on("widget_event", (e) => {
       // that mirror from the authoritative signal here so the
       // plugin never has to predict host-side focus rules.
       snapFormFocusTo(e.widget_key);
-      // Leaving the Agent dropdown (Tab / click elsewhere) closes its
-      // pop-over host-side; keep the local mirror honest.
-      if (e.widget_key !== "agent_dropdown") agentDropdownOpen = false;
+      // Leaving a dropdown (Tab / click elsewhere) closes its pop-over
+      // host-side; keep the local mirror honest.
+      if (e.widget_key !== openFormDropdown) openFormDropdown = null;
       return;
     }
-    if (e.event_type === "dropdown_open" && e.widget_key === "agent_dropdown") {
-      // Host-authoritative open/closed signal for the option pop-over.
+    if (e.event_type === "dropdown_open") {
+      // Host-authoritative open/closed signal for a dropdown's pop-over.
       const payload = (e.payload ?? {}) as Record<string, unknown>;
-      agentDropdownOpen = payload.open === true;
+      openFormDropdown = payload.open === true ? e.widget_key : null;
       return;
     }
     if (e.event_type === "change" && e.widget_key === "backend") {
