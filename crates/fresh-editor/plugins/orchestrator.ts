@@ -425,6 +425,12 @@ interface NewSessionForm {
   // remote path to root the session at; optional identity file; and free-form
   // extra ssh arguments (e.g. `-J jump`, `-o ProxyCommand=…`).
   sshHost: { value: string; cursor: number };
+  // The hosts `~/.ssh/config` names, read once when the form opens (design
+  // §4). With any, the Host control is a dropdown of them plus `Other
+  // host…`; `sshPick` indexes it (`sshHosts.length` = other). With none the
+  // Host control is the plain `sshHost` field.
+  sshHosts: SshConfigHost[];
+  sshPick: number;
   sshPath: { value: string; cursor: number };
   sshIdentity: { value: string; cursor: number };
   sshOptions: { value: string; cursor: number };
@@ -6594,7 +6600,9 @@ function rebuildFormFocusCycle(): void {
         cycle.push("project_path");
         break;
       case "ssh":
-        cycle.push("ssh_host", "ssh_path", "ssh_identity", "ssh_options");
+        if (f.sshHosts.length > 0) cycle.push("ssh_host_pick");
+        if (sshOther()) cycle.push("ssh_host", "ssh_identity", "ssh_options");
+        cycle.push("ssh_path");
         break;
       case "kubernetes":
         cycle.push("k8s_target");
@@ -7441,10 +7449,134 @@ function firstBodyFieldKey(backend: FormBackend): string {
     case "local":
       return "project_path";
     case "ssh":
-      return "ssh_host";
+      return form && form.sshHosts.length > 0 ? "ssh_host_pick" : "ssh_host";
     case "kubernetes":
       return "k8s_target";
   }
+}
+
+// === `~/.ssh/config` ========================================================
+//
+// Reading it is the whole of Fresh's involvement with the file: it populates
+// the Host picker and is never written to (design §4.4, §5.3). A host saved
+// with Fresh is a Fresh machine; a host here is an ssh host.
+
+interface SshConfigHost {
+  alias: string;
+  hostName?: string;
+  user?: string;
+  port?: string;
+}
+
+function homeDir(): string {
+  return editor.getEnv("HOME") ?? editor.getEnv("USERPROFILE") ?? "";
+}
+
+// Expand a leading `~` and resolve a relative path against `~/.ssh`, which
+// is what ssh does for `Include` and identity files.
+function sshPath(p: string): string {
+  const home = homeDir();
+  if (p.startsWith("~/")) return `${home}/${p.slice(2)}`;
+  if (p.startsWith("/") || /^[A-Za-z]:[\\/]/.test(p)) return p;
+  return `${home}/.ssh/${p}`;
+}
+
+// The files a (possibly globbed) `Include` names. One `*`/`?` glob in the
+// last segment is what managed setups use (`config.d/*`); anything fancier
+// is matched as a literal.
+function sshIncludeFiles(pattern: string): string[] {
+  const full = sshPath(pattern);
+  const slash = full.lastIndexOf("/");
+  const dir = slash >= 0 ? full.slice(0, slash) : ".";
+  const leaf = slash >= 0 ? full.slice(slash + 1) : full;
+  if (!/[*?]/.test(leaf)) return editor.fileExists(full) ? [full] : [];
+  const re = new RegExp("^" + leaf.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".") + "$");
+  try {
+    return editor.readDir(dir)
+      .filter((e) => !e.is_dir && re.test(e.name))
+      .map((e) => `${dir}/${e.name}`)
+      .sort();
+  } catch {
+    return [];
+  }
+}
+
+// Parse one ssh config file into `hosts`, following `Include`. A `Host`
+// line carries several aliases and every one of them gets the block's
+// settings; patterns (`*`, `?`, `!`) are defaults, not hosts, and are
+// dropped; ssh's first-obtained-value-wins rule is kept per alias.
+function parseSshConfig(path: string, hosts: SshConfigHost[], depth: number): void {
+  if (depth > 8) return;
+  const text = editor.readFile(path);
+  if (text === null) return;
+  let block: SshConfigHost[] = [];
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (line === "" || line.startsWith("#")) continue;
+    const m = /^(\S+?)(?:\s*=\s*|\s+)(.*)$/.exec(line);
+    if (!m) continue;
+    const key = m[1].toLowerCase();
+    const value = m[2].trim().replace(/^"(.*)"$/, "$1");
+    if (key === "host") {
+      block = [];
+      for (const alias of value.split(/\s+/)) {
+        if (!alias || /[*?!]/.test(alias)) continue;
+        let h = hosts.find((x) => x.alias === alias);
+        if (!h) {
+          h = { alias };
+          hosts.push(h);
+        }
+        block.push(h);
+      }
+      continue;
+    }
+    if (key === "match") {
+      block = [];
+      continue;
+    }
+    if (key === "include") {
+      for (const pat of value.split(/\s+/)) {
+        for (const file of sshIncludeFiles(pat)) parseSshConfig(file, hosts, depth + 1);
+      }
+      continue;
+    }
+    for (const h of block) {
+      if (key === "hostname" && h.hostName === undefined) h.hostName = value;
+      else if (key === "user" && h.user === undefined) h.user = value;
+      else if (key === "port" && h.port === undefined) h.port = value;
+    }
+  }
+}
+
+// Every named host `~/.ssh/config` configures, in file order. Empty when
+// there is no config, so the form falls back to a plain Host field.
+function sshConfigHosts(): SshConfigHost[] {
+  const hosts: SshConfigHost[] = [];
+  const home = homeDir();
+  if (home) parseSshConfig(`${home}/.ssh/config`, hosts, 0);
+  return hosts;
+}
+
+// What ssh will connect to for a picked host, for the note under the
+// picker: `user@hostname:port`, with the alias standing in for a `HostName`
+// that carries a `%h`-style token ssh expands and we cannot.
+function sshResolvedTarget(h: SshConfigHost): string {
+  const host = h.hostName && !h.hostName.includes("%") ? h.hostName : h.alias;
+  return (h.user ? `${h.user}@` : "") + host + (h.port ? `:${h.port}` : "");
+}
+
+// The Host control is on `Other host…` — or there is no config to pick
+// from — so the connection is what the user types.
+function sshOther(): boolean {
+  return !form || form.sshHosts.length === 0 || form.sshPick >= form.sshHosts.length;
+}
+
+// The host the SSH backend connects to: the picked alias (ssh resolves it
+// from its own config — user, port and identity included) or the typed
+// target.
+function sshChosenHost(): string {
+  if (!form) return "";
+  return sshOther() ? form.sshHost.value.trim() : form.sshHosts[form.sshPick].alias;
 }
 
 // === The form grid ==========================================================
@@ -7703,27 +7835,64 @@ function worktreeFields(): WidgetSpec[] {
 // SSH backend: host, remote path, identity file, extra ssh arguments. The
 // examples that lived in the labels' parentheticals and in the value slots
 // sit under their fields instead — a value slot shows a value.
+// SSH backend. With hosts in `~/.ssh/config` the Host control is a picker of
+// them (design §4.1): choosing one is a click, and user, port and identity
+// come from the config entry, so those fields never appear — the config is
+// the source of truth and the dialog only points at it (§4.2). `Other
+// host…` reveals them; with no config at all they show directly (§4.3).
 function sshBodyFields(): WidgetSpec[] {
   if (!form) return [];
-  return [
-    ...field(splitLabel("form.ssh_host_label").label, form.sshHost, {
-      key: "ssh_host",
-      note: editor.t("form.ssh_host_note"),
-    }),
-    ...field(formLabel("form.ssh_remote_path_label"), form.sshPath, {
-      key: "ssh_path",
-      note: editor.t("form.ssh_remote_path_placeholder"),
-    }),
-    ...field(splitLabel("form.ssh_identity_label").label, form.sshIdentity, {
+  const hostLabel = splitLabel("form.ssh_host_label").label;
+  const manual = (): WidgetSpec[] => [
+    ...field(splitLabel("form.ssh_identity_label").label, form!.sshIdentity, {
       key: "ssh_identity",
       placeholder: editor.t("form.ssh_identity_placeholder"),
     }),
-    ...field(splitLabel("form.ssh_options_label").label, form.sshOptions, {
+    ...field(splitLabel("form.ssh_options_label").label, form!.sshOptions, {
       key: "ssh_options",
       placeholder: splitPlaceholder(editor.t("form.ssh_options_placeholder")).placeholder,
       note: splitPlaceholder(editor.t("form.ssh_options_placeholder")).note,
     }),
   ];
+  const out: WidgetSpec[] = [];
+  if (form.sshHosts.length === 0) {
+    out.push(
+      ...field(hostLabel, form.sshHost, {
+        key: "ssh_host",
+        note: editor.t("form.ssh_no_config_note"),
+      }),
+      ...manual(),
+    );
+  } else {
+    out.push(
+      dropdown([...form.sshHosts.map((h) => h.alias), editor.t("form.ssh_other_host")], {
+        selectedIndex: form.sshPick,
+        label: hostLabel,
+        labelWidth: FORM_LABEL_W,
+        key: "ssh_host_pick",
+      }),
+    );
+    if (sshOther()) {
+      out.push(
+        ...field(editor.t("form.ssh_target_label"), form.sshHost, {
+          key: "ssh_host",
+          note: editor.t("form.ssh_host_note"),
+        }),
+        ...manual(),
+      );
+    } else {
+      // The resolved target, dim, so a pick can be checked without opening
+      // the config.
+      out.push(fieldNote(sshResolvedTarget(form.sshHosts[form.sshPick])));
+    }
+  }
+  out.push(
+    ...field(formLabel("form.ssh_remote_path_label"), form.sshPath, {
+      key: "ssh_path",
+      note: editor.t("form.ssh_remote_path_placeholder"),
+    }),
+  );
+  return out;
 }
 
 // Kubernetes backend: a saved target, or explicit context/namespace/pod/ws.
@@ -7787,7 +7956,12 @@ function buildConnectingView(): WidgetSpec {
   const rows: WidgetSpec[] = [];
   if (form.backend === "ssh") {
     rows.push(roRow(editor.t("form.ro_run_in"), editor.t("backend.ssh")));
-    rows.push(roRow(editor.t("form.ro_host"), form.sshHost.value.trim()));
+    rows.push(
+      roRow(
+        editor.t("form.ro_host"),
+        sshOther() ? form.sshHost.value.trim() : sshResolvedTarget(form.sshHosts[form.sshPick]),
+      ),
+    );
     if (form.sshPath.value.trim()) rows.push(roRow(editor.t("form.ro_remote_path"), form.sshPath.value.trim()));
   } else if (form.backend === "kubernetes") {
     rows.push(roRow(editor.t("form.ro_run_in"), editor.t("backend.kubernetes")));
@@ -7848,7 +8022,7 @@ function formIsSubmittable(): boolean {
         localProjectDefault()
       );
     case "ssh":
-      return form.sshHost.value.trim().length > 0;
+      return sshChosenHost().length > 0;
     case "kubernetes":
       return (
         form.k8sTarget.value.trim().length > 0 ||
@@ -7998,6 +8172,8 @@ function openForm(options?: { fromPicker?: boolean; target?: RunAgentTarget }): 
     target: options?.target ?? "new",
     backend: "local",
     sshHost: { value: "", cursor: 0 },
+    sshHosts: sshConfigHosts(),
+    sshPick: 0,
     sshPath: { value: "", cursor: 0 },
     sshIdentity: { value: "", cursor: 0 },
     sshOptions: { value: "", cursor: 0 },
@@ -8774,14 +8950,17 @@ function captureCreateSpec(f: NewSessionForm): CaptureResult {
   }
 
   if (f.backend === "ssh") {
-    const options = f.sshOptions.value.trim();
+    // A picked config host goes to ssh as its alias: user, port, identity
+    // and options come from the entry, so the manual fields are not sent.
+    const other = f.sshHosts.length === 0 || f.sshPick >= f.sshHosts.length;
+    const options = other ? f.sshOptions.value.trim() : "";
     return buildSshSpec({
       ...agentOptions,
-      host: f.sshHost.value.trim(),
+      host: other ? f.sshHost.value.trim() : f.sshHosts[f.sshPick].alias,
       name: sessionName,
       cmd,
       remotePath: f.sshPath.value.trim(),
-      identity: f.sshIdentity.value.trim(),
+      identity: other ? f.sshIdentity.value.trim() : "",
       extraArgs: options ? options.split(/\s+/) : [],
     });
   }
@@ -11333,6 +11512,19 @@ editor.on("widget_event", (e) => {
       if (typeof index === "number") {
         const next = SESSION_BACKENDS[index];
         if (next) selectBackend(next.id);
+      }
+      return;
+    }
+    if (e.event_type === "change" && e.widget_key === "ssh_host_pick") {
+      // The Host picker moved: a config host hides the manual fields,
+      // `Other host…` reveals them.
+      const payload = (e.payload ?? {}) as Record<string, unknown>;
+      const index = payload.index;
+      if (typeof index === "number" && index !== form.sshPick) {
+        form.sshPick = index;
+        form.lastError = null;
+        rebuildFormFocusCycle();
+        renderForm();
       }
       return;
     }
