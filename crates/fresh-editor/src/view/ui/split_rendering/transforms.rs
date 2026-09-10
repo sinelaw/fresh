@@ -1072,8 +1072,7 @@ mod line_break_hint_tests {
                 style: None,
             },
         ];
-        let out =
-            splice_inline_virtual_text(tokens, &[hint(2, VirtualTextPosition::BeforeChar)]);
+        let out = splice_inline_virtual_text(tokens, &[hint(2, VirtualTextPosition::BeforeChar)]);
         assert_eq!(past_the_break(&out), "");
     }
 }
