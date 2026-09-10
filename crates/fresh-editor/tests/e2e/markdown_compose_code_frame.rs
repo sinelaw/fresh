@@ -605,3 +605,177 @@ fn prose_below_a_block_is_not_framed_when_the_view_starts_mid_document() {
         "back at the top, the one real block still frames.\nScreen:\n{screen}"
     );
 }
+
+// ===========================================================================
+// The frame between the keystroke and the next decoration pass
+// ===========================================================================
+//
+// Everything above asserts on a *settled* frame. These two do not, because the
+// glitch never survives settling: the plugin answers `lines_changed` on its own
+// thread, so for one frame the block is drawn with the rails the previous pass
+// left behind, and it is that frame the user watches while typing.
+//
+// Driving it needs no timing. `apply_event` edits the buffer and `render`
+// paints it, and neither drains the plugin's replies — so the commands the
+// edit provokes are still sitting in the channel when the assertion runs, and
+// the frame under test is exactly the lagged one, every time.
+//
+// What the two edits have in common is that they act on the end of the code
+// line, which is where the closing rail is anchored, and where a person typing
+// in a code block spends all of their keystrokes.
+
+/// The document both cases edit, and the code line they edit the end of.
+#[cfg(feature = "plugins")]
+const EDITED_DOC: &str = "# Doc\n\n```rust\nfn answer() -> u32 { 42 }\n```\n\nTail.\n";
+#[cfg(feature = "plugins")]
+const EDITED_CODE: &str = "fn answer() -> u32 { 42 }";
+
+/// A framed block with its rails settled, and the byte range of its code line.
+#[cfg(feature = "plugins")]
+fn settled_block() -> (EditorTestHarness, tempfile::TempDir, std::ops::Range<usize>) {
+    let (mut harness, tmp) = compose_harness(EDITED_DOC);
+    harness
+        .wait_until(|h| h.screen_to_string().contains('└'))
+        .expect("compose mode should frame the fenced block");
+    park_cursor_at_top(&mut harness);
+    harness
+        .wait_until_stable(|h| h.screen_to_string().contains('└'))
+        .expect("the frame should settle before the edit under test");
+
+    let start = EDITED_DOC.find(EDITED_CODE).expect("code line in the doc");
+    (harness, tmp, start..start + EDITED_CODE.len())
+}
+
+/// The columns of the top border's corners, and the row the code sits on.
+#[cfg(feature = "plugins")]
+fn border_and_body(screen: &str) -> ((usize, usize), String) {
+    let border = screen
+        .lines()
+        .find(|l| l.contains('┌') && !l.contains('┬'))
+        .expect("top border on screen");
+    let cols: Vec<usize> = border
+        .chars()
+        .enumerate()
+        .filter(|(_, c)| "┌┐─".contains(*c))
+        .map(|(i, _)| i)
+        .collect();
+    let body = screen
+        .lines()
+        .find(|l| l.contains("fn answer"))
+        .unwrap_or_else(|| panic!("code line on screen.\nScreen:\n{screen}"))
+        .to_string();
+    ((cols[0], cols[cols.len() - 1]), body)
+}
+
+/// Deleting the last character of a code line must not take the block's right
+/// edge with it.
+///
+/// The rail used to be an inline hint anchored *after that very character*.
+/// Deleting it collapsed the hint's marker onto the line break, and an `after`
+/// hint on a line break is drawn past it — so the rail and its padding were
+/// drawn at the head of the *next* row, on top of the closing border, and the
+/// code row was left with one rail instead of two. Held down, Backspace walked
+/// the edge across the page a column per keystroke (the reported repro).
+///
+/// The line break is the anchor that survives the delete, so the rail stays on
+/// its own row. Its padding is still a pass stale, which is why this asserts
+/// the rail is *present and inside the frame* rather than flush with the
+/// corner — a settled frame is what `body_rails_line_up_with_the_border_corners`
+/// is for.
+#[cfg(feature = "plugins")]
+#[test]
+fn deleting_the_last_character_of_a_code_line_keeps_the_rail_on_that_line() {
+    use fresh::model::event::Event;
+
+    let (mut harness, _tmp, code) = settled_block();
+    let cursor_id = harness.editor().active_cursors().primary_id();
+
+    harness
+        .apply_event(Event::Delete {
+            range: code.end - 1..code.end,
+            deleted_text: "}".to_string(),
+            cursor_id,
+        })
+        .unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    let ((left, right), body) = border_and_body(&screen);
+    let rails: Vec<usize> = body
+        .chars()
+        .enumerate()
+        .filter(|(_, c)| *c == '│')
+        .map(|(i, _)| i)
+        .collect();
+
+    assert_eq!(
+        rails.len(),
+        2,
+        "the code row lost a rail to the keystroke that deleted the character \
+         the rail trailed — it was drawn on the row below instead.\nScreen:\n{screen}"
+    );
+    assert_eq!(rails[0], left, "the opening rail moved.\nScreen:\n{screen}");
+    assert!(
+        rails[1] <= right,
+        "the closing rail was drawn outside the frame it closes (column \
+         {}, frame ends at {right}).\nScreen:\n{screen}",
+        rails[1]
+    );
+}
+
+/// Typing at the end of a code line must not put the character outside the box.
+///
+/// The mirror of the case above, and the other half of the reported repro: an
+/// insertion at the end of the line lands *after* a hint anchored on the old
+/// last character, so the character just typed was drawn past the closing rail
+/// — outside the block — until the next pass caught up. Anchored on the line
+/// break, the rail's right-gravity marker travels with the inserted text and
+/// stays in front of it.
+#[cfg(feature = "plugins")]
+#[test]
+fn typing_at_the_end_of_a_code_line_stays_inside_the_frame() {
+    use fresh::model::event::Event;
+
+    let (mut harness, _tmp, code) = settled_block();
+    let cursor_id = harness.editor().active_cursors().primary_id();
+
+    harness
+        .apply_event(Event::Insert {
+            position: code.end,
+            text: "Z".to_string(),
+            cursor_id,
+        })
+        .unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    let ((_, right), body) = border_and_body(&screen);
+
+    let z = body
+        .chars()
+        .position(|c| c == 'Z')
+        .unwrap_or_else(|| panic!("the typed character should be on screen.\nScreen:\n{screen}"));
+    let closing = body
+        .char_indices()
+        .filter(|(_, c)| *c == '│')
+        .map(|(i, _)| body[..i].chars().count())
+        .next_back()
+        .expect("a closing rail on the code row");
+
+    assert!(
+        z < closing,
+        "the character just typed was drawn OUTSIDE the block: it is at column \
+         {z}, past the rail that closes its row at {closing}.\nScreen:\n{screen}"
+    );
+    // The rail may still overhang the border by the one character in flight —
+    // its padding is a pass stale, the residual the anchor cannot fix. What it
+    // may not do is leave the frame's neighbourhood, which is what an anchor
+    // that had drifted or changed rows would look like.
+    assert!(
+        closing <= right + 1,
+        "the closing rail is {} columns past a border that ends at {right}; a \
+         pass-stale padding is worth one, so this rail is somewhere else \
+         entirely.\nScreen:\n{screen}",
+        closing - right
+    );
+}
