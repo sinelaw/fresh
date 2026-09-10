@@ -1400,10 +1400,8 @@ impl Viewport {
     /// anything is built.
     ///
     /// Returns whether this pass **owns vertical placement** for the frame —
-    /// not whether it moved anything. Every buffer that reaches here has an
-    /// index, and the byte pass defers to this one for all of them, so the
-    /// answer is always yes. "Decided not to scroll" is still owning the
-    /// decision, so a `true` return with no movement is normal.
+    /// not whether it moved anything. Always true: every buffer that reaches
+    /// here has an index, and the byte pass defers for all of them.
     ///
     /// The viewport keeps its `(top_byte, top_view_line_offset)` pair — a new
     /// absolute top row is converted back through `byte_of_row`, so this changes
@@ -1463,16 +1461,9 @@ impl Viewport {
             None => index.row_of_byte(buffer, cursor_byte) as usize,
         };
 
-        // The user's `scroll_offset`, in absolute rows — the same rule the byte
-        // pass applies, and unconditional like it. This pass once left the
-        // margin off unless wrap was on or the top was parked inside a line, on
-        // the grounds that the byte pass had already placed the cursor; but the
-        // byte pass hands vertical placement to this one for every buffer that
-        // has an index (`row_pass_owns_placement`), so with wrap off the margin
-        // was one nobody applied: the cursor rode the very edge of the window
-        // and the view only scrolled once it got there, with the user's
-        // `scroll_offset` doing nothing at all on any file small enough to be
-        // indexed.
+        // Unconditional, and the byte pass's own rule: that pass defers to this
+        // one for every indexed buffer, so a margin skipped here is a margin
+        // nobody applies.
         let margin = self.scroll_offset.min(viewport_height / 2);
         let max_top = total_rows.saturating_sub(viewport_height);
 

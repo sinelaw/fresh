@@ -1,34 +1,21 @@
 //! `editor.scroll_offset` keeps its rows of context with soft wrap **off**.
 //!
-//! The setting is a reading margin: the cursor stops that many rows short of
-//! the window's edge and the file scrolls under it instead. With wrap off the
-//! margin went missing — the cursor walked to the very last row of the pane and
-//! only then did the view move, one row per key press, whatever
-//! `scroll_offset` said.
-//!
-//! It looked like a per-file-type bug because the wrap index that owns
-//! placement has size ceilings: past them no index is built, the byte-oriented
-//! pass stays the vertical authority, and it always applied the margin. So a
-//! 200-line source file rode the edge while a 6000-line one in the same window,
-//! with the same config, kept its context rows.
-//!
-//! The test drives `Down` and `Up` and reads only rendered output — the
-//! hardware cursor's row against the pane's own first and last row.
+//! The margin went missing in the hand-off between the two placement passes,
+//! which no single pass can see — hence an e2e test rather than a unit one.
+//! It read as a per-file-type bug because the wrap index that owns placement
+//! has size ceilings, and past them the byte pass (which kept the margin) is
+//! the authority.
 
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::Config;
 
-/// Deliberately not the default (3), so the assertions below can only pass if
-/// the configured value reached the placement pass.
+/// Not the default (3), so this can only pass if the configured value arrived.
 const SCROLL_OFFSET: usize = 5;
 
-/// Comfortably more than the walk below covers, so the document never runs out
-/// underneath the cursor and the margin is owed at every step.
+/// More than the walk below covers, so the margin is owed at every step.
 const LINES: usize = 300;
 
-/// Small enough to stay well inside the wrap index's ceilings, which is the
-/// case that lost the margin.
 fn wrap_off_config() -> Config {
     let mut config = Config::default();
     config.editor.line_wrap = false;
@@ -38,6 +25,7 @@ fn wrap_off_config() -> Config {
 
 #[test]
 fn scroll_offset_holds_the_cursor_off_the_edge_with_wrap_off() {
+    // Small enough to be indexed, which is the case that lost the margin.
     let mut harness =
         EditorTestHarness::with_temp_project_and_config(80, 24, wrap_off_config()).unwrap();
 
@@ -55,10 +43,6 @@ fn scroll_offset_holds_the_cursor_off_the_edge_with_wrap_off() {
 
     let (first_row, last_row) = harness.content_area_rows();
 
-    // Down through several screenfuls. Every line the cursor lands on has 100+
-    // more below it, so the view owes it `SCROLL_OFFSET` rows of what is
-    // coming; a cursor closer than that to the bottom means the view stopped
-    // scrolling ahead of it.
     for step in 1..=120 {
         harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
         harness.render().unwrap();
@@ -74,8 +58,7 @@ fn scroll_offset_holds_the_cursor_off_the_edge_with_wrap_off() {
         );
     }
 
-    // And the same margin above the cursor on the way back up, stopping short
-    // of the first line so there is always more document overhead.
+    // Back up, stopping short of the first line so there is always more above.
     for step in 1..=80 {
         harness.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
         harness.render().unwrap();
