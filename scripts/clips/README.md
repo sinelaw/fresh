@@ -310,3 +310,49 @@ session Restricted — which blocks the `spawnProcess` calls the welcome screen'
 finder and git cards are made of, and puts a red pill in the status bar besides.
 A demo repo of prose and a couple of scripts has no marker in it, opens Trusted,
 and films with its cards alive.
+
+## The dock, taken apart
+
+`fresh-dock-anatomy.json` is an explode clip: one still of the orchestrator
+dock, cut into the elements the layout actually built, opened up and walked
+through. Its rects are not read off the grid — **fresh reports them**. The
+`dump_ui_tree` action writes the active window's retained tree as JSON, one
+object per element with the rect the layout gave it, and `tui-tree` turns that
+plus a plan into `render.explode.pieces`. A font or geometry change costs one
+re-dump and no edits.
+
+Two rules make the dump usable:
+
+**Take it without an overlay over the screen.** The tree a command handler
+reads is the one the *last frame* built, so dumping through the command palette
+describes a screen with a palette across it. `clip_setup.ts` dispatches the
+action instead — `editor.executeAction("dump_ui_tree")` — reads the buffer it
+opens with `getBufferText`, writes it to `FRESH_CLIP_UI_TREE`, and closes it
+again. The buffer is a courier, not a thing to film, and by the time the
+capture takes its still the screen is back to what it was.
+
+**Dump from the run that is filmed.** The rects are in cells, so they depend on
+the geometry, the font, the dock's width and how many sessions exist. One run
+produces both the still and the dump, which is why the env var is the whole of
+the wiring: no var, no dump, and the orchestrator clip stages exactly as it did
+before.
+
+```sh
+~/repos/tui-clips/bin/tui-clip scripts/clips/fresh-dock-anatomy.json --stills
+~/repos/tui-clips/bin/tui-tree target/clips/dock-tree.json \
+    scripts/clips/assets/fresh-dock-anatomy/plan.json \
+    --into scripts/clips/fresh-dock-anatomy.json
+~/repos/tui-clips/bin/tui-clip scripts/clips/fresh-dock-anatomy.json --skip-capture --draft
+```
+
+The plan is the editorial half and the only file worth hand-editing: it names
+elements by key (`widget:new-session`, `sessions`, `session:*`), says what to
+call each one, and gives the offsets they fly to. One override earns its keep —
+`dock_column` is the full 39x29 column and the clip wants only the top of it,
+so the entry pins `"rows": [0, 10]`, which is the buttons, the filter and the
+list and none of the empty column below them. Anything a plan entry sets wins
+over the dump, which is how a piece can be a region rather than an element.
+
+`stagger` is what makes the session list worth diving into: five same-shaped
+rows pushed apart radially pile up along one axis, while dealing each one a
+little further along than the last opens them into a fan.

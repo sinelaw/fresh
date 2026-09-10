@@ -184,6 +184,27 @@ registerHandler("clipSetupOnReady", async () => {
   // line, and so the intent is on the record.
   void launch;
 
+  // A clip that takes this screen apart needs the rects the layout gave it,
+  // and the editor will report them — but only into a buffer, and only for the
+  // frame it last built. Dumping it from here rather than through the palette
+  // is what keeps the report describing the screen being filmed instead of the
+  // screen with a palette over it. The buffer goes away again immediately: it
+  // is a courier, not a thing to film.
+  const dumpTo = editor.getEnv("FRESH_CLIP_UI_TREE");
+  if (dumpTo) {
+    await editor.delay(1500);
+    editor.executeAction("dump_ui_tree");
+    await editor.flush();
+    const tree = editor.listBuffers().find((b) => (b.name ?? "").includes("ui-tree"));
+    if (tree) {
+      editor.writeFile(dumpTo, await editor.getBufferText(tree.id));
+      editor.closeBuffer(tree.id, true);
+      await editor.flush();
+    } else {
+      editor.error("clip_setup: dump_ui_tree produced no buffer");
+    }
+  }
+
   // Hand the dock the keyboard, here rather than with a keystroke in the
   // capture. That workspace is one pane and the pane is a terminal, so a
   // focused terminal eats every key the spec could press to get here —

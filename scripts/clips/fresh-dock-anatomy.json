@@ -1,0 +1,304 @@
+{
+  "name": "fresh-dock-anatomy",
+  "capture": {
+    "geometry": "140x29",
+    "font": "JetBrains Mono 16",
+    "screen": "2000x1000x24",
+    "display": ":99",
+    "backend": "xwd",
+    "workdir": "~/repos/fresh/target/clips/fresh-orchestrator-dock/api",
+    "settle": 55,
+    "copy_dirs": {
+      "~/repos/fresh/scripts/clips/assets/fresh-orchestrator-dock/fresh": "{scratch}/config/fresh",
+      "~/repos/fresh/scripts/clips/assets/fresh-orchestrator-dock/bin": "{scratch}/bin"
+    },
+    "env": {
+      "XDG_CONFIG_HOME": "{scratch}/config",
+      "XDG_DATA_HOME": "{scratch}/data-{pane}",
+      "XDG_STATE_HOME": "{scratch}/state-{pane}",
+      "XDG_RUNTIME_DIR": "{scratch}/run-{pane}",
+      "PATH": "{scratch}/bin:$PATH",
+      "LANG": "C.UTF-8",
+      "LC_ALL": "C.UTF-8",
+      "FRESH_CLIP_AGENT": "~/repos/fresh/crates/fresh-editor/tests/fixtures/coding_agent.py",
+      "FRESH_CLIP_UI_TREE": "~/repos/fresh/target/clips/dock-tree.json"
+    },
+    "keys": [
+      {
+        "sleep": 3
+      }
+    ],
+    "panes": {
+      "dock": {
+        "argv": [
+          "~/repos/fresh/target/release/fresh",
+          "--no-restore",
+          "--no-upgrade-check"
+        ]
+      }
+    }
+  },
+  "render": {
+    "size": [
+      1920,
+      1080
+    ],
+    "fps": 60,
+    "rows": 29,
+    "cols": 140,
+    "title": "fresh \u00b7 orchestrator dock",
+    "theme": {
+      "bg": [
+        18,
+        19,
+        26
+      ],
+      "caption_bg": [
+        28,
+        29,
+        40
+      ],
+      "panel_border": [
+        68,
+        71,
+        90
+      ],
+      "muted": [
+        150,
+        157,
+        192
+      ],
+      "fg": [
+        248,
+        248,
+        242
+      ],
+      "after": [
+        80,
+        250,
+        123
+      ]
+    },
+    "explode": {
+      "spread": 0.45,
+      "pieces": [
+        {
+          "rows": [
+            0,
+            29
+          ],
+          "cols": [
+            39,
+            140
+          ],
+          "label": "The window",
+          "offset": [
+            13,
+            2
+          ]
+        },
+        {
+          "rows": [
+            0,
+            10
+          ],
+          "cols": [
+            0,
+            39
+          ],
+          "label": "Dock",
+          "offset": [
+            -9,
+            -4
+          ],
+          "head": "The dock is an element, not a drawing",
+          "sub": "a retained tree the layout hands rects to",
+          "dive_head": "Two buttons, a filter, a list",
+          "dive_sub": "each one a node with a rect of its own",
+          "pieces": [
+            {
+              "rows": [
+                1,
+                2
+              ],
+              "cols": [
+                0,
+                15
+              ],
+              "label": "New task",
+              "offset": [
+                -6,
+                -4
+              ],
+              "head": "New task",
+              "sub": "cuts a worktree and starts an agent in it"
+            },
+            {
+              "rows": [
+                1,
+                2
+              ],
+              "cols": [
+                16,
+                36
+              ],
+              "label": "Filter",
+              "offset": [
+                14,
+                -4
+              ],
+              "head": "Filter",
+              "sub": "narrows the list without leaving it"
+            },
+            {
+              "rows": [
+                2,
+                3
+              ],
+              "cols": [
+                0,
+                13
+              ],
+              "label": "Filters",
+              "offset": [
+                -10,
+                1.5
+              ],
+              "head": "Filters",
+              "sub": "which tasks the list is willing to show"
+            },
+            {
+              "rows": [
+                2,
+                3
+              ],
+              "cols": [
+                14,
+                31
+              ],
+              "label": "View",
+              "offset": [
+                14,
+                1.5
+              ],
+              "head": "View",
+              "sub": "compact rows, or a card per task"
+            },
+            {
+              "rows": [
+                4,
+                9
+              ],
+              "cols": [
+                0,
+                38
+              ],
+              "label": "Sessions",
+              "offset": [
+                0,
+                6
+              ],
+              "head": "The session list",
+              "sub": "one row per worktree, one worktree per task",
+              "dive_head": "Five rows, five checkouts",
+              "dive_sub": "the one you review from, and four tasks under way",
+              "spread": [
+                0,
+                0.9
+              ],
+              "stagger": [
+                1.6,
+                0.9
+              ],
+              "pieces": [
+                {
+                  "rows": [
+                    4,
+                    5
+                  ],
+                  "cols": [
+                    0,
+                    38
+                  ],
+                  "label": "1"
+                },
+                {
+                  "rows": [
+                    5,
+                    6
+                  ],
+                  "cols": [
+                    0,
+                    38
+                  ],
+                  "label": "2"
+                },
+                {
+                  "rows": [
+                    6,
+                    7
+                  ],
+                  "cols": [
+                    0,
+                    38
+                  ],
+                  "label": "3"
+                },
+                {
+                  "rows": [
+                    7,
+                    8
+                  ],
+                  "cols": [
+                    0,
+                    38
+                  ],
+                  "label": "4"
+                },
+                {
+                  "rows": [
+                    8,
+                    9
+                  ],
+                  "cols": [
+                    0,
+                    38
+                  ],
+                  "label": "5"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "intro_caption": [
+      "The dock, taken apart",
+      "every rect straight from the editor's own layout"
+    ],
+    "outro_caption": [
+      "fresh",
+      "github.com/sinelaw/fresh"
+    ],
+    "survey_caption": [
+      "One screen, one tree",
+      "what the layout built, laid out"
+    ],
+    "timing": {
+      "intro": 1.5,
+      "explode": 1.4,
+      "survey": 1.7,
+      "move": 0.5,
+      "hold": 1.7,
+      "dive": 0.9,
+      "rise": 0.6,
+      "regroup": 0.55,
+      "implode": 1.0,
+      "outro": 1.2
+    }
+  },
+  "encode": {
+    "crf": 18,
+    "preset": "slow"
+  }
+}
