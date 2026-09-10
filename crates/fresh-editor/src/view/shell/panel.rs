@@ -175,6 +175,45 @@ impl Keymap {
     }
 }
 
+/// What a panel's capture leg does with a key.
+///
+/// Three outcomes rather than two, because "the mode declined this" and "the
+/// mode declined this *and* the prefix it was holding is done" are different
+/// facts and only one of them needs reporting.
+#[derive(Debug, Clone)]
+pub enum Captured {
+    /// Claim the key: nothing beneath sees it.
+    Claim(UiMsg),
+    /// Let the key through, but report this.
+    Report(UiMsg),
+    /// Not the mode's; say nothing.
+    Decline,
+}
+
+/// The capture leg's decision, separated from the tree plumbing so it can be
+/// exercised without standing one up.
+fn captured(km: &Keymap, key: fresh_ui::KeyPress) -> Captured {
+    match km.action(key) {
+        Bound::Run(action) => Captured::Claim(UiMsg::Action(action)),
+        Bound::Pending => match super::input::crossterm_key_event(key) {
+            Some(ev) => Captured::Claim(UiMsg::Ui(super::msg::UiFact::ChordPending {
+                code: ev.code,
+                modifiers: ev.modifiers,
+            })),
+            None => Captured::Decline,
+        },
+        // **An abandoned prefix must not poison the next key.** The buffer's
+        // own route clears the chord state on anything but a partial match; a
+        // key the panel's mode declines never reaches that route, so a stale
+        // `z` would sit in the window waiting to turn some later `a` into a
+        // `z a` nobody typed.
+        Bound::None if !km.chord.is_empty() => {
+            Captured::Report(UiMsg::Ui(super::msg::UiFact::ChordAbandoned))
+        }
+        Bound::None => Captured::Decline,
+    }
+}
+
 /// A described interior: the spec, and the host state it reads.
 #[derive(Clone, Debug)]
 pub struct Interior {
@@ -531,25 +570,17 @@ pub fn interior(
     body: Node<UiMsg>,
 ) -> Node<UiMsg> {
     let capture: Option<Capture> = keymap.map(|km| {
-        Rc::new(move |e: &fresh_ui::Event| {
-            let key = e.key?;
-            match km.action(key) {
-                Bound::Run(action) => {
-                    e.stop();
-                    Some(UiMsg::Action(action))
-                }
-                // A prefix is claimed, not run: the key belongs to the chord
-                // being typed, so nothing beneath may see it.
-                Bound::Pending => {
-                    e.stop();
-                    let ev = super::input::crossterm_key_event(key)?;
-                    Some(UiMsg::Ui(super::msg::UiFact::ChordPending {
-                        code: ev.code,
-                        modifiers: ev.modifiers,
-                    }))
-                }
-                Bound::None => None,
+        Rc::new(move |e: &fresh_ui::Event| match captured(&km, e.key?) {
+            // Claimed: the mode's action, or a prefix that belongs to the
+            // chord being typed — either way nothing beneath may see it.
+            Captured::Claim(msg) => {
+                e.stop();
+                Some(msg)
             }
+            // Reported but not claimed: the key is still the widgets' and the
+            // surface's; the message only says the prefix is done.
+            Captured::Report(msg) => Some(msg),
+            Captured::Decline => None,
         }) as Capture
     });
     interior_capturing(slot, capture, rests_empty, body)
@@ -1195,6 +1226,84 @@ mod tests {
             Bound::None,
             "`z q` is not a binding, so `q` is the panel's to pass on"
         );
+    }
+
+    /// **An abandoned prefix does not poison the next key.**
+    ///
+    /// `z` starts the mode's `z a`, then a key that continues nothing —
+    /// one the widgets take — and then `a`. If the prefix survived the key
+    /// in the middle, that `a` would complete a `z a` nobody typed. The
+    /// buffer's own route clears on anything but a partial match; the panel
+    /// leg has to say so too, and it says so by reporting the abandonment
+    /// rather than by silently holding on.
+    #[test]
+    fn a_prefix_the_mode_does_not_continue_is_abandoned() {
+        use crate::input::keybindings::KeybindingResolver;
+        let mut config = crate::config::Config::default();
+        config.keybindings.push(crate::config::Keybinding {
+            key: String::new(),
+            modifiers: Vec::new(),
+            keys: vec![
+                crate::config::KeyPress {
+                    key: "z".into(),
+                    modifiers: Vec::new(),
+                },
+                crate::config::KeyPress {
+                    key: "a".into(),
+                    modifiers: Vec::new(),
+                },
+            ],
+            chord: String::new(),
+            action: "save".to_string(),
+            args: std::collections::HashMap::new(),
+            when: Some("mode:review".to_string()),
+        });
+        let resolver =
+            std::sync::Arc::new(std::sync::RwLock::new(KeybindingResolver::new(&config)));
+        let prefix = vec![(
+            crossterm::event::KeyCode::Char('z'),
+            crossterm::event::KeyModifiers::NONE,
+        )];
+        let km = Keymap {
+            mode: "review".into(),
+            resolver,
+            text_focused: false,
+            chord: prefix,
+        };
+        // `x` continues nothing the mode binds, so the mode declines it —
+        // and the prefix it was holding is done.
+        assert_eq!(
+            km.action(fresh_ui::KeyPress::with(
+                fresh_ui::KeyCode::Char('x'),
+                Mods::NONE
+            )),
+            Bound::None
+        );
+        // …and the capture leg reports that abandonment rather than
+        // silently holding on.
+        assert!(
+            matches!(
+                captured(
+                    &km,
+                    fresh_ui::KeyPress::with(fresh_ui::KeyCode::Char('x'), Mods::NONE)
+                ),
+                Captured::Report(UiMsg::Ui(UiFact::ChordAbandoned))
+            ),
+            "a declined key should report the prefix abandoned"
+        );
+        // With no prefix pending there is nothing to report, and the key is
+        // simply not the mode's.
+        let idle = Keymap {
+            chord: Vec::new(),
+            ..km
+        };
+        assert!(matches!(
+            captured(
+                &idle,
+                fresh_ui::KeyPress::with(fresh_ui::KeyCode::Char('x'), Mods::NONE)
+            ),
+            Captured::Decline
+        ));
     }
 
     /// **A focused text field takes a printable key ahead of the mode.**

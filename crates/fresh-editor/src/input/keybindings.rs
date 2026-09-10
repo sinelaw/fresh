@@ -1687,8 +1687,6 @@ impl BindingSource {
 
 /// Log that a configured keybinding entry was dropped because its key name did
 /// not parse, so a rejected binding leaves a trace in the log instead of dying
-/// silently (issue #1128: `"key": "asterisk"` was ignored with no feedback
-/// anywhere).
 /// The shared key vocabulary, re-exported so the names this module's callers
 /// already use keep resolving.
 ///
@@ -1722,11 +1720,11 @@ pub fn key_name_to_code(lower: &str) -> Option<KeyCode> {
 /// shared tables, plus the keypad and media families this layer adds.
 ///
 /// Everything that used to carry its own parser resolves through here — a
-/// plugin mode's binding table, the widget wire — so a name that binds and a
-/// key that arrives cannot drift apart. The config's split-field form (a `key`
-/// name beside a `modifiers` array) is a different surface syntax and keeps
-/// its own modifier handling, but it resolves its *names* through the same
-/// tables, so it cannot drift either.
+/// plugin mode's binding table, the widget wire, a config entry's compact
+/// `chord` — so a name that binds and a key that arrives cannot drift apart.
+/// The config's split-field form (a `key` name beside a `modifiers` array) is
+/// a different surface syntax and keeps its own modifier handling, but it
+/// resolves its *names* through the same tables, so it cannot drift either.
 pub fn parse_key_seq(s: &str) -> Option<KeySeq> {
     KeySeq::parse(s, Some(terminal_key_names))
 }
@@ -1737,57 +1735,8 @@ pub fn parse_key_press(s: &str) -> Option<Key> {
     parse_key_seq(s)?.single()
 }
 
-/// One press as the config's split-field form spells it.
-///
-/// The inverse of the `key` + `modifiers` pair `parse_key` reads, so a
-/// compact `chord` string can be rewritten into the shape the loaders already
-/// understand rather than teaching each of them a second spelling.
-fn key_press_of(key: Key) -> crate::config::KeyPress {
-    use fresh_editor_core::keys::canonical_name;
-    crate::config::KeyPress {
-        key: canonical_name(key.code())
-            .map(str::to_string)
-            .unwrap_or_else(|| match key.code() {
-                KeyCode::Char(c) => c.to_string(),
-                KeyCode::F(n) => format!("f{n}"),
-                other => format!("{other:?}"),
-            }),
-        modifiers: crate::app::keybinding_editor::helpers::modifiers_to_config_names(key.mods()),
-    }
-}
-
-/// Rewrite a compact `chord` entry into the split-field form.
-///
-/// **Desugaring, not a fourth code path.** The three loaders below each
-/// already decide "chord or single key" from `keys` and `key`; teaching all
-/// of them about a third spelling is how a vocabulary grows the seams this
-/// module exists to remove. A compact entry becomes the entry it is
-/// equivalent to, once, here — so everything downstream sees the shape it
-/// always saw and cannot tell which spelling the user wrote.
-///
-/// The split fields win when both are present, so an entry that sets them is
-/// never reinterpreted.
-fn desugar(binding: &crate::config::Keybinding) -> std::borrow::Cow<'_, crate::config::Keybinding> {
-    use std::borrow::Cow;
-    if binding.chord.is_empty() || !binding.keys.is_empty() || !binding.key.is_empty() {
-        return Cow::Borrowed(binding);
-    }
-    let Some(seq) = parse_key_seq(&binding.chord) else {
-        warn_invalid_key(&binding.chord, &binding.action);
-        return Cow::Borrowed(binding);
-    };
-    let mut out = binding.clone();
-    match seq.single() {
-        Some(key) => {
-            let press = key_press_of(key);
-            out.key = press.key;
-            out.modifiers = press.modifiers;
-        }
-        None => out.keys = seq.keys().iter().map(|k| key_press_of(*k)).collect(),
-    }
-    Cow::Owned(out)
-}
-
+/// silently (issue #1128: `"key": "asterisk"` was ignored with no feedback
+/// anywhere).
 fn warn_invalid_key(key: &str, action: &str) {
     tracing::warn!(
         "Invalid keybinding in config: unknown key \"{key}\" for action \"{action}\" (binding ignored)"
@@ -1852,7 +1801,6 @@ impl KeybindingResolver {
     /// Load default bindings from a vector of keybinding definitions (into default_bindings/default_chord_bindings)
     fn load_default_bindings_from_vec(&mut self, bindings: &[crate::config::Keybinding]) {
         for binding in bindings {
-            let binding = &*desugar(binding);
             // Determine context from "when" clause
             let context = if let Some(ref when) = binding.when {
                 KeyContext::from_when_clause(when).unwrap_or(KeyContext::Normal)
@@ -1861,42 +1809,27 @@ impl KeybindingResolver {
             };
 
             if let Some(action) = Action::from_str(&binding.action, &binding.args) {
-                // Check if this is a chord binding (has keys field)
-                if !binding.keys.is_empty() {
-                    // Parse the chord sequence
-                    let mut sequence = Vec::new();
-                    for key_press in &binding.keys {
-                        if let Some(key_code) = Self::parse_key(&key_press.key) {
-                            let modifiers = Self::parse_modifiers(&key_press.modifiers);
-                            sequence.push((key_code, modifiers));
-                        } else {
-                            // Invalid key in sequence, skip this binding
-                            warn_invalid_key(&key_press.key, &binding.action);
-                            break;
-                        }
-                    }
-
-                    // Only add if all keys in sequence were valid
-                    if sequence.len() == binding.keys.len() && !sequence.is_empty() {
+                // **Chord or single key is a question about what parsed**, not
+                // about which field was filled in — `binding_sequence` answers
+                // for all three spellings, so this loop never has to know
+                // there is more than one.
+                let Some(sequence) = Self::binding_sequence(binding) else {
+                    continue;
+                };
+                match sequence.as_slice() {
+                    [(key_code, modifiers)] => self.insert_binding_with_equivalents(
+                        context,
+                        *key_code,
+                        *modifiers,
+                        action,
+                        Self::binding_key_name(binding),
+                    ),
+                    _ => {
                         self.default_chord_bindings
                             .entry(context)
                             .or_default()
                             .insert(sequence, action);
                     }
-                } else if let Some(key_code) = Self::parse_key(&binding.key) {
-                    // Single key binding (legacy format)
-                    let modifiers = Self::parse_modifiers(&binding.modifiers);
-
-                    // Insert the primary binding
-                    self.insert_binding_with_equivalents(
-                        context,
-                        key_code,
-                        modifiers,
-                        action,
-                        &binding.key,
-                    );
-                } else {
-                    warn_invalid_key(&binding.key, &binding.action);
                 }
             }
         }
@@ -1966,7 +1899,6 @@ impl KeybindingResolver {
     /// Load custom bindings from a vector of keybinding definitions (into bindings/chord_bindings)
     fn load_bindings_from_vec(&mut self, bindings: &[crate::config::Keybinding]) {
         for binding in bindings {
-            let binding = &*desugar(binding);
             // Determine context from "when" clause
             let context = if let Some(ref when) = binding.when {
                 KeyContext::from_when_clause(when).unwrap_or(KeyContext::Normal)
@@ -1981,37 +1913,22 @@ impl KeybindingResolver {
             }
 
             if let Some(action) = Action::from_str(&binding.action, &binding.args) {
-                // Check if this is a chord binding (has keys field)
-                if !binding.keys.is_empty() {
-                    // Parse the chord sequence
-                    let mut sequence = Vec::new();
-                    for key_press in &binding.keys {
-                        if let Some(key_code) = Self::parse_key(&key_press.key) {
-                            let modifiers = Self::parse_modifiers(&key_press.modifiers);
-                            sequence.push((key_code, modifiers));
-                        } else {
-                            // Invalid key in sequence, skip this binding
-                            warn_invalid_key(&key_press.key, &binding.action);
-                            break;
-                        }
+                let Some(sequence) = Self::binding_sequence(binding) else {
+                    continue;
+                };
+                match sequence.as_slice() {
+                    [(key_code, modifiers)] => {
+                        self.bindings
+                            .entry(context)
+                            .or_default()
+                            .insert((*key_code, *modifiers), action);
                     }
-
-                    // Only add if all keys in sequence were valid
-                    if sequence.len() == binding.keys.len() && !sequence.is_empty() {
+                    _ => {
                         self.chord_bindings
                             .entry(context)
                             .or_default()
                             .insert(sequence, action);
                     }
-                } else if let Some(key_code) = Self::parse_key(&binding.key) {
-                    // Single key binding (legacy format)
-                    let modifiers = Self::parse_modifiers(&binding.modifiers);
-                    self.bindings
-                        .entry(context)
-                        .or_default()
-                        .insert((key_code, modifiers), action);
-                } else {
-                    warn_invalid_key(&binding.key, &binding.action);
                 }
             }
         }
@@ -2033,6 +1950,57 @@ impl KeybindingResolver {
         (!sequence.is_empty()).then_some(sequence)
     }
 
+    /// **The key sequence this entry names, whichever way it was written.**
+    ///
+    /// Three spellings reach the loaders — the `keys` array, the compact
+    /// `chord` string, and the `key` + `modifiers` pair — and this answers
+    /// them in that order, so an entry that sets the split fields is never
+    /// reinterpreted. Every loader asks here, which is why adding the
+    /// compact form did not mean teaching three of them a third spelling.
+    ///
+    /// **The compact form is parsed, not rewritten.** An earlier version
+    /// desugared it *into* the split fields, and so could only express what
+    /// those fields can spell: the keypad and media names have no entry in
+    /// the config's own table, and Meta and Hyper have no modifier words at
+    /// all — so `{"chord": "Meta-s"}` quietly became a binding on bare `s`,
+    /// and `{"chord": "kp_begin"}` bound nothing. Both are the quiet-drop
+    /// defect this module exists to end, reintroduced by a round trip
+    /// through a lossier form.
+    ///
+    /// `None` (after a warning) when any part of it does not parse.
+    fn binding_sequence(
+        binding: &crate::config::Keybinding,
+    ) -> Option<Vec<(KeyCode, KeyModifiers)>> {
+        // **The split fields win, both of them.** `chord` is an alternative
+        // spelling offered to people writing configs, never a
+        // reinterpretation of an entry that already says what it binds — so
+        // it is consulted only when neither split field is set.
+        if !binding.keys.is_empty() {
+            return Self::parse_chord_sequence(binding);
+        }
+        if binding.key.is_empty() && !binding.chord.is_empty() {
+            let Some(seq) = parse_key_seq(&binding.chord) else {
+                warn_invalid_key(&binding.chord, &binding.action);
+                return None;
+            };
+            return Some(seq.keys().iter().map(|k| (k.code(), k.mods())).collect());
+        }
+        let Some(code) = Self::parse_key(&binding.key) else {
+            warn_invalid_key(&binding.key, &binding.action);
+            return None;
+        };
+        Some(vec![(code, Self::parse_modifiers(&binding.modifiers))])
+    }
+
+    /// How to name this entry's key in a warning — whichever field carried
+    /// it. Diagnostics only.
+    fn binding_key_name(binding: &crate::config::Keybinding) -> &str {
+        match binding.key.is_empty() {
+            false => &binding.key,
+            true => &binding.chord,
+        }
+    }
+
     /// Apply an `unbind` entry: take the built-in binding for its key (or
     /// chord) in `context` out of scope. Nothing is bound in its place, so
     /// the key falls through to whatever else binds it — a broader context,
@@ -2041,25 +2009,22 @@ impl KeybindingResolver {
     /// The removal is remembered so a plugin registering the same key for
     /// the same mode later (or again, after a reload) stays removed.
     fn unbind(&mut self, context: KeyContext, binding: &crate::config::Keybinding) {
-        if !binding.keys.is_empty() {
-            let Some(sequence) = Self::parse_chord_sequence(binding) else {
-                return;
-            };
-            if let Some(chords) = self.default_chord_bindings.get_mut(&context) {
-                chords.remove(&sequence);
-            }
-            if let Some(chords) = self.plugin_chord_defaults.get_mut(&context) {
-                chords.remove(&sequence);
-            }
-            self.removed_chords.insert((context, sequence));
-            return;
-        }
-
-        let Some(key_code) = Self::parse_key(&binding.key) else {
-            warn_invalid_key(&binding.key, &binding.action);
+        let Some(sequence) = Self::binding_sequence(binding) else {
             return;
         };
-        let key = (key_code, Self::parse_modifiers(&binding.modifiers));
+        let key = match sequence.as_slice() {
+            [one] => *one,
+            _ => {
+                if let Some(chords) = self.default_chord_bindings.get_mut(&context) {
+                    chords.remove(&sequence);
+                }
+                if let Some(chords) = self.plugin_chord_defaults.get_mut(&context) {
+                    chords.remove(&sequence);
+                }
+                self.removed_chords.insert((context, sequence));
+                return;
+            }
+        };
         if let Some(map) = self.default_bindings.get_mut(&context) {
             map.remove(&key);
             // A keymap binding brings its terminal equivalents along
@@ -3611,6 +3576,67 @@ mod tests {
                 ChordResolution::Complete(Action::Save)
             );
         }
+    }
+
+    /// **A compact entry binds the key it names, including the ones the
+    /// split fields have no words for.**
+    ///
+    /// The compact form was first implemented by rewriting the entry *into*
+    /// `key` + `modifiers`, which can only spell what the config's own
+    /// tables spell: the keypad and media names are not in them, and Meta
+    /// and Hyper have no modifier word at all. So `"Meta-s"` quietly became
+    /// a binding on bare `s` — pressing `s` ran the action — and
+    /// `"kp_begin"` bound nothing. Both are the quiet-drop defect this
+    /// module exists to end, and neither is caught by a test that only
+    /// exercises Ctrl, Shift and Alt on main-keyboard keys.
+    #[test]
+    fn a_compact_entry_binds_keys_the_split_fields_cannot_spell() {
+        fn bound(chord: &str) -> Option<(KeyCode, KeyModifiers)> {
+            let mut config = crate::config::Config::default();
+            config.keybindings.push(crate::config::Keybinding {
+                key: String::new(),
+                modifiers: Vec::new(),
+                keys: Vec::new(),
+                chord: chord.to_string(),
+                action: "save".to_string(),
+                args: std::collections::HashMap::new(),
+                when: Some("mode:compact".to_string()),
+            });
+            let r = KeybindingResolver::new(&config);
+            let ctx = KeyContext::Mode("compact".to_string());
+            let expected = parse_key_press(chord).expect("the test names a real key");
+            r.explicit_binding(&KeyEvent::new(expected.code(), expected.mods()), &ctx)
+                .map(|_| (expected.code(), expected.mods()))
+        }
+        for chord in ["Meta-s", "H-s", "kp_begin", "C-kp_begin"] {
+            let key = parse_key_press(chord).expect("names a real key");
+            assert_eq!(
+                bound(chord),
+                Some((key.code(), key.mods())),
+                "{chord:?} did not bind the key it names"
+            );
+        }
+        // …and the modifier is not quietly dropped onto the bare key: an
+        // entry for `Meta-s` must leave plain `s` unbound.
+        let mut config = crate::config::Config::default();
+        config.keybindings.push(crate::config::Keybinding {
+            key: String::new(),
+            modifiers: Vec::new(),
+            keys: Vec::new(),
+            chord: "Meta-s".into(),
+            action: "save".to_string(),
+            args: std::collections::HashMap::new(),
+            when: Some("mode:compact".to_string()),
+        });
+        let r = KeybindingResolver::new(&config);
+        assert_eq!(
+            r.explicit_binding(
+                &KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE),
+                &KeyContext::Mode("compact".to_string())
+            ),
+            None,
+            "the Meta modifier was dropped and bound bare `s`"
+        );
     }
 
     /// The split fields win when an entry carries both, so a config that

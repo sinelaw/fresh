@@ -2001,6 +2001,9 @@ impl Editor {
             UiFact::ChordPending { code, modifiers } => {
                 self.active_window_mut().chord_state.push((code, modifiers));
             }
+            UiFact::ChordAbandoned => {
+                self.active_window_mut().chord_state.clear();
+            }
             // The tree found the widget; the dispatch behind this is the one
             // all three frontends already share, and it does not change.
             // `None` for the clicked byte: the byte range in the hit is a

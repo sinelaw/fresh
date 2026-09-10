@@ -105,6 +105,9 @@ pub enum UiFact {
         code: crossterm::event::KeyCode,
         modifiers: crossterm::event::KeyModifiers,
     },
+    /// A key reached a panel whose mode holds a pending chord prefix and
+    /// continues none of it. The prefix is abandoned — see [`UiFact::ChordPending`].
+    ChordAbandoned,
     /// A press landed on a plugin widget, carrying what that press means.
     ///
     /// **What replaces the byte-range scan.** The runtime recorded a
