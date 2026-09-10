@@ -637,6 +637,46 @@ pub(super) fn inject_virtual_lines(
 struct InlineHintCell {
     text: String,
     style: Option<ViewTokenStyle>,
+    /// See [`InlineHint::pad_to_column`]; the cell is padded on emit.
+    pad_to_column: Option<u32>,
+}
+
+/// The splice's output, carrying the column its current row has reached.
+///
+/// Only a `pad_to_column` hint reads it, but every push has to maintain it, so
+/// it lives on the sink rather than being recomputed per hint. Advances match
+/// `WrapMachine`'s, since the two measure the same rows.
+struct SplicedRow {
+    tokens: Vec<ViewTokenWire>,
+    col: usize,
+}
+
+impl SplicedRow {
+    fn push(&mut self, token: ViewTokenWire) {
+        match &token.kind {
+            ViewTokenWireKind::Newline | ViewTokenWireKind::Break => self.col = 0,
+            ViewTokenWireKind::Text(s) => {
+                self.col += crate::primitives::visual_layout::visual_width(s, self.col)
+            }
+            ViewTokenWireKind::Space => self.col += 1,
+            ViewTokenWireKind::BinaryByte(_) => self.col += 4,
+        }
+        self.tokens.push(token);
+    }
+
+    /// `text` left-padded to end at `target`, or `default_pad` in front of it
+    /// when no target is set. Over-long rows get no padding rather than a
+    /// negative one — their edge is open, which the emitter already allows for.
+    fn padded(&self, text: &str, target: Option<u32>, default_pad: &str) -> String {
+        match target {
+            None => format!("{default_pad}{text}"),
+            Some(target) => {
+                let end = self.col + crate::primitives::visual_layout::visual_width(text, self.col);
+                let pad = (target as usize).saturating_sub(end);
+                format!("{}{text}", " ".repeat(pad))
+            }
+        }
+    }
 }
 
 /// One inline hint, resolved: everything the splice needs and no borrow of
@@ -654,6 +694,9 @@ pub struct InlineHint {
     /// would have to assume one, and a snapshot that disagrees with the live
     /// marker makes the index lay out a line the renderer never draws.
     pub gravity: crate::view::virtual_text::MarkerGravity,
+    /// Left-pad the hint so it ends at this column of its row. See
+    /// [`splice_inline_virtual_text`].
+    pub pad_to_column: Option<u32>,
     /// `None` when the caller passed no theme — the scroll-math and index
     /// paths, where only the cell's *width* matters and nothing is drawn.
     pub style: Option<ViewTokenStyle>,
@@ -694,6 +737,7 @@ pub fn resolve_inline_hints(
             text: vtext.text.clone(),
             position: vtext.position,
             gravity: vtext.gravity,
+            pad_to_column: vtext.pad_to_column,
             style: theme.map(|t| token_style_from_ratatui(vtext.resolved_style(t))),
         })
         .collect()
@@ -735,20 +779,23 @@ pub fn splice_inline_virtual_text(
     // order. `before` stores the raw hint text — its leading-space padding
     // depends on whether the anchor cell is a newline, decided while
     // walking the token stream below.
-    let mut before: HashMap<usize, Vec<(String, Option<ViewTokenStyle>)>> = HashMap::new();
+    let mut before: HashMap<usize, Vec<(String, Option<ViewTokenStyle>, Option<u32>)>> =
+        HashMap::new();
     let mut after: HashMap<usize, Vec<InlineHintCell>> = HashMap::new();
     for hint in hints {
         match hint.position {
             VirtualTextPosition::BeforeChar => {
-                before
-                    .entry(hint.anchor)
-                    .or_default()
-                    .push((hint.text.clone(), hint.style.clone()));
+                before.entry(hint.anchor).or_default().push((
+                    hint.text.clone(),
+                    hint.style.clone(),
+                    hint.pad_to_column,
+                ));
             }
             VirtualTextPosition::AfterChar => {
                 after.entry(hint.anchor).or_default().push(InlineHintCell {
-                    text: format!(" {}", hint.text),
+                    text: hint.text.clone(),
                     style: hint.style.clone(),
+                    pad_to_column: hint.pad_to_column,
                 });
             }
             // Line-level positions are handled by `inject_virtual_lines`.
@@ -762,7 +809,10 @@ pub fn splice_inline_virtual_text(
         style,
     };
 
-    let mut out: Vec<ViewTokenWire> = Vec::with_capacity(tokens.len());
+    let mut out = SplicedRow {
+        tokens: Vec::with_capacity(tokens.len()),
+        col: 0,
+    };
     // Whether nothing of this line's own source has been emitted yet. Only
     // used to recognise a newline that *is* the whole line — an empty line —
     // whose hints have no neighbouring text to be separated from.
@@ -791,8 +841,13 @@ pub fn splice_inline_virtual_text(
                             });
                         }
                         seg_start = anchor;
-                        for (text, style) in hints {
-                            out.push(virt(format!("{text} "), style.clone()));
+                        for (text, style, target) in hints {
+                            let cell = out.padded(text, *target, "");
+                            let cell = match target {
+                                Some(_) => cell,
+                                None => format!("{cell} "),
+                            };
+                            out.push(virt(cell, style.clone()));
                         }
                     }
                     seg.push(ch);
@@ -805,7 +860,8 @@ pub fn splice_inline_virtual_text(
                         });
                         seg_start = token_start + byte_idx;
                         for hint in hints {
-                            out.push(virt(hint.text.clone(), hint.style.clone()));
+                            let cell = out.padded(&hint.text, hint.pad_to_column, " ");
+                            out.push(virt(cell, hint.style.clone()));
                         }
                     }
                 }
@@ -831,11 +887,14 @@ pub fn splice_inline_virtual_text(
                 let anchor_is_newline = matches!(kind, ViewTokenWireKind::Newline);
                 let empty_line = anchor_is_newline && line_start_cell;
                 if let Some(hints) = before.get(&anchor) {
-                    for (text, style) in hints {
-                        let padded = match (anchor_is_newline, empty_line) {
-                            (_, true) => text.clone(),
-                            (true, false) => format!(" {text} "),
-                            (false, _) => format!("{text} "),
+                    for (text, style, target) in hints {
+                        let padded = match (target, anchor_is_newline, empty_line) {
+                            // A target column supersedes the convention: the
+                            // caller is placing a column, not trailing a word.
+                            (Some(t), _, _) => out.padded(text, Some(*t), ""),
+                            (None, _, true) => text.clone(),
+                            (None, true, false) => format!(" {text} "),
+                            (None, false, _) => format!("{text} "),
                         };
                         out.push(virt(padded, style.clone()));
                     }
@@ -844,7 +903,8 @@ pub fn splice_inline_virtual_text(
                 out.push(token);
                 if let Some(hints) = after_hints {
                     for hint in hints {
-                        out.push(virt(hint.text.clone(), hint.style.clone()));
+                        let cell = out.padded(&hint.text, hint.pad_to_column, " ");
+                        out.push(virt(cell, hint.style.clone()));
                     }
                 }
             }
@@ -854,7 +914,7 @@ pub fn splice_inline_virtual_text(
         }
     }
 
-    out
+    out.tokens
 }
 
 #[cfg(test)]
@@ -979,6 +1039,7 @@ mod line_break_hint_tests {
             text: "|".to_string(),
             position,
             gravity: MarkerGravity::Right,
+            pad_to_column: None,
             style: None,
         }
     }
@@ -1025,6 +1086,46 @@ mod line_break_hint_tests {
             .collect();
         // Padded on both sides — a caller sizing its own padding counts this.
         assert_eq!(head, "one | ");
+    }
+
+    /// A target column is measured against the row being spliced, so the same
+    /// hint text lands on the same column whatever the content ahead of it —
+    /// the property that lets an emitter working from a stale snapshot still
+    /// place a column correctly.
+    #[test]
+    fn a_padded_hint_ends_at_its_target_column_whatever_precedes_it() {
+        let col_of_glyph = |text: &str| {
+            let tokens: Vec<ViewTokenWire> = text
+                .char_indices()
+                .map(|(i, c)| ViewTokenWire {
+                    source_offset: Some(i),
+                    kind: ViewTokenWireKind::Text(c.to_string()),
+                    style: None,
+                })
+                .chain(std::iter::once(ViewTokenWire {
+                    source_offset: Some(text.len()),
+                    kind: ViewTokenWireKind::Newline,
+                    style: None,
+                }))
+                .collect();
+            let mut h = hint(text.len(), VirtualTextPosition::BeforeChar);
+            h.pad_to_column = Some(20);
+            let out = splice_inline_virtual_text(tokens, &[h]);
+            let rendered: String = out
+                .iter()
+                .take_while(|t| !matches!(t.kind, ViewTokenWireKind::Newline))
+                .filter_map(|t| match &t.kind {
+                    ViewTokenWireKind::Text(s) => Some(s.clone()),
+                    _ => None,
+                })
+                .collect();
+            rendered.chars().count()
+        };
+        assert_eq!(col_of_glyph("one"), 20);
+        assert_eq!(col_of_glyph("one two three"), 20);
+        // Past the target there is nothing left to pad with, so the row simply
+        // runs long rather than the glyph being dropped.
+        assert_eq!(col_of_glyph(&"x".repeat(25)), 26);
     }
 
     /// Why the break is a safe anchor: deleting the character in front of it

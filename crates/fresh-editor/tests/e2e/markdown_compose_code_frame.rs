@@ -657,9 +657,8 @@ fn border_and_body(screen: &str) -> ((usize, usize), String) {
 /// it: a rail anchored after that character used to collapse onto the line break
 /// and be drawn on the row below, walking the edge across the page.
 ///
-/// Asserts the rail is present and inside the frame, not flush with the corner —
-/// the padding is a pass stale here, and `body_rails_line_up_with_the_border_corners`
-/// covers the settled frame.
+/// The rail must also still be *on the corner*: the renderer pads it to the
+/// frame's column from the live row, so the lagging pass cannot move the edge.
 #[cfg(feature = "plugins")]
 #[test]
 fn deleting_the_last_character_of_a_code_line_keeps_the_rail_on_that_line() {
@@ -693,11 +692,9 @@ fn deleting_the_last_character_of_a_code_line_keeps_the_rail_on_that_line() {
          the rail trailed — it was drawn on the row below instead.\nScreen:\n{screen}"
     );
     assert_eq!(rails[0], left, "the opening rail moved.\nScreen:\n{screen}");
-    assert!(
-        rails[1] <= right,
-        "the closing rail was drawn outside the frame it closes (column \
-         {}, frame ends at {right}).\nScreen:\n{screen}",
-        rails[1]
+    assert_eq!(
+        rails[1], right,
+        "the block's right edge moved while a keystroke was in flight.\nScreen:\n{screen}"
     );
 }
 
@@ -740,13 +737,10 @@ fn typing_at_the_end_of_a_code_line_stays_inside_the_frame() {
         "the character just typed was drawn OUTSIDE the block: it is at column \
          {z}, past the rail that closes its row at {closing}.\nScreen:\n{screen}"
     );
-    // One column of overhang is the in-flight character's stale padding; more
-    // than that means the anchor drifted rather than the padding lagging.
-    assert!(
-        closing <= right + 1,
-        "the closing rail is {} columns past a border that ends at {right}; a \
-         pass-stale padding is worth one, so this rail is somewhere else \
-         entirely.\nScreen:\n{screen}",
-        closing - right
+    // Exactly on the corner, mid-keystroke: the renderer pads the rail from the
+    // row it is drawing, so no lag of the emitting pass can move the edge.
+    assert_eq!(
+        closing, right,
+        "the block's right edge moved while a keystroke was in flight.\nScreen:\n{screen}"
     );
 }

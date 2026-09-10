@@ -4670,6 +4670,7 @@ impl JsEditorApi {
         let bg = parse_color_spec("bg", &options);
         let bold: bool = options.get("bold").unwrap_or(false);
         let italic: bool = options.get("italic").unwrap_or(false);
+        let pad_to_column: Option<u32> = options.get("padToColumn").ok();
 
         // Track virtual text ID for cleanup on unload.
         self.plugin_tracked_state
@@ -4692,6 +4693,7 @@ impl JsEditorApi {
                 italic,
                 before,
                 epoch: self.hook_epoch_for(buffer_id),
+                pad_to_column,
             });
         Ok(true)
     }

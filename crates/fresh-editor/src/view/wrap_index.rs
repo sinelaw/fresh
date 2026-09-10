@@ -1672,6 +1672,7 @@ mod tests {
             anchor,
             text: ": Duration".to_string(),
             position: VirtualTextPosition::BeforeChar,
+            pad_to_column: None,
             style: None,
             gravity,
         };

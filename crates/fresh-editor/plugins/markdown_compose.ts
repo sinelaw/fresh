@@ -445,6 +445,11 @@ function emitCodeRails(
   // those rows, because the wrap's own hanging indent would push the RAIL right
   // instead of the code.
   const codeIndent = body.length - body.trimStart().length;
+  // The renderer pads the closing rail to this column from the row it is
+  // actually drawing, so the edge cannot lag the text the way a width computed
+  // here does — this pass is always an edit or two behind the buffer, which is
+  // what made the border jump a column while typing.
+  const railColumn = { ...codeFrameStyle, padToColumn: codeFrameWidth(measure) };
   for (let r = 0; r < rows.length; r++) {
     const row = rows[r];
     if (row.end <= row.start) continue;
@@ -474,7 +479,7 @@ function emitCodeRails(
     if (atLineEnd) {
       editor.addVirtualTextStyled(
         bufferId, `${CODE_RAIL_ID_PREFIX}${byteStart}:${r}:r`, contentEnd,
-        " ".repeat(pad) + RAIL_GLYPH, codeFrameStyle, true,
+        RAIL_GLYPH, railColumn, true,
       );
       continue;
     }
@@ -486,7 +491,7 @@ function emitCodeRails(
     );
     editor.addVirtualTextStyled(
       bufferId, `${CODE_RAIL_ID_PREFIX}${byteStart}:${r}:r`, lastCharStart,
-      " ".repeat(pad) + RAIL_GLYPH, codeFrameStyle, false,
+      RAIL_GLYPH, railColumn, false,
     );
   }
 }
