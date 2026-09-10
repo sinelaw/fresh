@@ -2423,6 +2423,8 @@ impl KeybindingResolver {
                 | Action::SplitHorizontal
                 | Action::SplitVertical
                 | Action::CloseSplit
+                | Action::IncreaseSplitSize
+                | Action::DecreaseSplitSize
                 | Action::ToggleMaximizeSplit
                 | Action::NextBuffer
                 | Action::PrevBuffer
@@ -4363,6 +4365,47 @@ mod tests {
             Action::InsertChar('d'),
             "Plain 'd' must remain text input for explorer search-as-you-type"
         );
+    }
+
+    #[test]
+    fn test_split_resize_ui_fallthrough_preserves_context_precedence() {
+        let mut config = Config::default();
+        for (key, action, when) in [
+            ("l", "increase_split_size", "normal"),
+            ("k", "decrease_split_size", "normal"),
+            ("l", "file_explorer_down", "file_explorer"),
+            ("k", "next_buffer", "global"),
+        ] {
+            config.keybindings.push(crate::config::Keybinding {
+                key: key.to_string(),
+                modifiers: vec!["ctrl".into(), "shift".into(), "super".into()],
+                keys: Vec::new(),
+                action: action.to_string(),
+                args: HashMap::new(),
+                when: Some(when.to_string()),
+            });
+        }
+        let modifiers = KeyModifiers::CONTROL | KeyModifiers::SHIFT | KeyModifiers::SUPER;
+        let increase = KeyEvent::new(KeyCode::Char('l'), modifiers);
+        let decrease = KeyEvent::new(KeyCode::Char('k'), modifiers);
+        let resolver = KeybindingResolver::new(&config);
+        assert_eq!(
+            resolver.resolve(&increase, KeyContext::FileExplorer),
+            Action::FileExplorerDown
+        );
+        assert_eq!(
+            resolver.resolve_terminal_ui_action(&decrease),
+            Action::NextBuffer
+        );
+        config.keybindings.truncate(2);
+        let resolver = KeybindingResolver::new(&config);
+        for (event, action) in [
+            (increase, Action::IncreaseSplitSize),
+            (decrease, Action::DecreaseSplitSize),
+        ] {
+            assert_eq!(resolver.resolve_terminal_ui_action(&event), action);
+            assert_eq!(resolver.resolve(&event, KeyContext::FileExplorer), action);
+        }
     }
 
     #[test]

@@ -199,6 +199,58 @@ mod tests {
     }
 
     #[test]
+    fn test_split_resize_dispatches_without_forwarding_unless_captured() {
+        let mut config = Config::default();
+        for (key, action, when) in [
+            ("l", "next_buffer", "global"),
+            ("k", "prev_buffer", "normal"),
+            ("l", "increase_split_size", "terminal"),
+            ("k", "decrease_split_size", "terminal"),
+        ] {
+            config.keybindings.push(crate::config::Keybinding {
+                key: key.to_string(),
+                modifiers: vec!["ctrl".into(), "shift".into(), "super".into()],
+                keys: Vec::new(),
+                action: action.to_string(),
+                args: Default::default(),
+                when: Some(when.to_string()),
+            });
+        }
+        let resolver = KeybindingResolver::new(&config);
+        for (bytes, expected) in [
+            (b"\x1b[108;14u".as_slice(), Action::IncreaseSplitSize),
+            (b"\x1b[107;14u".as_slice(), Action::DecreaseSplitSize),
+        ] {
+            let events = fresh_input_parser::InputParser::new().parse(bytes);
+            let [fresh_input_parser::Event::Key(event)] = events.as_slice() else {
+                panic!("expected one Kitty key event: {events:?}");
+            };
+            assert_eq!(resolver.resolve_terminal_ui_action(event), expected);
+            for captured in [false, true] {
+                let mut handler = TerminalModeInputHandler::new(captured, &resolver);
+                let mut ctx = InputContext::new();
+                assert!(matches!(
+                    handler.handle_key_event(event, &mut ctx),
+                    InputResult::Consumed
+                ));
+                if captured {
+                    assert!(matches!(
+                        ctx.deferred_actions.as_slice(),
+                        [DeferredAction::SendTerminalKey(code, modifiers)]
+                            if *code == event.code && *modifiers == event.modifiers
+                    ));
+                } else {
+                    // Exactly one editor action: neither PTY input nor a focus exit.
+                    assert!(matches!(
+                        ctx.deferred_actions.as_slice(),
+                        [DeferredAction::ExecuteAction(action)] if *action == expected
+                    ));
+                }
+            }
+        }
+    }
+
+    #[test]
     fn test_should_enter_terminal_mode() {
         // Ctrl+Space
         assert!(should_enter_terminal_mode(&key_with_mods(
