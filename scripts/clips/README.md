@@ -357,39 +357,41 @@ over the dump, which is how a piece can be a region rather than an element.
 rows pushed apart radially pile up along one axis, while dealing each one a
 little further along than the last opens them into a fan.
 
-## Smooth scrolling, and the grab rate that decides whether you can film it
+## Smooth scrolling, and why this one is stepped stills
 
-`fresh-smooth-scroll.json` is six seconds: wheel down the top of a buffer, then
-hold on the shaded rows at the top of the pane. It is driven by `{"click":
-{"col": …, "row": …, "button": 5}}` steps, because both features are *wheel*
-features — `editor.smooth_scroll` walks a notch's lines one at a time
-(`SMOOTH_SCROLL_LINE`, 16ms), and `editor.viewport_edge_fade` shades the top
-two rows of a pane that has more document above it.
+`fresh-smooth-scroll.json` is five seconds: scroll down the top of a buffer,
+zoom in further, keep scrolling. Two features at once — the view moves a line
+at a time rather than recentring, and a pane with more document above it shades
+its top two rows (`editor.viewport_edge_fade`; `EDGE_FADE_ROWS = 2`, the row
+against the edge painted a third of the way up from the background, the next
+two thirds, the third in full).
 
-**The grab rate is the editor's frame rate, so it decides which behaviour you
-film.** The walk hands over however many lines the clock has made due *this
-frame*: a terminal too slow to animate gets the jump it always had, by design.
-On this stack the terminal only paints when something grabs it, so the grab
-rate *is* that clock. At 1922x1082 an `xwd` costs ~61ms, which is 13fps, and
-the measured scroll came out in three-line steps — the capture was filming the
-degraded path and calling it the feature. Shrinking the window to 990x582 put
-the grab at ~12ms and 52fps, and the same scroll measured in ones and twos.
-Nothing changed in the editor; the camera got fast enough to see what it was
-already doing.
+**Do not film this with a recorded run.** The first attempt drove it with the
+wheel and a continuous grab, and it taught the lesson the hard way: the wheel's
+walk hands over however many lines the clock has made due *this frame*, so a
+terminal too slow to animate gets the plain jump it always had, by design. On
+this stack the grab rate is that clock — at 1922x1082 an `xwd` costs ~61ms,
+which is 13 frames a second, and the scroll came out in clean three-line steps.
+The capture was filming the degraded path and would have shipped it as the
+feature.
 
-So for a clip of an animation, size the capture by its grab cost, not by the
-resolution you want in the output — about 40ns per pixel here, and the frame
-budget is whatever the animation's own step is. Check a take by measuring it:
-align each frame against the one before it and print the distribution of
-row shifts. Threes with nothing between them mean you filmed the jump.
+A **`{"key": "Down"}` and a `{"shot": …}`, over and over**, has none of that in
+it. One key is one line, the shot after it is that line, and the frame rate is
+whatever the beat plays them at rather than whatever the machine could manage.
+Ninety-six pairs measured ninety-five steps of exactly one line and nothing
+else. It also frees the capture to be as large as the zoom wants, since the
+grab is no longer on a clock: font 24 at 80x22, so a 2.3x zoom on the shaded
+rows still has real pixels under it.
 
-Two knobs earn their place in the config the clip ships. `mouse_wheel_scroll_lines`
-is 8 rather than the default 3: `xdotool` cannot send notches closer than
-~130ms, so a scripted notch has to stand in for the several a real flick sends,
-and at 3 lines the walk finished long before the next notch and the scroll was
-mostly still frames. And the file opened is `mouse_input.rs` — the code that
-implements the thing being demonstrated, which is a nicer establishing shot
-than a lorem file.
+Measure the take rather than watching it: align each shot against the one
+before and print the distribution of row shifts. Every step should be a one.
+
+**Keep the motion running through the camera move.** Both beats are runs, cut
+consecutively out of the same sequence — the first half under the wide framing,
+the second half under the close one — so the zoom happens *over* a scroll that
+never stops, and the clip ends still moving. A still for the second beat would
+have parked the file the moment the camera arrived, which is the opposite of
+what the beat is about.
 
 **A `camera: "fit"` beat needs a canvas the renderer's constants fit inside.**
 `FIT_PAD` and the band a note stands in are absolute pixels, tuned for a
@@ -397,4 +399,4 @@ than a lorem file.
 rendered as a thumbnail in a sea of background. 1600x900 leaves the zoom to be
 decided by the rect, which is what asking to fit means. The same constants make
 `--draft` misleading for fit beats — a half-size draft reserves full-size room
-— so frame those at full size. This clip renders in ~75s, so that costs nothing.
+— so frame those at full size.
