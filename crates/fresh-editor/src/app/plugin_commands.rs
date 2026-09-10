@@ -1511,6 +1511,7 @@ impl Editor {
     ) {
         let delete_start = range.start;
         let delete_len = range.end.saturating_sub(range.start);
+        let mut removed_newline = false;
         if let Some(state) = self
             .windows
             .get_mut(&self.active_window)
@@ -1518,6 +1519,7 @@ impl Editor {
             .buffer_state_mut(buffer_id)
         {
             let deleted_text = state.get_text_range(range.start, range.end);
+            removed_newline = deleted_text.contains('\n');
             let event = Event::Delete {
                 range,
                 deleted_text,
@@ -1553,9 +1555,15 @@ impl Editor {
         // Keep search-match highlights consistent with the edit (issue #2414).
         self.reevaluate_plugin_edit_search_overlays(buffer_id, delete_start, 0);
         // Plugin edits bypass apply_event_to_active_buffer; shift plugin interval
-        // markers here too so plugin-tracked decorations ride the deletion.
+        // markers here too so plugin-tracked decorations ride the deletion, and
+        // bring the plugin line-offer set across it for the same reason.
         #[cfg(feature = "plugins")]
         self.shift_plugin_markers_for_edit(buffer_id, delete_start, delete_len, 0);
+        if removed_newline {
+            self.handle_refresh_lines(buffer_id);
+        } else {
+            self.adjust_seen_byte_ranges_for_edit(buffer_id, delete_start, delete_len, 0);
+        }
     }
 
     /// Re-evaluate the active window's search-match overlays around a region a
@@ -1603,6 +1611,7 @@ impl Editor {
         // Read cursor position first to avoid borrow conflicts
         let cursor_pos = self.active_cursors().primary().position;
         let text_len = text.len();
+        let inserted_newline = text.contains('\n');
         let event = Event::Insert {
             position: cursor_pos,
             text,
@@ -1614,11 +1623,26 @@ impl Editor {
             .apply_event_to_buffer(active_buf, split_id, &event);
         self.active_event_log_mut().append(event);
         // This path bypasses apply_event_to_active_buffer (it's how the markdown
-        // plugins insert a newline on Enter, etc.), so shift plugin interval
-        // markers here or plugin-tracked decorations (markdown table borders)
-        // keep stale coordinates and corrupt.
+        // plugins insert a newline on Enter, etc.), so the cross-cutting work it
+        // does has to happen here: shift plugin interval markers, or
+        // plugin-tracked decorations (markdown table borders) keep stale
+        // coordinates and corrupt — and bring the plugin line-offer set across
+        // the edit, or a line created by this insert inherits the byte range of
+        // one already offered and is never offered again.
         #[cfg(feature = "plugins")]
         self.shift_plugin_markers_for_edit(active_buf, cursor_pos, 0, text_len);
+        if inserted_newline {
+            // Same rule as the keyboard path: a line-count change renumbers
+            // every row below it, and those rows only *shift* — they stay
+            // "seen", so they never re-fire and a per-line decoration plugin
+            // never revisits them. It cannot ride the shift either, because its
+            // decoration ids are derived from byte offsets: a new line landing
+            // on an old offset re-uses the id and evicts the decoration of the
+            // line that moved off it.
+            self.handle_refresh_lines(active_buf);
+        } else {
+            self.adjust_seen_byte_ranges_for_edit(active_buf, cursor_pos, 0, text_len);
+        }
     }
 
     /// Handle DeleteSelection command

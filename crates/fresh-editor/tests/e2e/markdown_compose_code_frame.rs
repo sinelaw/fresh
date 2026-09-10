@@ -744,3 +744,102 @@ fn typing_at_the_end_of_a_code_line_stays_inside_the_frame() {
         "the block's right edge moved while a keystroke was in flight.\nScreen:\n{screen}"
     );
 }
+
+/// Every blank row of a fenced block keeps its rails as lines are inserted into
+/// it — the invariant a per-line decoration cannot state for itself.
+///
+/// Enter in a markdown buffer is `markdown_source`'s handler, which edits
+/// through `insertAtCursor` rather than the keyboard action, so it bypassed
+/// both paths that maintain the plugin line-offer set. A line created that way
+/// inherited the byte range of one already offered and was never offered again,
+/// so it was drawn with no sides — and the lines below it merely *shifted*,
+/// staying "seen", so their decorations were evicted by id collision (the ids
+/// are derived from byte offsets) with nothing to re-add them. Both show up as
+/// blank rows inside the box, and they accumulate with every Enter.
+#[cfg(feature = "plugins")]
+#[test]
+fn blank_rows_inserted_into_a_block_keep_their_rails() {
+    use crate::common::harness::{copy_plugin, copy_plugin_lib};
+    use crate::common::tracing::init_tracing_from_env;
+
+    init_tracing_from_env();
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project");
+    std::fs::create_dir(&project_root).unwrap();
+    let plugins_dir = project_root.join("plugins");
+    std::fs::create_dir(&plugins_dir).unwrap();
+    copy_plugin(&plugins_dir, "markdown_compose");
+    // The plugin that owns Enter in a markdown buffer, and whose edit path is
+    // the one under test.
+    copy_plugin(&plugins_dir, "markdown_source");
+    copy_plugin_lib(&plugins_dir);
+
+    let md_path = project_root.join("code.md");
+    std::fs::write(
+        &md_path,
+        "# Doc\n\n```rust\nfn a() {}\n\nfn b() {}\n```\n\nTail.\n",
+    )
+    .unwrap();
+
+    let mut harness = EditorTestHarness::create(
+        100,
+        30,
+        HarnessOptions::new()
+            .with_working_dir(project_root.clone())
+            .without_empty_plugins_dir()
+            .with_full_grammar_registry(),
+    )
+    .unwrap();
+    harness.open_file(&md_path).unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Toggle Compose").unwrap();
+    harness.wait_for_screen_contains("Toggle Compose").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains('└'))
+        .expect("compose mode should frame the fenced block");
+
+    // Onto the blank line inside the block, then open more of them.
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+    for _ in 0..4 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness.wait_for_async_quiescence(6).unwrap();
+    for _ in 0..3 {
+        harness
+            .send_key(KeyCode::Enter, KeyModifiers::NONE)
+            .unwrap();
+        harness.wait_for_async_quiescence(6).unwrap();
+    }
+    harness.wait_for_async_quiescence(8).unwrap();
+
+    let screen = harness.screen_to_string();
+    let (left, right) = frame_edges(&screen, "┌").expect("top border on screen");
+    let rows: Vec<&str> = screen.lines().collect();
+    let top = rows.iter().position(|l| l.contains('┌')).unwrap();
+    let bottom = rows.iter().position(|l| l.contains('└')).unwrap();
+
+    for (i, row) in rows.iter().enumerate().take(bottom).skip(top + 1) {
+        let rails: Vec<usize> = row
+            .chars()
+            .enumerate()
+            .filter(|(_, c)| *c == '│')
+            .map(|(j, _)| j)
+            .collect();
+        assert_eq!(
+            (rails.first().copied(), rails.last().copied()),
+            (Some(left), Some(right)),
+            "row {i} of the block is missing a side.\nScreen:\n{screen}"
+        );
+    }
+}
