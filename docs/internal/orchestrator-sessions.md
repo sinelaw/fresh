@@ -288,9 +288,20 @@ when the ids differ — an unguarded close would kill the terminal just spawned.
 
 ### 4.4 Plugin-level agent state
 
-The dock additionally shows a coarse agent state inferred from terminal output
-(e.g. working/idle, plus richer running/awaiting/ready/errored glyphs derived in
-the plugin). This is display-only and not part of the persistence model.
+The dock additionally shows a coarse agent state inferred from terminal output:
+`working` (recent output, or an OSC "running" marker), `blocked` (quiet, and
+the last screen lines read as a question for the user), `done` (quiet after a
+burst of work that happened while the window was not active — cleared on
+activation), `idle`, `unknown` (no output yet, or the terminal exited). Rows
+show `*` / `●` / `✓` / `·` / `?`, folder rows roll up `●n ✓n`, and the dock
+header carries `● N need you · ✓ N done` while either is non-zero. A
+transition into `blocked`/`done` in a non-active window is announced in the
+status bar (`● name needs you (F8 jumps)`, optional bell — see 5.0), and
+`Orchestrator: Jump to Attention` walks the pending workspaces (blocked first)
+and then returns; `Orchestrator: Jump Back` returns at once. Bind a key to
+`orchestrator_jump` / `orchestrator_jump_back` to use them without the palette.
+`blocked`/`done` are heuristics over the output stream, display-only, and not
+part of the persistence model.
 
 ---
 
@@ -325,6 +336,8 @@ the generated settings widgets.
 | `defaultView`         | `"card"` | Density the dock opens at: `card` or `compact`.      |
 | `showAllWorktrees`    | `false`  | Initial state of the "all worktrees" checkbox.       |
 | `showEmptyWorkspaces` | `true`   | Initial state of the "show empty" checkbox (i.e. `hideTrivial = !showEmptyWorkspaces`). |
+| `notifications`       | `"all"`  | Status-bar notice when a background workspace turns `blocked` (`needs-you`) or also `done` (`all`); `off` leaves only the dock's attention line. |
+| `notifySound`         | `false`  | Ring the terminal bell with each notice.             |
 
 Each is a *default*, not a lock: the dock's own "view" button and the two
 Filters checkboxes still override it for the rest of the session

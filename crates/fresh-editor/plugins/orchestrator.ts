@@ -148,6 +148,14 @@ interface AgentSession {
   workedSinceSeen?: boolean;
   // Start of the current output burst (ms), for the WORK_MIN_MS check.
   burstStartAt?: number;
+  // The state `sweepAttention` last saw for this session, so a change
+  // into blocked/done is announced exactly once per transition.
+  notifiedState?: AgentState;
+  // The question line behind the last "needs you" notice for this session.
+  // A blocked state that wobbles (an activation redraw reads as a short
+  // "working") comes back with the same question and is not announced
+  // again; a new question is a new line, and is.
+  announcedPrompt?: string;
   // Wall-clock ms when orchestrator.new fired createWindow.
   createdAt: number;
   // `true` when this row is a worktree discovered on disk (via
@@ -991,9 +999,22 @@ editor.defineConfigBoolean("showEmptyWorkspaces", {
   description:
     "Start the dock (and the Open picker) with 'show empty' checked, listing workspaces with no edited files (freshly created ones included).",
 });
+editor.defineConfigEnum("notifications", {
+  values: ["all", "needs-you", "off"] as const,
+  default: "all",
+  description:
+    "Announce a background workspace in the status bar when it needs you ('needs-you'), or also when it finishes a run ('all'). 'off' leaves only the dock's attention line.",
+});
+editor.defineConfigBoolean("notifySound", {
+  default: false,
+  description:
+    "Ring the terminal bell with each notification (needs-you and finished). Off by default.",
+});
 
 interface DockSettings {
   autoOpenDock?: boolean;
+  notifications?: "all" | "needs-you" | "off";
+  notifySound?: boolean;
   defaultView?: "card" | "compact";
   showAllWorktrees?: boolean;
   showEmptyWorkspaces?: boolean;
@@ -2165,10 +2186,19 @@ const BLOCKED_PATTERNS: RegExp[] = [
   /\besc(ape)? to cancel\b/i,
 ];
 
+// The most recent line of the agent terminal that reads as a question for
+// the user, or null when none of the recent lines does.
+function agentQuestionLine(s: AgentSession): string | null {
+  const lines = s.recentLines ?? [];
+  for (let i = lines.length - 1; i >= 0; i--) {
+    if (BLOCKED_PATTERNS.some((re) => re.test(lines[i]))) return lines[i];
+  }
+  return null;
+}
+
 // Does the agent terminal's recent output end in a question for the user?
 function agentWaitsForInput(s: AgentSession): boolean {
-  const lines = s.recentLines ?? [];
-  return lines.some((l) => BLOCKED_PATTERNS.some((re) => re.test(l)));
+  return agentQuestionLine(s) !== null;
 }
 
 // Coarse activity for a session, derived from how recently its terminal
@@ -2222,6 +2252,163 @@ function noteRecentLine(s: AgentSession, line: string): void {
   lines.push(clean);
   if (lines.length > RECENT_LINES) lines.splice(0, lines.length - RECENT_LINES);
   s.recentLines = lines;
+}
+
+// =============================================================================
+// Attention notifications + jump
+//
+// The dock's attention line only helps while the dock is in view. A
+// workspace that turns `blocked` or `done` while the user is looking at
+// another one is also announced in the status bar — `● ux-3 needs you ·
+// F8 to jump` — with an optional terminal bell, and one command
+// (`orchestrator_jump`) takes the user there and, from there, back.
+// =============================================================================
+
+// Where "Jump Back" returns to: the window the first jump of a chain left.
+let jumpReturnId: number | null = null;
+// The windows visited by the current chain of jumps (blocked → done → …),
+// so the same command walks each pending workspace once and then goes
+// back, instead of bouncing between two that stay pending.
+const jumpVisited = new Set<number>();
+// The notice currently in the status bar, so it can be retired when its
+// workspace is looked at or moves on. `setStatus` writes to the window
+// that is active at the time and only that window can clear it, so the
+// notice remembers where it landed, and every window that ever carried
+// one is wiped the next time it is shown without a live notice of its
+// own (a replaced or retired notice would otherwise linger there).
+let lastNotice: { id: number; state: AgentState; windowId: number } | null = null;
+const noticeWindows = new Set<number>();
+
+function showNotice(text: string): void {
+  editor.setStatus(text);
+  noticeWindows.add(editor.activeWindow());
+}
+
+function clearNoticeHere(): void {
+  editor.setStatus("");
+  noticeWindows.delete(editor.activeWindow());
+}
+
+// No host API rings the terminal bell, so write BEL to the controlling tty
+// from a child process; the terminal (or tmux, which forwards it) sounds it.
+function ringBell(): void {
+  try {
+    void Promise.resolve(editor.spawnHostProcess("sh", ["-c", "printf '\\a' > /dev/tty"])).catch(
+      () => undefined,
+    );
+  } catch {
+    // No shell / no tty: the notice still shows.
+  }
+}
+
+// `● name needs you · <key> to jump` — the key from the user's binding for
+// `orchestrator_jump` when there is one, else the command's palette name.
+function noticeText(s: AgentSession, st: AgentState): string {
+  // The status bar's message slot is short, so: the workspace's own name
+  // (rename or host label, not the `name · title` dock row), and the jump
+  // key only when one is bound — the palette command is always there.
+  const name = workspaceCustomName(s) || s.hostLabel || s.label;
+  const body =
+    st === "blocked"
+      ? editor.t("notify.needs_you", { name })
+      : editor.t("notify.done", { name });
+  const key =
+    editor.getKeybindingLabel("orchestrator_jump", "normal") ??
+    editor.getKeybindingLabel("orchestrator_jump", null);
+  return `${STATE_SYMBOL[st].glyph} ${body}` + (key ? ` ${editor.t("notify.jump_key", { key })}` : "");
+}
+
+// Announce every session whose state just became blocked/done while the
+// user was elsewhere, and retire a notice whose workspace was looked at
+// or moved on. Called wherever a state can change: terminal output, the
+// idle sweep, a terminal exit, a window switch.
+function sweepAttention(): void {
+  const active = editor.activeWindow();
+  const settings = dockSettings();
+  const mode = settings.notifications ?? "all";
+  if (noticeWindows.has(active) && lastNotice?.windowId !== active) clearNoticeHere();
+  // One sweep can flip several sessions at once (they went quiet in the
+  // same window); the status bar holds one line, so a needs-you wins over
+  // a finished, and the bell rings once.
+  let announce: { s: AgentSession; st: AgentState } | null = null;
+  for (const s of orchestratorSessions.values()) {
+    if (s.discovered || s.pending) continue;
+    const st = sessionState(s);
+    if (st === s.notifiedState) continue;
+    s.notifiedState = st;
+    if (s.id === active) continue;
+    if (st !== "blocked" && st !== "done") continue;
+    if (mode === "off" || (mode === "needs-you" && st !== "blocked")) continue;
+    if (st === "blocked") {
+      // `done` can't repeat without a fresh burst (activation clears it);
+      // `blocked` can, so it is keyed on the question itself.
+      const prompt = agentQuestionLine(s) ?? "";
+      if (prompt === s.announcedPrompt) continue;
+      s.announcedPrompt = prompt;
+    }
+    if (!announce || (st === "blocked" && announce.st !== "blocked")) announce = { s, st };
+  }
+  if (announce) {
+    lastNotice = { id: announce.s.id, state: announce.st, windowId: active };
+    showNotice(noticeText(announce.s, announce.st));
+    if (settings.notifySound) ringBell();
+  }
+  if (lastNotice) {
+    const s = orchestratorSessions.get(lastNotice.id);
+    if (!s || s.id === active || sessionState(s) !== lastNotice.state) {
+      if (lastNotice.windowId === active) clearNoticeHere();
+      lastNotice = null;
+    }
+  }
+}
+
+// The workspace the user should look at next: blocked before done, each in
+// the order the dock lists them, never the one they are already in.
+function attentionTarget(): number | null {
+  const active = editor.activeWindow();
+  const live = [...orchestratorSessions.values()].filter(
+    (s) => !s.discovered && !s.pending && s.id > 0 && s.id !== active && !jumpVisited.has(s.id),
+  );
+  const pick = (st: AgentState): number | null =>
+    live.find((s) => sessionState(s) === st)?.id ?? null;
+  return pick("blocked") ?? pick("done");
+}
+
+// Jump to what needs you; with nothing pending, the same command returns
+// to where the last jump came from (so one key toggles there and back).
+function jumpToAttention(): void {
+  const target = attentionTarget();
+  if (target === null) {
+    if (jumpReturnId === null) {
+      jumpVisited.clear();
+      editor.setStatus(editor.t("notify.nothing"));
+      return;
+    }
+    jumpBack();
+    return;
+  }
+  const from = editor.activeWindow();
+  // A fresh chain starts from wherever the user is; a continued one keeps
+  // its original return point.
+  if (!jumpVisited.has(from)) {
+    jumpReturnId = from;
+    jumpVisited.clear();
+    jumpVisited.add(from);
+  }
+  jumpVisited.add(target);
+  editor.setActiveWindow(target);
+}
+
+function jumpBack(): void {
+  jumpVisited.clear();
+  if (jumpReturnId === null || !orchestratorSessions.has(jumpReturnId)) {
+    jumpReturnId = null;
+    editor.setStatus(editor.t("notify.no_return"));
+    return;
+  }
+  const to = jumpReturnId;
+  jumpReturnId = editor.activeWindow();
+  editor.setActiveWindow(to);
 }
 
 // Age is shown at DAY granularity on purpose. A finer (s/m/h) counter ticks
@@ -4545,7 +4732,20 @@ function dockAttentionRow(att: { blocked: number; done: number }): WidgetSpec {
       }),
     );
   }
-  return row(spacer(1), ...parts, flexSpacer());
+  return row(
+    spacer(1),
+    ...parts,
+    flexSpacer(),
+    // Mouse route to the same jump the command makes; not in the Tab ring.
+    button(editor.t("dock.jump_btn"), {
+      key: "attention-jump",
+      bare: true,
+      focusable: false,
+      style: { fg: "ui.menu_disabled_fg" },
+      hoverStyle: { fg: "ui.help_key_fg" },
+    }),
+    spacer(1),
+  );
 }
 
 function buildDockSpec(): WidgetSpec {
@@ -13344,6 +13544,11 @@ editor.on("widget_event", (e) => {
       openDockSearch();
       return;
     }
+    // The attention line's `jump` → the workspace that needs you.
+    if (e.event_type === "activate" && e.widget_key === "attention-jump") {
+      jumpToAttention();
+      return;
+    }
     // The header's `⋯` → toggle its menu.
     if (e.event_type === "activate" && e.widget_key === "dock-menu") {
       if (openDialog.dockMenu?.kind === "main") closeDockMenu();
@@ -13583,6 +13788,7 @@ editor.on("active_window_changed", () => {
     // order (persisted at day granularity).
     markSessionActiveToday(s);
   }
+  sweepAttention();
   refreshOpenDialog();
   // A passive (blurred) dock mirrors the active window, so keep its
   // highlighted row in sync when focus moves to another window from
@@ -13648,6 +13854,8 @@ function scheduleIdleSweep(): void {
   const token = ++idleSweepToken;
   void editor.delay(IDLE_AFTER_MS + 100).then(() => {
     if (idleSweepToken !== token) return;
+    // Quiet is when a session turns blocked or done — announce it.
+    sweepAttention();
     refreshOpenDialog();
   });
 }
@@ -13717,6 +13925,7 @@ editor.on("terminal_output", (payload) => {
       s.terminalTitle = title;
       applyResolvedLabel(s);
     }
+    sweepAttention();
     refreshOpenDialog();
     // Ensure the row flips back to idle once output stops, even if no
     // further event arrives to trigger a render.
@@ -13741,6 +13950,7 @@ editor.on("terminal_exit", (payload) => {
     // a command that never emitted its "done" marker (killed, detached)
     // doesn't leave the row stuck "working".
     s.oscRunning = null;
+    sweepAttention();
     refreshOpenDialog();
   }
 });
@@ -13812,6 +14022,15 @@ editor.registerCommand(
 // which way its "Launch in" switch starts. One form, one submit path — the two
 // used to be separate dialogs, and the current-workspace one silently dropped
 // the agent-resume argv.
+registerHandler("orchestrator_jump", jumpToAttention);
+editor.registerCommand("%cmd.jump", "%cmd.jump_desc", "orchestrator_jump", null, {
+  terminalBypass: true,
+});
+registerHandler("orchestrator_jump_back", jumpBack);
+editor.registerCommand("%cmd.jump_back", "%cmd.jump_back_desc", "orchestrator_jump_back", null, {
+  terminalBypass: true,
+});
+
 registerHandler("orchestrator_run_agent", () => openForm({ target: "current" }));
 editor.registerCommand(
   "%cmd.run_agent",

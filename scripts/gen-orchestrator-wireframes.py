@@ -796,10 +796,15 @@ md("""
     `idle`, `unknown` (no output yet / terminal exited). Rows carry `●` /
     `*` / `✓` / `·` / `?`; a folder row rolls its members up as `●n ✓n`;
     the header shows `● N need you · ✓ N done` only while either is
-    non-zero. `blocked` and `done` are heuristics over the output stream —
-    good enough for the attention line, never a guarantee — and the
-    patterns are a fixed list in the plugin (a versioned, fetchable rule
-    set is still open).
+    non-zero. A transition into `blocked`/`done` in a window the user is
+    not looking at is also announced in the status bar (`● name needs you
+    (F8 jumps)`, with an optional terminal bell), and one command —
+    `Orchestrator: Jump to Attention`, bindable as `orchestrator_jump` —
+    walks the pending workspaces and then returns to where it started;
+    the attention line's `jump` is the mouse route. `blocked` and `done`
+    are heuristics over the output stream — good enough for the attention
+    line, never a guarantee — and the patterns are a fixed list in the
+    plugin (a versioned, fetchable rule set is still open).
 
     Dialogs (§3): one grid for New Workspace and Run Agent (§3.4–3.6);
     `Run in` is a radio; no boxes; hints under fields (§3.7); disclosure is
