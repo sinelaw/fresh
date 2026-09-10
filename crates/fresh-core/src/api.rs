@@ -3841,6 +3841,11 @@ pub enum PluginCommand {
         color: (u8, u8, u8),
         use_bg: bool, // true = use color as background, false = use as foreground
         before: bool, // true = before char, false = after char
+        /// Buffer version `position` was computed against (from the
+        /// `lines_changed` epoch, auto-stamped by the plugin runtime); see
+        /// [`Self::AddVirtualTextStyled`].
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        epoch: Option<u64>,
     },
 
     /// Add virtual text with full styling — fg/bg can be RGB or theme
@@ -3858,6 +3863,21 @@ pub enum PluginCommand {
         bold: bool,
         italic: bool,
         before: bool,
+        /// Buffer version `position` was computed against — the epoch of the
+        /// hook the emitting handler ran in, auto-stamped by the plugin runtime
+        /// (see `current_hook_epoch`). The editor remaps it forward before
+        /// anchoring, so a hint a lagged fire-and-forget hook echoes back lands
+        /// on the byte it was computed for instead of on whatever now sits that
+        /// many bytes into the buffer. `None` = no hook epoch in scope; anchor
+        /// verbatim.
+        ///
+        /// An inline hint needs this as much as a conceal does, and one kind
+        /// needs it more: a hint that draws a *column* — markdown compose's
+        /// code-block side rails — puts a glyph wherever its anchor landed, so
+        /// a drifted anchor moves the block's edge rather than merely
+        /// decorating the wrong span.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        epoch: Option<u64>,
     },
 
     /// Remove a virtual text by ID
