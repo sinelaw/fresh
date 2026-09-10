@@ -35,7 +35,6 @@ impl Editor {
         &self,
         spec: &fresh_core::api::WidgetSpec,
         prev: &std::collections::HashMap<String, crate::widgets::WidgetInstanceState>,
-        prev_painted: &std::collections::HashMap<String, crate::widgets::PaintedWindow>,
         prev_focus_key: &str,
         panel_width: u32,
         avail_height: Option<u32>,
@@ -63,13 +62,9 @@ impl Editor {
                 // panel's buffer (None when it isn't on screen — widgets
                 // then keep the legacy fallback until it is).
                 avail_height,
-                // The windows the last paint left: a scroll offset folds
-                // over its own previous value, so a repaint that did not
-                // carry this would start every list back at the top.
-                prev_painted: Some(prev_painted),
-                // The reader's sideways fold, for the same reason: a repaint
-                // that dropped it would slide every row back to its resting
-                // window under a reader who had panned away from it.
+                // The reader's sideways fold: a repaint that dropped it would
+                // slide every row back to its resting window under a reader
+                // who had panned away from it.
                 h_pan: Some(h_pan),
                 ..Default::default()
             },
@@ -85,7 +80,6 @@ pub(super) fn render_floating_spec(
     focus_marker: bool,
     spec: &fresh_core::api::WidgetSpec,
     prev: &std::collections::HashMap<String, crate::widgets::WidgetInstanceState>,
-    prev_painted: &std::collections::HashMap<String, crate::widgets::PaintedWindow>,
     prev_focus_key: &str,
     panel_width: u32,
     avail_height: Option<u32>,
@@ -114,10 +108,9 @@ pub(super) fn render_floating_spec(
             auto_focus_first,
             markdown,
             avail_height,
-            prev_painted: Some(prev_painted),
-            // The reader's sideways fold, for the same reason: a repaint that
-            // dropped it would slide every row back to its resting window
-            // under a reader who had panned away from it.
+            // The reader's sideways fold: a repaint that dropped it would slide
+            // every row back to its resting window under a reader who had
+            // panned away from it.
             h_pan,
         },
     )
@@ -152,7 +145,6 @@ fn spec_has_auto_sized_list(spec: &fresh_core::api::WidgetSpec) -> bool {
     }
     spec.children().any(spec_has_auto_sized_list)
 }
-
 
 fn find_scrollable_widget_key(spec: &fresh_core::api::WidgetSpec) -> Option<String> {
     let meta = crate::widgets::kinds::behavior(spec).box_meta(spec);
@@ -829,11 +821,6 @@ impl Editor {
                 .instance_states(panel_key)
                 .cloned()
                 .unwrap_or_default();
-            let prev_painted = self
-                .widget_registry
-                .get(panel_key)
-                .map(|p| p.painted.clone())
-                .unwrap_or_default();
             let h_pan = self
                 .widget_registry
                 .get(panel_key)
@@ -896,7 +883,6 @@ impl Editor {
                 focus_marker,
                 spec,
                 &prev,
-                &prev_painted,
                 &prev_focus,
                 panel_width,
                 avail_height,
@@ -919,13 +905,7 @@ impl Editor {
         let entries = out_pieces.entries;
         if self
             .widget_registry
-            .update_side_effects(
-                panel_key,
-                out_pieces.instance_states,
-                out_pieces.focus_key,
-                out_pieces.painted,
-                out_pieces.boxes,
-            )
+            .update_side_effects(panel_key, out_pieces.instance_states, out_pieces.focus_key)
             .is_none()
         {
             tracing::warn!("rerender_widget_panel({}) lost panel mid-call", panel_key);
@@ -1006,13 +986,7 @@ impl Editor {
         self.record_widget_panel_render_height(panel_key, avail_height);
         if self
             .widget_registry
-            .update_side_effects(
-                panel_key,
-                out.instance_states,
-                out.focus_key,
-                std::collections::HashMap::new(),
-                Vec::new(),
-            )
+            .update_side_effects(panel_key, out.instance_states, out.focus_key)
             .is_none()
         {
             tracing::warn!("resolve_described_panel({}) lost panel mid-call", panel_key);
@@ -1052,21 +1026,10 @@ impl Editor {
     ///
     /// One resolver, host-side, because "how big is this widget's window"
     /// is not something a kind can answer: it is a fact about a *layout*.
-    /// Two layouts can answer it, and they are asked in the order of who
-    /// actually laid the widget out.
     ///
-    /// **The tree first**, through [`Self::described_widget_viewport`] — for
-    /// a described panel the widget is a node the reconciler placed, and the
-    /// viewport under it published its window during that layout. The paint's
-    /// number for the same widget is the collector's separate resolution of
-    /// the same question, and where the spec names no `visible_rows` the two
-    /// can differ: the collector's is the panel's row budget minus what
-    /// `collect_col`'s fill pass measured its siblings to occupy, the tree's
-    /// is the `.flex(1)` share layout actually gave the node.
-    ///
-    /// **Then the last paint**, recorded in
-    /// [`crate::widgets::PaintedWindow`], which is the whole answer for a
-    /// panel the runtime still paints.
+    /// **The tree first**, through [`Self::described_widget_viewport`] — the
+    /// widget is a node the reconciler placed, and the viewport under it
+    /// published its window during that layout.
     ///
     /// **Then the spec**, for the frame between a mount and the first layout,
     /// where nothing has laid this widget out at all.
@@ -1082,12 +1045,7 @@ impl Editor {
         widget: &fresh_core::api::WidgetSpec,
         widget_key: &str,
     ) -> crate::widgets::kinds::Viewport {
-        if let Some(v) = self.described_widget_viewport(panel_key, widget_key) {
-            return v;
-        }
-        self.widget_registry
-            .get(panel_key)
-            .and_then(|panel| panel.painted_viewport(widget_key))
+        self.described_widget_viewport(panel_key, widget_key)
             .unwrap_or_else(|| crate::widgets::kinds::Viewport::from_spec(widget))
     }
 
@@ -1113,7 +1071,7 @@ impl Editor {
     /// [`fresh_ui::Ui::item_window`]'s design — a `Tree` drawn as bordered
     /// cards scrolls line by line, so its window is not in items and
     /// answering with its height in rows would be the units conflated (§6i).
-    /// Such a widget falls through to the paint, which publishes both.
+    /// Such a widget falls through to the spec.
     fn described_widget_viewport(
         &self,
         panel_key: &crate::widgets::PanelKey,
@@ -1222,11 +1180,12 @@ impl Editor {
         let Some(mut ui) = self.shell_ui.take() else {
             return false;
         };
-        let rows = self
-            .panel_subtree_root(&ui, panel_key)
-            .and_then(|root| {
-                ui.text_rows_in(root, &crate::view::shell::widgets::prose_run_key(widget_key))
-            });
+        let rows = self.panel_subtree_root(&ui, panel_key).and_then(|root| {
+            ui.text_rows_in(
+                root,
+                &crate::view::shell::widgets::prose_run_key(widget_key),
+            )
+        });
         self.shell_ui = Some(ui);
         let Some((whole, rows)) = rows else {
             return false;
@@ -2925,7 +2884,6 @@ impl Editor {
         }
     }
 
-
     /// Insert printable / IME-committed text at the focused text
     /// widget's cursor. Same path for single-line and multi-line —
     /// `TextEdit::insert_str` strips `\n` automatically when the
@@ -3419,7 +3377,7 @@ impl Editor {
     /// — the same geometry wheel routing hit-tests — then hands the
     /// caret move to the runtime. Rows above/below the region clamp to
     /// its edges so a drag that overshoots keeps selecting.
-    
+
     /// Right-click hit-test against a floating widget panel. Resolves the
     /// cell under the cursor to a widget and — only when it lands on a
     /// `list` row — fires a `widget_event` with `event_type: "context"`
@@ -3628,7 +3586,6 @@ mod tests {
             false,
             &spec,
             &Default::default(),
-            &Default::default(),
             "",
             40,
             None,
@@ -3645,8 +3602,6 @@ mod tests {
             spec,
             out.instance_states,
             out.focus_key,
-            out.painted,
-            out.boxes,
             true,
             false,
             false,
@@ -3692,7 +3647,6 @@ mod tests {
             false,
             &spec,
             &Default::default(),
-            &Default::default(),
             "field",
             40,
             None,
@@ -3709,8 +3663,6 @@ mod tests {
             spec,
             out.instance_states,
             out.focus_key,
-            out.painted,
-            out.boxes,
             true,
             false,
             false,
@@ -3852,7 +3804,6 @@ mod tests {
             false,
             &spec,
             &Default::default(),
-            &Default::default(),
             "",
             40,
             None,
@@ -3874,8 +3825,6 @@ mod tests {
             spec,
             out.instance_states,
             out.focus_key,
-            out.painted,
-            out.boxes,
             true,
             false,
             false,
@@ -3926,7 +3875,6 @@ mod tests {
             false,
             &spec,
             &Default::default(),
-            &Default::default(),
             "",
             30,
             None,
@@ -3943,8 +3891,6 @@ mod tests {
             spec,
             out.instance_states,
             out.focus_key,
-            out.painted,
-            out.boxes,
             true,
             false,
             false,
@@ -3972,19 +3918,19 @@ mod tests {
         );
     }
 
-    /// **A described panel's window is the tree's, and the paint's copy of it
-    /// is not consulted.**
+    /// **A described panel's window is the tree's, and the spec answers only
+    /// when there is no tree.**
     ///
-    /// The collector and the reconciler resolve the same auto-sized list two
-    /// different ways — the collector takes the panel's row budget and
-    /// subtracts what `collect_col`'s fill pass measured its siblings to
+    /// The collector and the reconciler used to resolve the same auto-sized
+    /// list two different ways — the collector took the panel's row budget
+    /// and subtracted what `collect_col`'s fill pass measured its siblings to
     /// occupy, the tree gives the node its `.flex(1)` share of what layout
     /// actually had — and until S5 the handlers were driven by the first even
-    /// on a surface the second had drawn. The paint's record is deliberately
-    /// poisoned here with a window the tree did not lay out: a reader that
-    /// still consults it reports three.
+    /// on a surface the second had drawn. The paint's record is gone; what is
+    /// left to check is that the tree's window is the one read, and that the
+    /// spec's legacy fallback is what answers before a layout exists.
     #[test]
-    fn a_described_panels_window_is_the_trees_not_the_paints() {
+    fn a_described_panels_window_is_the_trees_not_the_specs() {
         let (mut editor, _t) = make_editor();
         let panel_key = crate::widgets::PanelKey::new("test-plugin", 1);
         let spec = WidgetSpec::Col {
@@ -3994,7 +3940,6 @@ mod tests {
         let out = super::render_floating_spec(
             false,
             &spec,
-            &Default::default(),
             &Default::default(),
             "",
             30,
@@ -4006,20 +3951,12 @@ mod tests {
             true,
             None,
         );
-        // What the collector resolved for the same list, so the two numbers
-        // are visible side by side: with a plain header above it they agree
-        // (23 rows of the dock's 24, one taken by the button). The force of
-        // this test is not that they differ here — it is that the paint's
-        // record below is *not* what answers.
-        let collector = out.painted.get("lst").copied().expect("collector window");
         editor.widget_registry.mount(
             panel_key.clone(),
             crate::app::PanelSlot::Dock.buffer_id(),
             spec.clone(),
             out.instance_states,
             out.focus_key,
-            out.painted,
-            out.boxes,
             true,
             false,
             false,
@@ -4030,21 +3967,6 @@ mod tests {
         let widget = crate::widgets::find_widget_by_key(&spec, "lst")
             .cloned()
             .expect("the list is in the spec");
-        // What the last paint left, replaced by a number no layout produced.
-        editor
-            .widget_registry
-            .get_mut(&panel_key)
-            .expect("the panel")
-            .painted
-            .insert(
-                "lst".to_string(),
-                crate::widgets::PaintedWindow {
-                    rows: 3,
-                    items: 3,
-                    offset: 0,
-                    cols: 0,
-                },
-            );
 
         let vp = editor.widget_viewport(&panel_key, &widget, "lst");
         let tree = editor
@@ -4068,22 +3990,18 @@ mod tests {
             (tree.0.h as u32, tree.1 as u32),
             "the window is the one the reconciler laid out"
         );
-        assert!(
-            vp.items > 3,
-            "and not the paint's, which said three: got {}",
+        let legacy = fresh_core::api::LEGACY_VISIBLE_ROWS_FALLBACK;
+        assert_ne!(
+            vp.items, legacy,
+            "and not the spec's fallback: got {}",
             vp.items
         );
-        assert_eq!(
-            vp.items, collector.items,
-            "and in this shape the collector agrees — the divergence S5 is \
-             about needs a Col whose children the two measure differently"
-        );
 
-        // The same panel with no tree: the paint is then the only layout
-        // there is, and it is read exactly as before.
+        // The same panel with no tree: nothing has laid the list out, and
+        // the spec's fallback is the only answer there is.
         editor.shell_ui = None;
         let vp = editor.widget_viewport(&panel_key, &widget, "lst");
-        assert_eq!((vp.items, vp.rows), (3, 3), "the paint's window");
+        assert_eq!((vp.items, vp.rows), (legacy, legacy), "the spec's window");
     }
 
     /// **A described panel re-renders without producing a text projection.**
@@ -4140,8 +4058,6 @@ mod tests {
             spec,
             Default::default(),
             focus,
-            Default::default(),
-            Vec::new(),
             true,
             false,
             false,
@@ -4214,12 +4130,15 @@ mod tests {
             "the state is the document — no newline the wrap put there"
         );
         let (whole, rows) = prose_rows(&mut editor, &key);
-        assert_eq!(whole, prose_editor(&editor, &key).value(), "and the run shows that string");
-        assert!(rows.len() >= 3, "wrapped into rows at the dock's width: {}", rows.len());
-        let panel = editor.widget_registry.get(&key).expect("the panel");
+        assert_eq!(
+            whole,
+            prose_editor(&editor, &key).value(),
+            "and the run shows that string"
+        );
         assert!(
-            panel.boxes.is_empty() && panel.painted.is_empty(),
-            "no text projection ran for it"
+            rows.len() >= 3,
+            "wrapped into rows at the dock's width: {}",
+            rows.len()
         );
     }
 
@@ -4237,13 +4156,25 @@ mod tests {
 
         editor.handle_widget_key(&key, "Down");
         let one_down = byte_of(&rows, &whole, 1, 0).expect("row 1 col 0");
-        assert_eq!(prose_editor(&editor, &key).flat_cursor_byte(), one_down, "Down: one rendered row");
+        assert_eq!(
+            prose_editor(&editor, &key).flat_cursor_byte(),
+            one_down,
+            "Down: one rendered row"
+        );
         assert!(one_down > 0 && one_down < whole.len());
 
         editor.handle_widget_key(&key, "End");
-        assert_eq!(prose_editor(&editor, &key).flat_cursor_byte(), rows[1].src.end, "End: the row's last byte");
+        assert_eq!(
+            prose_editor(&editor, &key).flat_cursor_byte(),
+            rows[1].src.end,
+            "End: the row's last byte"
+        );
         editor.handle_widget_key(&key, "Home");
-        assert_eq!(prose_editor(&editor, &key).flat_cursor_byte(), rows[1].src.start, "Home: the row's first byte");
+        assert_eq!(
+            prose_editor(&editor, &key).flat_cursor_byte(),
+            rows[1].src.start,
+            "Home: the row's first byte"
+        );
 
         editor.handle_widget_key(&key, "S-Down");
         let two_down = byte_of(&rows, &whole, 2, 0).expect("row 2 col 0");
@@ -4258,8 +4189,16 @@ mod tests {
         editor.handle_widget_key(&key, "Up");
         editor.handle_widget_key(&key, "Up");
         let e = prose_editor(&editor, &key);
-        assert_eq!(e.flat_cursor_byte(), 0, "two rows up from row 2 is the start");
-        assert_eq!(e.selection_flat_range(), None, "a plain move drops the selection");
+        assert_eq!(
+            e.flat_cursor_byte(),
+            0,
+            "two rows up from row 2 is the start"
+        );
+        assert_eq!(
+            e.selection_flat_range(),
+            None,
+            "a plain move drops the selection"
+        );
     }
 
     /// **A press places the caret by the byte under the pointer, and the drag
@@ -4325,7 +4264,11 @@ mod tests {
         let byte = narrow[2].src.start + 2;
         editor.move_prose_caret(&key, "prose", byte, false);
         frame_the_shell(&mut editor);
-        assert_eq!(cell_of(&narrow, &whole, byte).0, 2, "on row 2 at the narrow width");
+        assert_eq!(
+            cell_of(&narrow, &whole, byte).0,
+            2,
+            "on row 2 at the narrow width"
+        );
 
         // Widen the dock: the same bytes wrap into fewer rows.
         if let Some(d) = editor.dock.as_mut() {
@@ -4339,7 +4282,12 @@ mod tests {
 
         let (whole2, wide) = prose_rows(&mut editor, &key);
         assert_eq!(whole2, whole, "the same string");
-        assert!(wide.len() < narrow.len(), "fewer rows: {} < {}", wide.len(), narrow.len());
+        assert!(
+            wide.len() < narrow.len(),
+            "fewer rows: {} < {}",
+            wide.len(),
+            narrow.len()
+        );
         let row = cell_of(&wide, &whole2, byte).0;
         assert!(row < 2, "the byte moved up to row {row}");
 
@@ -4355,7 +4303,11 @@ mod tests {
             .filter(|i| i.rect.x >= r.x as i32 && i.rect.x < (r.x + r.width) as i32)
             .map(|i| i.rect.y - r.y as i32)
             .collect();
-        assert_eq!(washes, vec![row as i32], "the caret wash is on the wrap's row");
+        assert_eq!(
+            washes,
+            vec![row as i32],
+            "the caret wash is on the wrap's row"
+        );
     }
 
     /// **A keyless document is a wrapped run and nothing else** — the welcome
@@ -4367,11 +4319,21 @@ mod tests {
         let key = crate::widgets::PanelKey::new("welcome", 1);
         mount_prose_panel(&mut editor, &key, prose_spec(None));
         let panel = editor.widget_registry.get(&key).expect("the panel");
-        assert!(panel.instance_states.is_empty(), "nothing to seed without a key");
+        assert!(
+            panel.instance_states.is_empty(),
+            "nothing to seed without a key"
+        );
         let ui = editor.shell_ui.as_ref().unwrap();
-        assert!(ui.find_by_key(&crate::view::shell::widgets::prose_run_key("prose")).is_none());
+        assert!(ui
+            .find_by_key(&crate::view::shell::widgets::prose_run_key("prose"))
+            .is_none());
         editor.handle_widget_key(&key, "Down");
-        assert!(editor.widget_registry.get(&key).unwrap().instance_states.is_empty());
+        assert!(editor
+            .widget_registry
+            .get(&key)
+            .unwrap()
+            .instance_states
+            .is_empty());
     }
 
     #[test]
@@ -4405,12 +4367,6 @@ mod tests {
         editor.rerender_widget_panel(&described);
 
         let panel = editor.widget_registry.get(&described).expect("the panel");
-        assert!(
-            panel.boxes.is_empty() && panel.painted.is_empty(),
-            "no text projection: {} boxes, {} painted windows",
-            panel.boxes.len(),
-            panel.painted.len()
-        );
         assert_eq!(panel.focus_key, "lst", "the focus clamp still ran");
         assert!(
             matches!(
@@ -4428,11 +4384,9 @@ mod tests {
         // out, so no re-render runs the collector.
         editor.rerender_widget_panel(&plain);
         let panel = editor.widget_registry.get(&plain).expect("the panel");
-        assert!(
-            panel.boxes.is_empty() && panel.painted.is_empty(),
-            "a pane-mounted panel is the tree's as well: {} boxes, {} painted windows",
-            panel.boxes.len(),
-            panel.painted.len()
+        assert_eq!(
+            panel.focus_key, "lst",
+            "a pane-mounted panel is the tree's as well"
         );
     }
 
@@ -4561,7 +4515,6 @@ mod tests {
             false,
             &spec,
             &Default::default(),
-            &Default::default(),
             "",
             30,
             None,
@@ -4578,8 +4531,6 @@ mod tests {
             spec,
             out.instance_states,
             out.focus_key,
-            out.painted,
-            out.boxes,
             true,
             false,
             false,
@@ -4628,7 +4579,6 @@ mod tests {
             false,
             &spec,
             &Default::default(),
-            &Default::default(),
             "",
             30,
             None,
@@ -4645,8 +4595,6 @@ mod tests {
             spec,
             out.instance_states,
             out.focus_key,
-            out.painted,
-            out.boxes,
             true,
             false,
             false,
@@ -4688,7 +4636,6 @@ mod tests {
             false,
             &spec,
             &Default::default(),
-            &Default::default(),
             "",
             30,
             None,
@@ -4705,8 +4652,6 @@ mod tests {
             spec,
             out.instance_states,
             out.focus_key,
-            out.painted,
-            out.boxes,
             true,
             false,
             false,
@@ -4746,7 +4691,6 @@ mod tests {
             false,
             &spec,
             &Default::default(),
-            &Default::default(),
             "",
             30,
             None,
@@ -4764,8 +4708,6 @@ mod tests {
             spec,
             out.instance_states,
             out.focus_key,
-            out.painted,
-            out.boxes,
             false,
             false,
             false,
@@ -4797,7 +4739,6 @@ mod tests {
             false,
             &spec,
             &Default::default(),
-            &Default::default(),
             "",
             30,
             None,
@@ -4814,8 +4755,6 @@ mod tests {
             spec,
             out.instance_states,
             out.focus_key,
-            out.painted,
-            out.boxes,
             true,
             false,
             false,
@@ -4863,7 +4802,6 @@ mod tests {
                 false,
                 spec,
                 &Default::default(),
-                &Default::default(),
                 prev_focus,
                 30,
                 None,
@@ -4887,8 +4825,6 @@ mod tests {
             closed,
             out.instance_states,
             out.focus_key,
-            out.painted,
-            out.boxes,
             true,
             false,
             false,
@@ -4920,14 +4856,7 @@ mod tests {
         let out = render(&open, "sessions");
         editor
             .widget_registry
-            .update(
-                &panel_key,
-                open,
-                out.instance_states,
-                out.focus_key,
-                out.painted,
-                out.boxes,
-            )
+            .update(&panel_key, open, out.instance_states, out.focus_key)
             .expect("the panel is mounted");
         editor.set_panel_focus_and_notify(&panel_key, "menu-pick:move:root".to_string());
 

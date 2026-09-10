@@ -1,22 +1,22 @@
 //! Panel registry — maps a panel's composite identity (owning plugin,
-//! plugin-local `panel_id`) to mounted spec and hit-area data for click
-//! routing.
+//! plugin-local `panel_id`) to its mounted spec and the state its widgets
+//! keep across spec updates.
 //!
 //! The registry is the source of truth for "which panels exist, what
-//! spec are they currently rendering, and which buffer rows belong
-//! to which widget." It does *not* own the virtual buffer the
-//! rendered output goes into — the plugin still owns the virtual
-//! buffer and passes its `BufferId` at mount time.
+//! spec are they currently rendering, and what each keyed widget holds."
+//! It does *not* own the virtual buffer a pane-mounted panel mirrors its
+//! rows into — the plugin still owns the virtual buffer and passes its
+//! `BufferId` at mount time. It holds no geometry either: where a widget
+//! is drawn is the tree's to know (`docs/internal/retained-mode-ui.md`
+//! "Where each surface lives").
 //!
-//! **Two types where there was one.** [`WidgetEvent`] is what a press
-//! *means* — a pure function of the spec and the instance state, which is
-//! why the three `synthesize_*_hit` functions can rebuild one from the spec
-//! alone. [`HitArea`] is where the text projection *drew* one, in the rows of
-//! a virtual buffer. They used to be one struct, and the surfaces that have
-//! no such rows carried four fields they could not interpret — and
-//! interpreted two of them anyway, adding a byte offset on at the press and
-//! taking it off again at the dispatch. Splitting them is what lets a
-//! described widget hand over an event with no coordinate space attached.
+//! [`WidgetEvent`] is what a press *means* — a pure function of the spec
+//! and the instance state, which is why the three `synthesize_*_hit`
+//! functions can rebuild one from the spec alone. It used to be one struct
+//! with the row and byte range the text projection drew it at, and the
+//! surfaces that have no such rows carried four fields they could not
+//! interpret. Splitting them is what lets a described widget hand over an
+//! event with no coordinate space attached.
 
 use crate::primitives::text_edit::TextEdit;
 use fresh_core::api::WidgetSpec;
@@ -65,7 +65,7 @@ impl std::fmt::Display for PanelKey {
 
 /// **What a press means**, with nothing about where it was drawn.
 ///
-/// This is the identity half of what used to be one `HitArea`: which widget
+/// The identity half of what used to be one hit-area struct: which widget
 /// the press belongs to, which part of it, what event that fires and with
 /// what payload. Every field is a pure function of `(spec, instance state)` —
 /// `Editor::synthesize_list_hit` and its two siblings already rebuild exactly
@@ -143,101 +143,6 @@ impl WidgetEvent {
     }
 }
 
-/// **Where a [`WidgetEvent`]'s target was drawn** — in the rows of the text
-/// projection, and nowhere else.
-///
-/// The collector renders a `WidgetSpec` into `TextPropertyEntry` rows inside
-/// a virtual buffer, and this is the byte range one interactive target
-/// occupies in them. Hit-test is `(buffer_row, buffer_col_byte) ∈ range`; the
-/// bytes are UTF-8 bytes within the row's text, matching the coordinate space
-/// `mouse_click` already delivers to plugins
-/// (`HookArgs::MouseClick::buffer_col`).
-///
-/// **Nothing resolves a press through that space any more.** It was real for
-/// one class of surface — a pane-mounted panel that rode the *buffer's*
-/// scroll, whose rows were buffer lines and whose cursor was the plugin's
-/// selection model — and that class is retired (design §3.5): every mounted
-/// panel is described, answers its own presses from the rectangle layout gave
-/// it, and never constructs one of these. The registry no longer stores them
-/// either. What the collector still emits rides its `RenderOutput` until the
-/// projection itself goes; the identity half lives in `event`, which is the
-/// part the description carries on its nodes.
-///
-/// Layout containers (`Row`, `Col`, `Spacer`, `HintBar`, `Raw`) emit no hit
-/// areas of their own; their children's bubble up with row/byte offsets
-/// adjusted to reflect the final on-screen position (`kinds::containers`).
-/// The `event` half is **not** shifted by that pass and must not be: its
-/// payload's `valueInnerStart` stays relative to the field's own rendered
-/// text. That is why a caller resolving a press through these ranges
-/// subtracts the matched area's `byte_start` from its click before handing it
-/// to `Editor::deliver_widget_hit` — the two numbers have to be in one space,
-/// and the event's is the field's.
-#[derive(Debug, Clone, PartialEq)]
-pub struct HitArea {
-    /// 0-indexed row within the rendered virtual buffer.
-    pub buffer_row: u32,
-    /// First UTF-8 byte (inclusive) within the row's text.
-    pub byte_start: usize,
-    /// Last UTF-8 byte (exclusive) within the row's text.
-    pub byte_end: usize,
-    /// True when this area came from an `Overlay` child - a popup the
-    /// renderer paints *over* the rows beneath it without reflowing
-    /// them (the dock's "New Task... " and "Move to Folder..." dropdowns).
-    /// Its byte range is measured against the overlay's own row text,
-    /// not the text of the row it covers, so a resolver over these
-    /// ranges had to keep the two apart (the deleted `hit_test_row_aware`
-    /// took the surface as a parameter).
-    pub overlay: bool,
-    /// What a press here means. Placing it does not change it.
-    pub event: WidgetEvent,
-}
-
-/// **The window one keyed `List`/`Tree` was last painted into.**
-///
-/// Not the widget's state — the *painter's*. A scroll offset is a fold over
-/// its own previous value, and the row window, the item window and the
-/// measured card band are derivations over geometry; all four used to sit in
-/// [`WidgetInstanceState`] and in a parallel `effective_rows` map, where they
-/// read as things a plugin's spec could set and a handler could own. They are
-/// neither. Naming them the last paint's window is the whole point of the
-/// type: a reader that wants "how big was the window" is asking about a
-/// *paint*, and it can now say so.
-///
-/// **Three quantities, kept apart on purpose** (§6i of the retained-mode
-/// plan is the record of what conflating two of them costs): `rows` is how
-/// tall the widget was painted, `items` is how many things that showed, and
-/// `offset` counts in the kind's own scroll unit — items for a `List`, whose
-/// window steps a card at a time, and *rows* for a `Tree`, which scrolls line
-/// by line so a bordered card can sit clipped at either edge.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct PaintedWindow {
-    /// Rows the widget windowed to: the spec's explicit `visible_rows`,
-    /// the auto-size height budget, or the legacy fallback.
-    pub rows: u32,
-    /// How many items those rows showed. For a `Tree` with bordered cards
-    /// of unequal height this is the conservative estimate its paging has
-    /// always used (`rows / rows-per-node`), never an overshoot.
-    pub items: u32,
-    /// First painted position, in the kind's own scroll unit (items for a
-    /// `List`, rows for a `Tree`). The scroll fold's previous value: the
-    /// next paint reads it back, clamps it, and republishes it.
-    pub offset: u32,
-    /// Width of the window, in display columns.
-    ///
-    /// The horizontal counterpart to `rows`, and the number a sideways pan
-    /// needs: how far a row can travel is a question about the panel's
-    /// width, and nothing but the paint knows it. Zero when unknown.
-    pub cols: u32,
-    // Rows one item occupies was here — the measured card band. It was the
-    // fourth of the four numbers S1 moved out of `WidgetInstanceState`, and
-    // the only one that never acquired a reader on this side: the division
-    // from rows to items happens where the window is resolved, so `items`
-    // above is the answer everything downstream wanted and the band itself
-    // was never asked for again. `Editor::widget_viewport`'s spec fallback
-    // takes a tree's rows-per-node from the *spec*, which is where a `Tree`
-    // declares it; a card list's band is measured, and measuring is layout's.
-}
-
 /// Widget instance state retained across spec updates, keyed by
 /// the widget's stable `key`. This is the "Spec/instance separation"
 /// described in §6 of the design doc — a plugin can rebuild its
@@ -259,8 +164,8 @@ pub enum WidgetInstanceState {
     ///
     /// **The window is not here.** The scroll offset, the row window
     /// and the measured card height used to sit in this variant, and
-    /// none of them is the widget's state: they are what the last
-    /// paint did, so they live in [`PaintedWindow`] on the panel.
+    /// none of them is the widget's state: they are the viewport's, and
+    /// the tree's viewport element holds them.
     List {
         selected_index: i32,
         /// True once the user has scrolled the list by mouse (wheel or
@@ -296,21 +201,15 @@ pub enum WidgetInstanceState {
     /// to widget-backed text inputs too.
     Text {
         editor: TextEdit,
-        /// **The last of the paint's numbers still living in instance
-        /// state**, and it stays because it still has a painted reader.
-        ///
-        /// It is the same shape as the offsets S1 moved to
-        /// [`PaintedWindow`] — a fold the *painter* owns — and for a
-        /// *described* panel it is already dead: the description gives the
-        /// window to the element (`view::shell::widgets`'s `windowed`), which
-        /// seeds from this once at mount and never reads it again, and no
-        /// handler writes it there either (`Text::on_wheel`'s document branch
-        /// needs a box arena a described panel does not have). What keeps the
-        /// field is the painted path: a pane-mounted panel the tree does not
-        /// describe still resolves its text window through
-        /// `render_widget_text_area`, which reads this back and republishes
-        /// it. It leaves when that renderer does — S8's wrapped viewport —
-        /// not with the collector's other outputs.
+        /// **The last of the mirror's numbers still living in instance
+        /// state.** The tree gives a text area's window to its element
+        /// (`view::shell::widgets`'s `windowed`), which seeds from this once
+        /// at mount and never reads it again; what keeps the field is the
+        /// mirror a pane-mounted panel keeps in its buffer, whose
+        /// `render_widget_text_area` reads this back and republishes it. It
+        /// leaves when the mirror is derived from the tree's own rows
+        /// (`docs/internal/retained-mode-ui.md` "Delete the widget text
+        /// projection").
         scroll: u32,
         /// Completion popup candidates the plugin most recently
         /// pushed via `WidgetMutation::SetCompletions`. Empty =
@@ -363,8 +262,8 @@ pub enum WidgetInstanceState {
     /// either expanded or not); ordering doesn't matter and we
     /// hit-test on contains.
     ///
-    /// The scroll offset that used to sit here is the painter's, not
-    /// the tree's — see [`PaintedWindow`].
+    /// The scroll offset that used to sit here is the viewport's, not
+    /// the tree widget's — the tree's viewport element holds it.
     Tree {
         selected_index: i32,
         expanded_keys: HashSet<String>,
@@ -450,25 +349,6 @@ pub struct WidgetPanelState {
     /// tree rests there. Re-clamped onto a widget the spec still has when
     /// the spec changes (`resolve_panel`).
     pub focus_key: String,
-    /// The window each keyed `List`/`Tree` was last painted into, by
-    /// widget key — see [`PaintedWindow`]. The scroll fold's own previous
-    /// value lives here, and so does one of the three answers to "how big is
-    /// this widget's window": the *paint's*. A described panel's comes from
-    /// the tree instead and this map is empty for one, because the walk that
-    /// filled it does not run (`Editor::resolve_described_panel`); the spec
-    /// answers last, for a widget nothing has laid out yet
-    /// ([`super::kinds::Viewport::from_spec`]).
-    pub painted: HashMap<String, PaintedWindow>,
-    /// The panel's layout-box tree from the most recent render
-    /// (root-last arena; see [`crate::widgets::layout_box`]).
-    /// Structure + panel-relative geometry for hit-tested dispatch.
-    ///
-    /// **Empty for a described panel**, which never had a use for it: its
-    /// rectangles are the tree's, the wheel router declines it outright, and
-    /// the Tab ring it used to supply is now a walk of the spec
-    /// (`Ui::next_in` over the interior's registrations) — the same two `box_meta` facts,
-    /// asked of the thing that states them.
-    pub boxes: Vec<crate::widgets::LayoutBox>,
     /// This panel's [`WidgetPanelOptions::auto_focus_first`], kept so
     /// every later repaint resolves focus the same way the mount did.
     pub auto_focus_first: bool,
@@ -494,12 +374,9 @@ pub struct WidgetPanelState {
     /// How far each keyed widget is panned sideways, in display columns,
     /// from where its rows would rest.
     ///
-    /// **Not in [`PaintedWindow`], and not in the instance state either.**
-    /// Not the paint's, because a pan is what the *reader* asked for rather
-    /// than what the last paint measured — and a described panel has no
-    /// painted window at all, which is precisely the panel this exists for.
-    /// Not the instance state, because it is per-widget rather than per-kind
-    /// and every kind that draws rows can honour it.
+    /// **Not in the instance state.** A pan is what the *reader* asked for
+    /// rather than what any paint measured, and it is per-widget rather than
+    /// per-kind — every kind that draws rows can honour it.
     ///
     /// A delta, not an absolute column: each row rests where its own content
     /// needs it to (see `TreeNode::window_anchor`) and they slide together.
@@ -528,8 +405,6 @@ impl WidgetPanelState {
             spec,
             instance_states: HashMap::new(),
             focus_key: String::new(),
-            painted: HashMap::new(),
-            boxes: Vec::new(),
             auto_focus_first: false,
             page: false,
             // A host surface has no reading row to keep focus in step with:
@@ -541,49 +416,6 @@ impl WidgetPanelState {
             // its controls are forms, not rows of somebody else's text.
             h_pan: HashMap::new(),
         }
-    }
-
-    /// The window the keyed widget is being driven against, read off
-    /// the last paint — `None` for a widget this panel has never painted.
-    ///
-    /// **Absent is an answer, not a default.** It used to fall back to the
-    /// spec's own `visible_rows` here, which made one function two: "what did
-    /// the paint measure" and "what does the spec ask for". The caller
-    /// (`app::Editor::widget_viewport`) now asks the tree first and
-    /// falls through to [`super::kinds::Viewport::from_spec`] last, and a
-    /// fallback buried in the middle of that chain could only shadow the
-    /// tree's answer with a stale one.
-    pub fn painted_viewport(&self, key: &str) -> Option<super::kinds::Viewport> {
-        self.painted.get(key).map(|w| super::kinds::Viewport {
-            rows: w.rows,
-            items: w.items.max(1),
-            cols: w.cols,
-        })
-    }
-
-    /// The painted window for `key`, for a handler that is about to move
-    /// it.
-    ///
-    /// A widget the panel has never painted still gets a window: the one
-    /// the host just delivered. That is the honest answer — the handler
-    /// is acting inside a window somebody resolved, and recording that
-    /// window is not a claim that a paint happened, only that this is the
-    /// frame the offset is measured in. It is also what keeps a wheel
-    /// notch on a not-yet-painted list from silently going nowhere, which
-    /// is what it did when the offset lived in an absent instance state.
-    pub fn window_mut(
-        &mut self,
-        key: &str,
-        viewport: super::kinds::Viewport,
-    ) -> &mut PaintedWindow {
-        self.painted
-            .entry(key.to_string())
-            .or_insert(PaintedWindow {
-                rows: viewport.rows,
-                items: viewport.items,
-                offset: 0,
-                cols: 0,
-            })
     }
 
     /// How far the keyed widget is panned sideways, in display columns.
@@ -603,22 +435,15 @@ impl WidgetPanelState {
     /// and clamping per row, is what keeps rows of different lengths sliding
     /// together instead of drifting apart at the ends.
     ///
-    /// **The bound comes from the last paint, and it has to.** A stored pan
-    /// is what the *next* keystroke moves from, so a value no row on screen
-    /// can reach is a value the reader has to press their way back through
-    /// against a screen that does not move. Only the paint knows the panel's
-    /// width, so only the paint can say where the travel ends; it publishes
-    /// that as [`PaintedWindow::pan_range`] and this holds both the current
-    /// value and the new one to it. `Shift+End` therefore lands *on* the
+    /// **Clamped to `bounds` on the way in and out.** A stored pan is what
+    /// the *next* keystroke moves from, so a value no row on screen can reach
+    /// is a value the reader has to press their way back through against a
+    /// screen that does not move. `bounds` is what the spec alone can
+    /// justify, from [`pan_bounds`]; `Shift+End` therefore lands *on* the
     /// tail rather than past it, and a run of `Shift+Right` at the tail
     /// accumulates no debt for `Shift+Left` to pay off.
     ///
-    /// `bounds` is the fallback for the frame before any paint — what the
-    /// spec alone can justify, from [`pan_bounds`]. It is an over-estimate
-    /// by construction, which is exactly why it cannot be the only bound.
-    ///
     /// [`pan_bounds`]: crate::widgets::render::pan_bounds
-    /// [`PaintedWindow::pan_range`]: PaintedWindow::pan_range
     pub fn pan_h(&mut self, key: &str, delta: Option<i32>, bounds: (i32, i32)) -> bool {
         let (left, right) = (bounds.0.min(0).abs(), bounds.1.max(0));
         // Clamped on the way in as well as on the way out: a stored value
@@ -690,7 +515,7 @@ impl WidgetPanelState {
     ///
     /// **What it carries is now only what it owns.** It used to shuttle
     /// a scroll offset and a measured item height through both arms;
-    /// those are the painter's and live in [`PaintedWindow`], so a
+    /// those are the window's — the tree's viewport holds them — so a
     /// selection move no longer has to know they exist — and cannot
     /// reset them by forgetting to copy one.
     pub fn set_selected_index(&mut self, widget_key: &str, index: i32) {
@@ -818,8 +643,6 @@ impl WidgetRegistry {
         spec: WidgetSpec,
         instance_states: HashMap<String, WidgetInstanceState>,
         focus_key: String,
-        painted: HashMap<String, PaintedWindow>,
-        boxes: Vec<crate::widgets::LayoutBox>,
         auto_focus_first: bool,
         page: bool,
         focus_follows_cursor: bool,
@@ -855,8 +678,6 @@ impl WidgetRegistry {
                 spec,
                 instance_states,
                 focus_key,
-                painted,
-                boxes,
                 auto_focus_first,
                 page,
                 focus_follows_cursor,
@@ -897,15 +718,12 @@ impl WidgetRegistry {
     /// error is sufficient: there's exactly one failure mode and
     /// no payload to attach.
     #[allow(clippy::result_unit_err)]
-    #[allow(clippy::too_many_arguments)]
     pub fn update(
         &mut self,
         panel_key: &PanelKey,
         spec: WidgetSpec,
         instance_states: HashMap<String, WidgetInstanceState>,
         focus_key: String,
-        painted: HashMap<String, PaintedWindow>,
-        boxes: Vec<crate::widgets::LayoutBox>,
     ) -> Result<BufferId, ()> {
         match self.panels.get_mut(panel_key) {
             Some(state) => {
@@ -919,8 +737,6 @@ impl WidgetRegistry {
                 state.spec = spec;
                 state.instance_states = instance_states;
                 state.focus_key = focus_key;
-                state.painted = painted;
-                state.boxes = boxes;
                 state.buffer_id.ok_or(())
             }
             None => Err(()),
@@ -967,24 +783,15 @@ impl WidgetRegistry {
     /// current (mutation helpers like `append_tree_nodes_in_spec` mutate it
     /// in place), so cloning it back through `update()` just to write the
     /// same value would waste a 5 000-node deep clone for every IPC.
-    #[allow(clippy::too_many_arguments)]
     pub fn update_side_effects(
         &mut self,
         panel_key: &PanelKey,
         instance_states: HashMap<String, WidgetInstanceState>,
         focus_key: String,
-        painted: HashMap<String, PaintedWindow>,
-        boxes: Vec<crate::widgets::LayoutBox>,
     ) -> Option<BufferId> {
         let state = self.panels.get_mut(panel_key)?;
         state.instance_states = instance_states;
         state.focus_key = focus_key;
-        // Host-driven rerenders (focus moves, hover, wheel) refresh the
-        // painted windows and geometry too — previously the window
-        // sizes were only written on the plugin-driven mount/update
-        // paths and went stale across every host-side rerender.
-        state.painted = painted;
-        state.boxes = boxes;
         state.buffer_id
     }
 
@@ -1105,8 +912,6 @@ mod tests {
             empty_spec(),
             HashMap::new(),
             String::new(),
-            HashMap::new(),
-            Vec::new(),
             true,
             false,
             false,
@@ -1117,8 +922,6 @@ mod tests {
             empty_spec(),
             HashMap::new(),
             String::new(),
-            HashMap::new(),
-            Vec::new(),
             true,
             false,
             false,

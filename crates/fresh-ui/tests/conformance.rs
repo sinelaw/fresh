@@ -2018,7 +2018,12 @@ fn text_rows_are_read_from_the_subtree_that_owns_the_key() {
     let right = ui.find_by_key(&Key::Str("right".into())).expect("right");
     let (_, l) = ui.text_rows_in(left, &run).expect("the left run");
     let (_, r) = ui.text_rows_in(right, &run).expect("the right run");
-    assert!(l.len() > r.len(), "narrower wraps into more rows: {} vs {}", l.len(), r.len());
+    assert!(
+        l.len() > r.len(),
+        "narrower wraps into more rows: {} vs {}",
+        l.len(),
+        r.len()
+    );
     assert_eq!(r.len(), 1, "forty columns holds the whole line");
     // And the frame-wide read is whichever comes first — the ambiguity the
     // rooted form exists to remove.

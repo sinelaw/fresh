@@ -5272,9 +5272,6 @@ impl Editor {
         // a fresh prefill) sees its spec values take effect. To
         // *preserve* state across renders, the plugin uses Update.
         let prev = std::collections::HashMap::new();
-        // A mount paints from scratch: no previous window either, so
-        // every list starts at the top.
-        let prev_painted = std::collections::HashMap::new();
         let prev_focus = String::new();
         let panel_width = self.widget_panel_width(buffer_id);
         let avail_height = self.widget_panel_height(buffer_id);
@@ -5283,7 +5280,6 @@ impl Editor {
         let out = self.render_panel_spec(
             &spec,
             &prev,
-            &prev_painted,
             &prev_focus,
             panel_width,
             avail_height,
@@ -5307,8 +5303,6 @@ impl Editor {
             spec,
             out.instance_states,
             out.focus_key,
-            out.painted,
-            out.boxes,
             options.auto_focus_first(),
             options.page(),
             options.focus_follows_cursor(),
@@ -5366,11 +5360,6 @@ impl Editor {
                 return;
             }
         };
-        let prev_painted = self
-            .widget_registry
-            .get(panel_key)
-            .map(|p| p.painted.clone())
-            .unwrap_or_default();
         let prev_focus = self
             .widget_registry
             .focus_key(panel_key)
@@ -5401,7 +5390,6 @@ impl Editor {
         let out = self.render_panel_spec(
             &spec,
             &prev,
-            &prev_painted,
             &prev_focus,
             panel_width,
             avail_height,
@@ -5410,14 +5398,10 @@ impl Editor {
         );
         self.record_widget_panel_render_height(panel_key, avail_height);
         let entries = out.entries;
-        match self.widget_registry.update(
-            panel_key,
-            spec,
-            out.instance_states,
-            out.focus_key,
-            out.painted,
-            out.boxes,
-        ) {
+        match self
+            .widget_registry
+            .update(panel_key, spec, out.instance_states, out.focus_key)
+        {
             Ok(buffer_id) => {
                 if let Err(e) = self.set_virtual_buffer_content(buffer_id, entries.clone()) {
                     tracing::error!("Failed to render updated widget panel {}: {}", panel_key, e);
@@ -5845,8 +5829,6 @@ impl Editor {
             hovered_popup_row: String::new(),
         });
         let prev = std::collections::HashMap::new();
-        // A mount paints from scratch — no previous window either.
-        let prev_painted = std::collections::HashMap::new();
         let prev_focus = String::new();
         let panel_width = self.floating_panel_inner_width(slot);
         // A fresh mount has nothing hovered: the pointer hasn't been
@@ -5858,7 +5840,6 @@ impl Editor {
                 focus_marker,
                 &spec,
                 &prev,
-                &prev_painted,
                 &prev_focus,
                 panel_width,
                 self.floating_panel_inner_height(slot),
@@ -5883,8 +5864,6 @@ impl Editor {
             spec,
             out.instance_states,
             out.focus_key,
-            out.painted,
-            out.boxes,
             // Floating and dock panels render through
             // `render_floating_spec`, which seeds focus unconditionally;
             // record what they actually rendered under rather than a
@@ -5961,7 +5940,6 @@ impl Editor {
             p.focused = false;
         }
         let prev = std::collections::HashMap::new();
-        let prev_painted = std::collections::HashMap::new();
         let prev_focus = String::new();
         let panel_width = self.floating_panel_inner_width(slot);
         let out = {
@@ -5970,7 +5948,6 @@ impl Editor {
                 false,
                 &spec,
                 &prev,
-                &prev_painted,
                 &prev_focus,
                 panel_width,
                 self.floating_panel_inner_height(slot),
@@ -5994,8 +5971,6 @@ impl Editor {
             spec,
             out.instance_states,
             out.focus_key,
-            out.painted,
-            out.boxes,
             // As the dock: `render_floating_spec` seeds focus
             // unconditionally, so record what was rendered under.
             true,
@@ -6038,11 +6013,6 @@ impl Editor {
             .instance_states(panel_key)
             .cloned()
             .unwrap_or_default();
-        let prev_painted = self
-            .widget_registry
-            .get(panel_key)
-            .map(|p| p.painted.clone())
-            .unwrap_or_default();
         let prev_focus = self
             .widget_registry
             .focus_key(panel_key)
@@ -6070,7 +6040,6 @@ impl Editor {
                 focus_marker,
                 &spec,
                 &prev,
-                &prev_painted,
                 &prev_focus,
                 panel_width,
                 self.floating_panel_inner_height(slot),
@@ -6091,14 +6060,7 @@ impl Editor {
         let entries = out.entries;
         if self
             .widget_registry
-            .update(
-                panel_key,
-                spec,
-                out.instance_states,
-                out.focus_key,
-                out.painted,
-                out.boxes,
-            )
+            .update(panel_key, spec, out.instance_states, out.focus_key)
             .is_err()
         {
             tracing::debug!(

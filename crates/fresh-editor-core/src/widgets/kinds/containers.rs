@@ -11,8 +11,7 @@ use fresh_core::api::{OverlayOptions, WidgetSpec};
 use fresh_core::text_property::{InlineOverlay, OffsetUnit, TextPropertyEntry};
 
 use super::WidgetImpl;
-use crate::widgets::layout_box::LayoutBox;
-use crate::widgets::registry::{HitArea, WidgetInstanceState};
+use crate::widgets::registry::WidgetInstanceState;
 use crate::widgets::render::{
     ensure_trailing_newline, pad_or_truncate_cols, render_collected, render_section_bottom_border,
     render_section_top_border, snap_down_to_char_boundary, strip_trailing_newline,
@@ -187,7 +186,6 @@ pub fn predicts_block(spec: &WidgetSpec) -> bool {
 enum RowPiece {
     Inline {
         entry: TextPropertyEntry,
-        hits: Vec<HitArea>,
         /// Some when this inline child was a focused TextInput.
         /// `byte_in_row` is the cursor's offset within the *child's*
         /// text — the Row collapse pass shifts it by the merged
@@ -198,11 +196,6 @@ enum RowPiece {
         /// pinned to that row. Rare but worth carrying through
         /// rather than dropping.
         embeds: Vec<EmbedRect>,
-        /// Layout boxes from this inline child's subtree; the collapse
-        /// pass shifts their columns by the *display width* of the
-        /// line so far (boxes and embeds are column-addressed; hits
-        /// stay byte-addressed within the row text).
-        boxes: Vec<LayoutBox>,
     },
     Block {
         /// Allocated column width for the zip path. May differ
@@ -211,16 +204,12 @@ enum RowPiece {
         /// entries should already fit).
         column_width: u32,
         entries: Vec<TextPropertyEntry>,
-        hits: Vec<HitArea>,
         focus_cursor: Option<FocusCursor>,
         /// Embed rects propagated up from this block child.
         /// Their `buffer_row` is already relative to the block's
         /// own row 0; the zip pass shifts row by `starting_row`
         /// and byte_in_row by the block's `byte_shift`.
         embeds: Vec<EmbedRect>,
-        /// Layout boxes from this block child's subtree, shifted by the
-        /// zip pass identically to `scroll_regions`.
-        boxes: Vec<LayoutBox>,
     },
     Flex,
 }
@@ -235,14 +224,11 @@ fn collect_row(
     panel_width: u32,
 ) -> CollectedOutput {
     let mut entries: Vec<TextPropertyEntry> = Vec::new();
-    let mut hits: Vec<HitArea> = Vec::new();
     let mut focus_cursor: Option<FocusCursor> = None;
     let mut embeds: Vec<EmbedRect> = Vec::new();
     let mut overlays: Vec<OverlayRow> = Vec::new();
     let mut popups: Vec<PanelPopup> = Vec::new();
-    let mut boxes: Vec<LayoutBox> = Vec::new();
     let mut wants_fill = false;
-    let mut painted: HashMap<String, crate::widgets::PaintedWindow> = HashMap::new();
 
     // Two-pass layout for Row:
     //  1. Walk children, render each. Track flex spacers
@@ -251,7 +237,7 @@ fn collect_row(
     //  2. Compute leftover width = panel_width - sum of
     //     non-flex widths; distribute evenly across flex
     //     slots; expand each flex spacer's text + shift
-    //     subsequent overlays / hits accordingly.
+    //     subsequent overlays accordingly.
     //
     // When ≥1 child is multi-line (a `Block`), the
     // assembly switches to a per-line zip instead of
@@ -276,12 +262,11 @@ fn collect_row(
             continue;
         }
         let child_panel_width = per_child_width[idx];
-        let mut child_out = render_collected(child, prev, next_state, ctx, child_panel_width);
+        let child_out = render_collected(child, prev, next_state, ctx, child_panel_width);
         // A Row is a horizontal packer — it has no leftover vertical
         // space to grant, so fill requests pass through to an
-        // enclosing Col; painted windows merge straight up.
+        // enclosing Col.
         wants_fill |= child_out.wants_fill;
-        painted.extend(std::mem::take(&mut child_out.painted));
         // Rows can host overlays in principle (e.g. a
         // tooltip on a button); forward them up without
         // a row-offset adjustment — Row pieces all sit
@@ -292,10 +277,8 @@ fn collect_row(
         // the caller shifts it up). Forward unshifted, like overlays.
         popups.extend(child_out.popups);
         if child_out.entries.is_empty() {
-            debug_assert!(child_out.hits.is_empty(), "empty children produce no hits");
             continue;
         }
-        let child_boxes = std::mem::take(&mut child_out.boxes);
         if child_out.entries.len() == 1 {
             let mut entry = child_out.entries.into_iter().next().unwrap();
             // Inline children can't carry their own newlines
@@ -305,19 +288,15 @@ fn collect_row(
             strip_trailing_newline(&mut entry);
             row_pieces.push(RowPiece::Inline {
                 entry,
-                hits: child_out.hits,
                 focus_cursor: child_out.focus_cursor,
                 embeds: child_out.embeds,
-                boxes: child_boxes,
             });
         } else {
             row_pieces.push(RowPiece::Block {
                 column_width: child_panel_width,
                 entries: child_out.entries,
-                hits: child_out.hits,
                 focus_cursor: child_out.focus_cursor,
                 embeds: child_out.embeds,
-                boxes: child_boxes,
             });
         }
     }
@@ -332,49 +311,37 @@ fn collect_row(
             row_pieces,
             panel_width,
             &mut entries,
-            &mut hits,
             &mut focus_cursor,
             &mut embeds,
-            &mut boxes,
         );
     } else if wrap {
         // Wrapping path: greedily pack inline pieces onto lines no
         // wider than `panel_width`; a piece that doesn't fit starts a
-        // new line (pieces are never split). Each piece's hits get
-        // their byte offset shifted by the line-so-far and their
-        // `buffer_row` set to the line index.
+        // new line (pieces are never split).
         assemble_wrapped_row(
             row_pieces,
             panel_width,
             &mut entries,
-            &mut hits,
             &mut focus_cursor,
             &mut embeds,
-            &mut boxes,
         );
     } else {
         assemble_inline_row(
             row_pieces,
             panel_width,
             &mut entries,
-            &mut hits,
             &mut focus_cursor,
             &mut embeds,
-            &mut boxes,
         );
     }
 
     CollectedOutput {
         entries,
-        hits,
         focus_cursor,
         embeds,
         overlays,
-        self_scroll: None,
         popups,
         wants_fill,
-        painted,
-        boxes,
     }
 }
 
@@ -420,19 +387,15 @@ pub fn allocate_row_child_widths(children: &[WidgetSpec], panel_width: u32) -> V
 /// Assemble a `Row` of purely inline pieces (no multi-line `Block`s)
 /// into a single merged entry. Flex spacers expand to fill the leftover
 /// width (`panel_width` minus the natural inline width, measured in
-/// display columns); child hits / focus / embeds / scroll regions are
-/// shifted by the running byte offset so they stay aligned in the
-/// merged row. The inline-only counterpart to [`zip_row_blocks`] and
+/// display columns); a child's focus cursor and embeds are shifted by
+/// the running offset so they stay aligned in the merged row. The inline-only counterpart to [`zip_row_blocks`] and
 /// [`assemble_wrapped_row`].
-#[allow(clippy::too_many_arguments)]
 fn assemble_inline_row(
     pieces: Vec<RowPiece>,
     panel_width: u32,
     entries: &mut Vec<TextPropertyEntry>,
-    hits: &mut Vec<HitArea>,
     focus_cursor: &mut Option<FocusCursor>,
     embeds: &mut Vec<EmbedRect>,
-    out_boxes: &mut Vec<LayoutBox>,
 ) {
     // Compute flex sizing. Width is measured in display columns
     // (`str_width`) to match `panel_width`; using the raw byte length
@@ -463,7 +426,7 @@ fn assemble_inline_row(
 
     // Pass 2: assemble. Accumulate inline pieces (with
     // collapsed flex spacers) into one entry; flush block
-    // pieces. Track byte-shift so child hits' offsets stay
+    // pieces. Track byte-shift so the child's caret stays
     // correct.
     let mut acc: Option<TextPropertyEntry> = None;
     let mut flex_seen = 0usize;
@@ -471,37 +434,22 @@ fn assemble_inline_row(
         match piece {
             RowPiece::Inline {
                 mut entry,
-                hits: child_hits,
                 focus_cursor: child_focus,
                 embeds: child_embeds,
-                boxes: child_boxes,
             } => {
                 let inline_shift = match acc.as_ref() {
                     Some(e) => e.text.len(),
                     None => 0,
                 };
-                // Boxes and embeds are column-addressed, so they shift
-                // by the *display width* of the line so far — not its
-                // byte length, which over-counts every multi-byte glyph
-                // (a localized toggle label, `▸`, `·`). Hits and the
-                // focus cursor stay byte-addressed within the row text.
+                // Embeds are column-addressed, so they shift by the
+                // *display width* of the line so far — not its byte
+                // length, which over-counts every multi-byte glyph (a
+                // localized toggle label, `▸`, `·`). The focus cursor
+                // stays byte-addressed within the row text.
                 let inline_cols = acc
                     .as_ref()
                     .map(|e| crate::primitives::display_width::str_width(&e.text))
                     .unwrap_or(0) as u32;
-                // The arena merge remaps parent indices by the boxes so
-                // far.
-                let base = out_boxes.len();
-                for mut b in child_boxes {
-                    b.parent = b.parent.map(|pi| pi + base);
-                    b.col += inline_cols;
-                    out_boxes.push(b);
-                }
-                for mut h in child_hits {
-                    h.byte_start += inline_shift;
-                    h.byte_end += inline_shift;
-                    hits.push(h);
-                }
                 if let Some(mut fc) = child_focus {
                     // buffer_row stays 0 — caller shifts.
                     fc.byte_in_row += inline_shift as u32;
@@ -565,14 +513,11 @@ fn collect_col(
     panel_width: u32,
 ) -> CollectedOutput {
     let entries: Vec<TextPropertyEntry> = Vec::new();
-    let hits: Vec<HitArea> = Vec::new();
     let focus_cursor: Option<FocusCursor> = None;
     let embeds: Vec<EmbedRect> = Vec::new();
     let overlays: Vec<OverlayRow> = Vec::new();
     let popups: Vec<PanelPopup> = Vec::new();
-    let boxes: Vec<LayoutBox> = Vec::new();
     let wants_fill = false;
-    let painted: HashMap<String, crate::widgets::PaintedWindow> = HashMap::new();
 
     // Pass 1 — render every child with NO height budget, so an
     // auto-sized List/Tree in a subtree reports `wants_fill` instead
@@ -654,31 +599,21 @@ fn collect_col(
                     ensure_trailing_newline(&mut entry);
                     child_outs[i].entries.push(entry);
                 }
-                // The spacer's own box was capped before the stretch;
-                // keep its rectangle honest.
-                let stretched = child_outs[i].entries.len() as u32;
-                if let Some(b) = child_outs[i].boxes.last_mut() {
-                    b.height = stretched;
-                }
             }
         }
     }
 
     // Fold every child in through the one shift point — a Col cannot
-    // shift some geometry channels and forget others. Overlay children
-    // occupy no column height; their subtree is promoted a stacking
-    // level and anchored at the current cursor.
+    // shift some channels and forget others. Overlay children occupy no
+    // column height; their rows are promoted to overlay rows anchored at
+    // the current cursor.
     let mut acc = CollectedOutput {
         entries,
-        hits,
         focus_cursor,
         embeds,
         overlays,
-        self_scroll: None,
         popups,
         wants_fill,
-        painted,
-        boxes,
     };
     for (child, child_out) in children.iter().zip(child_outs) {
         let row_offset = acc.entries.len() as u32;
@@ -716,7 +651,6 @@ fn collect_labeled_section(
     hover: Option<&OverlayOptions>,
 ) -> CollectedOutput {
     let mut entries: Vec<TextPropertyEntry> = Vec::new();
-    let mut hits: Vec<HitArea> = Vec::new();
     let mut focus_cursor: Option<FocusCursor> = None;
     let mut embeds: Vec<EmbedRect> = Vec::new();
     let mut overlays: Vec<OverlayRow> = Vec::new();
@@ -734,8 +668,7 @@ fn collect_labeled_section(
     };
     let mut child_out = render_collected(child, prev, next_state, section_ctx, inner_width);
     let wants_fill = child_out.wants_fill;
-    let painted = std::mem::take(&mut child_out.painted);
-    // ONE translation for every geometry channel: +1 row (the top
+    // ONE translation for every channel: +1 row (the top
     // border this section emits — the child authored anchors relative
     // to its own row 0, so the Text completion-popup overlay's anchor 1
     // lands on the section's bottom border row, anchor 2+ below it;
@@ -749,16 +682,6 @@ fn collect_labeled_section(
         LEFT_BORDER_PREFIX.chars().count() as u32,
         LEFT_BORDER_PREFIX.len(),
     );
-    let mut boxes: Vec<LayoutBox> = std::mem::take(&mut child_out.boxes);
-    for b in &mut boxes {
-        // Scrollable boxes widen two more columns — through the right
-        // padding onto the `│` border — so a wheel over the section
-        // border still scrolls the widget inside it (a section-specific
-        // tweak on top of the shared shift).
-        if b.scrollable {
-            b.width += 2;
-        }
-    }
     overlays.extend(std::mem::take(&mut child_out.overlays));
     popups.extend(std::mem::take(&mut child_out.popups));
 
@@ -780,12 +703,6 @@ fn collect_labeled_section(
     for mut child_entry in child_out.entries {
         strip_trailing_newline(&mut child_entry);
         let mut wrapped = wrap_in_side_border(child_entry, inner_width as usize);
-        let row_offset = entries.len() as u32;
-        // Shift hits/focus emitted by the child by 1 row
-        // (top border) and by the left-border prefix
-        // ("│ " — 4 bytes for the box-drawing char + 1
-        // for the space).
-        let _ = row_offset;
         // The side borders only: the child's own rows answer the
         // pointer through their own widgets, and painting over them
         // here would fight whatever they already say.
@@ -797,11 +714,10 @@ fn collect_labeled_section(
         entries.push(wrapped);
     }
 
-    // Hits, focus cursor and embeds were already translated by the
+    // The focus cursor and embeds were already translated by the
     // `shift_channels` call above (bytes for the byte-addressed
-    // channels, display columns for the embeds — the `│ ` prefix is
+    // channel, display columns for the embeds — the `│ ` prefix is
     // 4 UTF-8 bytes but only 2 display columns wide).
-    hits.extend(std::mem::take(&mut child_out.hits));
     if let Some(fc) = child_out.focus_cursor.take() {
         focus_cursor = Some(fc);
     }
@@ -816,15 +732,11 @@ fn collect_labeled_section(
 
     CollectedOutput {
         entries,
-        hits,
         focus_cursor,
         embeds,
         overlays,
-        self_scroll: None,
         popups,
         wants_fill,
-        painted,
-        boxes,
     }
 }
 
@@ -867,19 +779,15 @@ pub(super) fn collect_overlay(
     let child_out = render_collected(child, prev, next_state, ctx, panel_width);
     CollectedOutput {
         entries: child_out.entries,
-        hits: child_out.hits,
         focus_cursor: child_out.focus_cursor,
         embeds: child_out.embeds,
         overlays: child_out.overlays,
-        self_scroll: None,
         popups: child_out.popups,
-        boxes: child_out.boxes,
         // An Overlay occupies no column rows, so it never receives a
         // fill budget from `collect_col`; a fill request inside one
         // stays on the legacy fallback (bubbling it would let a popup
         // consume the column's leftover height).
         wants_fill: false,
-        painted: child_out.painted,
     }
 }
 
@@ -894,17 +802,13 @@ fn assemble_wrapped_row(
     pieces: Vec<RowPiece>,
     panel_width: u32,
     entries: &mut Vec<TextPropertyEntry>,
-    hits: &mut Vec<HitArea>,
     focus_cursor: &mut Option<FocusCursor>,
     embeds: &mut Vec<EmbedRect>,
-    out_boxes: &mut Vec<LayoutBox>,
 ) {
     use crate::primitives::display_width::str_width;
     let max_w = panel_width as usize;
     let mut acc: Option<TextPropertyEntry> = None;
     let mut row: u32 = 0;
-    // Hits for the current (not-yet-flushed) line, with byte offsets already
-    // shifted but buffer_row not yet stamped (set when the line is started).
     let flush = |acc: &mut Option<TextPropertyEntry>, entries: &mut Vec<TextPropertyEntry>| {
         if let Some(mut merged) = acc.take() {
             ensure_trailing_newline(&mut merged);
@@ -914,10 +818,8 @@ fn assemble_wrapped_row(
     for piece in pieces {
         let RowPiece::Inline {
             mut entry,
-            hits: child_hits,
             focus_cursor: piece_fc,
             embeds: child_embeds,
-            boxes: child_boxes,
         } = piece
         else {
             // Flex / Block: ignored in the wrap path.
@@ -936,28 +838,12 @@ fn assemble_wrapped_row(
             continue;
         }
         let shift = acc.as_ref().map(|e| e.text.len()).unwrap_or(0);
-        for mut h in child_hits {
-            h.byte_start += shift;
-            h.byte_end += shift;
-            h.buffer_row = row;
-            hits.push(h);
-        }
-        // Boxes are column-addressed: they land on the wrapped line at
+        // Embeds are column-addressed: they land on the wrapped line at
         // the line-so-far *display width*, not its byte length — the
         // two diverge on every multi-byte glyph. (Recomputed here
         // rather than reusing `acc_w`, which is stale after a flush
         // started a fresh line.)
         let shift_cols = acc.as_ref().map(|e| str_width(&e.text)).unwrap_or(0) as u32;
-        let base = out_boxes.len();
-        for mut b in child_boxes {
-            b.parent = b.parent.map(|pi| pi + base);
-            b.row += row;
-            b.col += shift_cols;
-            out_boxes.push(b);
-        }
-        // Embeds ride the same column-addressed shift as boxes; the
-        // wrap path used to drop them silently (`..` in the
-        // destructure) while the inline and zip paths carried them.
         for mut emb in child_embeds {
             emb.buffer_row += row;
             emb.col_in_row += shift_cols;
@@ -1023,15 +909,12 @@ fn merge_inline(merged: &mut TextPropertyEntry, next: &mut TextPropertyEntry) {
 /// offset (which output line we're on) and the per-piece
 /// byte-column offset (where in the merged text the piece
 /// starts).
-#[allow(clippy::too_many_arguments)]
 fn zip_row_blocks(
     pieces: Vec<RowPiece>,
     panel_width: u32,
     out_entries: &mut Vec<TextPropertyEntry>,
-    out_hits: &mut Vec<HitArea>,
     out_focus_cursor: &mut Option<FocusCursor>,
     out_embeds: &mut Vec<EmbedRect>,
-    out_boxes: &mut Vec<LayoutBox>,
 ) {
     let starting_row = out_entries.len() as u32;
 
@@ -1088,17 +971,15 @@ fn zip_row_blocks(
             match piece {
                 RowPiece::Inline {
                     entry,
-                    hits,
                     focus_cursor,
                     embeds: inline_embeds,
-                    boxes: piece_boxes,
                 } => {
                     let inline_cols = entry.text.chars().count();
                     let byte_shift = text.len();
                     // Cumulative column width to the left of this
-                    // piece, for embed/box positioning. Embeds and
-                    // boxes are column-addressed (display width), not
-                    // byte- or char-addressed.
+                    // piece, for embed positioning. Embeds are
+                    // column-addressed (display width), not byte- or
+                    // char-addressed.
                     let col_shift = crate::primitives::display_width::str_width(&text) as u32;
                     if row_idx == 0 {
                         text.push_str(&entry.text);
@@ -1111,14 +992,6 @@ fn zip_row_blocks(
                                 height_rows: emb.height_rows,
                             });
                         }
-                        let base = out_boxes.len();
-                        for b in piece_boxes {
-                            let mut b = b.clone();
-                            b.parent = b.parent.map(|pi| pi + base);
-                            b.row += starting_row;
-                            b.col += col_shift;
-                            out_boxes.push(b);
-                        }
                         for overlay in &entry.inline_overlays {
                             overlays.push(InlineOverlay {
                                 start: overlay.start + byte_shift,
@@ -1127,13 +1000,6 @@ fn zip_row_blocks(
                                 properties: overlay.properties.clone(),
                                 unit: overlay.unit,
                             });
-                        }
-                        for h in hits {
-                            let mut h = h.clone();
-                            h.byte_start += byte_shift;
-                            h.byte_end += byte_shift;
-                            h.buffer_row = starting_row;
-                            out_hits.push(h);
                         }
                         if let Some(fc) = focus_cursor {
                             *out_focus_cursor = Some(FocusCursor {
@@ -1159,15 +1025,13 @@ fn zip_row_blocks(
                 RowPiece::Block {
                     column_width,
                     entries,
-                    hits,
                     focus_cursor,
                     embeds: block_embeds,
-                    boxes: piece_boxes,
                 } => {
                     let block_w = *column_width as usize;
                     let byte_shift = text.len();
                     // Cumulative column width to the left of this
-                    // block, for embed/box positioning (display width).
+                    // block, for embed positioning (display width).
                     let col_shift = crate::primitives::display_width::str_width(&text) as u32;
                     // Emit each embed exactly once, on the row
                     // where its top edge lands. The embed's
@@ -1182,14 +1046,6 @@ fn zip_row_blocks(
                                 width_cols: emb.width_cols,
                                 height_rows: emb.height_rows,
                             });
-                        }
-                        let base = out_boxes.len();
-                        for b in piece_boxes {
-                            let mut b = b.clone();
-                            b.parent = b.parent.map(|pi| pi + base);
-                            b.row += starting_row;
-                            b.col += col_shift;
-                            out_boxes.push(b);
                         }
                     }
                     if let Some(line) = entries.get(row_idx) {
@@ -1255,16 +1111,6 @@ fn zip_row_blocks(
                                 properties: overlay.properties.clone(),
                                 unit: overlay.unit,
                             });
-                        }
-                        for h in hits {
-                            if h.buffer_row != row_idx as u32 {
-                                continue;
-                            }
-                            let mut h = h.clone();
-                            h.byte_start += byte_shift;
-                            h.byte_end += byte_shift;
-                            h.buffer_row = starting_row + row_idx as u32;
-                            out_hits.push(h);
                         }
                         if let Some(fc) = focus_cursor {
                             if fc.buffer_row == row_idx as u32 {
@@ -1454,7 +1300,6 @@ mod fill_tests {
                 ..Default::default()
             },
         );
-        assert_eq!(out.painted.get("l").map(|w| w.rows), Some(12));
         assert_eq!(out.entries.len(), 12);
     }
 
@@ -1467,8 +1312,8 @@ mod fill_tests {
             RenderOptions::default(),
         );
         assert_eq!(
-            out.painted.get("l").map(|w| w.rows),
-            Some(fresh_core::api::LEGACY_VISIBLE_ROWS_FALLBACK)
+            out.entries.len(),
+            fresh_core::api::LEGACY_VISIBLE_ROWS_FALLBACK as usize
         );
     }
 
@@ -1491,7 +1336,7 @@ mod fill_tests {
                 ..Default::default()
             },
         );
-        assert_eq!(out.painted.get("l").map(|w| w.rows), Some(10));
+        // Two hint-bar rows and ten list rows.
         assert_eq!(out.entries.len(), 12);
     }
 
@@ -1510,7 +1355,6 @@ mod fill_tests {
                 ..Default::default()
             },
         );
-        assert_eq!(out.painted.get("l").map(|w| w.rows), Some(4));
         assert_eq!(out.entries.len(), 4);
     }
 
@@ -1529,8 +1373,7 @@ mod fill_tests {
                 ..Default::default()
             },
         );
-        let legacy = fresh_core::api::LEGACY_VISIBLE_ROWS_FALLBACK;
-        assert_eq!(out.painted.get("a").map(|w| w.rows), Some(legacy));
-        assert_eq!(out.painted.get("b").map(|w| w.rows), Some(legacy));
+        let legacy = fresh_core::api::LEGACY_VISIBLE_ROWS_FALLBACK as usize;
+        assert_eq!(out.entries.len(), 2 * legacy);
     }
 }

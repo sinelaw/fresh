@@ -1191,19 +1191,26 @@ mod tests {
     }
 
     /// Every row of a composite control that the user can press must
-    /// carry a hit, and the hit must say *which* row — the settings
+    /// be a keyed node, and the key must say *which* row — the settings
     /// side has no other way to tell "the second extension" from "the
     /// add row" once the body is a description rather than a set of
     /// stashed rects.
     #[test]
     fn every_clickable_row_of_a_composite_control_names_itself() {
-        /// `(widget_key, event)` of every hit, in row order.
-        fn hits(out: &crate::widgets::RenderOutput) -> Vec<(String, &'static str)> {
-            let mut hits: Vec<_> = out.hits.iter().collect();
-            hits.sort_by_key(|h| (h.buffer_row, h.byte_start));
-            hits.iter()
-                .map(|h| (h.event.widget_key.clone(), h.event.event_type))
-                .collect()
+        /// `(widget_key, kind)` of every keyed node, in document order.
+        fn keyed(spec: &WidgetSpec, out: &mut Vec<(String, &'static str)>) {
+            let meta = crate::widgets::kinds::behavior(spec).box_meta(spec);
+            if let Some(k) = meta.key {
+                out.push((k, meta.kind));
+            }
+            for c in spec.children() {
+                keyed(c, out);
+            }
+        }
+        fn keys_of(spec: &WidgetSpec) -> Vec<(String, &'static str)> {
+            let mut out = Vec::new();
+            keyed(spec, &mut out);
+            out
         }
 
         let field = "/languages/cpp/extensions";
@@ -1212,20 +1219,14 @@ mod tests {
             items: vec!["cpp".into(), "cc".into()],
             integer: false,
         };
-        let out = crate::widgets::render_spec(
-            &setting_control_to_widget(field, &list),
-            &HashMap::new(),
-            "",
-            u32::MAX,
-        );
         assert_eq!(
-            hits(&out),
+            keys_of(&setting_control_to_widget(field, &list)),
             vec![
-                (format!("{field}::row::0"), "focus"),
-                (format!("{field}::remove::0"), "activate"),
-                (format!("{field}::row::1"), "focus"),
-                (format!("{field}::remove::1"), "activate"),
-                (format!("{field}::add"), "focus"),
+                (format!("{field}::row::0"), "text"),
+                (format!("{field}::remove::0"), "button"),
+                (format!("{field}::row::1"), "text"),
+                (format!("{field}::remove::1"), "button"),
+                (format!("{field}::add"), "text"),
             ],
             "each item's field and its [x], then the add row's field"
         );
@@ -1238,27 +1239,19 @@ mod tests {
             display_field: None,
             no_add: false,
         };
-        let out = crate::widgets::render_spec(
-            &setting_control_to_widget("/languages", &map),
-            &HashMap::new(),
-            "",
-            u32::MAX,
-        );
-        // A row's hit names the row; the list it belongs to is the owner.
-        let selects: Vec<(String, String, i64)> = out
-            .hits
-            .iter()
-            .filter(|h| h.event.event_type == "select")
-            .map(|h| {
-                (
-                    h.event.owner_key.clone().unwrap_or_default(),
-                    h.event.widget_key.clone(),
-                    h.event.payload["index"].as_i64().unwrap_or(-1),
-                )
-            })
-            .collect();
+        // A row's key names the row; the list it belongs to is the owner.
+        let spec = setting_control_to_widget("/languages", &map);
+        let rows: Vec<(String, String, usize)> =
+            match crate::widgets::find_widget_by_key(&spec, "/languages") {
+                Some(WidgetSpec::List { item_keys, key, .. }) => item_keys
+                    .iter()
+                    .enumerate()
+                    .map(|(i, k)| (key.clone().unwrap_or_default(), k.clone(), i))
+                    .collect(),
+                other => panic!("the map is a keyed list, got {other:?}"),
+            };
         assert_eq!(
-            selects,
+            rows,
             vec![
                 (
                     "/languages".to_string(),

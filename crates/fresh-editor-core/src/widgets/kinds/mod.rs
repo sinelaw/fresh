@@ -44,11 +44,10 @@ use fresh_core::api::WidgetSpec;
 use super::registry::WidgetInstanceState;
 use super::render::{CollectedOutput, RenderContext};
 
-/// Static box-tree metadata for one widget node: what its
-/// [`crate::widgets::LayoutBox`] should carry, derived from the spec
-/// alone. `render_collected` combines this with the collected row count
-/// to push the node's box after `collect` returns, so containers only
-/// ever handle child-box *merging*.
+/// Static metadata for one widget node, derived from the spec alone: what
+/// it is, whether it can take focus and under which key, and the dispatch
+/// flags the host's routing reads. The one place each kind states these
+/// facts — every focus ring and every routing decision asks here.
 #[derive(Debug, Clone, Default)]
 pub struct BoxMeta {
     pub kind: &'static str,

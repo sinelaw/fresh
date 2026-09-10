@@ -1314,7 +1314,6 @@ pub mod shell_theme {
         format!("{fg}/{bg}")
     }
 
-
     /// The same, with text attributes the theme does not carry.
     pub fn attrs(fg: &str, bg: &str, attrs: &[&str]) -> String {
         Ink {

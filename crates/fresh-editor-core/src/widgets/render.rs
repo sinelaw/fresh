@@ -20,8 +20,7 @@
 //! `Layer`, `Transient`, `Table`) extend the dispatch without
 //! changing the public function signature.
 
-use crate::widgets::layout_box::LayoutBox;
-use crate::widgets::registry::{HitArea, PaintedWindow, WidgetInstanceState};
+use crate::widgets::registry::WidgetInstanceState;
 use fresh_core::api::{
     ButtonKind, DualListOption, HintEntry, OverlayColorSpec, OverlayOptions, TreeNode, WidgetSpec,
 };
@@ -199,10 +198,8 @@ pub struct FocusCursor {
 /// What a single render of a `WidgetSpec` produces.
 ///
 /// * `entries` — the bytes for `set_virtual_buffer_content`.
-/// * `hits` — click rectangles for the `WidgetRegistry` so a later
-///   `mouse_click` dispatches a semantic `widget_event`.
 /// * `instance_states` — next-tick widget instance state (List
-///   scroll offsets / selection, TextInput value+cursor, …).
+///   selection, TextInput value+cursor, …).
 /// * `focus_key` — currently focused widget key, clamped to a
 ///   tabbable that exists in the spec (or `""` when there are no
 ///   tabbables).
@@ -213,9 +210,15 @@ pub struct FocusCursor {
 ///   terminal cursor should land. Replaces the previous
 ///   "overlay-as-cursor" hack — the actual hardware cursor blinks
 ///   at the right byte, with no theme-color guesswork.
+///
+/// **Text, and what the text needs.** The projection used to publish
+/// geometry beside its rows — the click ranges, the layout-box arena and
+/// the window each list was painted into — and the tree lays those out
+/// itself now (`docs/internal/retained-mode-ui.md` "Delete the widget
+/// text projection"). What is left is the mirror a pane-mounted panel
+/// keeps in its buffer, and the state the walk resolves on the way.
 pub struct RenderOutput {
     pub entries: Vec<TextPropertyEntry>,
-    pub hits: Vec<HitArea>,
     pub instance_states: HashMap<String, WidgetInstanceState>,
     pub focus_key: String,
     pub tabbable: Vec<String>,
@@ -242,19 +245,6 @@ pub struct RenderOutput {
     /// the panel), so the list extends past the panel/modal frame. Only
     /// one can be open at a time (the focused widget). See [`PanelPopup`].
     pub popup: Option<PanelPopup>,
-    /// The window each keyed `List`/`Tree` was painted into this
-    /// render: rows, items, offset and the measured item band. Stored
-    /// on the panel so key/mouse handlers act against what was really
-    /// painted (an auto-sized widget's spec carries no number at all),
-    /// and so the scroll fold has its own previous value to read back.
-    /// See [`PaintedWindow`].
-    pub painted: HashMap<String, PaintedWindow>,
-    /// The panel's layout-box tree (root-last arena; see
-    /// [`crate::widgets::layout_box`]). One box per widget with its
-    /// panel-relative rectangle, stacking level, and dispatch flags —
-    /// the geometry substrate hit-tested event routing and the derived
-    /// focus ring are built on.
-    pub boxes: Vec<LayoutBox>,
 }
 
 /// A panel's screen-level floating pop-over: the open `Dropdown`'s
@@ -325,14 +315,9 @@ pub struct EmbedRect {
 #[derive(Default)]
 pub struct CollectedOutput {
     pub entries: Vec<TextPropertyEntry>,
-    pub hits: Vec<HitArea>,
     pub focus_cursor: Option<FocusCursor>,
     pub embeds: Vec<EmbedRect>,
     pub overlays: Vec<OverlayRow>,
-    /// Scroll payload for THIS node's own box (a keyed List/Tree or
-    /// multi-line Text writes it in `collect`); `push_self_box` moves
-    /// it onto the box. Never set by containers.
-    pub self_scroll: Option<crate::widgets::layout_box::BoxScroll>,
     /// Open-Dropdown pop-overs, each anchored to its trigger row. Shifted
     /// through Col/Row/Section collapse exactly like `overlays`'
     /// `buffer_row`, then collapsed to `RenderOutput::popup`
@@ -344,23 +329,12 @@ pub struct CollectedOutput {
     /// child with the leftover budget; unresolved it bubbles to the
     /// caller (harmless — the widget used the legacy fallback rows).
     pub wants_fill: bool,
-    /// The window each keyed `List`/`Tree` was painted into by this
-    /// subtree — see [`PaintedWindow`]. The paint-output channel the
-    /// three window fields left `WidgetInstanceState` for; containers
-    /// merge it upward like every other keyed side channel.
-    pub painted: HashMap<String, PaintedWindow>,
-    /// The layout-box arena for this subtree (root-last; see
-    /// [`crate::widgets::layout_box`]). Containers shift child box
-    /// rectangles alongside the other column-addressed side channels
-    /// and re-parent subtree roots onto their own box.
-    pub boxes: Vec<LayoutBox>,
 }
 
 impl CollectedOutput {
     /// Fold a child subtree's entire output into this accumulator at
-    /// the current column cursor: every geometry channel — hits,
-    /// focus cursor, embeds, scroll regions, dropdown anchors,
-    /// overlays, boxes, entries — shifts down by `row_offset`
+    /// the current column cursor: every channel — focus cursor, embeds,
+    /// dropdown anchors, overlays, entries — shifts down by `row_offset`
     /// together. Containers MUST use this (or the overlay promotion
     /// variant) instead of shifting channels by hand: a container
     /// that shifts two of three column-addressed channels compiles
@@ -369,22 +343,16 @@ impl CollectedOutput {
     ///
     /// `promote_overlay` = the child is an `Overlay` in a `Col`: its
     /// entries become overlay rows anchored at the cursor (occupying
-    /// no column height), its hits are stamped `overlay`, and its
-    /// whole box subtree moves up one stacking level.
-    /// Translate EVERY geometry channel by one origin shift: `rows`
-    /// down, `display_cols` right for the column-addressed channels
-    /// (boxes, embeds), `bytes` right for the byte-addressed channels
-    /// (hits, the focus cursor). Flow-anchored popups ride the row
+    /// no column height).
+    /// Translate EVERY channel by one origin shift: `rows` down,
+    /// `display_cols` right for the column-addressed channel (embeds),
+    /// `bytes` right for the byte-addressed one (the focus cursor). Flow-anchored popups ride the row
     /// shift; absolute anchors name their own panel row and stay put.
     /// ONE method so a container cannot shift some channels and forget
     /// others — the labeled section used to spell this translation six
     /// times, synced only by prose (the byte-vs-column unit split is
     /// exactly where a hand-copied shift drifts).
     pub fn shift_channels(&mut self, rows: u32, display_cols: u32, bytes: usize) {
-        for b in &mut self.boxes {
-            b.row += rows;
-            b.col += display_cols;
-        }
         for o in &mut self.overlays {
             o.buffer_row += rows;
         }
@@ -392,11 +360,6 @@ impl CollectedOutput {
             if !dp.anchor_absolute {
                 dp.anchor_row += rows;
             }
-        }
-        for h in &mut self.hits {
-            h.buffer_row += rows;
-            h.byte_start += bytes;
-            h.byte_end += bytes;
         }
         if let Some(fc) = &mut self.focus_cursor {
             fc.buffer_row += rows;
@@ -408,23 +371,8 @@ impl CollectedOutput {
         }
     }
 
-    pub fn absorb_child(
-        &mut self,
-        mut child: CollectedOutput,
-        row_offset: u32,
-        promote_overlay: bool,
-    ) {
+    pub fn absorb_child(&mut self, child: CollectedOutput, row_offset: u32, promote_overlay: bool) {
         self.wants_fill |= child.wants_fill;
-        self.painted.extend(std::mem::take(&mut child.painted));
-        let base = self.boxes.len();
-        for mut b in child.boxes {
-            b.parent = b.parent.map(|pi| pi + base);
-            b.row += row_offset;
-            if promote_overlay {
-                b.z = b.z.saturating_add(1);
-            }
-            self.boxes.push(b);
-        }
         if let Some(mut fc) = child.focus_cursor {
             fc.buffer_row += row_offset;
             self.focus_cursor = Some(fc);
@@ -446,21 +394,9 @@ impl CollectedOutput {
                     entry: e,
                 });
             }
-            for mut h in child.hits {
-                h.buffer_row += row_offset;
-                // Byte ranges are measured against the overlay's row
-                // text — the covered row's text is invisible and must
-                // not resolve clicks.
-                h.overlay = true;
-                self.hits.push(h);
-            }
             // Nested overlays are already anchored.
             self.overlays.extend(child.overlays);
         } else {
-            for mut h in child.hits {
-                h.buffer_row += row_offset;
-                self.hits.push(h);
-            }
             self.overlays
                 .extend(child.overlays.into_iter().map(|mut o| {
                     o.buffer_row += row_offset;
@@ -468,23 +404,6 @@ impl CollectedOutput {
                 }));
             self.entries.extend(child.entries);
         }
-    }
-
-    /// Append this subtree's own root box: rectangle covering the rows
-    /// the subtree emitted at full `panel_width`, every parentless box
-    /// so far re-parented onto it. Leaf kinds call this on an output
-    /// with no boxes; containers call it after merging children.
-    pub fn push_self_box(&mut self, mut own: LayoutBox, panel_width: u32) {
-        own.width = panel_width;
-        own.height = self.entries.len() as u32;
-        own.scroll = self.self_scroll.take();
-        let idx = self.boxes.len();
-        for b in &mut self.boxes {
-            if b.parent.is_none() {
-                b.parent = Some(idx);
-            }
-        }
-        self.boxes.push(own);
     }
 }
 
@@ -552,32 +471,14 @@ pub struct RenderContext<'a> {
     /// `collect_col`'s fill pass). `None` = no budget: auto widgets
     /// fall back to the legacy default and report `wants_fill`.
     pub avail_height: Option<u32>,
-    /// The windows the PREVIOUS paint of this panel left behind, by
-    /// widget key. A scroll offset is a fold over its own previous
-    /// value, so the painter has to read back what it last published —
-    /// this is that channel's input half, the mirror of
-    /// [`CollectedOutput::painted`]. `None` (a stateless render: the
-    /// Settings dialog, a toolbar, most tests) starts every window at
-    /// the top, exactly as an absent instance-state offset used to.
-    pub prev_painted: Option<&'a HashMap<String, PaintedWindow>>,
     /// How far each keyed rows-widget is panned sideways, in display columns.
-    /// The reader's own fold, carried here for the same reason
-    /// `prev_painted` is: the painter is where a window is resolved, and
-    /// sideways is a window like any other. `None` (a stateless render)
-    /// pans nothing, exactly as an unset entry does.
+    /// The reader's own fold, carried here because the painter is where a
+    /// window is resolved, and sideways is a window like any other. `None`
+    /// (a stateless render) pans nothing, exactly as an unset entry does.
     pub h_pan: Option<&'a HashMap<String, i32>>,
 }
 
 impl RenderContext<'_> {
-    /// The window the keyed widget was painted into last time, if it
-    /// was. Empty and absent keys have none — an unkeyed list cannot
-    /// carry a scroll offset across renders, which is what "lists
-    /// without a `key` lose state across updates" has always meant.
-    pub fn painted(&self, key: Option<&str>) -> Option<PaintedWindow> {
-        let k = key.filter(|k| !k.is_empty())?;
-        self.prev_painted?.get(k).copied()
-    }
-
     /// Sideways pan for `key`, in display columns. Zero for a keyless widget
     /// — a pan is addressed to a widget and an unkeyed one cannot be named.
     pub fn h_pan(&self, key: Option<&str>) -> i32 {
@@ -637,10 +538,6 @@ pub struct RenderOptions<'a> {
     /// height in rows, when the host knows it. `None` keeps auto-sized
     /// `List`/`Tree` widgets on the legacy fallback.
     pub avail_height: Option<u32>,
-    /// See [`RenderContext::prev_painted`] — the windows this panel's
-    /// previous render published. A host that keeps a panel mounted
-    /// MUST thread it, or every repaint starts its lists at the top.
-    pub prev_painted: Option<&'a HashMap<String, PaintedWindow>>,
     /// See [`RenderContext::h_pan`] — how far each rows-widget is panned
     /// sideways. A host that keeps a panel mounted MUST thread it, or every
     /// repaint slides the reader's rows back to their resting window.
@@ -684,39 +581,23 @@ pub fn render_spec_with_options(
         markdown: opts.markdown,
         marker_gutter: opts.marker_gutter,
         avail_height: opts.avail_height,
-        prev_painted: opts.prev_painted,
         h_pan: opts.h_pan,
     };
     let mut next_state = HashMap::new();
     let collected = render_collected(spec, prev, &mut next_state, ctx, panel_width);
-    // The box tree is the focus authority for a *painted* panel: publish the
-    // ring derived from it (focusable boxes in document order).
-    //
-    // The assertion that used to sit here — that this equals the spec walk's
-    // `tabbable` — is gone, and the reason is that the spec walk is no longer
-    // a second computation of the same list. Both rings ask the same
-    // `box_meta` impls; the walk is now the *only* one a described panel has
-    // (`resolve_panel`), and the arena's is what a painted panel's boxes carry
-    // for the hit-tested paths that also read them. An assert between two
-    // expressions of one rule reports arena-construction bugs — which is what
-    // it was for — but it does so in a debug build only, and every surface
-    // that would trip it now has a test of its own for the ring it actually
-    // uses.
-    let derived_tabbable = crate::widgets::layout_box::focus_ring(&collected.boxes);
     RenderOutput {
         entries: collected.entries,
-        hits: collected.hits,
         instance_states: next_state,
         focus_key,
-        tabbable: derived_tabbable,
+        // The spec walk's ring is the one ring: `collect_tabbable` asks each
+        // kind's `box_meta`, which is what every focus authority reads.
+        tabbable,
         focus_cursor: collected.focus_cursor,
         embeds: collected.embeds,
         overlays: collected.overlays,
         // At most one Dropdown is open at a time (the focused one); take
         // the first if the spec somehow produced several.
         popup: collected.popups.into_iter().next(),
-        painted: collected.painted,
-        boxes: collected.boxes,
     }
 }
 
@@ -924,12 +805,8 @@ pub fn ensure_trailing_newline(entry: &mut TextPropertyEntry) {
 /// `Raw`, `Spacer`, `HintBar` skip.
 fn collect_tabbable(spec: &WidgetSpec, out: &mut Vec<String>) {
     // One copy of the focusability rules: each kind's `box_meta` is the
-    // authority (it also builds the layout-box tree the published ring
-    // derives from). This walk exists only because focus must resolve
-    // *before* collection builds the tree; it asks the same impls the
-    // tree does, so the two rings cannot diverge on rules — only an
-    // arena-construction bug could split them, which the debug assert
-    // in `render_spec_with_options` still guards.
+    // authority. Focus must resolve *before* collection (widgets style by
+    // focus), so this is a walk of the spec and not of anything rendered.
     let meta = super::kinds::behavior(spec).box_meta(spec);
     if meta.focusable {
         if let Some(k) = meta.key {
@@ -962,21 +839,7 @@ pub fn render_collected(
     // Every kind's behaviour lives in `widgets::kinds` behind the
     // `WidgetImpl` trait (`docs/internal/retained-mode-ui.md` "Where each surface lives"); the single
     // kind-dispatch is `kinds::behavior`.
-    let behavior = super::kinds::behavior(spec);
-    let mut out = behavior.collect(spec, prev, next_state, ctx, panel_width);
-    // Cap the subtree with its own layout box (rectangle = the rows it
-    // just emitted at this width), re-parenting child-subtree roots.
-    // Done here, once, so `collect` impls never see box bookkeeping
-    // beyond the container merge helpers.
-    let meta = behavior.box_meta(spec);
-    let mut own = LayoutBox::plain(meta.kind, 0, 0, 0, 0);
-    own.key = meta.key;
-    own.focusable = meta.focusable;
-    own.scrollable = meta.scrollable;
-    own.pointer_opaque = meta.pointer_opaque;
-    own.focus_trap = meta.focus_trap;
-    out.push_self_box(own, panel_width);
-    out
+    super::kinds::behavior(spec).collect(spec, prev, next_state, ctx, panel_width)
 }
 
 // =========================================================================
@@ -4407,23 +4270,18 @@ pub fn snap_down_to_char_boundary(s: &str, idx: usize) -> usize {
 #[cfg(test)]
 pub mod tests {
     use super::*;
-    use serde_json::json;
 
-    /// Most existing tests don't care about the new focus_key /
-    /// tabbable fields. Wrap the no-focus-needed render path so
-    /// they keep destructuring a 3-tuple; new tests destructure
-    /// `RenderOutput` directly.
+    /// Most existing tests don't care about the focus_key / tabbable
+    /// fields. Wrap the no-focus-needed render path so they destructure
+    /// `(entries, instance_states)`; new tests destructure `RenderOutput`
+    /// directly.
     fn render_no_focus(
         spec: &WidgetSpec,
         prev: &HashMap<String, WidgetInstanceState>,
-    ) -> (
-        Vec<TextPropertyEntry>,
-        Vec<HitArea>,
-        HashMap<String, WidgetInstanceState>,
-    ) {
+    ) -> (Vec<TextPropertyEntry>, HashMap<String, WidgetInstanceState>) {
         // u32::MAX disables flex sizing (no leftover to distribute).
         let out = render_spec(spec, prev, "", u32::MAX);
-        (out.entries, out.hits, out.instance_states)
+        (out.entries, out.instance_states)
     }
 
     /// [`render_no_focus`]'s whole output, for the assertions that are
@@ -4433,44 +4291,6 @@ pub mod tests {
         prev: &HashMap<String, WidgetInstanceState>,
     ) -> RenderOutput {
         render_spec(spec, prev, "", u32::MAX)
-    }
-
-    /// Render carrying a previous paint's windows in — the input half of
-    /// the channel a scroll offset folds over. `render_spec` alone is a
-    /// *stateless* render (nothing carried), so a test about where the
-    /// window ends up has to say where it started.
-    fn render_with_window(
-        spec: &WidgetSpec,
-        prev: &HashMap<String, WidgetInstanceState>,
-        prev_painted: &HashMap<String, PaintedWindow>,
-    ) -> RenderOutput {
-        render_spec_with_options(
-            spec,
-            prev,
-            u32::MAX,
-            RenderOptions {
-                auto_focus_first: true,
-
-                prev_painted: Some(prev_painted),
-                ..Default::default()
-            },
-        )
-    }
-
-    /// A previous paint that left a keyed list windowed at `offset`, one
-    /// row per item.
-    fn window_at(key: &str, rows: u32, offset: u32) -> HashMap<String, PaintedWindow> {
-        let mut m = HashMap::new();
-        m.insert(
-            key.to_string(),
-            PaintedWindow {
-                rows,
-                items: rows,
-                offset,
-                cols: 0,
-            },
-        );
-        m
     }
 
     #[test]
@@ -4701,7 +4521,7 @@ pub mod tests {
             markdown: false,
             key: None,
         };
-        let (entries, _, _) = render_no_focus(&spec, &HashMap::new());
+        let (entries, _) = render_no_focus(&spec, &HashMap::new());
         let text = entries[0].text.trim_end_matches('\n');
         use crate::primitives::display_width::str_width;
         // The label is padded to the 18-col column, then `: [` opens the
@@ -4743,7 +4563,7 @@ pub mod tests {
             markdown: false,
             key: None,
         };
-        let (entries, _, _) = render_no_focus(&spec, &HashMap::new());
+        let (entries, _) = render_no_focus(&spec, &HashMap::new());
         let text = entries[0].text.trim_end_matches('\n');
         assert!(
             text.contains("Name [") && !text.contains("Name :"),
@@ -4805,11 +4625,10 @@ pub mod tests {
             ],
             key: None,
         };
-        let (out, hits, _state) = render_no_focus(&spec, &HashMap::new());
+        let (out, _state) = render_no_focus(&spec, &HashMap::new());
         assert_eq!(out.len(), 2);
         assert_eq!(out[0].text, "A alpha\n");
         assert_eq!(out[1].text, "B beta\n");
-        assert!(hits.is_empty(), "HintBar emits no hit areas in v1");
     }
 
     #[test]
@@ -4818,10 +4637,9 @@ pub mod tests {
             entries: vec![TextPropertyEntry::text("hello")],
             key: None,
         };
-        let (out, hits, _state) = render_no_focus(&spec, &HashMap::new());
+        let (out, _state) = render_no_focus(&spec, &HashMap::new());
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].text, "hello\n");
-        assert!(hits.is_empty());
     }
 
     #[test]
@@ -4985,13 +4803,6 @@ pub mod tests {
         assert_eq!(text.len(), 31);
         assert!(text.starts_with("[ ] A"));
         assert!(text.ends_with("[ B ]\n"));
-        let button_hit = out
-            .hits
-            .iter()
-            .find(|h| h.event.widget_kind == "button")
-            .unwrap();
-        assert_eq!(button_hit.byte_start, 25);
-        assert_eq!(button_hit.byte_end, 30);
     }
 
     #[test]
@@ -5064,7 +4875,7 @@ pub mod tests {
             ],
             key: None,
         };
-        let (out, _hits, _state) = render_no_focus(&spec, &HashMap::new());
+        let (out, _state) = render_no_focus(&spec, &HashMap::new());
         assert_eq!(out.len(), 1);
         assert_eq!(out[0].text, "[ ] A    [ Go ]\n");
     }
@@ -5091,7 +4902,7 @@ pub mod tests {
             ],
             key: None,
         };
-        let (out, _hits, _state) = render_no_focus(&spec, &HashMap::new());
+        let (out, _state) = render_no_focus(&spec, &HashMap::new());
         assert_eq!(out.len(), 1);
         // Two adjacent HintBars are concatenated; the second's overlay shifts.
         assert_eq!(out[0].text, "Tab xEsc y\n");
@@ -5105,54 +4916,7 @@ pub mod tests {
     // -------------------------------------------------------------
 
     #[test]
-    fn toggle_emits_hit_area_with_toggle_payload() {
-        let spec = WidgetSpec::Toggle {
-            indeterminate: false,
-            label_first: false,
-            label_width: 0,
-            checked: false,
-            label: "Case".into(),
-            focused: false,
-            key: Some("case".into()),
-        };
-        let (_entries, hits, _state) = render_no_focus(&spec, &HashMap::new());
-        assert_eq!(hits.len(), 1);
-        let h = &hits[0];
-        assert_eq!(h.event.widget_key, "case");
-        assert_eq!(h.event.widget_kind, "toggle");
-        assert_eq!(h.event.event_type, "toggle");
-        assert_eq!(h.buffer_row, 0);
-        assert_eq!(h.byte_start, 0);
-        assert_eq!(h.byte_end, "[ ] Case".len());
-        assert_eq!(h.event.payload, json!({"checked": true}));
-    }
-
-    #[test]
-    fn button_emits_hit_area_with_activate_payload() {
-        let spec = WidgetSpec::Button {
-            label: "Replace All".into(),
-            focused: false,
-            intent: ButtonKind::Primary,
-            key: Some("replace".into()),
-            disabled: false,
-            focusable: true,
-            bare: false,
-            full_width: false,
-            hover_style: None,
-            style: None,
-        };
-        let (_entries, hits, _state) = render_no_focus(&spec, &HashMap::new());
-        assert_eq!(hits.len(), 1);
-        let h = &hits[0];
-        assert_eq!(h.event.widget_key, "replace");
-        assert_eq!(h.event.widget_kind, "button");
-        assert_eq!(h.event.event_type, "activate");
-        assert_eq!(h.byte_end, "[ Replace All ]".len());
-        assert_eq!(h.event.payload, json!({}));
-    }
-
-    #[test]
-    fn disabled_button_omits_hit_area_and_skips_tabbable() {
+    fn disabled_button_skips_tabbable() {
         let spec = WidgetSpec::Row {
             wrap: false,
             children: vec![
@@ -5184,14 +4948,6 @@ pub mod tests {
             key: None,
         };
         let out = render_spec(&spec, &HashMap::new(), "", 30);
-        assert_eq!(
-            out.hits
-                .iter()
-                .filter(|h| h.event.widget_kind == "button")
-                .count(),
-            1,
-            "disabled button should not emit a hit area"
-        );
         assert_eq!(
             out.tabbable,
             vec!["cancel".to_string()],
@@ -5315,7 +5071,7 @@ pub mod tests {
     }
 
     #[test]
-    fn row_inline_collapse_shifts_hit_byte_offsets() {
+    fn row_inline_collapse_merges_children_into_one_row() {
         let spec = WidgetSpec::Row {
             wrap: false,
             children: vec![
@@ -5345,52 +5101,10 @@ pub mod tests {
             ],
             key: None,
         };
-        let (entries, hits, _state) = render_no_focus(&spec, &HashMap::new());
+        let (entries, _state) = render_no_focus(&spec, &HashMap::new());
         // One merged row with text "[v] A  [ ] B"
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].text, "[v] A  [ ] B\n");
-        assert_eq!(hits.len(), 2);
-        assert_eq!(hits[0].event.widget_key, "a");
-        assert_eq!(hits[0].buffer_row, 0);
-        assert_eq!(hits[0].byte_start, 0);
-        assert_eq!(hits[0].byte_end, 5); // "[v] A".len()
-                                         // Second toggle shifts past first toggle ("[v] A".len() = 5)
-                                         // + spacer ("  ".len() = 2) = 7.
-        assert_eq!(hits[1].event.widget_key, "b");
-        assert_eq!(hits[1].buffer_row, 0);
-        assert_eq!(hits[1].byte_start, 7);
-        assert_eq!(hits[1].byte_end, 12);
-    }
-
-    #[test]
-    fn col_stacks_hit_rows() {
-        let spec = WidgetSpec::Col {
-            children: vec![
-                WidgetSpec::Toggle {
-                    indeterminate: false,
-                    label_first: false,
-                    label_width: 0,
-                    checked: false,
-                    label: "row0".into(),
-                    focused: false,
-                    key: Some("k0".into()),
-                },
-                WidgetSpec::Toggle {
-                    indeterminate: false,
-                    label_first: false,
-                    label_width: 0,
-                    checked: true,
-                    label: "row1".into(),
-                    focused: false,
-                    key: Some("k1".into()),
-                },
-            ],
-            key: None,
-        };
-        let (_entries, hits, _state) = render_no_focus(&spec, &HashMap::new());
-        assert_eq!(hits.len(), 2);
-        assert_eq!(hits[0].buffer_row, 0);
-        assert_eq!(hits[1].buffer_row, 1);
     }
 
     // -------------------------------------------------------------
@@ -5621,7 +5335,7 @@ pub mod tests {
     // -------------------------------------------------------------
 
     #[test]
-    fn list_emits_one_entry_and_one_hit_per_item() {
+    fn list_pads_to_its_visible_rows() {
         let spec = WidgetSpec::List {
             items: vec![
                 TextPropertyEntry::text("alpha"),
@@ -5635,24 +5349,16 @@ pub mod tests {
             focusable: true,
             key: None,
         };
-        let (entries, hits, _state) = render_no_focus(&spec, &HashMap::new());
+        let (entries, _state) = render_no_focus(&spec, &HashMap::new());
         // 3 real items + 7 blank padding rows to fill `visible_rows=10`.
         // Padding ensures the labeledSection that wraps a List stays
         // the height it advertises, so a sibling pane lands its
         // bottom border on the matching row (orchestrator picker
         // depends on this).
         assert_eq!(entries.len(), 10);
-        // Real items still produce exactly one hit each; padded rows
-        // are intentionally not clickable.
-        assert_eq!(hits.len(), 3);
-        for (i, h) in hits.iter().enumerate() {
-            assert_eq!(h.buffer_row, i as u32);
-            assert_eq!(h.event.widget_kind, "list");
-            assert_eq!(h.event.event_type, "select");
-            assert_eq!(h.event.payload["index"], i);
-        }
-        assert_eq!(hits[0].event.widget_key, "a");
-        assert_eq!(hits[2].event.widget_key, "c");
+        assert!(entries[0].text.starts_with("alpha"));
+        assert!(entries[2].text.starts_with("gamma"));
+        assert!(entries[3..].iter().all(|e| e.text.trim().is_empty()));
     }
 
     #[test]
@@ -5683,18 +5389,12 @@ pub mod tests {
         // Finite panel width (cards draw borders sized to it; the
         // u32::MAX `render_no_focus` uses would loop drawing `─`).
         let out = render_spec(&spec, &HashMap::new(), "", 40);
-        let (entries, hits) = (out.entries, out.hits);
+        let entries = out.entries;
         // Fills the advertised height.
         assert_eq!(entries.len(), 12);
-        // Card height is 3 rows; both cards render → 6 hit rows, all
-        // mapping back to their item index (whole card is clickable).
-        assert_eq!(hits.len(), 6, "3 rows per card * 2 cards");
-        assert!(hits[0..3]
-            .iter()
-            .all(|h| h.event.payload["index"] == 0 && h.event.widget_key == "a"));
-        assert!(hits[3..6]
-            .iter()
-            .all(|h| h.event.payload["index"] == 1 && h.event.widget_key == "b"));
+        // Card height is 3 rows; both cards render.
+        assert!(entries[1].text.contains("aaa"));
+        assert!(entries[4].text.contains("bbb"));
         // The selected card (index 1, rows 3..6) is marked by a heavy
         // box border + bold — NOT a background band (which read garish
         // over a multi-row card). The unselected card (rows 0..3) keeps
@@ -5815,7 +5515,7 @@ pub mod tests {
             focusable: true,
             key: None,
         };
-        let (entries, _hits, _state) = render_no_focus(&spec, &HashMap::new());
+        let (entries, _state) = render_no_focus(&spec, &HashMap::new());
         assert!(entries[0].style.is_none(), "unselected row keeps no style");
         let style = entries[1].style.as_ref().expect("selected row gets style");
         assert_eq!(
@@ -5826,7 +5526,7 @@ pub mod tests {
     }
 
     #[test]
-    fn list_inside_col_offsets_hit_rows_by_preceding_lines() {
+    fn list_inside_col_stacks_after_preceding_lines() {
         let spec = WidgetSpec::Col {
             children: vec![
                 WidgetSpec::HintBar {
@@ -5851,72 +5551,13 @@ pub mod tests {
             ],
             key: None,
         };
-        let (entries, hits, _state) = render_no_focus(&spec, &HashMap::new());
+        let (entries, _state) = render_no_focus(&spec, &HashMap::new());
         // HintBar (1 row) + List items (2) + padding rows (8) to fill
         // `visible_rows=10` = 11 total entries.
         assert_eq!(entries.len(), 11);
-        // Real list rows still produce one hit each; padding is not
-        // clickable.
-        assert_eq!(hits.len(), 2);
-        // List rows land at buffer_row 1 and 2 (after the HintBar).
-        assert_eq!(hits[0].buffer_row, 1);
-        assert_eq!(hits[1].buffer_row, 2);
-    }
-
-    #[test]
-    fn list_payload_includes_absolute_index_and_key() {
-        let spec = WidgetSpec::List {
-            items: vec![TextPropertyEntry::text("only")],
-            item_specs: vec![],
-            item_keys: vec!["match:42".into()],
-            selected_index: 0,
-            visible_rows: Some(10),
-            focusable: true,
-            key: None,
-        };
-        let (_entries, hits, _state) = render_no_focus(&spec, &HashMap::new());
-        assert_eq!(hits[0].event.payload["index"], 0);
-        assert_eq!(hits[0].event.payload["key"], "match:42");
-    }
-
-    #[test]
-    fn list_hit_payload_carries_list_key() {
-        // The click handler needs the List's *spec* key to update the
-        // host-owned selection (instance state is keyed by it) and to
-        // report a `widget_key` consistent with keyboard nav. The
-        // per-item key alone (in `payload.key`) can't identify the
-        // widget, so every list hit must carry `list_key`.
-        let spec = make_list(-1, 10, 2, Some("mylist"));
-        let (_entries, hits, _state) = render_no_focus(&spec, &HashMap::new());
-        assert_eq!(hits.len(), 2);
-        assert_eq!(hits[0].event.payload["list_key"], "mylist");
-        assert_eq!(hits[1].event.payload["list_key"], "mylist");
-    }
-
-    #[test]
-    fn list_hit_payload_list_key_is_null_when_keyless() {
-        // A keyless List has no instance state to update, so the click
-        // handler must be able to tell (null) and skip the sync.
-        let spec = make_list(-1, 10, 1, None);
-        let (_entries, hits, _state) = render_no_focus(&spec, &HashMap::new());
-        assert!(hits[0].event.payload["list_key"].is_null());
-    }
-
-    #[test]
-    fn list_with_missing_key_emits_empty_widget_key() {
-        let spec = WidgetSpec::List {
-            items: vec![TextPropertyEntry::text("a"), TextPropertyEntry::text("b")],
-            // Only one key for two items — second hit gets an empty key.
-            item_specs: vec![],
-            item_keys: vec!["only".into()],
-            selected_index: -1,
-            visible_rows: Some(10),
-            focusable: true,
-            key: None,
-        };
-        let (_, hits, _state) = render_no_focus(&spec, &HashMap::new());
-        assert_eq!(hits[0].event.widget_key, "only");
-        assert_eq!(hits[1].event.widget_key, "");
+        // List rows land on rows 1 and 2 (after the HintBar).
+        assert!(entries[1].text.starts_with("row0"));
+        assert!(entries[2].text.starts_with("row1"));
     }
 
     pub fn make_list(selected: i32, visible: u32, total: usize, key: Option<&str>) -> WidgetSpec {
@@ -5938,12 +5579,11 @@ pub mod tests {
     #[test]
     fn list_renders_only_visible_window() {
         let spec = make_list(-1, 3, 10, Some("L"));
-        let (entries, hits, _state) = render_no_focus(&spec, &HashMap::new());
+        let (entries, _state) = render_no_focus(&spec, &HashMap::new());
         assert_eq!(entries.len(), 3);
-        assert_eq!(hits.len(), 3);
         // First three items, absolute indices 0..2.
-        assert_eq!(hits[0].event.payload["index"], 0);
-        assert_eq!(hits[2].event.payload["index"], 2);
+        assert!(entries[0].text.starts_with("row0"));
+        assert!(entries[2].text.starts_with("row2"));
     }
 
     #[test]
@@ -5954,70 +5594,10 @@ pub mod tests {
         // seeds instance state.
         let spec = make_list(5, 3, 10, Some("L"));
         let out = render_no_focus_out(&spec, &HashMap::new());
-        // Visible window is items 3..6 → hits index 3, 4, 5.
-        assert_eq!(out.hits.len(), 3);
-        assert_eq!(out.hits[0].event.payload["index"], 3);
-        assert_eq!(out.hits[2].event.payload["index"], 5);
-        assert_eq!(out.painted.get("L").map(|w| w.offset), Some(3));
-    }
-
-    #[test]
-    fn list_scrolls_to_keep_selected_above_window_in_view() {
-        // Previous render scrolled to 5 with selection at 5; user
-        // pressed Up enough times that select_move set instance
-        // state's selection to 1; renderer should scroll back up
-        // to 1. (Spec's selected_index is initial-only; instance
-        // state is authoritative once present.)
-        let mut prev = HashMap::new();
-        prev.insert(
-            "L".into(),
-            WidgetInstanceState::List {
-                selected_index: 1,
-                user_scrolled: false,
-            },
-        );
-        // Spec's selected_index doesn't matter (instance state wins).
-        let spec = make_list(99, 3, 10, Some("L"));
-        let out = render_with_window(&spec, &prev, &window_at("L", 3, 5));
-        assert_eq!(out.hits[0].event.payload["index"], 1);
-        assert_eq!(out.painted.get("L").map(|w| w.offset), Some(1));
-    }
-
-    #[test]
-    fn list_scroll_preserved_when_selection_remains_in_view() {
-        // Previous render scrolled to 4 with selection at 4; user
-        // moved selection to 5 (still in window 4..6); scroll stays.
-        let mut prev = HashMap::new();
-        prev.insert(
-            "L".into(),
-            WidgetInstanceState::List {
-                selected_index: 5,
-                user_scrolled: false,
-            },
-        );
-        let spec = make_list(99, 3, 10, Some("L"));
-        let out = render_with_window(&spec, &prev, &window_at("L", 3, 4));
-        assert_eq!(out.hits[0].event.payload["index"], 4);
-        assert_eq!(out.painted.get("L").map(|w| w.offset), Some(4));
-    }
-
-    #[test]
-    fn list_clamps_scroll_to_max_when_dataset_is_smaller_than_old_offset() {
-        // Previous scroll past the end of a now-shorter dataset
-        // clamps to max_scroll = total - visible.
-        let mut prev = HashMap::new();
-        prev.insert(
-            "L".into(),
-            WidgetInstanceState::List {
-                selected_index: -1,
-                user_scrolled: false,
-            },
-        );
-        let spec = make_list(-1, 3, 5, Some("L"));
-        let out = render_with_window(&spec, &prev, &window_at("L", 3, 8));
+        // Visible window is items 3..6.
         assert_eq!(out.entries.len(), 3);
-        // total=5, visible=3 → max=2.
-        assert_eq!(out.painted.get("L").map(|w| w.offset), Some(2));
+        assert!(out.entries[0].text.starts_with("row3"));
+        assert!(out.entries[2].text.starts_with("row5"));
     }
 
     #[test]
@@ -6029,13 +5609,13 @@ pub mod tests {
         // advertises so a sibling pane (orchestrator picker's
         // preview) can match.
         assert_eq!(out.entries.len(), 10);
-        assert_eq!(out.painted.get("L").map(|w| w.offset), Some(0));
+        assert!(out.entries[0].text.starts_with("row0"));
     }
 
     #[test]
     fn list_without_key_does_not_persist_state() {
         let spec = make_list(5, 3, 10, None);
-        let (_entries, _hits, state) = render_no_focus(&spec, &HashMap::new());
+        let (_entries, state) = render_no_focus(&spec, &HashMap::new());
         assert!(
             state.is_empty(),
             "Lists without a `key` opt out of state preservation"
@@ -6381,7 +5961,7 @@ pub mod tests {
     }
 
     #[test]
-    fn raw_inside_col_offsets_following_hits() {
+    fn raw_inside_col_stacks_before_following_rows() {
         let spec = WidgetSpec::Col {
             children: vec![
                 WidgetSpec::Raw {
@@ -6404,10 +5984,9 @@ pub mod tests {
             ],
             key: None,
         };
-        let (entries, hits, _state) = render_no_focus(&spec, &HashMap::new());
+        let (entries, _state) = render_no_focus(&spec, &HashMap::new());
         assert_eq!(entries.len(), 4);
-        assert_eq!(hits.len(), 1);
-        assert_eq!(hits[0].buffer_row, 3);
+        assert!(entries[3].text.contains("after raw"));
     }
 
     // -------------------------------------------------------------
@@ -6774,7 +6353,7 @@ pub mod tests {
         let mut node = tnode("x", 0, true);
         node.text.pad_to_chars = Some(5);
         let spec = make_tree(vec![node], vec!["x"], -1, 10, vec!["x"], Some("T"));
-        let (entries, _hits, _state) = render_no_focus(&spec, &HashMap::new());
+        let (entries, _state) = render_no_focus(&spec, &HashMap::new());
         assert_eq!(entries.len(), 1);
         // The full row is prefix + padded body + trailing newline.
         // Body region must be "x    " (5 columns).
@@ -6790,7 +6369,7 @@ pub mod tests {
         let mut node = tnode("abcdefghij", 0, false);
         node.text.truncate_to_chars = Some(6);
         let spec = make_tree(vec![node], vec!["x"], -1, 10, vec![], Some("T"));
-        let (entries, _hits, _state) = render_no_focus(&spec, &HashMap::new());
+        let (entries, _state) = render_no_focus(&spec, &HashMap::new());
         let trimmed = entries[0].text.trim_end_matches('\n');
         // With budget=6, truncation produces "abc..." (3 head chars
         // + ellipsis), then prefix is prepended.
@@ -6819,7 +6398,7 @@ pub mod tests {
             unit: OffsetUnit::Char,
         });
         let spec = make_tree(vec![node], vec!["x"], -1, 10, vec![], Some("T"));
-        let (entries, _hits, _state) = render_no_focus(&spec, &HashMap::new());
+        let (entries, _state) = render_no_focus(&spec, &HashMap::new());
         let entry = &entries[0];
         let bold = entry
             .inline_overlays
@@ -6849,7 +6428,7 @@ pub mod tests {
             unit: OffsetUnit::Char,
         });
         let spec = make_tree(vec![node], vec!["x"], -1, 10, vec![], Some("T"));
-        let (entries, _hits, _state) = render_no_focus(&spec, &HashMap::new());
+        let (entries, _state) = render_no_focus(&spec, &HashMap::new());
         let entry = &entries[0];
         let bold = entry
             .inline_overlays
@@ -6888,7 +6467,7 @@ pub mod tests {
             },
         ];
         let spec = make_tree(vec![node], vec!["x"], -1, 10, vec![], Some("T"));
-        let (entries, _hits, _state) = render_no_focus(&spec, &HashMap::new());
+        let (entries, _state) = render_no_focus(&spec, &HashMap::new());
         let trimmed = entries[0].text.trim_end_matches('\n');
         // Leaf row: 2-space prefix + concatenated segments.
         assert!(
@@ -6939,7 +6518,7 @@ pub mod tests {
             },
         ];
         let spec = make_tree(vec![node], vec!["x"], -1, 10, vec![], Some("T"));
-        let (entries, _hits, _state) = render_no_focus(&spec, &HashMap::new());
+        let (entries, _state) = render_no_focus(&spec, &HashMap::new());
         let trimmed = entries[0].text.trim_end_matches('\n');
         let bold = entries[0]
             .inline_overlays
@@ -6959,7 +6538,7 @@ pub mod tests {
         }];
         node.text.pad_to_chars = Some(5);
         let spec = make_tree(vec![node], vec!["x"], -1, 10, vec![], Some("T"));
-        let (entries, _hits, _state) = render_no_focus(&spec, &HashMap::new());
+        let (entries, _state) = render_no_focus(&spec, &HashMap::new());
         let trimmed = entries[0].text.trim_end_matches('\n');
         // Two-space leaf prefix + "ab" + three padding spaces = "  ab   ".
         assert!(
@@ -7051,7 +6630,7 @@ pub mod tests {
             vec![], // none expanded
             Some("T"),
         );
-        let (entries, _hits, _state) = render_no_focus(&spec, &HashMap::new());
+        let (entries, _state) = render_no_focus(&spec, &HashMap::new());
         // Only the two top-level nodes are visible.
         assert_eq!(entries.len(), 2);
         assert!(entries[0].text.contains('a'));
@@ -7074,46 +6653,9 @@ pub mod tests {
             vec!["a"],
             Some("T"),
         );
-        let (entries, _hits, _state) = render_no_focus(&spec, &HashMap::new());
+        let (entries, _state) = render_no_focus(&spec, &HashMap::new());
         // a, a.0, a.1, b — b's child stays hidden.
         assert_eq!(entries.len(), 4);
-    }
-
-    #[test]
-    fn tree_emits_two_hits_per_internal_row_one_per_leaf() {
-        // a (internal, expanded) + a.0 (leaf) → 2 hits for a (disclosure + body)
-        // and 1 hit for a.0 (body only).
-        let spec = make_tree(
-            vec![tnode("a", 0, true), tnode("a.0", 1, false)],
-            vec!["a", "a.0"],
-            -1,
-            10,
-            vec!["a"],
-            Some("T"),
-        );
-        let (_entries, hits, _state) = render_no_focus(&spec, &HashMap::new());
-        assert_eq!(hits.len(), 3);
-        // First hit: disclosure on the internal node.
-        assert_eq!(hits[0].event.event_type, "expand");
-        assert_eq!(hits[0].event.widget_kind, "tree");
-        assert_eq!(hits[1].event.event_type, "select");
-        assert_eq!(hits[2].event.event_type, "select");
-    }
-
-    #[test]
-    fn tree_hits_carry_tree_spec_key_and_per_item_key_in_payload() {
-        let spec = make_tree(
-            vec![tnode("only", 0, false)],
-            vec!["only-key"],
-            -1,
-            10,
-            vec![],
-            Some("matchTree"),
-        );
-        let (_entries, hits, _state) = render_no_focus(&spec, &HashMap::new());
-        assert_eq!(hits[0].event.widget_key, "matchTree");
-        assert_eq!(hits[0].event.payload["key"], "only-key");
-        assert_eq!(hits[0].event.payload["index"], 0);
     }
 
     /// **A spec's `expanded_keys` is a seed, honoured on every render
@@ -7137,7 +6679,7 @@ pub mod tests {
             vec!["a"],
             Some("T"),
         );
-        let (entries, _, state) = render_no_focus(&spec, &HashMap::new());
+        let (entries, state) = render_no_focus(&spec, &HashMap::new());
         assert_eq!(
             entries.len(),
             2,
@@ -7186,7 +6728,7 @@ pub mod tests {
             vec!["a"], // the seed, overridden by the stored set
             Some("T"),
         );
-        let (entries, _hits, state) = render_no_focus(&spec, &prev);
+        let (entries, state) = render_no_focus(&spec, &prev);
         assert!(
             entries[1].text.contains("b"),
             "b, not a.0 — the stored expansion wins: {:?}",
@@ -7232,7 +6774,7 @@ pub mod tests {
             vec!["a"], // initial-only — ignored after first render
             Some("T"),
         );
-        let (entries, _hits, _state) = render_no_focus(&spec, &prev);
+        let (entries, _state) = render_no_focus(&spec, &prev);
         // Should render: a (collapsed), b, b.0 — three rows. a.0 hidden.
         assert_eq!(entries.len(), 3);
     }
@@ -7247,7 +6789,7 @@ pub mod tests {
             vec![],
             Some("T"),
         );
-        let (entries, _hits, _state) = render_no_focus(&spec, &HashMap::new());
+        let (entries, _state) = render_no_focus(&spec, &HashMap::new());
         assert!(entries[0].style.is_none());
         let style = entries[1].style.as_ref().expect("selected gets style");
         assert_eq!(
@@ -7273,7 +6815,7 @@ pub mod tests {
         // Asserted on the *painted* row, not on a write-back: the clamp
         // is a derivation the paint applies, and the walk no longer
         // records what it derived.
-        let (entries, _hits, state) = render_no_focus(&spec, &HashMap::new());
+        let (entries, state) = render_no_focus(&spec, &HashMap::new());
         let style = entries[0]
             .style
             .as_ref()
@@ -7312,67 +6854,13 @@ pub mod tests {
         let out = render_no_focus_out(&spec, &HashMap::new());
         // Visible window: items 2..5 → 3 rows.
         assert_eq!(out.entries.len(), 3);
-        assert_eq!(out.painted.get("T").map(|w| w.offset), Some(2));
-    }
-
-    /// A mouse-scrolled tree (`user_scrolled`) keeps its offset even
-    /// though the selected node is scrolled out of view. Without the
-    /// flag, any re-render — e.g. the orchestrator dock's async
-    /// probe-poll refresh re-pinning the same selection — snapped the
-    /// wheel-scrolled view back to the selected card (the flaky
-    /// `dock_card_tree_wheel_scrolls_when_overflowing` hang).
-    #[test]
-    fn tree_user_scroll_is_not_snapped_back_to_selection() {
-        let mut prev = HashMap::new();
-        prev.insert(
-            "T".to_string(),
-            WidgetInstanceState::Tree {
-                selected_index: 0,
-                expanded_keys: HashSet::new(),
-                user_scrolled: true,
-            },
-        );
-        // The wheel left the window three rows down.
-        let prev_painted = window_at("T", 2, 3);
-        let spec = make_tree(
-            vec![
-                tnode("n0", 0, false),
-                tnode("n1", 0, false),
-                tnode("n2", 0, false),
-                tnode("n3", 0, false),
-                tnode("n4", 0, false),
-                tnode("n5", 0, false),
-            ],
-            vec!["k0", "k1", "k2", "k3", "k4", "k5"],
-            0,
-            2,
-            vec![],
-            Some("T"),
-        );
-        let out = render_with_window(&spec, &prev, &prev_painted);
-        // Window stays at the user's offset (n3, n4) — not snapped back
-        // to the selected n0.
-        assert!(
-            out.entries[0].text.contains("n3"),
-            "window must start at the user's scroll offset, got: {:?}",
-            out.entries
-                .iter()
-                .map(|e| e.text.trim())
-                .collect::<Vec<_>>()
-        );
-        assert_eq!(out.painted.get("T").map(|w| w.offset), Some(3));
-        match out.instance_states.get("T") {
-            Some(WidgetInstanceState::Tree { user_scrolled, .. }) => {
-                assert!(*user_scrolled, "the flag must persist across renders");
-            }
-            other => panic!("the stored latch must survive, got {other:?}"),
-        }
+        assert!(out.entries[0].text.contains('2'));
+        assert!(out.entries[2].text.contains('4'));
     }
 
     /// Row-granular scrolling: a scroll offset landing *inside* a
     /// bordered card clips the card's top rows instead of snapping to a
-    /// node boundary, and the clipped rows' hits are dropped/shifted so
-    /// nothing hidden stays clickable.
+    /// node boundary.
     #[test]
     fn tree_row_scroll_clips_partial_cards_at_the_edges() {
         // Two bordered cards, item_height 3 → 5 rows each (10 total).
@@ -7384,19 +6872,12 @@ pub mod tests {
             ];
             n
         };
-        let mut prev = HashMap::new();
-        prev.insert(
-            "T".to_string(),
-            WidgetInstanceState::Tree {
-                selected_index: -1,
-                expanded_keys: HashSet::new(),
-                user_scrolled: true,
-            },
-        );
+        // Selecting the second card pulls the window down to its bottom
+        // edge: rows 4..10, which lands inside card A.
         let spec = WidgetSpec::Tree {
             nodes: vec![card("aa"), card("bb")],
             item_keys: vec!["ka".into(), "kb".into()],
-            selected_index: -1,
+            selected_index: 1,
             visible_rows: Some(6),
             expanded_keys: vec![],
             checkable: false,
@@ -7408,89 +6889,25 @@ pub mod tests {
         // A finite panel width: bordered cards draw `─` runs across the
         // full width, so the `u32::MAX` no-flex width `render_no_focus`
         // uses would try to build a 4-billion-char border string.
-        //
-        // Row 2 of card A: its border + name rows are clipped off; the
-        // window (6 rows) ends inside card B. That offset is the last
-        // paint's, carried in.
-        let out = render_spec_with_options(
-            &spec,
-            &prev,
-            40,
-            RenderOptions {
-                auto_focus_first: true,
-
-                prev_painted: Some(&window_at("T", 6, 2)),
-                ..Default::default()
-            },
-        );
-        let (entries, hits) = (out.entries, out.hits);
-        // Window = rows 2..8 of [A0 A1 A2 A3 A4 B0 B1 B2 B3 B4]:
-        // A's l2 content row first, B's l2 row last; 6 rows exactly.
+        let out = render_spec(&spec, &HashMap::new(), "", 40);
+        let entries = out.entries;
+        // Window = rows 4..10 of [A0 A1 A2 A3 A4 B0 B1 B2 B3 B4]: A's
+        // bottom border first, then all of card B; 6 rows exactly.
         assert_eq!(entries.len(), 6, "{:?}", texts(&entries));
         assert!(
-            entries[0].text.contains("aa-l2"),
-            "first row must be card A clipped mid-card: {:?}",
+            !entries[0].text.contains("aa"),
+            "first row must be card A clipped to its border: {:?}",
             texts(&entries)
         );
         assert!(
-            entries[5].text.contains("bb-l2"),
-            "last row must clip card B at the window bottom: {:?}",
+            entries[2].text.contains("bb"),
+            "card B follows whole: {:?}",
             texts(&entries)
-        );
-        // No hit may point outside the emitted rows, and card A's
-        // clipped-off name row must not have left a stale hit behind.
-        assert!(
-            hits.iter().all(|h| (h.buffer_row as usize) < entries.len()),
-            "hits must be clipped/shifted with the rows: {:?}",
-            hits.iter().map(|h| h.buffer_row).collect::<Vec<_>>()
         );
     }
 
     fn texts(entries: &[TextPropertyEntry]) -> Vec<&str> {
         entries.iter().map(|e| e.text.trim_end()).collect()
-    }
-
-    /// The inverse: once the flag clears (a deliberate selection move —
-    /// keyboard nav, click, or a plugin `SetSelectedIndex` to a new
-    /// index), keep-selection-visible re-engages and the window snaps
-    /// to the selection again.
-    #[test]
-    fn tree_selection_move_re_arms_scroll_follow() {
-        let mut prev = HashMap::new();
-        prev.insert(
-            "T".to_string(),
-            WidgetInstanceState::Tree {
-                selected_index: 0,
-                expanded_keys: HashSet::new(),
-                user_scrolled: false,
-            },
-        );
-        let spec = make_tree(
-            vec![
-                tnode("n0", 0, false),
-                tnode("n1", 0, false),
-                tnode("n2", 0, false),
-                tnode("n3", 0, false),
-                tnode("n4", 0, false),
-                tnode("n5", 0, false),
-            ],
-            vec!["k0", "k1", "k2", "k3", "k4", "k5"],
-            0,
-            2,
-            vec![],
-            Some("T"),
-        );
-        // The last paint left the window three rows down.
-        let out = render_with_window(&spec, &prev, &window_at("T", 2, 3));
-        assert!(
-            out.entries[0].text.contains("n0"),
-            "window must follow the selection when user_scrolled is clear, got: {:?}",
-            out.entries
-                .iter()
-                .map(|e| e.text.trim())
-                .collect::<Vec<_>>()
-        );
-        assert_eq!(out.painted.get("T").map(|w| w.offset), Some(0));
     }
 
     #[test]
@@ -7882,11 +7299,10 @@ pub mod tests {
     }
 
     #[test]
-    fn markdown_text_renders_document_rows_with_region_and_shadow() {
+    fn markdown_text_renders_document_rows_and_shadow() {
         // A markdown Text (no theme in a bare render context → plain
         // line fallback, same layout machinery) renders one row per
-        // wrapped line, padded to `rows`, emits its geometry region,
-        // and shadows the rendered plain text into a TextEdit so
+        // wrapped line, padded to `rows`, and shadows the rendered plain text into a TextEdit so
         // selection/copy operate on exactly what's shown.
         let spec = WidgetSpec::Text {
             value: "alpha\nbeta\ngamma\ndelta\nepsilon".into(),
@@ -7911,15 +7327,6 @@ pub mod tests {
         let out = render_spec(&spec, &HashMap::new(), "", 30);
         assert_eq!(out.entries.len(), 3, "visible window is `rows` tall");
         assert!(out.entries[0].text.starts_with("alpha"));
-        // The widget's box carries the scroll payload: every content
-        // line counted, not just the window.
-        let sc = out
-            .boxes
-            .iter()
-            .find(|b| b.key.as_deref() == Some("doc"))
-            .and_then(|b| b.scroll)
-            .expect("scroll payload on the doc box");
-        assert_eq!((sc.total, sc.visible), (5, 3));
         // The shadow editor holds the rendered plain text.
         match out.instance_states.get("doc") {
             Some(WidgetInstanceState::Text { editor, .. }) => {
@@ -7927,9 +7334,6 @@ pub mod tests {
             }
             other => panic!("expected Text instance state, got {other:?}"),
         }
-        // Every row is a caret target.
-        assert_eq!(out.hits.len(), 3);
-        assert!(out.hits.iter().all(|h| h.event.event_type == "focus"));
     }
 
     #[test]
@@ -7970,34 +7374,6 @@ pub mod tests {
                 .iter()
                 .any(|o| o.style.reversed),
             "caret renders as a reversed block cell"
-        );
-    }
-
-    #[test]
-    fn lists_emit_scroll_regions_even_when_they_fit() {
-        // Wheel routing hit-tests the pointer against every keyed list's
-        // region — a list that fits must still claim its geometry, or a
-        // wheel over it gets rerouted to a scrollable sibling.
-        let fits = make_list(-1, 10, 3, Some("fits"));
-        let overflows = make_list(-1, 3, 10, Some("overflows"));
-        let spec = WidgetSpec::Col {
-            children: vec![fits, overflows],
-            key: None,
-        };
-        let out = render_spec(&spec, &HashMap::new(), "", 40);
-        let keys: Vec<(&str, bool)> = out
-            .boxes
-            .iter()
-            .filter(|b| b.scroll.is_some())
-            .map(|b| {
-                let sc = b.scroll.unwrap();
-                (b.key.as_deref().unwrap_or(""), sc.total > sc.visible)
-            })
-            .collect();
-        assert_eq!(
-            keys,
-            vec![("fits", false), ("overflows", true)],
-            "every keyed list surfaces a region; only the overflowing one scrolls"
         );
     }
 
@@ -8196,18 +7572,6 @@ pub mod tests {
     }
 
     #[test]
-    fn number_emits_value_cell_hit_area() {
-        let spec = make_number(2.0, Some("size"));
-        let (_out, hits, _state) = render_no_focus(&spec, &HashMap::new());
-        let cells: Vec<_> = hits
-            .iter()
-            .filter(|h| h.event.widget_kind == "number")
-            .collect();
-        assert_eq!(cells.len(), 1, "one value-cell hit");
-        assert_eq!(cells[0].event.event_type, "number_value");
-    }
-
-    #[test]
     fn a_number_render_clamps_without_recording_it() {
         let spec = WidgetSpec::Number {
             label_width: 0,
@@ -8221,7 +7585,7 @@ pub mod tests {
             focused: false,
             key: Some("n".into()),
         };
-        let (out, _hits, state) = render_no_focus(&spec, &HashMap::new());
+        let (out, state) = render_no_focus(&spec, &HashMap::new());
         // Spec value 42 clamps to max 10 in what is drawn — and is not written
         // down. The clamp is a derivation applied on every read, so persisting
         // it stored nothing a reader could not work out, while making the
@@ -8323,7 +7687,7 @@ pub mod tests {
     }
 
     #[test]
-    fn dropdown_open_emits_toggle_hit_and_floating_popup() {
+    fn dropdown_open_surfaces_a_floating_popup() {
         let spec = WidgetSpec::Dropdown {
             label_width: 0,
             open: true,
@@ -8335,20 +7699,9 @@ pub mod tests {
             key: Some("d".into()),
         };
         let out = render_spec(&spec, &HashMap::new(), "d", u32::MAX);
-        let toggles = out
-            .hits
-            .iter()
-            .filter(|h| h.event.event_type == "dropdown_toggle")
-            .count();
-        assert_eq!(toggles, 1, "the trigger button stays a toggle hit");
-        // Options no longer render inline — they surface on the floating
-        // pop-over instead, so the panel has NO `dropdown_select` hits.
-        assert!(
-            !out.hits
-                .iter()
-                .any(|h| h.event.event_type == "dropdown_select"),
-            "open dropdown must not emit inline option hits"
-        );
+        // Options do not render inline — they surface on the floating
+        // pop-over instead.
+        assert_eq!(out.entries.len(), 1, "the panel keeps only the trigger row");
         let dp = out
             .popup
             .expect("an open dropdown surfaces a floating pop-over");
@@ -8381,7 +7734,7 @@ pub mod tests {
     #[test]
     fn a_render_clamps_the_selection_without_recording_it() {
         let spec = make_dropdown(&["a", "b", "c"], 9, Some("d"));
-        let (out, _hits, state) = render_no_focus(&spec, &HashMap::new());
+        let (out, state) = render_no_focus(&spec, &HashMap::new());
         assert!(
             out[0].text.contains("[c "),
             "the out-of-range index clamps to the last option: {:?}",
@@ -8412,7 +7765,7 @@ pub mod tests {
                 restore: None,
             },
         );
-        let (_out, _hits, state) = render_no_focus(&spec, &prev);
+        let (_out, state) = render_no_focus(&spec, &prev);
         match state.get("d") {
             Some(WidgetInstanceState::Dropdown {
                 selected_index,
@@ -8440,7 +7793,7 @@ pub mod tests {
     fn a_list_render_clamps_the_selection_without_recording_it() {
         // Three items, and a spec that names the tenth.
         let spec = make_list(9, 3, 3, Some("L"));
-        let (entries, _hits, state) = render_no_focus(&spec, &HashMap::new());
+        let (entries, state) = render_no_focus(&spec, &HashMap::new());
         assert!(
             entries[0].style.is_none() && entries[1].style.is_none(),
             "only one row is selected"
@@ -8479,7 +7832,7 @@ pub mod tests {
             },
         );
         let spec = make_list(0, 3, 3, Some("L"));
-        let (entries, _hits, state) = render_no_focus(&spec, &prev);
+        let (entries, state) = render_no_focus(&spec, &prev);
         assert!(
             entries[2].style.is_some(),
             "the paint clamps to the last item: {:?}",
@@ -8536,12 +7889,6 @@ pub mod tests {
             out.entries.len(),
             1,
             "open dropdown keeps only the trigger row (no inline options)"
-        );
-        assert!(
-            !out.hits
-                .iter()
-                .any(|h| h.event.event_type == "dropdown_select"),
-            "options moved to the pop-over — no inline select hits"
         );
         let dp = out.popup.expect("open dropdown surfaces a popup");
         assert_eq!(
@@ -8695,8 +8042,14 @@ pub mod tests {
              not a seed"
         );
         // The focus clamp: a key that is not in the ring falls to the first.
-        assert_eq!(resolve_panel(&spec, &prev, "nosuch", true, None).focus_key, "btn");
-        assert_eq!(resolve_panel(&spec, &prev, "nosuch", false, None).focus_key, "");
+        assert_eq!(
+            resolve_panel(&spec, &prev, "nosuch", true, None).focus_key,
+            "btn"
+        );
+        assert_eq!(
+            resolve_panel(&spec, &prev, "nosuch", false, None).focus_key,
+            ""
+        );
     }
 
     #[test]
@@ -8836,7 +8189,7 @@ pub mod tests {
 
     /// Rows the picker paints for a spec-seeded, focused dual list.
     fn dual_rows(spec: &WidgetSpec) -> Vec<String> {
-        let (out, _hits, _state) = render_no_focus(spec, &HashMap::new());
+        let (out, _state) = render_no_focus(spec, &HashMap::new());
         out.iter()
             .map(|e| e.text.trim_end_matches('\n').to_string())
             .collect()
@@ -8909,26 +8262,9 @@ pub mod tests {
     }
 
     #[test]
-    fn dual_list_cell_hits_cover_the_cursor_gutter() {
-        // The gutter is part of the cell, so clicking the marker (or
-        // the blank column reserved for it) selects that row.
-        let spec = make_dual(&[("a", "Alpha"), ("b", "Beta")], &["b"], None);
-        let (out, hits, _state) = render_no_focus(&spec, &HashMap::new());
-        let h = hits
-            .iter()
-            .find(|h| h.event.payload["column"] == "available")
-            .expect("available cell hit");
-        let row = &out[h.buffer_row as usize].text;
-        let cell = &row[h.byte_start..h.byte_end];
-        assert_eq!(h.byte_start, 0, "cell should start at the gutter");
-        assert!(cell.starts_with("  "), "gutter not in the hit: {cell:?}");
-        assert!(cell.contains("Alpha"), "label not in the hit: {cell:?}");
-    }
-
-    #[test]
     fn dual_list_renders_header_and_columns() {
         let spec = make_dual(&[("a", "Alpha"), ("b", "Beta")], &["b"], Some("d"));
-        let (out, _hits, state) = render_no_focus(&spec, &HashMap::new());
+        let (out, state) = render_no_focus(&spec, &HashMap::new());
         // Label + header + >=1 body rows.
         assert_eq!(out[0].text.trim_end(), "Elements");
         assert!(out[1].text.contains("Available"));
@@ -8948,24 +8284,6 @@ pub mod tests {
             "a render that decides nothing records nothing: {:?}",
             state.get("d")
         );
-    }
-
-    #[test]
-    fn dual_list_emits_cell_hit_areas() {
-        let spec = make_dual(&[("a", "Alpha"), ("b", "Beta")], &["b"], Some("d"));
-        let (_out, hits, _state) = render_no_focus(&spec, &HashMap::new());
-        let cells: Vec<_> = hits
-            .iter()
-            .filter(|h| h.event.widget_kind == "dual_list")
-            .collect();
-        // One available cell (a) + one included cell (b).
-        assert_eq!(cells.len(), 2);
-        assert!(cells
-            .iter()
-            .any(|h| h.event.payload["column"] == "available"));
-        assert!(cells
-            .iter()
-            .any(|h| h.event.payload["column"] == "included"));
     }
 
     #[test]
@@ -8993,154 +8311,6 @@ pub mod tests {
         }
     }
 
-    #[test]
-    fn box_tree_mirrors_structure_rows_and_focus_ring() {
-        use crate::widgets::layout_box::{focus_ring, hit_path};
-        let spec = WidgetSpec::Col {
-            key: None,
-            children: vec![
-                WidgetSpec::Button {
-                    label: "Go".into(),
-                    focused: false,
-                    intent: ButtonKind::Normal,
-                    key: Some("b".into()),
-                    disabled: false,
-                    focusable: true,
-                    bare: false,
-                    full_width: false,
-                    hover_style: None,
-                    style: None,
-                },
-                WidgetSpec::LabeledSection {
-                    label: "Files".into(),
-                    child: Box::new(boxed_list("l", 3, 5)),
-                    width_cols: None,
-                    width_pct: None,
-                    key: None,
-                    hover_style: None,
-                },
-            ],
-        };
-        let out = render_spec(&spec, &HashMap::new(), "", 40);
-        let boxes = &out.boxes;
-        // Root-last arena: the outer Col caps the vec and spans the
-        // whole surface.
-        let root = boxes.last().expect("root box");
-        assert_eq!(root.kind, "col");
-        assert_eq!(root.parent, None);
-        assert_eq!((root.row, root.col), (0, 0));
-        assert_eq!(root.width, 40);
-        assert_eq!(root.height as usize, out.entries.len());
-
-        let find = |kind: &str| {
-            boxes
-                .iter()
-                .position(|b| b.kind == kind)
-                .unwrap_or_else(|| panic!("no {kind} box"))
-        };
-        let button = &boxes[find("button")];
-        assert_eq!((button.row, button.height), (0, 1));
-        assert!(button.focusable);
-        let section = &boxes[find("labeled_section")];
-        // Below the button: top border + 5 list rows + bottom border.
-        assert_eq!((section.row, section.height), (1, 7));
-        let list = &boxes[find("list")];
-        // Inside the section: down past the top border, right past the
-        // "| " border prefix; the section rendered it at width - 4,
-        // then widened the scrollable box +2 through the right border
-        // (wheel over the border scrolls the list, matching the
-        // scroll-region widening).
-        assert_eq!((list.row, list.col), (2, 2));
-        assert_eq!((list.width, list.height), (38, 5));
-        assert!(list.scrollable && list.focusable);
-        assert_eq!(boxes[list.parent.unwrap()].kind, "labeled_section");
-
-        // The derived focus ring reproduces the collected tabbable
-        // list order-for-order — the invariant the phase-5 focus
-        // unification stands on.
-        assert_eq!(focus_ring(boxes), out.tabbable);
-        assert_eq!(out.tabbable, vec!["b".to_string(), "l".to_string()]);
-
-        // Hit-testing resolves through the structure: a point inside
-        // the list's rows lands on the list via col -> section -> list.
-        let path = hit_path(boxes, 3, 10);
-        let kinds: Vec<&str> = path.iter().map(|&i| boxes[i].kind).collect();
-        assert_eq!(kinds, vec!["col", "labeled_section", "list"]);
-        // The button row resolves to the button.
-        let path = hit_path(boxes, 0, 1);
-        assert_eq!(*path.last().unwrap(), find("button"));
-    }
-
-    #[test]
-    fn box_tree_row_zip_offsets_block_columns() {
-        let spec = WidgetSpec::Row {
-            key: None,
-            children: vec![boxed_list("left", 2, 3), boxed_list("right", 2, 3)],
-            wrap: false,
-        };
-        let out = render_spec(&spec, &HashMap::new(), "", 40);
-        let lists: Vec<&LayoutBox> = out.boxes.iter().filter(|b| b.kind == "list").collect();
-        assert_eq!(lists.len(), 2);
-        // Two zip blocks split the width; the right one starts at the
-        // left one's column budget.
-        assert_eq!((lists[0].row, lists[0].col, lists[0].width), (0, 0, 20));
-        assert_eq!((lists[1].row, lists[1].col, lists[1].width), (0, 20, 20));
-        // Side-by-side hit-tests pick the correct list.
-        use crate::widgets::layout_box::hit_path;
-        let left_hit = hit_path(&out.boxes, 1, 5);
-        let right_hit = hit_path(&out.boxes, 1, 25);
-        assert_eq!(
-            out.boxes[*left_hit.last().unwrap()].key.as_deref(),
-            Some("left")
-        );
-        assert_eq!(
-            out.boxes[*right_hit.last().unwrap()].key.as_deref(),
-            Some("right")
-        );
-    }
-
-    #[test]
-    fn box_tree_overlay_promotion_bumps_z_and_wins_hits() {
-        use crate::widgets::layout_box::hit_path;
-        let spec = WidgetSpec::Col {
-            key: None,
-            children: vec![
-                WidgetSpec::Raw {
-                    entries: vec![
-                        TextPropertyEntry::text("base0"),
-                        TextPropertyEntry::text("base1"),
-                        TextPropertyEntry::text("base2"),
-                    ],
-                    key: None,
-                },
-                WidgetSpec::Overlay {
-                    key: None,
-                    child: Box::new(WidgetSpec::Raw {
-                        entries: vec![TextPropertyEntry::text("popup")],
-                        key: None,
-                    }),
-                },
-            ],
-        };
-        let out = render_spec(&spec, &HashMap::new(), "", 40);
-        let overlay = out
-            .boxes
-            .iter()
-            .find(|b| b.kind == "overlay")
-            .expect("overlay box");
-        // Promoted: anchored where the col cursor stood (after 3 raw
-        // rows), one stacking level up, opaque to fall-through.
-        assert_eq!(overlay.z, 1);
-        assert!(overlay.pointer_opaque);
-        assert_eq!(overlay.row, 3);
-        // Its raw child rides along at the same z.
-        let raws: Vec<&LayoutBox> = out.boxes.iter().filter(|b| b.kind == "raw").collect();
-        assert!(raws.iter().any(|b| b.z == 1 && b.row == 3));
-        // A hit at the overlay's anchor row resolves to the promoted
-        // subtree, not the base surface.
-        let path = hit_path(&out.boxes, 3, 2);
-        assert_eq!(out.boxes[*path.last().unwrap()].z, 1);
-    }
     // -------------------------------------------------------------
     // WidgetImpl::on_wheel (phase 4 dispatch)
     // -------------------------------------------------------------
@@ -9155,8 +8325,6 @@ pub mod tests {
             spec: spec.clone(),
             instance_states: out.instance_states,
             focus_key: out.focus_key,
-            painted: out.painted,
-            boxes: out.boxes,
             auto_focus_first: true,
 
             page: false,
@@ -9167,47 +8335,6 @@ pub mod tests {
         }
     }
 
-    /// The window the host would deliver for `key` on that panel — the
-    /// same read `Editor::widget_viewport` makes, without an Editor.
-    fn viewport_of(
-        panel: &crate::widgets::WidgetPanelState,
-        key: &str,
-    ) -> crate::widgets::kinds::Viewport {
-        panel.painted_viewport(key).unwrap_or_else(|| {
-            crate::widgets::find_widget_by_key(&panel.spec, key)
-                .map(crate::widgets::kinds::Viewport::from_spec)
-                .unwrap_or_default()
-        })
-    }
-
-    /// The offset a paint left for `key`.
-    fn painted_offset(panel: &crate::widgets::WidgetPanelState, key: &str) -> u32 {
-        panel.painted.get(key).map(|w| w.offset).unwrap_or(0)
-    }
-
-    #[test]
-    fn list_on_wheel_consumes_until_bound_then_chains() {
-        use crate::widgets::kinds::behavior;
-        // 6 items, 3 visible → max_scroll 3.
-        let spec = boxed_list("l", 6, 3);
-        let mut panel = wheel_panel(&spec);
-        let vp = viewport_of(&panel, "l");
-        // Consume 3 notches down…
-        for i in 1..=3 {
-            assert!(
-                behavior(&spec).on_wheel(&spec, "l", &mut panel, vp, 1),
-                "notch {i} should scroll"
-            );
-        }
-        assert_eq!(painted_offset(&panel, "l"), 3, "and the window moved");
-        // …then the bound is hit: the wheel is NOT consumed, so the
-        // dispatcher keeps bubbling (scroll chaining) instead of the
-        // event going dead on a maxed-out list.
-        assert!(!behavior(&spec).on_wheel(&spec, "l", &mut panel, vp, 1));
-        // Back up consumes again.
-        assert!(behavior(&spec).on_wheel(&spec, "l", &mut panel, vp, -1));
-    }
-
     /// **A page is a window of items, and the window is measured in rows.**
     ///
     /// `select_move` adds its delta to the selection and clamps against the
@@ -9216,8 +8343,9 @@ pub mod tests {
     /// `item_height` times too far — here, eleven cards when four are on
     /// screen — which on the orchestrator's card lists jumped a PageDown
     /// clean past the end every time. There were two copies of that
-    /// conversion and only one was right; now the paint publishes both
-    /// numbers and the resolver hands over the one each seam is in.
+    /// conversion and only one was right; now the window arrives with both
+    /// numbers (the tree's `item_window_in`) and the resolver hands over
+    /// the one each seam is in.
     #[test]
     fn page_down_on_a_card_list_moves_a_window_of_cards_not_rows() {
         use crate::widgets::kinds::behavior;
@@ -9244,14 +8372,13 @@ pub mod tests {
             key: Some("cards".into()),
         };
         let mut panel = wheel_panel(&spec);
-        assert_eq!(
-            panel.painted.get("cards").map(|w| (w.rows, w.items)),
-            Some((12, 4)),
-            "the fixture really is a 3-row card list in a 12-row window: \
-             four of them fit"
-        );
-        let vp = viewport_of(&panel, "cards");
-        assert_eq!(vp.items, 4, "four cards on screen");
+        // The window as the tree reports it: a 12-row window showing four
+        // 3-row cards.
+        let vp = crate::widgets::kinds::Viewport {
+            items: 4,
+            rows: 12,
+            cols: 40,
+        };
         let mut fx = crate::widgets::kinds::KeyFx::default();
         behavior(&spec).on_key(&spec, "cards", &mut panel, vp, "PageDown", &mut fx);
         let sel = match panel.instance_states.get("cards") {
@@ -9292,84 +8419,6 @@ pub mod tests {
     }
 
     #[test]
-    fn fitting_list_on_wheel_never_consumes() {
-        use crate::widgets::kinds::behavior;
-        // Everything visible (Git Log shape): nothing to scroll, the
-        // wheel must fall through to the enclosing pane.
-        let spec = boxed_list("l", 3, 10);
-        let mut panel = wheel_panel(&spec);
-        let vp = viewport_of(&panel, "l");
-        assert!(!behavior(&spec).on_wheel(&spec, "l", &mut panel, vp, 1));
-        assert!(!behavior(&spec).on_wheel(&spec, "l", &mut panel, vp, -1));
-    }
-    #[test]
-    fn box_tree_carries_popup_pseudo_boxes() {
-        // Completion popup: a focused Text with candidates in instance
-        // state renders overlay rows AND a z=1 opaque box spanning
-        // them (separator + items + bottom border).
-        let spec = make_text_area("qu", 2, true, 1, 40, Some("q"));
-        let mut prev = HashMap::new();
-        prev.insert(
-            "q".into(),
-            WidgetInstanceState::Text {
-                editor: crate::primitives::text_edit::TextEdit::with_text("qu"),
-                scroll: 0,
-                completions: vec!["quick".to_string().into(), "quiet".to_string().into()],
-                completion_selected_index: 0,
-                completion_scroll_offset: 0,
-                completion_navigated: false,
-                user_scrolled: false,
-            },
-        );
-        let out = render_spec(&spec, &prev, "q", 40);
-        let popup = out
-            .boxes
-            .iter()
-            .find(|b| b.kind == "text_completions")
-            .expect("completion popup box");
-        assert_eq!(popup.z, 1);
-        assert!(popup.pointer_opaque);
-        // Anchored one row below the field: separator + 2 items + border.
-        assert_eq!((popup.row, popup.height), (1, 4));
-        assert!(!out.overlays.is_empty(), "popup rows exist");
-        // Its parent is the Text box itself — the popup belongs to the
-        // field, deeper in the tree, which is what lets depth-first
-        // dispatch reach it without a short-circuit.
-        assert_eq!(out.boxes[popup.parent.unwrap()].kind, "text");
-
-        // Dropdown pop-over: open state renders the screen-space box.
-        let spec = WidgetSpec::Dropdown {
-            options: vec!["a".into(), "b".into()],
-            selected_index: 0,
-            label: "Pick".into(),
-            focused: true,
-            label_width: 0,
-            open: false,
-            scroll_offset: 0,
-            key: Some("dd".into()),
-        };
-        let mut prev = HashMap::new();
-        prev.insert(
-            "dd".into(),
-            WidgetInstanceState::Dropdown {
-                selected_index: 0,
-                open: true,
-                restore: None,
-            },
-        );
-        let out = render_spec(&spec, &prev, "dd", 40);
-        let popup = out
-            .boxes
-            .iter()
-            .find(|b| b.kind == "dropdown_popup")
-            .expect("dropdown popup box");
-        assert!(popup.screen_space);
-        assert_eq!(popup.z, 2);
-        assert!(out.popup.is_some(), "side channel still feeds paint");
-        assert_eq!(out.boxes[popup.parent.unwrap()].kind, "dropdown");
-    }
-
-    #[test]
     fn screen_space_popup_rides_the_popup_channel() {
         // A plugin `Popup { screen_space: true }` contributes no inline
         // rows; its child renders through the generalized PanelPopup
@@ -9403,21 +8452,12 @@ pub mod tests {
         assert!(dp.row_indices.is_empty(), "generic rows get no select hits");
         // Only the sibling Raw row flows inline.
         assert_eq!(out.entries.len(), 1);
-        let pb = out
-            .boxes
-            .iter()
-            .find(|b| b.kind == "panel_popup")
-            .expect("screen-space popup box");
-        assert!(pb.screen_space);
     }
 
     /// A plugin `Popup { screen_space: false }` documents itself as
     /// riding the promoted-overlay path: its rows must FLOAT (overlay
-    /// channel, not inline column flow), its hits are stamped overlay,
-    /// and its boxes get the overlay z bump — which is what arms its
-    /// `pointer_opaque` box, since the panel opacity probe requires
-    /// z > 0. The Col promotion match once listed only `Overlay`,
-    /// leaving all three unwired for this kind.
+    /// channel, not inline column flow). The Col promotion match once
+    /// listed only `Overlay`, leaving this kind flowing inline.
     #[test]
     fn panel_clipped_popup_promotes_like_overlay() {
         let spec = WidgetSpec::Col {
@@ -9451,13 +8491,6 @@ pub mod tests {
                 .any(|o| o.entry.text.starts_with("float me")),
             "panel-clipped popup row rides the overlay channel"
         );
-        let pb = out
-            .boxes
-            .iter()
-            .find(|b| b.kind == "popup")
-            .expect("panel-clipped popup box collected");
-        assert!(pb.pointer_opaque, "popup box is opaque");
-        assert!(pb.z > 0, "promotion bumps z so the opacity probe sees it");
     }
 
     #[test]

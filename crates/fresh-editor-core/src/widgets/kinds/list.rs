@@ -7,7 +7,7 @@ use fresh_core::text_property::TextPropertyEntry;
 use serde_json::json;
 
 use super::WidgetImpl;
-use crate::widgets::registry::{HitArea, PaintedWindow, WidgetInstanceState};
+use crate::widgets::registry::WidgetInstanceState;
 use crate::widgets::render::{
     apply_hover_band, blank_list_row, ensure_trailing_newline, mark_list_card_selected,
     mark_list_row_selected, render_collected, CollectedOutput, RenderContext,
@@ -16,42 +16,6 @@ use crate::widgets::render::{
 pub struct List;
 
 impl WidgetImpl for List {
-    fn on_wheel(
-        &self,
-        spec: &WidgetSpec,
-        widget_key: &str,
-        panel: &mut crate::widgets::WidgetPanelState,
-        viewport: super::Viewport,
-        delta: i32,
-    ) -> bool {
-        let total = total_items(spec);
-        if total == 0 {
-            return false;
-        }
-        // The window arrives in items already — a `List`'s offset counts
-        // items, so the row-to-item division that used to happen here is
-        // the resolver's, once, for every seam that needs it. A list that
-        // already shows everything (max_scroll == 0, e.g. the Git Log,
-        // which sets visible_rows == commit count and scrolls via its
-        // enclosing pane) still reports "can't scroll" and lets the wheel
-        // bubble to that pane rather than swallowing it.
-        let visible_items = viewport.items.max(1);
-        let max_scroll = total.saturating_sub(visible_items);
-        let cur_scroll = panel.painted.get(widget_key).map(|w| w.offset).unwrap_or(0);
-        let new_scroll = (cur_scroll as i64 + delta as i64).clamp(0, max_scroll as i64) as u32;
-        if new_scroll == cur_scroll {
-            return false;
-        }
-        // Wheel scrolls the *view* only — the selection stays put (and
-        // may leave the visible window); `user_scrolled` tells the
-        // renderer not to snap the offset back to it. The offset is the
-        // painter's window and the latch is the widget's own fold, so
-        // the notch writes one of each.
-        panel.window_mut(widget_key, viewport).offset = new_scroll;
-        panel.latch_user_scrolled(widget_key);
-        true
-    }
-
     fn picker_nav(&self) -> super::PickerNav {
         // A peek keeps the filter input focused for typing while the
         // arrow moves the list selection.
@@ -204,8 +168,8 @@ impl WidgetImpl for List {
 }
 
 /// A `List`'s state, once the spec and the instance map have been
-/// reconciled. The window is deliberately absent: that is the painter's,
-/// and [`crate::widgets::PaintedWindow`] is where it lives.
+/// reconciled. The window is deliberately absent: that is the viewport's,
+/// and the tree's viewport element is where it lives.
 pub struct Resolved {
     /// The selection clamped into the current dataset, or `-1` for none
     /// (an empty list, or a list nobody has selected in).
@@ -432,9 +396,10 @@ fn plan_list_layout(
         selected: effective_sel,
         user_scrolled,
     } = resolve(total, selected_index, list_key, prev);
-    // The offset is the *last paint's*, not the widget's: the scroll
-    // fold reads back its own previous value and republishes it below.
-    let prev_scroll = ctx.painted(list_key).map(|w| w.offset).unwrap_or(0);
+    // The mirror keeps no window of its own: every render starts at the
+    // top and snaps to the selection below. The rows a reader sees are the
+    // tree's viewport, which scrolls itself.
+    let prev_scroll = 0u32;
 
     // Pre-render the card blocks (if any) so we know the uniform card
     // height; the visible-item count and all the scroll math derive
@@ -507,8 +472,6 @@ fn collect_list(
     panel_width: u32,
 ) -> CollectedOutput {
     let mut entries: Vec<TextPropertyEntry> = Vec::new();
-    let mut hits: Vec<HitArea> = Vec::new();
-    let mut self_scroll: Option<crate::widgets::layout_box::BoxScroll> = None;
     // Resolve the row window: an explicit spec value pins it exactly
     // as before; an omitted one auto-sizes from the host's height
     // budget (threaded down like `panel_width`, resolved to leftover
@@ -609,33 +572,8 @@ fn collect_list(
                 } else if is_hovered_row {
                     apply_hover_band(&mut entry);
                 }
-                let byte_end = entry.text.len();
                 ensure_trailing_newline(&mut entry);
-                let hit_row = entries.len() as u32;
                 entries.push(entry);
-                hits.push(HitArea {
-                    overlay: false,
-                    buffer_row: hit_row,
-                    byte_start: 0,
-                    byte_end,
-                    event: crate::widgets::WidgetEvent {
-                        row_target: true,
-                        context_click: true,
-                        widget_key: item_key.clone(),
-                        widget_kind: "list",
-                        payload: json!({
-                            "index": i as i64,
-                            "key": item_key,
-                            "list_key": list_key,
-                        }),
-                        event_type: "select",
-                        // The row's widget_key is the per-item key (hover
-                        // and pointer resolution use it); the List itself
-                        // owns the hit — focus, selection state, and the
-                        // fired event target it.
-                        owner_key: list_key.map(str::to_string),
-                    },
-                });
                 emitted += 1;
             }
         }
@@ -652,33 +590,8 @@ fn collect_list(
             } else if ctx.is_hovered(Some(item_key.as_str())) {
                 apply_hover_band(&mut entry);
             }
-            let byte_end = entry.text.len();
             ensure_trailing_newline(&mut entry);
             entries.push(entry);
-            let hit_row = (entries.len() - 1) as u32;
-            hits.push(HitArea {
-                overlay: false,
-                buffer_row: hit_row,
-                byte_start: 0,
-                byte_end,
-                event: crate::widgets::WidgetEvent {
-                    row_target: true,
-                    context_click: true,
-                    widget_key: item_key.clone(),
-                    widget_kind: "list",
-                    payload: json!({
-                        "index": i as i64,
-                        "key": item_key,
-                        // The List's own spec key, so a click handler can
-                        // update the host-owned selection instance state
-                        // (keyed by this) — the item key in `key` is not
-                        // enough to find the widget. Null for keyless lists.
-                        "list_key": list_key,
-                    }),
-                    event_type: "select",
-                    owner_key: list_key.map(str::to_string),
-                },
-            });
         }
         (end - start) as u32
     };
@@ -690,53 +603,12 @@ fn collect_list(
         entries.push(blank_list_row());
     }
 
-    // Surface the list's geometry + scroll state. The host paints a
-    // draggable scrollbar for lists that overflow (`total > visible`),
-    // and mouse-wheel routing hit-tests the pointer against the region
-    // either way — a wheel over a list that fits must not scroll a
-    // sibling list elsewhere on the panel. Totals are in items;
-    // height_rows is the painted band so the thumb spans it.
-    if let Some(k) = list_key {
-        let _ = k;
-        self_scroll = Some(crate::widgets::layout_box::BoxScroll {
-            total: total as usize,
-            visible: visible_items as usize,
-            offset: scroll as usize,
-        });
-    }
-
-    // The window this paint used, published under the name it deserves:
-    // the row budget, how many items that showed, where the window sat,
-    // and the measured card band. Every one of them is a derivation over
-    // geometry or a fold the painter owns — see `PaintedWindow`.
-    let mut painted = HashMap::new();
-    if let Some(k) = list_key {
-        if !k.is_empty() {
-            painted.insert(
-                k.to_string(),
-                PaintedWindow {
-                    rows: visible_rows,
-                    items: visible_items,
-                    offset: scroll,
-                    cols: 0,
-                },
-            );
-        }
-    }
     CollectedOutput {
         entries,
-        hits,
         wants_fill,
-        painted,
         focus_cursor: None,
         embeds: Vec::new(),
         overlays: Vec::new(),
-        self_scroll,
         popups: Vec::new(),
-        // List items are virtualized rows, not independently
-        // addressable boxes — the List's own box (pushed by
-        // `render_collected`) is the dispatch target; row-level
-        // targeting stays on `HitArea`s.
-        boxes: Vec::new(),
     }
 }

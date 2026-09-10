@@ -4,10 +4,9 @@
 use std::collections::HashMap;
 
 use fresh_core::api::WidgetSpec;
-use serde_json::json;
 
 use super::WidgetImpl;
-use crate::widgets::registry::{HitArea, WidgetInstanceState};
+use crate::widgets::registry::WidgetInstanceState;
 use crate::widgets::render::{
     apply_hover_band, ensure_trailing_newline, render_toggle, render_toggle_form, CollectedOutput,
     RenderContext,
@@ -98,11 +97,10 @@ impl WidgetImpl for Toggle {
         } else {
             *focused
         };
-        // Form layout (`label: [v]`) restricts the hit to the chip so a
-        // click on the label doesn't flip the value (the settings dialog's
-        // long-standing contract); the default chip-first layout keeps the
-        // whole row clickable, which is what plugin panels expect.
-        let (mut entry, chip_range) = if *label_first {
+        // Form layout (`label: [v]`) also reports the chip's byte range,
+        // which the description uses to restrict the press to the chip;
+        // the mirror wants only the row.
+        let mut entry = if *label_first {
             render_toggle_form(
                 *checked,
                 *indeterminate,
@@ -112,10 +110,9 @@ impl WidgetImpl for Toggle {
                 panel_width,
                 ctx.marker_gutter,
             )
+            .0
         } else {
-            let entry = render_toggle(*checked, label, is_focused, ctx.marker_gutter);
-            let end = entry.text.len();
-            (entry, (0, end))
+            render_toggle(*checked, label, is_focused, ctx.marker_gutter)
         };
         // The pointer lights the whole chip+label the same way it lights a
         // button. Focus already paints its own band, so hover only shows on
@@ -123,21 +120,6 @@ impl WidgetImpl for Toggle {
         if ctx.is_hovered(key) && !is_focused {
             apply_hover_band(&mut entry);
         }
-        out.hits.push(HitArea {
-            overlay: false,
-            buffer_row: 0,
-            byte_start: chip_range.0,
-            byte_end: chip_range.1,
-            event: crate::widgets::WidgetEvent {
-                row_target: false,
-                context_click: false,
-                widget_key: key.unwrap_or("").to_string(),
-                widget_kind: "toggle",
-                payload: json!({ "checked": !checked }),
-                event_type: "toggle",
-                owner_key: None,
-            },
-        });
         ensure_trailing_newline(&mut entry);
         out.entries.push(entry);
         out

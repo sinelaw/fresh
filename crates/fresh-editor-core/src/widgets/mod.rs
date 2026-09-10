@@ -18,7 +18,6 @@
 mod actions;
 pub mod frame;
 pub mod kinds;
-pub mod layout_box;
 mod registry;
 pub mod render;
 mod text_click;
@@ -29,10 +28,9 @@ pub use actions::{
     tree_parent_index,
 };
 pub use kinds::collect_visible_tree_indices;
-pub use layout_box::LayoutBox;
 pub use registry::{
-    HitArea, PaintedWindow, PanelId, PanelKey, WidgetEvent, WidgetInstanceState, WidgetPanelState,
-    WidgetRegistry, PROMPT_TOOLBAR_PANEL_ID,
+    PanelId, PanelKey, WidgetEvent, WidgetInstanceState, WidgetPanelState, WidgetRegistry,
+    PROMPT_TOOLBAR_PANEL_ID,
 };
 pub use render::{
     apply_hover_band, clamp_number, dual_available_values, dual_label, dual_sanitize_included,

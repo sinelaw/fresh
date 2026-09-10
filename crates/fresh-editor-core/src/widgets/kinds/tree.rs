@@ -7,7 +7,7 @@ use fresh_core::text_property::TextPropertyEntry;
 use serde_json::json;
 
 use super::WidgetImpl;
-use crate::widgets::registry::{HitArea, PaintedWindow, WidgetInstanceState};
+use crate::widgets::registry::WidgetInstanceState;
 use crate::widgets::render::{
     apply_hover_band, ensure_trailing_newline, mark_list_card_selected, render_tree_row,
     tree_max_scroll, tree_node_is_card, tree_node_rows, CollectedOutput, RenderContext,
@@ -19,71 +19,6 @@ pub struct Tree;
 use crate::widgets::render::PAN_COLUMNS;
 
 impl WidgetImpl for Tree {
-    fn on_wheel(
-        &self,
-        spec: &WidgetSpec,
-        widget_key: &str,
-        panel: &mut crate::widgets::WidgetPanelState,
-        viewport: super::Viewport,
-        delta: i32,
-    ) -> bool {
-        let WidgetSpec::Tree {
-            item_height,
-            card_borders,
-            checkable,
-            nodes,
-            item_keys,
-            ..
-        } = spec
-        else {
-            return false;
-        };
-        if nodes.is_empty() {
-            return false;
-        }
-        let item_height = (*item_height).max(1);
-        let expanded = resolve(spec, widget_key, &panel.instance_states).expanded;
-        let visible_indices = collect_visible_tree_indices(nodes, item_keys, &expanded);
-        if visible_indices.is_empty() {
-            return false;
-        }
-        // **A Tree's offset counts rows, not nodes** — line-level
-        // scrolling, so a bordered card can be partially clipped at the
-        // viewport edges — which is why the bound is computed against
-        // `viewport.rows` and not the item window beside it. Compute
-        // per-node heights and the clamp with the renderer's own helpers
-        // so the wheel can't disagree with what will actually be
-        // painted. Mirror the renderer's normalization: bordered-card
-        // layout only engages for multi-row items.
-        let card_borders = *card_borders && item_height > 1;
-        let heights: Vec<u32> = visible_indices
-            .iter()
-            .map(|&abs| {
-                crate::widgets::render::tree_node_rows(
-                    &nodes[abs],
-                    *checkable,
-                    item_height,
-                    card_borders,
-                )
-            })
-            .collect();
-        let max_scroll = crate::widgets::render::tree_max_scroll(&heights, viewport.rows);
-        let cur_scroll = panel.painted.get(widget_key).map(|w| w.offset).unwrap_or(0);
-        let new_scroll = (cur_scroll as i32 + delta).clamp(0, max_scroll as i32) as u32;
-        if new_scroll == cur_scroll {
-            return false;
-        }
-        // Mouse scroll moves the *view* only — the selection stays put
-        // (and may scroll out of view). `user_scrolled` tells the
-        // renderer not to snap the offset back to the selection, and it
-        // survives a plugin `SetSelectedIndex` that re-pins the same
-        // selection. The offset is the painter's window; the latch is
-        // the tree's own fold.
-        panel.window_mut(widget_key, viewport).offset = new_scroll;
-        panel.latch_user_scrolled(widget_key);
-        true
-    }
-
     fn picker_nav(&self) -> super::PickerNav {
         // A Tree is a real (tabbable) focus target. Peek-forwarding
         // would move the tree's selection while the previously focused
@@ -383,8 +318,8 @@ impl WidgetImpl for Tree {
 
 /// A `Tree`'s state, once the spec and the instance map have been
 /// reconciled. As with [`crate::widgets::kinds::list::Resolved`], the
-/// window is absent: that is the painter's, and lives in
-/// [`crate::widgets::PaintedWindow`].
+/// window is absent: that is the viewport's, and the tree's viewport
+/// element holds it.
 pub struct Resolved {
     /// The selected node's ABSOLUTE index into `nodes`, or `-1`.
     ///
@@ -709,9 +644,10 @@ fn render_widget_tree(
         expanded: prev_expanded,
         user_scrolled,
     } = resolve_seeded(selected_index, expanded_keys, tree_key.unwrap_or(""), prev);
-    // The offset is the *last paint's*, not the tree's: the scroll fold
-    // reads back its own previous value and republishes it below.
-    let prev_scroll = ctx.painted(tree_key).map(|w| w.offset).unwrap_or(0);
+    // The mirror keeps no window of its own: every render starts at the
+    // top and snaps to the selection below. The rows a reader sees are the
+    // tree's viewport, which scrolls itself.
+    let prev_scroll = 0u32;
     // Sideways is the reader's, not the paint's — one delta for the whole
     // tree, clamped per row against that row's own length so rows of
     // different lengths slide together rather than drifting apart.
@@ -814,7 +750,6 @@ fn render_widget_tree(
             Some(start)
         })
         .collect();
-    let total_rows: u32 = heights.iter().sum();
     let mut scroll = prev_scroll;
     if sel_visible_pos >= 0 && !user_scrolled {
         let sel = sel_visible_pos as usize;
@@ -836,32 +771,13 @@ fn render_widget_tree(
     // **The walk carries this widget's state; it does not decide it.**
     // Same contract as `collect_list` and `collect_dropdown`: the
     // clamped selection is a derivation [`resolve`] reapplies on every
-    // read, the offset is the paint's window and leaves below under
-    // that name, and an untouched tree contributes no entry at all —
-    // while a stored one has to survive, because `update_side_effects`
-    // replaces the whole map.
+    // read, and an untouched tree contributes no entry at all — while a
+    // stored one has to survive, because `update_side_effects` replaces
+    // the whole map.
     if let Some(k) = tree_key.filter(|k| !k.is_empty()) {
         if let Some(stored) = prev.get(k) {
             next_state.insert(k.to_string(), stored.clone());
         }
-        // The window this paint used. `items` is the node budget the
-        // pager moves in — the row budget divided by the rows one node
-        // occupies, which for bordered cards of unequal height is the
-        // conservative estimate paging has always used.
-        let per_node = if card_borders {
-            item_height + 2
-        } else {
-            item_height
-        };
-        out.painted.insert(
-            k.to_string(),
-            PaintedWindow {
-                rows: visible_rows,
-                items: visible_rows / per_node.max(1),
-                offset: scroll,
-                cols: panel_width,
-            },
-        );
     }
 
     // Render the visible window: rows `[scroll, scroll + budget)`.
@@ -880,7 +796,6 @@ fn render_widget_tree(
         // first node, when `scroll` lands inside it).
         let clip_top = scroll.saturating_sub(row_starts[vis_pos]) as usize;
         let entries_before = out.entries.len();
-        let hits_before = out.hits.len();
         // Apply pad/truncate hints and convert any char-unit
         // overlays to byte offsets *before* the disclosure
         // prefix is prepended; render_tree_row then byte-shifts
@@ -939,139 +854,22 @@ fn render_widget_tree(
         } else if is_hovered_row {
             apply_hover_band(&mut entry);
         }
-        let row_byte_end = entry.text.len();
         ensure_trailing_newline(&mut entry);
         out.entries.push(entry);
-        let hit_row = (out.entries.len() - 1) as u32;
-        // Tree hits use the *tree's* spec key for `widget_key` (so
-        // click-to-focus works the same as Toggle/Button — the tree is
-        // tabbable). The per-row key travels in the payload.
-        let tree_spec_key = tree_key.unwrap_or("").to_string();
-        // Continuation rows of a card (item_height > 1). The primary row
-        // owns expand/toggle, but every continuation row carries its own
-        // `select` hit — a card selects as a unit, so clicking its branch
-        // or PR line must behave like clicking its title line (the web
-        // renderer already treats the whole card as one click target).
-        // They also take the selection highlight so the card highlights
-        // as a block.
+        // Continuation rows of a card (item_height > 1) take the selection
+        // highlight so the card highlights as a block.
         for mut extra in rendered.extra_entries {
             if is_selected {
                 mark_selected(&mut extra);
             } else if is_hovered_row {
                 apply_hover_band(&mut extra);
             }
-            let extra_byte_end = extra.text.len();
             ensure_trailing_newline(&mut extra);
             out.entries.push(extra);
-            if extra_byte_end > 0 {
-                out.hits.push(HitArea {
-                    overlay: false,
-                    buffer_row: (out.entries.len() - 1) as u32,
-                    byte_start: 0,
-                    byte_end: extra_byte_end,
-                    event: crate::widgets::WidgetEvent {
-                        row_target: true,
-                        context_click: true,
-                        widget_key: tree_spec_key.clone(),
-                        widget_kind: "tree",
-                        payload: json!({
-                            "index": abs_idx as i64,
-                            "key": item_key.clone(),
-                        }),
-                        event_type: "select",
-                        owner_key: None,
-                    },
-                });
-            }
         }
-        // Disclosure hit (only when has_children) — fires
-        // `expand`. The host toggles instance-state
-        // `expanded_keys` and re-renders before firing the
-        // event; the plugin only listens if it cares about
-        // expansion changes.
-        if let Some(disc_range) = rendered.disclosure_range {
-            out.hits.push(HitArea {
-                overlay: false,
-                buffer_row: hit_row,
-                byte_start: disc_range.0,
-                byte_end: disc_range.1,
-                event: crate::widgets::WidgetEvent {
-                    row_target: false,
-                    context_click: false,
-                    widget_key: tree_spec_key.clone(),
-                    widget_kind: "tree",
-                    payload: json!({
-                        "index": abs_idx as i64,
-                        "key": item_key.clone(),
-                        "expanded": !is_expanded,
-                    }),
-                    event_type: "expand",
-                    owner_key: None,
-                },
-            });
-        }
-        // Checkbox hit (when the parent Tree is checkable
-        // *and* this node has Some(_) checked) — fires
-        // `toggle` with the *new* checked value. The host
-        // does not mutate the spec; the plugin owns the
-        // truth and pushes the new state back via
-        // `WidgetMutation::SetCheckedKeys`.
-        if let Some(cb_range) = rendered.checkbox_range {
-            let new_checked = !nodes[abs_idx].checked.unwrap_or(false);
-            out.hits.push(HitArea {
-                overlay: false,
-                buffer_row: hit_row,
-                byte_start: cb_range.0,
-                byte_end: cb_range.1,
-                event: crate::widgets::WidgetEvent {
-                    row_target: false,
-                    context_click: false,
-                    widget_key: tree_spec_key.clone(),
-                    widget_kind: "tree",
-                    payload: json!({
-                        "index": abs_idx as i64,
-                        "key": item_key.clone(),
-                        "checked": new_checked,
-                    }),
-                    event_type: "toggle",
-                    owner_key: None,
-                },
-            });
-        }
-        // Row body hit — fires `select`. Spans whatever's
-        // left of the row text after the disclosure +
-        // checkbox prefix.
-        let body_start = match (rendered.checkbox_range, rendered.disclosure_range) {
-            (Some((_, end)), _) => end + 1, // +1 for the trailing space after [v]
-            (None, Some((_, end))) => end,
-            (None, None) => 0,
-        };
-        if body_start < row_byte_end {
-            out.hits.push(HitArea {
-                overlay: false,
-                buffer_row: hit_row,
-                byte_start: body_start,
-                byte_end: row_byte_end,
-                event: crate::widgets::WidgetEvent {
-                    row_target: true,
-                    context_click: true,
-                    widget_key: tree_spec_key.clone(),
-                    widget_kind: "tree",
-                    payload: json!({
-                        "index": abs_idx as i64,
-                        "key": item_key.clone(),
-                    }),
-                    event_type: "select",
-                    owner_key: None,
-                },
-            });
-        }
-
         // Clip this node's rows to the viewport window: drop `clip_top`
         // rows hidden above it and anything past the remaining budget
-        // below, shifting the surviving rows' hits up accordingly and
-        // discarding hits whose row was clipped away (a hidden
-        // disclosure glyph must not stay clickable).
+        // below.
         let node_rows = out.entries.len() - entries_before;
         let keep_from = entries_before + clip_top.min(node_rows);
         let remaining = (budget - rows_emitted) as usize;
@@ -1087,38 +885,8 @@ fn render_widget_tree(
                 })
                 .collect();
             out.entries.extend(kept);
-            let clip = (keep_from - entries_before) as u32;
-            let kept_hits: Vec<HitArea> = out
-                .hits
-                .drain(hits_before..)
-                .filter_map(|mut h| {
-                    let row = h.buffer_row as usize;
-                    if row >= keep_from && row < keep_to {
-                        h.buffer_row -= clip;
-                        Some(h)
-                    } else {
-                        None
-                    }
-                })
-                .collect();
-            out.hits.extend(kept_hits);
         }
         rows_emitted += (out.entries.len() - entries_before) as u32;
-    }
-
-    // Surface a scroll region so the host paints a draggable overlay
-    // scrollbar when the tree overflows — mirroring the List path, so the
-    // dock's session tree gets the same hover scrollbar the card list had.
-    // Emitted whenever the tree is keyed (not only on overflow) so wheel
-    // routing can hit-test the pointer against the tree's geometry too.
-    // Totals are in rows (matching the row-based scroll offset), so the
-    // thumb size/position track line-level scrolling exactly.
-    if tree_key.filter(|k| !k.is_empty()).is_some() {
-        out.self_scroll = Some(crate::widgets::layout_box::BoxScroll {
-            total: total_rows as usize,
-            visible: rows_emitted as usize,
-            offset: scroll as usize,
-        });
     }
 
     out

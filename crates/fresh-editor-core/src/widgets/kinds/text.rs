@@ -8,7 +8,7 @@ use fresh_core::text_property::{InlineOverlay, OffsetUnit, TextPropertyEntry};
 use serde_json::json;
 
 use super::WidgetImpl;
-use crate::widgets::registry::{HitArea, WidgetInstanceState};
+use crate::widgets::registry::WidgetInstanceState;
 use crate::widgets::render::{
     blank_list_row, completion_scrollbar_glyph, ensure_trailing_newline, fit_label,
     focus_gutter_prefix, form_label_width, ratatui_style_to_overlay,
@@ -219,21 +219,17 @@ impl WidgetImpl for Text {
         delta: i32,
     ) -> bool {
         let WidgetSpec::Text {
-            rows,
             completions_visible_rows,
             ..
         } = spec
         else {
             return false;
         };
-        // An open completion popup scrolls first — the wheel reached
-        // this widget because the pointer sat on the popup's own box
-        // (or the field's). Which of those two the arena resolved, on
-        // a painted panel; which of those two the *tree* named, on a
-        // described one, where the notch arrives through
-        // `UiFact::WidgetWheel` rather than through a row and a column.
-        // Scrolling counts as stepping into the popup: Enter then
-        // accepts the highlighted row.
+        // Only an open completion popup scrolls here — the one window in a
+        // described panel the tree does not own, reached through
+        // `UiFact::WidgetWheel` by name. The field's own rows are the
+        // tree's viewport, which takes its own wheel. Scrolling counts as
+        // stepping into the popup: Enter then accepts the highlighted row.
         if let Some(WidgetInstanceState::Text {
             completions,
             completion_scroll_offset,
@@ -255,41 +251,7 @@ impl WidgetImpl for Text {
                 return true;
             }
         }
-        // Otherwise only a multi-line (document) Text scrolls under
-        // the wheel; a single-line field scrolls with its caret and
-        // emits no region.
-        if *rows <= 1 {
-            return false;
-        }
-        let Some((total, visible)) = panel
-            .boxes
-            .iter()
-            .find(|b| b.key.as_deref() == Some(widget_key))
-            .and_then(|b| b.scroll)
-            .map(|sc| (sc.total, sc.visible))
-        else {
-            return false;
-        };
-        let max_scroll = total.saturating_sub(visible) as i64;
-        if max_scroll == 0 {
-            return false;
-        }
-        match panel.instance_states.get_mut(widget_key) {
-            Some(WidgetInstanceState::Text {
-                scroll,
-                user_scrolled,
-                ..
-            }) => {
-                let new = (*scroll as i64 + delta as i64).clamp(0, max_scroll) as u32;
-                if new == *scroll {
-                    return false;
-                }
-                *scroll = new;
-                *user_scrolled = true;
-                true
-            }
-            _ => false,
-        }
+        false
     }
 
     fn box_meta(&self, spec: &WidgetSpec) -> super::BoxMeta {
@@ -511,7 +473,6 @@ pub fn completion_popup(
 #[allow(clippy::too_many_arguments)]
 fn emit_completion_overlays(
     out: &mut CollectedOutput,
-    key: Option<&str>,
     completions: &[fresh_core::api::CompletionItem],
     completions_visible_rows: u32,
     panel_width: u32,
@@ -531,32 +492,12 @@ fn emit_completion_overlays(
     ) else {
         return 0;
     };
-    let visible = popup.visible;
     for (i, entry) in popup.rows.into_iter().enumerate() {
         out.overlays.push(OverlayRow {
             buffer_row: 1 + i as u32,
             entry,
         });
     }
-    // The popup is a real box in the panel's layout tree: one
-    // stacking level up, opaque (a click inside it that resolves to
-    // nothing must not fall through to the rows it covers), spanning
-    // the dim separator (anchor 1), the item rows, and the bottom
-    // border. Containers shift it exactly as they shift the overlay
-    // rows it describes.
-    out.boxes.push({
-        let mut b =
-            crate::widgets::LayoutBox::plain("text_completions", 1, 0, panel_width, visible + 2);
-        b.z = 1;
-        b.pointer_opaque = true;
-        // Keyed with the field's key and scrollable: a wheel over the
-        // popup routes here through the ordinary hit-path bubble and
-        // lands in `Text::on_wheel`'s completions branch — no
-        // panel-wide absorb, no bespoke popup scroller.
-        b.key = key.map(|k| k.to_string());
-        b.scrollable = true;
-        b
-    });
     popup.scroll
 }
 
@@ -848,39 +789,11 @@ fn render_markdown_text_area(
             // panel (header off the top, `~` rows below the content).
             push_block_caret_overlay(&mut entry, byte_in_row);
         }
-        // One `focus` hit per row. `mdLine` names the rendered line so a
-        // click (and a drag) can place the caret; the byte range extends
-        // past the text so clicks on the row's padding land at line-end.
-        if let Some(k) = key.filter(|k| !k.is_empty()) {
-            out.hits.push(HitArea {
-                overlay: false,
-                buffer_row: vis,
-                byte_start: 0,
-                byte_end: entry.text.len() + width,
-                event: crate::widgets::WidgetEvent {
-                    row_target: true,
-                    context_click: false,
-                    widget_key: k.to_string(),
-                    widget_kind: "text",
-                    payload: json!({ "mdLine": idx }),
-                    event_type: "focus",
-                    owner_key: None,
-                },
-            });
-        }
         ensure_trailing_newline(&mut entry);
         out.entries.push(entry);
     }
 
     if let Some(k) = key.filter(|k| !k.is_empty()) {
-        // Scroll payload on the widget's own box: wheel bounds clamp
-        // against it, and the host paints a scrollbar when the
-        // document overflows.
-        out.self_scroll = Some(crate::widgets::layout_box::BoxScroll {
-            total: total as usize,
-            visible: visible as usize,
-            offset: scroll as usize,
-        });
         next_state.insert(
             k.to_string(),
             WidgetInstanceState::Text {
@@ -1003,25 +916,6 @@ fn render_widget_text(
             });
         }
         for (row_idx, mut e) in rendered.entries.into_iter().enumerate() {
-            // Clicking any rendered row of the text area focuses the field
-            // (see the single-line branch / #2234 item 1).
-            if let Some(k) = key.filter(|k| !k.is_empty()) {
-                out.hits.push(HitArea {
-                    overlay: false,
-                    buffer_row: row_idx as u32,
-                    byte_start: 0,
-                    byte_end: e.text.len(),
-                    event: crate::widgets::WidgetEvent {
-                        row_target: false,
-                        context_click: false,
-                        widget_key: k.to_string(),
-                        widget_kind: "text",
-                        payload: json!({}),
-                        event_type: "focus",
-                        owner_key: None,
-                    },
-                });
-            }
             // Modal surfaces paint the caret as a REVERSED cell in the
             // row itself (no hardware cursor over a modal).
             if block_caret {
@@ -1061,7 +955,6 @@ fn render_widget_text(
                 byte_in_row: byte_in_row as u32,
             });
         }
-        out.hits.extend(line.hit);
         out.entries.push(line.entry);
     }
     // Emit the completion popup (if any) as floating overlay rows so
@@ -1069,7 +962,6 @@ fn render_widget_text(
     // popup paints on top; persists the forward-only auto-scroll offset.
     prev_completion_scroll = emit_completion_overlays(
         &mut out,
-        key,
         &prev_completions,
         completions_visible_rows,
         panel_width,
@@ -1273,15 +1165,22 @@ pub struct SingleLine {
     /// Byte offset of the caret within `entry.text`, gutter included; `None`
     /// when the field is unfocused.
     pub caret: Option<usize>,
-    /// The `focus` hit, present only for a keyed field.
-    pub hit: Option<HitArea>,
+    /// What a press on the row means, present only for a keyed field: a
+    /// `focus` whose payload carries the value-layout breadcrumbs the click
+    /// handler needs to reposition the cursor to the clicked column
+    /// (`valueInnerStart` is where the value's `<inner>` region begins in
+    /// this row's text, after the gutter; the truncation fields translate a
+    /// click over a `…`-prefixed tail view back to a value byte). The
+    /// description attaches it to the whole row; an *unkeyed* field has
+    /// none, because with nothing to name it could not say what it focused.
+    pub event: Option<crate::widgets::WidgetEvent>,
     /// The horizontal window `render_text_input` chose — the first painted
     /// value char, to hand back on the next render.
     pub scroll: u32,
 }
 
 /// **The single-line field's row: label column, value cell, focus gutter,
-/// caret and hit.**
+/// caret and press.**
 ///
 /// Pulled out of the collector whole, because every one of the rules below is
 /// a rule about *this row* rather than about the immediate-mode walk that used
@@ -1398,21 +1297,9 @@ pub fn single_line(
     // projection's byte scan; the `focus` event keeps the plugin's focus
     // mirror in step.
     //
-    // The payload carries the value-layout breadcrumbs the click
-    // handler needs to reposition the cursor to the clicked column
-    // (#2573): `valueInnerStart` is where the value's `<inner>`
-    // region begins in this row's text (after the gutter that was
-    // just prepended), and the truncation fields translate a click
-    // over a `…`-prefixed tail view back to a value byte.
-    //
-    // An *unkeyed* field emits none: with nothing to name, the hit could not
-    // say which widget was focused.
-    let hit = key.filter(|k| !k.is_empty()).map(|k| HitArea {
-        overlay: false,
-        buffer_row: 0,
-        byte_start: 0,
-        byte_end: entry.text.len(),
-        event: crate::widgets::WidgetEvent {
+    let event = key
+        .filter(|k| !k.is_empty())
+        .map(|k| crate::widgets::WidgetEvent {
             row_target: false,
             context_click: false,
             widget_key: k.to_string(),
@@ -1425,13 +1312,12 @@ pub fn single_line(
             }),
             event_type: "focus",
             owner_key: None,
-        },
-    });
+        });
     ensure_trailing_newline(&mut entry);
     SingleLine {
         entry,
         caret: cursor_in_row,
-        hit,
+        event,
         scroll: rendered.scroll_chars,
     }
 }

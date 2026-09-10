@@ -6,7 +6,7 @@ use fresh_core::api::{DualListOption, OverlayColorSpec, OverlayOptions, WidgetSp
 use serde_json::json;
 
 use super::WidgetImpl;
-use crate::widgets::registry::{HitArea, WidgetInstanceState};
+use crate::widgets::registry::WidgetInstanceState;
 use fresh_core::text_property::{InlineOverlay, OffsetUnit, TextPropertyEntry};
 
 use crate::widgets::render::{
@@ -653,43 +653,14 @@ fn collect_dual_list(
     }
 
     let col_w = dual_col_width(panel_width);
-    let widget_key = key.unwrap_or("").to_string();
 
     if let Some(e) = label_row(label) {
         out.entries.push(e);
     }
-    let header_row_idx = out.entries.len() as u32;
     out.entries.push(header_row(&st, col_w));
 
     for i in 0..st.body_rows(visible_rows) {
-        let Row {
-            entry,
-            available,
-            included,
-        } = body_row(options, &st, i, col_w);
-        let row = header_row_idx + 1 + i as u32;
-        // Click hit areas: clicking a cell focuses that column +
-        // cursor row.
-        for (range, column) in [(available, "available"), (included, "included")] {
-            let Some((byte_start, byte_end)) = range else {
-                continue;
-            };
-            out.hits.push(HitArea {
-                overlay: false,
-                buffer_row: row,
-                byte_start,
-                byte_end,
-                event: crate::widgets::WidgetEvent {
-                    row_target: false,
-                    context_click: false,
-                    widget_key: widget_key.clone(),
-                    widget_kind: "dual_list",
-                    payload: json!({ "column": column, "index": i }),
-                    event_type: "dual_focus",
-                    owner_key: None,
-                },
-            });
-        }
+        let Row { entry, .. } = body_row(options, &st, i, col_w);
         out.entries.push(entry);
     }
 

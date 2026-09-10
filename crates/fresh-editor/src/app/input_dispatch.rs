@@ -524,14 +524,7 @@ impl Editor {
                 .unwrap_or_default();
             if self
                 .widget_registry
-                .update(
-                    key,
-                    spec,
-                    states,
-                    focus,
-                    std::collections::HashMap::new(),
-                    Vec::new(),
-                )
+                .update(key, spec, states, focus)
                 .is_err()
             {
                 tracing::warn!("prompt toolbar {key} vanished between the lookup and the update");
@@ -543,8 +536,6 @@ impl Editor {
                 spec,
                 std::collections::HashMap::new(),
                 String::new(),
-                std::collections::HashMap::new(),
-                Vec::new(),
                 // The query input holds the keyboard until a control is
                 // given it.
                 false,

@@ -88,15 +88,6 @@ impl WidgetImpl for Popup {
                 entries: child_out.entries,
                 row_indices: Vec::new(),
             });
-            // The pop-over as a box, mirroring the dropdown's: its
-            // final rectangle is resolved at paint (screen-space), two
-            // stacking levels up; panel-space hit-testing skips it.
-            out.boxes.push({
-                let mut b = crate::widgets::LayoutBox::plain("panel_popup", 0, 0, 0, 0);
-                b.screen_space = true;
-                b.z = 2;
-                b
-            });
             return out;
         }
         // Panel-clipped: same promoted-overlay collection as `Overlay`.

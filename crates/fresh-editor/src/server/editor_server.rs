@@ -1782,8 +1782,6 @@ mod wave_dismiss_tests {
             spec,
             HashMap::new(),
             "field".to_string(),
-            HashMap::new(),
-            Vec::new(),
             true,
             false,
             false,

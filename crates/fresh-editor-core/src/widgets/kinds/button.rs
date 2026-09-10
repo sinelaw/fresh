@@ -3,10 +3,9 @@
 use std::collections::HashMap;
 
 use fresh_core::api::WidgetSpec;
-use serde_json::json;
 
 use super::WidgetImpl;
-use crate::widgets::registry::{HitArea, WidgetInstanceState};
+use crate::widgets::registry::WidgetInstanceState;
 use crate::widgets::render::{
     ensure_trailing_newline, fill_button_label, render_bare_button, render_button, CollectedOutput,
     RenderContext,
@@ -148,30 +147,6 @@ impl WidgetImpl for Button {
                 style.as_ref(),
             )
         };
-        // Disabled buttons skip the hit area entirely — clicks on
-        // them are no-ops, matching the non-tabbable behavior in
-        // `collect_tabbable`. Without this, a stray click would
-        // still focus + activate a button whose handler is
-        // already gated by the same disabled condition the
-        // plugin computed.
-        if !disabled {
-            let byte_end = entry.text.len();
-            out.hits.push(HitArea {
-                overlay: false,
-                buffer_row: 0,
-                byte_start: 0,
-                byte_end,
-                event: crate::widgets::WidgetEvent {
-                    row_target: false,
-                    context_click: false,
-                    widget_key: key.unwrap_or("").to_string(),
-                    widget_kind: "button",
-                    payload: json!({}),
-                    event_type: "activate",
-                    owner_key: None,
-                },
-            });
-        }
         ensure_trailing_newline(&mut entry);
         out.entries.push(entry);
         out

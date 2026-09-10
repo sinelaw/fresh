@@ -26,7 +26,6 @@ mod status_bar;
 use super::types::HoverTarget;
 use super::Editor;
 
-
 /// Whether a cell is inside a rectangle.
 ///
 /// A plain geometry helper, cell first and rectangle second — its callers'

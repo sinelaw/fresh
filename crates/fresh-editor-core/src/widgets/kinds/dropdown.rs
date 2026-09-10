@@ -3,10 +3,9 @@
 use std::collections::HashMap;
 
 use fresh_core::api::WidgetSpec;
-use serde_json::json;
 
 use super::WidgetImpl;
-use crate::widgets::registry::{HitArea, WidgetInstanceState};
+use crate::widgets::registry::WidgetInstanceState;
 use crate::widgets::render::{
     ensure_trailing_newline, render_dropdown, CollectedOutput, PanelPopup, RenderContext,
     RenderedDropdown,
@@ -239,23 +238,6 @@ fn collect_dropdown(
     // `render_dropdown` directly, still uses them for its inline list).
     let _ = option_rows;
     let widget_key = key.unwrap_or("").to_string();
-    // A click on the `[value ▼]` button toggles the option list open
-    // (see `deliver_widget_hit`'s `dropdown_toggle` special case).
-    out.hits.push(HitArea {
-        overlay: false,
-        buffer_row: 0,
-        byte_start: button_range.0,
-        byte_end: button_range.1,
-        event: crate::widgets::WidgetEvent {
-            row_target: false,
-            context_click: false,
-            widget_key: widget_key.clone(),
-            widget_kind: "dropdown",
-            payload: json!({}),
-            event_type: "dropdown_toggle",
-            owner_key: None,
-        },
-    });
     // Open: surface the option list as a floating pop-over anchored to
     // the trigger's row (row 0 within this sub-render; Col/Row/Section
     // collapse shifts `anchor_row` up to the panel-inner row). The host
@@ -272,17 +254,6 @@ fn collect_dropdown(
             &widget_key,
             anchor_col(&entry.text, button_range.0),
         ));
-        // The pop-over as a box: screen-space (its final rectangle is
-        // resolved at paint, flipping above the anchor near the frame
-        // edge), two stacking levels up. Panel-space hit-testing skips
-        // screen-space boxes — the click path checks the paint-recorded
-        // rect first, same ordering as before.
-        out.boxes.push({
-            let mut b = crate::widgets::LayoutBox::plain("dropdown_popup", 0, 0, 0, 0);
-            b.screen_space = true;
-            b.z = 2;
-            b
-        });
     }
     ensure_trailing_newline(&mut entry);
     out.entries.insert(0, entry);

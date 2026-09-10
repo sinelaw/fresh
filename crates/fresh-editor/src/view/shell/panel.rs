@@ -1246,17 +1246,19 @@ mod tests {
         use fresh_core::api::{OverlayColorSpec, OverlayOptions, WidgetSpec};
         use fresh_core::text_property::TextPropertyEntry;
         let mut selected = TextPropertyEntry::text(" Move to Folder");
-        selected.inline_overlays.push(fresh_core::text_property::InlineOverlay {
-            start: 0,
-            end: selected.text.len(),
-            style: OverlayOptions {
-                bg: Some(OverlayColorSpec::theme_key("ui.menu_selected_bg")),
-                extend_to_line_end: true,
-                ..Default::default()
-            },
-            properties: Default::default(),
-            unit: fresh_core::text_property::OffsetUnit::Byte,
-        });
+        selected
+            .inline_overlays
+            .push(fresh_core::text_property::InlineOverlay {
+                start: 0,
+                end: selected.text.len(),
+                style: OverlayOptions {
+                    bg: Some(OverlayColorSpec::theme_key("ui.menu_selected_bg")),
+                    extend_to_line_end: true,
+                    ..Default::default()
+                },
+                properties: Default::default(),
+                unit: fresh_core::text_property::OffsetUnit::Byte,
+            });
         let raw = |t: &str| WidgetSpec::Raw {
             entries: vec![TextPropertyEntry::text(t)],
             key: None,

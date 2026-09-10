@@ -14,11 +14,10 @@
 use std::collections::HashMap;
 
 use fresh_core::api::WidgetSpec;
-use serde_json::json;
 
 use super::WidgetImpl;
 use crate::primitives::text_edit::TextEdit;
-use crate::widgets::registry::{HitArea, WidgetInstanceState};
+use crate::widgets::registry::WidgetInstanceState;
 use crate::widgets::render::{
     clamp_number, ensure_trailing_newline, render_number, CollectedOutput, NumberEdit,
     RenderContext, RenderedNumber,
@@ -249,26 +248,7 @@ fn collect_number(
         draft.as_ref().map(NumberEdit::from),
         ctx.marker_gutter,
     );
-    let RenderedNumber {
-        mut entry,
-        value_range,
-    } = rendered;
-    // A click on the value cell begins in-place editing (`on_pointer`).
-    out.hits.push(HitArea {
-        overlay: false,
-        buffer_row: 0,
-        byte_start: value_range.0,
-        byte_end: value_range.1,
-        event: crate::widgets::WidgetEvent {
-            row_target: false,
-            context_click: false,
-            widget_key: key.unwrap_or("").to_string(),
-            widget_kind: "number",
-            payload: json!({}),
-            event_type: "number_value",
-            owner_key: None,
-        },
-    });
+    let RenderedNumber { mut entry, .. } = rendered;
     ensure_trailing_newline(&mut entry);
     out.entries.push(entry);
     out
