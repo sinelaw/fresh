@@ -948,3 +948,132 @@ mod soft_break_tests {
         assert_eq!(tail, "onetwo", "no source character may be dropped");
     }
 }
+
+/// Where an inline hint anchored on a **line break** is drawn.
+///
+/// This is the contract markdown compose's code-block rails rest on, and the
+/// one they used to fall foul of. A closing rail anchored `AfterChar` on the
+/// row's last character is anchored to a character a keystroke can delete: its
+/// marker then collapses onto the line break, and — as the first test here
+/// pins — an `after` hint on a line break is emitted *past* it, so the rail is
+/// drawn at the head of the next row instead of at the end of its own. Holding
+/// Backspace in a framed code block walked the block's right edge across the
+/// closing border that way.
+///
+/// A `before` hint on the same break is the end-of-line hint, drawn at the end
+/// of the line it belongs to, which is why the rail is anchored there now.
+#[cfg(test)]
+mod line_break_hint_tests {
+    use super::*;
+    use crate::view::virtual_text::MarkerGravity;
+
+    /// `"one"` followed by its line break, as source cells.
+    fn line_with_break() -> Vec<ViewTokenWire> {
+        let mut tokens: Vec<ViewTokenWire> = "one"
+            .char_indices()
+            .map(|(i, c)| ViewTokenWire {
+                source_offset: Some(i),
+                kind: ViewTokenWireKind::Text(c.to_string()),
+                style: None,
+            })
+            .collect();
+        tokens.push(ViewTokenWire {
+            source_offset: Some(3),
+            kind: ViewTokenWireKind::Newline,
+            style: None,
+        });
+        tokens
+    }
+
+    fn hint(anchor: usize, position: VirtualTextPosition) -> InlineHint {
+        InlineHint {
+            anchor,
+            text: "|".to_string(),
+            position,
+            gravity: MarkerGravity::Right,
+            style: None,
+        }
+    }
+
+    /// The cells emitted after the line break — the head of the next row.
+    fn past_the_break(tokens: &[ViewTokenWire]) -> String {
+        let br = tokens
+            .iter()
+            .position(|t| matches!(t.kind, ViewTokenWireKind::Newline))
+            .expect("the line break survives the splice");
+        tokens[br + 1..]
+            .iter()
+            .filter_map(|t| match &t.kind {
+                ViewTokenWireKind::Text(s) => Some(s.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn an_after_hint_on_a_line_break_is_drawn_past_it() {
+        let out = splice_inline_virtual_text(
+            line_with_break(),
+            &[hint(3, VirtualTextPosition::AfterChar)],
+        );
+        assert_eq!(
+            past_the_break(&out),
+            " |",
+            "an `after` hint on a line break lands on the NEXT row; a              decoration that must stay on its own row cannot be anchored this              way — see the module docs"
+        );
+    }
+
+    #[test]
+    fn a_before_hint_on_a_line_break_is_drawn_at_the_end_of_its_line() {
+        let out = splice_inline_virtual_text(
+            line_with_break(),
+            &[hint(3, VirtualTextPosition::BeforeChar)],
+        );
+        assert_eq!(
+            past_the_break(&out),
+            "",
+            "the end-of-line hint belongs to the line it ends, not to the one              below it"
+        );
+        let head: String = out
+            .iter()
+            .take_while(|t| !matches!(t.kind, ViewTokenWireKind::Newline))
+            .filter_map(|t| match &t.kind {
+                ViewTokenWireKind::Text(s) => Some(s.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            head, "one | ",
+            "padded on both sides, which is the convention a caller sizing its              own padding has to count"
+        );
+    }
+
+    /// The property that makes the break a safe anchor: it is still there
+    /// after the character in front of it is deleted, so the hint has not
+    /// moved rows. Deleting `e` leaves the hint anchored on the break, which
+    /// the test above shows is drawn at the end of the line.
+    #[test]
+    fn deleting_the_last_character_does_not_move_a_break_anchored_hint() {
+        let tokens: Vec<ViewTokenWire> = vec![
+            ViewTokenWire {
+                source_offset: Some(0),
+                kind: ViewTokenWireKind::Text("o".to_string()),
+                style: None,
+            },
+            ViewTokenWire {
+                source_offset: Some(1),
+                kind: ViewTokenWireKind::Text("n".to_string()),
+                style: None,
+            },
+            // `e` deleted: the break — and the hint on it — shifted down one.
+            ViewTokenWire {
+                source_offset: Some(2),
+                kind: ViewTokenWireKind::Newline,
+                style: None,
+            },
+        ];
+        let out =
+            splice_inline_virtual_text(tokens, &[hint(2, VirtualTextPosition::BeforeChar)]);
+        assert_eq!(past_the_break(&out), "");
+    }
+}
