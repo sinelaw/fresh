@@ -300,24 +300,36 @@ What is left, all editor-side:
    (`Editor::handle_widget_text_selection_drag`) and `Text::on_wheel`'s document
    branch.
 
-**Why it is the keystone.** `Editor::resolve_described_panel` bails out for any
-spec containing a markdown document, and that bail-out is what keeps the entire
-`painted`/`boxes` projection alive. Removing it collapses a chain: the arena
-goes → the prose drag's arena read goes → `widget_text_drag` goes →
-`PointerGrab::WidgetText` goes, which is the **last remaining variant** → the
-pointer's legacy grab roster retires, and with the two hover reactions moved
-beside their surfaces, `app/chrome/` can go with it. `render_button`'s deletion
-hangs off the same chain — see *The shell's stylesheet*.
+**What it clears on its own.** The chain runs through the arena's *readers*,
+and they are all markdown's:
+
+- the last `render_collected` call inside a description build — after which no
+  build runs a renderer, which is the property that makes the purity check
+  (*Instrumentation*) worth building;
+- `spec_has_markdown_document` and its bail-out in `resolve_described_panel`;
+- both editor-side readers of `boxes` — the prose drag and `Text::on_wheel`'s
+  document branch — and with the drag, `Editor::widget_text_drag`;
+- `PointerGrab::WidgetText`, which is the **last remaining variant**, so the
+  enum, `pointer_grab()` and the grab arms in `mouse_input.rs` go with it;
+- the shadow `TextEdit` over reflowed rows.
+
+**What it does not clear, and why.** The arena's *writer* is not markdown's.
+`resolve_described_panel` has a second bail-out: an **anchored** floating panel
+(a plugin's context menu) takes its width from the mirror's widest row, because
+its interior is built by a `layout_reader` that needs a number before it can
+produce one, and `Sizing::Auto` there would hand it the whole screen. That panel
+still goes through `render_floating_spec` → `render_collected`, which still
+writes `painted` and `boxes`. So the fields, `render_collected` itself,
+`layout_box.rs` and `render_button` survive until an **intrinsic width for an
+anchored layer** lands too — a genuine missing library capability, not glue.
+
+Treat the two as a pair: this item removes the readers, that one removes the
+writer, and only the pair retires the projection. `app/chrome/` likewise loses
+its grab here and needs its two hover reactions moved before the module goes.
 
 Consumers: code-tour's prose column (keyed, full caret/selection/drag/copy) and
 the welcome screen's code sample (keyless, read-only — check early whether it
 needs steps 2–4 at all).
-
-The second bail-out is separate and smaller: an **anchored** floating panel (a
-plugin's context menu) takes its width from the mirror's widest row, because its
-interior is built by a `layout_reader` that needs a number before it can produce
-one and `Sizing::Auto` there would hand it the whole screen. That is a genuine
-missing library capability — an intrinsic width for an anchored layer — not glue.
 
 ### The status bar does layout by hand
 
@@ -449,11 +461,12 @@ no bracketed string to re-colour.
    and `Rule::reserved_x` asserts that symmetry rather than assuming it, so the
    day a rule wants sides of different widths that assertion is the trigger.
 
-**And one item that belongs to the markdown chain, not the stylesheet.**
+**And one item that belongs to the text-projection chain, not the stylesheet.**
 `render_button` cannot be deleted while `render_floating_spec` /
 `render_panel_spec` still run the whole text projection on every mount and
 repaint: that path's entire output is a string, and a naked label plus a class
-says nothing to it. The duplication it existed to end is already gone —
+says nothing to it. What keeps that path alive is the anchored-panel bail-out —
+see *The markdown document view*, "What it does not clear". The duplication it existed to end is already gone —
 `widgets::frame::Frame::BUTTON` holds the glyphs and the padding, and both the
 runtime's text and the shell's reserved columns read it, with a test asserting
 they agree on width. `render_button` goes when the text pipeline goes.
@@ -493,6 +506,10 @@ Recorded so the corrections are not re-derived:
 - **"Delete `app/chrome/`" was misstated.** What is there now is message
   handlers, not a duplicate chrome system. The item is *move these beside their
   surfaces*, which is placement, not deletion of a second authority.
+- **`layout_box.rs` was listed as deleted. It is not** — 314 lines, still the
+  home of `LayoutBox`, `BoxScroll`, `focus_ring` and `hit_path`, and still
+  reached by `render_collected` and three kinds. It goes with the text
+  projection, not before it.
 - **The deletion ledger conflated two kinds of survivor.** `HostRegion` and
   `HostTarget` survive as a *key namespace* for readers that ask where a region
   is — no region is a `Host` any more. `popup_areas` survives as a cache of tree
