@@ -7708,7 +7708,7 @@ function sshBodyFields(): WidgetSpec[] {
   return [
     ...field(splitLabel("form.ssh_host_label").label, form.sshHost, {
       key: "ssh_host",
-      note: editor.t("form.ssh_host_placeholder"),
+      note: editor.t("form.ssh_host_note"),
     }),
     ...field(formLabel("form.ssh_remote_path_label"), form.sshPath, {
       key: "ssh_path",
@@ -7756,7 +7756,7 @@ function k8sBodyFields(): WidgetSpec[] {
       }),
     );
   }
-  fields.push(fieldNote(editor.t("form.k8s_hint")));
+  fields.push(fieldNote(splitPlaceholder(noteText(editor.t("form.k8s_hint"))).placeholder));
   return fields;
 }
 
