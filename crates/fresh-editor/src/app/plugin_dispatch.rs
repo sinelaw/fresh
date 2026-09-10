@@ -512,6 +512,7 @@ impl Editor {
                 italic,
                 before,
                 epoch,
+                pad_to_column,
             } => {
                 self.handle_add_virtual_text_styled(
                     buffer_id,
@@ -524,6 +525,7 @@ impl Editor {
                     italic,
                     before,
                     epoch,
+                    pad_to_column,
                 );
             }
             PluginCommand::RemoveVirtualText {

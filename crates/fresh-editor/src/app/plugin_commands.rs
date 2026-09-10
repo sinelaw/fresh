@@ -415,6 +415,7 @@ impl Editor {
         italic: bool,
         before: bool,
         epoch: Option<u64>,
+        pad_to_column: Option<u32>,
     ) {
         if let Some(state) = self
             .windows
@@ -486,6 +487,7 @@ impl Editor {
                 vtext_position,
                 0, // priority
                 virtual_text_id,
+                pad_to_column,
             );
         }
     }
