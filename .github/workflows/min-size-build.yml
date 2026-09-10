@@ -12,6 +12,9 @@
 
 name: Min-size Build
 
+permissions:
+  contents: read
+
 on:
   workflow_call:
   workflow_dispatch:

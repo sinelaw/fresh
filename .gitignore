@@ -74,3 +74,37 @@ tests/wrap_model/.venv/
 tests/wrap_model/.hypothesis/
 __pycache__/
 *.pyc
+
+# Secrets and key material
+# `.envrc` itself is tracked (it holds only `use flake`); what tools write
+# beside it is not.
+.env
+.env.*
+!.env.example
+.envrc.local
+.direnv/
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa
+id_ed25519
+secrets.json
+credentials.json
+.npmrc
+.cargo/credentials
+.cargo/credentials.toml
+
+# Editor / AI-assistant workspace state
+.vscode/
+!.vscode/extensions.json
+.idea/
+.cursor/
+.claude/settings.local.json
+.claude/*.local.json
+.aider*
+.mcp.local.json
+
+# Machine-local editor session state (the project config layer beside it,
+# .fresh/config.json, is committed deliberately or not at all).
+.fresh/session.json

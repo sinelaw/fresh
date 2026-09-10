@@ -6,6 +6,9 @@ name: Theme screenshots
 #
 # See docs/theme-screenshot-diff.md for objectives & criteria.
 
+permissions:
+  contents: read
+
 on:
   pull_request:
     paths:
@@ -32,6 +35,7 @@ jobs:
       - name: Checkout (full history for base diff)
         uses: actions/checkout@v6
         with:
+          persist-credentials: false
           fetch-depth: 0
 
       - name: Fetch PR base branch

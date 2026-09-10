@@ -3,6 +3,9 @@
 
 name: Flatpak Build
 
+permissions:
+  contents: read
+
 on:
   workflow_call:
     inputs:

@@ -3,6 +3,9 @@
 
 name: GUI Builds
 
+permissions:
+  contents: read
+
 on:
   workflow_call:
     inputs:

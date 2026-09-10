@@ -1,5 +1,8 @@
 name: FreeBSD Builds
 
+permissions:
+  contents: read
+
 on:
   workflow_call:
   workflow_dispatch:

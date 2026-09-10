@@ -1,5 +1,8 @@
 name: CI
 
+permissions:
+  contents: read
+
 on:
   pull_request:
   push:
@@ -17,6 +20,9 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.head_ref || github.run_id }}
   cancel-in-progress: true
 
+# Every checkout here sets `persist-credentials: false`: these jobs compile and
+# run the pull request's own code — a build.rs, a proc macro, a test — and the
+# default checkout leaves the job token in `.git/config` for that code to read.
 jobs:
   fmt:
     name: fmt
@@ -24,6 +30,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - name: Cache Cargo dependencies
         uses: Swatinem/rust-cache@v2
       - name: check formatting
@@ -34,6 +42,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - name: Cache Cargo dependencies
         uses: Swatinem/rust-cache@v2
       # Plain `cargo clippy` fails the build only on error-level diagnostics
@@ -52,6 +62,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - name: Install Rust nightly
         uses: dtolnay/rust-toolchain@nightly
       - name: Run cargo doc
@@ -63,6 +75,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - name: Cache Cargo dependencies
         uses: Swatinem/rust-cache@v2
       - name: Generate schema
@@ -75,6 +89,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - name: Cache Cargo dependencies
         uses: Swatinem/rust-cache@v2
       - name: Check build without plugins feature
@@ -90,6 +106,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - name: Lint install.sh
         run: shellcheck -S warning -s sh scripts/install.sh
       - name: Failure modes
@@ -110,6 +128,8 @@ jobs:
       # - run: vcpkg install openssl:x64-windows-static-md
       #   if: runner.os == 'Windows'
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
       - name: Cache Cargo dependencies
@@ -155,6 +175,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
       - name: Install actionlint
         env:
           VERSION: 1.7.7
@@ -168,3 +190,17 @@ jobs:
         env:
           SHELLCHECK_OPTS: -S warning
         run: ./actionlint -no-color -oneline -shellcheck shellcheck
+
+  supply-chain:
+    name: supply-chain audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Install cargo-deny
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny
+      - name: Check advisories, sources and licenses
+        run: cargo deny --all-features check advisories sources licenses
