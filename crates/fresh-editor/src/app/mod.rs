@@ -225,7 +225,7 @@ pub fn editor_tick(
 }
 
 pub(crate) use path_utils::{
-    explorer_path_under_root, normalize_explorer_plugin_path, normalize_path,
+    explorer_path_under_root, normalize_explorer_plugin_path, normalize_path, ExplorerRoot,
 };
 
 use self::types::{
