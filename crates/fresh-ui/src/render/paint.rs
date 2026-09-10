@@ -122,26 +122,34 @@ impl<M: 'static> Ui<M> {
         // separates a control's box from its contents once the list is flat:
         // the `Fill` is where the button *is*, the runs inside it are what the
         // button *says*, and both wear the class.
-        let (names_itself, wash) = self
+        let (names_itself, ground) = self
             .arena
             .get(element)
             .map(|e| {
                 let d = resolve(&e.desc);
+                // A rule is a ground the backend tiles, so naming one makes
+                // the box paint exactly as naming a theme or a class does —
+                // otherwise a rule on an otherwise-unthemed box would have
+                // nowhere to be said.
+                let ground = match &d.desc {
+                    crate::desc::Desc::Box(b) if b.rule.is_some() => {
+                        Some(Draw::Rule(b.rule.clone().expect("checked")))
+                    }
+                    crate::desc::Desc::Box(b) if b.wash => Some(Draw::Wash),
+                    _ => None,
+                };
                 (
                     e.desc.theme.is_some()
                         || d.theme.is_some()
                         || e.desc.classes.is_some()
-                        || d.classes.is_some(),
-                    matches!(&d.desc, crate::desc::Desc::Box(b) if b.wash),
+                        || d.classes.is_some()
+                        || matches!(ground, Some(Draw::Rule(_))),
+                    ground,
                 )
             })
-            .unwrap_or((false, false));
+            .unwrap_or((false, None));
         if names_itself && !rect.is_empty() {
-            let ground = match wash {
-                true => Draw::Wash,
-                false => Draw::Fill,
-            };
-            list.push(ground, Geom { rect, clip });
+            list.push(ground.unwrap_or(Draw::Fill), Geom { rect, clip });
         }
 
         if let Some(obj) = self.render.get(r).and_then(|n| n.obj.as_ref()) {

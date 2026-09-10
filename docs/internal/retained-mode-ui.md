@@ -313,19 +313,26 @@ and they are all markdown's:
   enum, `pointer_grab()` and the grab arms in `mouse_input.rs` go with it;
 - the shadow `TextEdit` over reflowed rows.
 
-**What it does not clear, and why.** The arena's *writer* is not markdown's.
-`resolve_described_panel` has a second bail-out: an **anchored** floating panel
-(a plugin's context menu) takes its width from the mirror's widest row, because
-its interior is built by a `layout_reader` that needs a number before it can
-produce one, and `Sizing::Auto` there would hand it the whole screen. That panel
-still goes through `render_floating_spec` → `render_collected`, which still
-writes `painted` and `boxes`. So the fields, `render_collected` itself,
-`layout_box.rs` and `render_button` survive until an **intrinsic width for an
-anchored layer** lands too — a genuine missing library capability, not glue.
+**What it does not clear on its own, and what does.** The arena's *writer*
+was not markdown's. `resolve_described_panel` had a second bail-out: an
+**anchored** floating panel (a plugin's context menu) took its width from the
+mirror's widest row, because its interior is built by a `layout_reader` that
+needs a number before it can produce one, and under `Sizing::Auto` a rule
+inside it — `"─".repeat(width)` — came out frame-wide and set the very width
+it had been asked about. That bail-out is retired: a rule is a ground the
+backend tiles (`Node::rule`, `Draw::Rule`), sized by layout, and the anchored
+box says `Auto` like every other described box. Three more fills of the same
+shape went with it — the body row, a tinted entry's fill row, and a list or
+tree with no row count — each a `Flex` on a column's cross axis, which is
+measured at the whole extent whether or not that extent is definite; each is
+`Auto` now, and the column's `Stretch` widens it to what the box settled on.
+`an_anchored_popup_is_as_wide_as_its_widest_row_not_its_rule` pins the
+production menu's shape.
 
-Treat the two as a pair: this item removes the readers, that one removes the
-writer, and only the pair retires the projection. `app/chrome/` likewise loses
-its grab here and needs its two hover reactions moved before the module goes.
+So the text projection's only remaining writer *is* markdown's: once this
+item lands, `painted`/`boxes`, `render_collected`, `layout_box.rs` and
+`render_button` have no caller. `app/chrome/` loses its grab here and still
+needs its two hover reactions moved before the module goes.
 
 Consumers: code-tour's prose column (keyed, full caret/selection/drag/copy) and
 the welcome screen's code sample (keyless, read-only — check early whether it

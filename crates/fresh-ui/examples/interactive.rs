@@ -342,6 +342,18 @@ impl Terminal {
             // A wash recolours what is under it and keeps the text; this
             // backend has no ground to recolour, so it paints nothing.
             Draw::Wash => {}
+            // A rule: the cluster, as many as fit the rect layout settled
+            // on. Nobody told the description how wide that would be.
+            Draw::Rule(g) => {
+                let w = fresh_ui::glyph::width(g).max(1) as i32;
+                for y in r.y..r.y + r.h as i32 {
+                    let mut x = r.x;
+                    while x + w <= r.right() {
+                        self.put_symbol(x, y, g, w as u16, (fg, bg), clip);
+                        x += w;
+                    }
+                }
+            }
             Draw::Scrim(Scrim::Opaque) => {
                 self.fill(frame, ' ', c(roles.text), c(roles.base), frame)
             }

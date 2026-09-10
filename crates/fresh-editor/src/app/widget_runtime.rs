@@ -986,24 +986,14 @@ impl Editor {
     /// [`crate::widgets::resolve_panel`]'s three: the state carry, the focus
     /// clamp, and the ring — none of which needs a row, a width or a height.
     ///
-    /// **The one exception is stated rather than hidden.** An *anchored*
-    /// floating panel — a plugin's right-click context menu — still takes its
-    /// width from the mirror's widest row, because its interior is built by a
-    /// `layout_reader` that needs a number before it can produce one and
-    /// `Sizing::Auto` there would hand it the whole screen
-    /// (`view::shell::panel::Panel::anchored_width` argues this at length, and
-    /// names the change that retires it). That panel keeps the collector, and
-    /// this returns `false` for it.
+    /// An anchored floating panel used to be an exception here: its width was
+    /// the mirror's widest row, because a rule inside its interior was text of
+    /// a computed length and set the width it had been asked about under
+    /// `Auto`. A rule is a ground the backend tiles now (`fresh_ui::Node::rule`),
+    /// so the box measures its content like every other described box and
+    /// the anchored panel needs nothing from the collector.
     ///
-    /// A panel that becomes anchored *after* a host-driven re-render keeps the
-    /// rows from the last render that produced any, which is the placement
-    /// call's own ordering: `FloatingPanelControl("anchor")` follows the
-    /// update that emitted the menu's spec, and that update runs the collector
-    /// whatever the placement is. Stale rows are the right failure mode there
-    /// — clearing them would size the pop-over to its six-column minimum
-    /// instead of to a spec one frame old.
-    ///
-    /// **The second exception is the markdown document view**, and it is the
+    /// **The one exception left is the markdown document view**, and it is the
     /// same one §6e names: a described panel holding one still runs
     /// `render_collected` inside its own description, and two host paths read
     /// the box arena that walk produces — the drag-to-select on the prose
@@ -1018,14 +1008,6 @@ impl Editor {
             return false;
         }
         let slot = self.slot_of_panel(panel_key);
-        if matches!(slot, Some(super::PanelSlot::Floating))
-            && matches!(
-                self.panel(super::PanelSlot::Floating).map(|p| p.placement),
-                Some(super::PanelPlacement::Anchored { .. })
-            )
-        {
-            return false;
-        }
         let Some(state) = self.widget_registry.get(panel_key) else {
             return false;
         };

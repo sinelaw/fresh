@@ -1447,6 +1447,11 @@ impl Editor {
             let (kind, lines, border, thumb, dim) = match &item.draw {
                 Draw::Fill => ("fill", None, None, None, false),
                 Draw::Wash => ("wash", None, None, None, false),
+                // The glyph travels, and the DOM is free to ignore it: a
+                // rule is "a line across here", and CSS says that better
+                // than a repeated `─` does. It is carried so a backend that
+                // has no better answer still has one.
+                Draw::Rule(g) => ("rule", Some(vec![g.to_string()]), None, None, false),
                 Draw::Border(bs) => (
                     "border",
                     None,

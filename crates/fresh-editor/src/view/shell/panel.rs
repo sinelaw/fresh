@@ -53,7 +53,9 @@ pub enum Spot {
     Anchored {
         x: u16,
         y: u16,
-        /// The widest entry, borders excluded.
+        /// The widest entry, borders excluded. Read only when the interior is
+        /// a `Host` — see [`Panel::anchored_width`], the mirror of
+        /// [`Panel::height`].
         content_cols: u16,
         content_rows: u16,
     },
@@ -292,21 +294,26 @@ impl Panel {
         Sizing::Cells(content.saturating_add(2).max(3))
     }
 
-    /// **An anchored popup's width stays the mirror's count, even described,
-    /// and this is not an omission.**
+    /// **A described interior states its own width; a painted one cannot** —
+    /// exactly [`Self::height`]'s split, and now for the same reason.
     ///
-    /// The box hugs its content horizontally, so `Auto` is what it wants to
-    /// say — but the interior is built by a `layout_reader`, which needs a
-    /// *number* for the width before it can produce a row, and under `Auto`
-    /// the number it would be handed is the whole screen. A divider would come
-    /// out a hundred columns wide and set the very width it was asked about.
-    /// The height has no such loop: nothing in the interior is built from a
-    /// row budget it would then determine.
+    /// This used to be the mirror's widest-entry count even for a described
+    /// panel, and the argument for that was a real loop: the interior is
+    /// built by a `layout_reader`, which needs a *number* for the width
+    /// before it can produce a row, and a rule inside it was text of a
+    /// computed length — so under `Auto` the rule came out frame-wide and
+    /// set the very width it had been asked about.
     ///
-    /// So this one measurement outlives the rest, and what removes it is the
-    /// interior stating its own natural width — the same step that lets the
-    /// `layout_reader` go.
+    /// A rule is a ground now ([`fresh_ui::Node::rule`]), tiled by the
+    /// backend across whatever rectangle layout settled on, and flexing
+    /// along its own axis — so it contributes nothing to an intrinsic
+    /// measure and the loop is gone. What is left is the `Host` case, where
+    /// there is genuinely nothing to measure, and the count answers for it
+    /// as it does for the height.
     fn anchored_width(&self, content_cols: u16) -> Sizing {
+        if self.interior.is_some() {
+            return Sizing::Auto;
+        }
         Sizing::Cells(content_cols.saturating_add(2).max(6))
     }
 }
@@ -740,12 +747,17 @@ fn body(p: &Panel) -> Node<UiMsg> {
             .key(body_key())
             .pointer_mode(PointerMode::Transparent);
     };
-    // **A described body is as tall as its rows, and the box follows it.**
-    // `flex(1)` here would fill a remainder that no longer exists — the box's
-    // own height is `Auto` now, and a flexible child measures as nothing under
-    // an indefinite constraint, so the frame would collapse to its border.
-    // Width still fills: the cross axis of the enclosing column, stretched.
-    let area = row().w(Sizing::Flex(1)).key(body_key());
+    // **A described body is as wide and as tall as its rows, and the box
+    // follows it.** `Auto` on both axes. It used to be `Flex(1)` wide —
+    // "fill the cross axis of the enclosing column" — and on a column's
+    // cross axis a flexible child is measured at the whole extent whether
+    // or not that extent is definite (`prim::range`), so under an `Auto`
+    // box the body came out frame-wide and the box followed *it*. That was
+    // the second half of why an anchored panel could not hug its content
+    // (the first was the rule inside it). `Auto` hugs, and the column's
+    // `Stretch` then widens the body to whatever the box settled on — which
+    // for a centred panel's percentage width is exactly the fill this had.
+    let area = row().w(Sizing::Auto).key(body_key());
     let keymap = i.keymap.clone();
     // **The width the widgets are laid out at is layout's answer, not the
     // caller's.** A centred panel is a percentage of its bounds, so nobody
@@ -1206,6 +1218,111 @@ mod tests {
         ));
         assert!(got.claimed, "the modal owns the pointer");
         assert!(facts(got).is_empty(), "and swallows a press beside it");
+    }
+
+    /// **An anchored popup hugs its content, and nothing inside it decides
+    /// how wide that is.** The shape is the orchestrator dock's right-click
+    /// menu (`contextMenuSpec`): a title row, rows whose labels the plugin
+    /// padded to the widest, a divider, a hint row — plus one row with a
+    /// full-width tint, which is what a selected item is. Four things used
+    /// to set the width to the frame here, each by being measured at the
+    /// whole extent it was handed: the divider (`"─".repeat(width)`), the
+    /// body row (`Flex(1)` on the box's cross axis), a tinted entry's fill
+    /// row (the same), and a list or tree with no row count (`flex(1)` sets
+    /// both axes). Each is `Auto` now and the column's `Stretch` widens it
+    /// to what the box settled on — so the box settles on its widest row,
+    /// and everything else follows it out to that edge.
+    #[test]
+    fn an_anchored_popup_is_as_wide_as_its_widest_row_not_its_rule() {
+        use fresh_core::api::{OverlayColorSpec, OverlayOptions, WidgetSpec};
+        use fresh_core::text_property::TextPropertyEntry;
+        let mut selected = TextPropertyEntry::text(" Move to Folder");
+        selected.inline_overlays.push(fresh_core::text_property::InlineOverlay {
+            start: 0,
+            end: selected.text.len(),
+            style: OverlayOptions {
+                bg: Some(OverlayColorSpec::theme_key("ui.menu_selected_bg")),
+                extend_to_line_end: true,
+                ..Default::default()
+            },
+            properties: Default::default(),
+            unit: fresh_core::text_property::OffsetUnit::Byte,
+        });
+        let raw = |t: &str| WidgetSpec::Raw {
+            entries: vec![TextPropertyEntry::text(t)],
+            key: None,
+        };
+        let spec = WidgetSpec::Col {
+            children: vec![
+                raw(" Session"),
+                raw(" Visit"),
+                WidgetSpec::Raw {
+                    entries: vec![selected],
+                    key: None,
+                },
+                WidgetSpec::Divider {
+                    ch: String::new(),
+                    style: None,
+                    key: None,
+                },
+                raw(" Esc closes"),
+            ],
+            key: None,
+        };
+        let mut p = panel(Spot::Anchored {
+            x: 10,
+            y: 5,
+            // Deliberately wrong, like the height test's count: a described
+            // box does not read it.
+            content_cols: 40,
+            content_rows: 3,
+        });
+        p.title = None;
+        p.closable = false;
+        p.interior = Some(Interior {
+            spec: std::rc::Rc::new(spec),
+            states: Default::default(),
+            h_pan: Default::default(),
+            focus_key: String::new(),
+            keyboard: true,
+            page: None,
+            reading: None,
+            selection: Vec::new(),
+            compose: None,
+            hovered_key: None,
+            hovered_item_key: String::new(),
+            hovered_popup_row: String::new(),
+            marker_gutter: false,
+            avail_height: None,
+            scrollbar_reveal: None,
+            keymap: None,
+            markdown: None,
+        });
+        let ui = laid_out(Some(p));
+        let bx = rect(&ui, &key()).expect("the anchored box");
+        assert_eq!(
+            bx.width,
+            " Move to Folder".len() as u16 + 2,
+            "the widest row inside two border columns — not the frame, not the count"
+        );
+        assert_eq!(bx.height, 5 + 2, "five rows inside two border rows");
+        // And the things that fill, fill *that*: the rule and the tint reach
+        // the box's inner edge, no further. The panel is a layer, so its
+        // items are past `layers_from`, not in the in-flow band.
+        let inner = bx.width - 2;
+        let widths: Vec<u16> = ui
+            .spec()
+            .items
+            .iter()
+            .filter(|i| matches!(i.draw, fresh_ui::Draw::Rule(_) | fresh_ui::Draw::Fill))
+            .filter(|i| i.rect.h == 1 && i.rect.x == bx.x as i32 + 1)
+            .map(|i| i.rect.w)
+            .collect();
+        assert!(!widths.is_empty(), "a rule and a tint were painted");
+        assert!(
+            widths.iter().all(|w| *w == inner),
+            "each spans the inner width {inner}: {widths:?}"
+        );
     }
 
     /// An anchored popup wears neither title nor button — the painter's rule,

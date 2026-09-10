@@ -77,6 +77,32 @@ function treeItemEl(it,kindOf){
     case "border":
       if(it.border==="rounded") el.classList.add("rounded");
       break;
+    case "rule": {
+      // A ground made of one cluster, tiled across the rect the library
+      // settled on — the description never said how wide. The glyph rides
+      // in `lines[0]`, and this backend is free to ignore it: a horizontal
+      // box-drawing rule becomes a vector line for the same reason VRULE
+      // does (the font's glyph leaves gaps at our cell metrics), and any
+      // other cluster is tiled as text, one per cell.
+      const g=(it.lines&&it.lines[0])||"─";
+      const hrule="─━═".includes(g);
+      for(let r=0;r<it.h;r++){
+        const top=px(r,CH);
+        if(hrule){
+          const hv=(g==="━"?1.8:1.1)*zoom;
+          const rule=div("tree-rule");
+          rule.style.left="0"; rule.style.top=(top+CH/2-hv/2)+"px";
+          rule.style.width=px(it.w,CW)+"px"; rule.style.height=hv+"px";
+          el.appendChild(rule);
+        }else{
+          const row=div("tree-row");
+          row.style.top=top+"px";
+          row.textContent=g.repeat(Math.max(0,Math.floor(it.w)));
+          el.appendChild(row);
+        }
+      }
+      break;
+    }
     case "scrim":
       el.classList.add(it.dim?"dim":"opaque");
       break;
