@@ -43,6 +43,49 @@ impl Editor {
         self.apply_event_to_active_buffer(event);
     }
 
+    /// Bring a buffer's `seen_byte_ranges` across one edit that replaced
+    /// `[position, position + removed)` with `inserted` bytes.
+    ///
+    /// The set keys plugin line offers by byte range, so an edit that shifts
+    /// lines has to shift it too — and a *new* line can otherwise inherit the
+    /// range of one already offered, which makes the editor skip it forever.
+    /// A row that never reaches a per-line decoration plugin never gets its
+    /// decoration, and nothing detects the omission (fresh#3247).
+    ///
+    /// Every path that edits a buffer must call this. Two do it through
+    /// `trigger_plugin_hooks_for_event`; the plugin command handlers that edit
+    /// directly (`insertAtCursor`, `deleteRange` — how the markdown plugins
+    /// handle Enter and Tab) call it themselves, next to the marker shift they
+    /// already owe for the same reason.
+    pub(crate) fn adjust_seen_byte_ranges_for_edit(
+        &mut self,
+        buffer_id: crate::model::event::BufferId,
+        position: usize,
+        removed: usize,
+        inserted: usize,
+    ) {
+        let Some(seen) = self
+            .active_window_mut()
+            .seen_byte_ranges
+            .get_mut(&buffer_id)
+        else {
+            return;
+        };
+        let edit_end = position + removed;
+        *seen = seen
+            .iter()
+            .filter_map(|&(start, end)| {
+                if end <= position {
+                    Some((start, end)) // entirely before the edit
+                } else if start >= edit_end {
+                    Some(((start + inserted) - removed, (end + inserted) - removed))
+                } else {
+                    None // overlaps the edit: its content changed
+                }
+            })
+            .collect();
+    }
+
     /// Apply an event to the active buffer with all cross-cutting concerns.
     /// This is the centralized method that automatically handles:
     /// - Event application to buffer
@@ -697,33 +740,7 @@ impl Editor {
                 let insert_position = *position;
                 let insert_len = text.len();
 
-                // Adjust byte ranges for the insertion
-                if let Some(seen) = self
-                    .active_window_mut()
-                    .seen_byte_ranges
-                    .get_mut(&buffer_id)
-                {
-                    // Collect adjusted ranges:
-                    // - Ranges ending before insert: keep unchanged
-                    // - Ranges containing insert point: remove (content changed)
-                    // - Ranges starting after insert: shift by insert_len
-                    let adjusted: std::collections::HashSet<(usize, usize)> = seen
-                        .iter()
-                        .filter_map(|&(start, end)| {
-                            if end <= insert_position {
-                                // Range ends before insert - unchanged
-                                Some((start, end))
-                            } else if start >= insert_position {
-                                // Range starts at or after insert - shift forward
-                                Some((start + insert_len, end + insert_len))
-                            } else {
-                                // Range contains insert point - invalidate
-                                None
-                            }
-                        })
-                        .collect();
-                    *seen = adjusted;
-                }
+                self.adjust_seen_byte_ranges_for_edit(buffer_id, insert_position, 0, insert_len);
 
                 // Shift plugin interval markers so they ride the inserted text
                 // (the editor owns shifting; plugins never track byte offsets).
@@ -753,35 +770,8 @@ impl Editor {
             } => {
                 let delete_start = range.start;
 
-                // Adjust byte ranges for the deletion
-                let delete_end = range.end;
-                let delete_len = delete_end - delete_start;
-                if let Some(seen) = self
-                    .active_window_mut()
-                    .seen_byte_ranges
-                    .get_mut(&buffer_id)
-                {
-                    // Collect adjusted ranges:
-                    // - Ranges ending before delete start: keep unchanged
-                    // - Ranges overlapping deletion: remove (content changed)
-                    // - Ranges starting after delete end: shift backward by delete_len
-                    let adjusted: std::collections::HashSet<(usize, usize)> = seen
-                        .iter()
-                        .filter_map(|&(start, end)| {
-                            if end <= delete_start {
-                                // Range ends before delete - unchanged
-                                Some((start, end))
-                            } else if start >= delete_end {
-                                // Range starts after delete - shift backward
-                                Some((start - delete_len, end - delete_len))
-                            } else {
-                                // Range overlaps deletion - invalidate
-                                None
-                            }
-                        })
-                        .collect();
-                    *seen = adjusted;
-                }
+                let delete_len = range.end - delete_start;
+                self.adjust_seen_byte_ranges_for_edit(buffer_id, delete_start, delete_len, 0);
 
                 // Shift plugin interval markers for the deletion (editor owns
                 // shifting; the plugin re-discovers markers whose interior was hit).
