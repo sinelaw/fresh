@@ -33,7 +33,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Cache Cargo dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - name: check formatting
         run: cargo fmt -- --check
   clippy:
@@ -45,7 +45,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Cache Cargo dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       # Plain `cargo clippy` fails the build only on error-level diagnostics
       # (deny-by-default lints, the crate's `#![deny(clippy::let_underscore_must_use)]`,
       # or compile errors) — clippy *warnings* do not fail it. The previous
@@ -65,7 +65,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Install Rust nightly
-        uses: dtolnay/rust-toolchain@nightly
+        uses: dtolnay/rust-toolchain@be39649afda95dbf70f87cce95f68b8d5797b296 # nightly branch
       - name: Run cargo doc
         run: cargo doc --no-deps --all-features
         env:
@@ -78,7 +78,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Cache Cargo dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - name: Generate schema
         run: cargo run --features dev-bins --bin generate_schema > /tmp/config-schema.json
       - name: Check schema is up-to-date
@@ -92,7 +92,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Cache Cargo dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - name: Check build without plugins feature
         run: cargo check --no-default-features --features runtime --all-targets
 
@@ -131,11 +131,11 @@ jobs:
         with:
           persist-credentials: false
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch
       - name: Cache Cargo dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@c3ec0de9ae7f1019cea21aa96aa0a895b9552063 # v2
         with:
           tool: cargo-nextest
       # Install Vulkan + Xvfb for headless GPU testing (Linux only).
@@ -199,7 +199,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Install cargo-deny
-        uses: taiki-e/install-action@v2
+        uses: taiki-e/install-action@c3ec0de9ae7f1019cea21aa96aa0a895b9552063 # v2
         with:
           tool: cargo-deny
       - name: Check advisories, sources and licenses

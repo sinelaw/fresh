@@ -52,7 +52,7 @@ jobs:
           cat aur-repo/PKGBUILD
 
       - name: Publish AUR package (fresh-editor-bin)
-        uses: KSXGitHub/github-actions-deploy-aur@v4.1.3
+        uses: KSXGitHub/github-actions-deploy-aur@da03e160361ce01bf087e790b6ffd196d7dccff7 # v4.1.3
         with:
           pkgname: fresh-editor-bin
           pkgbuild: ./aur-repo/PKGBUILD
@@ -87,7 +87,7 @@ jobs:
           cat aur-repo/PKGBUILD
 
       - name: Publish AUR package (fresh-editor)
-        uses: KSXGitHub/github-actions-deploy-aur@v4.1.3
+        uses: KSXGitHub/github-actions-deploy-aur@da03e160361ce01bf087e790b6ffd196d7dccff7 # v4.1.3
         with:
           pkgname: fresh-editor
           pkgbuild: ./aur-repo/PKGBUILD

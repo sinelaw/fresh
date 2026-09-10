@@ -12,10 +12,10 @@ on:
 
   workflow_dispatch:
 
+# The Pages grants belong to the deploy job alone; the build job runs the site's
+# own toolchain and must not be able to publish a deployment itself.
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
   group: pages
@@ -31,7 +31,7 @@ jobs:
           fetch-depth: 0
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
 
       - name: Setup Pages
         uses: actions/configure-pages@v6
@@ -48,6 +48,9 @@ jobs:
           path: dist
 
   deploy:
+    permissions:
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
