@@ -606,31 +606,17 @@ fn prose_below_a_block_is_not_framed_when_the_view_starts_mid_document() {
     );
 }
 
-// ===========================================================================
-// The frame between the keystroke and the next decoration pass
-// ===========================================================================
-//
-// Everything above asserts on a *settled* frame. These two do not, because the
-// glitch never survives settling: the plugin answers `lines_changed` on its own
-// thread, so for one frame the block is drawn with the rails the previous pass
-// left behind, and it is that frame the user watches while typing.
-//
-// Driving it needs no timing. `apply_event` edits the buffer and `render`
-// paints it, and neither drains the plugin's replies — so the commands the
-// edit provokes are still sitting in the channel when the assertion runs, and
-// the frame under test is exactly the lagged one, every time.
-//
-// What the two edits have in common is that they act on the end of the code
-// line, which is where the closing rail is anchored, and where a person typing
-// in a code block spends all of their keystrokes.
+// The two below assert on the frame drawn BETWEEN an edit and the plugin's next
+// decoration pass — the one a person watches while typing, and the only one the
+// glitch survives in. No timing needed: neither `apply_event` nor `render`
+// drains the plugin's replies, so the lagged frame is what the assertion sees.
 
-/// The document both cases edit, and the code line they edit the end of.
 #[cfg(feature = "plugins")]
 const EDITED_DOC: &str = "# Doc\n\n```rust\nfn answer() -> u32 { 42 }\n```\n\nTail.\n";
 #[cfg(feature = "plugins")]
 const EDITED_CODE: &str = "fn answer() -> u32 { 42 }";
 
-/// A framed block with its rails settled, and the byte range of its code line.
+/// A framed block with its rails settled, and its code line's byte range.
 #[cfg(feature = "plugins")]
 fn settled_block() -> (EditorTestHarness, tempfile::TempDir, std::ops::Range<usize>) {
     let (mut harness, tmp) = compose_harness(EDITED_DOC);
@@ -667,21 +653,13 @@ fn border_and_body(screen: &str) -> ((usize, usize), String) {
     ((cols[0], cols[cols.len() - 1]), body)
 }
 
-/// Deleting the last character of a code line must not take the block's right
-/// edge with it.
+/// Deleting the last character of a code line must not take the right edge with
+/// it: a rail anchored after that character used to collapse onto the line break
+/// and be drawn on the row below, walking the edge across the page.
 ///
-/// The rail used to be an inline hint anchored *after that very character*.
-/// Deleting it collapsed the hint's marker onto the line break, and an `after`
-/// hint on a line break is drawn past it — so the rail and its padding were
-/// drawn at the head of the *next* row, on top of the closing border, and the
-/// code row was left with one rail instead of two. Held down, Backspace walked
-/// the edge across the page a column per keystroke (the reported repro).
-///
-/// The line break is the anchor that survives the delete, so the rail stays on
-/// its own row. Its padding is still a pass stale, which is why this asserts
-/// the rail is *present and inside the frame* rather than flush with the
-/// corner — a settled frame is what `body_rails_line_up_with_the_border_corners`
-/// is for.
+/// Asserts the rail is present and inside the frame, not flush with the corner —
+/// the padding is a pass stale here, and `body_rails_line_up_with_the_border_corners`
+/// covers the settled frame.
 #[cfg(feature = "plugins")]
 #[test]
 fn deleting_the_last_character_of_a_code_line_keeps_the_rail_on_that_line() {
@@ -723,14 +701,9 @@ fn deleting_the_last_character_of_a_code_line_keeps_the_rail_on_that_line() {
     );
 }
 
-/// Typing at the end of a code line must not put the character outside the box.
-///
-/// The mirror of the case above, and the other half of the reported repro: an
-/// insertion at the end of the line lands *after* a hint anchored on the old
-/// last character, so the character just typed was drawn past the closing rail
-/// — outside the block — until the next pass caught up. Anchored on the line
-/// break, the rail's right-gravity marker travels with the inserted text and
-/// stays in front of it.
+/// The mirror case: an insertion at the end of the line lands *after* a hint
+/// anchored on the old last character, drawing the typed character outside the
+/// box. Right gravity on the line break keeps the rail in front of it.
 #[cfg(feature = "plugins")]
 #[test]
 fn typing_at_the_end_of_a_code_line_stays_inside_the_frame() {
@@ -767,10 +740,8 @@ fn typing_at_the_end_of_a_code_line_stays_inside_the_frame() {
         "the character just typed was drawn OUTSIDE the block: it is at column \
          {z}, past the rail that closes its row at {closing}.\nScreen:\n{screen}"
     );
-    // The rail may still overhang the border by the one character in flight —
-    // its padding is a pass stale, the residual the anchor cannot fix. What it
-    // may not do is leave the frame's neighbourhood, which is what an anchor
-    // that had drifted or changed rows would look like.
+    // One column of overhang is the in-flight character's stale padding; more
+    // than that means the anchor drifted rather than the padding lagging.
     assert!(
         closing <= right + 1,
         "the closing rail is {} columns past a border that ends at {right}; a \
