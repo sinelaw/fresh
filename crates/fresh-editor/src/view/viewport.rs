@@ -1400,9 +1400,9 @@ impl Viewport {
     /// anything is built.
     ///
     /// Returns whether this pass **owns vertical placement** for the frame —
-    /// not whether it moved anything. The caller forwards it to
-    /// [`Self::ensure_visible_in_layout`] as `rows_settled`, and the two must
-    /// not both apply the margin. "Decided not to scroll" is still owning the
+    /// not whether it moved anything. Every buffer that reaches here has an
+    /// index, and the byte pass defers to this one for all of them, so the
+    /// answer is always yes. "Decided not to scroll" is still owning the
     /// decision, so a `true` return with no movement is normal.
     ///
     /// The viewport keeps its `(top_byte, top_view_line_offset)` pair — a new
@@ -1463,25 +1463,23 @@ impl Viewport {
             None => index.row_of_byte(buffer, cursor_byte) as usize,
         };
 
-        // Same margin rule as the layout pass, in absolute rows — including its
-        // guard, which is `top_view_line_offset > 0`, i.e. "the viewport is
-        // parked inside a wrapped line". Not `top_row > 0`, which is true after
-        // any scroll at all: with wrap off that turns on a margin the layout
-        // pass deliberately leaves off, because there the byte-oriented
-        // pre-render `ensure_visible` has already placed the cursor and a second
-        // margin just pushes it a few rows further from the edge.
-        let apply_margin = self.line_wrap_enabled || self.top_view_line_offset() > 0;
-        let margin = if apply_margin {
-            self.scroll_offset.min(viewport_height / 2)
-        } else {
-            0
-        };
+        // The user's `scroll_offset`, in absolute rows — the same rule the byte
+        // pass applies, and unconditional like it. This pass once left the
+        // margin off unless wrap was on or the top was parked inside a line, on
+        // the grounds that the byte pass had already placed the cursor; but the
+        // byte pass hands vertical placement to this one for every buffer that
+        // has an index (`row_pass_owns_placement`), so with wrap off the margin
+        // was one nobody applied: the cursor rode the very edge of the window
+        // and the view only scrolled once it got there, with the user's
+        // `scroll_offset` doing nothing at all on any file small enough to be
+        // indexed.
+        let margin = self.scroll_offset.min(viewport_height / 2);
         let max_top = total_rows.saturating_sub(viewport_height);
 
         let in_top_margin = cursor_row < top_row + margin;
         let in_bottom_margin = cursor_row + margin + 1 > top_row + viewport_height;
         if !in_top_margin && !in_bottom_margin {
-            return apply_margin;
+            return true;
         }
 
         let target_top = if in_top_margin {
@@ -1492,7 +1490,7 @@ impl Viewport {
 
         let new_top = target_top.min(max_top);
         if new_top == top_row {
-            return apply_margin;
+            return true;
         }
 
         if delta > 0 && new_top >= exp_first && new_top < exp_first + exp_drawn {
@@ -1510,7 +1508,7 @@ impl Viewport {
             self.set_top_byte(buffer.line_start_offset(addr.line).unwrap_or(0));
             self.set_top_view_line_offset(addr.row_in_line);
         }
-        apply_margin
+        true
     }
 
     /// Horizontal placement only.

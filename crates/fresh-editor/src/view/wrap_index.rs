@@ -2693,6 +2693,57 @@ mod tests {
         assert!(set.get(&geometry(10)).is_none(), "oldest evicted");
     }
 
+    /// The scroll margin is the user's `scroll_offset` whether or not wrap is
+    /// on. This pass owns vertical placement for every indexed buffer — the
+    /// byte pass defers to it — so a margin skipped here is a margin nobody
+    /// applies, which is what left the cursor riding the bottom edge of a
+    /// wrap-off window.
+    #[test]
+    fn ensure_visible_in_rows_keeps_the_margin_with_wrap_off() {
+        use crate::view::viewport::Viewport;
+
+        // Wrap off is `Chop`: rows are logical lines until a line is
+        // pathologically long, so row 9 is line 9.
+        let text = (0..100)
+            .map(|i| format!("line_{i}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        let mut buffer = Buffer::from_bytes(text.as_bytes().to_vec(), test_fs());
+        let mut index = WrapIndex::default();
+        let geometry = WrapIndexGeometry {
+            fold_signature: 0,
+            rule: WrapRule::Chop { chars: 1000 },
+            view_mode: CacheViewMode::Source,
+        };
+        index.ensure_built(
+            &mut buffer,
+            geometry,
+            inputs(0),
+            LineEnding::LF,
+            &IndexDecorations::default(),
+        );
+
+        let height = 10usize;
+        let mut viewport = Viewport::new(20, height as u16);
+        viewport.line_wrap_enabled = false;
+        viewport.set_scroll_offset(3);
+        viewport.set_top_byte(0);
+        viewport.set_top_view_line_offset(0);
+
+        // The cursor on the window's last row is three rows inside the bottom
+        // margin, so the view scrolls until it is three rows clear of the edge.
+        let cursor_byte = buffer.line_start_offset(height - 1).unwrap();
+        viewport.ensure_visible_in_rows(&index, &buffer, cursor_byte, None);
+
+        let top_line = buffer.get_line_number(viewport.top_byte());
+        assert_eq!(
+            top_line, 3,
+            "wrap-off placement must keep `scroll_offset` rows below the cursor: \
+             expected top line 3, got {top_line}"
+        );
+        assert_eq!(viewport.top_view_line_offset(), 0);
+    }
+
     /// Row-space `ensure_visible` matches the Python model's rule exactly
     /// (`tests/wrap_model/wrap_model/viewport.py::Viewport.ensure_visible`):
     /// scroll the minimum that puts the cursor's row inside the margin, clamped
