@@ -1,9 +1,9 @@
 {
   "name": "fresh-smooth-scroll",
   "capture": {
-    "geometry": "76x20",
-    "font": "JetBrains Mono 16",
-    "screen": "1400x800x24",
+    "geometry": "80x22",
+    "font": "JetBrains Mono 24",
+    "screen": "1800x1100x24",
     "display": ":99",
     "backend": "xwd",
     "settle": 14,
@@ -29,226 +29,587 @@
         "shot": "top"
       },
       {
-        "record": "scroll",
-        "seconds": 3.6,
-        "fps": 30
-      },
-      {
-        "sleep": 0.4
-      },
-      {
-        "click": {
-          "col": 38,
-          "row": 11,
-          "button": 5,
-          "settle": 0.0
-        }
-      },
-      {
-        "click": {
-          "col": 38,
-          "row": 11,
-          "button": 5,
-          "settle": 0.0
-        }
-      },
-      {
-        "click": {
-          "col": 38,
-          "row": 11,
-          "button": 5,
-          "settle": 0.0
-        }
-      },
-      {
-        "click": {
-          "col": 38,
-          "row": 11,
-          "button": 5,
-          "settle": 0.0
-        }
-      },
-      {
-        "click": {
-          "col": 38,
-          "row": 11,
-          "button": 5,
-          "settle": 0.0
-        }
-      },
-      {
-        "click": {
-          "col": 38,
-          "row": 11,
-          "button": 5,
-          "settle": 0.0
-        }
-      },
-      {
-        "click": {
-          "col": 38,
-          "row": 11,
-          "button": 5,
-          "settle": 0.0
-        }
-      },
-      {
-        "click": {
-          "col": 38,
-          "row": 11,
-          "button": 5,
-          "settle": 0.0
-        }
-      },
-      {
-        "click": {
-          "col": 38,
-          "row": 11,
-          "button": 5,
-          "settle": 0.0
-        }
-      },
-      {
-        "click": {
-          "col": 38,
-          "row": 11,
-          "button": 5,
-          "settle": 0.0
-        }
-      },
-      {
-        "click": {
-          "col": 38,
-          "row": 11,
-          "button": 5,
-          "settle": 0.0
-        }
-      },
-      {
-        "click": {
-          "col": 38,
-          "row": 11,
-          "button": 5,
-          "settle": 0.0
-        }
-      },
-      {
-        "click": {
-          "col": 38,
-          "row": 11,
-          "button": 5,
-          "settle": 0.0
-        }
-      },
-      {
-        "click": {
-          "col": 38,
-          "row": 11,
-          "button": 5,
-          "settle": 0.0
-        }
-      },
-      {
-        "click": {
-          "col": 38,
-          "row": 11,
-          "button": 5,
-          "settle": 0.0
-        }
-      },
-      {
-        "click": {
-          "col": 38,
-          "row": 11,
-          "button": 5,
-          "settle": 0.0
-        }
-      },
-      {
-        "click": {
-          "col": 38,
-          "row": 11,
-          "button": 5,
-          "settle": 0.0
-        }
-      },
-      {
-        "click": {
-          "col": 38,
-          "row": 11,
-          "button": 5,
-          "settle": 0.0
-        }
-      },
-      {
-        "click": {
-          "col": 38,
-          "row": 11,
-          "button": 5,
-          "settle": 0.0
-        }
-      },
-      {
-        "click": {
-          "col": 38,
-          "row": 11,
-          "button": 5,
-          "settle": 0.0
-        }
-      },
-      {
-        "click": {
-          "col": 38,
-          "row": 11,
-          "button": 5,
-          "settle": 0.0
-        }
-      },
-      {
-        "click": {
-          "col": 38,
-          "row": 11,
-          "button": 5,
-          "settle": 0.0
-        }
-      },
-      {
-        "click": {
-          "col": 38,
-          "row": 11,
-          "button": 5,
-          "settle": 0.0
-        }
-      },
-      {
-        "click": {
-          "col": 38,
-          "row": 11,
-          "button": 5,
-          "settle": 0.0
-        }
-      },
-      {
-        "click": {
-          "col": 38,
-          "row": 11,
-          "button": 5,
-          "settle": 0.0
-        }
-      },
-      {
-        "click": {
-          "col": 38,
-          "row": 11,
-          "button": 5,
-          "settle": 0.0
-        }
+        "key": "Down",
+        "repeat": 20
       },
       {
         "sleep": 0.6
       },
       {
-        "shot": "mid"
+        "key": "Down"
+      },
+      {
+        "shot": "s001"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s002"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s003"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s004"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s005"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s006"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s007"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s008"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s009"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s010"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s011"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s012"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s013"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s014"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s015"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s016"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s017"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s018"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s019"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s020"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s021"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s022"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s023"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s024"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s025"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s026"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s027"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s028"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s029"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s030"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s031"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s032"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s033"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s034"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s035"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s036"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s037"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s038"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s039"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s040"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s041"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s042"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s043"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s044"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s045"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s046"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s047"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s048"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s049"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s050"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s051"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s052"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s053"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s054"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s055"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s056"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s057"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s058"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s059"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s060"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s061"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s062"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s063"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s064"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s065"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s066"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s067"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s068"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s069"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s070"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s071"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s072"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s073"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s074"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s075"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s076"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s077"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s078"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s079"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s080"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s081"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s082"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s083"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s084"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s085"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s086"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s087"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s088"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s089"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s090"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s091"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s092"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s093"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s094"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s095"
+      },
+      {
+        "key": "Down"
+      },
+      {
+        "shot": "s096"
       }
     ],
     "panes": {
@@ -269,15 +630,15 @@
       900
     ],
     "fps": 60,
-    "rows": 20,
-    "cols": 76,
+    "rows": 22,
+    "cols": 80,
     "header_height": 96,
     "title": "fresh 0.5.0",
     "labels": {
       "solo": "NEW"
     },
     "cursor": false,
-    "note_size": 22,
+    "note_size": 32,
     "intro_caption": [
       "",
       ""
@@ -332,32 +693,130 @@
     },
     "annotations": [
       {
-        "shots": "scroll",
+        "shots": [
+          "s001",
+          "s002",
+          "s003",
+          "s004",
+          "s005",
+          "s006",
+          "s007",
+          "s008",
+          "s009",
+          "s010",
+          "s011",
+          "s012",
+          "s013",
+          "s014",
+          "s015",
+          "s016",
+          "s017",
+          "s018",
+          "s019",
+          "s020",
+          "s021",
+          "s022",
+          "s023",
+          "s024",
+          "s025",
+          "s026",
+          "s027",
+          "s028",
+          "s029",
+          "s030",
+          "s031",
+          "s032",
+          "s033",
+          "s034",
+          "s035",
+          "s036",
+          "s037",
+          "s038",
+          "s039",
+          "s040",
+          "s041",
+          "s042",
+          "s043",
+          "s044",
+          "s045",
+          "s046",
+          "s047",
+          "s048"
+        ],
         "rows": [
           1,
-          9
+          10
         ],
         "cols": [
           0,
-          76
+          58
         ],
         "camera": "fit",
-        "hold": 2.9,
+        "hold": 1.9,
         "note": "smooth scrolling",
         "note_at": "below-right"
       },
       {
-        "shot": "mid",
+        "shots": [
+          "s049",
+          "s050",
+          "s051",
+          "s052",
+          "s053",
+          "s054",
+          "s055",
+          "s056",
+          "s057",
+          "s058",
+          "s059",
+          "s060",
+          "s061",
+          "s062",
+          "s063",
+          "s064",
+          "s065",
+          "s066",
+          "s067",
+          "s068",
+          "s069",
+          "s070",
+          "s071",
+          "s072",
+          "s073",
+          "s074",
+          "s075",
+          "s076",
+          "s077",
+          "s078",
+          "s079",
+          "s080",
+          "s081",
+          "s082",
+          "s083",
+          "s084",
+          "s085",
+          "s086",
+          "s087",
+          "s088",
+          "s089",
+          "s090",
+          "s091",
+          "s092",
+          "s093",
+          "s094",
+          "s095",
+          "s096"
+        ],
         "rows": [
           1,
-          8
+          6
         ],
         "cols": [
           0,
-          60
+          30
         ],
         "camera": "fit",
-        "hold": 1.6,
+        "hold": 1.9,
         "note": "shaded edge",
         "note_at": "below-right"
       }

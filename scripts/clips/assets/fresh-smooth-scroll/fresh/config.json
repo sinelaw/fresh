@@ -4,8 +4,7 @@
   "editor": {
     "animations": true,
     "viewport_edge_fade": true,
-    "smooth_scroll": true,
-    "mouse_wheel_scroll_lines": 8
+    "smooth_scroll": true
   },
   "plugins": {
     "welcome_screen": {
