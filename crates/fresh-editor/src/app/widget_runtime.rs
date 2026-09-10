@@ -72,50 +72,6 @@ impl Editor {
     }
 }
 
-// Every parameter here is host state the spec doesn't carry (focus, hover,
-// theme, geometry); bundling them into a struct would only move the same
-// list one level out.
-#[allow(clippy::too_many_arguments)]
-pub(super) fn render_floating_spec(
-    focus_marker: bool,
-    spec: &fresh_core::api::WidgetSpec,
-    prev: &std::collections::HashMap<String, crate::widgets::WidgetInstanceState>,
-    prev_focus_key: &str,
-    panel_width: u32,
-    avail_height: Option<u32>,
-    hover_key: &str,
-    hover_item_key: &str,
-    hover_popup_row: &str,
-    markdown: Option<crate::widgets::MarkdownCtx<'_>>,
-    auto_focus_first: bool,
-    h_pan: Option<&std::collections::HashMap<String, i32>>,
-) -> crate::widgets::RenderOutput {
-    crate::widgets::render_spec_with_options(
-        spec,
-        prev,
-        panel_width,
-        crate::widgets::RenderOptions {
-            prev_focus_key,
-            hover_key,
-            hover_item_key,
-            hover_popup_row,
-            marker_gutter: focus_marker,
-            // The panel's own policy — see `WidgetPanelOptions`. This
-            // is the path a focus change, a hover change and every
-            // host-driven refresh re-render through, mounted panels
-            // included, so seeding here unconditionally undid a panel's
-            // "nothing focused" the moment anything touched it.
-            auto_focus_first,
-            markdown,
-            avail_height,
-            // The reader's sideways fold: a repaint that dropped it would slide
-            // every row back to its resting window under a reader who had
-            // panned away from it.
-            h_pan,
-        },
-    )
-}
-
 /// Walk a `Tree`'s flat `nodes` and return the absolute indices of
 /// nodes that are currently visible — i.e. every ancestor is in
 /// `expanded`. Mirrors the renderer's filter so dispatcher and
@@ -784,147 +740,19 @@ impl Editor {
         }
     }
 
-    /// Re-render an existing widget panel after an in-host state
-    /// change (focus advance, scroll move, etc.) without the plugin
-    /// re-emitting the spec. Reads the panel's current spec from
-    /// the registry, resolves it against the (possibly updated) prev
-    /// state / focus key, and writes the result back.
-    ///
-    /// **Two ways of doing that, and which one is right is whether the tree
-    /// laid this panel out.** A described panel needs the three walks of
-    /// [`Self::resolve_described_panel`] and nothing else; a painted one
-    /// needs the whole text projection, which is what `render_floating_spec`
-    /// below produces.
+    /// Re-resolve an existing widget panel after an in-host state change
+    /// (focus advance, selection move, etc.) without the plugin re-emitting
+    /// the spec. Reads the panel's current spec from the registry, resolves
+    /// it against the (possibly updated) state / focus key, and writes the
+    /// result back — the three walks of [`Self::resolve_described_panel`],
+    /// and nothing else: the tree lays every mounted panel out, so there is
+    /// no text projection to refresh here.
     pub(super) fn rerender_widget_panel(&mut self, panel_key: &crate::widgets::PanelKey) {
         // Whatever this re-resolves is read by the description; the tree
         // catches up on the next frame, and a key before it lays one out.
         self.shell_description_stale = true;
-        if self.resolve_described_panel(panel_key) {
-            return;
-        }
-        // The spec already lives in the registry — mutations (e.g.
-        // `append_tree_nodes_in_spec`) edit it in place. Borrow it for
-        // render, then write back only the side-effects (instance
-        // states, focus key). The previous shape cloned the
-        // whole spec out, rendered, then moved it back — for a Tree
-        // with 5 000 nodes that's a multi-MB deep clone per IPC, which
-        // dominates the host's per-mutation cost during a streaming
-        // search.
-        let rendered_height: Option<u32>;
-        let (buffer_id, _is_floating, panel_width, out_pieces) = {
-            let (buffer_id, spec) = match self.widget_registry.buffer_and_spec_ref(panel_key) {
-                Some(s) => s,
-                None => return,
-            };
-            let prev = self
-                .widget_registry
-                .instance_states(panel_key)
-                .cloned()
-                .unwrap_or_default();
-            let h_pan = self
-                .widget_registry
-                .get(panel_key)
-                .map(|p| p.h_pan.clone())
-                .unwrap_or_default();
-            let prev_focus = self
-                .widget_registry
-                .focus_key(panel_key)
-                .map(|s| s.to_string())
-                .unwrap_or_default();
-            let auto_focus_first = self
-                .widget_registry
-                .get(panel_key)
-                .map(|p| p.auto_focus_first)
-                .unwrap_or(true);
-            let panel_slot = Self::slot_for_panel_buffer(buffer_id);
-            let is_floating = panel_slot.is_some();
-            let panel_width = if let Some(slot) = panel_slot {
-                self.floating_panel_inner_width(slot)
-            } else {
-                self.widget_panel_width(buffer_id)
-            };
-            // Floating panels that opted into the focus-marker gutter
-            // (the Orchestrator New Session form) must re-render
-            // through the same marker renderer on every host-driven
-            // refresh — otherwise a Tab / focus advance would repaint
-            // the panel without the gutter and the layout would jump.
-            let focus_marker = panel_slot
-                .and_then(|slot| self.panel(slot))
-                .map(|f| f.focus_marker)
-                .unwrap_or(false);
-            // This is also the path a hover change re-renders through, so
-            // the panel's tracked hover key has to reach the renderer here
-            // — otherwise entering a `×` would repaint it unhighlighted.
-            // A buffer-mounted panel has no `FloatingWidgetPanel` to
-            // carry this, so it keeps its hover on its registry state.
-            let (hover_key, hover_item_key) = match panel_slot {
-                Some(slot) => self
-                    .panel(slot)
-                    .map(|f| (f.hovered_widget_key.clone(), f.hovered_item_key.clone()))
-                    .unwrap_or_default(),
-                None => self.widget_registry.hover_keys(panel_key),
-            };
-            // The popup row is a floating-panel affordance; a mounted panel
-            // drops the popup channel at mount, so there is none to carry.
-            let hover_popup_row = panel_slot
-                .and_then(|slot| self.panel(slot))
-                .map(|f| f.hovered_popup_row.clone())
-                .unwrap_or_default();
-            // Row budget for auto-sized lists/trees: the floating
-            // panel's inner height when this is a floating/dock slot,
-            // else the split viewport height of the panel's buffer.
-            let avail_height = match panel_slot {
-                Some(slot) => self.floating_panel_inner_height(slot),
-                None => self.widget_panel_height(buffer_id),
-            };
-            rendered_height = avail_height;
-            let theme_guard = self.theme.read().unwrap();
-            let out = render_floating_spec(
-                focus_marker,
-                spec,
-                &prev,
-                &prev_focus,
-                panel_width,
-                avail_height,
-                &hover_key,
-                &hover_item_key,
-                &hover_popup_row,
-                Some(crate::widgets::MarkdownCtx {
-                    theme: &theme_guard,
-                    grammars: Some(self.grammar_registry.as_ref()),
-                }),
-                auto_focus_first,
-                Some(&h_pan),
-            );
-            (buffer_id, is_floating, panel_width, out)
-        };
-        let _ = panel_width;
-        self.record_widget_panel_render_height(panel_key, rendered_height);
-        let panel_slot = Self::slot_for_panel_buffer(buffer_id);
-        let focus_cursor = out_pieces.focus_cursor;
-        let entries = out_pieces.entries;
-        if self
-            .widget_registry
-            .update_side_effects(panel_key, out_pieces.instance_states, out_pieces.focus_key)
-            .is_none()
-        {
-            tracing::warn!("rerender_widget_panel({}) lost panel mid-call", panel_key);
-            return;
-        }
-        if let Some(slot) = panel_slot {
-            if let Some(fwp) = self.panel_mut(slot) {
-                if &fwp.panel_key == panel_key {
-                    fwp.entries = entries;
-                }
-            }
-            return;
-        }
-        if let Err(e) = self.set_virtual_buffer_content(buffer_id, entries.clone()) {
-            tracing::error!("rerender_widget_panel({}) failed: {}", panel_key, e);
-        }
-        self.apply_widget_focus_cursor(buffer_id, &entries, focus_cursor);
+        self.resolve_described_panel(panel_key);
     }
-
     /// Re-resolve a **described** panel, and report that the collector did
     /// not need to run.
     ///
@@ -951,8 +779,7 @@ impl Editor {
     /// document branch. Neither errors against an empty arena; each simply
     /// stops working. See [`spec_has_markdown_document`].
     ///
-    /// Returns `false` for a panel the tree does not describe, which then
-    /// renders exactly as before.
+    /// Returns `false` for a panel that is not mounted.
     fn resolve_described_panel(&mut self, panel_key: &crate::widgets::PanelKey) -> bool {
         if !self.panel_is_the_trees(panel_key) {
             return false;
@@ -2923,50 +2750,21 @@ impl Editor {
         }
     }
 
-    /// Inner-rect column budget for a floating panel render — the
-    /// terminal width × `width_pct`, minus 2 cols for the frame
-    /// border. Mirrors the `widget_panel_width` reservation; never
-    /// goes below 10 cols so flex spacers don't collapse to zero on
-    /// narrow terminals.
-    pub(super) fn floating_panel_inner_width(&self, slot: super::PanelSlot) -> u32 {
-        // A left-dock panel wraps its content to the dock's fixed
-        // column width rather than a percentage of the terminal.
-        if let Some(super::PanelPlacement::LeftDock { width_cols }) =
-            self.panel(slot).map(|f| f.placement)
-        {
-            return (width_cols as u32).saturating_sub(2).max(10);
-        }
-        // A sidebar section is the column's width less its two walls — laid
-        // and wrapped at one number, the dock's rule inverted for two
-        // borders (`view::shell::sidebar::body`).
-        if let super::PanelSlot::Sidebar(_) = slot {
-            return (self.sidebar_cols() as u32).saturating_sub(2).max(1);
-        }
-        let term_w = self.terminal_width.max(1) as u32;
-        let pct = self
-            .panel(slot)
-            .map(|f| f.width_pct.clamp(1, 100) as u32)
-            .unwrap_or(80);
-        let w = (term_w * pct) / 100;
-        w.saturating_sub(2).max(10)
-    }
-
-    /// Height sibling of [`Self::floating_panel_inner_width`]: the row
-    /// budget auto-sized (`visible_rows: None`) lists/trees inside this
-    /// panel size themselves to. A left dock spans the terminal height;
+    /// The row budget auto-sized (`visible_rows: None`) lists/trees inside
+    /// this panel size themselves to. A left dock spans the terminal height;
     /// a centered modal takes its `height_pct` share.
     ///
     /// **Two rows come off, and only one arm has a frame to justify them.**
     /// For the centred and anchored panel the reservation is the box's own
     /// border, and the number is not in competition with layout: the box is
-    /// `Sizing::Auto` (`view::shell::panel::Panel::height`), so the budget
+    /// `Sizing::Auto` (`view::shell::panel::layer_for`), so the budget
     /// decides the content's height and `Auto` measures around it — one
     /// authority with the layout following, not two answers.
     ///
     /// The dock is the arm where that argument does not hold. Its rectangle is
     /// the full terminal height (`Editor::compute_dock_split`) and its column
-    /// has no border — the divider is a *column*, which
-    /// `floating_panel_inner_width` accounts for separately — so nothing in
+    /// has no border — the divider is a *column*, which the column's own
+    /// description accounts for separately (`view::shell::dock`) — so nothing in
     /// the dock's geometry spends these two rows. What does spend them is the
     /// orchestrator's own layout: it pads below its tree so its hint bar lands
     /// on the column's last two rows. That makes the number a plugin's
@@ -3492,7 +3290,6 @@ mod tests {
             placement: crate::app::PanelPlacement::LeftDock { width_cols: 30 },
             focused: true,
             mode: None,
-            entries: Vec::new(),
             scrollbar_zone_hovered: false,
             scrollbar_flash_until: None,
             fullscreen: false,
@@ -3582,20 +3379,7 @@ mod tests {
         buffer_id: crate::model::event::BufferId,
     ) {
         let spec = list_of(40);
-        let out = super::render_floating_spec(
-            false,
-            &spec,
-            &Default::default(),
-            "",
-            40,
-            None,
-            "",
-            "",
-            "",
-            None,
-            true,
-            None,
-        );
+        let out = crate::widgets::resolve_panel(&spec, &Default::default(), "", true, None);
         editor.widget_registry.mount(
             panel_key.clone(),
             buffer_id,
@@ -3643,24 +3427,11 @@ mod tests {
             markdown: false,
             key: Some("field".into()),
         };
-        let out = super::render_floating_spec(
-            false,
-            &spec,
-            &Default::default(),
-            "field",
-            40,
-            None,
-            "",
-            "",
-            "",
-            None,
-            true,
-            None,
-        );
+        let out = crate::widgets::resolve_panel(&spec, &Default::default(), "field", true, None);
         editor.widget_registry.mount(
             panel_key.clone(),
             buffer,
-            spec,
+            spec.clone(),
             out.instance_states,
             out.focus_key,
             true,
@@ -3669,12 +3440,14 @@ mod tests {
         );
         editor.dock = Some(dock_panel(panel_key.clone()));
         // Candidates never come from the spec — the plugin pushes them — so
-        // this is the state a `SetCompletions` leaves behind.
-        match editor
+        // this is the state a `SetCompletions` leaves behind, seeded the way
+        // that applier seeds it on a field nobody has typed in.
+        let panel = editor
             .widget_registry
             .get_mut(&panel_key)
-            .and_then(|p| p.instance_states.get_mut("field"))
-        {
+            .expect("the panel");
+        crate::widgets::kinds::text::ensure_text_state(&spec, "field", panel);
+        match panel.instance_states.get_mut("field") {
             Some(crate::widgets::WidgetInstanceState::Text { completions, .. }) => {
                 *completions = (0..9).map(|i| format!("cand{i}").into()).collect();
             }
@@ -3800,20 +3573,7 @@ mod tests {
             children: vec![button("one"), button("two")],
             key: None,
         };
-        let out = super::render_floating_spec(
-            false,
-            &spec,
-            &Default::default(),
-            "",
-            40,
-            None,
-            "",
-            "",
-            "",
-            None,
-            true,
-            None,
-        );
+        let out = crate::widgets::resolve_panel(&spec, &Default::default(), "", true, None);
         assert_eq!(
             out.tabbable,
             vec!["one".to_string(), "two".to_string()],
@@ -3871,20 +3631,7 @@ mod tests {
             children: vec![button("one"), button("two")],
             key: None,
         };
-        let out = super::render_floating_spec(
-            false,
-            &spec,
-            &Default::default(),
-            "",
-            30,
-            None,
-            "",
-            "",
-            "",
-            None,
-            true,
-            None,
-        );
+        let out = crate::widgets::resolve_panel(&spec, &Default::default(), "", true, None);
         editor.widget_registry.mount(
             panel_key.clone(),
             crate::app::PanelSlot::Dock.buffer_id(),
@@ -3937,20 +3684,7 @@ mod tests {
             children: vec![button("hdr"), auto_list(40)],
             key: None,
         };
-        let out = super::render_floating_spec(
-            false,
-            &spec,
-            &Default::default(),
-            "",
-            30,
-            Some(24),
-            "",
-            "",
-            "",
-            None,
-            true,
-            None,
-        );
+        let out = crate::widgets::resolve_panel(&spec, &Default::default(), "", true, None);
         editor.widget_registry.mount(
             panel_key.clone(),
             crate::app::PanelSlot::Dock.buffer_id(),
@@ -4511,20 +4245,7 @@ mod tests {
             children: vec![button("one"), button("two")],
             key: None,
         };
-        let out = super::render_floating_spec(
-            false,
-            &spec,
-            &Default::default(),
-            "",
-            30,
-            None,
-            "",
-            "",
-            "",
-            None,
-            true,
-            None,
-        );
+        let out = crate::widgets::resolve_panel(&spec, &Default::default(), "", true, None);
         editor.widget_registry.mount(
             panel_key.clone(),
             crate::app::PanelSlot::Dock.buffer_id(),
@@ -4575,20 +4296,7 @@ mod tests {
             children: vec![button("one"), button("two")],
             key: None,
         };
-        let out = super::render_floating_spec(
-            false,
-            &spec,
-            &Default::default(),
-            "",
-            30,
-            None,
-            "",
-            "",
-            "",
-            None,
-            true,
-            None,
-        );
+        let out = crate::widgets::resolve_panel(&spec, &Default::default(), "", true, None);
         editor.widget_registry.mount(
             panel_key.clone(),
             crate::app::PanelSlot::Dock.buffer_id(),
@@ -4632,20 +4340,7 @@ mod tests {
             children: vec![button("one"), button("two")],
             key: None,
         };
-        let out = super::render_floating_spec(
-            false,
-            &spec,
-            &Default::default(),
-            "",
-            30,
-            None,
-            "",
-            "",
-            "",
-            None,
-            true,
-            None,
-        );
+        let out = crate::widgets::resolve_panel(&spec, &Default::default(), "", true, None);
         editor.widget_registry.mount(
             panel_key.clone(),
             crate::app::PanelSlot::Dock.buffer_id(),
@@ -4687,20 +4382,7 @@ mod tests {
             children: vec![button("one"), button("two")],
             key: None,
         };
-        let out = super::render_floating_spec(
-            false,
-            &spec,
-            &Default::default(),
-            "",
-            30,
-            None,
-            "",
-            "",
-            "",
-            None,
-            false,
-            None,
-        );
+        let out = crate::widgets::resolve_panel(&spec, &Default::default(), "", false, None);
         assert_eq!(out.focus_key, "", "nothing seeded");
         editor.widget_registry.mount(
             panel_key.clone(),
@@ -4735,20 +4417,7 @@ mod tests {
             children: vec![button("one"), button("two"), button("three")],
             key: None,
         };
-        let out = super::render_floating_spec(
-            false,
-            &spec,
-            &Default::default(),
-            "",
-            30,
-            None,
-            "",
-            "",
-            "",
-            None,
-            true,
-            None,
-        );
+        let out = crate::widgets::resolve_panel(&spec, &Default::default(), "", true, None);
         editor.widget_registry.mount(
             panel_key.clone(),
             crate::app::PanelSlot::Dock.buffer_id(),
@@ -4798,20 +4467,7 @@ mod tests {
         let panel_key = crate::widgets::PanelKey::new("test-plugin", 1);
         // Rendering a spec into the registry exactly as mount/update do.
         let render = |spec: &WidgetSpec, prev_focus: &str| {
-            super::render_floating_spec(
-                false,
-                spec,
-                &Default::default(),
-                prev_focus,
-                30,
-                None,
-                "",
-                "",
-                "",
-                None,
-                true,
-                None,
-            )
+            crate::widgets::resolve_panel(spec, &Default::default(), prev_focus, true, None)
         };
         // The dock before the dropdown: a list, and nothing else to focus.
         let closed = WidgetSpec::Col {

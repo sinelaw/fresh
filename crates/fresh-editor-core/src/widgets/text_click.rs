@@ -1,10 +1,10 @@
 //! Mapping a press on a rendered text widget to a caret position.
 //!
 //! Every text input the widget runtime draws — plugin panels *and* the
-//! Settings controls, which render through the same [`render_spec`] path —
-//! emits a `focus` [`HitArea`] whose payload carries the value-layout
-//! breadcrumbs needed to turn a byte in the rendered row into a byte in the
-//! field's *value*:
+//! Settings controls, which describe through the same `single_line` row —
+//! carries a `focus` event (`SingleLine::event`) whose payload holds the
+//! value-layout breadcrumbs needed to turn a byte in the rendered row into a
+//! byte in the field's *value*:
 //!
 //! * `valueInnerStart` — byte where the value's `<inner>` region begins in
 //!   the rendered row (after the gutter / label / `[`).

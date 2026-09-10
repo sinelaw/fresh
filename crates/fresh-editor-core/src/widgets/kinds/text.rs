@@ -1345,7 +1345,13 @@ pub fn mode(spec: &WidgetSpec) -> (bool, bool) {
 /// no-op. If not, seeds from the spec's `value` / `cursor_byte` /
 /// `rows`. Returns true when the widget is a Text now present in
 /// instance state.
-fn ensure_seeded(
+///
+/// **The one seed a text field has.** Nothing writes a field's state on a
+/// render — the description resolves the spec against whatever is stored
+/// (`resolve`), and a walk that seeded would be a second authority. The
+/// first *handler* that has to hold state seeds it here: an edit, a caret
+/// move, or a plugin pushing completions onto a field nobody has typed in.
+pub fn ensure_text_state(
     spec: &WidgetSpec,
     widget_key: &str,
     panel: &mut crate::widgets::WidgetPanelState,
@@ -1405,7 +1411,7 @@ pub fn apply_edit(
     fx: &mut super::KeyFx,
     op: impl FnOnce(&mut crate::primitives::text_edit::TextEdit),
 ) -> bool {
-    if !ensure_seeded(spec, widget_key, panel) {
+    if !ensure_text_state(spec, widget_key, panel) {
         return false;
     }
     let Some(WidgetInstanceState::Text { editor, .. }) = panel.instance_states.get_mut(widget_key)

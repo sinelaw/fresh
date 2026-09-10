@@ -1619,14 +1619,12 @@ pub(crate) struct FloatingWidgetState {
     /// The text projection's rows for this panel, refreshed on every spec /
     /// command / mutate.
     ///
-    /// **Text, not paint.** They were painted into the overlay rect at draw
-    /// time and hit-tested against; both readers are gone. What is left reads
-    /// them as strings: the anchored popup's width
-    /// (`view::shell::panel::Panel::anchored_width`, which is 2.3's one named
-    /// exception) and the row count a `Host` interior's box is sized by.
-    pub entries: Vec<fresh_core::text_property::TextPropertyEntry>,
-    // **`focus_cursor` and `embeds` are gone from here; both were
-    // write-only.**
+    // **The rows, `focus_cursor` and `embeds` are gone from here.**
+    //
+    // The rows were the text projection's, painted into the overlay rect at
+    // draw time and hit-tested against, then read only as strings to size a
+    // box the tree could not measure; the tree describes every mounted
+    // panel now and measures its own box. The other two were write-only.
     //
     // The first was the hardware-cursor target for a focused field, the second
     // the rectangles a `WindowEmbed` reserved so the panel painter could walk
@@ -1651,9 +1649,6 @@ pub(crate) struct FloatingWidgetState {
     // painter that recorded a track was deleted in 2.4, so nothing could arm
     // a drag, and a described list's bar is its viewport's.
     //
-    // `entries` stays because it is still read as *text*, and one measurement
-    // of it survives: an anchored popup's width (`view::shell::panel::
-    // Panel::anchored_width`).
     /// Whether the pointer is over the dock's column.
     ///
     /// **The tree says so** (`UiFact::DockHover`), because the column is a
@@ -2273,7 +2268,6 @@ mod tests {
             placement,
             focused,
             mode: None,
-            entries: Vec::new(),
             scrollbar_zone_hovered: false,
             scrollbar_flash_until: None,
             fullscreen: false,

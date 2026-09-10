@@ -339,69 +339,56 @@ to nothing), the viewport is `anchor_to` it, and the applier calls
 screen's code sample), `a_captured_move_reports_the_byte_under_it` and
 `text_rows_are_read_from_the_subtree_that_owns_the_key`.
 
-**What it leaves for the deletion that follows.** With both bail-outs gone,
-the text projection has no writer: `WidgetPanelState::{painted, boxes}`,
-`render_collected`, `layout_box.rs` and `render_button` have no caller, and
-`Text::on_wheel`'s document branch reads an arena nothing fills. See *Delete
-the widget text projection* below.
+**What it left for the deletion that followed.** With both bail-outs gone,
+the text projection's geometry had no writer, and it is deleted — see *Delete
+the widget text projection* below for what is left of the projection and why.
 
 ### Delete the widget text projection
 
-**Narrowed, by decision.** The projection has two kinds of output, and only
-one of them is dead.
+**Its geometry is gone; its text survives as one mirror.** The projection had
+two kinds of output. The click ranges (`HitArea`), the layout-box arena
+(`LayoutBox`, `layout_box.rs`, `focus_ring`, `hit_path`) and the window each
+list was painted into (`PaintedWindow`, `WidgetPanelState::{painted, boxes}`)
+were the geometry, and the tree lays every widget out, hit-tests it, scrolls
+its viewport and walks its focus ring itself — so those, the registry state
+that carried them, the `mount`/`update`/`update_side_effects` parameters, the
+host's painted-viewport fallback (`widget_viewport` asks the tree, then the
+spec), `List::on_wheel`/`Tree::on_wheel` (they moved a window nothing drives)
+and the `Host` leaf a floating panel could fall back to
+(`FloatingWidgetState::entries`, `Spot::{content_rows, content_cols}`,
+`Panel::{height, anchored_width}`) are deleted. `Panel.interior` is no longer
+an `Option`: every mounted panel is described, and its box measures itself
+on both axes. The three slot mount/update paths and every re-render go
+through `resolve_panel` — a walk of the spec against the stored state — and
+`render_floating_spec` is gone with the last caller that rendered.
 
-Its **text** — `RenderOutput::entries` — is load-bearing for a pane-mounted
-panel: the panel's *buffer* is those rows (`set_virtual_buffer_content`),
-code-tour reads that buffer back (`getBufferText`, in `lineRangeBytes`) to
-place its step highlight, and the page's reading row and the status bar's
-`Ln`/`Col` ride on it — "the mirror follows rather than leads". So
-`render_collected` stays as the mirror's producer, and `render_button` stays
-as the mirror's text formatter (it already reads `Frame::BUTTON`; the
-duplication the stylesheet work set out to end is gone). It runs on mount and
-update, never inside a description build: **no description build runs a
-renderer** holds today. Deriving the mirror from the tree's own rows is its
-own project — the same capability the gutter-as-runs and the web's remaining
-projections wait on — and a prerequisite for deleting the collector outright.
+**What is left is the mirror, and it is a compromise, not a goal.** A
+pane-mounted panel's *buffer* is the projection's rows
+(`render_panel_spec` → `set_virtual_buffer_content`, on mount and on a
+plugin update only): code-tour reads that buffer back (`getBufferText`, in
+`lineRangeBytes`) to place its step highlight, and the page's reading row
+and the status bar's `Ln`/`Col` ride on it. So `render_collected` stays as
+that buffer's text producer and `render_button` as its formatter (it already
+reads `Frame::BUTTON`; the duplication the stylesheet work set out to end is
+gone). The mirror keeps no window of its own — every list starts at the top
+and snaps to its selection — and it never runs inside a description build:
+**no description build runs a renderer** holds. The single-line field's
+press event is the one thing the description still takes from the
+projection's formatter (`SingleLine::event`, the value-layout breadcrumbs
+`value_byte_from_hit` reads), because that row's byte layout is the
+formatter's to know.
 
-Its **geometry** — the box arena and the hit ranges — has no reader left, and
-that deletion is open. An attempt to do it by scripted, compiler-driven
-statement removal corrupted `containers.rs` and `render.rs` twice and was
-reverted; it needs to be done per file with the text in view. The map:
+**What retires it.** Derive the pane-panel buffer from the tree's own rows
+(`Ui::text_rows` over the panel's subtree, the capability the gutter-as-runs
+and the web's remaining projections also wait on), point code-tour and the
+reading row at that, and delete the collector and every kind's `collect`.
+Until then the projection is one function deep and has one reader.
 
-- `CollectedOutput::{shift_channels, absorb_child, push_self_box}` in
-  `render.rs`: the `boxes`/`hits`/`painted` legs of the first two, all of the
-  third; the `focus_ring(&collected.boxes)` → `tabbable` derivation in
-  `render_spec`'s assembly; the `PaintedWindow` folds around lines 494–575.
-- `RenderOutput::{hits, tabbable, painted, boxes}` and
-  `CollectedOutput::{hits, boxes, painted, self_scroll}`.
-- `containers.rs`: the three assemblers' `hits: &mut Vec<HitArea>` /
-  `out_boxes: &mut Vec<LayoutBox>` parameters (`assemble_inline_row`,
-  `assemble_wrapped_row`, `zip_row_blocks`) and every argument at their
-  call sites; `RowPiece::hits`; the `hits`/`boxes`/`painted` locals in
-  `collect_row`, `collect_col`, `collect_section` and their struct fields;
-  the `painted` assertions in its tests.
-- Per kind: `out.hits.push(HitArea { .. })`, `out.push_self_box(..)`,
-  `out.self_scroll = Some(BoxScroll { .. })`, `out.painted.insert(..)` in
-  `list.rs`, `tree.rs`, `text.rs`, `button.rs`, `toggle.rs`, `number.rs`,
-  `dual_list.rs`, `dropdown.rs`, `popup.rs`, `hint_bar.rs`, `raw.rs`,
-  `spacer.rs`, `divider.rs`, `window_embed.rs`, `component.rs`.
-- `registry.rs`: `HitArea`, `PaintedWindow`, `WidgetPanelState::{painted,
-  boxes}`, `painted_viewport`, the `&mut PaintedWindow` accessor, and the
-  `painted`/`boxes` parameters of `mount` and `update_side_effects`;
-  `widgets/mod.rs`'s re-exports; `layout_box.rs` whole.
-- Host: the five mount/update sites in `plugin_dispatch.rs` and the
-  re-render tail in `widget_runtime.rs` pass `out.painted`/`out.boxes` —
-  drop the arguments; `widget_viewport`'s `painted_viewport` fallback (the
-  spec's `Viewport::from_spec` is what remains); `painted_panel_height`
-  and `widget_panels_with_stale_height`, which must read the pane's height
-  from the tree instead; `Text::on_wheel`'s document branch, which reads an
-  arena nothing fills.
-- Then `FloatingWidgetState::entries` (read only by `panel_description`'s
-  `Host` fallback), `Spot::{content_rows, content_cols}` and the painted
-  branches of `Panel::{height, anchored_width}` — every described box says
-  `Auto` — and the `painter::{centered, anchored}` parity tests that pin the
-  painted arithmetic. And `app/chrome/`'s two hover reactions move beside
-  their surfaces, and the module goes.
+**Residue the deletion exposed.** `user_scrolled` on the `List`, `Tree` and
+`Text` instance states has no writer left (`latch_user_scrolled` and the
+wheel branches that set it went with the window); `resolve` still reads it
+and `set_selected_index` still clears it. It is dead state and should go —
+about sixty sites, mechanical.
 
 ### The status bar does layout by hand
 
@@ -534,14 +521,13 @@ no bracketed string to re-colour.
    day a rule wants sides of different widths that assertion is the trigger.
 
 **And one item that belongs to the text-projection chain, not the stylesheet.**
-`render_button` cannot be deleted while `render_floating_spec` /
-`render_panel_spec` still run the whole text projection on every mount and
-repaint: that path's entire output is a string, and a naked label plus a class
-says nothing to it. What keeps that path alive is the anchored-panel bail-out —
-see *The markdown document view*, "What it does not clear". The duplication it existed to end is already gone —
-`widgets::frame::Frame::BUTTON` holds the glyphs and the padding, and both the
-runtime's text and the shell's reserved columns read it, with a test asserting
-they agree on width. `render_button` goes when the text pipeline goes.
+`render_button` cannot be deleted while `render_panel_spec` still produces a
+pane-mounted panel's buffer: that path's entire output is a string, and a
+naked label plus a class says nothing to it. The duplication it existed to
+end is already gone — `widgets::frame::Frame::BUTTON` holds the glyphs and
+the padding, and both the runtime's text and the shell's reserved columns
+read it, with a test asserting they agree on width. `render_button` goes when
+the mirror goes — see *Delete the widget text projection*.
 
 **Rules that stand:** an unknown class decorates nothing and is *not* an error,
 while an unresolvable **ink** stays the loud failure it is — two slots, two
@@ -579,10 +565,9 @@ Recorded so the corrections are not re-derived:
 - **"Delete `app/chrome/`" was misstated.** What is there now is message
   handlers, not a duplicate chrome system. The item is *move these beside their
   surfaces*, which is placement, not deletion of a second authority.
-- **`layout_box.rs` was listed as deleted. It is not** — 314 lines, still the
-  home of `LayoutBox`, `BoxScroll`, `focus_ring` and `hit_path`, and still
-  reached by `render_collected` and three kinds. It goes with the text
-  projection, not before it.
+- **`layout_box.rs` was listed as deleted before it was.** It went with the
+  projection's geometry, after the markdown document view stopped needing an
+  arena — see *Delete the widget text projection* — not before.
 - **The deletion ledger conflated two kinds of survivor.** `HostRegion` and
   `HostTarget` survive as a *key namespace* for readers that ask where a region
   is — no region is a `Host` any more. `popup_areas` survives as a cache of tree

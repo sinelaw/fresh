@@ -466,45 +466,6 @@ impl WidgetPanelState {
         true
     }
 
-    /// Latch "the user moved this window by hand" on a `List` or `Tree`.
-    ///
-    /// **Seeded from the spec when there is no entry**, because now that
-    /// the render walk stops writing derivations an untouched widget has
-    /// none — and a wheel notch is not a reason to forget which row the
-    /// plugin said was selected. Every handler that folds this state has
-    /// the same obligation; this is the one that has no spec-shaped
-    /// resolver of its own to route through.
-    pub fn latch_user_scrolled(&mut self, key: &str) {
-        if let Some(
-            WidgetInstanceState::List { user_scrolled, .. }
-            | WidgetInstanceState::Tree { user_scrolled, .. },
-        ) = self.instance_states.get_mut(key)
-        {
-            *user_scrolled = true;
-            return;
-        }
-        if self.instance_states.contains_key(key) {
-            return;
-        }
-        let seeded = match crate::widgets::find_widget_by_key(&self.spec, key) {
-            Some(WidgetSpec::List { selected_index, .. }) => WidgetInstanceState::List {
-                selected_index: *selected_index,
-                user_scrolled: true,
-            },
-            Some(WidgetSpec::Tree {
-                selected_index,
-                expanded_keys,
-                ..
-            }) => WidgetInstanceState::Tree {
-                selected_index: *selected_index,
-                expanded_keys: expanded_keys.iter().cloned().collect(),
-                user_scrolled: true,
-            },
-            _ => return,
-        };
-        self.instance_states.insert(key.to_string(), seeded);
-    }
-
     /// Set the host-owned selected index for a `List` or `Tree`
     /// instance, dispatching on the *existing* instance variant so a
     /// Tree keeps its expanded-keys set. Shared by the pointer select

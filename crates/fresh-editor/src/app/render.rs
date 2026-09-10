@@ -6509,49 +6509,27 @@ impl Editor {
         use crate::view::shell::panel::{Panel, Spot};
 
         let p = self.panel(crate::app::PanelSlot::Floating)?;
-        // Every row the spec produced, borders excluded — `WindowEmbed`
-        // reservations included, since each contributes its blank entries and
-        // an `EmbedRect` painted over them. This is the count the painter's
-        // `entries.len() + 2` used, kept as the one measurement the tree needs
-        // from the runtime.
-        //
-        // **Neither axis is the mirror's any more.** A described box measures
-        // its own height (`Panel::height` answers `Sizing::Auto`) and, since
-        // a rule became a ground rather than text of a computed length, its
-        // own width too — so this count survives only for a panel whose
-        // interior is a `Host`, which today means no panel at all. It is kept
-        // for that case and goes with it.
-        let content_rows = p.entries.len() as u16;
+        // Neither axis is measured here: a described box is as tall as its
+        // rows and as wide as its widest one, and the interior states both.
         let spot = match p.placement {
             super::PanelPlacement::Centered => Spot::Centered {
                 width_pct: p.width_pct,
-                content_rows,
             },
-            super::PanelPlacement::Anchored { x, y } => Spot::Anchored {
-                x,
-                y,
-                content_cols: p
-                    .entries
-                    .iter()
-                    .map(|e| crate::primitives::display_width::str_width(&e.text) as u16)
-                    .max()
-                    .unwrap_or(0),
-                content_rows,
-            },
+            super::PanelPlacement::Anchored { x, y } => Spot::Anchored { x, y },
             // The dock panel's frame is the dock column's, not this box's —
             // and a sidebar section's is its column's.
             super::PanelPlacement::LeftDock { .. }
             | super::PanelPlacement::SidebarSection { .. } => return None,
         };
         Some(Panel {
-            // **`None` means there is no panel mounted in the slot**, and
-            // nothing else. This used to say "described when every variant of
-            // the spec is one the tree describes, and painted whole
-            // otherwise" — the `covered` gate, which ran out of `false` arms
-            // and was deleted in 2.4. `panel_interior` asks one question, and
-            // it is the same one `panel_is_described` asks; `WindowEmbed` is
-            // described like everything else, as a `Host` leaf.
-            interior: self.panel_interior(crate::app::PanelSlot::Floating),
+            // **No interior means no panel**: a slot whose panel the registry
+            // does not hold has nothing to describe, and there is no frame.
+            // This used to say "described when every variant of the spec is
+            // one the tree describes, and painted whole otherwise" — the
+            // `covered` gate, which ran out of `false` arms and was deleted;
+            // `WindowEmbed` is described like everything else, as a `Host`
+            // leaf.
+            interior: self.panel_interior(crate::app::PanelSlot::Floating)?,
             spot,
             title: p.title.clone(),
             closable: p.closable,

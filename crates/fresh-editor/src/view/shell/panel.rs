@@ -42,23 +42,11 @@ use super::msg::{UiFact, UiMsg};
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Spot {
     /// Centred in its bounds: as wide as the request, as tall as the content.
-    Centered {
-        width_pct: u8,
-        /// Rows the spec produced, borders excluded.
-        content_rows: u16,
-    },
+    Centered { width_pct: u8 },
     /// An unobtrusive context-menu popup at an absolute screen cell. It hugs
     /// its items rather than taking a percentage, and it is clamped so the
     /// whole box stays on screen.
-    Anchored {
-        x: u16,
-        y: u16,
-        /// The widest entry, borders excluded. Read only when the interior is
-        /// a `Host` — see [`Panel::anchored_width`], the mirror of
-        /// [`Panel::height`].
-        content_cols: u16,
-        content_rows: u16,
-    },
+    Anchored { x: u16, y: u16 },
 }
 
 /// The panel's frame, with everything resolved from live state.
@@ -78,14 +66,11 @@ pub struct Panel {
     /// beside the dock. The orchestrator's global modals opt into the former
     /// so they are not cramped into the region right of their own dock.
     pub fullscreen: bool,
-    /// **The interior, when it is described rather than painted.**
-    ///
-    /// `Some` when the panel's spec uses only variants
-    /// `view::shell::widgets` describes; `None` sends the whole panel down
-    /// the runtime's path, which is what still paints a `WindowEmbed`. A
-    /// panel is one or the other and never half of each — see
-    /// `widgets::covered`.
-    pub interior: Option<Interior>,
+    /// **The interior: the spec, and the host state it reads.** Every
+    /// mounted panel is described — `view::shell::widgets` has a node for
+    /// every variant, a `WindowEmbed` included — so the box is as tall and
+    /// as wide as its rows, and nothing sizes it from outside.
+    pub interior: Interior,
 }
 
 /// **A plugin panel's keymap, on the tree.** The mode a panel's plugin
@@ -269,60 +254,6 @@ pub fn body_key() -> Key {
 
 pub fn close_key() -> Key {
     Key::Str("panel_close".into())
-}
-
-impl Panel {
-    /// The box's height, borders included. The request is a hint in this
-    /// direction and always has been: shorter content shrinks the box, taller
-    /// content grows it up to the frame.
-    ///
-    /// **A described interior states its own height; a painted one cannot.**
-    /// The counts in `Spot` are the row and column tallies of the widget
-    /// runtime's text mirror, and for a described panel they are a *second*
-    /// measurement of a subtree layout is about to measure anyway — the last
-    /// thing on this branch that made the mirror a rendering input rather than
-    /// a text mirror. `Auto` is "whatever the content needs, within the
-    /// incoming constraint", which is exactly the fit-to-content rule the
-    /// arithmetic was spelling out.
-    ///
-    /// A painted interior is a `Host` leaf. A host has no intrinsic size by
-    /// definition — the tree hands it a rectangle and knows nothing about what
-    /// goes in it — so `Auto` there would collapse the box to its border. The
-    /// counts stay for exactly that case, and go with it.
-    fn height(&self) -> Sizing {
-        if self.interior.is_some() {
-            return Sizing::Auto;
-        }
-        let content = match self.spot {
-            Spot::Centered { content_rows, .. } | Spot::Anchored { content_rows, .. } => {
-                content_rows
-            }
-        };
-        Sizing::Cells(content.saturating_add(2).max(3))
-    }
-
-    /// **A described interior states its own width; a painted one cannot** —
-    /// exactly [`Self::height`]'s split, and now for the same reason.
-    ///
-    /// This used to be the mirror's widest-entry count even for a described
-    /// panel, and the argument for that was a real loop: the interior is
-    /// built by a `layout_reader`, which needs a *number* for the width
-    /// before it can produce a row, and a rule inside it was text of a
-    /// computed length — so under `Auto` the rule came out frame-wide and
-    /// set the very width it had been asked about.
-    ///
-    /// A rule is a ground now ([`fresh_ui::Node::rule`]), tiled by the
-    /// backend across whatever rectangle layout settled on, and flexing
-    /// along its own axis — so it contributes nothing to an intrinsic
-    /// measure and the loop is gone. What is left is the `Host` case, where
-    /// there is genuinely nothing to measure, and the count answers for it
-    /// as it does for the height.
-    fn anchored_width(&self, content_cols: u16) -> Sizing {
-        if self.interior.is_some() {
-            return Sizing::Auto;
-        }
-        Sizing::Cells(content_cols.saturating_add(2).max(6))
-    }
 }
 
 /// The panel's frame as a layer.
@@ -604,7 +535,8 @@ pub fn layer_for(p: &Panel) -> Node<UiMsg> {
                     frame_box(p)
                         .w(Sizing::Pct(*width_pct))
                         .min_w(20)
-                        .h(p.height())
+                        // As tall as its rows: the interior measures itself.
+                        .h(Sizing::Auto)
                         // The floor the arithmetic carried: a box is its two
                         // border rows and at least one row of content, even
                         // when the spec produced none.
@@ -614,9 +546,7 @@ pub fn layer_for(p: &Panel) -> Node<UiMsg> {
         }
         // Full-frame whatever the dock is doing: the anchor is an absolute
         // screen cell that may sit over the dock column.
-        Spot::Anchored {
-            x, y, content_cols, ..
-        } => l
+        Spot::Anchored { x, y } => l
             .anchor(Anchor::Point(*x, *y))
             .place(Place::Over)
             .fit(Fit::CLAMP)
@@ -624,9 +554,12 @@ pub fn layer_for(p: &Panel) -> Node<UiMsg> {
             .on_dismiss(|_| UiMsg::Ui(UiFact::PanelClosed))
             .child(
                 frame_box(p)
-                    .w(p.anchored_width(*content_cols))
+                    // As wide as its widest row and as tall as its rows: the
+                    // interior measures itself, and the column's `Stretch`
+                    // widens everything else in it to that edge.
+                    .w(Sizing::Auto)
                     .min_w(6)
-                    .h(p.height())
+                    .h(Sizing::Auto)
                     .min_h(3)
                     .key(key()),
             ),
@@ -739,23 +672,13 @@ fn close_button(p: &Panel) -> Node<UiMsg> {
 
 /// The content area.
 ///
-/// **Transparent when the interior is a painter**, so the box behind it
-/// takes the press — the painter never answered one. **Opaque when it is
-/// described**, because then the widgets answer their own presses and a
-/// press that reaches the area but no widget is the panel's to swallow, not
-/// the buffer's.
+/// **Opaque**: the widgets answer their own presses, and a press that
+/// reaches the area but no widget is the panel's to swallow, not the
+/// buffer's.
 fn body(p: &Panel) -> Node<UiMsg> {
-    let Some(i) = p.interior.clone() else {
-        // **A host fills the box; it does not size it.** The box's height came
-        // from the mirror's row count precisely because a `Host` leaf has no
-        // intrinsic size, so the body takes the remainder it was given.
-        return row()
-            .flex(1)
-            .key(body_key())
-            .pointer_mode(PointerMode::Transparent);
-    };
-    // **A described body is as wide and as tall as its rows, and the box
-    // follows it.** `Auto` on both axes. It used to be `Flex(1)` wide —
+    let i = p.interior.clone();
+    // **The body is as wide and as tall as its rows, and the box follows
+    // it.** `Auto` on both axes. It used to be `Flex(1)` wide —
     // "fill the cross axis of the enclosing column" — and on a column's
     // cross axis a flexible child is measured at the whole extent whether
     // or not that extent is definite (`prim::range`), so under an `Auto`
@@ -870,14 +793,52 @@ mod tests {
         }
     }
 
-    fn panel(spot: Spot) -> Panel {
+    /// A described interior over `spec`, with nothing focused, hovered or
+    /// panned — the shape every layout test here wants.
+    fn interior_of(spec: fresh_core::api::WidgetSpec) -> Interior {
+        Interior {
+            spec: std::rc::Rc::new(spec),
+            states: Default::default(),
+            h_pan: Default::default(),
+            focus_key: String::new(),
+            keyboard: true,
+            page: None,
+            reading: None,
+            selection: Vec::new(),
+            compose: None,
+            hovered_key: None,
+            hovered_item_key: String::new(),
+            hovered_popup_row: String::new(),
+            reveal: fresh_ui::behavior::anchor::Anchor::new(),
+            marker_gutter: false,
+            avail_height: None,
+            scrollbar_reveal: None,
+            keymap: None,
+            markdown: None,
+        }
+    }
+
+    /// An interior of `rows` plain rows, each `cols` cells wide — the
+    /// content the painter's arithmetic used to be handed as two counts.
+    fn rows_of(rows: u16, cols: u16) -> Interior {
+        interior_of(fresh_core::api::WidgetSpec::Raw {
+            entries: (0..rows)
+                .map(|_| {
+                    fresh_core::text_property::TextPropertyEntry::text("x".repeat(cols as usize))
+                })
+                .collect(),
+            key: None,
+        })
+    }
+
+    fn panel(spot: Spot, interior: Interior) -> Panel {
         Panel {
             spot,
             title: Some("A Dialog".into()),
             closable: true,
             focused: true,
             fullscreen: true,
-            interior: None,
+            interior,
         }
     }
 
@@ -899,14 +860,15 @@ mod tests {
 
     /// **The box lands where the painter put it.** Every shape the painter had
     /// a branch for: content shorter than the request, content taller than the
-    /// frame, and the narrow-width floor.
+    /// frame, and the narrow-width floor — with the content described, so the
+    /// rows are the interior's own.
     #[test]
     fn a_centred_panel_is_placed_where_the_arithmetic_put_it() {
         for (pct, rows) in [(50u8, 6u16), (90, 3), (30, 40), (10, 5), (100, 1)] {
-            let ui = laid_out(Some(panel(Spot::Centered {
-                width_pct: pct,
-                content_rows: rows,
-            })));
+            let ui = laid_out(Some(panel(
+                Spot::Centered { width_pct: pct },
+                rows_of(rows, 10),
+            )));
             assert_eq!(
                 rect(&ui, &key()),
                 Some(painter::centered(FRAME, pct, rows)),
@@ -926,12 +888,7 @@ mod tests {
             (99, 29, 30, 10),
             (0, 0, 2, 1),
         ] {
-            let ui = laid_out(Some(panel(Spot::Anchored {
-                x,
-                y,
-                content_cols: cols,
-                content_rows: rows,
-            })));
+            let ui = laid_out(Some(panel(Spot::Anchored { x, y }, rows_of(rows, cols))));
             assert_eq!(
                 rect(&ui, &key()),
                 Some(painter::anchored(FRAME, x, y, cols, rows)),
@@ -945,10 +902,10 @@ mod tests {
     /// asked of a second widget.
     #[test]
     fn the_content_area_is_the_box_less_its_border() {
-        let ui = laid_out(Some(panel(Spot::Centered {
-            width_pct: 60,
-            content_rows: 8,
-        })));
+        let ui = laid_out(Some(panel(
+            Spot::Centered { width_pct: 60 },
+            rows_of(8, 10),
+        )));
         let box_rect = rect(&ui, &key()).expect("a box");
         let body = rect(&ui, &body_key()).expect("a content area");
         assert_eq!(
@@ -966,10 +923,10 @@ mod tests {
     /// the painter filed and a mouse arm compared against.
     #[test]
     fn the_close_button_sits_where_the_painter_recorded_it() {
-        let ui = laid_out(Some(panel(Spot::Centered {
-            width_pct: 60,
-            content_rows: 8,
-        })));
+        let ui = laid_out(Some(panel(
+            Spot::Centered { width_pct: 60 },
+            rows_of(8, 10),
+        )));
         let box_rect = rect(&ui, &key()).expect("a box");
         assert_eq!(
             rect(&ui, &close_key()),
@@ -1047,11 +1004,7 @@ mod tests {
             markdown: None,
         };
         let framed = |keymap: Option<Keymap>| {
-            let mut p = panel(Spot::Centered {
-                width_pct: 60,
-                content_rows: 4,
-            });
-            p.interior = Some(interior(keymap));
+            let p = panel(Spot::Centered { width_pct: 60 }, interior(keymap));
             let mut ui: Ui<UiMsg> = Ui::new();
             ui.frame(
                 frame_tree(Frame {
@@ -1142,10 +1095,10 @@ mod tests {
     /// ("checked BEFORE the general panel hit-test") is now the tree's.
     #[test]
     fn a_press_on_the_close_button_is_the_buttons_and_not_the_interiors() {
-        let mut ui = laid_out(Some(panel(Spot::Centered {
-            width_pct: 60,
-            content_rows: 8,
-        })));
+        let mut ui = laid_out(Some(panel(
+            Spot::Centered { width_pct: 60 },
+            rows_of(8, 10),
+        )));
         let cb = rect(&ui, &close_key()).expect("a button");
         let got = facts(ui.dispatch(Input::press(
             Point::new(cb.x as i32 + 1, cb.y as i32),
@@ -1161,10 +1114,10 @@ mod tests {
     /// once, where one solid title cell hid the whole frame behind it.
     #[test]
     fn a_press_beside_the_close_button_falls_through_to_the_interior() {
-        let mut ui = laid_out(Some(panel(Spot::Centered {
-            width_pct: 60,
-            content_rows: 8,
-        })));
+        let mut ui = laid_out(Some(panel(
+            Spot::Centered { width_pct: 60 },
+            rows_of(8, 10),
+        )));
         let cb = rect(&ui, &close_key()).expect("a button");
         let got = facts(ui.dispatch(Input::press(
             Point::new(cb.x as i32 - 2, cb.y as i32),
@@ -1181,10 +1134,10 @@ mod tests {
     /// hit-tests itself and must still be reached.
     #[test]
     fn a_press_in_the_content_area_reaches_the_interior() {
-        let mut ui = laid_out(Some(panel(Spot::Centered {
-            width_pct: 60,
-            content_rows: 8,
-        })));
+        let mut ui = laid_out(Some(panel(
+            Spot::Centered { width_pct: 60 },
+            rows_of(8, 10),
+        )));
         let body = rect(&ui, &body_key()).expect("a content area");
         let got = ui.dispatch(Input::press(
             Point::new(
@@ -1204,22 +1157,17 @@ mod tests {
     /// painter had recorded. The layer knows its own box.
     #[test]
     fn a_press_outside_an_anchored_popup_dismisses_it_and_a_modal_swallows_it() {
-        let mut ui = laid_out(Some(panel(Spot::Anchored {
-            x: 10,
-            y: 5,
-            content_cols: 12,
-            content_rows: 4,
-        })));
+        let mut ui = laid_out(Some(panel(Spot::Anchored { x: 10, y: 5 }, rows_of(4, 12))));
         let got = ui.dispatch(Input::press(
             Point::new(60, 20),
             MouseButton::Left,
             Mods::NONE,
         ));
         assert_eq!(facts(got), vec![UiFact::PanelClosed]);
-        let mut ui = laid_out(Some(panel(Spot::Centered {
-            width_pct: 60,
-            content_rows: 8,
-        })));
+        let mut ui = laid_out(Some(panel(
+            Spot::Centered { width_pct: 60 },
+            rows_of(8, 10),
+        )));
         let got = ui.dispatch(Input::press(
             Point::new(1, 1),
             MouseButton::Left,
@@ -1280,36 +1228,9 @@ mod tests {
             ],
             key: None,
         };
-        let mut p = panel(Spot::Anchored {
-            x: 10,
-            y: 5,
-            // Deliberately wrong, like the height test's count: a described
-            // box does not read it.
-            content_cols: 40,
-            content_rows: 3,
-        });
+        let mut p = panel(Spot::Anchored { x: 10, y: 5 }, interior_of(spec));
         p.title = None;
         p.closable = false;
-        p.interior = Some(Interior {
-            spec: std::rc::Rc::new(spec),
-            states: Default::default(),
-            h_pan: Default::default(),
-            focus_key: String::new(),
-            keyboard: true,
-            page: None,
-            reading: None,
-            selection: Vec::new(),
-            compose: None,
-            hovered_key: None,
-            hovered_item_key: String::new(),
-            hovered_popup_row: String::new(),
-            reveal: fresh_ui::behavior::anchor::Anchor::new(),
-            marker_gutter: false,
-            avail_height: None,
-            scrollbar_reveal: None,
-            keymap: None,
-            markdown: None,
-        });
         let ui = laid_out(Some(p));
         let bx = rect(&ui, &key()).expect("the anchored box");
         assert_eq!(
@@ -1341,27 +1262,16 @@ mod tests {
     /// and the reason is that it is dismissed by clicking away from it.
     #[test]
     fn an_anchored_popup_has_no_close_button() {
-        let ui = laid_out(Some(panel(Spot::Anchored {
-            x: 10,
-            y: 5,
-            content_cols: 12,
-            content_rows: 4,
-        })));
+        let ui = laid_out(Some(panel(Spot::Anchored { x: 10, y: 5 }, rows_of(4, 12))));
         assert!(rect(&ui, &close_key()).is_none());
     }
 
-    /// **A described box is as tall as its rows, not as tall as the mirror
-    /// said.** The `Spot`'s count is deliberately wrong here — nine rows for a
-    /// two-row spec — and the box comes out four cells: two rows of content
-    /// between two border rows. That is 2.3's exit condition for this slot:
-    /// the runtime's text mirror no longer feeds the panel's geometry, so
-    /// deleting it would move nothing.
-    ///
-    /// The count still governs a *painted* panel, and the case above this one
-    /// pins that. A `Host` leaf has no intrinsic size; the mirror is the only
-    /// thing that can answer for it.
+    /// **A box is as tall as its rows.** Two rows of content between two
+    /// border rows: nothing outside the interior says how tall the box is —
+    /// the runtime's text mirror used to, and deleting that count moved
+    /// nothing.
     #[test]
-    fn a_described_box_is_measured_not_counted() {
+    fn a_box_is_measured_by_its_interior() {
         use fresh_core::api::WidgetSpec;
         let spec = WidgetSpec::Raw {
             entries: vec![
@@ -1370,44 +1280,9 @@ mod tests {
             ],
             key: None,
         };
-        let mut p = panel(Spot::Centered {
-            width_pct: 60,
-            content_rows: 9,
-        });
-        p.interior = Some(Interior {
-            spec: std::rc::Rc::new(spec),
-            states: Default::default(),
-            h_pan: Default::default(),
-            focus_key: String::new(),
-            keyboard: true,
-
-            page: None,
-            reading: None,
-            selection: Vec::new(),
-            compose: None,
-            hovered_key: None,
-            hovered_item_key: String::new(),
-            hovered_popup_row: String::new(),
-            reveal: fresh_ui::behavior::anchor::Anchor::new(),
-            marker_gutter: false,
-            avail_height: None,
-            scrollbar_reveal: None,
-            keymap: None,
-            markdown: None,
-        });
-        let described = rect(&laid_out(Some(p.clone())), &key()).expect("a described box");
+        let p = panel(Spot::Centered { width_pct: 60 }, interior_of(spec));
+        let described = rect(&laid_out(Some(p)), &key()).expect("a described box");
         assert_eq!(described.height, 4, "two rows inside two borders");
-
-        // The same spot with no interior is the painter's, and still counts.
-        let mut painted = p;
-        painted.interior = None;
-        assert_eq!(
-            rect(&laid_out(Some(painted)), &key())
-                .expect("a painted box")
-                .height,
-            11,
-            "nine rows inside two borders, because a host cannot say"
-        );
     }
 
     /// **The interior is in the tree.** A described panel's widget rows are
@@ -1427,31 +1302,30 @@ mod tests {
             }],
             key: None,
         };
-        let mut p = panel(Spot::Centered {
-            width_pct: 60,
-            content_rows: 4,
-        });
-        p.interior = Some(Interior {
-            spec: std::rc::Rc::new(spec),
-            states: Default::default(),
-            h_pan: Default::default(),
-            focus_key: String::new(),
-            keyboard: true,
+        let p = panel(
+            Spot::Centered { width_pct: 60 },
+            Interior {
+                spec: std::rc::Rc::new(spec),
+                states: Default::default(),
+                h_pan: Default::default(),
+                focus_key: String::new(),
+                keyboard: true,
 
-            page: None,
-            reading: None,
-            selection: Vec::new(),
-            compose: None,
-            hovered_key: None,
-            hovered_item_key: String::new(),
-            hovered_popup_row: String::new(),
-            reveal: fresh_ui::behavior::anchor::Anchor::new(),
-            marker_gutter: false,
-            avail_height: None,
-            scrollbar_reveal: None,
-            keymap: None,
-            markdown: None,
-        });
+                page: None,
+                reading: None,
+                selection: Vec::new(),
+                compose: None,
+                hovered_key: None,
+                hovered_item_key: String::new(),
+                hovered_popup_row: String::new(),
+                reveal: fresh_ui::behavior::anchor::Anchor::new(),
+                marker_gutter: false,
+                avail_height: None,
+                scrollbar_reveal: None,
+                keymap: None,
+                markdown: None,
+            },
+        );
         let ui = laid_out(Some(p));
         let body = rect(&ui, &body_key()).expect("a content area");
         for text in ["alpha", "beta"] {
@@ -1497,31 +1371,30 @@ mod tests {
             hover_style: None,
             style: None,
         };
-        let mut p = panel(Spot::Centered {
-            width_pct: 60,
-            content_rows: 4,
-        });
-        p.interior = Some(Interior {
-            spec: std::rc::Rc::new(spec),
-            states: Default::default(),
-            h_pan: Default::default(),
-            focus_key: String::new(),
-            keyboard: true,
+        let p = panel(
+            Spot::Centered { width_pct: 60 },
+            Interior {
+                spec: std::rc::Rc::new(spec),
+                states: Default::default(),
+                h_pan: Default::default(),
+                focus_key: String::new(),
+                keyboard: true,
 
-            page: None,
-            reading: None,
-            selection: Vec::new(),
-            compose: None,
-            hovered_key: None,
-            hovered_item_key: String::new(),
-            hovered_popup_row: String::new(),
-            reveal: fresh_ui::behavior::anchor::Anchor::new(),
-            marker_gutter: false,
-            avail_height: None,
-            scrollbar_reveal: None,
-            keymap: None,
-            markdown: None,
-        });
+                page: None,
+                reading: None,
+                selection: Vec::new(),
+                compose: None,
+                hovered_key: None,
+                hovered_item_key: String::new(),
+                hovered_popup_row: String::new(),
+                reveal: fresh_ui::behavior::anchor::Anchor::new(),
+                marker_gutter: false,
+                avail_height: None,
+                scrollbar_reveal: None,
+                keymap: None,
+                markdown: None,
+            },
+        );
         let mut ui = laid_out(Some(p));
         let at = ui
             .spec()
@@ -1553,34 +1426,33 @@ mod tests {
     #[test]
     fn a_described_content_area_does_not_let_presses_through() {
         use fresh_core::api::WidgetSpec;
-        let mut p = panel(Spot::Centered {
-            width_pct: 60,
-            content_rows: 4,
-        });
-        p.interior = Some(Interior {
-            spec: std::rc::Rc::new(WidgetSpec::Raw {
-                entries: vec![fresh_core::text_property::TextPropertyEntry::text("x")],
-                key: None,
-            }),
-            states: Default::default(),
-            h_pan: Default::default(),
-            focus_key: String::new(),
-            keyboard: true,
+        let p = panel(
+            Spot::Centered { width_pct: 60 },
+            Interior {
+                spec: std::rc::Rc::new(WidgetSpec::Raw {
+                    entries: vec![fresh_core::text_property::TextPropertyEntry::text("x")],
+                    key: None,
+                }),
+                states: Default::default(),
+                h_pan: Default::default(),
+                focus_key: String::new(),
+                keyboard: true,
 
-            page: None,
-            reading: None,
-            selection: Vec::new(),
-            compose: None,
-            hovered_key: None,
-            hovered_item_key: String::new(),
-            hovered_popup_row: String::new(),
-            reveal: fresh_ui::behavior::anchor::Anchor::new(),
-            marker_gutter: false,
-            avail_height: None,
-            scrollbar_reveal: None,
-            keymap: None,
-            markdown: None,
-        });
+                page: None,
+                reading: None,
+                selection: Vec::new(),
+                compose: None,
+                hovered_key: None,
+                hovered_item_key: String::new(),
+                hovered_popup_row: String::new(),
+                reveal: fresh_ui::behavior::anchor::Anchor::new(),
+                marker_gutter: false,
+                avail_height: None,
+                scrollbar_reveal: None,
+                keymap: None,
+                markdown: None,
+            },
+        );
         let mut ui = laid_out(Some(p));
         let body = rect(&ui, &body_key()).expect("a content area");
         let got = facts(ui.dispatch(Input::press(

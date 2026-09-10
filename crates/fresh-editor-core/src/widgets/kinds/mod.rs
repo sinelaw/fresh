@@ -261,10 +261,9 @@ pub trait WidgetImpl: Sync {
         panel_width: u32,
     ) -> CollectedOutput;
 
-    /// This node's layout-box metadata: the tag, key, and dispatch
-    /// flags its [`crate::widgets::LayoutBox`] carries. Each impl
-    /// answers for its own variant — there is deliberately no central
-    /// kind→tag table.
+    /// This node's metadata: the tag, key, and dispatch flags the host's
+    /// routing and every focus ring read. Each impl answers for its own
+    /// variant — there is deliberately no central kind→tag table.
     fn box_meta(&self, spec: &WidgetSpec) -> BoxMeta;
 
     /// A key event dispatched to the focused widget before the
