@@ -151,6 +151,8 @@ interface AgentSession {
   // The state `sweepAttention` last saw for this session, so a change
   // into blocked/done is announced exactly once per transition.
   notifiedState?: AgentState;
+  // Wall-clock ms of the last exit of the session's agent terminal.
+  lastExitAt?: number;
   // The question line behind the last "needs you" notice for this session.
   // A blocked state that wobbles (an activation redraw reads as a short
   // "working") comes back with the same question and is not announced
@@ -1010,11 +1012,17 @@ editor.defineConfigBoolean("notifySound", {
   description:
     "Ring the terminal bell with each notification (needs-you and finished). Off by default.",
 });
+editor.defineConfigString("detectionRulesUrl", {
+  default: "",
+  description:
+    "URL of a published detection-rules JSON ({version, blocked: [regex…]}). Fetched at startup and by Orchestrator: Reload Detection Rules; adopted when its version is newer than <data dir>/orchestrator/detection-rules.json. Empty = built-in rules (or the local file).",
+});
 
 interface DockSettings {
   autoOpenDock?: boolean;
   notifications?: "all" | "needs-you" | "off";
   notifySound?: boolean;
+  detectionRulesUrl?: string;
   defaultView?: "card" | "compact";
   showAllWorktrees?: boolean;
   showEmptyWorkspaces?: boolean;
@@ -2157,17 +2165,17 @@ async function refreshDiscoveredWorktrees(): Promise<void> {
 // the model between chunks — so a few seconds of grace keeps the dot from
 // flickering idle mid-task. Too long and a finished agent reads as busy;
 // 5s is a reasonable middle.
-const IDLE_AFTER_MS = 5000;
+let IDLE_AFTER_MS = 5000;
 
 // An output burst has to last at least this long before a quiet session
 // counts as "done" (something to review). Shorter bursts are prompt
 // redraws, a single echoed keystroke, a status line — not work.
-const WORK_MIN_MS = 1500;
+let WORK_MIN_MS = 1500;
 
 // How many trailing terminal lines `sessionState` inspects for a
 // waiting-on-you prompt. Agents draw their question plus a short menu
 // (`❯ 1. Yes  2. No`) so a handful of lines is enough.
-const RECENT_LINES = 6;
+let RECENT_LINES = 6;
 
 // Lines that mean "the agent is waiting on the user". Generic across
 // Claude Code, Codex, Aider, Gemini, and a plain shell `read -p`: a
@@ -2175,30 +2183,202 @@ const RECENT_LINES = 6;
 // choice menu, or an explicit "waiting for input". Matched against the
 // last RECENT_LINES lines only, so an old question scrolled off-screen
 // can't keep a row blocked forever.
-const BLOCKED_PATTERNS: RegExp[] = [
-  /\(y\/n\)|\[y\/n\]|\(yes\/no\)|\[y\/N\]|\[Y\/n\]/i,
-  /\bdo you want to\b/i,
-  /\b(proceed|continue|allow|approve|confirm|accept)\?/i,
-  /\bpress (enter|return)\b/i,
-  /[❯>]\s*1[.)]\s*yes/i,
-  /\bdon'?t ask again\b/i,
-  /\bwaiting for (your )?(input|approval|confirmation)\b/i,
-  /\besc(ape)? to cancel\b/i,
+//
+// These are the built-in rules (version BUILTIN_RULES_VERSION). Agent CLIs
+// redesign their chrome constantly, so the live set can be replaced by
+// data: `<data dir>/orchestrator/detection-rules.json`, optionally fetched
+// from `detectionRulesUrl` — see `loadDetectionRules`.
+const BUILTIN_BLOCKED_SOURCES: string[] = [
+  "\\(y\\/n\\)|\\[y\\/n\\]|\\(yes\\/no\\)|\\[y\\/N\\]|\\[Y\\/n\\]",
+  "\\bdo you want to\\b",
+  "\\b(proceed|continue|allow|approve|confirm|accept)\\?",
+  "\\bpress (enter|return)\\b",
+  "[❯>]\\s*1[.)]\\s*yes",
+  "\\bdon'?t ask again\\b",
+  "\\bwaiting for (your )?(input|approval|confirmation)\\b",
+  "\\besc(ape)? to cancel\\b",
 ];
+const BUILTIN_RULES_VERSION = 1;
+
+// The rule set in force: where it came from and its version, for
+// `explainState` and the CLI's `agent explain`.
+interface DetectionRules {
+  version: number;
+  source: "built-in" | "file" | "url";
+  blocked: string[];
+  workMinMs?: number;
+  idleAfterMs?: number;
+  recentLines?: number;
+}
+let detectionRules: DetectionRules = {
+  version: BUILTIN_RULES_VERSION,
+  source: "built-in",
+  blocked: BUILTIN_BLOCKED_SOURCES,
+};
+let BLOCKED_PATTERNS: RegExp[] = compileBlocked(BUILTIN_BLOCKED_SOURCES);
+
+// Compile rule sources case-insensitively, dropping any that do not parse
+// (one bad rule in a fetched file must not disable detection).
+function compileBlocked(sources: string[]): RegExp[] {
+  const out: RegExp[] = [];
+  for (const src of sources) {
+    try {
+      out.push(new RegExp(src, "i"));
+    } catch {
+      editor.warn(`orchestrator: detection rule does not compile, skipped: ${src}`);
+    }
+  }
+  return out;
+}
+
+function detectionRulesFile(): string {
+  return editor.pathJoin(editor.getDataDir(), "orchestrator", "detection-rules.json");
+}
+
+// Validate a parsed rules document. `null` when it is not one.
+function parseDetectionRules(raw: string): Omit<DetectionRules, "source"> | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== "object") return null;
+  const p = parsed as Record<string, unknown>;
+  if (typeof p.version !== "number" || !Array.isArray(p.blocked)) return null;
+  const blocked = p.blocked.filter((x): x is string => typeof x === "string" && x !== "");
+  if (blocked.length === 0) return null;
+  const num = (v: unknown): number | undefined =>
+    typeof v === "number" && Number.isFinite(v) && v > 0 ? v : undefined;
+  return {
+    version: p.version,
+    blocked,
+    workMinMs: num(p.workMinMs),
+    idleAfterMs: num(p.idleAfterMs),
+    recentLines: num(p.recentLines),
+  };
+}
+
+function applyDetectionRules(rules: DetectionRules): void {
+  detectionRules = rules;
+  BLOCKED_PATTERNS = compileBlocked(rules.blocked);
+  WORK_MIN_MS = rules.workMinMs ?? 1500;
+  IDLE_AFTER_MS = rules.idleAfterMs ?? 5000;
+  RECENT_LINES = Math.max(1, Math.floor(rules.recentLines ?? 6));
+}
+
+// Load the rules file if there is one (else the built-ins), then — when
+// `detectionRulesUrl` is set — fetch the published set and adopt it if its
+// version is newer than what is on disk. Best-effort throughout: a missing
+// file, a bad download or an unreachable host leaves the current rules.
+async function loadDetectionRules(): Promise<DetectionRules> {
+  const path = detectionRulesFile();
+  const raw = editor.readFile(editor.localPath(path));
+  const local = raw ? parseDetectionRules(raw) : null;
+  if (local) applyDetectionRules({ ...local, source: "file" });
+  else if (raw) editor.warn(`orchestrator: ${path} is not a rules file, using built-in rules`);
+  const url = (dockSettings().detectionRulesUrl ?? "").trim();
+  if (url) {
+    try {
+      const r = await editor.spawnHostProcess("curl", ["-fsSL", "--max-time", "10", url]);
+      const remote = r.exit_code === 0 ? parseDetectionRules(r.stdout) : null;
+      if (!remote) {
+        editor.warn(`orchestrator: could not fetch detection rules from ${url}`);
+      } else if (remote.version > (local?.version ?? 0)) {
+        editor.createDir(editor.pathJoin(editor.getDataDir(), "orchestrator"));
+        editor.writeFile(editor.localPath(path), JSON.stringify(remote, null, 2));
+        applyDetectionRules({ ...remote, source: "url" });
+        editor.info(`orchestrator: detection rules v${remote.version} fetched from ${url}`);
+      }
+    } catch (e) {
+      editor.warn(`orchestrator: detection rules fetch failed: ${String(e)}`);
+    }
+  }
+  return detectionRules;
+}
 
 // The most recent line of the agent terminal that reads as a question for
-// the user, or null when none of the recent lines does.
-function agentQuestionLine(s: AgentSession): string | null {
+// the user, with the rule that matched it — or null when none does.
+function agentQuestionMatch(s: AgentSession): { line: string; rule: string; index: number } | null {
   const lines = s.recentLines ?? [];
   for (let i = lines.length - 1; i >= 0; i--) {
-    if (BLOCKED_PATTERNS.some((re) => re.test(lines[i]))) return lines[i];
+    const idx = BLOCKED_PATTERNS.findIndex((re) => re.test(lines[i]));
+    if (idx >= 0) return { line: lines[i], rule: detectionRules.blocked[idx] ?? String(BLOCKED_PATTERNS[idx]), index: idx };
   }
   return null;
 }
 
+// The question line alone (the notice's repeat guard keys on it).
+function agentQuestionLine(s: AgentSession): string | null {
+  return agentQuestionMatch(s)?.line ?? null;
+}
+
 // Does the agent terminal's recent output end in a question for the user?
 function agentWaitsForInput(s: AgentSession): boolean {
-  return agentQuestionLine(s) !== null;
+  return agentQuestionMatch(s) !== null;
+}
+
+// The decision chain behind a session's state, in plain words, so a wrong
+// badge is a bug report with evidence: what the terminal said, how long
+// ago, which rule fired, which rule set was in force.
+interface StateExplanation {
+  state: AgentState;
+  reasons: string[];
+  question: string | null;
+  rule: string | null;
+  outputAgeMs: number | null;
+  osc: boolean | null;
+  unseenWork: boolean;
+  recentLines: string[];
+  rules: { version: number; source: string };
+}
+
+function explainState(s: AgentSession): StateExplanation {
+  const state = sessionState(s);
+  const age = s.lastOutputAt === null ? null : Date.now() - s.lastOutputAt;
+  const secs = (ms: number): string => `${(ms / 1000).toFixed(1)}s`;
+  const q = agentQuestionMatch(s);
+  const reasons: string[] = [];
+  if (s.discovered) reasons.push("on-disk worktree with no live window");
+  else if (s.pending) reasons.push("workspace still being created");
+  else if (s.oscRunning === true) reasons.push("shell integration marks a command as running (OSC 133/9;4)");
+  else if (age === null && s.terminalId === null) reasons.push("no agent terminal in this window");
+  else if (age === null) reasons.push("the terminal has produced no output yet, or it exited");
+  else {
+    if (s.oscRunning === false) reasons.push("shell integration marks the last command finished");
+    if (age < IDLE_AFTER_MS && s.oscRunning !== false) {
+      reasons.push(`output ${secs(age)} ago, inside the ${secs(IDLE_AFTER_MS)} idle window`);
+    } else {
+      reasons.push(`quiet for ${secs(age)} (idle window ${secs(IDLE_AFTER_MS)})`);
+      if (q) reasons.push(`line ${JSON.stringify(q.line)} matched rule ${q.index + 1}: /${q.rule}/i`);
+      else reasons.push(`none of the last ${RECENT_LINES} lines reads as a question`);
+      if (!q) {
+        if (s.workedSinceSeen && s.id !== editor.activeWindow()) {
+          reasons.push(`a burst of output of at least ${secs(WORK_MIN_MS)} arrived while another window was active and has not been viewed`);
+        } else if (s.workedSinceSeen) {
+          reasons.push("unseen work, but this window is active so it counts as seen");
+        } else {
+          reasons.push("no unseen work since the window was last viewed");
+        }
+      }
+    }
+  }
+  return {
+    state,
+    reasons,
+    question: q?.line ?? null,
+    rule: q ? q.rule : null,
+    outputAgeMs: age,
+    osc: s.oscRunning ?? null,
+    unseenWork: s.workedSinceSeen === true,
+    recentLines: [...(s.recentLines ?? [])],
+    rules: { version: detectionRules.version, source: detectionRules.source },
+  };
+}
+
+function explainSummaryLine(s: AgentSession, ex: StateExplanation): string {
+  const name = workspaceCustomName(s) || s.hostLabel || s.label;
+  return `${STATE_SYMBOL[ex.state].glyph} ${name}: ${ex.state} — ${ex.reasons.join("; ")} (rules v${ex.rules.version}, ${ex.rules.source})`;
 }
 
 // Coarse activity for a session, derived from how recently its terminal
@@ -2263,6 +2443,12 @@ function noteRecentLine(s: AgentSession, line: string): void {
 // F8 to jump` — with an optional terminal bell, and one command
 // (`orchestrator_jump`) takes the user there and, from there, back.
 // =============================================================================
+
+// Per-terminal last-output / exit stamps, for `runAgent`'s readiness check:
+// a launch has to be judged by *its* terminal, not by whatever else prints in
+// the same window (the shell that ran `fresh --cmd agent start`, say).
+const terminalOutputAt = new Map<number, number>();
+const terminalExitAt = new Map<number, number>();
 
 // Where "Jump Back" returns to: the window the first jump of a chain left.
 let jumpReturnId: number | null = null;
@@ -11393,7 +11579,7 @@ interface RunAgentLaunchOpts {
 async function launchAgentInCurrentWorkspace(
   cmd: string,
   opts: RunAgentLaunchOpts,
-): Promise<void> {
+): Promise<number | null> {
   const trimmedCmd = cmd.trim();
   const cwd = editor.getCwd();
   const entry = agentEntryForCmd(trimmedCmd);
@@ -11413,7 +11599,7 @@ async function launchAgentInCurrentWorkspace(
   });
   if (trimmedCmd) editor.setGlobalState("orchestrator.last_cmd", trimmedCmd);
   try {
-    await editor.createTerminal({
+    const created = await editor.createTerminal({
       cwd,
       command: launch.length > 0 ? launch : undefined,
       resume,
@@ -11425,10 +11611,14 @@ async function launchAgentInCurrentWorkspace(
       allowScript: FRESH_CLI_ALLOW_SCRIPT,
       focus: true,
     });
+    // The terminal's id, so `runAgent` can judge readiness by this terminal
+    // alone.
+    return typeof created?.terminalId === "number" ? created.terminalId : null;
   } catch (e) {
     editor.setStatus(
       editor.t("status.prefix", { msg: e instanceof Error ? e.message : String(e) }),
     );
+    return null;
   }
 }
 
@@ -11456,16 +11646,46 @@ async function launchAgentInCurrentWorkspace(
 /// What a launch answers with. `workspaceId` is the durable identity — the one
 /// still valid after a restart — and is what a caller should record;
 /// `windowId` is a per-process handle, useful only for the rest of this run.
-export type AgentLaunchResult = {
+/// The ids that name a workspace to a caller.
+export type WorkspaceIds = {
   workspaceId: string;
   windowId: number;
   root: string;
+};
+
+export type AgentLaunchResult = WorkspaceIds & {
+  /** The launched command resolved to this agent (`"terminal"` for a bare
+   *  shell, `"unknown"` for a command the registry does not know). */
+  agent: string;
+  /** `true` once the launch was seen to come up: its terminal produced
+   *  output within `readyTimeoutMs`. `false` with `error` set when it exited
+   *  first or stayed silent; also `false`, without an error, when the caller
+   *  passed `wait: false`. */
+  ready: boolean;
+  /** The workspace's agent state at return. */
+  state: AgentState;
+  error?: string;
+};
+
+/// What `waitForState` resolves with.
+export type WaitResult = {
+  workspaceId: string;
+  windowId: number;
+  state: AgentState;
+  elapsedMs: number;
+  timedOut: boolean;
 };
 
 /// Options shared by both launch verbs. Every field is optional; an omitted one
 /// takes the dialog's own default, so `runAgent({})` is the dialog's defaults
 /// with no agent.
 export type RunAgentOptions = {
+  /** Wait for the launch to come up before returning (default `true`): the
+   *  terminal has to produce output within `readyTimeoutMs`, and an exit
+   *  before that is reported as an error. */
+  wait?: boolean;
+  /** How long `wait` allows, in ms (default 15000). */
+  readyTimeoutMs?: number;
   /** Agent command line, e.g. `claude` or `claude --model opus`. A bare
    *  terminal when empty or omitted. */
   agent?: string;
@@ -11647,7 +11867,10 @@ export type DockFilterOptions = {
 /// boolean without wrapping everything in try/catch.
 export type OrchestratorApi = {
   /** Launch a coding agent in THIS workspace — the headless twin of the
-   *  "Run Agent…" dialog. Resolves once the agent's terminal is up. */
+   *  "Run Agent…" dialog. By default resolves once the launch has been seen
+   *  to come up (its terminal produced output within `readyTimeoutMs`);
+   *  `ready: false` with `error` when it exited first or stayed silent, so
+   *  a caller never mistakes a dead terminal for a running agent. */
   runAgent(options?: RunAgentOptions): Promise<AgentLaunchResult>;
   /** Create a workspace and launch a coding agent in it — the headless twin
    *  of the "New Workspace" dialog, including its backend switch.
@@ -11662,11 +11885,25 @@ export type OrchestratorApi = {
    *  dock to watch, the durable workspace id does not exist until the window is
    *  born, and waiting is what lets a failed create reject rather than
    *  silently do nothing. */
-  newWorkspace(options?: NewWorkspaceOptions): Promise<AgentLaunchResult>;
+  newWorkspace(options?: NewWorkspaceOptions): Promise<WorkspaceIds>;
   /** Every workspace the dock is tracking, in dock order — what a caller
    *  needs to find the one it made earlier, or to report on all of them.
    *  Reads the live model, so it reflects creations made moments ago. */
   listWorkspaces(): WorkspaceSummary[];
+  /** One workspace — by `workspaceId`, `windowId` (or its decimal string),
+   *  or dock name — with the decision chain behind its `agentState`
+   *  (`explain`: reasons, the question line and rule that matched, output
+   *  age, the rule set in force). `null` when there is no such workspace. */
+  getWorkspace(target: string | number): (WorkspaceSummary & { explain: StateExplanation }) | null;
+  /** Block until the workspace's agent state is one of `until` (default:
+   *  anything but `working`), polling every `pollMs` (250). Resolves with
+   *  `timedOut: true` after `timeoutMs` (default 5 minutes; 0 = no limit).
+   *  Throws for an unknown workspace. The synchronisation primitive a lead
+   *  agent needs to dispatch work and collect it. */
+  waitForState(
+    target: string | number,
+    options?: { until?: AgentState | AgentState[]; timeoutMs?: number; pollMs?: number },
+  ): Promise<WaitResult>;
   /** Focus a workspace by its durable `workspaceId` (or its `windowId`) —
    *  what `listWorkspaces()` reports.
    *
@@ -11777,7 +12014,7 @@ declare global {
 }
 
 // The active workspace's ids, for a launch that ran in place.
-function currentWorkspaceIds(): AgentLaunchResult {
+function currentWorkspaceIds(): WorkspaceIds {
   const id = editor.activeWindow();
   const info = editor.listWindows().find((w) => w.id === id);
   return {
@@ -11826,14 +12063,94 @@ async function runAgent(options: RunAgentOptions = {}): Promise<AgentLaunchResul
   // Same gating and the same launch function as `submitForm`'s
   // current-workspace branch, so a bare terminal never gets stray flags.
   const gated = gateAgentOptions(cmd, agentOptionsFrom(options));
-  await launchAgentInCurrentWorkspace(cmd, {
+  const launchedAt = Date.now();
+  const terminalId = await launchAgentInCurrentWorkspace(cmd, {
     auto: gated.auto,
     prompt: gated.startPrompt,
     teachFreshCli: gated.teachFreshCli,
   });
   // The agent runs in the workspace the caller is already in; returning its ids
   // means a caller never has to correlate "which workspace did that land in".
-  return currentWorkspaceIds();
+  const ids = currentWorkspaceIds();
+  const entry = cmd ? agentEntryForCmd(cmd) : null;
+  const argv0 = splitAgentCmd(cmd)[0] ?? "";
+  const agent = !cmd ? "terminal" : (entry?.id ?? (editor.pathBasename(argv0) || argv0 || "unknown"));
+  const s = orchestratorSessions.get(ids.windowId);
+  const stateOf = (): AgentState => (s ? sessionState(s) : "unknown");
+  if (terminalId === null) {
+    return { ...ids, agent, ready: false, state: stateOf(), error: `could not open a terminal for ${cmd || "the shell"}` };
+  }
+  if (options.wait === false) {
+    return { ...ids, agent, ready: false, state: stateOf() };
+  }
+  // A launch is "up" once *its* terminal has said anything; one that exits
+  // first is the silent failure this exists to catch (a missing binary, a
+  // bad flag, an auth prompt on a tty that closed). Judged per terminal, so
+  // another shell printing in the same window cannot vouch for it.
+  const deadline = launchedAt + Math.max(1000, options.readyTimeoutMs ?? 15000);
+  while (Date.now() < deadline) {
+    const out = terminalOutputAt.get(terminalId);
+    const exit = terminalExitAt.get(terminalId);
+    if (out !== undefined && out >= launchedAt) {
+      return { ...ids, agent, ready: true, state: stateOf() };
+    }
+    if (exit !== undefined && exit >= launchedAt) {
+      return { ...ids, agent, ready: false, state: stateOf(), error: `${cmd || "terminal"} exited before it produced output` };
+    }
+    await editor.delay(200);
+  }
+  return {
+    ...ids,
+    agent,
+    ready: false,
+    state: stateOf(),
+    error: `${cmd || "terminal"} produced no output within ${Math.round((deadline - launchedAt) / 1000)}s`,
+  };
+}
+
+/// Block until a workspace's agent state is one of `until` (default: any
+/// state other than `working`, i.e. "quiet"), polling every `pollMs`. Resolves
+/// with `timedOut: true` after `timeoutMs` (default 5 minutes; `0` = no
+/// limit). Throws for an unknown workspace.
+async function waitForState(
+  target: string | number,
+  options: { until?: AgentState | AgentState[]; timeoutMs?: number; pollMs?: number } = {},
+): Promise<WaitResult> {
+  const s = resolveWorkspace(target);
+  if (!s || s.discovered) throw new Error(`no such workspace: ${String(target)}`);
+  const until = new Set<AgentState>(
+    options.until === undefined
+      ? ["blocked", "done", "idle", "unknown"]
+      : Array.isArray(options.until)
+        ? options.until
+        : [options.until],
+  );
+  const started = Date.now();
+  const timeout = options.timeoutMs ?? 300_000;
+  const poll = Math.max(50, options.pollMs ?? 250);
+  const ids = (): { workspaceId: string; windowId: number } => ({
+    workspaceId: editor.listWindows().find((w) => w.id === s.id)?.stable_id ?? "",
+    windowId: s.id,
+  });
+  for (;;) {
+    const state = sessionState(s);
+    if (until.has(state)) {
+      return { ...ids(), state, elapsedMs: Date.now() - started, timedOut: false };
+    }
+    if (timeout > 0 && Date.now() - started >= timeout) {
+      return { ...ids(), state, elapsedMs: Date.now() - started, timedOut: true };
+    }
+    await editor.delay(poll);
+  }
+}
+
+/// One workspace with the decision chain behind its state, or `null`.
+function getWorkspace(target: string | number): (WorkspaceSummary & { explain: StateExplanation }) | null {
+  const s = resolveWorkspace(target);
+  if (!s) return null;
+  const row = listWorkspaces().find((w) => w.windowId === s.id);
+  if (!row) return null;
+  return { ...row, explain: explainState(s) };
 }
 
 /// Build the caller's options into the same `CreateSpec` the dialog submits.
@@ -11894,7 +12211,7 @@ function specForNewWorkspace(options: NewWorkspaceOptions): CreateSpec {
 
 async function newWorkspace(
   options: NewWorkspaceOptions = {},
-): Promise<AgentLaunchResult> {
+): Promise<WorkspaceIds> {
   // Before `specForNewWorkspace`, which rejects a bad host / missing path.
   await yieldToCaller();
   const spec = specForNewWorkspace(options);
@@ -11939,7 +12256,8 @@ function listWorkspaces(): WorkspaceSummary[] {
       root: session.root,
       projectPath: session.projectPath,
       branch: session.branch ?? git?.branch,
-      agentState: session.state,
+      // Live, not the cached `state`: blocked/done are computed at read time.
+      agentState: session.discovered || session.pending ? session.state : sessionState(session),
       title: session.terminalTitle ?? "",
       git: git
         ? {
@@ -12004,6 +12322,13 @@ function resolveWorkspace(target: string | number): AgentSession | null {
   for (const session of orchestratorSessions.values()) {
     const stable = windows.find((w) => w.id === session.id)?.stable_id;
     if (stable === target) return session;
+  }
+  // A CLI caller may only have the dock's name or the window number.
+  if (/^-?\d+$/.test(target)) return orchestratorSessions.get(Number(target)) ?? null;
+  for (const session of orchestratorSessions.values()) {
+    if (session.label === target || session.hostLabel === target || workspaceCustomName(session) === target) {
+      return session;
+    }
   }
   return null;
 }
@@ -12302,6 +12627,8 @@ editor.exportPluginApi("orchestrator", {
   runAgent,
   newWorkspace,
   listWorkspaces,
+  getWorkspace,
+  waitForState,
   focusWorkspace,
   renameWorkspace: apiRenameWorkspace,
   moveWorkspace: apiMoveWorkspace,
@@ -13760,6 +14087,7 @@ editor.on("window_closed", () => {
 // editor last quit. They come back as paused placeholder rows the user
 // resumes (Enter) or dismisses — nothing auto-runs (§ recoverPendingWorkspaces).
 editor.on("ready", () => {
+  void loadDetectionRules();
   recoverPendingWorkspaces();
   // Auto-open the dock when the user asked for it in Settings (Plugin:
   // orchestrator → autoOpenDock). Runs after the recovery pass, which
@@ -13861,6 +14189,7 @@ function scheduleIdleSweep(): void {
 }
 
 editor.on("terminal_output", (payload) => {
+  terminalOutputAt.set(payload.terminal_id, Date.now());
   const s = orchestratorSessions.get(payload.window_id);
   if (s) {
     // Ignore the redraw burst a terminal emits right after its window
@@ -13934,8 +14263,12 @@ editor.on("terminal_output", (payload) => {
 });
 
 editor.on("terminal_exit", (payload) => {
+  terminalExitAt.set(payload.terminal_id, Date.now());
+  terminalOutputAt.delete(payload.terminal_id);
   const s = orchestratorSessions.get(payload.window_id);
-  if (s) {
+  // Only the session's own agent terminal (or any terminal, when it has
+  // none) resets the row: a side shell closing must not blank the badge.
+  if (s && (s.terminalId === null || s.terminalId === payload.terminal_id)) {
     // A terminal in this session ended — it can't be the source of work
     // anymore. Drop to idle and clear the timestamp so the row reads idle
     // immediately rather than riding out the IDLE_AFTER_MS tail. If another
@@ -13943,6 +14276,7 @@ editor.on("terminal_exit", (payload) => {
     // `terminal_output` re-marks it working within the debounce window.
     s.lastOutputAt = null;
     s.state = "unknown";
+    s.lastExitAt = Date.now();
     s.recentLines = [];
     s.workedSinceSeen = false;
     s.burstStartAt = undefined;
@@ -14022,6 +14356,39 @@ editor.registerCommand(
 // which way its "Launch in" switch starts. One form, one submit path — the two
 // used to be separate dialogs, and the current-workspace one silently dropped
 // the agent-resume argv.
+// Explain the state badge of the dock's selected workspace (or the active
+// one): one line in the status bar, the full chain in the log.
+registerHandler("orchestrator_explain", () => {
+  let id: number | null = null;
+  const selKey = openDialog?.dockSelKey;
+  if (selKey?.startsWith(SESSION_NODE_PREFIX)) {
+    const sel = Number(selKey.slice(SESSION_NODE_PREFIX.length));
+    if (orchestratorSessions.has(sel)) id = sel;
+  }
+  if (id === null) id = editor.activeWindow();
+  const s = orchestratorSessions.get(id);
+  if (!s) {
+    editor.setStatus(editor.t("explain.none"));
+    return;
+  }
+  const ex = explainState(s);
+  const line = explainSummaryLine(s, ex);
+  editor.setStatus(line);
+  editor.info(`orchestrator: ${line}\n  recent lines: ${JSON.stringify(ex.recentLines)}`);
+});
+editor.registerCommand("%cmd.explain", "%cmd.explain_desc", "orchestrator_explain", null, {
+  terminalBypass: true,
+});
+registerHandler("orchestrator_reload_rules", () => {
+  void loadDetectionRules().then((r) => {
+    editor.setStatus(editor.t("explain.rules_loaded", { version: String(r.version), source: r.source }));
+    refreshOpenDialog();
+  });
+});
+editor.registerCommand("%cmd.reload_rules", "%cmd.reload_rules_desc", "orchestrator_reload_rules", null, {
+  terminalBypass: true,
+});
+
 registerHandler("orchestrator_jump", jumpToAttention);
 editor.registerCommand("%cmd.jump", "%cmd.jump_desc", "orchestrator_jump", null, {
   terminalBypass: true,

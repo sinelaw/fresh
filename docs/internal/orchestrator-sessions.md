@@ -303,6 +303,18 @@ and then returns; `Orchestrator: Jump Back` returns at once. Bind a key to
 `blocked`/`done` are heuristics over the output stream, display-only, and not
 part of the persistence model.
 
+The "question on screen" rules are data, not code: the built-in set (v1) can
+be replaced by `<data dir>/orchestrator/detection-rules.json` — `{ "version":
+N, "blocked": ["regex", …], "workMinMs"?, "idleAfterMs"?, "recentLines"? }` —
+and, when `detectionRulesUrl` is set, by a published file fetched at startup
+(and by `Orchestrator: Reload Detection Rules`) whenever its version is newer
+than the local one. `Orchestrator: Explain State` (and `fresh --cmd agent
+explain <ID>`) prints the decision chain — which line matched which rule,
+output age, OSC marker, unseen-work flag, rule-set version and source — so a
+wrong badge is a bug report with evidence. The CLI verbs (`fresh --cmd
+workspace list`, `agent list|get|explain|wait|start`) are documented in
+agent-fresh-cli-exposure-plan.md.
+
 ---
 
 ## 5. The dock and Open dialog UX
@@ -338,6 +350,7 @@ the generated settings widgets.
 | `showEmptyWorkspaces` | `true`   | Initial state of the "show empty" checkbox (i.e. `hideTrivial = !showEmptyWorkspaces`). |
 | `notifications`       | `"all"`  | Status-bar notice when a background workspace turns `blocked` (`needs-you`) or also `done` (`all`); `off` leaves only the dock's attention line. |
 | `notifySound`         | `false`  | Ring the terminal bell with each notice.             |
+| `detectionRulesUrl`   | `""`     | URL of a published detection-rules JSON; adopted when newer than the local file. |
 
 Each is a *default*, not a lock: the dock's own "view" button and the two
 Filters checkboxes still override it for the rest of the session

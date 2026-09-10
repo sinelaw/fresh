@@ -759,8 +759,26 @@ not looking at is also announced in the status bar (`● name needs you
 walks the pending workspaces and then returns to where it started;
 the attention line's `jump` is the mouse route. `blocked` and `done`
 are heuristics over the output stream — good enough for the attention
-line, never a guarantee — and the patterns are a fixed list in the
-plugin (a versioned, fetchable rule set is still open).
+line, never a guarantee. The patterns are data: the built-in set
+(v1) yields to `<data dir>/orchestrator/detection-rules.json`, which
+`detectionRulesUrl` can keep current from a published file, and
+`Orchestrator: Explain State` / `fresh --cmd agent explain` print the
+decision chain (line, rule, timing, rule-set version) behind a badge.
+
+CLI: `fresh --cmd workspace list`, `agent list`, `agent get`, `agent
+explain`, `agent wait --until STATE --timeout SECS` and a validated
+`agent start` (exit 1 when the launch died or stayed silent) ride the
+existing script channel, token and all — see
+agent-fresh-cli-exposure-plan.md.
+
+Not built, and why: **persistence by default** (a bare `fresh` that
+attaches to a daemon) is a change to the launch model for every user,
+not a dock change — `fresh -a` and in-app detach exist; flipping the
+default and adding a session switcher is its own decision with its own
+test surface. **A layout tier inside a workspace** (arrangements of
+panes that can be saved and replayed, so a test runner, a dev server
+and an agent share one workspace) needs a new host concept between
+window and buffer; nothing in the plugin can stand in for it.
 
 Dialogs (§3): one grid for New Workspace and Run Agent (§3.4–3.6);
 `Run in` is a radio; no boxes; hints under fields (§3.7); disclosure is
