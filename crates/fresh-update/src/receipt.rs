@@ -2,8 +2,8 @@
 //!
 //! Written at install time by whatever installed `fresh` (a packaged file for
 //! OS/package-manager channels, a sidecar file for wrapper channels), and read
-//! at runtime to resolve provenance authoritatively. See
-//! `docs/internal/packaging-self-update.md` §5.
+//! at runtime to resolve provenance authoritatively. The format is the
+//! `InstallReceipt` struct below.
 
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};

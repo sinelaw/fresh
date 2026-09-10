@@ -4,8 +4,7 @@
 //! The problem this crate solves: at runtime, `fresh` must know **for sure**
 //! how it was installed (Homebrew vs AUR vs winget vs a raw tarball vs …) so it
 //! can update through the *same* mechanism instead of guessing from the
-//! executable path. See `docs/internal/packaging-self-update.md` for the full
-//! design.
+//! executable path.
 //!
 //! # Shape
 //!
