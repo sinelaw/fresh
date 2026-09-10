@@ -416,6 +416,7 @@ function emitCodeRails(
   blockIndent: number,
 ): void {
   const contentEnd = lineContentEndByte(lineContent, byteStart);
+  // Past the terminator, so `contentEnd < lineEndByte` means "has one".
   const lineEndByte = charToByte(lineContent, lineContent.length, byteStart);
   const text = lineContent.replace(/\r?\n$/, "");
   const blockMeasure = Math.max(4, measure - blockIndent);
@@ -461,36 +462,14 @@ function emitCodeRails(
     const pad = inner - displayWidth(rowText) - railIndent;
     if (pad < 0) continue; // unbreakable over-long row: leave the edge open
 
-    // The row that reaches the end of the line hangs its closing rail on the
-    // line's own break, as a `before` hint — the renderer's end-of-line hint.
-    // Its padding is the same `pad`: the renderer's leading space puts the
-    // glyph in the same column the `after` form puts it, and the trailing space
-    // that form does not get lands *past* the glyph, on the far side of the
-    // frame, where it is invisible. It costs the row one column over the
-    // frame's width, which is slack `codeFrameWidth` already holds back.
-    //
-    // The anchor is the whole point. A hint anchored *after the last
-    // character* is anchored to a character the next keystroke can delete: its
-    // marker then collapses onto the line break, and an `after` hint on a line
-    // break renders past it — at the head of the NEXT row, dragging the rail
-    // and its padding across the closing border. That is the frame walking off
-    // sideways while you hold Backspace. Typing has the mirror fault: an
-    // insertion at the end of the line lands *after* an anchor sitting on the
-    // old last character, so for one frame the character you just typed is
-    // drawn outside the box.
-    //
-    // The line break is the anchor that survives both. Deleting the last
-    // character does not remove it, so the rail stays on its own row; and the
-    // hint's marker has right gravity, so text inserted at the end of the line
-    // pushes the rail along in front of it instead of being drawn past it.
-    // Only the *padding* can still be a frame stale, which costs the right
-    // edge a column or two until the next pass — a breathing edge rather than
-    // a rail on the wrong line.
-    //
-    // Rows that end at a soft break have no line break of their own and keep
-    // the last-character anchor. So does a line with no terminator at all (a
-    // block left unclosed at EOF), where there is no break cell to hang a hint
-    // on and one anchored there would simply not be drawn.
+    // The line break is the only anchor an edit at the end of the line cannot
+    // orphan: deleting the last character would collapse an `after` hint onto
+    // the break, which renders on the NEXT row, and an insertion there would
+    // outrun it. Right gravity carries this one along instead. `pad` is
+    // unchanged — the end-of-line hint's trailing space falls outside the
+    // frame, on slack `codeFrameWidth` already holds back. Residual: the
+    // padding is still a pass stale, so the edge breathes a column.
+    // Soft-broken rows and an unterminated line have no break to hang it on.
     const atLineEnd = row.end === body.length && contentEnd < lineEndByte;
     if (atLineEnd) {
       editor.addVirtualTextStyled(
@@ -500,10 +479,7 @@ function emitCodeRails(
       continue;
     }
 
-    // Anchor the closing rail *after the last character* of the row, found by
-    // code point rather than by `end - 1`: a byte before the end lands inside
-    // a multi-byte glyph, and the row's last character is exactly where a
-    // multi-byte glyph is most likely to be.
+    // By code point, not `end - 1`: that byte can land inside a multi-byte glyph.
     const lastChar = Array.from(rowText).pop() as string;
     const lastCharStart = charToByte(
       lineContent, blockIndent + row.end - lastChar.length, byteStart,

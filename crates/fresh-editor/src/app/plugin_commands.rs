@@ -381,8 +381,6 @@ impl Editor {
                 .virtual_texts
                 .remove_by_id(&mut state.marker_list, &virtual_text_id);
 
-            // Repair a stale anchor against the hook epoch — see
-            // `handle_add_virtual_text_styled`, which carries the reasoning.
             let position = match state.map_plugin_coord(position, epoch) {
                 Some(p) => p,
                 None => return,
@@ -470,18 +468,9 @@ impl Editor {
                 .virtual_texts
                 .remove_by_id(&mut state.marker_list, &virtual_text_id);
 
-            // Repair a stale anchor: the plugin computed `position` against the
-            // `lines_changed` epoch, and later edits may have moved that byte.
-            // Map it forward, exactly as the conceal and virtual-line paths do
-            // — this was the one coordinate-bearing command class that did not,
-            // so an inline hint was the one decoration that could still land on
-            // a byte the plugin never meant.
-            //
-            // The removal above stands either way: on an unmappable epoch the
-            // hint is dropped rather than placed at a guessed byte, and the next
-            // `lines_changed` for the line re-adds it with fresh coordinates.
-            // Returning *before* the removal would instead leave this id's
-            // previous hint in place, stale.
+            // Remapped after the removal above: an unmappable epoch drops the hint
+            // rather than guessing a byte, and returning earlier would strand the
+            // stale one under this id.
             let position = match state.map_plugin_coord(position, epoch) {
                 Some(p) => p,
                 None => return,
