@@ -2713,8 +2713,8 @@ impl Editor {
         inherit_normal_bindings: bool,
         plugin_name: Option<String>,
     ) {
-        use super::parse_key_string;
         use crate::input::buffer_mode::BufferMode;
+        use crate::input::keybindings::parse_key_seq;
         use crate::input::keybindings::{Action, KeyContext};
 
         let mode = BufferMode::new(name.clone())
@@ -2732,49 +2732,30 @@ impl Editor {
 
         let mode_context = KeyContext::Mode(name.clone());
 
-        // Parse key bindings from strings
-        // Key strings can be single keys ("g", "C-f") or chord sequences ("g g", "z z")
+        // **A binding's key is parsed in one place** — `parse_key_seq`, the
+        // editor's single entry point for a key written as a string. This
+        // loop used to carry its own parser and its own name table (`RET`,
+        // `SPC`, `PGUP`, …), which is how a mode could bind a name the rest
+        // of the editor did not know, and vice versa. The compact syntax
+        // covers both shapes: one press (`g`, `C-f`) or a sequence separated
+        // by spaces (`g g`, `z z`, `C-x C-s`), so what used to be two branches
+        // over a hand-split string is now a question about what parsed.
         for (key_str, command) in &bindings {
-            let parts: Vec<&str> = key_str.split_whitespace().collect();
-
-            if parts.len() == 1 {
-                // Single key binding
-                if let Some((code, modifiers)) = parse_key_string(key_str) {
-                    let action = Action::from_str(command, &std::collections::HashMap::new())
-                        .unwrap_or_else(|| Action::PluginAction(command.clone()));
-                    self.keybindings.write().unwrap().load_plugin_default(
-                        mode_context.clone(),
-                        code,
-                        modifiers,
-                        action,
-                    );
-                } else {
-                    tracing::warn!("Failed to parse key binding: {}", key_str);
+            let Some(seq) = parse_key_seq(key_str) else {
+                tracing::warn!("Failed to parse key binding: {}", key_str);
+                continue;
+            };
+            let action = Action::from_str(command, &std::collections::HashMap::new())
+                .unwrap_or_else(|| Action::PluginAction(command.clone()));
+            let mut kb = self.keybindings.write().unwrap();
+            match seq.single() {
+                Some(key) => {
+                    kb.load_plugin_default(mode_context.clone(), key.code(), key.mods(), action)
                 }
-            } else {
-                // Chord sequence (multiple keys separated by space)
-                let mut sequence = Vec::new();
-                let mut parse_failed = false;
-
-                for part in &parts {
-                    if let Some((code, modifiers)) = parse_key_string(part) {
-                        sequence.push((code, modifiers));
-                    } else {
-                        tracing::warn!("Failed to parse key in chord: {} (in {})", part, key_str);
-                        parse_failed = true;
-                        break;
-                    }
-                }
-
-                if !parse_failed && !sequence.is_empty() {
-                    tracing::debug!("Adding chord binding: {:?} -> {}", sequence, command);
-                    let action = Action::from_str(command, &std::collections::HashMap::new())
-                        .unwrap_or_else(|| Action::PluginAction(command.clone()));
-                    self.keybindings.write().unwrap().load_plugin_chord_default(
-                        mode_context.clone(),
-                        sequence,
-                        action,
-                    );
+                None => {
+                    tracing::debug!("Adding chord binding: {} -> {}", seq, command);
+                    let sequence = seq.keys().iter().map(|k| (k.code(), k.mods())).collect();
+                    kb.load_plugin_chord_default(mode_context.clone(), sequence, action)
                 }
             }
         }
@@ -2800,10 +2781,12 @@ impl Editor {
                         for (key_code, modifiers) in mode_bindings.keys() {
                             let label =
                                 crate::input::keybindings::format_keybinding(key_code, modifiers);
-                            if let Some((_key_str, cmd)) = bindings
-                                .iter()
-                                .find(|(k, _)| parse_key_string(k) == Some((*key_code, *modifiers)))
-                            {
+                            if let Some((_key_str, cmd)) = bindings.iter().find(|(k, _)| {
+                                parse_key_seq(k).and_then(|s| s.single())
+                                    == Some(crate::input::keybindings::Key::new(
+                                        *key_code, *modifiers,
+                                    ))
+                            }) {
                                 let key = format!("{}\0{}", cmd, name);
                                 snapshot.keybinding_labels.insert(key, label);
                             }

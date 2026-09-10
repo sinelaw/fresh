@@ -1698,7 +1698,7 @@ impl BindingSource {
 /// the half the data layer cannot have: the keypad and media families are
 /// decoded by the terminal input-parser crate, which the data layer neither
 /// depends on nor should.
-pub use fresh_editor_core::keys::{KeyName, NAMED_KEYS, PUNCTUATION_KEYS};
+pub use fresh_editor_core::keys::{Key, KeyName, KeySeq, NAMED_KEYS, PUNCTUATION_KEYS};
 
 /// The name families this layer adds behind the shared tables.
 ///
@@ -1715,6 +1715,26 @@ fn terminal_key_names(lower: &str) -> Option<KeyCode> {
 /// Resolve an already-lowercased key name against every table.
 pub fn key_name_to_code(lower: &str) -> Option<KeyCode> {
     fresh_editor_core::keys::name_to_code(lower, Some(terminal_key_names))
+}
+
+/// **The one entry point for a key written as a string**, anywhere in the
+/// editor: the shared compact syntax (`C-x`, `C-S-Left`, `C-x C-s`) over the
+/// shared tables, plus the keypad and media families this layer adds.
+///
+/// Everything that used to carry its own parser resolves through here — a
+/// plugin mode's binding table, the widget wire — so a name that binds and a
+/// key that arrives cannot drift apart. The config's split-field form (a `key`
+/// name beside a `modifiers` array) is a different surface syntax and keeps
+/// its own modifier handling, but it resolves its *names* through the same
+/// tables, so it cannot drift either.
+pub fn parse_key_seq(s: &str) -> Option<KeySeq> {
+    KeySeq::parse(s, Some(terminal_key_names))
+}
+
+/// [`parse_key_seq`] for a caller that has no chord vocabulary: `None` if the
+/// string names a sequence rather than a single press.
+pub fn parse_key_press(s: &str) -> Option<Key> {
+    parse_key_seq(s)?.single()
 }
 
 fn warn_invalid_key(key: &str, action: &str) {
@@ -3464,6 +3484,83 @@ impl KeybindingResolver {
 
 #[cfg(test)]
 mod tests {
+
+    /// **The two surface syntaxes name the same keystrokes.** A key reachable
+    /// through the config's split fields (`"key": "pageup", "modifiers":
+    /// ["ctrl"]`) must be the same value as the compact form a plugin mode or
+    /// the widget wire writes (`C-pageup`), for every name in the tables and
+    /// every modifier set.
+    ///
+    /// This equivalence is the whole point of one table, and it is what used
+    /// to be false: the two sides had separate name tables, so a name could
+    /// bind through one syntax and be silently dropped by the other.
+    #[test]
+    fn the_compact_form_and_the_split_fields_name_the_same_keys() {
+        let modifier_sets: &[(&[&str], &str)] = &[
+            (&[], ""),
+            (&["ctrl"], "C-"),
+            (&["shift"], "S-"),
+            (&["alt"], "M-"),
+            (&["ctrl", "shift"], "C-S-"),
+        ];
+        for entry in NAMED_KEYS.iter().chain(PUNCTUATION_KEYS) {
+            for name in entry.names {
+                for (mod_names, prefix) in modifier_sets {
+                    let owned: Vec<String> = mod_names.iter().map(|m| m.to_string()).collect();
+                    let code = KeybindingResolver::parse_key_public(name)
+                        .unwrap_or_else(|| panic!("{name:?} did not parse as a config key"));
+                    let mods = KeybindingResolver::parse_modifiers_public(&owned);
+                    assert_eq!(
+                        parse_key_press(&format!("{prefix}{name}")),
+                        Some(Key::new(code, mods)),
+                        "{prefix}{name} vs the split fields"
+                    );
+                }
+            }
+        }
+    }
+
+    /// The keypad and media families reach the compact syntax too. They are
+    /// the half of the vocabulary the data layer cannot hold, passed in behind
+    /// the shared tables — so this is what proves the seam is actually wired
+    /// rather than merely written.
+    #[test]
+    fn the_terminal_only_families_resolve_through_the_one_parser() {
+        for name in ["kp_begin", "kp_enter", "kp_0"] {
+            assert!(
+                parse_key_press(name).is_some(),
+                "{name:?} did not resolve through parse_key_seq"
+            );
+            assert_eq!(
+                parse_key_press(name).map(|k| k.code()),
+                key_name_to_code(name),
+                "{name:?} disagreed with the resolver's own lookup"
+            );
+        }
+        // …and a modifier in front of one still works, which is the part a
+        // bolted-on fallback would get wrong.
+        assert_eq!(
+            parse_key_press("C-kp_begin").map(|k| k.mods()),
+            Some(KeyModifiers::CONTROL)
+        );
+    }
+
+    /// A plugin mode's binding table speaks the compact syntax, chords
+    /// included. These shapes all ship today; what matters is that one press
+    /// and a sequence are told apart by what parsed, not by a caller
+    /// re-splitting the string.
+    #[test]
+    fn a_binding_string_is_one_press_or_a_sequence() {
+        for single in ["g", "C-f", "M-o", "F", "?", "Esc", "BackTab"] {
+            let seq = parse_key_seq(single).unwrap_or_else(|| panic!("{single:?}"));
+            assert!(seq.single().is_some(), "{single:?} should be one press");
+        }
+        for chord in ["g g", "z z", "z a", "C-x C-s"] {
+            let seq = parse_key_seq(chord).unwrap_or_else(|| panic!("{chord:?}"));
+            assert_eq!(seq.single(), None, "{chord:?} should be a sequence");
+            assert_eq!(seq.keys().len(), 2, "{chord:?}");
+        }
+    }
     use super::*;
 
     #[test]
