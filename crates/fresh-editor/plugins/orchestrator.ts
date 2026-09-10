@@ -4614,6 +4614,7 @@ function dockMainOptions(): MenuOption[] {
   return [
     { key: "main:folder", label: editor.t("dock.new_menu_folder") },
     { key: "main:manage", label: editor.t("dock.menu_manage") },
+    { key: "main:machines", label: editor.t("dock.menu_machines") },
     { key: "main:view:compact", label: editor.t("dock.menu_view_compact"), marked: dockView === "compact" },
     { key: "main:view:card", label: editor.t("dock.menu_view_card"), marked: dockView === "card" },
     { key: "main:empty", label: editor.t("dock.show_empty"), marked: !openDialog.hideTrivial },
@@ -4792,6 +4793,11 @@ function runDockMenuOption(optKey: string): void {
   if (optKey === "main:manage") {
     closeDockMenu();
     openControlRoom();
+    return;
+  }
+  if (optKey === "main:machines") {
+    closeDockMenu();
+    openMachinesDialog();
     return;
   }
   // The settings flip in place and the menu stays up, so a second choice
@@ -7462,6 +7468,805 @@ function firstBodyFieldKey(backend: FormBackend): string {
   }
 }
 
+// =============================================================================
+// Machines — Fresh's own registry of hosts to run workspaces on (design §5).
+//
+// The registry is Fresh state in the platform data dir, beside `workspaces/`
+// and `orchestrator/state/`. `~/.ssh/config` is read for the host picker and
+// never written: a host saved here is a Fresh machine, a host there is an
+// ssh host, and neither becomes the other. A machine is tested before it is
+// saved, and the result is reported beside the fields that caused it — an
+// error that names neither the cause nor the field is the failure mode this
+// dialog exists to avoid.
+// =============================================================================
+
+type MachineKind = "ssh" | "kubernetes";
+
+interface Machine {
+  id: string;
+  name: string;
+  kind: MachineKind;
+  // ssh: `[user@]host[:port]`, an identity file, extra ssh arguments.
+  target: string;
+  identity: string;
+  options: string;
+  // kubernetes: kubeconfig context, namespace, a pod name or `-l` selector.
+  context: string;
+  namespace: string;
+  pod: string;
+  // Where a workspace on this machine is rooted unless the form says otherwise.
+  path: string;
+  lastTest: { ok: boolean; at: number; summary: string } | null;
+}
+
+type Field = { value: string; cursor: number };
+
+function machinesFile(): string {
+  return editor.pathJoin(editor.getDataDir(), "orchestrator", "machines.json");
+}
+
+let machinesCache: Machine[] | null = null;
+
+// Every saved machine, by name. A missing or corrupt file is an empty
+// registry, never a crash: the dialog that writes it repairs it.
+function loadMachines(): Machine[] {
+  if (machinesCache) return machinesCache;
+  const out: Machine[] = [];
+  const raw = editor.readFile(editor.localPath(machinesFile()));
+  if (raw) {
+    try {
+      const parsed = JSON.parse(raw) as { machines?: unknown[] };
+      for (const item of parsed.machines ?? []) {
+        const x = item as Partial<Machine>;
+        if (typeof x.id !== "string" || typeof x.name !== "string") continue;
+        if (x.kind !== "ssh" && x.kind !== "kubernetes") continue;
+        out.push({
+          id: x.id,
+          name: x.name,
+          kind: x.kind,
+          target: x.target ?? "",
+          identity: x.identity ?? "",
+          options: x.options ?? "",
+          context: x.context ?? "",
+          namespace: x.namespace ?? "",
+          pod: x.pod ?? "",
+          path: x.path ?? "",
+          lastTest: x.lastTest ?? null,
+        });
+      }
+    } catch {
+      // Unreadable JSON: start over rather than refuse every dialog.
+    }
+  }
+  out.sort((a, b) => a.name.localeCompare(b.name));
+  machinesCache = out;
+  return out;
+}
+
+function saveMachines(list: Machine[]): boolean {
+  list.sort((a, b) => a.name.localeCompare(b.name));
+  machinesCache = list;
+  editor.createDir(editor.localPath(editor.pathJoin(editor.getDataDir(), "orchestrator")));
+  return editor.writeFile(
+    editor.localPath(machinesFile()),
+    JSON.stringify({ version: 1, machines: list }, null, 2),
+  );
+}
+
+function machineById(id: string): Machine | null {
+  return loadMachines().find((m) => m.id === id) ?? null;
+}
+
+function upsertMachine(m: Machine): void {
+  saveMachines([...loadMachines().filter((x) => x.id !== m.id), m]);
+}
+
+function removeMachine(id: string): void {
+  saveMachines(loadMachines().filter((x) => x.id !== id));
+}
+
+function newMachineId(): string {
+  return `m-${Date.now().toString(36)}-${Math.floor(Math.random() * 1e6).toString(36)}`;
+}
+
+// The short identity a row shows beside the name: where ssh connects, or
+// which pods kubectl execs into.
+function machineSummary(m: Machine): string {
+  if (m.kind === "ssh") return m.target;
+  const where = `${m.namespace || "?"} / ${m.pod || "?"}`;
+  return m.context ? `${where}  (${m.context})` : where;
+}
+
+function machineKindTag(m: Machine): string {
+  return m.kind === "ssh" ? "ssh" : "k8s";
+}
+
+// Workspaces running on a machine: the sessions whose remote facet names it.
+function machineWorkspaceCount(m: Machine): number {
+  let n = 0;
+  for (const s of orchestratorSessions.values()) {
+    if (!s.remote) continue;
+    if (m.kind === "ssh" && s.remote.kind === "ssh") {
+      const bare = m.target.replace(/^ssh:\/\//, "").replace(/:\d+$/, "");
+      if (s.remote.detail === bare || s.remote.detail === m.target) n++;
+    } else if (m.kind === "kubernetes" && s.remote.kind === "kubernetes") {
+      if (s.remote.detail === `${m.namespace}/${m.pod}`) n++;
+    }
+  }
+  return n;
+}
+
+function localWorkspaceCount(): number {
+  let n = 0;
+  for (const s of orchestratorSessions.values()) if (!s.remote) n++;
+  return n;
+}
+
+// `[user@]host[:port]` (or a pasted `ssh://…`) → the part ssh takes as the
+// destination and the port for `-p`.
+function parseSshTarget(t: string): { dest: string; port: string | null } {
+  const raw = t.trim().replace(/^ssh:\/\//, "").replace(/\/.*$/, "");
+  const m = /^(.+):(\d+)$/.exec(raw);
+  return m ? { dest: m[1], port: m[2] } : { dest: raw, port: null };
+}
+
+function expandHome(p: string): string {
+  return p.startsWith("~/") ? `${homeDir()}/${p.slice(2)}` : p;
+}
+
+// Why an ssh test failed, said beside the field that caused it.
+function sshFailureHint(err: string): string {
+  if (/permission denied/i.test(err)) return editor.t("machine.hint_denied");
+  if (/could not resolve|name or service not known|nodename nor servname/i.test(err)) {
+    return editor.t("machine.hint_resolve");
+  }
+  if (/connection refused|timed out|no route to host|network is unreachable/i.test(err)) {
+    return editor.t("machine.hint_unreachable");
+  }
+  if (/host key verification failed/i.test(err)) return editor.t("machine.hint_hostkey");
+  return "";
+}
+
+interface MachineTestResult {
+  ok: boolean;
+  summary: string;
+  detail: string;
+}
+
+// Try the connection the machine describes, without touching the editor's
+// authority: ssh in batch mode (no prompts, a short timeout) and read what
+// the box is; kubectl lists the pods the selector matches.
+async function testMachine(m: Machine): Promise<MachineTestResult> {
+  if (m.kind === "ssh") {
+    const { dest, port } = parseSshTarget(m.target);
+    if (!dest) return { ok: false, summary: editor.t("machine.err_target"), detail: "" };
+    const args = [
+      "-o", "BatchMode=yes",
+      "-o", "ConnectTimeout=8",
+      ...(port ? ["-p", port] : []),
+      ...(m.identity.trim() ? ["-i", expandHome(m.identity.trim())] : []),
+      ...(m.options.trim() ? m.options.trim().split(/\s+/) : []),
+      dest,
+      "uname -sr; git --version 2>/dev/null; nproc 2>/dev/null",
+    ];
+    const r = await editor.spawnHostProcess("ssh", args);
+    if (r.exit_code === 0) {
+      const lines = r.stdout.split("\n").map((l) => l.trim()).filter(Boolean);
+      const os = lines[0] ?? "";
+      const git = (lines[1] ?? "").replace(/^git version /, "git ");
+      const cores = lines[2] ? editor.t("machine.cores", { n: lines[2] }) : "";
+      return { ok: true, summary: [os, git, cores].filter(Boolean).join(" · "), detail: "" };
+    }
+    const err = r.stderr
+      .split("\n")
+      .map((l) => l.trim())
+      .filter((l) => l && !/^warning:/i.test(l))
+      .pop() ?? editor.t("machine.err_exit", { code: String(r.exit_code) });
+    // `ssh: connect to host X port N: Connection refused` → the reason; the
+    // target is on the field above and the hint below says what to check.
+    const summary = err
+      .replace(/^ssh: /, "")
+      .replace(/^[^ :]+@[^ :]+: /, "")
+      .replace(/^connect to host \S+ port \d+: /, "")
+      .replace(/\.$/, "");
+    return { ok: false, summary, detail: sshFailureHint(err) };
+  }
+  if (!m.namespace.trim() || !m.pod.trim()) {
+    return { ok: false, summary: editor.t("machine.err_ns_pod"), detail: "" };
+  }
+  const pod = m.pod.trim();
+  const args = [
+    ...(m.context.trim() ? ["--context", m.context.trim()] : []),
+    "-n", m.namespace.trim(),
+    "get", "pods",
+    ...(pod.startsWith("-l") ? ["-l", pod.slice(2).trim()] : [pod]),
+    "-o", "name",
+  ];
+  const r = await editor.spawnHostProcess("kubectl", args);
+  if (r.exit_code === 0) {
+    const n = r.stdout.split("\n").filter((l) => l.trim()).length;
+    if (n === 0) return { ok: false, summary: editor.t("machine.err_no_pods"), detail: "" };
+    return { ok: true, summary: editor.t("machine.pods_match", { n: String(n) }), detail: "" };
+  }
+  const err = r.stderr.split("\n").map((l) => l.trim()).filter(Boolean).pop() ??
+    editor.t("machine.err_exit", { code: String(r.exit_code) });
+  return { ok: false, summary: err.replace(/^error: /i, ""), detail: "" };
+}
+
+// How long ago, for the Machines rows: `2m ago`, `3h ago`, `5d ago`.
+function agoText(at: number): string {
+  const s = Math.max(0, Math.floor((Date.now() - at) / 1000));
+  if (s < 60) return editor.t("machine.ago_now");
+  if (s < 3600) return editor.t("machine.ago", { t: `${Math.floor(s / 60)}m` });
+  if (s < 86400) return editor.t("machine.ago", { t: `${Math.floor(s / 3600)}h` });
+  return editor.t("machine.ago", { t: `${Math.floor(s / 86400)}d` });
+}
+
+// A widget_event as the dialogs below read it.
+interface WidgetEvt {
+  panel_id?: number;
+  event_type: string;
+  widget_key?: string;
+  payload?: unknown;
+}
+
+function applyTextChange(slot: Field, payload: unknown): void {
+  const p = (payload ?? {}) as Record<string, unknown>;
+  if (typeof p.value === "string") slot.value = p.value;
+  if (typeof p.cursorByte === "number") slot.cursor = p.cursorByte;
+}
+
+function fieldOf(value: string): Field {
+  return { value, cursor: utf8Len(value) };
+}
+
+// Blur the dock while a machine dialog owns the keyboard, and hand it back
+// after (mirrors the folder dialog).
+function yieldDockToDialog(): void {
+  if (openPanel && dockMode) {
+    dockBlurred = true;
+    editor.floatingPanelControl(openPanel.id(), "blur", 0);
+  }
+}
+
+function restoreDockAfterDialog(): void {
+  if (openPanel && dockMode) {
+    dockBlurred = false;
+    editor.floatingPanelControl(openPanel.id(), "focus", 0);
+    openPanel.setFocusKey("sessions");
+    refreshOpenDialog();
+  }
+}
+
+// --- Add / Edit Machine (§5.3) ----------------------------------------------
+
+interface MachineDialogState {
+  id: string | null;
+  kind: MachineKind;
+  name: Field;
+  target: Field;
+  identity: Field;
+  options: Field;
+  context: Field;
+  namespace: Field;
+  pod: Field;
+  path: Field;
+  test: { state: "idle" | "running" | "ok" | "fail"; summary: string; detail: string };
+  // Which test's answer is still wanted: an edit after a test started makes
+  // its result stale.
+  testToken: number;
+  error: string;
+  // Where the dialog came from, to go back to on close.
+  returnTo: "machines" | null;
+}
+
+const MACHINE_DIALOG_MODE = "orchestrator-machine-dialog";
+let machineDialog: MachineDialogState | null = null;
+let machinePanel: FloatingWidgetPanel | null = null;
+let machineFocusKey = "machine-name";
+
+function openMachineDialog(existing: Machine | null, returnTo: "machines" | null): void {
+  yieldDockToDialog();
+  const m = existing;
+  machineDialog = {
+    id: m?.id ?? null,
+    kind: m?.kind ?? "ssh",
+    name: fieldOf(m?.name ?? ""),
+    target: fieldOf(m?.target ?? ""),
+    identity: fieldOf(m?.identity ?? ""),
+    options: fieldOf(m?.options ?? ""),
+    context: fieldOf(m?.context ?? ""),
+    namespace: fieldOf(m?.namespace ?? ""),
+    pod: fieldOf(m?.pod ?? ""),
+    path: fieldOf(m?.path ?? ""),
+    test: { state: "idle", summary: "", detail: "" },
+    testToken: 0,
+    error: "",
+    returnTo,
+  };
+  machinePanel = new FloatingWidgetPanel();
+  machinePanel.mount(buildMachineDialogSpec(), {
+    widthPct: 60,
+    heightPct: 70,
+    focusMarker: true,
+    labelAlign: "right",
+    title: m ? editor.t("machine.edit_title") : editor.t("machine.add_title"),
+    closable: true,
+  });
+  editor.floatingPanelControl(machinePanel.id(), "fullscreen", 1);
+  editor.setEditorMode(MACHINE_DIALOG_MODE);
+  machineFocusKey = "machine-name";
+  machinePanel.setFocusKey("machine-name");
+}
+
+function closeMachineDialog(reopen: boolean): void {
+  const returnTo = machineDialog?.returnTo ?? null;
+  if (machinePanel) {
+    machinePanel.unmount();
+    machinePanel = null;
+  }
+  machineDialog = null;
+  editor.setEditorMode(null);
+  if (reopen && returnTo === "machines") {
+    openMachinesDialog();
+    return;
+  }
+  restoreDockAfterDialog();
+}
+
+// The machine the dialog currently describes.
+function machineFromDialog(d: MachineDialogState): Machine {
+  return {
+    id: d.id ?? newMachineId(),
+    name: d.name.value.trim(),
+    kind: d.kind,
+    target: d.target.value.trim(),
+    identity: d.identity.value.trim(),
+    options: d.options.value.trim(),
+    context: d.context.value.trim(),
+    namespace: d.namespace.value.trim(),
+    pod: d.pod.value.trim(),
+    path: d.path.value.trim(),
+    lastTest: d.test.state === "ok" || d.test.state === "fail"
+      ? { ok: d.test.state === "ok", at: Date.now(), summary: d.test.summary }
+      : null,
+  };
+}
+
+function buildMachineDialogSpec(): WidgetSpec {
+  const d = machineDialog!;
+  const children: WidgetSpec[] = [
+    radio([editor.t("backend.ssh"), editor.t("backend.kubernetes")], {
+      selectedIndex: d.kind === "ssh" ? 0 : 1,
+      label: editor.t("machine.kind"),
+      labelWidth: FORM_LABEL_W,
+      key: "machine-kind",
+    }),
+    spacer(0),
+    ...field(editor.t("machine.name"), d.name, { key: "machine-name" }),
+  ];
+  if (d.kind === "ssh") {
+    children.push(
+      ...field(editor.t("machine.target"), d.target, {
+        key: "machine-target",
+        note: editor.t("form.ssh_host_note"),
+      }),
+      ...field(splitLabel("form.ssh_identity_label").label, d.identity, {
+        key: "machine-identity",
+        placeholder: editor.t("form.ssh_identity_placeholder"),
+      }),
+      ...field(splitLabel("form.ssh_options_label").label, d.options, {
+        key: "machine-options",
+        placeholder: splitPlaceholder(editor.t("form.ssh_options_placeholder")).placeholder,
+      }),
+    );
+  } else {
+    children.push(
+      ...field(splitLabel("form.k8s_context_label").label, d.context, {
+        key: "machine-context",
+        placeholder: editor.t("form.k8s_context_placeholder"),
+      }),
+      ...field(formLabel("form.k8s_namespace_label"), d.namespace, {
+        key: "machine-namespace",
+        placeholder: editor.t("form.k8s_namespace_placeholder"),
+      }),
+      ...field(formLabel("form.k8s_pod_label"), d.pod, {
+        key: "machine-pod",
+        note: editor.t("machine.pod_note"),
+      }),
+    );
+  }
+  children.push(
+    ...field(editor.t("machine.path"), d.path, {
+      key: "machine-path",
+      placeholder: d.kind === "ssh" ? "/srv" : "/workspace",
+    }),
+    spacer(0),
+  );
+  // The test's answer, beside the fields that produced it.
+  if (d.error) {
+    children.push(label(`✗ ${d.error}`, {
+      labelWidth: FORM_LABEL_W,
+      style: { fg: "ui.status_error_indicator_fg", bold: true },
+    }));
+  } else if (d.test.state === "running") {
+    children.push(label(`… ${editor.t("machine.testing")}`, { labelWidth: FORM_LABEL_W, style: NOTE_STYLE }));
+  } else if (d.test.state === "ok") {
+    children.push(label(`✓ ${editor.t("machine.connected")} · ${d.test.summary}`, {
+      labelWidth: FORM_LABEL_W,
+      style: { fg: "ui.help_key_fg", bold: true },
+    }));
+  } else if (d.test.state === "fail") {
+    children.push(label(`✗ ${d.test.summary}`, {
+      labelWidth: FORM_LABEL_W,
+      style: { fg: "ui.status_error_indicator_fg", bold: true },
+    }));
+    if (d.test.detail) {
+      children.push(label(`  ${d.test.detail}`, { labelWidth: FORM_LABEL_W, style: NOTE_STYLE }));
+    }
+  }
+  children.push(
+    spacer(0),
+    wrappingRow(
+      withAccel(
+        button(
+          d.test.state === "fail" ? editor.t("machine.btn_save_anyway") : editor.t("machine.btn_save"),
+          { intent: "primary", key: "machine-save" },
+        ),
+        "^⏎",
+      ),
+      spacer(2),
+      withAccel(
+        button(
+          d.test.state === "fail" ? editor.t("machine.btn_test_again") : editor.t("machine.btn_test"),
+          { key: "machine-test" },
+        ),
+        "^T",
+      ),
+      spacer(2),
+      withAccel(button(editor.t("form.btn_cancel"), { intent: "danger", key: "machine-cancel" }), "Esc"),
+    ),
+  );
+  return col(...children);
+}
+
+function renderMachineDialog(): void {
+  if (machinePanel && machineDialog) machinePanel.update(buildMachineDialogSpec());
+}
+
+function runMachineTest(): void {
+  const d = machineDialog;
+  if (!d) return;
+  d.error = "";
+  d.test = { state: "running", summary: "", detail: "" };
+  const token = ++d.testToken;
+  renderMachineDialog();
+  void testMachine(machineFromDialog(d)).then((r) => {
+    if (machineDialog !== d || d.testToken !== token) return;
+    d.test = { state: r.ok ? "ok" : "fail", summary: r.summary, detail: r.detail };
+    renderMachineDialog();
+  });
+}
+
+function saveMachineDialog(): void {
+  const d = machineDialog;
+  if (!d) return;
+  const m = machineFromDialog(d);
+  d.error = !m.name
+    ? editor.t("machine.err_name")
+    : m.kind === "ssh" && !parseSshTarget(m.target).dest
+    ? editor.t("machine.err_target")
+    : m.kind === "kubernetes" && (!m.namespace || !m.pod)
+    ? editor.t("machine.err_ns_pod")
+    : "";
+  if (d.error) {
+    renderMachineDialog();
+    return;
+  }
+  // An existing machine keeps its last test when this session did not run one.
+  if (!m.lastTest && d.id) m.lastTest = machineById(d.id)?.lastTest ?? null;
+  upsertMachine(m);
+  closeMachineDialog(true);
+}
+
+const MACHINE_DIALOG_MODE_BINDINGS: [string, string][] = [
+  ["Enter", "orchestrator_machine_enter"],
+  ["C-Enter", "orchestrator_machine_save"],
+  ["C-t", "orchestrator_machine_test"],
+];
+editor.defineMode(MACHINE_DIALOG_MODE, MACHINE_DIALOG_MODE_BINDINGS, true, true);
+
+registerHandler("orchestrator_machine_enter", () => {
+  if (!machineDialog || !machinePanel) return;
+  // Enter saves from any field; on a button it is that button.
+  if (machineFocusKey === "machine-cancel") return closeMachineDialog(true);
+  if (machineFocusKey === "machine-test") return runMachineTest();
+  if (machineFocusKey === "machine-kind") return;
+  saveMachineDialog();
+});
+registerHandler("orchestrator_machine_save", () => saveMachineDialog());
+registerHandler("orchestrator_machine_test", () => runMachineTest());
+
+function handleMachineDialogEvent(e: WidgetEvt): void {
+  const d = machineDialog!;
+  if (e.event_type === "cancel") {
+    // Esc / the native `[×]`: the host unmounted the panel already.
+    machinePanel = null;
+    closeMachineDialog(true);
+    return;
+  }
+  if (e.event_type === "focus") {
+    if (typeof e.widget_key === "string" && e.widget_key.length > 0) machineFocusKey = e.widget_key;
+    return;
+  }
+  if (e.event_type === "change" && e.widget_key === "machine-kind") {
+    const idx = ((e.payload ?? {}) as Record<string, unknown>).index;
+    if (typeof idx === "number") {
+      d.kind = idx === 0 ? "ssh" : "kubernetes";
+      d.test = { state: "idle", summary: "", detail: "" };
+      d.error = "";
+      renderMachineDialog();
+    }
+    return;
+  }
+  if (e.event_type === "change") {
+    const slots: Record<string, Field> = {
+      "machine-name": d.name,
+      "machine-target": d.target,
+      "machine-identity": d.identity,
+      "machine-options": d.options,
+      "machine-context": d.context,
+      "machine-namespace": d.namespace,
+      "machine-pod": d.pod,
+      "machine-path": d.path,
+    };
+    const slot = e.widget_key ? slots[e.widget_key] : undefined;
+    if (slot) {
+      applyTextChange(slot, e.payload);
+      // An edit outdates the test's answer and any validation error.
+      if (d.test.state !== "idle" || d.error) {
+        d.test = { state: "idle", summary: "", detail: "" };
+        d.error = "";
+        d.testToken++;
+        renderMachineDialog();
+      }
+    }
+    return;
+  }
+  if (e.event_type === "activate") {
+    if (e.widget_key === "machine-save") saveMachineDialog();
+    else if (e.widget_key === "machine-test") runMachineTest();
+    else if (e.widget_key === "machine-cancel") closeMachineDialog(true);
+  }
+}
+
+// --- Machines (§5.4) --------------------------------------------------------
+
+const MACHINES_MODE = "orchestrator-machines";
+let machinesPanel: FloatingWidgetPanel | null = null;
+let machinesState: { index: number; focus: string } | null = null;
+// A machine picked in the Machines dialog for `New workspace here`: the form
+// opens with it chosen (`null` = local).
+let pendingFormMachine: string | null = null;
+
+interface MachinesRow {
+  key: string;
+  machine: Machine | null;
+}
+
+function machinesRows(): MachinesRow[] {
+  return [{ key: "local", machine: null }, ...loadMachines().map((m) => ({ key: m.id, machine: m }))];
+}
+
+function openMachinesDialog(): void {
+  yieldDockToDialog();
+  const idx = machinesState?.index ?? 0;
+  machinesState = { index: Math.min(idx, machinesRows().length - 1), focus: "machines" };
+  machinesPanel = new FloatingWidgetPanel();
+  machinesPanel.mount(buildMachinesSpec(), {
+    widthPct: 70,
+    heightPct: 70,
+    focusMarker: true,
+    title: editor.t("machine.list_title"),
+    closable: true,
+  });
+  editor.floatingPanelControl(machinesPanel.id(), "fullscreen", 1);
+  editor.setEditorMode(MACHINES_MODE);
+  machinesPanel.setFocusKey("machines");
+  machinesPanel.setSelectedIndex("machines", machinesState.index);
+}
+
+function closeMachinesDialog(): void {
+  if (machinesPanel) {
+    machinesPanel.unmount();
+    machinesPanel = null;
+  }
+  machinesState = null;
+  editor.setEditorMode(null);
+  restoreDockAfterDialog();
+}
+
+function machinesRowEntry(r: MachinesRow): TextPropertyEntry {
+  const dim = { fg: "ui.menu_disabled_fg" };
+  const pad = (s: string, n: number): string => {
+    const w = editor.stringWidth(s);
+    return w >= n ? s : s + " ".repeat(n - w);
+  };
+  if (!r.machine) {
+    const n = localWorkspaceCount();
+    return styledRow([
+      { text: pad(editor.t("machine.local"), 13) },
+      { text: pad("", 5), style: dim },
+      { text: pad(editor.t("machine.local_summary"), 30), style: dim },
+      { text: pad("", 12), style: dim },
+      { text: editor.t("machine.workspaces", { n: String(n) }), style: dim },
+    ]);
+  }
+  const m = r.machine;
+  const test = m.lastTest === null
+    ? { text: pad("—", 12), style: dim }
+    : m.lastTest.ok
+    ? { text: pad(editor.t("machine.test_ok"), 12), style: { fg: "ui.help_key_fg" } }
+    : { text: pad(`✗ ${agoText(m.lastTest.at)}`, 12), style: { fg: "ui.status_error_indicator_fg" } };
+  const n = machineWorkspaceCount(m);
+  return styledRow([
+    { text: pad(m.name, 13) },
+    { text: pad(machineKindTag(m), 5), style: dim },
+    { text: pad(machineSummary(m), 30), style: dim },
+    test,
+    { text: n > 0 ? editor.t("machine.workspaces", { n: String(n) }) : "—", style: dim },
+  ]);
+}
+
+function buildMachinesSpec(): WidgetSpec {
+  const st = machinesState!;
+  const rows = machinesRows();
+  const sel = rows[st.index];
+  const editable = !!sel?.machine;
+  return col(
+    list({
+      items: rows.map(machinesRowEntry),
+      itemKeys: rows.map((r) => r.key),
+      selectedIndex: st.index,
+      visibleRows: Math.min(8, rows.length),
+      key: "machines",
+    }),
+    spacer(0),
+    button(`+ ${editor.t("machine.add")}`, { key: "machines-add" }),
+    spacer(0),
+    wrappingRow(
+      withAccel(button(editor.t("machine.btn_new_here"), { intent: "primary", key: "machines-new" }), "⏎"),
+      spacer(2),
+      button(editor.t("machine.btn_edit"), { key: "machines-edit", disabled: !editable }),
+      spacer(2),
+      button(editor.t("machine.btn_test"), { key: "machines-test", disabled: !editable }),
+      spacer(2),
+      button(editor.t("machine.btn_remove"), { intent: "danger", key: "machines-remove", disabled: !editable }),
+      spacer(2),
+      withAccel(button(editor.t("machine.btn_close"), { key: "machines-close" }), "Esc"),
+    ),
+  );
+}
+
+function renderMachinesDialog(): void {
+  if (machinesPanel && machinesState) {
+    machinesPanel.update(buildMachinesSpec());
+    machinesPanel.setSelectedIndex("machines", machinesState.index);
+  }
+}
+
+function machinesSelected(): MachinesRow | null {
+  return machinesState ? machinesRows()[machinesState.index] ?? null : null;
+}
+
+// `New workspace here`: the form, with the row's machine already chosen.
+function newWorkspaceOnSelected(): void {
+  const row = machinesSelected();
+  if (!row) return;
+  pendingFormMachine = row.machine ? row.machine.id : null;
+  closeMachinesDialog();
+  dockBlurred = true;
+  openForm({ fromPicker: true });
+}
+
+function testSelectedMachine(): void {
+  const row = machinesSelected();
+  if (!row?.machine) return;
+  const m = row.machine;
+  void testMachine(m).then((r) => {
+    const cur = machineById(m.id);
+    if (!cur) return;
+    cur.lastTest = { ok: r.ok, at: Date.now(), summary: r.summary };
+    upsertMachine(cur);
+    renderMachinesDialog();
+  });
+}
+
+const MACHINES_MODE_BINDINGS: [string, string][] = [
+  ["Enter", "orchestrator_machines_enter"],
+];
+editor.defineMode(MACHINES_MODE, MACHINES_MODE_BINDINGS, true, true);
+
+registerHandler("orchestrator_machines_enter", () => {
+  if (!machinesPanel || !machinesState) return;
+  if (machinesState.focus === "machines" || machinesState.focus === "") return newWorkspaceOnSelected();
+  machinesPanel.command(activate());
+});
+
+function handleMachinesEvent(e: WidgetEvt): void {
+  const st = machinesState!;
+  if (e.event_type === "cancel") {
+    machinesPanel = null;
+    closeMachinesDialog();
+    return;
+  }
+  if (e.event_type === "focus") {
+    if (typeof e.widget_key === "string") st.focus = e.widget_key;
+    return;
+  }
+  if (isListEvent(e as { event_type: string; widget_key?: string; payload?: unknown }, "machines")) {
+    const payload = (e.payload ?? {}) as Record<string, unknown>;
+    const idx = typeof payload.index === "number" ? payload.index : -1;
+    if (e.event_type === "select" && idx >= 0) {
+      const changed = idx !== st.index;
+      st.index = idx;
+      if (changed) renderMachinesDialog();
+    } else if (e.event_type === "activate") {
+      if (idx >= 0) st.index = idx;
+      newWorkspaceOnSelected();
+    }
+    return;
+  }
+  if (e.event_type !== "activate") return;
+  switch (e.widget_key) {
+    case "machines-add":
+      closeMachinesDialogKeepDock();
+      openMachineDialog(null, "machines");
+      return;
+    case "machines-edit": {
+      const row = machinesSelected();
+      if (row?.machine) {
+        closeMachinesDialogKeepDock();
+        openMachineDialog(row.machine, "machines");
+      }
+      return;
+    }
+    case "machines-test":
+      testSelectedMachine();
+      return;
+    case "machines-remove": {
+      const row = machinesSelected();
+      if (row?.machine) {
+        removeMachine(row.machine.id);
+        st.index = Math.min(st.index, machinesRows().length - 1);
+        renderMachinesDialog();
+      }
+      return;
+    }
+    case "machines-new":
+      newWorkspaceOnSelected();
+      return;
+    case "machines-close":
+      closeMachinesDialog();
+      return;
+  }
+}
+
+// Close the list on the way to a dialog that comes back to it: the dock
+// stays blurred meanwhile.
+function closeMachinesDialogKeepDock(): void {
+  if (machinesPanel) {
+    machinesPanel.unmount();
+    machinesPanel = null;
+  }
+  editor.setEditorMode(null);
+}
+
+registerHandler("orchestrator_machines", () => {
+  if (machinesPanel) return;
+  openMachinesDialog();
+});
+
 // === `~/.ssh/config` ========================================================
 //
 // Reading it is the whole of Fresh's involvement with the file: it populates
@@ -7630,6 +8435,13 @@ function splitPlaceholder(s: string): { placeholder: string; note: string } {
 }
 
 const NOTE_STYLE = { fg: "ui.menu_disabled_fg", italic: true } as const;
+
+// A button and its accelerator, as one unit: a nested row is never split by
+// a wrapping row, so a narrow footer never strands an `Esc` on a line of its
+// own.
+function withAccel(b: WidgetSpec, k: string): WidgetSpec {
+  return row(b, label(k, { style: NOTE_STYLE }));
+}
 
 // One row under a field, in the field column: `↳ hint`.
 function fieldNote(text: string, style: Partial<OverlayOptions> = NOTE_STYLE): WidgetSpec {
@@ -8089,10 +8901,6 @@ function buildFormSpec(): WidgetSpec {
   // one being clipped off the right edge. Running in the current workspace
   // creates nothing, so there is no foreground/background pair to offer —
   // just "Run".
-  // A button and its accelerator wrap as one unit (a nested row is never
-  // split), so a narrow form never strands an `Esc` on a line of its own.
-  const withAccel = (b: WidgetSpec, k: string): WidgetSpec =>
-    row(b, label(k, { style: NOTE_STYLE }));
   const cancel = withAccel(
     button(editor.t("form.btn_cancel"), { intent: "danger", key: "cancel" }),
     "Esc",
@@ -11320,6 +12128,17 @@ function enterBulkConfirm(action: BulkAction): void {
 
 editor.on("widget_event", (e) => {
   // ---------------------------------------------------------------------
+  // Machines: the Add / Edit Machine dialog and the Machines list.
+  // ---------------------------------------------------------------------
+  if (machinePanel && machineDialog && e.panel_id === machinePanel.id()) {
+    handleMachineDialogEvent(e);
+    return;
+  }
+  if (machinesPanel && machinesState && e.panel_id === machinesPanel.id()) {
+    handleMachinesEvent(e);
+    return;
+  }
+  // ---------------------------------------------------------------------
   // "New Folder" dialog: name field, organize checkbox, Cancel / Create.
   // ---------------------------------------------------------------------
   if (createFolderPanel && createFolderDialog && e.panel_id === createFolderPanel.id()) {
@@ -12407,6 +13226,13 @@ editor.registerCommand(
   "%cmd.open",
   "%cmd.open_desc",
   "orchestrator_open",
+  null,
+  { terminalBypass: true },
+);
+editor.registerCommand(
+  "%cmd.machines",
+  "%cmd.machines_desc",
+  "orchestrator_machines",
   null,
   { terminalBypass: true },
 );
