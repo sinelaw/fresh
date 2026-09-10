@@ -158,7 +158,7 @@ function treeEls(t){
     // A centered floating panel is modal: the tree blocks the pointer behind
     // it, and the terminal dims what it covers. The dim is drawn here from
     // that fact until the tree declares the scrim itself — it cannot while
-    // the fold runs in two bands (retained-mode-ui.md §3.3).
+    // the fold runs in two bands (retained-mode-ui.md, "Back to a frame").
     if(s.kind==="floating"&&!s.anchored){
       const scrim=div("tree-scrim");
       scrim.style.width=px(scene.w||0,CW)+"px"; scrim.style.height=px(scene.h||0,CH)+"px";

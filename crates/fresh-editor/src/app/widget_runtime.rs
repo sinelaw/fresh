@@ -355,7 +355,7 @@ impl Editor {
     // identity into `WidgetPanelState::hits`, or a byte the browser measured.
     // The scene stopped shipping a plugin panel to the browser, so nothing
     // can send one back, and `hits` stopped having a described-panel reader
-    // with them. See `docs/internal/retained-mode-ui.md` §3.9.
+    // with them. See `docs/internal/retained-mode-ui.md` "The web".
     //
     // The synthesizers are the loss worth naming: they were the derivation of
     // `HitArea`'s identity half from `(spec, instance state)` — the shape §4.1
@@ -1238,7 +1238,7 @@ impl Editor {
             None => return,
         };
         let focus_key = panel.focus_key.clone();
-        // Kind-owned key handling (`docs/internal/retained-mode-ui.md` §3.5):
+        // Kind-owned key handling (`docs/internal/retained-mode-ui.md` "Where each surface lives"):
         // the focused widget's impl claims keys its own open popup
         // needs — Text's completion list, Dropdown's option list —
         // and passes everything else through. The popup short-circuit

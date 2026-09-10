@@ -1113,7 +1113,7 @@ impl Editor {
 // `boxes` for a *described* panel, and so the last reason the immediate-mode
 // collector had to run for one. Deleting it is what lets the retained tree be
 // the only thing that lays a plugin panel out. See
-// `docs/internal/retained-mode-ui.md` §3.9 for what the replacement is: the web
+// `docs/internal/retained-mode-ui.md` "The web" for what the replacement is: the web
 // consuming the display list the TUI already folds, the way it consumes the
 // status bar, the settings dialog and the file browser.
 //
@@ -1131,7 +1131,7 @@ impl Editor {
 // browser to lay out itself, no recorded hit list, no index to echo back. A
 // press comes back as a cell through the ordinary mouse path and is routed
 // over the tree like a terminal click; a text press reaches the field through
-// `text_byte` like any other. See `docs/internal/retained-mode-ui.md` §3.9.
+// `text_byte` like any other. See `docs/internal/retained-mode-ui.md` "The web".
 //
 // What is shipped is the panel subtrees only — the dock, the floating panel's
 // frame, and each sidebar section a plugin mounted — plus every layer those

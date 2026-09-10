@@ -352,7 +352,7 @@ impl Editor {
         // combination and terminal size — `tests/ui_shell_frame_parity.rs` is
         // the standing proof, and it keeps both derivations honest now that
         // only one of them runs here.
-        // See `docs/internal/retained-mode-ui.md` §3.1.
+        // See `docs/internal/retained-mode-ui.md` "The shape".
         // The settings search list's window, from the band the tree placed
         // last frame. This is the one mutation the description needs made
         // *before* it is built: the row it describes says "(1-3 of 298)", and
@@ -1304,7 +1304,7 @@ impl Editor {
         // above): every described surface files its items' rects and keys as
         // it folds. What is still blank is a *tier*, not a surface: an item
         // whose ink resolved to literal colours files nothing — defect
-        // `Paint::Lit` in `docs/internal/retained-mode-ui.md` §3.3.
+        // `Paint::Lit` in `docs/internal/retained-mode-ui.md` "Smaller residue".
 
         // Software mouse cursor (GPM) and keyboard-capture dimming — both
         // read already-painted cells, so they run after the main draw.

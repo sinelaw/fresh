@@ -3,7 +3,7 @@
 //! Renders its child unchanged; `focus_trap` on its `box_meta` is what
 //! scopes Tab cycling (the tree's ring, read by `Ui::next_in`, and the layout
 //! box that carries the same flag) to the subtree. See
-//! `docs/internal/retained-mode-ui.md` §3.5.
+//! `docs/internal/retained-mode-ui.md` "Where each surface lives".
 
 use std::collections::HashMap;
 

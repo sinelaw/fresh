@@ -5291,7 +5291,7 @@ impl Editor {
             &h_pan,
         );
         self.record_widget_panel_render_height(&panel_key, avail_height);
-        // KNOWN LIMITATION (deliberate; retired by `docs/internal/retained-mode-ui.md` §3.5):
+        // KNOWN LIMITATION (deliberate; retired by `docs/internal/retained-mode-ui.md` "The markdown document view"):
         // buffer-mounted panels consume only the base rows + hits —
         // `out.overlays` and `out.popup` are DROPPED, and the click
         // path resolves with `on_overlay=false`. The popup/overlay

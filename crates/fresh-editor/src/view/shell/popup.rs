@@ -1,7 +1,7 @@
 //! Popups, as descriptions.
 //!
 //! The parity ledger this surface was migrated against is folded into
-//! `docs/internal/retained-mode-ui.md` (§3.4, §8). This module starts where the surface is most obviously a
+//! `docs/internal/retained-mode-ui.md` "Where each surface lives", "Decisions that stand". This module starts where the surface is most obviously a
 //! restatement: **placement**.
 //!
 //! `Popup::calculate_area` is six strategies, each of which ends by clamping to

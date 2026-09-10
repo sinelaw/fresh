@@ -8,7 +8,7 @@
 //!
 //! This is the terminal backend's half of that answer. The web's half is CSS,
 //! reading the same class list off the same item, and neither backend is told
-//! what the other does. See `docs/internal/shell-stylesheet-design.md`.
+//! what the other does. See `docs/internal/retained-mode-ui.md` "The shell's stylesheet".
 //!
 //! **A [`Rule`] carries only what is implemented** — a border, horizontal
 //! padding, and ink. No margin, no fill, no shadow, and no vertical padding

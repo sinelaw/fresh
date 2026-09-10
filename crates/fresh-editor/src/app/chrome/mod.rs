@@ -7,8 +7,10 @@
 //! keyboard walk, and last the overlay-layer stack that told `get_key_context`
 //! and the PTY gate which surface was up (both read the tree now: `app::
 //! overlay`). The modules below keep the `Editor` methods the tree's facts
-//! land in for each surface. `docs/internal/retained-mode-ui.md` §3.1 moves
-//! the two hover reactions beside their surfaces and deletes this module.
+//! land in for each surface. Moving the two hover reactions beside their
+//! surfaces deletes this module; what holds it open until then is the last
+//! `PointerGrab` variant — see `docs/internal/retained-mode-ui.md`, "The
+//! markdown document view".
 
 mod base;
 mod context_menu;

@@ -1,6 +1,6 @@
 //! Per-kind widget behaviour behind a single trait.
 //!
-//! This is the one behaviour authority `docs/internal/retained-mode-ui.md` §3.5 names:
+//! This is the one behaviour authority `docs/internal/retained-mode-ui.md` "Where each surface lives" names:
 //! `WidgetSpec` stays a closed, serializable wire type (it crosses the
 //! plugin sandbox boundary and feeds the row and web renderers), while
 //! the *behaviour* for each kind lives in one `WidgetImpl` per kind,
