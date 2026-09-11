@@ -252,6 +252,7 @@ mod tests {
     fn chrome(tabs: bool, vscroll: bool, hscroll: bool) -> PaneChrome {
         PaneChrome {
             tabs,
+            breadcrumbs: false,
             vscroll,
             hscroll,
         }

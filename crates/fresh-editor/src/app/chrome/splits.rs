@@ -25,6 +25,29 @@ use fresh_i18n::t;
 use super::Editor;
 
 impl Editor {
+    /// Navigate to the symbol whose rendered breadcrumb label was pressed.
+    pub(crate) fn handle_click_breadcrumb(&mut self, pane: LeafId, col: u16, row: u16) {
+        let Some(area) = self.pane_part_rect(crate::view::shell::splits::breadcrumbs_key(pane))
+        else {
+            return;
+        };
+        let target = {
+            let window = self.active_window();
+            window.pane_buffer(pane).and_then(|buffer_id| {
+                let items = window.breadcrumbs.get(&buffer_id)?;
+                let position =
+                    crate::view::ui::breadcrumbs::breadcrumb_position_at(area, items, col, row)?;
+                Some((buffer_id, position))
+            })
+        };
+        let Some((buffer_id, position)) = target else {
+            return;
+        };
+        self.focus_split(pane, buffer_id);
+        self.active_window_mut()
+            .set_buffer_cursor_in_splits(buffer_id, position, &[pane]);
+    }
+
     /// Double-click on a split's content rect: the Splits component's
     /// `chrome:editor` arm (moved from the old post-walk scan).
     pub(super) fn handle_split_double_click(

@@ -665,6 +665,7 @@ fn with_grid<R>(
     let win = editor.windows.get_mut(&window)?;
 
     let metadata_ref = &win.buffer_metadata;
+    let breadcrumbs_ref = &win.breadcrumbs;
     let event_logs_mut = &mut win.event_logs;
     let grouped_ref = &win.grouped_subtrees;
     let composite_buffers_mut = &mut win.composite_buffers;
@@ -681,6 +682,7 @@ fn with_grid<R>(
                 cfg,
             },
             buffer_metadata: metadata_ref,
+            breadcrumbs: breadcrumbs_ref,
             grouped_subtrees: grouped_ref,
             pane_chrome,
             described_panes,
@@ -2490,6 +2492,7 @@ impl Editor {
                 self.scroll_pane_tab_strip(pane, delta);
             }
             UiFact::PaneTabsPan { pane, delta } => self.scroll_pane_tab_strip(pane, delta),
+            UiFact::PaneBreadcrumbPress { pane, x, y } => self.handle_click_breadcrumb(pane, x, y),
             UiFact::PaneContentPress {
                 pane,
                 byte,
