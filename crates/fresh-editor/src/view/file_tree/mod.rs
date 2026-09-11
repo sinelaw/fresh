@@ -21,9 +21,10 @@ pub use ignore::{IgnorePatterns, IgnoreStatus};
 pub use node::{NodeId, NodeState, TreeNode};
 pub use search::FileExplorerSearch;
 pub use slots::{
-    default_slot_providers, ExplorerLeadingSlotPayload, ExplorerSlotContext, ExplorerSlotProviders,
-    ExplorerSlotResolution, ExplorerSlotResolver, ExplorerTooltipSummary,
-    ExplorerTrailingSlotPayload, ExplorerTrailingSlotResolution, FileExplorerSlotOverrideCache,
+    default_slot_providers, ExplorerLeadingSlotColor, ExplorerLeadingSlotPayload,
+    ExplorerSlotContext, ExplorerSlotProviders, ExplorerSlotResolution, ExplorerSlotResolver,
+    ExplorerTooltipSummary, ExplorerTrailingSlotPayload, ExplorerTrailingSlotResolution,
+    FileExplorerLeadingRuleCache, FileExplorerSlotOverrideCache,
     COMPATIBILITY_TRAILING_SLOT_HIT_WIDTH, DEFAULT_LEADING_SLOT_MIN_WIDTH,
 };
 pub use tree::FileTree;

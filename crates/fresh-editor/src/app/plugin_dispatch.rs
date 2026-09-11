@@ -898,6 +898,12 @@ impl Editor {
                 self.active_window_mut()
                     .handle_clear_file_explorer_slots(&namespace);
             }
+            PluginCommand::SetFileExplorerLeadingSlotRules { namespace, rules } => {
+                self.handle_set_file_explorer_leading_slot_rules(namespace, rules);
+            }
+            PluginCommand::ClearFileExplorerLeadingSlotRules { namespace } => {
+                self.handle_clear_file_explorer_leading_slot_rules(&namespace);
+            }
 
             // ==================== Status/Prompt Commands ====================
             PluginCommand::SetStatus { message } => {
