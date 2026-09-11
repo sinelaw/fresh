@@ -2291,12 +2291,21 @@ function applyDetectionRules(rules: DetectionRules): void {
 // `detectionRulesUrl` is set — fetch the published set and adopt it if its
 // version is newer than what is on disk. Best-effort throughout: a missing
 // file, a bad download or an unreachable host leaves the current rules.
+// Set when the last load found a rules file it could not use, so a reload
+// from the palette can say so instead of reporting the rules still in
+// force as if the file had been read.
+let detectionRulesProblem: string | null = null;
+
 async function loadDetectionRules(): Promise<DetectionRules> {
   const path = detectionRulesFile();
   const raw = editor.readFile(editor.localPath(path));
   const local = raw ? parseDetectionRules(raw) : null;
+  detectionRulesProblem = null;
   if (local) applyDetectionRules({ ...local, source: "file" });
-  else if (raw) editor.warn(`orchestrator: ${path} is not a rules file, using built-in rules`);
+  else if (raw) {
+    detectionRulesProblem = editor.pathBasename(path);
+    editor.warn(`orchestrator: ${path} is not a rules file, using built-in rules`);
+  }
   const url = (dockSettings().detectionRulesUrl ?? "").trim();
   if (url && /^https?:\/\//i.test(url)) {
     // The editor's own HTTP client, into a scratch file beside the rules;
@@ -11634,7 +11643,14 @@ async function submitForm(visit: boolean): Promise<void> {
     };
     const cmd = form.cmd.value;
     closeForm();
-    restoreDockAfterForm();
+    // The agent runs here, in the window the user is looking at: keyboard
+    // focus goes to its terminal, so the dock (if one is mounted under the
+    // form) stays visible but blurred instead of taking the focus back.
+    if (openPanel && dockMode) {
+      dockBlurred = true;
+      editor.floatingPanelControl(openPanel.id(), "blur", 0);
+      refreshOpenDialog();
+    }
     void launchAgentInCurrentWorkspace(cmd, opts);
     return;
   }
@@ -14705,7 +14721,10 @@ editor.registerCommand("%cmd.explain", "%cmd.explain_desc", "orchestrator_explai
 });
 registerHandler("orchestrator_reload_rules", () => {
   void loadDetectionRules().then((r) => {
-    editor.setStatus(editor.t("explain.rules_loaded", { version: String(r.version), source: r.source }));
+    const loaded = editor.t("explain.rules_loaded", { version: String(r.version), source: r.source });
+    editor.setStatus(
+      detectionRulesProblem ? editor.t("explain.rules_bad", { path: detectionRulesProblem, loaded }) : loaded,
+    );
     refreshOpenDialog();
   });
 });

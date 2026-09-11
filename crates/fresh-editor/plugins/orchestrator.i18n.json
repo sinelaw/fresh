@@ -376,7 +376,8 @@
     "preview.state_unknown": "няма сигнал",
     "form.runs_here": "изпълнява се в тази работна област: %{name}",
     "explain.title": "Защо това състояние",
-    "explain.recent_lines": "последни редове от изхода"
+    "explain.recent_lines": "последни редове от изхода",
+    "explain.rules_bad": "%{loaded} — %{path} не е файл с правила"
   },
   "cs": {
     "cmd.open": "Orchestrator: Otevřít",
@@ -755,7 +756,8 @@
     "preview.state_unknown": "žádný signál",
     "form.runs_here": "běží v tomto pracovním prostoru: %{name}",
     "explain.title": "Proč tento stav",
-    "explain.recent_lines": "poslední řádky výstupu"
+    "explain.recent_lines": "poslední řádky výstupu",
+    "explain.rules_bad": "%{loaded} — %{path} není soubor pravidel"
   },
   "de": {
     "cmd.open": "Orchestrator: Öffnen",
@@ -1134,7 +1136,8 @@
     "preview.state_unknown": "kein Signal",
     "form.runs_here": "läuft in diesem Arbeitsbereich: %{name}",
     "explain.title": "Warum dieser Zustand",
-    "explain.recent_lines": "letzte Ausgabezeilen"
+    "explain.recent_lines": "letzte Ausgabezeilen",
+    "explain.rules_bad": "%{loaded} — %{path} ist keine Regeldatei"
   },
   "en": {
     "cmd.open": "Orchestrator: Open",
@@ -1513,7 +1516,8 @@
     "menu.dock": "Orchestrator Dock",
     "form.runs_here": "runs in this workspace: %{name}",
     "explain.title": "Why this state",
-    "explain.recent_lines": "last lines of output"
+    "explain.recent_lines": "last lines of output",
+    "explain.rules_bad": "%{loaded} — %{path} is not a rules file"
   },
   "es": {
     "cmd.open": "Orchestrator: Abrir",
@@ -1892,7 +1896,8 @@
     "preview.state_unknown": "sin señal",
     "form.runs_here": "se ejecuta en este espacio de trabajo: %{name}",
     "explain.title": "Por qué este estado",
-    "explain.recent_lines": "últimas líneas de salida"
+    "explain.recent_lines": "últimas líneas de salida",
+    "explain.rules_bad": "%{loaded} — %{path} no es un archivo de reglas"
   },
   "fr": {
     "cmd.open": "Orchestrator : ouvrir",
@@ -2271,7 +2276,8 @@
     "preview.state_unknown": "aucun signal",
     "form.runs_here": "s'exécute dans cet espace de travail : %{name}",
     "explain.title": "Pourquoi cet état",
-    "explain.recent_lines": "dernières lignes de sortie"
+    "explain.recent_lines": "dernières lignes de sortie",
+    "explain.rules_bad": "%{loaded} — %{path} n'est pas un fichier de règles"
   },
   "it": {
     "cmd.open": "Orchestrator: Apri",
@@ -2650,7 +2656,8 @@
     "preview.state_unknown": "nessun segnale",
     "form.runs_here": "viene eseguito in questo spazio di lavoro: %{name}",
     "explain.title": "Perché questo stato",
-    "explain.recent_lines": "ultime righe di output"
+    "explain.recent_lines": "ultime righe di output",
+    "explain.rules_bad": "%{loaded} — %{path} non è un file di regole"
   },
   "ja": {
     "cmd.open": "Orchestrator: 開く",
@@ -3029,7 +3036,8 @@
     "preview.state_unknown": "信号なし",
     "form.runs_here": "このワークスペースで実行: %{name}",
     "explain.title": "この状態の理由",
-    "explain.recent_lines": "出力の最後の行"
+    "explain.recent_lines": "出力の最後の行",
+    "explain.rules_bad": "%{loaded} — %{path} はルールファイルではありません"
   },
   "ko": {
     "cmd.open": "Orchestrator: 열기",
@@ -3408,7 +3416,8 @@
     "preview.state_unknown": "신호 없음",
     "form.runs_here": "이 워크스페이스에서 실행: %{name}",
     "explain.title": "이 상태인 이유",
-    "explain.recent_lines": "출력의 마지막 줄"
+    "explain.recent_lines": "출력의 마지막 줄",
+    "explain.rules_bad": "%{loaded} — %{path}은(는) 규칙 파일이 아닙니다"
   },
   "pt-BR": {
     "cmd.open": "Orchestrator: Abrir",
@@ -3787,7 +3796,8 @@
     "preview.state_unknown": "sem sinal",
     "form.runs_here": "roda neste espaço de trabalho: %{name}",
     "explain.title": "Por que este estado",
-    "explain.recent_lines": "últimas linhas de saída"
+    "explain.recent_lines": "últimas linhas de saída",
+    "explain.rules_bad": "%{loaded} — %{path} não é um arquivo de regras"
   },
   "ru": {
     "cmd.open": "Orchestrator: Открыть",
@@ -4166,7 +4176,8 @@
     "preview.state_unknown": "нет сигнала",
     "form.runs_here": "запускается в этом рабочем пространстве: %{name}",
     "explain.title": "Почему такое состояние",
-    "explain.recent_lines": "последние строки вывода"
+    "explain.recent_lines": "последние строки вывода",
+    "explain.rules_bad": "%{loaded} — %{path} не файл правил"
   },
   "th": {
     "cmd.open": "Orchestrator: เปิด",
@@ -4545,7 +4556,8 @@
     "preview.state_unknown": "ไม่มีสัญญาณ",
     "form.runs_here": "รันในเวิร์กสเปซนี้: %{name}",
     "explain.title": "ทำไมจึงเป็นสถานะนี้",
-    "explain.recent_lines": "บรรทัดสุดท้ายของเอาต์พุต"
+    "explain.recent_lines": "บรรทัดสุดท้ายของเอาต์พุต",
+    "explain.rules_bad": "%{loaded} — %{path} ไม่ใช่ไฟล์กฎ"
   },
   "uk": {
     "cmd.open": "Orchestrator: Відкрити",
@@ -4924,7 +4936,8 @@
     "preview.state_unknown": "немає сигналу",
     "form.runs_here": "запускається в цьому робочому просторі: %{name}",
     "explain.title": "Чому такий стан",
-    "explain.recent_lines": "останні рядки виводу"
+    "explain.recent_lines": "останні рядки виводу",
+    "explain.rules_bad": "%{loaded} — %{path} не файл правил"
   },
   "vi": {
     "cmd.open": "Orchestrator: Mở",
@@ -5303,7 +5316,8 @@
     "preview.state_unknown": "không có tín hiệu",
     "form.runs_here": "chạy trong không gian làm việc này: %{name}",
     "explain.title": "Vì sao có trạng thái này",
-    "explain.recent_lines": "các dòng đầu ra cuối cùng"
+    "explain.recent_lines": "các dòng đầu ra cuối cùng",
+    "explain.rules_bad": "%{loaded} — %{path} không phải là tệp quy tắc"
   },
   "zh-CN": {
     "cmd.open": "Orchestrator：打开",
@@ -5682,6 +5696,7 @@
     "preview.state_unknown": "无信号",
     "form.runs_here": "在此工作区运行：%{name}",
     "explain.title": "为何是此状态",
-    "explain.recent_lines": "输出的最后几行"
+    "explain.recent_lines": "输出的最后几行",
+    "explain.rules_bad": "%{loaded} — %{path} 不是规则文件"
   }
 }
