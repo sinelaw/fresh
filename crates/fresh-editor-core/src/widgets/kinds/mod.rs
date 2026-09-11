@@ -43,23 +43,19 @@ use fresh_core::api::WidgetSpec;
 
 use crate::keys::KeySeq;
 
-/// The key sets the kinds distinguish, stated where every kind can reach them.
 mod vocab {
     use crate::keys::Key;
     use crossterm::event::{KeyCode, KeyModifiers};
 
-    /// Space activates a checkbox or button; Enter is the form's.
     pub fn activates(key: Key) -> bool {
         key.mods().is_empty() && matches!(key.code(), KeyCode::Enter | KeyCode::Char(' '))
     }
 
-    /// The clipboard and select-all chords a text field claims.
     pub fn ctrl_char(key: Key, c: char) -> bool {
         key.mods() == KeyModifiers::CONTROL && key.code() == KeyCode::Char(c)
     }
 
-    /// Caret and edit keys under any combination of Shift (extend the
-    /// selection) and Ctrl (step or delete by word).
+    /// Caret and edit keys under any combination of Shift and Ctrl.
     pub fn text_caret(key: Key) -> bool {
         const CARET: KeyModifiers = KeyModifiers::CONTROL.union(KeyModifiers::SHIFT);
         key.mods().difference(CARET).is_empty()
@@ -319,8 +315,7 @@ pub trait WidgetImpl: Sync {
     /// on `fx` — the dispatcher rerenders and fires them after the
     /// handler returns. `viewport` is the window the key acts inside
     /// (paging), handed down rather than looked up — see [`Viewport`].
-    /// A [`KeySeq`] because the wire can carry a chord. No kind binds one, so
-    /// each opens with [`KeySeq::single`] and lets a chord fall through.
+    /// A [`KeySeq`] because the wire can carry a chord; no kind binds one.
     fn on_key(
         &self,
         _spec: &WidgetSpec,

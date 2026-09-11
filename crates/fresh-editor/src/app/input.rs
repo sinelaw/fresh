@@ -595,8 +595,7 @@ impl Editor {
                 true
             }
             WidgetKeyOutcome::SmartKey(key) => {
-                // The wire stays a string: `WidgetAction::Key` is what a
-                // plugin's `widgetKey(...)` produces, and that is public.
+                // The wire stays a string: `widgetKey(...)` is public API.
                 self.handle_widget_command(
                     &panel_key,
                     fresh_core::api::WidgetAction::Key {

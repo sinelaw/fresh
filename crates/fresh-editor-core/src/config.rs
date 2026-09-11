@@ -2691,12 +2691,9 @@ pub struct Keybinding {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub keys: Vec<KeyPress>,
 
-    /// The whole binding as one compact string — `"C-x"`, `"C-S-Left"`, or a
-    /// chord as `"C-x C-s"`. The syntax a plugin mode's binding table uses.
-    ///
-    /// An alternative to the split fields, which take precedence when both
-    /// are present. Separate from `key` because `key` names a key literally
-    /// (`"-"` is the minus key), so prefixes there would be ambiguous.
+    /// The whole binding as one string — `"C-x"`, `"C-S-Left"`, `"C-x C-s"`.
+    /// An alternative to `key` + `modifiers` and `keys`, which take
+    /// precedence when present.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub chord: String,
 

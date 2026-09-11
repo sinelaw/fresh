@@ -1,24 +1,17 @@
-//! The key vocabulary: name tables, the compact string syntax (`C-x`,
-//! `C-S-Left`, `C-x C-s`), and the typed value every surface resolves to.
+//! Key names, the compact syntax (`C-x`, `C-S-Left`, `C-x C-s`), and the
+//! typed value surfaces resolve to.
 //!
-//! Parsing accepts every alias in the tables; printing emits one canonical
-//! spelling per keystroke, so format and parse are inverses.
-//!
-//! The keypad and media names live in the terminal input-parser crate, which
-//! this crate does not depend on; callers pass them in as [`ExtraNames`].
+//! Keypad and media names live in the terminal input-parser crate, which this
+//! crate does not depend on; callers pass them in as [`ExtraNames`].
 
 use crossterm::event::{KeyCode, KeyModifiers};
 
-/// Data rather than match arms: the parser reads these, and so does the
-/// generator for `docs/configuration/keyboard.md`.
 pub struct KeyName {
-    /// Lowercase; the first is canonical and is what [`canonical_name`] prints.
+    /// Lowercase; the first is canonical.
     pub names: &'static [&'static str],
     pub code: KeyCode,
 }
 
-/// Keys with a name of their own. Every spelling the keybinding editor writes
-/// back must appear here, or it would record bindings its loader rejects.
 pub const NAMED_KEYS: &[KeyName] = &[
     KeyName {
         names: &["enter", "ret", "return"],
@@ -248,10 +241,8 @@ pub const PUNCTUATION_KEYS: &[KeyName] = &[
     },
 ];
 
-/// A name family consulted after the shared tables.
 pub type ExtraNames = fn(&str) -> Option<KeyCode>;
 
-/// Resolve a lowercased name. The shared tables win; `extra` only extends.
 pub fn name_to_code(lower: &str, extra: Option<ExtraNames>) -> Option<KeyCode> {
     NAMED_KEYS
         .iter()
@@ -261,7 +252,6 @@ pub fn name_to_code(lower: &str, extra: Option<ExtraNames>) -> Option<KeyCode> {
         .or_else(|| extra.and_then(|f| f(lower)))
 }
 
-/// `None` for codes the tables do not name; [`Key::fmt_into`] handles those.
 pub fn canonical_name(code: KeyCode) -> Option<&'static str> {
     NAMED_KEYS
         .iter()
@@ -270,8 +260,7 @@ pub fn canonical_name(code: KeyCode) -> Option<&'static str> {
         .and_then(|k| k.names.first().copied())
 }
 
-/// Longest first, so `Super-` is not read as `S-` + `uper-`. `M-` and `A-`
-/// are both Alt.
+/// Longest first, so `Super-` is not read as `S-`.
 const PREFIXES: &[(&str, KeyModifiers)] = &[
     ("super-", KeyModifiers::SUPER),
     ("cmd-", KeyModifiers::SUPER),
@@ -284,8 +273,6 @@ const PREFIXES: &[(&str, KeyModifiers)] = &[
     ("h-", KeyModifiers::HYPER),
 ];
 
-/// Fixed order, so one value has one spelling. Covers every `KeyModifiers`
-/// bit, not just the four in common use, so printing drops nothing.
 const PRINTED_PREFIXES: &[(&str, KeyModifiers)] = &[
     ("Super-", KeyModifiers::SUPER),
     ("Meta-", KeyModifiers::META),
@@ -295,8 +282,7 @@ const PRINTED_PREFIXES: &[(&str, KeyModifiers)] = &[
     ("S-", KeyModifiers::SHIFT),
 ];
 
-/// One key press. Fields are private so [`Key::new`] is the only way in and
-/// its normalisation cannot be bypassed.
+/// Fields are private so [`Key::new`]'s normalisation cannot be bypassed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Key {
     code: KeyCode,
@@ -308,7 +294,6 @@ impl Key {
         Self { code, mods }.normalized()
     }
 
-    /// Unmodified, and `const` — the one case needing no normalisation.
     pub const fn plain(code: KeyCode) -> Self {
         Self {
             code,
@@ -320,7 +305,7 @@ impl Key {
         self.code
     }
 
-    /// Never carries a Shift that belongs to the code.
+    /// Never a Shift that belongs to the code.
     pub fn mods(&self) -> KeyModifiers {
         self.mods
     }
@@ -329,14 +314,9 @@ impl Key {
         crossterm::event::KeyEvent::new(self.code, self.mods)
     }
 
-    /// `Tab`+Shift, `BackTab` and `BackTab`+Shift are one keystroke; fold them
-    /// onto one value so bindings and arriving keys cannot miss each other.
+    /// `Tab`+Shift, `BackTab` and `BackTab`+Shift are one keystroke.
     fn normalized(self) -> Self {
         match (self.code, self.mods.contains(KeyModifiers::SHIFT)) {
-            // `BackTab` *is* Shift+Tab, so a Shift beside it is redundant —
-            // and a terminal may or may not send it. Folding both directions
-            // is what makes "one keystroke, one value" true rather than true
-            // for the spellings someone happened to test.
             (KeyCode::Tab, true) => Self {
                 code: KeyCode::BackTab,
                 mods: self.mods.difference(KeyModifiers::SHIFT),
@@ -349,11 +329,8 @@ impl Key {
         }
     }
 
-    /// Modifier prefixes in any order and case, then a table name, a function
-    /// key, or a single character.
-    ///
     /// An uppercase bare character carries Shift (`F` is Shift+f); named keys
-    /// are matched case-insensitively.
+    /// are case-insensitive.
     pub fn parse(s: &str, extra: Option<ExtraNames>) -> Option<Self> {
         let mut mods = KeyModifiers::NONE;
         let mut rest = s;
@@ -361,8 +338,7 @@ impl Key {
             let lower = rest.to_lowercase();
             for (prefix, m) in PREFIXES {
                 if lower.starts_with(prefix) {
-                    // A prefix is only a prefix while something follows it:
-                    // `"-"` is a key, and `"s-"` on its own is not Shift.
+                    // `"-"` is a key.
                     if rest.len() > prefix.len() {
                         mods |= *m;
                         rest = &rest[prefix.len()..];
@@ -390,7 +366,6 @@ impl Key {
         Some(Self::new(code, mods))
     }
 
-    /// Inverse of [`Key::parse`].
     fn fmt_into(&self, out: &mut String) {
         for (prefix, m) in PRINTED_PREFIXES {
             if self.mods.contains(*m) {
@@ -417,13 +392,11 @@ impl std::fmt::Display for Key {
     }
 }
 
-/// One press, or an emacs-style chord. Presses are space-separated; the space
-/// key is spelled `space`, so the separator is unambiguous.
+/// Space-separated; the space key is spelled `space`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct KeySeq(Vec<Key>);
 
 impl KeySeq {
-    /// `None` when empty.
     pub fn new(keys: Vec<Key>) -> Option<Self> {
         (!keys.is_empty()).then_some(Self(keys))
     }
@@ -436,7 +409,6 @@ impl KeySeq {
         &self.0
     }
 
-    /// `None` for a chord. Callers with no chord vocabulary ask this first.
     pub fn single(&self) -> Option<Key> {
         match self.0.as_slice() {
             [k] => Some(*k),
@@ -489,10 +461,8 @@ mod tests {
             .flat_map(|k| k.names.iter().copied())
     }
 
-    /// Characters are constrained to those that are their own lowercase, and
-    /// non-whitespace: uppercase is not a distinct value here, a multi-char
-    /// lowering has no single-character spelling, and whitespace would be
-    /// eaten by the chord separator.
+    /// Characters must be their own lowercase and non-whitespace: uppercase
+    /// is not a distinct value, and whitespace is the chord separator.
     fn any_key() -> impl Strategy<Value = Key> {
         let named: Vec<KeyCode> = NAMED_KEYS
             .iter()
@@ -513,16 +483,13 @@ mod tests {
     }
 
     proptest! {
-        /// Format and parse are inverses.
         #[test]
         fn printing_then_parsing_is_the_identity(key in any_key()) {
             let printed = key.to_string();
-            // Never the chord separator, or a sequence could not be split.
             prop_assert!(!printed.contains(char::is_whitespace), "printed as {:?}", printed);
             prop_assert_eq!(Key::parse(&printed, None), Some(key), "printed as {:?}", printed);
         }
 
-        /// The same from the other side, pinning the syntax at both ends.
         #[test]
         fn parsing_then_printing_preserves_meaning(key in any_key()) {
             let printed = key.to_string();
@@ -530,7 +497,6 @@ mod tests {
             prop_assert_eq!(reparsed.to_string(), printed);
         }
 
-        /// A sequence is its presses, in order, and survives the round trip.
         #[test]
         fn a_sequence_round_trips_as_its_presses(keys in prop::collection::vec(any_key(), 1..6)) {
             let seq = KeySeq::new(keys.clone()).expect("non-empty");
@@ -540,8 +506,8 @@ mod tests {
             prop_assert_eq!(KeySeq::parse(&printed, None), Some(seq));
         }
 
-        /// Separate from the round trip: a printer that drops a bit and a
-        /// parser that never sets it would round-trip happily.
+        /// A printer that drops a bit and a parser that never sets it would
+        /// round-trip happily, so this is separate.
         #[test]
         fn no_modifier_is_dropped_in_printing(key in any_key()) {
             let printed = key.to_string();
@@ -550,7 +516,6 @@ mod tests {
         }
     }
 
-    /// `PageUp`, `pageup` and `PAGEUP` are one keystroke.
     #[test]
     fn a_named_key_is_case_insensitive() {
         for name in names() {
@@ -565,8 +530,6 @@ mod tests {
         }
     }
 
-    /// Every alias resolves to its canonical spelling, and no name is claimed
-    /// twice.
     #[test]
     fn aliases_agree_with_their_canonical_spelling() {
         let mut seen = std::collections::HashSet::new();
@@ -584,7 +547,6 @@ mod tests {
         }
     }
 
-    /// Prefix order and the two spellings of Alt do not change the value.
     #[test]
     fn modifier_prefixes_commute() {
         for name in names() {
@@ -598,8 +560,6 @@ mod tests {
         }
     }
 
-    /// These aliases are a compatibility promise, so their existence is
-    /// asserted directly; the properties above cover their behaviour.
     #[test]
     fn the_legacy_spellings_are_still_names() {
         for legacy in [
@@ -620,7 +580,6 @@ mod tests {
         }
     }
 
-    /// Shift+Tab is one keystroke however it is spelled.
     #[test]
     fn the_spellings_of_shift_tab_are_one_keystroke() {
         let spellings = ["BackTab", "S-BackTab", "S-Tab", "Shift+Tab", "S-Shift+Tab"];
@@ -630,7 +589,6 @@ mod tests {
             parsed.windows(2).all(|w| w[0] == w[1]),
             "{spellings:?} parsed as {parsed:?}"
         );
-        // Folded from either direction, so there is one value to match.
         for built in [
             Key::new(KeyCode::Tab, KeyModifiers::SHIFT),
             Key::new(KeyCode::BackTab, KeyModifiers::SHIFT),
@@ -641,8 +599,6 @@ mod tests {
         }
     }
 
-    /// The one place case carries meaning; it must not leak into named or
-    /// function keys.
     #[test]
     fn an_uppercase_character_carries_shift() {
         for c in ['f', 'c', 'w', 'z'] {
@@ -657,14 +613,12 @@ mod tests {
                 Some(Key::new(KeyCode::Char(c), KeyModifiers::NONE))
             );
         }
-        // `F1` is a function key, not Shift+f with a stray 1.
         assert_eq!(
             Key::parse("F1", None),
             Some(Key::new(KeyCode::F(1), KeyModifiers::NONE))
         );
     }
 
-    /// `-` is a key; the prefix peeler must not eat it.
     #[test]
     fn a_prefix_needs_a_key_after_it() {
         assert_eq!(
@@ -677,7 +631,6 @@ mod tests {
         );
     }
 
-    /// A half-understood sequence fails rather than binding short.
     #[test]
     fn an_unparseable_press_fails_the_whole_sequence() {
         for empty in ["", "   "] {
@@ -688,7 +641,6 @@ mod tests {
         assert_eq!(KeySeq::parse("nosuchkey C-x", None), None);
     }
 
-    /// The hook extends the vocabulary and never redefines it.
     #[test]
     fn an_extra_family_extends_but_does_not_redefine() {
         fn extra(name: &str) -> Option<KeyCode> {

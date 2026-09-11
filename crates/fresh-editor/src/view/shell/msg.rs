@@ -96,13 +96,12 @@ pub enum UiMsg {
 /// comparable, and tests compare facts.
 #[derive(Clone, Debug, PartialEq)]
 pub enum UiFact {
-    /// A key a panel's mode claimed as part of a chord. The prefix lives on
-    /// the window; see `panel::Keymap::chord`.
+    /// Part of a chord a panel's mode binds; see `panel::Keymap::chord`.
     ChordPending {
         code: crossterm::event::KeyCode,
         modifiers: crossterm::event::KeyModifiers,
     },
-    /// A key continued none of the pending prefix, so it is abandoned.
+    /// A key continued none of the pending prefix.
     ChordAbandoned,
     /// A press landed on a plugin widget, carrying what that press means.
     ///

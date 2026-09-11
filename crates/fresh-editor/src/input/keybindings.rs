@@ -1687,13 +1687,10 @@ impl BindingSource {
 
 /// Log that a configured keybinding entry was dropped because its key name did
 /// not parse, so a rejected binding leaves a trace in the log instead of dying
-/// The tables live in [`fresh_editor_core::keys`]; the keypad and media
-/// families stay here, where the input-parser crate is available.
+/// The keypad and media families stay here, where the input-parser crate is
+/// available.
 pub use fresh_editor_core::keys::{Key, KeyName, KeySeq, NAMED_KEYS, PUNCTUATION_KEYS};
 
-/// Taken from the parser's own tables rather than a second list, so a name
-/// that binds and a key that arrives agree by construction. The keypad names
-/// are aliases for the key the terminal reports; the media keys are not.
 fn terminal_key_names(lower: &str) -> Option<KeyCode> {
     fresh_input_parser::keypad::code_for_keysym(lower)
         .or_else(|| fresh_input_parser::media_modifier::code_for_keysym(lower))
@@ -1704,14 +1701,11 @@ pub fn key_name_to_code(lower: &str) -> Option<KeyCode> {
     fresh_editor_core::keys::name_to_code(lower, Some(terminal_key_names))
 }
 
-/// The entry point for any key written as a string: a plugin mode's binding
-/// table, the widget wire, a config entry's `chord`. The config's split-field
-/// form handles its own modifiers but resolves names through the same tables.
+/// The entry point for any key written as a string.
 pub fn parse_key_seq(s: &str) -> Option<KeySeq> {
     KeySeq::parse(s, Some(terminal_key_names))
 }
 
-/// `None` if the string names a sequence rather than a single press.
 pub fn parse_key_press(s: &str) -> Option<Key> {
     parse_key_seq(s)?.single()
 }
@@ -1927,13 +1921,9 @@ impl KeybindingResolver {
         (!sequence.is_empty()).then_some(sequence)
     }
 
-    /// The sequence this entry names, from `keys`, `chord`, or
-    /// `key` + `modifiers` — in that order, so the split fields win.
-    ///
-    /// The compact form is parsed directly: the split fields cannot spell the
-    /// keypad and media names, or the Meta and Hyper modifiers.
-    ///
-    /// `None` (after a warning) when any part does not parse.
+    /// From `keys`, `chord`, or `key` + `modifiers`, in that order, so the
+    /// split fields win. The compact form is parsed rather than rewritten into
+    /// them: they cannot spell keypad and media names, or Meta and Hyper.
     fn binding_sequence(
         binding: &crate::config::Keybinding,
     ) -> Option<Vec<(KeyCode, KeyModifiers)>> {
@@ -1954,7 +1944,6 @@ impl KeybindingResolver {
         Some(vec![(code, Self::parse_modifiers(&binding.modifiers))])
     }
 
-    /// Diagnostics only.
     fn binding_key_name(binding: &crate::config::Keybinding) -> &str {
         match binding.key.is_empty() {
             false => &binding.key,
@@ -3464,8 +3453,6 @@ impl KeybindingResolver {
 #[cfg(test)]
 mod tests {
 
-    /// Asserted on the resolved action, so this is a claim about behaviour
-    /// rather than about the rewrite.
     #[test]
     fn a_compact_entry_binds_what_its_split_field_equivalent_binds() {
         fn resolver_for(b: crate::config::Keybinding) -> KeybindingResolver {
@@ -3484,7 +3471,6 @@ mod tests {
                 when: Some("normal".to_string()),
             }
         }
-        // Single press: "C-S-Left" against key + modifiers.
         let compact = resolver_for(crate::config::Keybinding {
             chord: "C-S-Left".into(),
             ..entry("save")
@@ -3501,7 +3487,6 @@ mod tests {
             split.resolve(&ev, KeyContext::Normal)
         );
 
-        // Chord: "C-x C-s" against the `keys` array.
         let press = |k: &str, m: Vec<String>| crate::config::KeyPress {
             key: k.to_string(),
             modifiers: m,
@@ -3535,8 +3520,6 @@ mod tests {
         }
     }
 
-    /// Including the keys the split fields have no words for: the keypad and
-    /// media names, and the Meta and Hyper modifiers.
     #[test]
     fn a_compact_entry_binds_keys_the_split_fields_cannot_spell() {
         fn bound(chord: &str) -> Option<(KeyCode, KeyModifiers)> {
@@ -3564,7 +3547,7 @@ mod tests {
                 "{chord:?} did not bind the key it names"
             );
         }
-        // A `Meta-s` entry must leave plain `s` unbound.
+        // `Meta-s` must leave plain `s` unbound.
         let mut config = crate::config::Config::default();
         config.keybindings.push(crate::config::Keybinding {
             key: String::new(),
@@ -3586,7 +3569,7 @@ mod tests {
         );
     }
 
-    /// Asserted in a mode context of its own, where nothing else is bound.
+    /// In a mode context of its own, where nothing else is bound.
     #[test]
     fn the_split_fields_take_precedence_over_the_compact_form() {
         let mut config = crate::config::Config::default();
@@ -3616,8 +3599,6 @@ mod tests {
         );
     }
 
-    /// `{"key": "pageup", "modifiers": ["ctrl"]}` and `C-pageup` are the same
-    /// keystroke, for every name under every modifier set.
     #[test]
     fn the_compact_form_and_the_split_fields_name_the_same_keys() {
         let modifier_sets: &[(&[&str], &str)] = &[
@@ -3644,8 +3625,6 @@ mod tests {
         }
     }
 
-    /// The keypad and media families reach the compact syntax too, which is
-    /// what proves the extension seam is wired.
     #[test]
     fn the_terminal_only_families_resolve_through_the_one_parser() {
         for name in ["kp_begin", "kp_enter", "kp_0"] {
@@ -3659,16 +3638,12 @@ mod tests {
                 "{name:?} disagreed with the resolver's own lookup"
             );
         }
-        // …and a modifier in front of one still works, which is the part a
-        // bolted-on fallback would get wrong.
         assert_eq!(
             parse_key_press("C-kp_begin").map(|k| k.mods()),
             Some(KeyModifiers::CONTROL)
         );
     }
 
-    /// One press and a sequence are told apart by what parsed, not by the
-    /// caller re-splitting the string.
     #[test]
     fn a_binding_string_is_one_press_or_a_sequence() {
         for single in ["g", "C-f", "M-o", "F", "?", "Esc", "BackTab"] {

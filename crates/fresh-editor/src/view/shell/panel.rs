@@ -108,17 +108,15 @@ pub struct Keymap {
     /// binds Space, `/` or a digit binds them for the controls, and a
     /// field with the keyboard still types them.
     pub text_focused: bool,
-    /// The window's pending chord prefix, shared rather than per-panel: a
-    /// panel's mode is its buffer's mode, so `z` on a sidebar and `a` on the
-    /// diff are one `z a`.
+    /// The window's pending chord prefix. Shared rather than per-panel: a
+    /// panel's mode is its buffer's mode.
     pub chord: Vec<(crossterm::event::KeyCode, crossterm::event::KeyModifiers)>,
 }
 
-/// What a panel's mode makes of a key.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Bound {
     Run(crate::input::keybindings::Action),
-    /// Extends a chord the mode binds; claim it and wait for the rest.
+    /// Extends a chord the mode binds.
     Pending,
     None,
 }
@@ -148,9 +146,8 @@ impl Keymap {
         let Ok(resolver) = self.resolver.read() else {
             return Bound::None;
         };
-        // Chords first, then explicit single-key bindings — the order
-        // `router::chord_or_key` uses. `explicit_binding` rather than the
-        // full `resolve`: a panel takes only what its mode names.
+        // `explicit_binding` rather than `resolve`: a panel takes only what
+        // its mode names.
         use crate::input::keybindings::ChordResolution;
         match resolver.resolve_chord(&self.chord, &ev, ctx.clone()) {
             ChordResolution::Complete(action) => return Bound::Run(action),
@@ -164,17 +161,14 @@ impl Keymap {
     }
 }
 
-/// What a panel's capture leg does with a key.
 #[derive(Debug, Clone)]
 pub enum Captured {
-    /// Claim it; nothing beneath sees it.
     Claim(UiMsg),
-    /// Let it through, but report this.
     Report(UiMsg),
     Decline,
 }
 
-/// Separated from the tree plumbing so it can be tested without a `Ui`.
+/// Separate from the tree plumbing so it can be tested without a `Ui`.
 fn captured(km: &Keymap, key: fresh_ui::KeyPress) -> Captured {
     match km.action(key) {
         Bound::Run(action) => Captured::Claim(UiMsg::Action(action)),
@@ -185,8 +179,7 @@ fn captured(km: &Keymap, key: fresh_ui::KeyPress) -> Captured {
             })),
             None => Captured::Decline,
         },
-        // The buffer's route clears the prefix on anything but a partial
-        // match, and a declined key never reaches it.
+        // A declined key never reaches the buffer route that would clear it.
         Bound::None if !km.chord.is_empty() => {
             Captured::Report(UiMsg::Ui(super::msg::UiFact::ChordAbandoned))
         }
@@ -555,7 +548,6 @@ pub fn interior(
                 e.stop();
                 Some(msg)
             }
-            // Not claimed: the key is still the widgets' and the surface's.
             Captured::Report(msg) => Some(msg),
             Captured::Decline => None,
         }) as Capture
@@ -1138,7 +1130,6 @@ mod tests {
         );
     }
 
-    /// A mode's chord resolves on a panel, not only on its buffer.
     #[test]
     fn a_modes_chord_resolves_on_its_panel() {
         use crate::input::keybindings::{Action, KeybindingResolver};
@@ -1192,7 +1183,7 @@ mod tests {
         );
     }
 
-    /// `z`, then a key continuing nothing, then `a` must not complete `z a`.
+    /// `z`, a key continuing nothing, then `a` must not complete `z a`.
     #[test]
     fn a_prefix_the_mode_does_not_continue_is_abandoned() {
         use crate::input::keybindings::KeybindingResolver;
@@ -1234,7 +1225,6 @@ mod tests {
             )),
             Bound::None
         );
-        // The capture leg reports the abandonment.
         assert!(
             matches!(
                 captured(
@@ -1245,7 +1235,6 @@ mod tests {
             ),
             "a declined key should report the prefix abandoned"
         );
-        // With no prefix pending there is nothing to report.
         let idle = Keymap {
             chord: Vec::new(),
             ..km

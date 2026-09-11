@@ -1091,18 +1091,14 @@ impl Editor {
             WidgetAction::TextInputChar { text } => {
                 self.handle_widget_text_char(panel_key, &text);
             }
-            WidgetAction::Key { key } => {
-                // Where a widget key string becomes a value: both the
-                // router's keystrokes and a plugin's `widgetKey(...)`.
-                match crate::input::keybindings::parse_key_seq(&key) {
-                    Some(seq) => self.handle_widget_key(panel_key, &seq),
-                    None => tracing::debug!(
-                        target: "fresh::widgets",
-                        %key,
-                        "widget key did not parse; dropped"
-                    ),
-                }
-            }
+            WidgetAction::Key { key } => match crate::input::keybindings::parse_key_seq(&key) {
+                Some(seq) => self.handle_widget_key(panel_key, &seq),
+                None => tracing::debug!(
+                    target: "fresh::widgets",
+                    %key,
+                    "widget key did not parse; dropped"
+                ),
+            },
         }
     }
 
@@ -1310,7 +1306,6 @@ impl Editor {
         }
         .cloned();
         let widget = widget.as_ref();
-        // The panel's fallbacks answer unmodified keys only.
         use crossterm::event::KeyCode;
         let Some(key) = key.single().filter(|k| k.mods().is_empty()) else {
             return;

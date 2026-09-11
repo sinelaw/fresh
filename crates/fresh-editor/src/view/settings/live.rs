@@ -32,19 +32,14 @@ use crate::input::keybindings::{Key, KeySeq};
 use crate::widgets::kinds::{behavior, KeyDisposition, KeyFx, Viewport};
 use crate::widgets::{WidgetInstanceState, WidgetPanelState};
 
-/// A press the widget vocabulary distinguishes, or text to type.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum KeyName {
     Press(Key),
     Text(String),
 }
 
-/// The press a widget kind knows a keystroke as.
-///
-/// Each arm masks to the modifiers its key means something by — Ctrl and
-/// Shift on an arrow, Ctrl and Alt on a character chord — so a stray
-/// modifier does not turn it into a key the kinds decline. `router` masks the
-/// same way, and the two feed the same kinds.
+/// Each arm masks to the modifiers its key means something by, so a stray one
+/// does not turn it into a key the kinds decline. `router` masks the same way.
 pub fn key_name(ev: &KeyEvent) -> Option<KeyName> {
     const CARET: KeyModifiers = KeyModifiers::CONTROL.union(KeyModifiers::SHIFT);
     const CHORD: KeyModifiers = KeyModifiers::CONTROL.union(KeyModifiers::ALT);
@@ -108,13 +103,11 @@ pub fn key(store: &mut WidgetPanelState, spec: &WidgetSpec, key: &str, ev: &KeyE
     Outcome { disposition, fx }
 }
 
-/// Presses the surface makes on a control's behalf, not keystrokes the user
-/// made.
+/// Presses the surface makes on a control's behalf.
 pub const ENTER: Key = Key::plain(KeyCode::Enter);
 pub const ESCAPE: Key = Key::plain(KeyCode::Esc);
 pub const SPACE: Key = Key::plain(KeyCode::Char(' '));
 
-/// Hand a press to the control's kind — the surface's own decision.
 pub fn named(store: &mut WidgetPanelState, spec: &WidgetSpec, key: &str, press: Key) -> Outcome {
     let mut fx = KeyFx::default();
     let disposition = behavior(spec).on_key(
@@ -420,9 +413,6 @@ mod tests {
     }
 
     #[test]
-    /// The expected side is a name resolved by the shared parser, so this
-    /// asserts agreement between two vocabularies rather than restating a
-    /// formatter's output.
     fn keys_are_the_presses_the_kinds_know() {
         let n = |c, m| key_name(&ev(c, m));
         assert_eq!(

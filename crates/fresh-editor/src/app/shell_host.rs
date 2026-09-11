@@ -1948,8 +1948,8 @@ impl Editor {
             let stales = !msg.is_pointer_transient();
             match msg {
                 crate::view::shell::msg::UiMsg::Action(action) => {
-                    // An action ends a chord, and a key the tree answered
-                    // never reaches the route that would clear the prefix.
+                    // A key the tree answered never reaches the buffer route
+                    // that would clear the prefix.
                     self.active_window_mut().chord_state.clear();
                     // Straight into the pipeline that has always applied
                     // actions; nothing about it changes.

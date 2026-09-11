@@ -2732,8 +2732,6 @@ impl Editor {
 
         let mode_context = KeyContext::Mode(name.clone());
 
-        // One press (`g`, `C-f`) or a space-separated sequence (`g g`,
-        // `C-x C-s`); which it is follows from what parsed.
         for (key_str, command) in &bindings {
             let Some(seq) = parse_key_seq(key_str) else {
                 tracing::warn!("Failed to parse key binding: {}", key_str);

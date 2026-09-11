@@ -1057,8 +1057,6 @@ impl KeybindingEditor {
                 modifiers_to_config_names(binding.modifiers)
             },
             keys: binding.chord_keys.clone(),
-            // The editor writes the split fields; the compact form is a
-            // spelling for people, not something to rewrite a file into.
             chord: String::new(),
             action,
             args,

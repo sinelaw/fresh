@@ -187,7 +187,6 @@ pub enum WidgetKeyOutcome {
     /// Esc default: fire a `cancel` widget_event at the focused widget,
     /// then unmount the panel.
     CancelAndUnmount,
-    /// Route a smart key through the widget command dispatcher.
     SmartKey(KeySeq),
     /// Feed a printable character to the focused TextInput.
     TextChar(char),
@@ -235,10 +234,8 @@ pub fn widget_panel_key(
     // the editor there. See [`WidgetPanelView::page`].
     let reader = view.page && !view.focused_widget_is_text;
 
-    // Which codes a widget answers, and which modifiers ride along. A
-    // modifier the vocabulary has no meaning for is dropped, not forwarded:
-    // the kinds decline what they do not recognise, so an `Alt`+Left that
-    // kept its Alt would match nothing and be swallowed.
+    // A modifier the vocabulary has no meaning for is masked off: the kinds
+    // decline what they do not recognise, and the key would be swallowed.
     // `view::settings::live::key_name` masks the same way.
     const CARET: KeyModifiers = KeyModifiers::CONTROL.union(KeyModifiers::SHIFT);
     let widget_key = match code {
@@ -247,7 +244,6 @@ pub fn widget_panel_key(
         // Ctrl deletes a word rather than a character (`Text::on_key`).
         KeyCode::Backspace | KeyCode::Delete => Some(modifiers & KeyModifiers::CONTROL),
         KeyCode::PageUp | KeyCode::PageDown if !reader => Some(KeyModifiers::NONE),
-        // Shift extends a field's selection, Ctrl steps by word.
         KeyCode::Home
         | KeyCode::End
         | KeyCode::Left
@@ -705,8 +701,7 @@ mod tests {
         );
     }
 
-    /// A modifier the vocabulary has no meaning for is dropped, not
-    /// forwarded — the kinds would decline it and swallow the key.
+    /// A modifier the vocabulary has no meaning for is masked off.
     #[test]
     fn a_key_carries_only_the_modifiers_its_vocabulary_distinguishes() {
         let kb = resolver();
@@ -748,7 +743,6 @@ mod tests {
             press(KeyCode::Enter, KeyModifiers::CONTROL | KeyModifiers::SHIFT),
             Key::new(KeyCode::Enter, KeyModifiers::NONE)
         );
-        // Ctrl on an edit key and Ctrl/Shift on a caret key survive.
         assert_eq!(
             press(
                 KeyCode::Backspace,
