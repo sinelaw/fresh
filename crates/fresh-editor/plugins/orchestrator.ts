@@ -9885,7 +9885,7 @@ function openForm(options?: { fromPicker?: boolean; target?: RunAgentTarget }): 
 function mountFormPanel(focusKey?: string): void {
   if (!form || !formPanel) return;
   const creating = form.target === "new";
-  // Width 70 / height 90: the host shrinks the panel to its actual
+  // Width 75 / height 90: the host shrinks the panel to its actual
   // content height when content is shorter than the requested cap,
   // so a generous height ceiling doesn't waste space on tall
   // terminals (the form usually renders ~20 rows). The previous
@@ -9895,11 +9895,13 @@ function mountFormPanel(focusKey?: string): void {
   //
   // Width: the right-aligned label column (`FORM_LABEL_W`) takes ~17
   // cells off every value, and the Project Path completion list sits
-  // under the value, so a candidate only shows whole when the dialog
-  // leaves ~90 cells for it — a macOS temp path with a directory name
-  // is 80. 60% of a 160-column terminal did not; 70% does.
+  // under the value, so a candidate only shows whole — and an accepted
+  // one fits the field with its cursor — when the dialog leaves ~95
+  // cells for it: a macOS temp path with a directory name is 80, plus
+  // the cursor cell and room for a longer hash. 60% of a 160-column
+  // terminal left ~74; 75% leaves ~98.
   formPanel.mount(buildFormSpec(), {
-    widthPct: 70,
+    widthPct: 75,
     heightPct: 90,
     // Reserve the `▸ ` focus-marker gutter: focus is then legible from
     // a plain terminal capture (driveable by automation) and the
