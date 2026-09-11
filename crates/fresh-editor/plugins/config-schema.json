@@ -1418,7 +1418,7 @@
           }
         },
         "chord": {
-          "description": "The whole binding as one compact string — `\"C-x\"`, `\"C-S-Left\"`, or a\nchord as `\"C-x C-s\"`. The syntax a plugin mode's binding table uses.\n\nAn alternative to the split fields, which take precedence when both\nare present. Separate from `key` because `key` names a key literally\n(`\"-\"` is the minus key), so prefixes there would be ambiguous.",
+          "description": "The whole binding as one string — `\"C-x\"`, `\"C-S-Left\"`, `\"C-x C-s\"`.\nAn alternative to `key` + `modifiers` and `keys`, which take\nprecedence when present.",
           "type": "string"
         },
         "action": {
