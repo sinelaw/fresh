@@ -338,6 +338,54 @@ impl VirtualTextManager {
         id
     }
 
+    /// Namespaced form of [`add_with_theme_keys`] for inline virtual text.
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_with_theme_keys_in_namespace(
+        &mut self,
+        marker_list: &mut MarkerList,
+        position: usize,
+        text: String,
+        style: Style,
+        fg_theme_key: Option<String>,
+        bg_theme_key: Option<String>,
+        vtext_position: VirtualTextPosition,
+        priority: i32,
+        namespace: VirtualTextNamespace,
+        gravity: MarkerGravity,
+    ) -> VirtualTextId {
+        debug_assert!(
+            vtext_position.is_inline(),
+            "add_with_theme_keys_in_namespace requires BeforeChar or AfterChar"
+        );
+
+        let marker_id = gravity.create(marker_list, position);
+
+        let id = VirtualTextId(self.next_id);
+        self.next_id += 1;
+
+        self.texts.insert(
+            id,
+            VirtualText {
+                marker_id,
+                gravity,
+                text,
+                style,
+                fg_theme_key,
+                bg_theme_key,
+                position: vtext_position,
+                priority,
+                string_id: None,
+                namespace: Some(namespace),
+                gutter_glyph: None,
+                gutter_color: None,
+                text_overlays: Vec::new(),
+            },
+        );
+        self.bump_version();
+
+        id
+    }
+
     /// Add a virtual text entry with a string identifier
     ///
     /// This is useful for plugins that need to track and remove virtual texts by name.

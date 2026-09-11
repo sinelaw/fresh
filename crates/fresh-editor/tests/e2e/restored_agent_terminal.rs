@@ -54,6 +54,7 @@ fn spawn_agent_terminal(window: &mut fresh::app::window::Window, argv: &[&str]) 
             focus: true,       // the agent terminal is the seed
             persistent: false, // ephemeral — exactly the Orchestrator agent case
             command: Some(argv.clone()),
+            environment: Vec::new(),
             title: None,
             env: std::collections::HashMap::new(),
         })
@@ -81,6 +82,7 @@ fn spawn_resumable_agent_terminal(
             focus: true,
             persistent: false,
             command: Some(launch.clone()),
+            environment: Vec::new(),
             title: None,
             env: std::collections::HashMap::new(),
         })

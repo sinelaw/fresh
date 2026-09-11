@@ -93,6 +93,22 @@ impl Editor {
                 PopupConfirmResult::EarlyReturn
             }
 
+            Some(PopupResolver::CodeLens) => {
+                let selected_index = self
+                    .active_state()
+                    .popups
+                    .top()
+                    .and_then(|p| p.selected_item())
+                    .and_then(|item| item.data.as_ref())
+                    .and_then(|data| data.parse::<usize>().ok());
+                self.hide_popup();
+                if let Some(index) = selected_index {
+                    self.execute_code_lens(index);
+                }
+                self.active_window_mut().pending_code_lens_commands = None;
+                PopupConfirmResult::EarlyReturn
+            }
+
             Some(PopupResolver::LspConfirm { language }) => {
                 let action = self
                     .active_state()
@@ -396,6 +412,11 @@ impl Editor {
 
             Some(PopupResolver::CodeAction) => {
                 self.active_window_mut().pending_code_actions = None;
+                self.hide_popup();
+            }
+
+            Some(PopupResolver::CodeLens) => {
+                self.active_window_mut().pending_code_lens_commands = None;
                 self.hide_popup();
             }
 

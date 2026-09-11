@@ -174,6 +174,8 @@ pub enum LspFeature {
     SignatureHelp,
     /// Inlay hints (exclusive)
     InlayHints,
+    /// Code lens annotations and commands (exclusive)
+    CodeLens,
     /// Folding ranges (exclusive)
     FoldingRange,
     /// Semantic tokens (exclusive)
@@ -490,6 +492,7 @@ mod tests {
         assert!(!LspFeature::Rename.is_merged());
         assert!(!LspFeature::SignatureHelp.is_merged());
         assert!(!LspFeature::InlayHints.is_merged());
+        assert!(!LspFeature::CodeLens.is_merged());
         assert!(!LspFeature::FoldingRange.is_merged());
         assert!(!LspFeature::SemanticTokens.is_merged());
         assert!(!LspFeature::DocumentHighlight.is_merged());

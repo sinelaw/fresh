@@ -104,6 +104,7 @@ fn open_terminal_with_output(
             focus: true,
             persistent: false,
             command: Some(vec!["sleep".into(), "30".into()]),
+            environment: Vec::new(),
             title: None,
             env: std::collections::HashMap::new(),
         })

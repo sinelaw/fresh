@@ -380,6 +380,7 @@ fn layout_for_plain_text_under(
             ends_with_newline: false,
             virtual_gutter_glyph: None,
             virtual_line_style: None,
+            virtual_text_namespace: None,
         });
     }
     lines
@@ -682,6 +683,7 @@ pub fn compute_line_layout(
             ends_with_newline: false,
             virtual_gutter_glyph: None,
             virtual_line_style: None,
+            virtual_text_namespace: None,
         });
     }
     result
@@ -1036,6 +1038,7 @@ mod tests {
                 ends_with_newline: false,
                 virtual_gutter_glyph: None,
                 virtual_line_style: None,
+                virtual_text_namespace: None,
             })
             .collect()
     }
