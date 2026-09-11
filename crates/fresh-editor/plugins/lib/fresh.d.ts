@@ -1427,6 +1427,7 @@ type HintEntry = {
 	label: string;
 };
 type ButtonKind = "normal" | "primary" | "danger";
+type LabelAlign = "left" | "right";
 type TreeNode = {
 	/**
 	* The pre-rendered row content (text + per-row overlays).
@@ -1635,6 +1636,33 @@ type WidgetSpec = {
 	* taller than its window. Defaults to `0`.
 	*/
 	scrollOffset: number;
+	key?: string | null;
+} | {
+	"kind": "radio";
+	/**
+	* The selectable options, in display order.
+	*/
+	options: Array<string>;
+	/**
+	* Initial selected index into `options`. Read at first render
+	* only; instance state takes over thereafter. Clamped to
+	* `[0, options.len())`.
+	*/
+	selectedIndex: number;
+	/**
+	* Optional label rendered before the options. Empty = omitted.
+	*/
+	label?: string;
+	/**
+	* Whether this widget has visual focus. Initial-only once the
+	* host owns focus.
+	*/
+	focused: boolean;
+	/**
+	* Pad the label to this display width so a column of controls
+	* aligns their option cells. `0` = no padding.
+	*/
+	labelWidth: number;
 	key?: string | null;
 } | {
 	"kind": "dualList";
@@ -2112,6 +2140,16 @@ type WidgetSpec = {
 	rows: number;
 	key?: string | null;
 } | {
+	"kind": "label";
+	text: string;
+	style?: Partial<OverlayOptions>;
+	/**
+	* Indent into the field column of a form whose controls share
+	* this label width. `0` = flush left.
+	*/
+	labelWidth: number;
+	key?: string | null;
+} | {
 	"kind": "raw";
 	entries: Array<TextPropertyEntry>;
 	key?: string | null;
@@ -2251,6 +2289,10 @@ type WidgetMutation = {
 	value: number;
 } | {
 	"kind": "setDropdown";
+	widgetKey: string;
+	index: number;
+} | {
+	"kind": "setRadio";
 	widgetKey: string;
 	index: number;
 } | {
@@ -4436,18 +4478,15 @@ interface EditorAPI {
 	setBufferShowCursors(bufferId: number, show: boolean): boolean;
 	/**
 	* Choose the grammar a virtual buffer is highlighted with.
-	*
-	* Panel buffers are named `*<panel id>*`, which resolves to no grammar.
-	* A plugin composing a known text shape into one calls this so the host
-	* highlights it instead of the plugin painting per-row overlays. `name`
-	* is resolved like a virtual buffer's own name, so an extension in it
-	* (`"stream.diff"`) selects the grammar.
+	* 
+	* Panel buffers are named `*<panel id>*`, which resolves to no
+	* grammar; a plugin composing a known text shape into one calls this
+	* so the host highlights it instead of the plugin painting overlays.
 	*/
 	setBufferLanguage(bufferId: number, name: string): boolean;
 	/**
-	* Show old/new diff line numbers in a composed diff stream's gutter. The
-	* host derives them from the stream's `@@` headers when the content is
-	* set, so the plugin never numbers a row itself.
+	* Show old/new diff line numbers in a composed diff stream's gutter,
+	* derived by the host from the stream's `@@` headers.
 	*/
 	setBufferDiffGutter(bufferId: number, enabled: boolean): boolean;
 	/**
@@ -4815,7 +4854,7 @@ interface EditorAPI {
 	* Mount a declarative widget panel as a centered floating
 	* overlay (not bound to any virtual buffer).
 	*/
-	mountFloatingWidget(panelId: number, specObj: unknown, widthPct: number, heightPct: number, asDock?: boolean, focusMarker?: boolean, title?: string, closable?: boolean, startBlurred?: boolean, mode?: string): boolean;
+	mountFloatingWidget(panelId: number, specObj: unknown, widthPct: number, heightPct: number, asDock?: boolean, focusMarker?: boolean, title?: string, closable?: boolean, startBlurred?: boolean, mode?: string, labelAlign?: string): boolean;
 	/**
 	* Mount a declarative widget panel as a **sidebar section**: a titled,
 	* collapsible section of the file explorer's column, appended after

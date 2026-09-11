@@ -7029,6 +7029,9 @@ impl JsEditorApi {
         // The panel's own keymap: a `defineMode` name whose bindings its
         // keys resolve against first. Optional trailing arg, default none.
         mode: rquickjs::function::Opt<String>,
+        // How the panel's form controls align their labels in the shared
+        // column: `"right"` or `"left"` (default). Optional trailing arg.
+        label_align: rquickjs::function::Opt<String>,
     ) -> rquickjs::Result<bool> {
         let json = js_to_json(&ctx, spec_obj);
         let spec: fresh_core::api::WidgetSpec = match serde_json::from_value(json) {
@@ -7054,6 +7057,10 @@ impl JsEditorApi {
                 closable: closable.0.unwrap_or(false),
                 start_blurred: start_blurred.0.unwrap_or(false),
                 mode: mode.0.filter(|s| !s.is_empty()),
+                label_align: match label_align.0.as_deref() {
+                    Some("right") => fresh_core::api::LabelAlign::Right,
+                    _ => fresh_core::api::LabelAlign::Left,
+                },
             })
             .is_ok())
     }

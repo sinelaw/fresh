@@ -51,6 +51,7 @@ fn mount_titled_closable(harness: &mut EditorTestHarness) {
             height_pct: 40,
             as_dock: false,
             focus_marker: false,
+            label_align: Default::default(),
             title: Some(FRAME_TITLE.to_string()),
             closable: true,
             start_blurred: false,

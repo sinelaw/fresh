@@ -83,6 +83,7 @@ impl Editor {
 #[allow(clippy::too_many_arguments)]
 pub(super) fn render_floating_spec(
     focus_marker: bool,
+    label_align: fresh_core::api::LabelAlign,
     spec: &fresh_core::api::WidgetSpec,
     prev: &std::collections::HashMap<String, crate::widgets::WidgetInstanceState>,
     prev_painted: &std::collections::HashMap<String, crate::widgets::PaintedWindow>,
@@ -106,6 +107,7 @@ pub(super) fn render_floating_spec(
             hover_item_key,
             hover_popup_row,
             marker_gutter: focus_marker,
+            label_align,
             // The panel's own policy — see `WidgetPanelOptions`. This
             // is the path a focus change, a hover change and every
             // host-driven refresh re-render through, mounted panels
@@ -895,6 +897,10 @@ impl Editor {
                 .and_then(|slot| self.panel(slot))
                 .map(|f| f.focus_marker)
                 .unwrap_or(false);
+            let label_align = panel_slot
+                .and_then(|slot| self.panel(slot))
+                .map(|f| f.label_align)
+                .unwrap_or_default();
             // This is also the path a hover change re-renders through, so
             // the panel's tracked hover key has to reach the renderer here
             // — otherwise entering a `×` would repaint it unhighlighted.
@@ -924,6 +930,7 @@ impl Editor {
             let theme_guard = self.theme.read().unwrap();
             let out = render_floating_spec(
                 focus_marker,
+                label_align,
                 spec,
                 &prev,
                 &prev_painted,
@@ -3680,6 +3687,7 @@ mod tests {
             scrollbar_flash_until: None,
             fullscreen: false,
             focus_marker: false,
+            label_align: Default::default(),
             title: None,
             closable: false,
             hovered_widget_key: String::new(),
@@ -3767,6 +3775,7 @@ mod tests {
         let spec = list_of(40);
         let out = super::render_floating_spec(
             false,
+            Default::default(),
             &spec,
             &Default::default(),
             &Default::default(),
@@ -3831,6 +3840,7 @@ mod tests {
         };
         let out = super::render_floating_spec(
             false,
+            Default::default(),
             &spec,
             &Default::default(),
             &Default::default(),
@@ -3991,6 +4001,7 @@ mod tests {
         };
         let out = super::render_floating_spec(
             false,
+            Default::default(),
             &spec,
             &Default::default(),
             &Default::default(),
@@ -4065,6 +4076,7 @@ mod tests {
         };
         let out = super::render_floating_spec(
             false,
+            Default::default(),
             &spec,
             &Default::default(),
             &Default::default(),
@@ -4134,6 +4146,7 @@ mod tests {
         };
         let out = super::render_floating_spec(
             false,
+            Default::default(),
             &spec,
             &Default::default(),
             &Default::default(),
@@ -4423,6 +4436,7 @@ mod tests {
         };
         let out = super::render_floating_spec(
             false,
+            Default::default(),
             &spec,
             &Default::default(),
             &Default::default(),
@@ -4490,6 +4504,7 @@ mod tests {
         };
         let out = super::render_floating_spec(
             false,
+            Default::default(),
             &spec,
             &Default::default(),
             &Default::default(),
@@ -4550,6 +4565,7 @@ mod tests {
         };
         let out = super::render_floating_spec(
             false,
+            Default::default(),
             &spec,
             &Default::default(),
             &Default::default(),
@@ -4608,6 +4624,7 @@ mod tests {
         };
         let out = super::render_floating_spec(
             false,
+            Default::default(),
             &spec,
             &Default::default(),
             &Default::default(),
@@ -4659,6 +4676,7 @@ mod tests {
         };
         let out = super::render_floating_spec(
             false,
+            Default::default(),
             &spec,
             &Default::default(),
             &Default::default(),
@@ -4725,6 +4743,7 @@ mod tests {
         let render = |spec: &WidgetSpec, prev_focus: &str| {
             super::render_floating_spec(
                 false,
+                Default::default(),
                 spec,
                 &Default::default(),
                 &Default::default(),

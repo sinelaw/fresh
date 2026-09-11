@@ -20,7 +20,7 @@ use crate::event::{
     Axis, Ctl, Event, Flow, GestureKind, Input, KeyPress, Mods, MouseButton, Phase,
     SelectionOnFocus,
 };
-use crate::render::geom::Point;
+use crate::render::geom::{Point, Rect};
 use crate::render::object::{Hit, RenderId};
 use crate::schedule::Ui;
 
@@ -969,11 +969,42 @@ impl<M: 'static> Ui<M> {
             // often a whole panel body as a single row, and suppressing the
             // dismissal over a body would leave no outside at all. A caller
             // that wants this says which node it means.
+            //
+            // **And only the part of it that answers a press.** The anchor is
+            // usually a whole row — a dropdown's label, its `[value ▼]`
+            // button, and the blank run after it — and only the button
+            // toggles. A press on the label or the blank run reaches no
+            // handler, so nothing would close the list if this dismissal
+            // stood aside for it: the user clicked beside the trigger and
+            // the list stayed up. The exemption is for the press the anchor
+            // will act on itself; the rest of its rectangle is outside.
             let anchored_on = match &geom.anchor {
                 crate::desc::Anchor::Node(k) => self.find_by_key(k),
                 _ => None,
             };
-            if anchored_on.is_some_and(|a| paths.iter().any(|p| p.contains(&a))) {
+            //
+            // "Part of the anchor" is geometric, not structural: a `gesture()`
+            // wrapper carries the handler for the keyed node *inside* it (the
+            // menu bar's labels are built that way), so the nodes that count
+            // are those on the path whose rectangle lies within the anchor's
+            // — the anchor, its descendants, and a wrapper the same size.
+            let on_trigger = anchored_on.is_some_and(|a| {
+                let ar = self.rect_of(a);
+                let within = |r: Rect| {
+                    r.x >= ar.x
+                        && r.y >= ar.y
+                        && r.x + i32::from(r.w) <= ar.x + i32::from(ar.w)
+                        && r.y + i32::from(r.h) <= ar.y + i32::from(ar.h)
+                };
+                paths.iter().any(|p| {
+                    p.contains(&a)
+                        && p.iter().any(|&n| {
+                            within(self.rect_of(n))
+                                && !self.listeners(n, GestureKind::Press, false).is_empty()
+                        })
+                })
+            });
+            if on_trigger {
                 continue;
             }
             if let Some(h) = self.dismiss_handler(lid) {

@@ -9,8 +9,6 @@
 //! for tar/zip archives, extracts the inner binary, then hands the verified
 //! executable bytes to [`atomic_replace`]. AppImages need no extraction, so the
 //! whole flow is usable directly for them.
-//!
-//! See `docs/internal/packaging-self-update.md` §8.
 
 use crate::provenance::Provenance;
 use sha2::{Digest, Sha256};

@@ -81,6 +81,22 @@ export function hintBar(entries: HintEntry[]): WidgetSpec {
   return { kind: "hintBar", entries };
 }
 
+/** One row of static text — the hint under a field, a status line, a
+ * read-only summary. Never focusable, never clickable. `style` colours
+ * it (a dim `fg`, `italic`); `labelWidth` indents it into the field
+ * column of a form whose controls share that label width, so a hint
+ * sits under the value it describes. Omit unset keys rather than
+ * passing `undefined` (see `styledRow`). */
+export function label(
+  text: string,
+  options?: { style?: Partial<OverlayOptions>; labelWidth?: number; key?: string },
+): WidgetSpec {
+  const spec: WidgetSpec = { kind: "label", text, labelWidth: options?.labelWidth ?? 0 };
+  if (options?.style !== undefined) spec.style = options.style;
+  if (options?.key !== undefined) spec.key = options.key;
+  return spec;
+}
+
 /** Imperative-virtual-buffer escape hatch. Wraps an existing
  * `TextPropertyEntry[]` (the same shape `setVirtualBufferContent`
  * already accepts) so a plugin can migrate its panel one widget at a
@@ -224,6 +240,38 @@ export function dropdown(
 ): WidgetSpec {
   return {
     kind: "dropdown",
+    options,
+    selectedIndex: options_?.selectedIndex ?? 0,
+    label: options_?.label ?? "",
+    focused: options_?.focused ?? false,
+    labelWidth: options_?.labelWidth ?? 0,
+    key: options_?.key,
+  };
+}
+
+/** Inline single-select option group, rendered as
+ * `label: (•) A   ( ) B   ( ) C` — every option visible, the selected
+ * one filled. Use it for a short, fixed choice a form asks about (a
+ * backend, a scope); a longer set is a `dropdown`. Left/Right cycle the
+ * selection, Home/End jump it, a click on an option selects it; Up/Down
+ * walk the form like Tab. The selected index is host-owned instance
+ * state after first render (the spec `selectedIndex` is a seed); each
+ * change fires `widget_event { event_type: "change", payload: { index,
+ * value } }`. Push a new selection with `WidgetPanel.setRadio(key, i)`.
+ *
+ * `labelWidth` pads the label so a column of controls aligns. */
+export function radio(
+  options: string[],
+  options_?: {
+    selectedIndex?: number;
+    label?: string;
+    focused?: boolean;
+    labelWidth?: number;
+    key?: string;
+  },
+): WidgetSpec {
+  return {
+    kind: "radio",
     options,
     selectedIndex: options_?.selectedIndex ?? 0,
     label: options_?.label ?? "",
@@ -1095,6 +1143,12 @@ export class WidgetPanel {
     return this.mutate({ kind: "setDropdown", widgetKey, index });
   }
 
+  /** Push a new `Radio` selection (instance state) without a re-mount.
+   * Clamped to the option set; no `change` event fires. */
+  setRadio(widgetKey: string, index: number): boolean {
+    return this.mutate({ kind: "setRadio", widgetKey, index });
+  }
+
   /** Replace a `DualList` widget's ordered included set. Unknown
    * values are dropped on the next render; does not fire a `change`
    * event. */
@@ -1246,6 +1300,12 @@ export class FloatingWidgetPanel {
        * widget that holds focus. A dock declares its chords here rather
        * than through the window's editor mode. */
       mode?: string;
+      /** How the panel's form controls (`text` / `dropdown` / `toggle` /
+       * `number` with a `labelWidth`) align their labels in the shared
+       * column. `"right"` lines the colons up into one edge — the form
+       * grid; `"left"` (default) is the compact settings-style column.
+       * Panel-wide, because a column aligns as one. */
+      labelAlign?: LabelAlign;
     } = {},
   ): boolean {
     // deno-lint-ignore no-explicit-any
@@ -1264,6 +1324,7 @@ export class FloatingWidgetPanel {
       options.closable ?? false,
       options.startBlurred ?? false,
       options.mode ?? "",
+      options.labelAlign ?? "left",
     );
   }
 
@@ -1325,6 +1386,12 @@ export class FloatingWidgetPanel {
    * render; does not fire a `change` event. */
   setDropdown(widgetKey: string, index: number): boolean {
     return this.mutate({ kind: "setDropdown", widgetKey, index });
+  }
+
+  /** Push a new `Radio` selection (instance state) without a re-mount.
+   * Clamped to the option set; no `change` event fires. */
+  setRadio(widgetKey: string, index: number): boolean {
+    return this.mutate({ kind: "setRadio", widgetKey, index });
   }
 
   /** Replace a `DualList` widget's ordered included set. Unknown

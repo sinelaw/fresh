@@ -227,6 +227,7 @@ fn collect_dropdown(
         label,
         is_focused,
         label_width,
+        ctx.label_align,
         open,
         spec_scroll,
         ctx.marker_gutter,

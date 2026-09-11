@@ -45,10 +45,22 @@ nested-forward path routes to them:
 | `fresh path/to/file.rs` (also `path:line:col`, ranges) | Opens the file as a buffer in the **current** workspace | **Yes** — waits until the buffer is closed (the `$EDITOR` contract) |
 | `fresh some/dir/` | Opens the directory as a **new focused workspace** | No |
 | `fresh --cmd script run` | Evaluates TypeScript against this workspace and prints what it returned | Until the script settles (bounded) |
+| `fresh --cmd workspace list [--json]` / `agent list` | Every workspace the dock tracks (live ones only for `agent list`), with stable `workspaceId`s and the five-state `agentState` | No |
+| `fresh --cmd agent get <ID>` / `agent explain <ID>` | One workspace by `workspaceId`, window number or dock name — `explain` prints the decision chain behind its state (rule, evidence, timing, rule-set version) | No |
+| `fresh --cmd agent wait <ID> [--until STATE,…] [--timeout SECS]` | Blocks until the agent is quiet (or in one of the named states); exit 3 on timeout | **Yes** — the synchronisation primitive a lead agent needs |
+| `fresh --cmd agent start <CMD> [--prompt …] [--auto] [--no-wait]` | Launches an agent in this workspace and confirms it came up (its terminal produced output); exit 1 when it exited first or stayed silent | Until ready (bounded by `--timeout`) |
 
-The third subsumes what a verb menu would have offered: anything the plugin API
-can do, an agent can do, and it learns the surface by reading the declaration
-files `fresh --cmd script types` points at.
+The script verb subsumes what a verb menu would have offered: anything the
+plugin API can do, an agent can do, and it learns the surface by reading the
+declaration files `fresh --cmd script types` points at. The `workspace` and
+`agent` verbs are that same channel with the scripts written for you — each one
+only calls the orchestrator plugin's published API (`listWorkspaces`,
+`getWorkspace`, `waitForState`, `runAgent`), so they carry the same
+authorization (the workspace's capability token) and the same targeting
+(`$FRESH_SESSION` or `--session`). Read-only verbs that work *without* a token
+from any shell on the box were considered and not built: the token is the
+whole security posture of the channel, and a second, unauthenticated front
+door would need its own audit.
 
 ## The gap (what an agent still cannot do)
 

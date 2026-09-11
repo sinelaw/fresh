@@ -59,7 +59,7 @@ fn setup_projects() -> (tempfile::TempDir, PathBuf) {
 /// good — the helper retypes until the row is really listed.
 fn open_dock(h: &mut EditorTestHarness) {
     h.run_palette_command("Orchestrator: Toggle Dock").unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("Orchestrator") && h.editor().is_dock_focused())
+    h.wait_until(|h| h.screen_to_string().contains("+ New") && h.editor().is_dock_focused())
         .unwrap();
 }
 

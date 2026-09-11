@@ -246,6 +246,7 @@ fn collect_number(
         label,
         is_focused,
         label_width,
+        ctx.label_align,
         draft.as_ref().map(NumberEdit::from),
         ctx.marker_gutter,
     );

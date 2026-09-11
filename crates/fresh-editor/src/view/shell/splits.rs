@@ -1600,6 +1600,7 @@ fn panel_content(id: LeafId, i: super::panel::Interior, active: bool) -> Node<Ui
                 keyboard: active,
                 hovered_key: i.hovered_key.clone(),
                 marker_gutter: i.marker_gutter,
+                label_align: i.label_align,
                 hovered_item_key: i.hovered_item_key.clone(),
                 hovered_popup_row: i.hovered_popup_row.clone(),
                 // **A page's lists take their natural height**: the page is

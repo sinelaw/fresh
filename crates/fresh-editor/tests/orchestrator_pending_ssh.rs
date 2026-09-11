@@ -64,12 +64,12 @@ fn ssh_submit_is_non_blocking_and_shows_connecting_row() {
     })
     .unwrap();
 
-    // Switch "Run in:" from Local to SSH (Shift+Tab wraps focus onto the
-    // selector, → advances to SSH and swaps the body), then Tab into the SSH
-    // body's first field (Host) and type a host.
+    // Switch the Machine control from Local to `Other host…` (Shift+Tab
+    // lands focus on it, → advances one option and fills the connection
+    // section), then Tab into its first field (Target) and type a host.
     h.send_key(KeyCode::BackTab, KeyModifiers::NONE).unwrap();
     h.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("Host  ("))
+    h.wait_until(|h| h.screen_to_string().contains("Target:"))
         .unwrap();
     h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     h.type_text("dead-host").unwrap();

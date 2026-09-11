@@ -142,6 +142,46 @@ registerHandler("probe_ssh_no_host", async function () {
     }
 });
 
+// `getWorkspace` answers by durable id, by window number, and by dock name,
+// and carries the decision chain behind the state badge. The launch
+// workspace has no agent terminal, so it reads `idle` under the built-in
+// rules with a reason that says so.
+registerHandler("probe_get_workspace", function () {
+    const o = orch();
+    const w = o.getWorkspace(me().workspaceId);
+    const byNumber = o.getWorkspace(me().windowId);
+    const byName = o.getWorkspace(me().name);
+    const missing = o.getWorkspace("ws-does-not-exist");
+    report(
+        "PROBE_GET " + w.agentState + " " + w.explain.state + " rules=" + w.explain.rules.source +
+        " reasons=" + w.explain.reasons.length +
+        " number=" + (byNumber && byNumber.workspaceId === w.workspaceId) +
+        " name=" + (byName && byName.workspaceId === w.workspaceId) +
+        " missing=" + (missing === null),
+    );
+});
+
+// `waitForState` returns as soon as the state is one of `until`, reports a
+// timeout without throwing, and throws only for a workspace that does not
+// exist.
+registerHandler("probe_wait", async function () {
+    const o = orch();
+    const now = await o.waitForState(me().windowId, { until: "idle", timeoutMs: 2000 });
+    const late = await o.waitForState(me().windowId, { until: ["working"], timeoutMs: 300 });
+    let threw = "no";
+    try {
+        await o.waitForState("ws-does-not-exist", { timeoutMs: 100 });
+    } catch (e: any) {
+        threw = "yes";
+    }
+    report(
+        "PROBE_WAIT " + now.state + " " + now.timedOut + " then " + late.state + " " + late.timedOut +
+        " unknown_threw=" + threw,
+    );
+});
+
+editor.registerCommand("Probe Get Workspace", "", "probe_get_workspace", null);
+editor.registerCommand("Probe Wait For State", "", "probe_wait", null);
 editor.registerCommand("Probe File Under Folder", "", "probe_file_under_folder", null);
 editor.registerCommand("Probe Rename Workspace", "", "probe_rename", null);
 editor.registerCommand("Probe List Folders", "", "probe_list_folders", null);
@@ -191,7 +231,7 @@ fn harness() -> (tempfile::TempDir, EditorTestHarness) {
 /// on render alone can land before the dock is listening).
 fn open_dock(h: &mut EditorTestHarness) {
     run_command(h, "Orchestrator: Toggle Dock");
-    h.wait_until(|h| h.screen_to_string().contains("Orchestrator") && h.editor().is_dock_focused())
+    h.wait_until(|h| h.screen_to_string().contains("+ New") && h.editor().is_dock_focused())
         .unwrap();
 }
 
@@ -219,35 +259,29 @@ fn dock_column(screen: &str) -> String {
         .join("\n")
 }
 
-/// Click the toolbar's density button, which sits beside "Filters" rather
-/// than inside it. Used to put the dock in card density — the opposite of
-/// the compact default — so a probe that switches it *to* compact has
-/// somewhere to switch from.
-fn click_view_button(h: &mut EditorTestHarness) {
-    let screen = h.screen_to_string();
-    // Click the button itself, not the start of its row — the density button
-    // shares the toolbar row with "Filters", which owns the left edge.
-    let (vrow, vcol) = screen
-        .lines()
-        .enumerate()
-        .find_map(|(r, l)| {
-            l.find("view:")
-                .map(|b| (r as u16, l[..b].chars().count() as u16))
-        })
-        .unwrap_or_else(|| panic!("screen missing 'view:':\n{screen}"));
+/// Put the dock in card density through the `⋯` menu's "card view" row, so
+/// the probe has a density to change from. The menu is closed again after.
+fn set_card_view(h: &mut EditorTestHarness) {
+    open_dock_menu(h);
+    let (vcol, vrow) = h
+        .find_text_on_screen("card view")
+        .unwrap_or_else(|| panic!("screen missing 'card view':\n{}", h.screen_to_string()));
     h.mouse_click(vcol + 1, vrow).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("● card view"))
+        .unwrap();
+    h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| !h.screen_to_string().contains("Manage workspaces"))
+        .unwrap();
 }
 
-/// Expand the dock's collapsible "Filters" section, which holds the project
-/// control and the two checkboxes.
-fn expand_filters(h: &mut EditorTestHarness) {
-    let screen = h.screen_to_string();
-    let frow = screen
-        .lines()
-        .position(|l| l.contains("Filters"))
-        .unwrap_or_else(|| panic!("screen missing 'Filters':\n{screen}")) as u16;
-    h.mouse_click(3, frow).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("Manage"))
+/// Open the dock header's `⋯` menu, which holds the density rows (the
+/// applied one wears a `●`), the show switches and the project scope.
+fn open_dock_menu(h: &mut EditorTestHarness) {
+    let (mcol, mrow) = h
+        .find_text_on_screen("⋯")
+        .unwrap_or_else(|| panic!("screen missing '⋯':\n{}", h.screen_to_string()));
+    h.mouse_click(mcol, mrow).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Manage workspaces"))
         .unwrap();
 }
 
@@ -308,6 +342,44 @@ fn rename_workspace_relabels_the_row_on_the_dock() {
         .unwrap();
 }
 
+/// `getWorkspace` resolves the same workspace by durable id, window number
+/// and dock name, returns `null` for an id that matches nothing, and
+/// explains the badge: the launch workspace has no agent terminal, so it is
+/// `idle` under the built-in rules with at least one reason.
+#[test]
+fn get_workspace_resolves_by_id_number_and_name_and_explains_the_state() {
+    let (_tmp, mut h) = harness();
+
+    run_command(&mut h, "Probe Get Workspace");
+
+    h.wait_until(|h| h.screen_to_string().contains("PROBE_GET "))
+        .unwrap();
+    // The report lands in the buffer, so the screen row carries the
+    // line-number gutter before it; read from the marker on.
+    let screen = h.screen_to_string();
+    let row = screen.lines().find(|l| l.contains("PROBE_GET ")).unwrap();
+    let line = row[row.find("PROBE_GET ").unwrap()..].trim().to_string();
+    assert!(
+        line.starts_with("PROBE_GET idle idle rules=built-in reasons=")
+            && line.contains(" number=true name=true missing=true"),
+        "unexpected probe line: {line}"
+    );
+}
+
+/// `waitForState` returns at once when the state already matches, reports a
+/// timeout (rather than throwing) when it never does, and throws for a
+/// workspace that does not exist.
+#[test]
+fn wait_for_state_returns_times_out_and_refuses_unknown_targets() {
+    let (_tmp, mut h) = harness();
+
+    run_command(&mut h, "Probe Wait For State");
+
+    h.wait_until(|h| h.screen_to_string().contains("PROBE_WAIT "))
+        .unwrap();
+    h.assert_screen_contains("PROBE_WAIT idle false then idle true unknown_threw=yes");
+}
+
 /// `listFolders` reports what the dock shows, parents before children, with
 /// the nesting depth a caller needs to render the tree.
 #[test]
@@ -328,21 +400,20 @@ fn list_folders_reports_the_tree_the_dock_renders() {
     .unwrap();
 }
 
-/// `setDockView` flips the density the dock's own "view" button flips.
+/// `setDockView` flips the density the dock's own `⋯` menu rows flip.
 #[test]
 fn set_dock_view_switches_the_dock_to_compact() {
     let (_tmp, mut h) = harness();
     open_dock(&mut h);
     // Start from card, so the probe has a density to change.
-    click_view_button(&mut h);
-    h.wait_until(|h| h.screen_to_string().contains("view: card"))
-        .unwrap();
+    set_card_view(&mut h);
 
     run_command(&mut h, "Probe Compact View");
 
-    h.wait_until(|h| h.screen_to_string().contains("view: compact"))
+    open_dock_menu(&mut h);
+    h.wait_until(|h| h.screen_to_string().contains("● compact view"))
         .unwrap();
-    h.assert_screen_not_contains("view: card");
+    h.assert_screen_not_contains("● card view");
 }
 
 /// `setDockFilter` drives the dock's search box: a needle nothing matches

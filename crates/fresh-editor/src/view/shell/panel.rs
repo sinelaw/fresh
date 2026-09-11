@@ -197,6 +197,8 @@ pub struct Interior {
     /// empty. See [`super::widgets::Ctx::hovered_popup_row`].
     pub hovered_popup_row: String,
     pub marker_gutter: bool,
+    /// Form-label alignment for the panel's controls; see `Ctx::label_align`.
+    pub label_align: fresh_core::api::LabelAlign,
     /// The row budget auto-sized lists and trees are windowed to.
     ///
     /// `None` for a pane-mounted panel, and that is not "unknown": the dock
@@ -768,6 +770,7 @@ fn body(p: &Panel) -> Node<UiMsg> {
 
                 hovered_key: i.hovered_key.clone(),
                 marker_gutter: i.marker_gutter,
+                label_align: i.label_align,
                 hovered_item_key: i.hovered_item_key.clone(),
                 hovered_popup_row: i.hovered_popup_row.clone(),
                 avail_height: i.avail_height,
@@ -1020,6 +1023,7 @@ mod tests {
             hovered_item_key: String::new(),
             hovered_popup_row: String::new(),
             marker_gutter: false,
+            label_align: Default::default(),
             avail_height: None,
             scrollbar_reveal: None,
             keymap,
@@ -1260,6 +1264,7 @@ mod tests {
             hovered_item_key: String::new(),
             hovered_popup_row: String::new(),
             marker_gutter: false,
+            label_align: Default::default(),
             avail_height: None,
             scrollbar_reveal: None,
             keymap: None,
@@ -1316,6 +1321,7 @@ mod tests {
             hovered_item_key: String::new(),
             hovered_popup_row: String::new(),
             marker_gutter: false,
+            label_align: Default::default(),
             avail_height: None,
             scrollbar_reveal: None,
             keymap: None,
@@ -1385,6 +1391,7 @@ mod tests {
             hovered_item_key: String::new(),
             hovered_popup_row: String::new(),
             marker_gutter: false,
+            label_align: Default::default(),
             avail_height: None,
             scrollbar_reveal: None,
             keymap: None,
@@ -1443,6 +1450,7 @@ mod tests {
             hovered_item_key: String::new(),
             hovered_popup_row: String::new(),
             marker_gutter: false,
+            label_align: Default::default(),
             avail_height: None,
             scrollbar_reveal: None,
             keymap: None,

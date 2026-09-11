@@ -27,9 +27,11 @@ mod divider;
 pub mod dropdown;
 pub mod dual_list;
 mod hint_bar;
+mod label;
 pub mod list;
 pub mod number;
 mod popup;
+pub mod radio;
 mod raw;
 mod spacer;
 pub mod text;
@@ -449,6 +451,7 @@ pub fn focusable_key(spec: &WidgetSpec) -> Option<String> {
 pub fn behavior(spec: &WidgetSpec) -> &'static dyn WidgetImpl {
     match spec {
         WidgetSpec::HintBar { .. } => &hint_bar::HintBar,
+        WidgetSpec::Label { .. } => &label::Label,
         WidgetSpec::Spacer { .. } => &spacer::Spacer,
         WidgetSpec::Divider { .. } => &divider::Divider,
         WidgetSpec::Raw { .. } => &raw::Raw,
@@ -457,6 +460,7 @@ pub fn behavior(spec: &WidgetSpec) -> &'static dyn WidgetImpl {
         WidgetSpec::WindowEmbed { .. } => &window_embed::WindowEmbed,
         WidgetSpec::Number { .. } => &number::Number,
         WidgetSpec::Dropdown { .. } => &dropdown::Dropdown,
+        WidgetSpec::Radio { .. } => &radio::Radio,
         WidgetSpec::DualList { .. } => &dual_list::DualList,
         WidgetSpec::List { .. } => &list::List,
         WidgetSpec::Tree { .. } => &tree::Tree,

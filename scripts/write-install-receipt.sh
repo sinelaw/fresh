@@ -4,8 +4,7 @@
 # Usage: write-install-receipt.sh <channel> <output-file> [hint_key=value ...]
 #
 # The receipt is read at runtime by the `fresh-update` crate to resolve
-# provenance authoritatively and update through the same mechanism. See
-# docs/internal/packaging-self-update.md.
+# provenance authoritatively and update through the same mechanism.
 #
 # `managed` and `self_update` are derived from the channel (mirroring the
 # registry's UpdateKind) so callers only pass the channel id and any

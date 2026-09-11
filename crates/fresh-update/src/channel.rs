@@ -7,8 +7,8 @@
 use std::fmt;
 use std::str::FromStr;
 
-/// A distribution channel. See `docs/internal/packaging-self-update.md` §3 for
-/// the full inventory and how each one records its provenance.
+/// A distribution channel. The variants below are the full inventory; each
+/// records how it was installed at install time rather than guessing later.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Channel {
     /// Homebrew (tap `sinelaw/homebrew-fresh`).

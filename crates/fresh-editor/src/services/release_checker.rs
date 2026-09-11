@@ -317,7 +317,7 @@ pub fn is_newer_version(current: &str, latest: &str) -> bool {
 ///
 /// Delegates entirely to `fresh_update::resolve()` (override → receipt →
 /// embedded channel; no path guessing, so an install that recorded nothing
-/// resolves to Unknown). See `docs/internal/packaging-self-update.md`.
+/// resolves to Unknown).
 pub fn detect_provenance() -> Provenance {
     fresh_update::resolve()
 }

@@ -1204,6 +1204,79 @@ fn a_press_on_the_node_a_layer_is_anchored_to_does_not_dismiss_it() {
     );
 }
 
+/// **The exemption is the trigger, not the row it sits in.** The editor's
+/// dropdown names its whole row as the anchor — label, `[value ▼]` button and
+/// the blank run after it — and only the button answers a press. A press on
+/// the label or the blank run reaches no handler, so if the dismissal stood
+/// aside for the whole row the list would stay up for a click right beside
+/// its trigger. It stands aside only for a press something in the anchor
+/// will act on.
+#[test]
+fn a_press_on_the_anchored_row_beside_its_trigger_dismisses() {
+    let log: Log = Rc::new(RefCell::new(Vec::new()));
+    let anchor = fresh_ui::Key::Str("trigger-row".into());
+    let build = |log: &Log, anchor: &fresh_ui::Key| -> Node<()> {
+        let l = log.clone();
+        let t = log.clone();
+        stack().children([
+            col().theme("doc"),
+            row().key(anchor.clone()).h(Sizing::Cells(1)).children([
+                // The label: no handler.
+                text("Host:  ").w(Sizing::Cells(7)),
+                // The trigger: the one piece that acts on a press.
+                gesture(text("[value]")).on(
+                    GestureKind::Press,
+                    Rc::new(move |_: &Event| note(&t, "trigger".into())),
+                ),
+                fresh_ui::layer()
+                    .anchor(fresh_ui::Anchor::Node(anchor.clone()))
+                    .place(fresh_ui::Place::Below)
+                    .dismiss(fresh_ui::Dismiss::OUTSIDE_POINTER)
+                    .on_dismiss_handler(Rc::new(move |_: &Event| note(&l, "dismissed".into())))
+                    .child(col().w(Sizing::Cells(6)).h(Sizing::Cells(3)).theme("pop")),
+            ]),
+        ])
+    };
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(build(&log, &anchor), FRAME);
+
+    // On the label, in the anchored row but off the trigger: dismissed.
+    ui.dispatch(Input::press(
+        Point::new(1, 0),
+        MouseButton::Left,
+        Mods::NONE,
+    ));
+    assert!(
+        log.borrow().contains(&"dismissed".to_string()),
+        "a press on the row beside the trigger closes the list: {:?}",
+        log.borrow()
+    );
+    assert!(
+        !log.borrow().contains(&"trigger".to_string()),
+        "and the trigger did not see it: {:?}",
+        log.borrow()
+    );
+
+    // On the trigger itself: its own press, and no dismissal.
+    log.borrow_mut().clear();
+    ui.frame(build(&log, &anchor), FRAME);
+    ui.dispatch(Input::press(
+        Point::new(8, 0),
+        MouseButton::Left,
+        Mods::NONE,
+    ));
+    assert!(
+        log.borrow().contains(&"trigger".to_string()),
+        "the trigger saw its own press: {:?}",
+        log.borrow()
+    );
+    assert!(
+        !log.borrow().contains(&"dismissed".to_string()),
+        "and the layer did not also dismiss itself: {:?}",
+        log.borrow()
+    );
+}
+
 // -- Event::text_byte ---------------------------------------------------------
 
 /// A press on text reports the byte, not the column.

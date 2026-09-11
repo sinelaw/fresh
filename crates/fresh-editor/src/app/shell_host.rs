@@ -2095,6 +2095,33 @@ impl Editor {
             // and a pop-over is not among them. Stored on the panel beside the
             // hovered widget, which is where every other row-level hover
             // lives, and read back by the dropdown's renderer.
+            // A plugin-drawn overlay (the dock's `⋯` menu) had a press land
+            // outside it: the plugin hears `dismiss` on the overlay's key
+            // and closes what it drew. Same delivery as every widget event.
+            UiFact::WidgetOverlayDismiss { slot, key } => {
+                use crate::view::shell::widgets::Slot;
+                let panel = match slot {
+                    Slot::Dock => Some(crate::app::PanelSlot::Dock),
+                    Slot::Sidebar(i) => Some(crate::app::PanelSlot::Sidebar(i)),
+                    Slot::Floating => Some(crate::app::PanelSlot::Floating),
+                    Slot::Pane(_) | Slot::PromptToolbar | Slot::Settings | Slot::SettingsEntry => {
+                        None
+                    }
+                };
+                let panel_key = panel.and_then(|p| self.panel(p).map(|p| p.panel_key.clone()));
+                if let Some(panel_key) = panel_key {
+                    let ev = crate::widgets::WidgetEvent {
+                        row_target: false,
+                        context_click: false,
+                        widget_key: key,
+                        widget_kind: "overlay",
+                        payload: serde_json::json!({}),
+                        event_type: "dismiss",
+                        owner_key: None,
+                    };
+                    self.deliver_widget_hit(&panel_key, &ev, None);
+                }
+            }
             UiFact::WidgetPopupDismiss { slot } => {
                 use crate::view::shell::widgets::Slot;
                 match slot {

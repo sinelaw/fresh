@@ -12,7 +12,7 @@
 //! * the session list order is stable as the active window changes
 //!   (the picker's current-project-first sort must not reorder the
 //!   persistent dock);
-//! * mouse clicks land on dock widgets (the "New Task… ▾" button opens
+//! * mouse clicks land on dock widgets (the `[ + New ]` button opens
 //!   the create dropdown).
 
 use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness};
@@ -60,7 +60,7 @@ fn open_dock(h: &mut EditorTestHarness) {
     h.wait_until(|h| h.screen_to_string().contains("Toggle Dock"))
         .unwrap();
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("Orchestrator") && h.editor().is_dock_focused())
+    h.wait_until(|h| h.screen_to_string().contains("+ New") && h.editor().is_dock_focused())
         .unwrap();
 }
 
@@ -90,41 +90,37 @@ fn card_config() -> Config {
     config
 }
 
-/// Expand the dock's collapsible "Filters" section so the density /
-/// project / worktree / trivial controls and the "Manage" button — which
-/// the redesigned toolbar tucks away by default — become visible.
-fn expand_filters(h: &mut EditorTestHarness) {
-    let frow = row_of(h, "Filters") as u16;
-    h.mouse_click(3, frow).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("Manage"))
+/// Open the dock header's `⋯` menu — density, what to show, the project
+/// scope, folder creation and "Manage workspaces…" all live behind it.
+fn open_dock_menu(h: &mut EditorTestHarness) {
+    let (mcol, mrow) = pos_of(h, "⋯");
+    h.mouse_click(mcol, mrow).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Manage workspaces"))
         .unwrap();
 }
 
-/// Put the dock in `want` ("card" or "compact") density by clicking the
-/// toolbar's `view:` button, which sits beside "Filters" rather than inside
-/// it — flipping how the list is laid out is not a filter, and shouldn't
-/// need a section disclosed first. Idempotent: a dock already in `want`
-/// is left alone, so a test states the density it needs without having to
-/// know the default.
-fn set_view(h: &mut EditorTestHarness, want: &str) {
-    let target = format!("view: {want}");
-    if h.screen_to_string().contains(&target) {
-        return;
-    }
-    // Click the button itself, not the start of its row — the density button
-    // shares the toolbar row with "Filters", which owns the left edge.
-    let screen = h.screen_to_string();
-    let (vrow, vcol) = screen
-        .lines()
-        .enumerate()
-        .find_map(|(r, l)| {
-            l.find("view:")
-                .map(|b| (r as u16, l[..b].chars().count() as u16))
-        })
-        .unwrap_or_else(|| panic!("screen missing the density button:\n{screen}"));
-    h.mouse_click(vcol + 1, vrow).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains(&target))
+/// Close an open `⋯` menu with Esc, which hands the keyboard back to the
+/// session list.
+fn close_dock_menu(h: &mut EditorTestHarness) {
+    h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| !h.screen_to_string().contains("Manage workspaces"))
         .unwrap();
+}
+
+/// Put the dock in `want` ("card" or "compact") density through the `⋯`
+/// menu's view rows (the applied one wears a `●`). Idempotent: a dock
+/// already in `want` is left alone, so a test states the density it needs
+/// without having to know the default.
+fn set_view(h: &mut EditorTestHarness, want: &str) {
+    let marked = format!("● {want} view");
+    open_dock_menu(h);
+    if !h.screen_to_string().contains(&marked) {
+        let (vcol, vrow) = pos_of(h, &format!("{want} view"));
+        h.mouse_click(vcol + 1, vrow).unwrap();
+        h.wait_until(|h| h.screen_to_string().contains(&marked))
+            .unwrap();
+    }
+    close_dock_menu(h);
 }
 
 #[test]
@@ -137,8 +133,8 @@ fn dock_renders_as_left_column_beside_chrome() {
     open_dock(&mut h);
 
     // The dock and its controls render...
-    h.assert_screen_contains("Orchestrator");
-    h.assert_screen_contains("New Task");
+    h.assert_screen_contains("+ New");
+    h.assert_screen_contains("⋯");
     // ...and the editor chrome (menu bar) is still present to its right,
     // i.e. the dock is a column beside the window, not a replacement.
     h.assert_screen_contains("File");
@@ -167,7 +163,7 @@ fn ctrl_p_opens_palette_while_dock_focused_and_dock_stays() {
     h.wait_until(|h| h.screen_to_string().contains("Open File"))
         .unwrap();
     h.assert_screen_contains("Open File");
-    h.assert_screen_contains("Orchestrator");
+    h.assert_screen_contains("+ New");
 }
 
 /// Opening the palette from the dock hands the keyboard back to the editor, so
@@ -256,7 +252,7 @@ fn alt_o_toggles_dock_focus_with_visible_indicator() {
     // Alt+O → hand focus back to the editor. The dock stays visible
     // (non-modal), but its divider dims to the muted colour.
     h.send_key(KeyCode::Char('o'), KeyModifiers::ALT).unwrap();
-    h.assert_screen_contains("Orchestrator");
+    h.assert_screen_contains("+ New");
     let blurred_fg = divider_fg(&h);
     assert_ne!(
         focused_fg, blurred_fg,
@@ -266,7 +262,7 @@ fn alt_o_toggles_dock_focus_with_visible_indicator() {
     // Alt+O again → dive back into the dock: the divider relights with the
     // original focused colour.
     h.send_key(KeyCode::Char('o'), KeyModifiers::ALT).unwrap();
-    h.assert_screen_contains("Orchestrator");
+    h.assert_screen_contains("+ New");
     assert_eq!(
         divider_fg(&h),
         focused_fg,
@@ -275,7 +271,7 @@ fn alt_o_toggles_dock_focus_with_visible_indicator() {
 }
 
 /// Clicking the editor must hand keyboard focus back to the editor even when
-/// focus sits on a *filter* widget (e.g. the "view: compact" toggle) rather
+/// focus sits on a *header* widget (the `⋯` menu button) rather
 /// than the session list — the dock's focused divider must dim, symmetric
 /// with the list-focused case. Reproduces the report that an editor click
 /// kept focus on the orchestrator when a filter button was keyboard-focused.
@@ -300,27 +296,17 @@ fn editor_click_blurs_dock_when_a_filter_widget_is_focused() {
     let divider_fg = |h: &EditorTestHarness| h.get_cell_style(border_col(h), ROW).unwrap().fg;
     let focused_fg = divider_fg(&h);
 
-    // Reveal the Filters section and move keyboard focus off the list onto a
-    // toolbar widget (Tab from the Filters header lands on the density
-    // toggle, its immediate neighbour).
-    expand_filters(&mut h);
+    // Move keyboard focus off the list onto a header control: Tab from the
+    // list wraps to `[ + New ]`, one more lands on `⋯`. Enter opens its menu
+    // — the user's exact sequence. The menu re-renders the dock; focus must
+    // stay in it, and the subsequent editor click must still blur.
+    h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     h.render().unwrap();
-    // Press Enter to flip the toggle (view: card ↔ compact) — the user's exact
-    // sequence. The flip re-renders the dock; focus must stay put, and the
-    // subsequent editor click must still blur. Which way it flips is not the
-    // point, so wait on the density *changing* rather than on either name —
-    // a test that named one would pass vacuously in the density that already
-    // shows it.
-    let before = if h.screen_to_string().contains("view: card") {
-        "view: card"
-    } else {
-        "view: compact"
-    };
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| !h.screen_to_string().contains(before))
+    h.wait_until(|h| h.screen_to_string().contains("Manage workspaces"))
         .unwrap();
-    // Still focused (on a filter widget): the divider keeps its accent colour.
+    // Still focused (on a header widget): the divider keeps its accent colour.
     assert_eq!(
         divider_fg(&h),
         focused_fg,
@@ -476,7 +462,7 @@ fn next_window_keeps_dock_order_stable_and_highlight_correct() {
     // Blur the dock: focus dives to the editor, the scenario in which the
     // user pages windows.
     h.send_key(KeyCode::Char('o'), KeyModifiers::ALT).unwrap();
-    h.assert_screen_contains("Orchestrator");
+    h.assert_screen_contains("+ New");
 
     let wall_col = |h: &EditorTestHarness| -> u16 {
         let cols = h.screen_row_text(0).chars().count() as u16;
@@ -807,7 +793,7 @@ fn dock_scrollbar_ignores_stale_per_window_cursor_when_blurred() {
     // otherwise the baseline is taken mid-relayout and the comparison below
     // fails on the layout shift rather than the scrollbar.
     h.send_key(KeyCode::Char('o'), KeyModifiers::ALT).unwrap();
-    h.assert_screen_contains("Orchestrator");
+    h.assert_screen_contains("+ New");
     h.wait_until_stable(|_| true).unwrap();
 
     let wall_col = {
@@ -853,29 +839,24 @@ fn mouse_click_on_dock_new_button_opens_form() {
     h.render().unwrap();
     open_dock(&mut h);
 
-    // Click the "New Task… ▾" dropdown button inside the dock column. A
-    // click landing on a dock widget proves mouse hit-testing routes into
-    // the panel; the button opens the create dropdown (New Task… / New
-    // Folder…). Choosing "New Task…" (the cursor's first option, accepted
-    // with Enter) then opens the new-session form.
-    let new_row = row_of(&h, "New Task") as u16;
+    // Click the `[ + New ]` button inside the dock column. A click landing
+    // on a dock widget proves mouse hit-testing routes into the panel; the
+    // button opens the new-session form straight away.
+    let new_row = row_of(&h, "+ New") as u16;
     h.mouse_click(4, new_row).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("New Folder"))
-        .unwrap();
-    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
     h.wait_until(|h| h.screen_to_string().contains("New Workspace"))
         .unwrap();
     h.assert_screen_contains("New Workspace");
     // The dock and the centered form occupy disjoint slots, so opening
     // the form must NOT tear down the dock — its header stays painted in
     // the left column beside the modal.
-    h.assert_screen_contains("Orchestrator");
+    h.assert_screen_contains("+ New");
 
     // Esc cancels the form; the dock regains focus and stays visible.
     h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     h.wait_until(|h| !h.screen_to_string().contains("New Workspace"))
         .unwrap();
-    h.assert_screen_contains("Orchestrator");
+    h.assert_screen_contains("+ New");
 }
 
 #[test]
@@ -894,13 +875,13 @@ fn dock_alt_n_opens_form_keyboard_and_dock_stays() {
     h.wait_until(|h| h.screen_to_string().contains("New Workspace"))
         .unwrap();
     h.assert_screen_contains("New Workspace");
-    h.assert_screen_contains("Orchestrator");
+    h.assert_screen_contains("+ New");
 
     // Esc returns to the dock, which is still mounted and re-focused.
     h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     h.wait_until(|h| !h.screen_to_string().contains("New Workspace"))
         .unwrap();
-    h.assert_screen_contains("Orchestrator");
+    h.assert_screen_contains("+ New");
 }
 
 /// Enter on a Tab-focused dock button runs THAT button's action, not the
@@ -919,34 +900,26 @@ fn dock_enter_on_focused_button_runs_button_action() {
     h.render().unwrap();
     open_dock(&mut h);
 
-    // Focus opens on the sessions tree. One Tab lands on the "New Task… ▾"
-    // dropdown button (spec-order first tabbable). Enter must open the
-    // create dropdown — the same thing a click on the button does — not
-    // dive the tree.
-    h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("New Folder"))
-        .unwrap();
-    h.assert_screen_contains("New Folder");
-
-    // Esc closes the dropdown; back on the tree, nothing dived.
-    h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| !h.screen_to_string().contains("New Folder"))
-        .unwrap();
-
-    // Tab to the "Filters" header button and Enter it: the section expands
-    // (its "Manage" button appears), proving Enter activated the focused
-    // button rather than diving the tree. The density control is NOT the
-    // tell here — it sits on the toolbar beside "Filters", visible whether
-    // or not the section is open.
-    h.assert_screen_not_contains("Manage");
-    h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    // Focus opens on the sessions tree. Tab wraps to `[ + New ]` (spec-order
+    // first tabbable) and a second lands on `⋯`. Enter must open its menu —
+    // the same thing a click on the glyph does — not dive the tree.
+    h.assert_screen_not_contains("Manage workspaces");
     h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("Manage"))
+    h.wait_until(|h| h.screen_to_string().contains("Manage workspaces"))
         .unwrap();
-    h.assert_screen_contains("Manage");
+
+    // Esc closes the menu; back on the tree, nothing dived.
+    close_dock_menu(&mut h);
+
+    // One Tab to `[ + New ]` and Enter it: the New Workspace form opens,
+    // proving Enter activated the focused button rather than diving the tree.
+    h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("New Workspace"))
+        .unwrap();
+    h.assert_screen_contains("New Workspace");
 }
 
 #[test]
@@ -983,7 +956,7 @@ fn dock_slash_filters_and_enter_returns_to_list() {
     // stays visible and focused.
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
     h.render().unwrap();
-    h.assert_screen_contains("Orchestrator");
+    h.assert_screen_contains("+ New");
     h.assert_screen_contains("gamma");
 }
 
@@ -1004,7 +977,7 @@ fn dock_right_border_drag_resizes_and_persists() {
         .create_window_at(root.join("wt-beta"), "beta".to_string());
     h.render().unwrap();
     open_dock(&mut h);
-    h.wait_until(|h| h.screen_to_string().contains("Orchestrator"))
+    h.wait_until(|h| h.screen_to_string().contains("+ New"))
         .unwrap();
 
     // The menu bar ("Edit") sits right of the dock on row 0; its index in
@@ -1040,7 +1013,7 @@ fn dock_right_border_drag_resizes_and_persists() {
     h.wait_until(|h| h.screen_to_string().contains("Toggle Dock"))
         .unwrap();
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| !h.screen_to_string().contains("Orchestrator"))
+    h.wait_until(|h| !h.screen_to_string().contains("+ New"))
         .unwrap();
     open_dock(&mut h);
     let edit_reopened = col_in_row(&h, 0, "Edit");
@@ -1063,22 +1036,23 @@ fn dock_show_empty_toggle_flips_on_click() {
             .unwrap();
     h.render().unwrap();
     open_dock(&mut h);
-    // The trivial-sessions toggle now lives in the collapsible Filters
-    // section — open it first.
-    expand_filters(&mut h);
-    h.wait_until(|h| h.screen_to_string().contains("show empty"))
-        .unwrap();
-    let trow = row_of(&h, "show empty") as u16;
-    // On by default: checked.
+    // The trivial-sessions switch lives in the `⋯` menu — open it first.
+    open_dock_menu(&mut h);
+    let (tcol, trow) = pos_of(&h, "show empty");
+    // On by default: marked.
     assert!(
-        h.screen_row_text(trow).contains("[v] show empty"),
-        "expected toggle on by default: {:?}",
+        h.screen_row_text(trow).contains("● show empty"),
+        "expected the switch on by default: {:?}",
         h.screen_row_text(trow)
     );
-    // Click it → unchecked (opt back into hiding trivial sessions).
-    h.mouse_click(3, trow).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("[ ] show empty"))
-        .unwrap();
+    // Click it → off (opt back into hiding trivial sessions). The menu
+    // stays up, its mark gone.
+    h.mouse_click(tcol, trow).unwrap();
+    h.wait_until(|h| {
+        let row = h.screen_row_text(trow);
+        row.contains("show empty") && !row.contains("● show empty")
+    })
+    .unwrap();
 }
 
 #[test]
@@ -1164,24 +1138,26 @@ fn dock_alt_t_toggles_worktrees_without_blurring() {
             .unwrap();
     h.render().unwrap();
     open_dock(&mut h);
-    // The worktree toggle lives in the collapsible Filters section — open
-    // it so the checkbox state is visible (Alt+T flips the flag either way).
-    expand_filters(&mut h);
+    // The worktree switch lives in the `⋯` menu — open it so its mark is
+    // visible (Alt+T flips the flag either way, and the menu stays up).
+    open_dock_menu(&mut h);
+    let off = |h: &EditorTestHarness| {
+        let s = h.screen_to_string();
+        s.contains("all worktrees") && !s.contains("● all worktrees")
+    };
 
     // The dock's worktree filter starts off.
-    h.wait_until(|h| h.screen_to_string().contains("[ ] all worktrees"))
-        .unwrap();
+    h.wait_until(|h| off(h)).unwrap();
 
     // Alt+T flips it on. Without the fix the chord blurs the dock and the
-    // checkbox stays unchecked, so this wait would time out.
+    // switch stays off, so this wait would time out.
     h.send_key(KeyCode::Char('t'), KeyModifiers::ALT).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("[v] all worktrees"))
+    h.wait_until(|h| h.screen_to_string().contains("● all worktrees"))
         .unwrap();
 
     // Alt+T again flips it back off (proves it stays wired, not one-shot).
     h.send_key(KeyCode::Char('t'), KeyModifiers::ALT).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("[ ] all worktrees"))
-        .unwrap();
+    h.wait_until(|h| off(h)).unwrap();
 
     // And the dock kept keyboard focus throughout — it never blurred.
     assert!(
@@ -1208,11 +1184,10 @@ fn open_picker_covers_dock_fullscreen_and_esc_restores_it() {
             .unwrap();
     h.render().unwrap();
     open_dock(&mut h);
-    // Sanity: the dock (not the modal picker) is what's up, and the dock's
-    // "New Task… ▾" button — which only the dock renders, never the picker
-    // (its create button reads "+ New") — is on screen.
+    // Sanity: the dock (not the modal picker) is what's up — its `⋯` menu
+    // glyph, which only the dock renders, is on screen.
     h.assert_screen_not_contains("ORCHESTRATOR :: Workspaces");
-    h.assert_screen_contains("New Task");
+    h.assert_screen_contains("⋯");
 
     // Ctrl+P falls through (blurs the dock) and opens the palette; run
     // "Orchestrator: Open" from it.
@@ -1257,7 +1232,7 @@ fn open_picker_covers_dock_fullscreen_and_esc_restores_it() {
     h.wait_until(|h| !h.screen_to_string().contains("ORCHESTRATOR :: Workspaces"))
         .unwrap();
     h.wait_until(|h| h.editor().is_dock_focused()).unwrap();
-    h.assert_screen_contains("New Task");
+    h.assert_screen_contains("+ New");
 }
 
 /// The Quick Open hint bar (`file | >command | :line | #buffer`) must align
@@ -1769,7 +1744,7 @@ fn dock_close_reflows_buffer_to_full_width() {
     h.wait_until(|h| h.screen_to_string().contains("Toggle Dock"))
         .unwrap();
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| !h.screen_to_string().contains("Orchestrator"))
+    h.wait_until(|h| !h.screen_to_string().contains("+ New"))
         .unwrap();
 
     // After the dock closes, the line-1 gutter must land at col 0
@@ -1876,9 +1851,9 @@ fn dock_filter_clears_when_focus_leaves_so_reentry_shows_all() {
     h.assert_screen_contains("beta");
     // The filter *input* must clear too, not just the filtering: the box
     // is a controlled widget, so without resetting its value it would
-    // still read the old query while the list shows everything. The
-    // empty box shows its "Search Tasks" placeholder.
-    h.assert_screen_contains("Search Tasks");
+    // still read the old query while the list shows everything. Emptied,
+    // the search row itself goes away — search is on demand.
+    h.assert_screen_not_contains("/ [");
 }
 
 /// The F5 clear-on-leave must NOT fire when the user *picks* a workspace
@@ -1918,7 +1893,7 @@ fn dock_filter_survives_diving_into_a_filtered_workspace() {
     h.wait_until(|h| !h.editor().is_dock_focused()).unwrap();
 
     // The dive must leave the filter alone: "beta" stays hidden and the
-    // box still reads "gamma" (an emptied box shows the "Search Tasks"
+    // box still reads "gamma" (an emptied box shows the "Search workspaces"
     // placeholder instead).
     let after_dive = h.screen_to_string();
     assert!(
@@ -1927,7 +1902,7 @@ fn dock_filter_survives_diving_into_a_filtered_workspace() {
          filtered-out 'beta' row came back:\n{after_dive}"
     );
     assert!(
-        !after_dive.contains("Search Tasks"),
+        !after_dive.contains("Search workspaces"),
         "diving into a filtered workspace must keep the search text, but the box \
          fell back to its placeholder:\n{after_dive}"
     );
@@ -1944,11 +1919,11 @@ fn dock_filter_survives_diving_into_a_filtered_workspace() {
 
     // A click on a row is the same gesture as Enter, and keeps the filter
     // for the same reason. (The row's own line, not the filter box, which
-    // also spells the needle — that one shares its row with "New Task".)
+    // also spells the needle — that one is the `/ [` search row.)
     let gamma_row =
         h.screen_to_string()
             .lines()
-            .position(|l| l.contains("gamma") && !l.contains("New Task"))
+            .position(|l| l.contains("gamma") && !l.contains("/ ["))
             .unwrap_or_else(|| panic!("no 'gamma' row:\n{}", h.screen_to_string())) as u16;
     h.mouse_click(3, gamma_row).unwrap();
     h.wait_until(|h| !h.editor().is_dock_focused()).unwrap();
@@ -1958,7 +1933,7 @@ fn dock_filter_survives_diving_into_a_filtered_workspace() {
         "clicking a filtered workspace must keep the filter applied:\n{after_click}"
     );
     assert!(
-        !after_click.contains("Search Tasks"),
+        !after_click.contains("Search workspaces"),
         "clicking a filtered workspace must keep the search text:\n{after_click}"
     );
 }
@@ -2069,11 +2044,11 @@ fn dock_project_dropdown_is_keyboard_navigable() {
             .unwrap();
     h.render().unwrap();
     open_dock(&mut h);
-    // The project control lives in the collapsible Filters section.
-    expand_filters(&mut h);
 
-    // The project control starts unfiltered.
-    h.assert_screen_contains("All ▾");
+    // The scope starts unfiltered: the `⋯` menu's scope row reads "All".
+    open_dock_menu(&mut h);
+    h.assert_screen_contains("scope: All ▾");
+    close_dock_menu(&mut h);
 
     // Alt+P opens the dropdown; it lists "All projects" plus this project.
     h.send_key(KeyCode::Char('p'), KeyModifiers::ALT).unwrap();
@@ -2086,20 +2061,14 @@ fn dock_project_dropdown_is_keyboard_navigable() {
     h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
 
-    // The dropdown closed and the project filter is applied: the toolbar
-    // now reads the project basename, no longer "All".
-    h.wait_until(|h| h.screen_to_string().contains("alphaproj ▾"))
+    // The dropdown closed…
+    h.wait_until(|h| !h.screen_to_string().contains("All projects"))
         .unwrap();
-    let screen = h.screen_to_string();
-    assert!(
-        !screen.contains("All ▾"),
-        "project filter should be applied (toolbar should not read 'All ▾'):\n{screen}"
-    );
-    // And the menu itself is gone.
-    assert!(
-        !screen.contains("All projects"),
-        "dropdown should have closed after Enter:\n{screen}"
-    );
+    // …and the project filter is applied: the `⋯` menu's scope row now
+    // reads the project basename, no longer "All".
+    open_dock_menu(&mut h);
+    h.assert_screen_contains("scope: alphaproj ▾");
+    h.assert_screen_not_contains("scope: All ▾");
 }
 
 /// Esc cancels the open project dropdown without applying a filter and
@@ -2115,7 +2084,6 @@ fn dock_project_dropdown_esc_cancels_without_filtering() {
             .unwrap();
     h.render().unwrap();
     open_dock(&mut h);
-    expand_filters(&mut h);
 
     h.send_key(KeyCode::Char('p'), KeyModifiers::ALT).unwrap();
     h.wait_until(|h| h.screen_to_string().contains("All projects"))
@@ -2124,14 +2092,13 @@ fn dock_project_dropdown_esc_cancels_without_filtering() {
     h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
 
-    // Menu closed and no filter applied — toolbar still reads "All ▾".
+    // Menu closed and no filter applied — the `⋯` menu's scope row still
+    // reads "All".
     h.wait_until(|h| !h.screen_to_string().contains("All projects"))
         .unwrap();
-    let screen = h.screen_to_string();
-    assert!(
-        screen.contains("All ▾"),
-        "Esc must not apply the cursor's project (toolbar should still read 'All ▾'):\n{screen}"
-    );
+    open_dock_menu(&mut h);
+    h.assert_screen_contains("scope: All ▾");
+    close_dock_menu(&mut h);
 
     // The dock still owns the keyboard: Alt+P re-opens the dropdown.
     h.send_key(KeyCode::Char('p'), KeyModifiers::ALT).unwrap();
@@ -2401,12 +2368,12 @@ fn dock_right_click_opens_context_menu() {
 fn dock_context_menu_esc_closes() {
     let (_tmp, mut h) = open_dock_context_menu("alphaproj");
 
-    // Esc dismisses the menu; the dock returns (its "New Task… ▾" button
+    // Esc dismisses the menu; the dock returns (its `[ + New ]` button
     // shows) and the menu-only "Archive"/"Delete" actions are gone.
     h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     h.wait_until(|h| !h.screen_to_string().contains("Archive"))
         .unwrap();
-    h.assert_screen_contains("New Task");
+    h.assert_screen_contains("+ New");
 }
 
 #[test]
@@ -2495,12 +2462,12 @@ fn dock_context_menu_click_outside_dismisses() {
     h.mouse_click(90, 20).unwrap();
     h.wait_until(|h| !h.screen_to_string().contains("Archive"))
         .unwrap();
-    h.assert_screen_contains("New Task");
+    h.assert_screen_contains("+ New");
 }
 
 // ── folder tree ───────────────────────────────────────────────────────────
 
-/// The "New Task… ▾" dropdown can create a folder, and a session's
+/// The `⋯` menu can create a folder, and a session's
 /// context menu can file it into that folder — the dock's hierarchical
 /// organisation. Creating a folder then moving the session into it makes
 /// the folder report a member count of `(1)`.
@@ -2514,14 +2481,11 @@ fn dock_new_folder_and_move_session_into_it() {
     h.render().unwrap();
     open_dock(&mut h);
 
-    // Open the "New Task… ▾" create dropdown, move the cursor to
-    // "New Folder…", and accept it — that opens the New Folder dialog.
-    let new_row = row_of(&h, "New Task") as u16;
-    h.mouse_click(4, new_row).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("New Folder"))
-        .unwrap();
-    h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    // Pick "New Folder…" from the `⋯` menu — that opens the New Folder
+    // dialog.
+    open_dock_menu(&mut h);
+    let (fcol, frow) = pos_of(&h, "New Folder");
+    h.mouse_click(fcol, frow).unwrap();
 
     // The dialog opens with focus in the (empty) name field. Type the
     // name, then Tab onto the "Organize … under this folder" checkbox and
@@ -2580,13 +2544,10 @@ fn dock_new_folder_dialog_enter_on_cancel_cancels() {
     h.render().unwrap();
     open_dock(&mut h);
 
-    // Open the New Folder dialog via the "New Task… ▾" dropdown.
-    let new_row = row_of(&h, "New Task") as u16;
-    h.mouse_click(4, new_row).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("New Folder"))
-        .unwrap();
-    h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    // Open the New Folder dialog via the `⋯` menu.
+    open_dock_menu(&mut h);
+    let (fcol, frow) = pos_of(&h, "New Folder");
+    h.mouse_click(fcol, frow).unwrap();
     h.wait_until(|h| h.screen_to_string().contains("Folder name"))
         .unwrap();
 
@@ -2803,28 +2764,6 @@ fn palette_move_command_opens_move_dropdown() {
     .unwrap();
 }
 
-/// The expanded Filters panel carries a "Move…" button that opens the
-/// Move-to-Folder dropdown for the highlighted/current session — a
-/// mouse-first route to the same flow.
-#[test]
-fn dock_filters_move_button_opens_move_dropdown() {
-    let (_tmp, root) = setup_project("alphaproj");
-    let mut h =
-        EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
-            .unwrap();
-    h.render().unwrap();
-    open_dock(&mut h);
-
-    expand_filters(&mut h);
-    let (mcol, mrow) = pos_of(&h, "Move…");
-    h.mouse_click(mcol + 2, mrow).unwrap();
-    h.wait_until(|h| {
-        let s = h.screen_to_string();
-        s.contains("Top level") && s.contains("New Folder")
-    })
-    .unwrap();
-}
-
 /// A folder's "Rename…" action opens the same centered dialog as "New
 /// Folder" — pre-filled with the current name — instead of the bottom
 /// minibuffer prompt (which also ran the label and value together).
@@ -2838,12 +2777,9 @@ fn dock_folder_rename_uses_dialog() {
     open_dock(&mut h);
 
     // Create a folder "Docs" (empty — organize checkbox off).
-    let new_row = row_of(&h, "New Task") as u16;
-    h.mouse_click(4, new_row).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("New Folder"))
-        .unwrap();
-    h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    open_dock_menu(&mut h);
+    let (fcol, frow) = pos_of(&h, "New Folder");
+    h.mouse_click(fcol, frow).unwrap();
     h.wait_until(|h| h.screen_to_string().contains("Folder name"))
         .unwrap();
     h.type_text("Docs").unwrap();
@@ -2953,15 +2889,12 @@ fn dock_hint_bar_stays_pinned_after_folder_collapse() {
     h.render().unwrap();
     open_dock(&mut h);
 
-    // Create a folder via "New Task… ▾" → "New Folder…", keeping the
+    // Create a folder via `⋯` → "New Folder…", keeping the
     // "organize under this folder" checkbox ON so the launch session is
     // filed inside it (the folder then has a card to hide on collapse).
-    let new_row = row_of(&h, "New Task") as u16;
-    h.mouse_click(4, new_row).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("New Folder"))
-        .unwrap();
-    h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    open_dock_menu(&mut h);
+    let (fcol, frow) = pos_of(&h, "New Folder");
+    h.mouse_click(fcol, frow).unwrap();
     h.wait_until(|h| h.screen_to_string().contains("Folder name"))
         .unwrap();
     h.type_text("Docs").unwrap();
@@ -3025,9 +2958,6 @@ fn dock_compact_rows_drop_branch_name() {
     // cached the branch (the "clean" gate above), which the compact row
     // used to trail as a "▸<branch>" suffix.
     h.wait_until(|h| {
-        if !h.screen_to_string().contains("view: compact") {
-            return false;
-        }
         let Some(name_row) = dock_card_name_row(h, "alphaproj") else {
             return false;
         };
@@ -3187,20 +3117,16 @@ fn dock_list_scrollbar_flashes_on_keyboard_nav_and_expires() {
     );
 }
 
-/// Drive the dock's "New Task… ▾" create dropdown to open the "New Folder"
-/// dialog. Clicks the dropdown, then clicks its "New Folder…" option (a
-/// mouse activate routes straight to the plugin's `runDockMenuOption`, so
-/// there's no keyboard-focus race). Returns once the dialog's body —
-/// text that lives only inside it — is on screen.
+/// Drive the dock's `⋯` menu to open the "New Folder" dialog. Opens the
+/// menu, then clicks its "New Folder…" option (a mouse activate routes
+/// straight to the plugin's `runDockMenuOption`, so there's no
+/// keyboard-focus race). Returns once the dialog's body — text that lives
+/// only inside it — is on screen.
 fn open_new_folder_dialog(h: &mut EditorTestHarness) {
-    let new_row = row_of(h, "New Task") as u16;
-    h.mouse_click(4, new_row).unwrap();
-    // The create dropdown opens listing "New Task…" / "New Folder…".
-    h.wait_until(|h| h.screen_to_string().contains("New Folder"))
-        .unwrap();
+    open_dock_menu(h);
     let (fx, fy) = h
         .find_text_on_screen("New Folder")
-        .expect("the create dropdown should list a 'New Folder…' option");
+        .expect("the ⋯ menu should list a 'New Folder…' option");
     h.mouse_click(fx, fy).unwrap();
     // The dialog's "Folder name" prompt and "Create Folder" button are
     // text unique to the dialog body (not the toolbar or the dropdown).
@@ -3264,7 +3190,7 @@ fn new_folder_dialog_wears_native_modal_frame() {
     h.wait_until(|h| !h.screen_to_string().contains("Create Folder"))
         .unwrap();
     h.assert_screen_not_contains("[×]");
-    h.assert_screen_contains("Orchestrator");
+    h.assert_screen_contains("+ New");
 
     // Re-open and confirm Esc dismisses it the same way (both routes fire
     // the panel's cancel `widget_event`, which the orchestrator handles).
@@ -3274,7 +3200,7 @@ fn new_folder_dialog_wears_native_modal_frame() {
     h.wait_until(|h| !h.screen_to_string().contains("Create Folder"))
         .unwrap();
     h.assert_screen_not_contains("[×]");
-    h.assert_screen_contains("Orchestrator");
+    h.assert_screen_contains("+ New");
 }
 
 /// Open the New-Session ("New Workspace") form via the command palette and
@@ -3749,11 +3675,11 @@ fn settings_modal_covers_the_full_screen_and_dims_the_dock() {
         .find(|&c| h.get_cell(c, 0).as_deref() == Some("│"))
         .expect("dock right border (│) should be present on the toolbar row");
 
-    // Sample a dock cell before the modal opens: its title, which the
-    // modal does not cover.
+    // Sample a dock cell before the modal opens: its `+ New` button, which
+    // the modal does not cover.
     let (title_col, title_row) = h
-        .find_text_on_screen("Orchestrator")
-        .expect("dock title should be on screen");
+        .find_text_on_screen("+ New")
+        .expect("dock header should be on screen");
     let undimmed_fg = h.get_cell_style(title_col, title_row).unwrap().fg;
 
     h.open_settings().unwrap();
@@ -3783,25 +3709,12 @@ fn settings_modal_covers_the_full_screen_and_dims_the_dock() {
     );
 }
 
-/// The dock's title bar carries a `[ × ]` hide button at its right edge —
-/// the affordance the file explorer beside it has always had — and clicking
-/// it tears the dock down.
-///
-/// Before this, the only way to put the dock away was the "Orchestrator:
-/// Toggle Dock" command or its accelerator, so the panel read as permanent
-/// furniture to anyone who reaches for a close button first.
-///
-/// The button is right-*aligned*, not padded to a guessed width: the title
-/// row is a Row with a flex spacer the host sizes against the dock's real
-/// column count. The assertion below therefore checks the glyph sits on the
-/// dock's last content column, which is what the previous "pad past the
-/// screen width and let the host clip the tail" title row could never
-/// express — the clipped tail was exactly where the button belongs.
-///
-/// It renders as the bare glyph (`bare: true`), not a framed `[ × ]`, and
-/// lights up under the pointer the way the tab and file explorer `×` do.
+/// The `⋯` menu's last row hides the dock, the same teardown Esc and
+/// "Orchestrator: Toggle Dock" run: the whole dock column goes away. The
+/// title bar above the action row keeps its `×` as the mouse route to the
+/// same thing; the action row itself carries the `⋯` menu.
 #[test]
-fn dock_title_bar_close_button_hides_the_dock() {
+fn dock_menu_hide_dock_hides_the_dock() {
     let (_tmp, root) = setup_project("alphaproj");
     let mut h =
         EditorTestHarness::with_config_and_working_dir(120, 32, Default::default(), root.clone())
@@ -3809,68 +3722,34 @@ fn dock_title_bar_close_button_hides_the_dock() {
     h.render().unwrap();
     open_dock(&mut h);
 
-    // The glyph shares the dock's title row, and wears no `[ ]` frame.
-    let title_row = row_of(&h, "Orchestrator") as u16;
-    let title_text = h.screen_row_text(title_row);
+    // The title bar carries the `×`; the action row under it carries `⋯`.
+    // Only the dock's column counts: the editor's tab bar shares these
+    // screen rows and has a `×` of its own.
+    let dock_col = |row: usize| -> String {
+        let text = h.screen_row_text(row as u16);
+        text.split('│').next().unwrap_or("").to_string()
+    };
+    let action_row = row_of(&h, "+ New");
+    let header = dock_col(action_row);
     assert!(
-        title_text.contains('×'),
-        "dock title bar should carry a × hide button:\n{}",
+        header.contains("⋯") && !header.contains('×'),
+        "the dock's action row carries the ⋯ menu:\n{}",
         h.screen_to_string()
     );
+    let title = dock_col(action_row - 1);
     assert!(
-        !title_text.contains("[ × ]") && !title_text.contains("[×]"),
-        "the × is a bare icon affordance, not a framed button:\n{}",
-        h.screen_to_string()
-    );
-    let close_col = title_text
-        .chars()
-        .position(|c| c == '×')
-        .expect("× just asserted present") as u16;
-
-    // It sits on the dock's last content column. The header rule under the
-    // toolbar is drawn by the host (`divider()`) across the panel's real
-    // inner width, so its final `─` *is* that column — comparing against it
-    // asserts the right-alignment without the test re-deriving the dock's
-    // geometry (width fraction, border, gutter) and without pinning the dock
-    // to any particular width.
-    let rule_row = h
-        .screen_to_string()
-        .lines()
-        .position(|l| l.starts_with("────"))
-        .expect("dock header rule should be on screen") as u16;
-    let cols = h.screen_row_text(rule_row).chars().count() as u16;
-    let content_last_col = (0..cols)
-        .take_while(|&c| h.get_cell(c, rule_row).as_deref() == Some("─"))
-        .last()
-        .expect("dock header rule should span the panel's inner width");
-    assert_eq!(
-        close_col,
-        content_last_col,
-        "the × must sit on the dock's last content column (glyph at \
-         {close_col}, content ends at {content_last_col}):\n{}",
+        title.contains("Orchestrator") && title.contains('×'),
+        "the dock's title bar sits above the action row with its ×:\n{}",
         h.screen_to_string()
     );
 
-    // Pointing at it recolours it, so it reads as live before you commit to
-    // the click — the affordance the tab and explorer `×` already have.
-    let idle_fg = h.get_cell_style(close_col, title_row).unwrap().fg;
-    h.mouse_move(close_col, title_row).unwrap();
-    h.wait_until(|h| h.get_cell_style(close_col, title_row).unwrap().fg != idle_fg)
+    open_dock_menu(&mut h);
+    let (hcol, hrow) = pos_of(&h, "Hide dock");
+    h.mouse_click(hcol, hrow).unwrap();
+    h.wait_until(|h| !h.screen_to_string().contains("+ New"))
         .unwrap();
-
-    // ...and moving off it puts the idle colour back, so the highlight
-    // tracks the pointer rather than latching on first contact.
-    h.mouse_move(0, title_row).unwrap();
-    h.wait_until(|h| h.get_cell_style(close_col, title_row).unwrap().fg == idle_fg)
-        .unwrap();
-
-    // Clicking it runs the same teardown as Esc / the toggle command: the
-    // whole dock column goes away, not just the title row.
-    h.mouse_click(close_col, title_row).unwrap();
-    h.wait_until(|h| !h.screen_to_string().contains("New Task"))
-        .unwrap();
-    h.assert_screen_not_contains("Filters");
-    h.assert_screen_not_contains("Search Tasks");
+    h.assert_screen_not_contains("⋯");
+    h.assert_screen_not_contains("Hide dock");
 }
 
 /// View ▸ Orchestrator Dock toggles the dock, sits directly under the file
@@ -3910,7 +3789,7 @@ fn view_menu_row_toggles_the_dock_with_a_live_checkbox() {
     // Enter dispatches the plugin action behind it and the dock comes up.
     h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("New Task"))
+    h.wait_until(|h| h.screen_to_string().contains("+ New"))
         .unwrap();
 
     // Re-opening the menu now shows the box ticked, because the checkbox
@@ -3923,7 +3802,7 @@ fn view_menu_row_toggles_the_dock_with_a_live_checkbox() {
     // ...and the same row puts it away again.
     h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| !h.screen_to_string().contains("New Task"))
+    h.wait_until(|h| !h.screen_to_string().contains("+ New"))
         .unwrap();
 }
 
@@ -4036,12 +3915,9 @@ fn moving_extracted_co_tenant_workspace_to_folder_leaves_original_unfiled() {
         .unwrap();
 
     // Create an empty folder "Docs" (organize checkbox off).
-    let new_row = row_of(&h, "New Task") as u16;
-    h.mouse_click(4, new_row).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("New Folder"))
-        .unwrap();
-    h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    open_dock_menu(&mut h);
+    let (fcol, frow) = pos_of(&h, "New Folder");
+    h.mouse_click(fcol, frow).unwrap();
     h.wait_until(|h| h.screen_to_string().contains("Folder name"))
         .unwrap();
     h.type_text("Docs").unwrap();
@@ -4187,14 +4063,11 @@ fn box_border_cols(h: &EditorTestHarness, row: u16) -> (u16, u16) {
     (borders[0], borders[1])
 }
 
-/// Open the dock's "New Task… ▾" create dropdown (entries "New Task…"
-/// and "New Folder…") and return the screen row of its second entry.
+/// Open the dock's `⋯` menu (first entries "New Folder…" and "Manage
+/// workspaces…") and return the screen row of its second entry.
 fn open_create_dropdown(h: &mut EditorTestHarness) -> u16 {
-    let new_row = row_of(h, "New Task") as u16;
-    h.mouse_click(4, new_row).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("New Folder"))
-        .unwrap();
-    row_of(h, "New Folder") as u16
+    open_dock_menu(h);
+    row_of(h, "Manage workspaces") as u16
 }
 
 /// A dock dropdown's hover band must span the menu row, not a band sized
@@ -4215,8 +4088,8 @@ fn dock_dropdown_hover_band_spans_the_menu_row() {
     h.render().unwrap();
     open_dock(&mut h);
 
-    // "New Folder…" is the entry to hover: "New Task…" is the keyboard
-    // cursor and already carries the focus band.
+    // "Manage workspaces…" is the entry to hover: "New Folder…" is the
+    // keyboard cursor and already carries the focus band.
     let menu_row = open_create_dropdown(&mut h);
     let (left, right) = box_border_cols(&h, menu_row);
 
@@ -4259,7 +4132,7 @@ fn dock_dropdown_cursor_band_spans_the_menu_row() {
     let (left, right) = box_border_cols(&h, menu_row);
     let idle = row_bgs(&h, menu_row);
 
-    // ↓ moves the dropdown cursor onto "New Folder…".
+    // ↓ moves the dropdown cursor onto "Manage workspaces…".
     h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     h.wait_until(|h| row_bgs(h, menu_row) != idle).unwrap();
     let selected = row_bgs(&h, menu_row);
@@ -4526,9 +4399,10 @@ fn mouse_click_on_dock_filter_moves_the_keyboard_into_the_dock() {
         "the editor click should have blurred the dock"
     );
 
-    // The filter field, reached with the mouse rather than with "/".
-    let row = row_of(&h, "Search") as u16;
-    let col = col_in_row(&h, row, "Search") as u16;
+    // The search, reached with the mouse rather than with "/": the header's
+    // `/ search` opens the field and puts the keyboard in it.
+    let row = row_of(&h, "/ search") as u16;
+    let col = col_in_row(&h, row, "/ search") as u16;
     h.mouse_click(col + 1, row).unwrap();
     h.render().unwrap();
     // Asserted before a key is sent, and deliberately: with the keyboard

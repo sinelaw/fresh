@@ -1,6 +1,5 @@
 //! The channel → update-strategy registry: the single place that encodes
-//! "how do we update channel X". See `docs/internal/packaging-self-update.md`
-//! §6.
+//! "how do we update channel X".
 
 use crate::channel::Channel;
 use crate::provenance::Provenance;
