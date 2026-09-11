@@ -151,7 +151,18 @@ export default defineConfig({
 
     socialLinks: [{ icon: "github", link: "https://github.com/sinelaw/fresh" }],
 
-    search: { provider: "local" },
+    search: {
+      provider: "local",
+      options: {
+        detailedView: true,
+        _render(src, env, md) {
+          if (env.relativePath?.startsWith("internal/")) {
+            return "";
+          }
+          return md.render(src, env);
+        },
+      },
+    },
 
     editLink: {
       pattern: "https://github.com/sinelaw/fresh/edit/master/docs/:path",
