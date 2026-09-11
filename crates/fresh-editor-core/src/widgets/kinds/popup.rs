@@ -20,13 +20,9 @@
 //! (escaping panel clipping), not an architecture requirement — recorded
 //! as optional follow-up, not debt.
 
-use std::collections::HashMap;
-
 use fresh_core::api::WidgetSpec;
 
 use super::WidgetImpl;
-use crate::widgets::registry::WidgetInstanceState;
-use crate::widgets::render::{render_collected, CollectedOutput, PanelPopup, RenderContext};
 
 pub struct Popup;
 
@@ -42,53 +38,5 @@ impl WidgetImpl for Popup {
             }
         }
         m
-    }
-    fn collect(
-        &self,
-        spec: &WidgetSpec,
-        prev: &HashMap<String, WidgetInstanceState>,
-        next_state: &mut HashMap<String, WidgetInstanceState>,
-        ctx: RenderContext<'_>,
-        panel_width: u32,
-    ) -> CollectedOutput {
-        let WidgetSpec::Popup {
-            child,
-            key,
-            anchor,
-            screen_space,
-        } = spec
-        else {
-            return CollectedOutput::default();
-        };
-        if *screen_space {
-            // Render the child subtree exactly like any other node,
-            // then project its rows through the pop-over channel
-            // instead of the panel flow: the popup contributes no
-            // inline rows, and its content escapes panel clipping.
-            // `row_indices` stays empty — a generic popup's rows are
-            // not option cells, so the host records no select hits
-            // (clicks inside the box are absorbed by its rect).
-            let child_out = render_collected(child, prev, next_state, ctx, panel_width);
-            let mut out = CollectedOutput::default();
-            let (anchor_row, anchor_col, anchor_absolute) = match anchor {
-                // Explicit anchor: absolute panel-inner coordinates —
-                // the container merges must not shift it with the flow.
-                Some([row, col]) => (*row, *col, true),
-                // No anchor: drop from the popup's own position in the
-                // tree (parents shift anchor_row as they merge).
-                None => (0, 0, false),
-            };
-            out.popups.push(PanelPopup {
-                widget_key: key.clone().unwrap_or_default(),
-                anchor_row,
-                anchor_col,
-                anchor_absolute,
-                entries: child_out.entries,
-                row_indices: Vec::new(),
-            });
-            return out;
-        }
-        // Panel-clipped: same promoted-overlay collection as `Overlay`.
-        super::containers::collect_overlay(child, prev, next_state, ctx, panel_width)
     }
 }

@@ -594,8 +594,8 @@ impl WidgetRegistry {
     /// The wide parameter list is the price of `WidgetPanelState`
     /// being public — every field is plainly named at the call
     /// site rather than buried inside an opaque builder. The
-    /// dispatcher always populates them all from one `RenderOutput`,
-    /// so the apparent verbosity stays at the boundary.
+    /// dispatcher populates them all from one `resolve_panel`, so the
+    /// apparent verbosity stays at the boundary.
     #[allow(clippy::too_many_arguments)]
     pub fn mount(
         &mut self,

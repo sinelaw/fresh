@@ -25,53 +25,6 @@ use super::Editor;
 /// host state that changes with every mouse move, so it is applied
 /// around the render rather than carried in the spec; only bare icon
 /// buttons read it.
-impl Editor {
-    /// Render a buffer-mounted panel spec with the live theme + grammars
-    /// threaded in (so `markdown: true` Text widgets render through the
-    /// shared markdown engine). The read guard on the theme lives only
-    /// for the render call.
-    #[allow(clippy::too_many_arguments)]
-    pub(super) fn render_panel_spec(
-        &self,
-        spec: &fresh_core::api::WidgetSpec,
-        prev: &std::collections::HashMap<String, crate::widgets::WidgetInstanceState>,
-        prev_focus_key: &str,
-        panel_width: u32,
-        avail_height: Option<u32>,
-        auto_focus_first: bool,
-        h_pan: &std::collections::HashMap<String, i32>,
-    ) -> crate::widgets::RenderOutput {
-        let theme_guard = self.theme.read().unwrap();
-        crate::widgets::render_spec_with_options(
-            spec,
-            prev,
-            panel_width,
-            crate::widgets::RenderOptions {
-                prev_focus_key,
-                // The panel's own policy: see `WidgetPanelOptions`. A
-                // panel that says "nothing focused" is a real state
-                // must not have that answer overwritten on every
-                // repaint.
-                auto_focus_first,
-                markdown: Some(crate::widgets::MarkdownCtx {
-                    theme: &theme_guard,
-                    grammars: Some(self.grammar_registry.as_ref()),
-                }),
-                // Auto-size budget for `visible_rows: None` lists/trees:
-                // the viewport height of the split currently showing the
-                // panel's buffer (None when it isn't on screen — widgets
-                // then keep the legacy fallback until it is).
-                avail_height,
-                // The reader's sideways fold: a repaint that dropped it would
-                // slide every row back to its resting window under a reader
-                // who had panned away from it.
-                h_pan: Some(h_pan),
-                ..Default::default()
-            },
-        )
-    }
-}
-
 /// Walk a `Tree`'s flat `nodes` and return the absolute indices of
 /// nodes that are currently visible — i.e. every ancestor is in
 /// `expanded`. Mirrors the renderer's filter so dispatcher and
@@ -307,83 +260,12 @@ impl Editor {
         );
     }
 
-    /// Apply a `RenderOutput`'s focus-cursor position to the panel
-    /// buffer + every split rendering it. When a `TextInput` is
-    /// focused, the dispatcher flips `show_cursors=true` and moves
-    /// the primary cursor to the right byte. When no TextInput is
-    /// focused, the cursor is hidden (`show_cursors=false`) — the
-    /// focused widget's own bg overlay shows where focus is.
-    ///
-    /// Must be called *after* `set_virtual_buffer_content` so the
-    /// buffer's text matches the row/byte coordinates the renderer
-    /// produced.
-    pub(super) fn apply_widget_focus_cursor(
-        &mut self,
-        buffer_id: BufferId,
-        entries: &[fresh_core::text_property::TextPropertyEntry],
-        focus_cursor: Option<crate::widgets::FocusCursor>,
-    ) {
-        // A widget panel is laid out to the panel's exact width and clipped
-        // there, so its view has nothing to scroll sideways to. Pin it
-        // before anything else: the focus cursor below can sit at the end
-        // of a row that reaches the right edge, and cursor-following would
-        // otherwise drag the whole panel — header included — left by a
-        // column or two.
-        self.pin_widget_panel_horizontal_scroll(buffer_id);
-
-        // If the plugin has taken explicit control of this buffer's cursor
-        // (via `setBufferShowCursors`), the widget runtime must not touch
-        // its visibility or position — the plugin owns it. This lets a
-        // widget-panel pane be cursor-driven (e.g. git log's commit list)
-        // without each repaint clearing the cursor.
-        let locked = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.get(&buffer_id))
-            .map(|s| s.cursor_visibility_locked)
-            .unwrap_or(false);
-        if locked {
-            return;
-        }
-
-        let absolute_byte = focus_cursor.map(|fc| {
-            let row = fc.buffer_row as usize;
-            let prefix: usize = entries.iter().take(row).map(|e| e.text.len()).sum();
-            prefix + fc.byte_in_row as usize
-        });
-
-        if let Some(state) = self
-            .windows
-            .get_mut(&self.active_window)
-            .map(|w| &mut w.buffers)
-            .expect("active window present")
-            .get_mut(&buffer_id)
-        {
-            state.show_cursors = absolute_byte.is_some();
-        }
-
-        if let Some(byte) = absolute_byte {
-            for vs in self
-                .windows
-                .get_mut(&self.active_window)
-                .and_then(|w| w.split_view_states_mut())
-                .expect("active window must have a populated split layout")
-                .values_mut()
-            {
-                if vs.buffer_state(buffer_id).is_some() {
-                    let cursor = vs.cursors.primary_mut();
-                    cursor.position = byte;
-                }
-            }
-        }
-    }
-
     /// Mark every view of `buffer_id` as non-horizontally-scrollable.
     ///
     /// Called on each widget-panel repaint rather than once at mount:
     /// a panel that is hidden and shown again gets a fresh
     /// `SplitViewState`, and the flag has to land on that one too.
-    fn pin_widget_panel_horizontal_scroll(&mut self, buffer_id: BufferId) {
+    pub(super) fn pin_widget_panel_horizontal_scroll(&mut self, buffer_id: BufferId) {
         for vs in self
             .windows
             .get_mut(&self.active_window)
@@ -548,70 +430,7 @@ impl Editor {
             .and_then(|b| b.compose_width)
     }
 
-    /// Best-effort width for a buffer's containing split. Returns
-    /// the most recent `SplitViewState::viewport.width` for any
-    /// split rendering this buffer; falls back to terminal width
-    /// when the buffer hasn't been rendered yet (e.g. mid-mount).
-    /// Subtracts 2 columns to account for gutter/scrollbar/border
-    /// padding the renderer adds — leaving the right edge clear
-    /// instead of pushing content into the chrome. This is what
-    /// flex `Spacer`s inside `Row` use to size their fill.
-    pub(super) fn widget_panel_width(&self, buffer_id: BufferId) -> u32 {
-        let raw = self
-            .windows
-            .get(&self.active_window)
-            .and_then(|w| w.buffers.splits())
-            .map(|(_, vs)| vs)
-            .expect("active window must have a populated split layout")
-            .values()
-            .find(|vs| vs.buffer_state(buffer_id).is_some() && vs.viewport.width > 0)
-            // A composed buffer is painted into a narrower column than
-            // its split: `compose_width` is what the renderer clips to,
-            // so it is also what the widget layout has to size rows to.
-            // Laying out against the split width instead let the two
-            // disagree, and every consequence of that disagreement
-            // looked like a widget bug rather than a width bug — a
-            // `flexSpacer` filled to the split and pushed its row past
-            // the column, so the host wrapped a centred row in half,
-            // and a `divider` ruled across the pane instead of the
-            // page. Plugins were left computing their own pads from a
-            // width the host already knew.
-            //
-            // Read it from *this buffer's* state, not from the split's:
-            // `SplitViewState` derefs to whichever buffer is active
-            // there, so `vs.compose_width` was the neighbouring tab's
-            // answer whenever the panel was not the one on screen. A
-            // panel opened behind another buffer therefore laid out to
-            // the whole split and then had its centred rows wrapped
-            // against a compose column it never saw — and it stayed
-            // that way, because nothing repaints a background tab. The
-            // pane width beside it is a property of the split, so that
-            // one is right to read through the deref.
-            .map(|vs| {
-                (
-                    vs.buffer_state(buffer_id).and_then(|b| b.compose_width),
-                    vs.viewport.width,
-                )
-            })
-            .unwrap_or((None, self.terminal_width.max(1) as u16));
-        match raw {
-            // Composing, the compose layout has already flanked the
-            // column with real margins, so the panel *is* the column.
-            // Taking the full gutter here as well left two unused
-            // columns inside the render area, and because both fell on
-            // its right the page rode left of the column it was
-            // supposedly centred in — measured on the welcome screen at
-            // 100, 120 and 150 columns, a left margin four short of the
-            // right one. One column is still held back: a row that
-            // fills the area exactly wraps.
-            (Some(cw), _) => (cw as u32).saturating_sub(1).max(10),
-            // Not composing: reserve 2 cols for gutter/scrollbar/border.
-            // Saturate to avoid 0 width on tiny panels.
-            (None, vw) => (vw as u32).saturating_sub(2).max(10),
-        }
-    }
-
-    /// Height sibling of [`Self::widget_panel_width`]: the viewport
+    /// The viewport
     /// height of a split currently rendering this buffer, or `None`
     /// when the buffer isn't on screen (auto-sized widgets then keep
     /// the legacy fallback until it is). No padding is subtracted —
@@ -728,6 +547,7 @@ impl Editor {
     pub(crate) fn drop_widget_panels_for_buffer(&mut self, buffer_id: BufferId) {
         for panel_key in self.widget_registry.panels_for_buffer(buffer_id) {
             self.page_anchors.remove(&panel_key);
+            self.pane_mirrors.remove(&panel_key);
             self.widget_panel_render_heights.remove(&panel_key);
             self.widget_registry.unmount(&panel_key);
             // The description names the panels, so losing one changes it.
@@ -770,14 +590,6 @@ impl Editor {
     /// `Auto`. A rule is a ground the backend tiles now (`fresh_ui::Node::rule`),
     /// so the box measures its content like every other described box and
     /// the anchored panel needs nothing from the collector.
-    ///
-    /// **The one exception left is the markdown document view**, and it is the
-    /// same one §6e names: a described panel holding one still runs
-    /// `render_collected` inside its own description, and two host paths read
-    /// the box arena that walk produces — the drag-to-select on the prose
-    /// (`Self::handle_widget_text_selection_drag`) and `Text::on_wheel`'s
-    /// document branch. Neither errors against an empty arena; each simply
-    /// stops working. See [`spec_has_markdown_document`].
     ///
     /// Returns `false` for a panel that is not mounted.
     fn resolve_described_panel(&mut self, panel_key: &crate::widgets::PanelKey) -> bool {
@@ -937,7 +749,7 @@ impl Editor {
     ///
     /// `None` when the surface has no described interior in this frame, which
     /// is the same answer as "the tree did not lay this panel out".
-    fn panel_subtree_root(
+    pub(super) fn panel_subtree_root(
         &self,
         ui: &fresh_ui::Ui<crate::view::shell::msg::UiMsg>,
         panel_key: &crate::widgets::PanelKey,
@@ -1560,7 +1372,10 @@ impl Editor {
     /// The anchor **is** the host's handle on that window (§3.5), so it is
     /// also the only name the host has for the element: the description keys
     /// the widgets inside the page, not the viewport around them.
-    fn page_viewport(&self, panel_key: &crate::widgets::PanelKey) -> Option<fresh_ui::ElementId> {
+    pub(super) fn page_viewport(
+        &self,
+        panel_key: &crate::widgets::PanelKey,
+    ) -> Option<fresh_ui::ElementId> {
         self.page_anchors.get(panel_key)?.target()
     }
 
@@ -3670,7 +3485,7 @@ mod tests {
     ///
     /// The collector and the reconciler used to resolve the same auto-sized
     /// list two different ways — the collector took the panel's row budget
-    /// and subtracted what `collect_col`'s fill pass measured its siblings to
+    /// and subtracted what its fill pass measured the siblings to
     /// occupy, the tree gives the node its `.flex(1)` share of what layout
     /// actually had — and until S5 the handlers were driven by the first even
     /// on a surface the second had drawn. The paint's record is gone; what is
@@ -3852,10 +3667,7 @@ mod tests {
                 _ => unreachable!(),
             }
             .as_str(),
-            crate::widgets::RenderContext {
-                markdown: Some(ink.ctx()),
-                ..Default::default()
-            },
+            Some(ink.ctx()),
         )
         .text;
         assert_eq!(
@@ -4554,7 +4366,7 @@ fn display_col_of(line: &str, byte: usize) -> u16 {
 
 /// The byte offset at display column `col` of `line` — the start of the
 /// character covering that cell, and the line's length past its end.
-fn byte_at_display_col(line: &str, col: u16) -> usize {
+pub(super) fn byte_at_display_col(line: &str, col: u16) -> usize {
     use unicode_width::UnicodeWidthChar;
     let mut cols = 0usize;
     for (at, ch) in line.char_indices() {

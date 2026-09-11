@@ -1,15 +1,8 @@
 //! `Button` — framed or bare action button with intent styling.
 
-use std::collections::HashMap;
-
 use fresh_core::api::WidgetSpec;
 
 use super::WidgetImpl;
-use crate::widgets::registry::WidgetInstanceState;
-use crate::widgets::render::{
-    ensure_trailing_newline, fill_button_label, render_bare_button, render_button, CollectedOutput,
-    RenderContext,
-};
 
 pub struct Button;
 
@@ -71,84 +64,5 @@ impl WidgetImpl for Button {
             }
         }
         m
-    }
-    fn collect(
-        &self,
-        spec: &WidgetSpec,
-        _prev: &HashMap<String, WidgetInstanceState>,
-        _next_state: &mut HashMap<String, WidgetInstanceState>,
-        ctx: RenderContext<'_>,
-        panel_width: u32,
-    ) -> CollectedOutput {
-        let WidgetSpec::Button {
-            label,
-            focused,
-            focusable,
-            intent,
-            key,
-            disabled,
-            bare,
-            full_width,
-            hover_style,
-            style,
-            ..
-        } = spec
-        else {
-            return CollectedOutput::default();
-        };
-        let key = key.as_deref();
-        let mut out = CollectedOutput::default();
-        // `focusable: false` drops the button from the Tab cycle, so it
-        // can never be what focus is on — and must not render as though
-        // it were. This matters when several buttons share one key to
-        // act as a single control: the focus clamp lands on the one
-        // tabbable member, and without this gate every other member
-        // painted itself focused too, putting the focus band across the
-        // whole group at rest.
-        let is_focused = !disabled
-            && *focusable
-            && if key.is_some_and(|k| !k.is_empty()) {
-                ctx.is_focused(key)
-            } else {
-                *focused
-            };
-        // A `hover_style` applies only while the pointer is actually on this
-        // widget, and never to a disabled one — an inert control advertising
-        // itself as live would lie.
-        let hovered = !disabled && ctx.is_hovered(key);
-        let hover = hover_style.as_ref().filter(|_| hovered);
-        // A `full_width` button is stretched by padding its *label*, before
-        // the chrome goes on, so the finished control (frame and all) is
-        // exactly `panel_width` columns — the focus / hover band is painted
-        // over the button's own cells, so filling the label is what makes
-        // the band span the row rather than hugging the word.
-        let filled =
-            full_width.then(|| fill_button_label(label, *bare, ctx.marker_gutter, panel_width));
-        let label = filled.as_deref().unwrap_or(label);
-        let mut entry = if *bare {
-            render_bare_button(
-                label,
-                is_focused,
-                *intent,
-                *disabled,
-                hover,
-                hovered,
-                style.as_ref(),
-            )
-        } else {
-            render_button(
-                label,
-                is_focused,
-                *intent,
-                *disabled,
-                ctx.marker_gutter,
-                hover,
-                hovered,
-                style.as_ref(),
-            )
-        };
-        ensure_trailing_newline(&mut entry);
-        out.entries.push(entry);
-        out
     }
 }

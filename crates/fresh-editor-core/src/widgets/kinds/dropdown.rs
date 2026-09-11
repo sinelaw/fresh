@@ -6,10 +6,7 @@ use fresh_core::api::WidgetSpec;
 
 use super::WidgetImpl;
 use crate::widgets::registry::WidgetInstanceState;
-use crate::widgets::render::{
-    ensure_trailing_newline, render_dropdown, CollectedOutput, PanelPopup, RenderContext,
-    RenderedDropdown,
-};
+use crate::widgets::render::PanelPopup;
 
 pub struct Dropdown;
 
@@ -127,137 +124,6 @@ impl WidgetImpl for Dropdown {
         }
         m
     }
-    fn collect(
-        &self,
-        spec: &WidgetSpec,
-        prev: &HashMap<String, WidgetInstanceState>,
-        next_state: &mut HashMap<String, WidgetInstanceState>,
-        ctx: RenderContext<'_>,
-        _panel_width: u32,
-    ) -> CollectedOutput {
-        let WidgetSpec::Dropdown {
-            options,
-            selected_index,
-            label,
-            focused,
-            label_width,
-            open,
-            scroll_offset,
-            key,
-        } = spec
-        else {
-            return CollectedOutput::default();
-        };
-        collect_dropdown(
-            options,
-            *selected_index,
-            label,
-            *focused,
-            *label_width,
-            *open,
-            *scroll_offset,
-            key.as_deref(),
-            prev,
-            next_state,
-            ctx,
-        )
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn collect_dropdown(
-    options: &[String],
-    spec_selected: i32,
-    label: &str,
-    focused: bool,
-    label_width: u32,
-    spec_open: bool,
-    spec_scroll: u32,
-    key: Option<&str>,
-    prev: &HashMap<String, WidgetInstanceState>,
-    next_state: &mut HashMap<String, WidgetInstanceState>,
-    ctx: RenderContext<'_>,
-) -> CollectedOutput {
-    let mut out = CollectedOutput::default();
-    // A keyed widget takes focus from the host's resolved focus key; an
-    // unkeyed one falls back to the spec's initial-only `focused` hint.
-    let is_focused = if key.is_some_and(|k| !k.is_empty()) {
-        ctx.is_focused(key)
-    } else {
-        focused
-    };
-    let Resolved {
-        selected: cur,
-        open,
-    } = resolve(options, spec_selected, spec_open, key, prev, is_focused);
-    // **The walk carries this widget's state; it does not decide it.**
-    //
-    // It used to write the *resolved* pair back — the clamped index and the
-    // focus-gated open flag — which made the render walk an authority on
-    // state that `set_selection` and `set_open` also write, and made the
-    // description read a value the painter had computed a frame earlier. Both
-    // of those are the defect this phase exists to remove.
-    //
-    // Nothing is lost by carrying the stored pair through instead, because
-    // neither derivation was ever *storage*: [`resolve`] applies the clamp and
-    // the focus gate on every read, so a reader gets the same answer whether
-    // or not the walk wrote it down. What the pass-through still buys is
-    // collection — `update_side_effects` replaces the whole map, so a widget
-    // the spec no longer contains loses its state, and one this walk did not
-    // mention would lose it too.
-    //
-    // An absent entry stays absent: the spec is the seed until a handler makes
-    // a decision, which is exactly what "instance state is authoritative after
-    // first render" should have meant all along.
-    if let Some(k) = key.filter(|k| !k.is_empty()) {
-        if let Some(stored) = prev.get(k) {
-            next_state.insert(k.to_string(), stored.clone());
-        }
-    }
-
-    let RenderedDropdown {
-        mut entry,
-        button_range,
-        option_rows,
-        scroll_offset,
-    } = render_dropdown(
-        options,
-        cur,
-        label,
-        is_focused,
-        label_width,
-        open,
-        spec_scroll,
-        ctx.marker_gutter,
-    );
-    // The open list now floats as a screen-level pop-over
-    // (`out.popups`) instead of growing inline, so the panel
-    // keeps only the compact `[value ▲]` trigger row and never
-    // grows/clips inside the frame. `render_dropdown`'s inline
-    // `option_rows` are discarded here (the Settings dialog, which calls
-    // `render_dropdown` directly, still uses them for its inline list).
-    let _ = option_rows;
-    let widget_key = key.unwrap_or("").to_string();
-    // Open: surface the option list as a floating pop-over anchored to
-    // the trigger's row (row 0 within this sub-render; Col/Row/Section
-    // collapse shifts `anchor_row` up to the panel-inner row). The host
-    // draws + hit-tests it at screen coordinates, so it extends past the
-    // panel/modal border instead of reflowing the panel. Option hit
-    // areas are registered by the host draw pass, not here (they live
-    // outside the panel's buffer rows).
-    if open {
-        out.popups.push(popup_of(
-            options,
-            cur,
-            scroll_offset as u32,
-            ctx.hover_popup_row,
-            &widget_key,
-            anchor_col(&entry.text, button_range.0),
-        ));
-    }
-    ensure_trailing_newline(&mut entry);
-    out.entries.insert(0, entry);
-    out
 }
 
 /// A `Dropdown`'s two pieces of state, once the spec and the instance map

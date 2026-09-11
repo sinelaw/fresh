@@ -18,10 +18,7 @@ use fresh_core::api::WidgetSpec;
 use super::WidgetImpl;
 use crate::primitives::text_edit::TextEdit;
 use crate::widgets::registry::WidgetInstanceState;
-use crate::widgets::render::{
-    clamp_number, ensure_trailing_newline, render_number, CollectedOutput, NumberEdit,
-    RenderContext, RenderedNumber,
-};
+use crate::widgets::render::{clamp_number, NumberEdit};
 
 pub struct Number;
 
@@ -160,98 +157,6 @@ impl WidgetImpl for Number {
         }
         m
     }
-    fn collect(
-        &self,
-        spec: &WidgetSpec,
-        prev: &HashMap<String, WidgetInstanceState>,
-        next_state: &mut HashMap<String, WidgetInstanceState>,
-        ctx: RenderContext<'_>,
-        _panel_width: u32,
-    ) -> CollectedOutput {
-        let WidgetSpec::Number {
-            value,
-            min,
-            max,
-            integer,
-            percent,
-            label,
-            focused,
-            label_width,
-            key,
-            ..
-        } = spec
-        else {
-            return CollectedOutput::default();
-        };
-        collect_number(
-            *value,
-            *min,
-            *max,
-            *integer,
-            *percent,
-            label,
-            *focused,
-            *label_width,
-            key.as_deref(),
-            prev,
-            next_state,
-            ctx,
-        )
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn collect_number(
-    spec_value: f64,
-    min: Option<f64>,
-    max: Option<f64>,
-    integer: bool,
-    percent: bool,
-    label: &str,
-    focused: bool,
-    label_width: u32,
-    key: Option<&str>,
-    prev: &HashMap<String, WidgetInstanceState>,
-    next_state: &mut HashMap<String, WidgetInstanceState>,
-    ctx: RenderContext<'_>,
-) -> CollectedOutput {
-    let mut out = CollectedOutput::default();
-    // A keyed widget takes focus from the host's resolved focus key; an
-    // unkeyed one falls back to the spec's initial-only `focused` hint.
-    let is_focused = if key.is_some_and(|k| !k.is_empty()) {
-        ctx.is_focused(key)
-    } else {
-        focused
-    };
-    let Resolved { value: cur, draft } = resolve(spec_value, min, max, key, prev);
-    // **The walk carries this widget's state; it does not decide it.** The
-    // clamp above is a derivation, applied on every read, so writing it back
-    // stored nothing a reader could not work out — while making the render
-    // walk a second writer of a field `on_key` and `on_pointer` also own. The
-    // pass-through is what keeps the entry alive across the whole-map replace
-    // in `update_side_effects`; an absent one stays absent, so a number nobody
-    // has touched still reads its value from the spec. Same rule as
-    // `kinds::dropdown`, and for the same reason.
-    if let Some(k) = key.filter(|k| !k.is_empty()) {
-        if let Some(stored) = prev.get(k) {
-            next_state.insert(k.to_string(), stored.clone());
-        }
-    }
-
-    let rendered = render_number(
-        cur,
-        integer,
-        percent,
-        label,
-        is_focused,
-        label_width,
-        draft.as_ref().map(NumberEdit::from),
-        ctx.marker_gutter,
-    );
-    let RenderedNumber { mut entry, .. } = rendered;
-    ensure_trailing_newline(&mut entry);
-    out.entries.push(entry);
-    out
 }
 
 /// A `Number`'s two pieces of state, once the spec and the instance map

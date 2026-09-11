@@ -25,8 +25,6 @@
 //! `fresh_ui::Event::text_byte` reports the byte, from the shaping that drew
 //! the row. So the snapshot is gone and what is left is the arithmetic that
 //! was always the real work: undo the field's own layout.
-//!
-//! [`render_spec`]: super::render_spec
 
 /// Translate a byte offset into a rendered widget row back to a byte
 /// offset into the field's *value*, undoing the field's layout: the

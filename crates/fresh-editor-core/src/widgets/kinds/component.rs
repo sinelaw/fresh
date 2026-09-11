@@ -5,13 +5,9 @@
 //! box that carries the same flag) to the subtree. See
 //! `docs/internal/retained-mode-ui.md` "Where each surface lives".
 
-use std::collections::HashMap;
-
 use fresh_core::api::WidgetSpec;
 
 use super::WidgetImpl;
-use crate::widgets::registry::WidgetInstanceState;
-use crate::widgets::render::{render_collected, CollectedOutput, RenderContext};
 
 pub struct Component;
 
@@ -26,18 +22,5 @@ impl WidgetImpl for Component {
         // The point of the kind: Tab cycles inside this subtree.
         m.focus_trap = true;
         m
-    }
-    fn collect(
-        &self,
-        spec: &WidgetSpec,
-        prev: &HashMap<String, WidgetInstanceState>,
-        next_state: &mut HashMap<String, WidgetInstanceState>,
-        ctx: RenderContext<'_>,
-        panel_width: u32,
-    ) -> CollectedOutput {
-        let WidgetSpec::Component { child, .. } = spec else {
-            return CollectedOutput::default();
-        };
-        render_collected(child, prev, next_state, ctx, panel_width)
     }
 }

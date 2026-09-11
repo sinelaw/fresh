@@ -57,6 +57,7 @@ mod navigation;
 mod on_save_actions;
 mod orchestrator_persistence;
 mod overlay;
+mod pane_mirror;
 mod path_utils;
 #[cfg(feature = "plugins")]
 mod plugin_commands;
@@ -1249,6 +1250,11 @@ pub struct Editor {
     /// Absent means the top of the page, which is where a page opens.
     pub(crate) page_reading: HashMap<crate::widgets::PanelKey, (u32, u16)>,
 
+    /// The rows each pane-mounted panel's buffer was last written from —
+    /// see `app::pane_mirror`. A layout whose rows come out equal writes
+    /// nothing.
+    pub(crate) pane_mirrors: HashMap<crate::widgets::PanelKey, Vec<String>>,
+
     /// Request the event loop to suspend the process (SIGTSTP on Unix).
     /// Consumed by the outer event loop after the current action returns.
     suspend_requested: bool,
@@ -1676,8 +1682,8 @@ pub(crate) struct FloatingWidgetState {
     /// dock, while other plugins' floating panels keep the default
     /// coexist-beside-the-dock layout. Ignored for `LeftDock`.
     pub fullscreen: bool,
-    /// When true, this panel renders through `render_spec_with_marker`:
-    /// every focusable control reserves a two-column gutter for the
+    /// When true, every focusable control of this panel reserves a
+    /// two-column gutter for the
     /// `▸ ` focus marker so focus is legible from a plain capture and
     /// the layout stays constant as focus moves. Opt-in at mount
     /// (`MountFloatingWidget.focus_marker`); the Orchestrator New
@@ -1702,8 +1708,8 @@ pub(crate) struct FloatingWidgetState {
     /// Widget key the pointer is currently over, tracked from mouse-move
     /// events against this panel's hit areas. Empty for "nothing hovered".
     ///
-    /// Feeds `RenderContext::hover_key` on the next render, where widgets
-    /// carrying a `hover_style` compare it against their own key. Only a
+    /// Feeds the description's `Ctx::hovered_key` on the next frame, where
+    /// widgets carrying a `hover_style` compare it against their own key. Only a
     /// crossing between widgets changes it, so motion inside one control
     /// costs nothing.
     pub hovered_widget_key: String,
@@ -1713,8 +1719,8 @@ pub(crate) struct FloatingWidgetState {
     ///
     /// `hovered_widget_key` alone can't light a single row: every row of a
     /// tree shares the *tree's* spec key, so it names the list, not the
-    /// line under the pointer. This feeds `RenderContext::hover_item_key`,
-    /// which the list/tree collectors compare against each row's item key.
+    /// line under the pointer. This feeds the description's
+    /// `Ctx::hovered_item_key`, compared against each row's item key.
     pub hovered_item_key: String,
     /// The open dropdown pop-over's hovered option, as a decimal index, or
     /// empty. Separate from `hovered_item_key` because a pop-over's rows are

@@ -689,6 +689,7 @@ impl Editor {
             shell_key_event: None,
             page_anchors: HashMap::new(),
             page_reading: HashMap::new(),
+            pane_mirrors: HashMap::new(),
             suspend_requested: false,
             plugin_global_state: parts.plugin_global_state,
             // Boot-loaded state came *from* disk — nothing is dirty yet.

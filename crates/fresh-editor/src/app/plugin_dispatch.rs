@@ -5271,32 +5271,16 @@ impl Editor {
         // so a plugin that re-mounts (e.g. reopening a panel with
         // a fresh prefill) sees its spec values take effect. To
         // *preserve* state across renders, the plugin uses Update.
-        let prev = std::collections::HashMap::new();
-        let prev_focus = String::new();
-        let panel_width = self.widget_panel_width(buffer_id);
         let avail_height = self.widget_panel_height(buffer_id);
-        // A mount has nothing panned yet.
-        let h_pan = std::collections::HashMap::new();
-        let out = self.render_panel_spec(
+        let ink = self.markdown_ink();
+        let out = crate::widgets::resolve_panel(
             &spec,
-            &prev,
-            &prev_focus,
-            panel_width,
-            avail_height,
+            &std::collections::HashMap::new(),
+            "",
             options.auto_focus_first(),
-            &h_pan,
+            Some(ink.ctx()),
         );
         self.record_widget_panel_render_height(&panel_key, avail_height);
-        // KNOWN LIMITATION (deliberate; retired by `docs/internal/retained-mode-ui.md` "The markdown document view"):
-        // buffer-mounted panels consume only the base rows + hits —
-        // `out.overlays` and `out.popup` are DROPPED, and the click
-        // path resolves with `on_overlay=false`. The popup/overlay
-        // channels (Overlay children, open Dropdown pop-overs, Text
-        // completions) work only in the floating/dock slots today;
-        // wiring them for mounted panels needs paint-time compositing
-        // over split content — a renderer arc of its own. A mounted
-        // panel using those channels will neither paint nor click them:
-        // prefer a floating slot for popup-bearing UI until that lands.
         self.widget_registry.mount(
             panel_key.clone(),
             buffer_id,
@@ -5324,22 +5308,13 @@ impl Editor {
         {
             state.interactive_widget_panel = true;
         }
-        let entries = out.entries;
-        if let Err(e) = self.set_virtual_buffer_content(buffer_id, entries.clone()) {
-            tracing::error!(
-                "Failed to render mounted widget panel {} into {:?}: {}",
-                panel_key,
-                buffer_id,
-                e
-            );
-        } else {
-            tracing::debug!(
-                "Mounted widget panel {} into buffer {:?}",
-                panel_key,
-                buffer_id
-            );
-        }
-        self.apply_widget_focus_cursor(buffer_id, &entries, out.focus_cursor);
+        // The buffer's rows are the tree's, written once the frame lays the
+        // panel out — see `app::pane_mirror`.
+        tracing::debug!(
+            "Mounted widget panel {} into buffer {:?}",
+            panel_key,
+            buffer_id
+        );
     }
 
     fn handle_update_widget_panel(
@@ -5365,13 +5340,12 @@ impl Editor {
             .focus_key(panel_key)
             .map(|s| s.to_string())
             .unwrap_or_default();
-        let buffer_id_for_width = self
+        let buffer_id = self
             .widget_registry
             .buffer_and_spec(panel_key)
             .map(|(b, _)| b)
             .unwrap_or(BufferId(0));
-        let panel_width = self.widget_panel_width(buffer_id_for_width);
-        let avail_height = self.widget_panel_height(buffer_id_for_width);
+        let avail_height = self.widget_panel_height(buffer_id);
         // The policy the mount set, not a fresh default: a repaint that
         // resolved focus differently from the mount is exactly the drift
         // `auto_focus_first` exists to prevent.
@@ -5380,34 +5354,22 @@ impl Editor {
             .get(panel_key)
             .map(|p| p.auto_focus_first)
             .unwrap_or(true);
-        // The reader's sideways fold: a repaint that dropped it would slide
-        // every row back to its resting window under a reader who panned.
-        let h_pan = self
-            .widget_registry
-            .get(panel_key)
-            .map(|p| p.h_pan.clone())
-            .unwrap_or_default();
-        let out = self.render_panel_spec(
+        let ink = self.markdown_ink();
+        let out = crate::widgets::resolve_panel(
             &spec,
             &prev,
             &prev_focus,
-            panel_width,
-            avail_height,
             auto_focus_first,
-            &h_pan,
+            Some(ink.ctx()),
         );
         self.record_widget_panel_render_height(panel_key, avail_height);
-        let entries = out.entries;
         match self
             .widget_registry
             .update(panel_key, spec, out.instance_states, out.focus_key)
         {
-            Ok(buffer_id) => {
-                if let Err(e) = self.set_virtual_buffer_content(buffer_id, entries.clone()) {
-                    tracing::error!("Failed to render updated widget panel {}: {}", panel_key, e);
-                }
-                self.apply_widget_focus_cursor(buffer_id, &entries, out.focus_cursor);
-            }
+            // The buffer's rows are the tree's, written once the frame lays
+            // the new spec out — see `app::pane_mirror`.
+            Ok(_) => {}
             Err(()) => {
                 tracing::debug!(
                     "UpdateWidgetPanel for unknown panel {} ignored (not mounted)",
@@ -5728,6 +5690,7 @@ impl Editor {
 
     fn handle_unmount_widget_panel(&mut self, panel_key: &crate::widgets::PanelKey) {
         self.page_anchors.remove(panel_key);
+        self.pane_mirrors.remove(panel_key);
         match self.widget_registry.unmount(panel_key) {
             Some(buffer_id) => {
                 tracing::debug!(

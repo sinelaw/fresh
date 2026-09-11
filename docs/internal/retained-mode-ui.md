@@ -345,50 +345,51 @@ the widget text projection* below for what is left of the projection and why.
 
 ### Delete the widget text projection
 
-**Its geometry is gone; its text survives as one mirror.** The projection had
-two kinds of output. The click ranges (`HitArea`), the layout-box arena
-(`LayoutBox`, `layout_box.rs`, `focus_ring`, `hit_path`) and the window each
-list was painted into (`PaintedWindow`, `WidgetPanelState::{painted, boxes}`)
-were the geometry, and the tree lays every widget out, hit-tests it, scrolls
-its viewport and walks its focus ring itself — so those, the registry state
-that carried them, the `mount`/`update`/`update_side_effects` parameters, the
-host's painted-viewport fallback (`widget_viewport` asks the tree, then the
-spec), `List::on_wheel`/`Tree::on_wheel` (they moved a window nothing drives)
-and the `Host` leaf a floating panel could fall back to
-(`FloatingWidgetState::entries`, `Spot::{content_rows, content_cols}`,
-`Panel::{height, anchored_width}`) are deleted. `Panel.interior` is no longer
-an `Option`: every mounted panel is described, and its box measures itself
-on both axes. The three slot mount/update paths and every re-render go
-through `resolve_panel` — a walk of the spec against the stored state — and
-`render_floating_spec` is gone with the last caller that rendered.
+**Done.** The projection — `render_collected`, `WidgetImpl::collect` and
+every kind's collector, the container assemblers, `CollectedOutput`,
+`RenderOutput`, `RenderContext`, `RenderOptions`, `render_spec*`,
+`render_button`/`render_bare_button` — is deleted, and so is everything it
+produced: the click ranges (`HitArea`), the layout-box arena (`LayoutBox`,
+`layout_box.rs`), the window each list was painted into (`PaintedWindow`,
+`WidgetPanelState::{painted, boxes}`), the floating panel's `Host` leaf
+(`FloatingWidgetState::entries`, `Spot::content_*`,
+`Panel::{height, anchored_width}`, `render_floating_spec`), and the
+`widget_text_drag`/`PointerGrab` pointer path. A kind still answers for its
+state, its keys and its presses (`WidgetImpl`), and the formatters the
+description reads stay in `render.rs` and the kinds (`render_toggle*`,
+`render_number`, `render_dropdown`, `render_tree_row`, `single_line`,
+`completion_popup`, `markdown_document`, …). Every mount, update and host
+re-render resolves the spec (`resolve_panel`) and nothing renders it: **no
+description build runs a renderer**, and no host seam holds a rectangle,
+hit range or window the tree did not lay out.
 
-**What is left is the mirror, and it is a compromise, not a goal.** A
-pane-mounted panel's *buffer* is the projection's rows
-(`render_panel_spec` → `set_virtual_buffer_content`, on mount and on a
-plugin update only): code-tour reads that buffer back (`getBufferText`, in
-`lineRangeBytes`) to place its step highlight, and the page's reading row
-and the status bar's `Ln`/`Col` ride on it. So `render_collected` stays as
-that buffer's text producer and `render_button` as its formatter (it already
-reads `Frame::BUTTON`; the duplication the stylesheet work set out to end is
-gone). The mirror keeps no window of its own — every list starts at the top
-and snaps to its selection — and it never runs inside a description build:
-**no description build runs a renderer** holds. The single-line field's
-press event is the one thing the description still takes from the
-projection's formatter (`SingleLine::event`, the value-layout breadcrumbs
-`value_byte_from_hit` reads), because that row's byte layout is the
-formatter's to know.
-
-**What retires it.** Derive the pane-panel buffer from the tree's own rows
-(`Ui::text_rows` over the panel's subtree, the capability the gutter-as-runs
-and the web's remaining projections also wait on), point code-tour and the
-reading row at that, and delete the collector and every kind's `collect`.
-Until then the projection is one function deep and has one reader.
+**The pane-mounted panel's buffer is derived from the tree**
+(`app/pane_mirror.rs`). That buffer is where a pane panel's text is
+*reported* from — `Ln`/`Col`, a plugin's `cursor_moved` and `getBufferText`,
+the page reader's row and column — and it used to be the projection's rows,
+written on every plugin update as a second rendering of the same spec. Now,
+at the end of `Editor::lay_out_shell`, each pane panel's subtree is painted
+unclipped (`fresh_ui::Ui::paint_subtree`: every row layout settled, the
+ones a viewport scrolled away included, in-flow only) and folded through the
+frame's own fold (`fold_band`) into a cell grid the size of the content —
+for a page, its viewport's content; for anything else, its box — whose rows
+become the buffer's lines. Line `n` is the tree's row `n` by construction.
+The buffer is written only when the rows changed; the caret the tree placed
+(`LayoutSpec::cursor`) seats the buffer cursor for a focused field, and a
+page's cursor stays the reader's (`move_page_reader`). The one contract that
+moved: the buffer fills on the next frame, not synchronously at mount — a
+plugin that reads its own panel buffer inside the same tick as its update
+reads the previous frame's rows.
 
 **Residue the deletion exposed.** `user_scrolled` on the `List`, `Tree` and
 `Text` instance states has no writer left (`latch_user_scrolled` and the
 wheel branches that set it went with the window); `resolve` still reads it
 and `set_selected_index` still clears it. It is dead state and should go —
-about sixty sites, mechanical.
+about sixty sites, mechanical. `widget_panel_render_heights` /
+`widget_panels_with_stale_height` re-resolve a pane panel when its split
+height changes; with nothing rendered by height any more the re-resolve is a
+no-op beyond marking the description stale, and the machinery can go with
+it.
 
 ### The status bar does layout by hand
 
@@ -520,14 +521,10 @@ no bracketed string to re-colour.
    and `Rule::reserved_x` asserts that symmetry rather than assuming it, so the
    day a rule wants sides of different widths that assertion is the trigger.
 
-**And one item that belongs to the text-projection chain, not the stylesheet.**
-`render_button` cannot be deleted while `render_panel_spec` still produces a
-pane-mounted panel's buffer: that path's entire output is a string, and a
-naked label plus a class says nothing to it. The duplication it existed to
-end is already gone — `widgets::frame::Frame::BUTTON` holds the glyphs and
-the padding, and both the runtime's text and the shell's reserved columns
-read it, with a test asserting they agree on width. `render_button` goes when
-the mirror goes — see *Delete the widget text projection*.
+**And the item that belonged to the text-projection chain is closed.**
+`render_button` went with the projection; the button's frame is the node's
+own (`button_node`, reading `widgets::frame::Frame::BUTTON`), and the class
+table is the one statement of its ink.
 
 **Rules that stand:** an unknown class decorates nothing and is *not* an error,
 while an unresolvable **ink** stays the loud failure it is — two slots, two

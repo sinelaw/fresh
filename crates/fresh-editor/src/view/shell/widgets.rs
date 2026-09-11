@@ -16,7 +16,7 @@
 //! thousand lines of new code.
 //!
 //! **How it is checked.** Every variant here is asserted equal to
-//! `widgets::render_spec`'s own answer, over the shapes that runtime branches
+//! the runtime's text projection's own answer, over the shapes it branched
 //! on — the same arrangement that made the split separators a safe swap
 //! (`the_dividers_are_where_the_separators_are`). The runtime is the oracle
 //! while it is still the implementation, so a variant cannot be migrated
@@ -35,9 +35,8 @@
 //! adapter over the immediate-mode runtime.
 //!
 //! Every variant is now written out below as nodes. The generic adapter is
-//! gone: nothing routes a whole widget through `render_collected` and rebuilds
-//! it from the cells that came back, so no press is resolved by matching a byte
-//! range in a row the painter produced.
+//! gone, and so is the text projection itself: no press is resolved by
+//! matching a byte range in a row a painter produced.
 //!
 //! What has *not* gone is the runtime as a **formatter**. Each arm still asks
 //! it what a row says — `render_dropdown` for a trigger, `render_text_input`
@@ -153,7 +152,7 @@ impl Slot {
 
 /// What a panel's widgets need beyond their spec.
 ///
-/// All of it is host state the runtime read off a `RenderContext`: which
+/// All of it is host state the text projection read off its own context: which
 /// widget has the panel's focus, which one the pointer is on, whether the
 /// focus-marker gutter is reserved. Passed down rather than looked up,
 /// because a description is a pure function of what it is handed.
@@ -1109,9 +1108,9 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
         }
         // **The first interactive variant, and the seam the rest ride.**
         //
-        // Its *text* is the runtime's own — `render_button` and
-        // `render_bare_button` know what a framed action looks like, and that
-        // is domain knowledge. What moves is the hit: the runtime recorded a
+        // Its *text* is the label; the frame is the node's own
+        // (`button_node`, reading `Frame::BUTTON`). What moved first was the
+        // hit: the runtime recorded a
         // `HitArea` spanning the row's bytes and a click was resolved by
         // scanning those ranges; the node carries the `WidgetEvent` half of
         // that same value and hands it over when it is pressed, so everything
@@ -2129,13 +2128,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
             ..
         } if *rows > 1 => {
             use fresh_ui::{Event, GestureKind, MouseButton};
-            let doc = crate::widgets::kinds::text::markdown_document(
-                value,
-                crate::widgets::RenderContext {
-                    markdown: cx.markdown,
-                    ..Default::default()
-                },
-            );
+            let doc = crate::widgets::kinds::text::markdown_document(value, cx.markdown);
             let text_len = doc.text.trim_end_matches('\n').len();
             let wk = key.as_deref().filter(|k| !k.is_empty());
             let editor = wk.and_then(|k| cx.states.get(k)).and_then(|st| match st {
@@ -2317,7 +2310,10 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                 rendered.scroll_offset as u32,
                 &cx.hovered_popup_row,
                 &widget_key,
-                dd::anchor_col(&rendered.entry.text, rendered.button_range.0),
+                crate::widgets::kinds::dropdown::anchor_col(
+                    &rendered.entry.text,
+                    rendered.button_range.0,
+                ),
             );
             // **The row is named, not just the parent** — the same reason
             // `rows_with_hits` names it. The layer resolves to this rectangle
@@ -3359,7 +3355,7 @@ fn extended_ground(entry: &TextPropertyEntry, base: &Ink) -> Option<Ink> {
 /// A button, built from its **naked label** and the classes that say what it
 /// is.
 ///
-/// **The frame is not text.** `render_button` composed `"{marker}[ {label} ]"`
+/// **The frame is not text.** The projection composed `"{marker}[ {label} ]"`
 /// and handed it down as one string, which is why the web could neither find a
 /// button nor tell its label from its brackets, and why a theme could only
 /// re-colour the whole run. Here the description says *button, primary,
@@ -3851,7 +3847,7 @@ fn ink_of(o: &OverlayOptions, under: &Ink) -> Ink {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::super::msg::UiFact;
     use super::*;
     use fresh_core::api::HintEntry;
@@ -3868,7 +3864,7 @@ mod tests {
         EMPTY.get_or_init(Default::default)
     }
 
-    fn cx() -> Ctx<'static> {
+    pub(crate) fn cx() -> Ctx<'static> {
         Ctx {
             slot: Slot::Floating,
             states: no_state(),
@@ -3891,74 +3887,10 @@ mod tests {
         }
     }
 
-    /// What the runtime says this spec renders as: one string per row, with
-    /// the trailing newlines its entries carry stripped.
-    ///
-    /// This is the oracle. It is the implementation still, which is what makes
-    /// it worth asserting against: a variant cannot be migrated wrongly here
-    /// without the two disagreeing.
-    fn runtime_rows(spec: &WidgetSpec) -> Vec<String> {
-        let out = crate::widgets::render_spec(spec, &Default::default(), "", WIDTH as u32);
-        out.entries
-            .iter()
-            .map(|e| {
-                let mut n = e.clone();
-                n.normalize_widths();
-                n.text.trim_end_matches('\n').trim_end().to_string()
-            })
-            .collect()
-    }
-
     /// What the tree says, laid out at the same width: the text of each row of
     /// the display list, in paint order.
     fn tree_rows(spec: &WidgetSpec) -> Vec<String> {
         tree_text(spec, &cx())
-    }
-
-    /// **A title bar's tint spans its strip, and its button stays at the
-    /// right edge.**
-    ///
-    /// The runtime collapses an inline-only `Row` into one entry and keeps the
-    /// *leading* child's whole-entry style for the merged line, which is how
-    /// the orchestrator dock tints its title bar and pins its `[×]`. Both
-    /// halves have to survive the tree: the oracle is the runtime itself.
-    #[test]
-    fn a_title_rows_band_spans_it_and_its_button_stays_right() {
-        use fresh_core::api::{OverlayColorSpec, OverlayOptions};
-        let mut title = TextPropertyEntry::text("Orchestrator");
-        title.style = Some(OverlayOptions {
-            fg: Some(OverlayColorSpec::theme_key("ui.menu_fg")),
-            bg: Some(OverlayColorSpec::theme_key("ui.menu_bg")),
-            ..Default::default()
-        });
-        let spec = WidgetSpec::Row {
-            children: vec![
-                WidgetSpec::Raw {
-                    entries: vec![title],
-                    key: None,
-                },
-                WidgetSpec::Spacer {
-                    cols: 0,
-                    flex: true,
-                    key: None,
-                },
-                WidgetSpec::Button {
-                    label: "\u{d7}".into(),
-                    focused: false,
-                    intent: Default::default(),
-                    key: Some("dock-close".into()),
-                    disabled: false,
-                    focusable: false,
-                    bare: true,
-                    full_width: false,
-                    hover_style: None,
-                    style: None,
-                },
-            ],
-            key: None,
-            wrap: false,
-        };
-        assert_eq!(runtime_rows(&spec), tree_rows(&spec));
     }
 
     fn hint(keys: &str, label: &str) -> HintEntry {
@@ -3976,111 +3908,6 @@ mod tests {
         WidgetSpec::Col {
             children,
             key: None,
-        }
-    }
-
-    /// Every covered variant, in the shapes the runtime branches on, asserted
-    /// against the runtime itself.
-    #[test]
-    fn the_covered_variants_render_what_the_runtime_renders() {
-        let cases: Vec<(&str, WidgetSpec)> = vec![
-            (
-                "one raw row",
-                col_of(vec![WidgetSpec::Raw {
-                    entries: vec![raw("hello")],
-                    key: None,
-                }]),
-            ),
-            (
-                "several raw rows",
-                col_of(vec![WidgetSpec::Raw {
-                    entries: vec![raw("one"), raw("two"), raw("three")],
-                    key: None,
-                }]),
-            ),
-            (
-                "an empty raw",
-                col_of(vec![WidgetSpec::Raw {
-                    entries: vec![],
-                    key: None,
-                }]),
-            ),
-            (
-                "a hint bar",
-                col_of(vec![WidgetSpec::HintBar {
-                    entries: vec![hint("Tab", "next"), hint("Esc", "cancel")],
-                    key: None,
-                }]),
-            ),
-            (
-                "a hint bar with one entry",
-                col_of(vec![WidgetSpec::HintBar {
-                    entries: vec![hint("Enter", "submit")],
-                    key: None,
-                }]),
-            ),
-            (
-                "a default divider",
-                col_of(vec![WidgetSpec::Divider {
-                    ch: "─".into(),
-                    style: None,
-                    key: None,
-                }]),
-            ),
-            (
-                "a divider with another glyph",
-                col_of(vec![WidgetSpec::Divider {
-                    ch: "=".into(),
-                    style: None,
-                    key: None,
-                }]),
-            ),
-            (
-                "rows and dividers together",
-                col_of(vec![
-                    WidgetSpec::Raw {
-                        entries: vec![raw("above")],
-                        key: None,
-                    },
-                    WidgetSpec::Divider {
-                        ch: "─".into(),
-                        style: None,
-                        key: None,
-                    },
-                    WidgetSpec::Raw {
-                        entries: vec![raw("below")],
-                        key: None,
-                    },
-                ]),
-            ),
-            // **The multi-line field, in the shapes its window branches on.**
-            // Its rows no longer come from the collector at all — they are
-            // built line by line from `render::text_area_row`, which the
-            // collector also builds its own from — so this is the case where
-            // the two could drift and nothing else would say so. A document
-            // shorter than the budget is the one that pins the blank padding
-            // that keeps the editing block rectangular.
-            (
-                "a text area whose document fills it",
-                area("alpha\nbeta\ngamma", 3, ""),
-            ),
-            (
-                "a text area padded out below its document",
-                area("alpha\nbeta", 5, ""),
-            ),
-            ("a text area with a label", area("alpha\nbeta", 3, "Notes")),
-            ("an empty text area", area("", 3, "")),
-            // A document *longer* than its window is deliberately not here.
-            // The two disagree about where an unfocused window starts and
-            // always have: the collector treats a `cursor_byte` of `-1` as
-            // end-of-value and scrolls the last line into view, while the
-            // description leaves its viewport at the top — which is what a
-            // display-only document should show. `rows_of` could not compare
-            // them anyway: it reads the display list without clipping, so a
-            // windowed list's overscan rows appear in its grid.
-        ];
-        for (label, spec) in cases {
-            assert_eq!(tree_rows(&spec), runtime_rows(&spec), "{label}");
         }
     }
 
@@ -4109,142 +3936,6 @@ mod tests {
         }
     }
 
-    /// **A form's rows are the runtime's rows.** Every variant was asserted
-    /// against `render_spec` on its own, and both of the faults that reached
-    /// CI were in how they *compose*, where a one-variant case cannot look.
-    ///
-    /// A `flexSpacer()` inside a row asked the row to be as tall as
-    /// everything left in the column above it — `Node::flex` sets both axes,
-    /// and on a container's *cross* axis `Sizing::Flex` means "fill the
-    /// extent" — so the New-Workspace form's tab row came out twenty-six
-    /// cells tall and every field under it was laid out at zero height
-    /// against the panel's bottom edge. A `spacer(0)` between two sections
-    /// measured nothing, where `kinds::spacer` pushes one entry: a blank
-    /// line. Neither is visible in a single widget and both move every row
-    /// under them in a real panel.
-    #[test]
-    fn a_forms_rows_are_the_runtimes_rows() {
-        let gap = |cols: u32, flex: bool| WidgetSpec::Spacer {
-            cols,
-            flex,
-            key: None,
-        };
-        let field = |label: &str, body: &str| WidgetSpec::LabeledSection {
-            label: label.into(),
-            child: Box::new(WidgetSpec::Raw {
-                entries: vec![raw(body)],
-                key: None,
-            }),
-            width_pct: None,
-            key: None,
-            hover_style: None,
-            width_cols: None,
-        };
-        let cases: Vec<(&str, WidgetSpec)> = vec![
-            (
-                "a flexible spacer between two runs",
-                col_of(vec![
-                    WidgetSpec::Row {
-                        children: vec![
-                            WidgetSpec::Raw {
-                                entries: vec![raw("Run in:")],
-                                key: None,
-                            },
-                            gap(0, true),
-                            WidgetSpec::Raw {
-                                entries: vec![raw("switch")],
-                                key: None,
-                            },
-                        ],
-                        wrap: false,
-                        key: None,
-                    },
-                    WidgetSpec::Raw {
-                        entries: vec![raw("under it")],
-                        key: None,
-                    },
-                ]),
-            ),
-            (
-                "fixed spacers between a column's sections",
-                col_of(vec![
-                    WidgetSpec::Raw {
-                        entries: vec![raw("first")],
-                        key: None,
-                    },
-                    gap(0, false),
-                    WidgetSpec::Raw {
-                        entries: vec![raw("second")],
-                        key: None,
-                    },
-                    gap(4, false),
-                    WidgetSpec::Raw {
-                        entries: vec![raw("third")],
-                        key: None,
-                    },
-                ]),
-            ),
-            (
-                "two fields side by side in a row",
-                col_of(vec![WidgetSpec::Row {
-                    children: vec![field("Left", "one"), field("Right", "two")],
-                    wrap: false,
-                    key: None,
-                }]),
-            ),
-            (
-                "a form: a tab row, spacers, two fields and a button",
-                col_of(vec![
-                    WidgetSpec::Row {
-                        children: vec![
-                            WidgetSpec::Raw {
-                                entries: vec![raw("Run in:")],
-                                key: None,
-                            },
-                            gap(0, true),
-                            WidgetSpec::Raw {
-                                entries: vec![raw("switch")],
-                                key: None,
-                            },
-                        ],
-                        wrap: false,
-                        key: None,
-                    },
-                    gap(0, false),
-                    field("Host", "build-01"),
-                    field("Remote Path", "/srv"),
-                    gap(0, false),
-                    button("Create", Some("create"), false, false),
-                ]),
-            ),
-        ];
-        // **Corners, and only corners, are normalised.** `fold::border` writes
-        // the editor's plain set (`┌┐└┘`) and the widget runtime's
-        // `LabeledSection` wrote the rounded one — a difference C.6 already
-        // made on the panel's own frame, and a deliberate one: "a rounded set
-        // would be a visible change on the first surface that migrates". It
-        // is recorded here rather than asserted away, because everything else
-        // about the frame — where it starts, how wide it is, where its legend
-        // sits — is compared exactly.
-        let plain = |rows: Vec<String>| -> Vec<String> {
-            rows.into_iter()
-                .map(|r| {
-                    r.replace('╭', "┌")
-                        .replace('╮', "┐")
-                        .replace('╰', "└")
-                        .replace('╯', "┘")
-                })
-                .collect()
-        };
-        for (label, spec) in cases {
-            assert_eq!(
-                plain(tree_rows(&spec)),
-                plain(runtime_rows(&spec)),
-                "{label}"
-            );
-        }
-    }
-
     /// The tree's rows for a spec under a context.
     ///
     /// **Grouped by row, because a styled row is many items.** A `text_runs`
@@ -4268,12 +3959,53 @@ mod tests {
     /// is what a `Spacer` in a column *is*; and ignoring `Draw::Border`
     /// cannot see a `LabeledSection`'s frame at all.
     fn rows_of(ui: &Ui<UiMsg>) -> Vec<String> {
+        rows_of_width(ui, WIDTH)
+    }
+
+    /// The text of row `y` as the runs on it, joined in `x` order — the
+    /// string a press's byte is measured in, which the cell grid of
+    /// [`rows_of`] is not once a wide glyph is on the row.
+    fn row_text(ui: &Ui<UiMsg>, y: i32) -> String {
+        let mut runs: Vec<(i32, String)> = ui
+            .spec()
+            .in_flow()
+            .iter()
+            .filter_map(|i| match &i.draw {
+                fresh_ui::Draw::Lines(l) if i.rect.y == y => {
+                    l.first().map(|s| (i.rect.x, s.to_string()))
+                }
+                _ => None,
+            })
+            .collect();
+        runs.sort_by_key(|(x, _)| *x);
+        runs.into_iter().map(|(_, s)| s).collect()
+    }
+
+    /// The rows of `spec` laid out at `width`, for a test outside this
+    /// module that wants what the tree draws for a spec it built.
+    pub(crate) fn rows_at(spec: &WidgetSpec, width: u16) -> Vec<String> {
+        rows_of_width(&laid_out_at(spec, width), width)
+    }
+
+    /// The display list of `spec` laid out at `width` — every in-flow item,
+    /// for a test that asks about a row's theme rather than its text.
+    pub(crate) fn items_at(spec: &WidgetSpec, width: u16) -> Vec<fresh_ui::Item> {
+        laid_out_at(spec, width).spec().in_flow().to_vec()
+    }
+
+    fn laid_out_at(spec: &WidgetSpec, width: u16) -> Ui<UiMsg> {
+        let mut ui: Ui<UiMsg> = Ui::new();
+        ui.frame(node(spec, width, &cx()), Size::new(width, 64));
+        ui
+    }
+
+    fn rows_of_width(ui: &Ui<UiMsg>, width: u16) -> Vec<String> {
         const H: usize = 64;
-        let mut grid: Vec<Vec<char>> = vec![vec![' '; WIDTH as usize]; H];
+        let mut grid: Vec<Vec<char>> = vec![vec![' '; width as usize]; H];
         let mut bottom: Option<usize> = None;
         let put =
             |grid: &mut Vec<Vec<char>>, bottom: &mut Option<usize>, x: i32, y: i32, c: char| {
-                if x < 0 || y < 0 || y as usize >= H || x >= WIDTH as i32 {
+                if x < 0 || y < 0 || y as usize >= H || x >= width as i32 {
                     return;
                 }
                 grid[y as usize][x as usize] = c;
@@ -4355,30 +4087,6 @@ mod tests {
             .collect()
     }
 
-    /// The runtime's, under the same context.
-    fn runtime_text(spec: &WidgetSpec, c: &Ctx<'_>) -> Vec<String> {
-        crate::widgets::render_spec_with_options(
-            spec,
-            c.states,
-            WIDTH as u32,
-            crate::widgets::RenderOptions {
-                prev_focus_key: &c.focus_key,
-                auto_focus_first: false,
-                marker_gutter: c.marker_gutter,
-                hover_key: c.hovered_key.as_deref().unwrap_or(""),
-                ..Default::default()
-            },
-        )
-        .entries
-        .iter()
-        .map(|e| {
-            let mut n = e.clone();
-            n.normalize_widths();
-            n.text.trim_end_matches('\n').trim_end().to_string()
-        })
-        .collect()
-    }
-
     fn button(label: &str, key: Option<&str>, disabled: bool, bare: bool) -> WidgetSpec {
         WidgetSpec::Button {
             label: label.into(),
@@ -4391,57 +4099,6 @@ mod tests {
             full_width: false,
             hover_style: None,
             style: None,
-        }
-    }
-
-    /// A button says what the runtime says it says — framed, bare, disabled,
-    /// focused, and stretched. The label is `render_button`'s to decide and
-    /// stays that way; only the hit moved.
-    #[test]
-    fn a_button_renders_what_the_runtime_renders() {
-        let cases: Vec<(&str, WidgetSpec, Ctx<'static>)> = vec![
-            ("framed", button("Go", Some("go"), false, false), cx()),
-            ("bare", button("×", Some("x"), false, true), cx()),
-            ("disabled", button("Go", Some("go"), true, false), cx()),
-            ("keyless", button("Go", None, false, false), cx()),
-            (
-                "focused",
-                button("Go", Some("go"), false, false),
-                Ctx {
-                    focus_key: "go".into(),
-                    ..cx()
-                },
-            ),
-            (
-                "hovered",
-                button("Go", Some("go"), false, false),
-                Ctx {
-                    hovered_key: Some("go".into()),
-                    ..cx()
-                },
-            ),
-            (
-                "with the marker gutter",
-                button("Go", Some("go"), false, false),
-                Ctx {
-                    marker_gutter: true,
-                    ..cx()
-                },
-            ),
-            (
-                "full width",
-                {
-                    let mut b = button("Go", Some("go"), false, false);
-                    if let WidgetSpec::Button { full_width, .. } = &mut b {
-                        *full_width = true;
-                    }
-                    b
-                },
-                cx(),
-            ),
-        ];
-        for (label, spec, c) in cases {
-            assert_eq!(tree_text(&spec, &c), runtime_text(&spec, &c), "{label}");
         }
     }
 
@@ -4581,52 +4238,6 @@ mod tests {
         }
     }
 
-    /// A toggle says what the runtime says it says, in both layouts and both
-    /// states, focused and hovered.
-    #[test]
-    fn a_toggle_renders_what_the_runtime_renders() {
-        let mut cases: Vec<(String, WidgetSpec, Ctx<'static>)> = Vec::new();
-        for label_first in [false, true] {
-            for checked in [false, true] {
-                cases.push((
-                    format!("label_first={label_first} checked={checked}"),
-                    toggle("wrap", checked, label_first),
-                    cx(),
-                ));
-            }
-        }
-        cases.push((
-            "focused".into(),
-            toggle("wrap", false, false),
-            Ctx {
-                focus_key: "t".into(),
-                ..cx()
-            },
-        ));
-        cases.push((
-            "hovered".into(),
-            toggle("wrap", false, false),
-            Ctx {
-                hovered_key: Some("t".into()),
-                ..cx()
-            },
-        ));
-        cases.push((
-            "indeterminate".into(),
-            {
-                let mut t = toggle("wrap", false, true);
-                if let WidgetSpec::Toggle { indeterminate, .. } = &mut t {
-                    *indeterminate = true;
-                }
-                t
-            },
-            cx(),
-        ));
-        for (label, spec, c) in cases {
-            assert_eq!(tree_text(&spec, &c), runtime_text(&spec, &c), "{label}");
-        }
-    }
-
     /// **The chip, and only the chip.** In form layout a click on the label
     /// must not flip the value — the settings dialog's contract, which the
     /// runtime kept as a byte range and this keeps as where the nodes are.
@@ -4664,69 +4275,6 @@ mod tests {
         };
         assert_eq!(hit.widget_kind, "toggle");
         assert_eq!(hit.event_type, "toggle");
-    }
-
-    /// A number field says what the runtime says, in every shape its
-    /// formatter branches on — integer, percent, clamped, labelled, focused,
-    /// and mid-edit.
-    #[test]
-    fn a_number_renders_what_the_runtime_renders() {
-        let base = |integer: bool, percent: bool| WidgetSpec::Number {
-            value: 42.0,
-            min: Some(0.0),
-            max: Some(100.0),
-            step: 1.0,
-            integer,
-            percent,
-            label: "size".into(),
-            focused: false,
-            label_width: 8,
-            key: Some("n".into()),
-        };
-        let mut cases: Vec<(String, WidgetSpec, Ctx<'static>)> = vec![
-            ("integer".into(), base(true, false), cx()),
-            ("float".into(), base(false, false), cx()),
-            ("percent".into(), base(false, true), cx()),
-            (
-                "focused".into(),
-                base(true, false),
-                Ctx {
-                    focus_key: "n".into(),
-                    ..cx()
-                },
-            ),
-        ];
-        // Above the max: the runtime clamps, and so must this.
-        let mut over = base(true, false);
-        if let WidgetSpec::Number { value, .. } = &mut over {
-            *value = 999.0;
-        }
-        cases.push(("clamped".into(), over, cx()));
-        for (label, spec, c) in cases {
-            assert_eq!(tree_text(&spec, &c), runtime_text(&spec, &c), "{label}");
-        }
-        // Mid-edit: the draft being typed — the kind's instance state —
-        // replaces the value cell.
-        let mut editor = crate::primitives::text_edit::TextEdit::single_line_with_text("7");
-        editor.move_end();
-        let states = std::collections::HashMap::from([(
-            "n".to_string(),
-            crate::widgets::WidgetInstanceState::Number {
-                value: 42.0,
-                edit: Some(editor),
-            },
-        )]);
-        let editing = Ctx {
-            states: &states,
-            focus_key: "n".into(),
-            ..cx()
-        };
-        let spec = base(true, false);
-        assert_eq!(
-            tree_text(&spec, &editing),
-            runtime_text(&spec, &editing),
-            "editing"
-        );
     }
 
     /// **The value cell, and only the value cell.** "A click on the value cell
@@ -4838,105 +4386,6 @@ mod tests {
         };
         assert_eq!(row_of(&ui, "second"), 1, "the row below did not shift");
         let _ = plain;
-    }
-
-    /// **A described single-line field says what the collector said.**
-    ///
-    /// It used to *be* the collector — this test was written when a `Text`
-    /// went through `collected`, and its cases are unchanged. Now the row is
-    /// built from the spec through `kinds::text::single_line`, and the runtime
-    /// is the oracle it has to keep agreeing with: label column, value cell,
-    /// focus gutter, placeholder and the horizontal window are all rules the
-    /// description would otherwise have restated slightly wrong.
-    #[test]
-    fn a_single_line_field_renders_what_the_runtime_renders() {
-        let field = |label: &str,
-                     value: &str,
-                     placeholder: Option<&str>,
-                     field_width: u32,
-                     full_width: bool,
-                     label_width: u32| WidgetSpec::Text {
-            value: value.into(),
-            cursor_byte: -1,
-            focused: false,
-            label: label.into(),
-            placeholder: placeholder.map(|p| p.into()),
-            rows: 1,
-            field_width,
-            max_visible_chars: 0,
-            full_width,
-            completions: Vec::new(),
-            completions_visible_rows: 0,
-            block_caret: false,
-            sel_start: -1,
-            sel_end: -1,
-            label_width,
-            read_only: false,
-            markdown: false,
-            key: Some("t".into()),
-        };
-        let cases: Vec<(&str, WidgetSpec)> = vec![
-            ("a text field", field("name", "hello", None, 12, false, 0)),
-            ("unlabelled", field("", "hello", None, 12, false, 0)),
-            // The form-column rule: the label is padded to `label_width` and
-            // terminated with `:` so the `[` lines up with its siblings'.
-            (
-                "in a form column",
-                field("name", "hello", None, 12, false, 10),
-            ),
-            // A label wider than the column it is given, which `fit_label`
-            // has to cut rather than let overflow the control's right edge.
-            (
-                "a label wider than its column",
-                field("a very long field label indeed", "hi", None, 12, false, 8),
-            ),
-            // `full_width` sizes the value cell against the *padded* label,
-            // the brackets, the cursor park and the gutter reserve.
-            ("full width", field("name", "hello", None, 0, true, 0)),
-            (
-                "full width in a form column",
-                field("name", "hello", None, 0, true, 10),
-            ),
-            // Empty and unfocused is the placeholder's only state.
-            (
-                "a placeholder",
-                field("path", "", Some("~/project"), 12, false, 0),
-            ),
-            // Longer than the cell: the horizontal window and its `…`.
-            (
-                "a value past the window",
-                field(
-                    "name",
-                    "a value far wider than its cell",
-                    None,
-                    12,
-                    false,
-                    0,
-                ),
-            ),
-        ];
-        for (label, spec) in cases {
-            assert_eq!(
-                tree_text(&spec, &cx()),
-                runtime_text(&spec, &cx()),
-                "{label}"
-            );
-            // Focused, with the marker gutter the forms that want
-            // capture-legible focus turn on: the `▸ ` is four bytes and two
-            // columns, and every overlay on the row shifts by the bytes while
-            // the cell shrinks by the columns. Getting either half wrong
-            // moves the brackets.
-            let marked = Ctx {
-                focus_key: "t".into(),
-                marker_gutter: true,
-                ..cx()
-            };
-            assert_eq!(
-                tree_text(&spec, &marked),
-                runtime_text(&spec, &marked),
-                "{label}, focused with the marker gutter"
-            );
-        }
     }
 
     /// **The boundary is closed.** Every variant but `WindowEmbed` is
@@ -5449,15 +4898,6 @@ mod tests {
         }
     }
 
-    /// A dual list renders what the runtime renders, through the adapter and
-    /// with no substitution: it emits every row, so there is no window and no
-    /// bar to lose.
-    #[test]
-    fn a_dual_list_renders_what_the_runtime_renders() {
-        let spec = a_dual_list();
-        assert_eq!(tree_text(&spec, &cx()), runtime_text(&spec, &cx()));
-    }
-
     /// **Both columns answer.** Each row is two cells with a `dual_focus`
     /// gesture apiece over its own byte range — the case that needed a row to
     /// stop being one target, and the one where keeping only the first would
@@ -5467,15 +4907,14 @@ mod tests {
         let spec = a_dual_list();
         let mut ui: Ui<UiMsg> = Ui::new();
         ui.frame(node(&spec, WIDTH, &cx()), Size::new(WIDTH, 24));
-        // Where each cell's label sits, read off the rows the runtime formats.
-        let entries =
-            crate::widgets::render_spec(&spec, &Default::default(), "", WIDTH as u32).entries;
+        // Where each cell's label sits, read off the rows the tree laid out.
+        let rows = rows_of(&ui);
         let cell = |label: &str| -> (i32, i32) {
-            let (row, text) = entries
+            let (row, text) = rows
                 .iter()
                 .enumerate()
-                .find(|(_, e)| e.text.contains(label))
-                .map(|(i, e)| (i, e.text.as_str()))
+                .find(|(_, r)| r.contains(label))
+                .map(|(i, r)| (i, r.as_str()))
                 .expect("the label is on a body row");
             let col = text[..text.find(label).unwrap()].chars().count() as i32;
             (col, row as i32)
@@ -5694,12 +5133,42 @@ mod tests {
         }
     }
 
-    /// The runtime's own pop-over for a spec: the rows it windowed and the
-    /// absolute index each of them selects.
+    /// The pop-over the kind builds for a spec: the rows it windowed and the
+    /// absolute index each of them selects, anchored at the trigger's column.
     fn runtime_popup(spec: &WidgetSpec) -> crate::widgets::PanelPopup {
-        crate::widgets::render_spec(spec, &Default::default(), "", WIDTH as u32)
-            .popup
-            .expect("an open dropdown has a pop-over")
+        let WidgetSpec::Dropdown {
+            options,
+            selected_index,
+            label,
+            label_width,
+            scroll_offset,
+            key,
+            ..
+        } = spec
+        else {
+            panic!("a dropdown");
+        };
+        let rendered = crate::widgets::render_dropdown(
+            options,
+            *selected_index,
+            label,
+            false,
+            *label_width,
+            true,
+            *scroll_offset,
+            false,
+        );
+        crate::widgets::kinds::dropdown::popup_of(
+            options,
+            *selected_index,
+            *scroll_offset,
+            "",
+            key.as_deref().unwrap_or(""),
+            crate::widgets::kinds::dropdown::anchor_col(
+                &rendered.entry.text,
+                rendered.button_range.0,
+            ),
+        )
     }
 
     /// Every line the layers paint, grouped by row the way [`rows_of`] groups
@@ -5736,50 +5205,6 @@ mod tests {
                 _ => None,
             })
             .collect()
-    }
-
-    /// A closed dropdown is one row, and it is the row the runtime renders.
-    #[test]
-    fn a_closed_dropdown_is_the_trigger_row_the_runtime_renders() {
-        let spec = dropdown(&["fast", "slow"], 1, false, 0);
-        assert_eq!(tree_rows(&spec), runtime_rows(&spec));
-    }
-
-    /// Open, the trigger row is still the runtime's — the option list floats
-    /// rather than growing the panel, exactly as the runtime's does.
-    #[test]
-    fn an_open_dropdowns_trigger_row_is_still_the_runtimes() {
-        let spec = dropdown(&["fast", "slow", "off"], 0, true, 0);
-        assert_eq!(tree_rows(&spec), runtime_rows(&spec));
-    }
-
-    /// **The pop-over's rows are the collector's, verbatim.** The runtime is
-    /// the formatter here: it clamps the scroll, slices the window and renders
-    /// each option. What the tree adds is where the box goes and what a press
-    /// on a row means.
-    #[test]
-    fn the_pop_over_paints_the_rows_the_collector_windowed() {
-        let spec = dropdown(&["fast", "slow", "off"], 0, true, 0);
-        let mut ui: Ui<UiMsg> = Ui::new();
-        ui.frame(node(&spec, WIDTH, &cx()), Size::new(WIDTH, 24));
-        let want: Vec<String> = runtime_popup(&spec)
-            .entries
-            .iter()
-            .map(|e| {
-                let mut n = e.clone();
-                n.normalize_widths();
-                // Not `trim_end`: the pop-over pads every row to the widest
-                // option, and that padding is where the selected row's
-                // highlight reaches the box's edge.
-                n.text.trim_end_matches('\n').to_string()
-            })
-            .collect();
-        let got = layer_rows(&ui);
-        assert_eq!(
-            got,
-            want.iter().map(|w| w.to_string()).collect::<Vec<_>>(),
-            "the option rows, verbatim"
-        );
     }
 
     /// **The box hangs off the trigger's row, at the button's own column.**
@@ -6218,34 +5643,6 @@ mod tests {
         );
     }
 
-    /// **The oracle, for everything the marker did not change.** A card is
-    /// now `node_in`'d like any other subtree rather than formatted by the
-    /// collector, so the question "does a card still look like a card" has an
-    /// answer the runtime can give: an unselected card list draws exactly the
-    /// block the collector drew, one column in. That column is the gutter
-    /// this arm always reserves and the runtime reserved only once the list
-    /// overflowed — the reflow-on-overflow bug, visible here as the whole of
-    /// the difference.
-    #[test]
-    fn an_unselected_card_lists_cards_are_the_ones_the_runtime_draws() {
-        let spec = card_list(3, -1, 12);
-        let runtime: Vec<String> =
-            crate::widgets::render_spec(&spec, &Default::default(), "", (WIDTH - 1) as u32)
-                .entries
-                .iter()
-                .map(|e| {
-                    let mut n = e.clone();
-                    n.normalize_widths();
-                    n.text.trim_end_matches('\n').trim_end().to_string()
-                })
-                // The runtime pads a list out to its advertised `visible_rows`
-                // with blank entries; the description paints no row there, so
-                // the two agree on everything that has ink in it.
-                .filter(|r| !r.is_empty())
-                .collect();
-        assert_eq!(tree_rows(&spec), runtime);
-    }
-
     /// A press anywhere on a card selects it, and says which — the same
     /// `select` hit with the same payload the runtime recorded for every row
     /// of the band.
@@ -6641,22 +6038,9 @@ mod tests {
             marker_gutter: true,
             ..cx()
         };
-        let row = crate::widgets::render_spec_with_options(
-            &spec,
-            &Default::default(),
-            WIDTH as u32,
-            crate::widgets::RenderOptions {
-                prev_focus_key: "field",
-                auto_focus_first: false,
-                marker_gutter: true,
-                ..Default::default()
-            },
-        )
-        .entries
-        .remove(0)
-        .text;
         let mut ui: Ui<UiMsg> = Ui::new();
         ui.frame(node(&spec, WIDTH, &focused), Size::new(WIDTH, 8));
+        let row = row_text(&ui, 0);
         let got = facts(ui.dispatch(fresh_ui::Input::press(
             fresh_ui::Point::new(4, 0),
             fresh_ui::MouseButton::Left,
@@ -6714,20 +6098,9 @@ mod tests {
         };
         let mut ui: Ui<UiMsg> = Ui::new();
         ui.frame(node(&spec, WIDTH, &focused), Size::new(WIDTH, 8));
-        // Where the value's glyphs are on screen, asked of the same row the
-        // description drew: the runtime's entry is the oracle for the text,
-        // and the byte the value starts at is the origin the payload names.
-        let out = crate::widgets::render_spec_with_options(
-            &spec,
-            &Default::default(),
-            WIDTH as u32,
-            crate::widgets::RenderOptions {
-                prev_focus_key: "field",
-                auto_focus_first: false,
-                ..Default::default()
-            },
-        );
-        let row = out.entries[0].text.clone();
+        // Where the value's glyphs are on screen, read off the runs the tree
+        // laid out: the byte the value starts at is the origin the payload names.
+        let row = row_text(&ui, 0);
         let inner = row.find("abcdef").expect("the value is on the row");
         assert!(
             row[..inner].contains('名'),
@@ -6879,51 +6252,6 @@ mod tests {
             hover_style: None,
             width_cols: None,
         }
-    }
-
-    /// **The completion list paints the rows the collector windowed.**
-    ///
-    /// Every rule about which candidates show — the forward-only scroll, the
-    /// window clamp, the scrollbar thumb, the highlight that only appears once
-    /// the user has stepped into the list — lives in `completion_popup`, which
-    /// the collector calls too. So the runtime's own overlay rows are the
-    /// oracle, and the box the tree floats has to be made of exactly them.
-    #[test]
-    fn the_completion_list_paints_the_rows_the_collector_windowed() {
-        let items: Vec<String> = (0..9).map(|i| format!("candidate{i}")).collect();
-        let refs: Vec<&str> = items.iter().map(|s| s.as_str()).collect();
-        let states = field_states("he", &refs, 6, true, 0);
-        let spec = sectioned_field();
-        let ctx = Ctx {
-            focus_key: "field".into(),
-            states: Box::leak(Box::new(states.clone())),
-            ..cx()
-        };
-        let want: Vec<String> = crate::widgets::render_spec_with_options(
-            &spec,
-            &states,
-            WIDTH as u32,
-            crate::widgets::RenderOptions {
-                prev_focus_key: "field",
-                auto_focus_first: false,
-                ..Default::default()
-            },
-        )
-        .overlays
-        .iter()
-        .map(|o| {
-            let mut n = o.entry.clone();
-            n.normalize_widths();
-            n.text.trim_end_matches('\n').trim_end().to_string()
-        })
-        .collect();
-        assert!(
-            want.len() == 7,
-            "five of nine candidates, a separator and a border: {want:?}"
-        );
-        let mut ui: Ui<UiMsg> = Ui::new();
-        ui.frame(node(&spec, WIDTH, &ctx), Size::new(WIDTH, 24));
-        assert_eq!(layer_rows(&ui), want);
     }
 
     /// **A wheel over the candidate list moves the list.**
@@ -7123,110 +6451,6 @@ mod tests {
                 .find_by_key(&fresh_ui::Key::Str("widget_focus:".into()))
                 .is_none()),
             "a decorative widget stays off the ring"
-        );
-    }
-
-    /// **`any_on_the_ring` and the collector's ring answer the same question**,
-    /// for every shape the two could plausibly split on.
-    ///
-    /// This is the parity assertion that makes the swap safe.
-    /// `panel::Interior::has_focus_targets` used to be
-    /// `!WidgetPanelState::tabbable.is_empty()` — the collector's
-    /// `collect_tabbable`, recorded at whatever render ran last. It is now this
-    /// walk, which is the *tree's* own admission rule
-    /// (`kinds::focusable_key`) applied to the spec in hand. The two are pinned
-    /// against each other here while the collector still exists, because the
-    /// consequence of a silent disagreement is not cosmetic: `false` when the
-    /// tree has focusables means `keys_layer` keeps its sink instead of naming
-    /// a scope, and `true` when it has none means `apply_autofocus` drops focus
-    /// and the panel's keys leak to the buffer behind it.
-    ///
-    /// The one deliberate divergence is the last case: an empty key is a key
-    /// the collector's ring admits and the tree's cannot address.
-    #[test]
-    fn the_derived_ring_and_the_collectors_agree_on_whether_there_is_one() {
-        let raw = WidgetSpec::Raw {
-            entries: vec![fresh_core::text_property::TextPropertyEntry::text("x")],
-            key: None,
-        };
-        let btn = |key: Option<&str>, disabled: bool, focusable: bool| WidgetSpec::Button {
-            label: "b".into(),
-            focused: false,
-            intent: Default::default(),
-            key: key.map(Into::into),
-            disabled,
-            focusable,
-            bare: false,
-            full_width: false,
-            hover_style: None,
-            style: None,
-        };
-        let col = |children: Vec<WidgetSpec>| WidgetSpec::Col {
-            children,
-            key: None,
-        };
-        let cases: Vec<(&str, WidgetSpec)> = vec![
-            ("nothing at all", raw.clone()),
-            ("a bare button", btn(Some("b"), false, true)),
-            ("a button with no key", btn(None, false, true)),
-            ("a disabled button", btn(Some("b"), true, true)),
-            ("a button that opted out", btn(Some("b"), false, false)),
-            (
-                "one focusable buried under decoration",
-                col(vec![
-                    raw.clone(),
-                    col(vec![raw.clone(), btn(Some("deep"), false, true)]),
-                ]),
-            ),
-            (
-                "nothing focusable, several levels of it",
-                col(vec![
-                    raw.clone(),
-                    col(vec![raw.clone(), btn(None, false, true)]),
-                ]),
-            ),
-        ];
-        for (what, spec) in cases {
-            let collected =
-                crate::widgets::render_spec(&spec, &Default::default(), "", WIDTH as u32);
-            assert_eq!(
-                any_on_the_ring(&spec),
-                !collected.tabbable.is_empty(),
-                "{what}: the derived answer and the collector's ring disagree"
-            );
-        }
-
-        // **Staleness is the whole of the difference, so it is the thing to
-        // pin.** The two rules agree above on every shape; what the swap buys
-        // is that the answer is taken from *this* spec rather than from the
-        // ring some earlier render recorded. Here the recorded ring is empty
-        // and the spec has a button in it — the shape a panel is in between a
-        // spec update and the re-render that would refresh the ring.
-        let spec = std::rc::Rc::new(btn(Some("ok"), false, true));
-        let interior = super::super::panel::Interior {
-            spec: spec.clone(),
-            states: Default::default(),
-            h_pan: Default::default(),
-            focus_key: String::new(),
-            keyboard: true,
-
-            page: None,
-            reading: None,
-            selection: Vec::new(),
-            compose: None,
-            hovered_key: None,
-            hovered_item_key: String::new(),
-            hovered_popup_row: String::new(),
-            reveal: fresh_ui::behavior::anchor::Anchor::new(),
-            marker_gutter: false,
-            avail_height: None,
-            scrollbar_reveal: None,
-            keymap: None,
-            markdown: None,
-        };
-        assert!(
-            any_on_the_ring(&interior.spec),
-            "the ring is read from the spec the interior is about to describe"
         );
     }
 

@@ -13,6 +13,17 @@ use crate::render::geom::{Rect, Size};
 use crate::render::object::{Geom, RenderId};
 use crate::render::spec::{CursorSpec, Draw, DrawList, Item, LayoutSpec, ThemeKey};
 use crate::schedule::Ui;
+use crate::ElementId;
+
+/// Whether a paint walk honours the clips layout recorded.
+#[derive(Clone, Copy)]
+enum Clipping {
+    /// The frame's walk: an ancestor's clip cuts what is under it.
+    Inherited,
+    /// A subtree read for its content: every node is clipped only by
+    /// itself, so nothing a viewport scrolled away is lost.
+    None,
+}
 
 impl<M: 'static> Ui<M> {
     pub(crate) fn flush_paint(&mut self, frame: Size) {
@@ -20,7 +31,7 @@ impl<M: 'static> Ui<M> {
         spec.clear();
         spec.frame = frame;
         if let Some(root) = self.render_root {
-            self.paint_render(root, &mut spec);
+            self.paint_render(root, &mut spec, Clipping::Inherited);
             // Everything from here on came out of a layer. Recorded before the
             // loop rather than derived after it, because a scrim carries no key
             // and an unkeyed layer leaves no index entry — nothing outside can
@@ -75,7 +86,7 @@ impl<M: 'static> Ui<M> {
                 draw: Draw::Scrim(kind),
             });
         }
-        self.paint_render(lr, spec);
+        self.paint_render(lr, spec, Clipping::Inherited);
         if spec.cursor.is_none() {
             spec.cursor = under.filter(|c| {
                 !spec.items[painted_from..]
@@ -85,13 +96,37 @@ impl<M: 'static> Ui<M> {
         }
     }
 
-    fn paint_render(&mut self, r: RenderId, spec: &mut LayoutSpec) {
+    /// The display list of one subtree, unclipped.
+    ///
+    /// Every item the subtree would paint if nothing above it cut it — the
+    /// rows a viewport has scrolled out of its window included — in absolute
+    /// coordinates, each with its own rectangle as its clip, and in-flow only:
+    /// a layer declared inside the subtree is not part of it. It is not a
+    /// frame: nothing is drawn and the frame's own list is untouched. For a
+    /// host that keeps a text mirror of a subtree somewhere the screen is not
+    /// and needs the rows the screen does not show.
+    pub fn paint_subtree(&mut self, root: ElementId) -> LayoutSpec {
+        let mut spec = LayoutSpec {
+            frame: self.frame_size,
+            ..LayoutSpec::default()
+        };
+        if let Some(r) = self.render_for(root) {
+            self.paint_render(r, &mut spec, Clipping::None);
+        }
+        spec.layers_from = spec.items.len();
+        spec
+    }
+
+    fn paint_render(&mut self, r: RenderId, spec: &mut LayoutSpec, clipping: Clipping) {
         let (element, rect, clip, theme, classes, key, kids, out_of_flow) = {
             let Some(n) = self.render.get(r) else { return };
             (
                 n.element,
                 n.data.rect,
-                n.data.clip,
+                match clipping {
+                    Clipping::Inherited => n.data.clip,
+                    Clipping::None => n.data.rect,
+                },
                 n.theme.clone(),
                 n.classes.clone(),
                 n.key.clone(),
@@ -164,7 +199,7 @@ impl<M: 'static> Ui<M> {
             if self.render.get(k).map(|n| n.out_of_flow).unwrap_or(false) {
                 continue;
             }
-            self.paint_render(k, spec);
+            self.paint_render(k, spec, clipping);
         }
         let _ = out_of_flow;
 

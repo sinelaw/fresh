@@ -3905,6 +3905,9 @@ impl Editor {
         );
         self.shell_ui = Some(ui);
         self.shell_description_stale = false;
+        // The pane panels' buffers are the rows this layout settled — see
+        // `app::pane_mirror`.
+        self.mirror_pane_panels();
     }
 
     /// The frame's second half: the display list of the tree as
@@ -6393,8 +6396,8 @@ impl Editor {
     /// **All of it is host state the spec does not carry** — the focused
     /// widget, the widget and row under the pointer, whether the focus-marker
     /// gutter is reserved, the auto-size row budget, and the instance state
-    /// the stateful kinds are authoritative for. The runtime read the same
-    /// list off a `RenderContext`; here it is resolved once, where the
+    /// the stateful kinds are authoritative for. The text projection read
+    /// the same list off its own context; here it is resolved once, where the
     /// description is built, and handed down.
     ///
     /// `None` means there is no panel in the slot, or none mounted in the

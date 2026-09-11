@@ -1251,7 +1251,7 @@ impl Span {
 pub enum Search {
     Hint(Vec<Span>),
     /// **The query is a `WidgetSpec::Text`**, which is how it was already
-    /// painted — "the same `WidgetSpec` + `render_spec` path every settings
+    /// painted — "the same `WidgetSpec` path every settings
     /// field now uses, instead of hand-rolled cursor spans". It is a *node*
     /// now, through the same adapter a plugin's field goes through, which is
     /// what "there is no privileged internal surface" means.
@@ -2997,8 +2997,8 @@ mod tests {
     }
 
     /// **The live query is a node, through the adapter a plugin's field goes
-    /// through.** It was already a `WidgetSpec::Text` rendered by
-    /// `render_spec`; what changed is that the tree lays it out.
+    /// through.** It was already a `WidgetSpec::Text` rendered by the text
+    /// projection; what changed is that the tree lays it out.
     #[test]
     fn an_active_search_paints_its_query_and_its_count() {
         let mut ui: Ui<UiMsg> = Ui::new();

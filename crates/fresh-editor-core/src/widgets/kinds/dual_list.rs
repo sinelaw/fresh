@@ -10,10 +10,10 @@ use crate::widgets::registry::WidgetInstanceState;
 use fresh_core::text_property::{InlineOverlay, OffsetUnit, TextPropertyEntry};
 
 use crate::widgets::render::{
-    cell, dual_available_values, dual_col_width, dual_cursor_marker, dual_label,
-    dual_sanitize_included, ensure_trailing_newline, CollectedOutput, RenderContext,
-    DUAL_COLUMN_ACTIVE, DUAL_CURSOR_IDLE, DUAL_GUTTER_BLANK, KEY_COMPLETION_DIM_FG, KEY_FOCUSED_BG,
-    KEY_FOCUSED_FG, KEY_PLACEHOLDER_FG, KEY_SECTION_LABEL_FG,
+    cell, dual_available_values, dual_cursor_marker, dual_label, dual_sanitize_included,
+    ensure_trailing_newline, DUAL_COLUMN_ACTIVE, DUAL_CURSOR_IDLE, DUAL_GUTTER_BLANK,
+    KEY_COMPLETION_DIM_FG, KEY_FOCUSED_BG, KEY_FOCUSED_FG, KEY_PLACEHOLDER_FG,
+    KEY_SECTION_LABEL_FG,
 };
 
 pub struct DualList;
@@ -89,51 +89,6 @@ impl WidgetImpl for DualList {
         let index = payload.get("index").and_then(|v| v.as_i64()).unwrap_or(0) as usize;
         pointer_focus_cell(spec, widget_key, panel, to_included, index);
         super::PointerDisposition::Consumed
-    }
-
-    fn collect(
-        &self,
-        spec: &WidgetSpec,
-        prev: &HashMap<String, WidgetInstanceState>,
-        next_state: &mut HashMap<String, WidgetInstanceState>,
-        ctx: RenderContext<'_>,
-        panel_width: u32,
-    ) -> CollectedOutput {
-        let WidgetSpec::DualList {
-            options,
-            included,
-            excluded,
-            label,
-            focused,
-            active_included,
-            available_cursor,
-            included_cursor,
-            hint,
-            visible_rows,
-            key,
-        } = spec
-        else {
-            return CollectedOutput::default();
-        };
-        collect_dual_list(
-            options,
-            DualListSeed {
-                included,
-                excluded,
-                active_included: *active_included,
-                available_cursor: *available_cursor as usize,
-                included_cursor: *included_cursor as usize,
-            },
-            label,
-            hint,
-            *focused,
-            *visible_rows,
-            key.as_deref(),
-            prev,
-            next_state,
-            ctx,
-            panel_width,
-        )
     }
 }
 
@@ -608,70 +563,6 @@ pub fn body_row(options: &[DualListOption], st: &Resolved, i: usize, col_w: usiz
         available: left_val.is_some().then_some((left_start, left_end)),
         included: right_val.is_some().then_some((right_start, right_end)),
     }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn collect_dual_list(
-    options: &[DualListOption],
-    seed: DualListSeed<'_>,
-    label: &str,
-    hint: &str,
-    focused: bool,
-    visible_rows: u32,
-    key: Option<&str>,
-    prev: &HashMap<String, WidgetInstanceState>,
-    next_state: &mut HashMap<String, WidgetInstanceState>,
-    ctx: RenderContext<'_>,
-    panel_width: u32,
-) -> CollectedOutput {
-    let mut out = CollectedOutput::default();
-    // A keyed widget takes focus from the host's resolved focus key; an
-    // unkeyed one falls back to the spec's initial-only `focused` hint.
-    let is_focused = if key.is_some_and(|k| !k.is_empty()) {
-        ctx.is_focused(key)
-    } else {
-        focused
-    };
-    let st = resolve(options, &seed, key, prev, is_focused);
-    // **The walk carries this widget's state; it does not decide it.**
-    //
-    // What it used to write back was `resolve`'s answer — the sanitized
-    // included set and both clamped cursors — and every one of those is
-    // recomputed on each read by the same function, which the painter and the
-    // description both call. Persisting a derivation stored nothing a reader
-    // could not work out, and it made the render walk a second writer of
-    // fields `on_key` and `on_pointer` own.
-    //
-    // The pass-through keeps the entry alive across the whole-map replace in
-    // `update_side_effects`; an absent one stays absent, so a control nobody
-    // has touched still reads its columns from the spec. Same rule as
-    // `kinds::dropdown` and `kinds::number`, for the same reason.
-    if let Some(k) = key.filter(|k| !k.is_empty()) {
-        if let Some(stored) = prev.get(k) {
-            next_state.insert(k.to_string(), stored.clone());
-        }
-    }
-
-    let col_w = dual_col_width(panel_width);
-
-    if let Some(e) = label_row(label) {
-        out.entries.push(e);
-    }
-    out.entries.push(header_row(&st, col_w));
-
-    for i in 0..st.body_rows(visible_rows) {
-        let Row { entry, .. } = body_row(options, &st, i, col_w);
-        out.entries.push(entry);
-    }
-
-    // Key hint under the columns. The control's bindings (Shift+←→ to
-    // move an item across, Shift+↑↓ to reorder) aren't guessable from
-    // its shape, so the host supplies a localized one-liner and it
-    // rides with the control instead of only in a panel footer.
-    if let Some(e) = hint_row(hint) {
-        out.entries.push(e);
-    }
-    out
 }
 
 /// The optional label above the columns. `None` when the plugin gave none,
