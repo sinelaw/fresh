@@ -3723,14 +3723,20 @@ fn dock_menu_hide_dock_hides_the_dock() {
     open_dock(&mut h);
 
     // The title bar carries the `×`; the action row under it carries `⋯`.
+    // Only the dock's column counts: the editor's tab bar shares these
+    // screen rows and has a `×` of its own.
+    let dock_col = |row: usize| -> String {
+        let text = h.screen_row_text(row as u16);
+        text.split('│').next().unwrap_or("").to_string()
+    };
     let action_row = row_of(&h, "+ New");
-    let header = h.screen_row_text(action_row as u16);
+    let header = dock_col(action_row);
     assert!(
         header.contains("⋯") && !header.contains('×'),
         "the dock's action row carries the ⋯ menu:\n{}",
         h.screen_to_string()
     );
-    let title = h.screen_row_text((action_row - 1) as u16);
+    let title = dock_col(action_row - 1);
     assert!(
         title.contains("Orchestrator") && title.contains('×'),
         "the dock's title bar sits above the action row with its ×:\n{}",
