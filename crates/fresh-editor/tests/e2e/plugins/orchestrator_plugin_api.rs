@@ -354,13 +354,11 @@ fn get_workspace_resolves_by_id_number_and_name_and_explains_the_state() {
 
     h.wait_until(|h| h.screen_to_string().contains("PROBE_GET "))
         .unwrap();
+    // The report lands in the buffer, so the screen row carries the
+    // line-number gutter before it; read from the marker on.
     let screen = h.screen_to_string();
-    let line = screen
-        .lines()
-        .find(|l| l.contains("PROBE_GET "))
-        .unwrap()
-        .trim()
-        .to_string();
+    let row = screen.lines().find(|l| l.contains("PROBE_GET ")).unwrap();
+    let line = row[row.find("PROBE_GET ").unwrap()..].trim().to_string();
     assert!(
         line.starts_with("PROBE_GET idle idle rules=built-in reasons=")
             && line.contains(" number=true name=true missing=true"),

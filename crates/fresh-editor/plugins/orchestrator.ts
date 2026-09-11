@@ -8897,8 +8897,10 @@ function sshIncludeFiles(pattern: string): string[] {
 // dropped; ssh's first-obtained-value-wins rule is kept per alias.
 function parseSshConfig(path: string, hosts: SshConfigHost[], depth: number): void {
   if (depth > 8) return;
+  // A missing file reads back as null or undefined depending on the host
+  // path it was asked through; either way there is nothing to parse.
   const text = editor.readFile(path);
-  if (text === null) return;
+  if (!text) return;
   let block: SshConfigHost[] = [];
   for (const raw of text.split(/\r?\n/)) {
     const line = raw.trim();
@@ -12059,6 +12061,7 @@ function agentOptionsFrom(options: RunAgentOptions): AgentOptionInputs {
 }
 
 async function runAgent(options: RunAgentOptions = {}): Promise<AgentLaunchResult> {
+  await yieldToCaller();
   const cmd = trimmed(options.agent);
   // Same gating and the same launch function as `submitForm`'s
   // current-workspace branch, so a bare terminal never gets stray flags.
@@ -12116,6 +12119,7 @@ async function waitForState(
   target: string | number,
   options: { until?: AgentState | AgentState[]; timeoutMs?: number; pollMs?: number } = {},
 ): Promise<WaitResult> {
+  await yieldToCaller();
   const s = resolveWorkspace(target);
   if (!s || s.discovered) throw new Error(`no such workspace: ${String(target)}`);
   const until = new Set<AgentState>(
