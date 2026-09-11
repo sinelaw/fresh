@@ -426,12 +426,6 @@ type SessionBackend = "local" | "ssh" | "kubernetes" | "devcontainer";
 // §5.1), as its own group below the machines.
 type FormBackend = "local" | "ssh" | "kubernetes" | "devcontainer";
 
-const SESSION_BACKENDS: { id: FormBackend; label: string }[] = [
-  { id: "local", label: editor.t("backend.local") },
-  { id: "ssh", label: editor.t("backend.ssh") },
-  { id: "kubernetes", label: editor.t("backend.kubernetes") },
-];
-
 interface NewSessionForm {
   // Where the agent lands: a terminal in the CURRENT workspace, or a brand-new
   // one. This is the dialog's top-level mode switch — "current" hides every
@@ -889,6 +883,8 @@ const DOCK_WIDTH_FRACTION = 0.28;
 // (density, what to show, the project scope), folder creation, and hiding
 // the dock itself, behind one glyph. See docs/internal/orchestrator-ux-redesign.md §2.4.
 const DOCK_MORE_GLYPH = "⋯";
+// The title bar's hide button.
+const DOCK_CLOSE_GLYPH = "×";
 
 // Responsive default dock width: ~`DOCK_WIDTH_FRACTION` of the terminal,
 // clamped to [`DOCK_MIN`..`DOCK_MAX`]. Re-evaluated on resize so the dock
@@ -4847,6 +4843,7 @@ function dockProjectMenu(): WidgetSpec {
         key: PROJECT_MENU_KEY,
       }),
     }),
+    { key: DOCK_PROJECT_OVERLAY_KEY },
   );
 }
 
@@ -4958,19 +4955,43 @@ function dockAttentionRow(att: { blocked: number; done: number }): WidgetSpec {
       }),
     );
   }
+  // Counts only: the way to the workspace that needs you is `Orchestrator:
+  // Jump to Attention` (F8 by default) or the row itself.
+  return row(spacer(1), ...parts, spacer(1));
+}
+
+// The dock's title bar: "Orchestrator" as a menu-bar strip spanning the dock,
+// with the hide `×` pinned to the right edge (mouse-only, like the file
+// explorer's; the keyboard has Toggle Dock). The accelerator that focuses
+// the dock supplies the mnemonic: its letter in the title is underlined
+// when the binding really is a single letter that appears in the title.
+function dockTitleRow(): WidgetSpec {
+  const title = editor.t("dock.title");
+  const base = { fg: "ui.menu_fg", bg: "ui.menu_bg" };
+  const accel = editor.getKeybindingLabel("toggle_dock_focus", "normal");
+  const m = accel ? accel.match(/([A-Za-z])\s*$/) : null;
+  const mnem = m ? m[1].toLowerCase() : "";
+  const idx = mnem ? title.toLowerCase().indexOf(mnem) : -1;
+  const segments: Entry[] = [];
+  if (idx >= 0) {
+    if (idx > 0) segments.push({ text: title.slice(0, idx), style: base });
+    segments.push({ text: title.slice(idx, idx + 1), style: { ...base, underline: true, bold: true } });
+    segments.push({ text: title.slice(idx + 1), style: base });
+  } else {
+    segments.push({ text: title, style: { ...base, bold: true } });
+  }
+  // The strip's background rides on the first inline piece's entry style:
+  // a Row's inline collapse keeps the leading child's style for the merged
+  // line, so `base` tints the title, the spacer and the button alike.
   return row(
-    spacer(1),
-    ...parts,
+    raw([styledRow(segments as Parameters<typeof styledRow>[0], { style: base })]),
     flexSpacer(),
-    // Mouse route to the same jump the command makes; not in the Tab ring.
-    button(editor.t("dock.jump_btn"), {
-      key: "attention-jump",
-      bare: true,
+    button(DOCK_CLOSE_GLYPH, {
+      key: "dock-close",
       focusable: false,
-      style: { fg: "ui.menu_disabled_fg" },
-      hoverStyle: { fg: "ui.help_key_fg" },
+      bare: true,
+      hoverStyle: { fg: "ui.tab_close_hover_fg" },
     }),
-    spacer(1),
   );
 }
 
@@ -5067,7 +5088,9 @@ function buildDockSpec(): WidgetSpec {
   // something to say — a dock with nothing pending stays as tall as before.
   const att = attentionCounts(orchestratorSessions.keys());
   const attentionRow: WidgetSpec[] = att.blocked > 0 || att.done > 0 ? [dockAttentionRow(att)] : [];
-  const chromeRows = 2 + searchRow.length + attentionRow.length + bottomRows;
+  // Top chrome: the title bar, the action row, the search row while it is
+  // open, the attention line when there is one, and the divider.
+  const chromeRows = 3 + searchRow.length + attentionRow.length + bottomRows;
   const listRows = Math.max(MIN_LIST_ROWS, innerH - chromeRows);
   openDialog.listVisibleRows = listRows;
   // Rows of chrome above the tree (everything in chromeRows except the
@@ -5090,6 +5113,7 @@ function buildDockSpec(): WidgetSpec {
     : [];
 
   return col(
+    dockTitleRow(),
     row(
       button(editor.t("dock.new"), { intent: "primary", key: "new-session" }),
       flexSpacer(),
@@ -5311,6 +5335,15 @@ function menuRows(
   );
 }
 
+// The dock's menus float over its rows as keyed overlays: the host reports a
+// press outside one as a `dismiss` on its key, which closes it (the press
+// still lands where it was aimed — a row click both closes the menu and
+// selects the row). The `⋯` button's own press arrives right after that
+// dismissal, so it is held off from reopening what it just closed.
+const DOCK_MENU_OVERLAY_KEY = "dock-menu-overlay";
+const DOCK_PROJECT_OVERLAY_KEY = "dock-project-overlay";
+let dockMenuDismissedAt = 0;
+
 function dockDropdownOverlay(label: string, opts: MenuOption[], cursor: number): WidgetSpec {
   return overlay(
     labeledSection({
@@ -5323,6 +5356,7 @@ function dockDropdownOverlay(label: string, opts: MenuOption[], cursor: number):
         key: DOCK_MENU_KEY,
       }),
     }),
+    { key: DOCK_MENU_OVERLAY_KEY },
   );
 }
 
@@ -7203,48 +7237,30 @@ function rebuildFormFocusCycle(): void {
   const creating = f.target === "new";
   const cycle: string[] = ["target_dropdown"];
   if (creating) {
-    cycle.push(formUsesMachines() ? "machine" : "backend");
-    switch (f.backend) {
-      case "local":
-      case "devcontainer":
-        cycle.push("project_path");
-        break;
-      case "ssh":
-        if (f.machineId) {
-          cycle.push("ssh_path");
-          break;
-        }
-        if (f.sshHosts.length > 0 && !formUsesMachines()) cycle.push("ssh_host_pick");
-        if (sshOther()) cycle.push("ssh_host", "ssh_identity", "ssh_options");
-        cycle.push("ssh_path");
-        if (sshOther()) cycle.push(...rememberKeys());
-        break;
-      case "kubernetes":
-        if (f.machineId) {
-          cycle.push("k8s_workspace");
-          break;
-        }
-        cycle.push("k8s_target");
-        if (f.k8sTarget.value.trim().length === 0) {
-          cycle.push("k8s_context", "k8s_namespace", "k8s_pod", "k8s_workspace");
-        }
-        cycle.push(...rememberKeys());
-        break;
+    cycle.push("machine");
+    if (!f.machineId && f.backend === "ssh" && sshOther()) {
+      cycle.push("ssh_host", "ssh_identity", "ssh_options");
     }
-    cycle.push("name");
+    if (!f.machineId && f.backend === "kubernetes") {
+      cycle.push("k8s_target");
+      if (f.k8sTarget.value.trim().length === 0) cycle.push("k8s_context", "k8s_namespace", "k8s_pod");
+    }
+    cycle.push(pathFieldKey(f.backend), "name");
   }
   cycle.push("agent_dropdown");
   // The command field is a stop only while it is shown — and it is shown
   // whenever the preset hands focus to it, so that focus is never dropped.
   if (cmdVisible()) cycle.push("cmd");
-  const agent = agentOptionsApply() ? activeAgentEntry() : null;
+  const agent = activeAgentEntry();
   if (agent?.prompt) cycle.push("start_prompt");
+  if (agent?.auto) cycle.push("auto_mode");
+  if (agent?.systemPrompt && teachApplies()) cycle.push("teach_fresh_cli");
   if (creating && f.backend === "local" && f.projectPathIsGit !== false) {
     cycle.push("worktree", "branch");
     if (f.createWorktree) cycle.push("new_branch");
+  } else if (creating && typedMachine()) {
+    cycle.push(...rememberKeys());
   }
-  if (agent?.auto) cycle.push("auto_mode");
-  if (agent?.systemPrompt) cycle.push("teach_fresh_cli");
   cycle.push("create-visit");
   if (creating) cycle.push("create-bg");
   cycle.push("cancel");
@@ -8054,15 +8070,6 @@ const SUBTITLE_VALUE_STYLE = { fg: "ui.help_key_fg", bold: true } as const;
 // Switch the New Workspace form to a different backend: swap the body and
 // rebuild the Tab cycle. Focus stays on the `Run in` radio, which is where
 // the choice was made (←/→ or a click on an option).
-function selectBackend(backend: FormBackend): void {
-  if (!form || !formPanel || form.backend === backend) return;
-  form.backend = backend;
-  form.lastError = null;
-  closeCompletion();
-  renderForm();
-  snapFormFocusTo("backend");
-}
-
 // The first input of a backend's body — where the form lands focus on open.
 function firstBodyFieldKey(backend: FormBackend): string {
   switch (backend) {
@@ -8070,10 +8077,22 @@ function firstBodyFieldKey(backend: FormBackend): string {
     case "devcontainer":
       return "project_path";
     case "ssh":
-      if (form?.machineId) return "ssh_path";
-      return form && form.sshHosts.length > 0 ? "ssh_host_pick" : "ssh_host";
+      return !form?.machineId && sshOther() ? "ssh_host" : "ssh_path";
     case "kubernetes":
       return form?.machineId ? "k8s_workspace" : "k8s_target";
+  }
+}
+
+// The key of the one Project Path field, whichever backend it roots.
+function pathFieldKey(backend: FormBackend): string {
+  switch (backend) {
+    case "local":
+    case "devcontainer":
+      return "project_path";
+    case "ssh":
+      return "ssh_path";
+    case "kubernetes":
+      return "k8s_workspace";
   }
 }
 
@@ -8091,6 +8110,13 @@ function firstBodyFieldKey(backend: FormBackend): string {
 
 type MachineKind = "ssh" | "kubernetes";
 
+// The outcome of the last `Test connection`, kept with the machine.
+interface MachineTest {
+  ok: boolean;
+  at: number;
+  summary: string;
+}
+
 interface Machine {
   id: string;
   name: string;
@@ -8105,7 +8131,7 @@ interface Machine {
   pod: string;
   // Where a workspace on this machine is rooted unless the form says otherwise.
   path: string;
-  lastTest: { ok: boolean; at: number; summary: string } | null;
+  lastTest: MachineTest | null;
 }
 
 type Field = { value: string; cursor: number };
@@ -8353,6 +8379,11 @@ function restoreDockAfterDialog(): void {
 interface MachineDialogState {
   id: string | null;
   kind: MachineKind;
+  // The hosts `~/.ssh/config` names, and which the `Host` picker is on
+  // (`hosts.length` = `Other host…`, the typed target). Picking an alias
+  // fills Name and Target from it; ssh resolves the rest from the entry.
+  hosts: SshConfigHost[];
+  hostPick: number;
   name: Field;
   target: Field;
   identity: Field;
@@ -8375,14 +8406,23 @@ let machineDialog: MachineDialogState | null = null;
 let machinePanel: FloatingWidgetPanel | null = null;
 let machineFocusKey = "machine-name";
 
-function openMachineDialog(existing: Machine | null, returnTo: "machines" | "form" | null): void {
+function openMachineDialog(
+  existing: Machine | null,
+  returnTo: "machines" | "form" | null,
+  fromHost?: SshConfigHost,
+): void {
   yieldDockToDialog();
   const m = existing;
+  const hosts = sshConfigHosts();
+  const seed = fromHost?.alias ?? m?.target.trim() ?? "";
+  const pick = hosts.findIndex((h) => h.alias === seed);
   machineDialog = {
     id: m?.id ?? null,
     kind: m?.kind ?? "ssh",
-    name: fieldOf(m?.name ?? ""),
-    target: fieldOf(m?.target ?? ""),
+    hosts,
+    hostPick: pick >= 0 ? pick : hosts.length,
+    name: fieldOf(m?.name ?? fromHost?.alias ?? ""),
+    target: fieldOf(m?.target ?? fromHost?.alias ?? ""),
     identity: fieldOf(m?.identity ?? ""),
     options: fieldOf(m?.options ?? ""),
     context: fieldOf(m?.context ?? ""),
@@ -8460,8 +8500,23 @@ function buildMachineDialogSpec(): WidgetSpec {
       key: "machine-kind",
     }),
     spacer(0),
-    ...field(editor.t("machine.name"), d.name, { key: "machine-name" }),
   ];
+  // The Host picker, when the config names any: an alias is the target
+  // (ssh resolves user, port and identity from the entry) and the name
+  // follows it; `Other host…` leaves both to the fields below.
+  if (d.kind === "ssh" && d.hosts.length > 0) {
+    const pick = Math.min(d.hostPick, d.hosts.length);
+    children.push(
+      dropdown([...d.hosts.map((h) => h.alias), editor.t("form.ssh_other_host")], {
+        selectedIndex: pick,
+        label: splitLabel("form.ssh_host_label").label,
+        labelWidth: FORM_LABEL_W,
+        key: "machine-host-pick",
+      }),
+    );
+    if (pick < d.hosts.length) children.push(fieldNote(sshResolvedTarget(d.hosts[pick])));
+  }
+  children.push(...field(editor.t("machine.name"), d.name, { key: "machine-name" }));
   if (d.kind === "ssh") {
     children.push(
       ...field(editor.t("machine.target"), d.target, {
@@ -8600,6 +8655,8 @@ registerHandler("orchestrator_machine_enter", () => {
   if (machineFocusKey === "machine-cancel") return closeMachineDialog(true);
   if (machineFocusKey === "machine-test") return runMachineTest();
   if (machineFocusKey === "machine-kind") return;
+  // Enter on the Host picker opens it, the way every form dropdown does.
+  if (machineFocusKey === "machine-host-pick") return machinePanel.command({ kind: "key", key: "Enter" });
   saveMachineDialog();
 });
 registerHandler("orchestrator_machine_save", () => saveMachineDialog());
@@ -8615,6 +8672,29 @@ function handleMachineDialogEvent(e: WidgetEvt): void {
   }
   if (e.event_type === "focus") {
     if (typeof e.widget_key === "string" && e.widget_key.length > 0) machineFocusKey = e.widget_key;
+    return;
+  }
+  if (e.event_type === "change" && e.widget_key === "machine-host-pick") {
+    const idx = ((e.payload ?? {}) as Record<string, unknown>).index;
+    if (typeof idx === "number" && idx !== d.hostPick) {
+      const before = d.hosts[d.hostPick];
+      d.hostPick = idx;
+      const h = d.hosts[idx];
+      if (h) {
+        // The alias is the target; the name follows it unless the user
+        // typed one of their own. The fields' text is host-owned after
+        // first render, so the new values are pushed, not just re-rendered.
+        d.target = fieldOf(h.alias);
+        machinePanel?.setValue("machine-target", d.target.value, d.target.cursor);
+        if (!d.name.value.trim() || (before && d.name.value === before.alias)) {
+          d.name = fieldOf(h.alias);
+          machinePanel?.setValue("machine-name", d.name.value, d.name.cursor);
+        }
+      }
+      d.test = { state: "idle", summary: "", detail: "" };
+      d.error = "";
+      renderMachineDialog();
+    }
     return;
   }
   if (e.event_type === "change" && e.widget_key === "machine-kind") {
@@ -8671,10 +8751,55 @@ let pendingFormMachine: string | null | undefined = undefined;
 interface MachinesRow {
   key: string;
   machine: Machine | null;
+  // A host `~/.ssh/config` names, listed beside the saved machines so the
+  // dialog shows every place a workspace can run. Fresh does not own it
+  // (§5.3): it can be launched on and tested, and saved as a machine of its
+  // own, but not edited or removed here.
+  host?: SshConfigHost;
+}
+
+// Results of `Test connection` on ssh-config hosts, kept for this run only:
+// the config file is not Fresh's to write a result into.
+const sshHostTests = new Map<string, MachineTest>();
+
+// A saved machine that already stands for a config host (its target is the
+// alias, or what the alias resolves to) hides the config row.
+function machineCoversHost(m: Machine, h: SshConfigHost): boolean {
+  if (m.kind !== "ssh") return false;
+  const t = m.target.trim().replace(/^ssh:\/\//, "");
+  return t === h.alias || t === sshResolvedTarget(h);
 }
 
 function machinesRows(): MachinesRow[] {
-  return [{ key: "local", machine: null }, ...loadMachines().map((m) => ({ key: m.id, machine: m }))];
+  const saved = loadMachines();
+  const rows: MachinesRow[] = [
+    { key: "local", machine: null },
+    ...saved.map((m) => ({ key: m.id, machine: m })),
+  ];
+  for (const h of sshConfigHosts()) {
+    if (saved.some((m) => machineCoversHost(m, h))) continue;
+    rows.push({ key: `host:${h.alias}`, machine: null, host: h });
+  }
+  return rows;
+}
+
+// The machine a config host stands for, for a test or a launch: ssh
+// resolves user, port and identity from the entry, so the alias is the
+// whole target.
+function machineForHost(h: SshConfigHost): Machine {
+  return {
+    id: `host:${h.alias}`,
+    name: h.alias,
+    kind: "ssh",
+    target: h.alias,
+    identity: "",
+    options: "",
+    context: "",
+    namespace: "",
+    pod: "",
+    path: "",
+    lastTest: sshHostTests.get(h.alias) ?? null,
+  };
 }
 
 function openMachinesDialog(): void {
@@ -8711,7 +8836,7 @@ function machinesRowEntry(r: MachinesRow): TextPropertyEntry {
     const w = editor.stringWidth(s);
     return w >= n ? s : s + " ".repeat(n - w);
   };
-  if (!r.machine) {
+  if (!r.machine && !r.host) {
     const n = localWorkspaceCount();
     return styledRow([
       { text: pad(editor.t("machine.local"), 13) },
@@ -8721,19 +8846,24 @@ function machinesRowEntry(r: MachinesRow): TextPropertyEntry {
       { text: editor.t("machine.workspaces", { n: String(n) }), style: dim },
     ]);
   }
-  const m = r.machine;
+  const m = r.machine ?? machineForHost(r.host!);
   const test = m.lastTest === null
     ? { text: pad("—", 12), style: dim }
     : m.lastTest.ok
     ? { text: pad(editor.t("machine.test_ok"), 12), style: { fg: "ui.help_key_fg" } }
     : { text: pad(`✗ ${agoText(m.lastTest.at)}`, 12), style: { fg: "ui.status_error_indicator_fg" } };
   const n = machineWorkspaceCount(m);
+  const tail = r.host
+    ? editor.t("machine.from_ssh_config")
+    : n > 0
+    ? editor.t("machine.workspaces", { n: String(n) })
+    : "—";
   return styledRow([
     { text: pad(m.name, 13) },
     { text: pad(machineKindTag(m), 5), style: dim },
-    { text: pad(machineSummary(m), 30), style: dim },
+    { text: pad(r.host ? sshResolvedTarget(r.host) : machineSummary(m), 30), style: dim },
     test,
-    { text: n > 0 ? editor.t("machine.workspaces", { n: String(n) }) : "—", style: dim },
+    { text: tail, style: dim },
   ]);
 }
 
@@ -8741,7 +8871,8 @@ function buildMachinesSpec(): WidgetSpec {
   const st = machinesState!;
   const rows = machinesRows();
   const sel = rows[st.index];
-  const editable = !!sel?.machine;
+  const editable = !!sel?.machine || !!sel?.host;
+  const removable = !!sel?.machine;
   return col(
     list({
       items: rows.map(machinesRowEntry),
@@ -8760,7 +8891,7 @@ function buildMachinesSpec(): WidgetSpec {
       spacer(2),
       button(editor.t("machine.btn_test"), { key: "machines-test", disabled: !editable }),
       spacer(2),
-      button(editor.t("machine.btn_remove"), { intent: "danger", key: "machines-remove", disabled: !editable }),
+      button(editor.t("machine.btn_remove"), { intent: "danger", key: "machines-remove", disabled: !removable }),
       spacer(2),
       withAccel(button(editor.t("machine.btn_close"), { key: "machines-close" }), "Esc"),
     ),
@@ -8782,7 +8913,7 @@ function machinesSelected(): MachinesRow | null {
 function newWorkspaceOnSelected(): void {
   const row = machinesSelected();
   if (!row) return;
-  pendingFormMachine = row.machine ? row.machine.id : null;
+  pendingFormMachine = row.machine ? row.machine.id : row.host ? `host:${row.host.alias}` : null;
   closeMachinesDialog();
   dockBlurred = true;
   openForm({ fromPicker: true });
@@ -8790,7 +8921,16 @@ function newWorkspaceOnSelected(): void {
 
 function testSelectedMachine(): void {
   const row = machinesSelected();
-  if (!row?.machine) return;
+  if (!row) return;
+  if (row.host) {
+    const alias = row.host.alias;
+    void testMachine(machineForHost(row.host)).then((r) => {
+      sshHostTests.set(alias, { ok: r.ok, at: Date.now(), summary: r.summary });
+      renderMachinesDialog();
+    });
+    return;
+  }
+  if (!row.machine) return;
   const m = row.machine;
   void testMachine(m).then((r) => {
     const cur = machineById(m.id);
@@ -8847,6 +8987,10 @@ function handleMachinesEvent(e: WidgetEvt): void {
       if (row?.machine) {
         closeMachinesDialogKeepDock();
         openMachineDialog(row.machine, "machines");
+      } else if (row?.host) {
+        // Save the config host as a machine of its own: Add Machine, on it.
+        closeMachinesDialogKeepDock();
+        openMachineDialog(null, "machines", row.host);
       }
       return;
     }
@@ -9128,8 +9272,11 @@ interface MachineOption {
   hostIndex?: number;
 }
 
+// The Machine control is always the form's host control (§3.8): Local, the
+// saved machines, the ssh-config hosts, `Other host…`, `Kubernetes…`,
+// Devcontainer and `Add machine…` — with or without saved machines.
 function formUsesMachines(): boolean {
-  return loadMachines().length > 0;
+  return true;
 }
 
 function machineOptions(): MachineOption[] {
@@ -9256,37 +9403,6 @@ function machineRow(): WidgetSpec[] {
   return out;
 }
 
-// A saved SSH machine: the connection is the machine's; only where the
-// workspace is rooted is asked.
-function machineSshFields(): WidgetSpec[] {
-  const m = form?.machineId ? machineById(form.machineId) : null;
-  if (!form || !m) return [];
-  return field(formLabel("form.ssh_remote_path_label"), form.sshPath, {
-    key: "ssh_path",
-    placeholder: m.path,
-    note: m.path ? undefined : editor.t("form.ssh_remote_path_placeholder"),
-  });
-}
-
-function machineK8sFields(): WidgetSpec[] {
-  const m = form?.machineId ? machineById(form.machineId) : null;
-  if (!form || !m) return [];
-  return field(formLabel("form.k8s_workspace_label"), form.k8sWorkspace, {
-    key: "k8s_workspace",
-    placeholder: m.path || editor.t("form.k8s_workspace_placeholder"),
-  });
-}
-
-// Devcontainer: the project that carries the `.devcontainer/`.
-function devcontainerBodyFields(): WidgetSpec[] {
-  if (!form) return [];
-  return field(formLabel("form.project_path"), form.projectPath, {
-    key: "project_path",
-    placeholder: form.defaultProjectPath || editor.t("form.devcontainer_path_placeholder"),
-    note: editor.t("form.devcontainer_hint"),
-  });
-}
-
 // A name for a remembered machine when the user gives none: the host of an
 // ssh target, the pod or namespace of a cluster.
 function rememberDefaultName(): string {
@@ -9360,19 +9476,6 @@ function rememberMachineFromForm(f: NewSessionForm): void {
   }
 }
 
-// `Run in`: a radio — a mutually exclusive choice, drawn as one. The host
-// owns the selection (←/→, Home/End, a click on an option) and reports each
-// move as a `change`, which `selectBackend` answers by swapping the body.
-function backendRow(): WidgetSpec {
-  const sel: FormBackend = form ? form.backend : "local";
-  return radio(SESSION_BACKENDS.map((b) => b.label), {
-    selectedIndex: Math.max(0, SESSION_BACKENDS.findIndex((b) => b.id === sel)),
-    label: formLabel("form.run_in"),
-    labelWidth: FORM_LABEL_W,
-    key: "backend",
-  });
-}
-
 // Agent selector: a single dropdown of the preset labels (terminal, the
 // known agents, custom…). ←/→ or ↑/↓ over it cycles; the change event maps
 // the chosen index back to a preset and applies it (fills the command field).
@@ -9407,9 +9510,15 @@ function cmdField(): WidgetSpec[] {
   });
 }
 
-// Agent options are wired for the local backend and for "run in the current
-// workspace" (which is always local to the window you're in).
+// The start prompt and auto mode are the agent's, not the host's: a remote
+// launch takes them too (§3.8).
 function agentOptionsApply(): boolean {
+  return !!form;
+}
+
+// "Teach Fresh CLI" is local-only: the CLI it teaches drives this editor
+// over a local socket, which a shell on another machine cannot reach.
+function teachApplies(): boolean {
   return !!form && (form.target === "current" || form.backend === "local");
 }
 
@@ -9437,7 +9546,7 @@ function agentSwitchFields(): WidgetSpec[] {
   if (entry.auto) {
     out.push(formToggle(form.autoMode, editor.t("form.auto_mode"), "auto_mode"));
   }
-  if (entry.systemPrompt) {
+  if (entry.systemPrompt && teachApplies()) {
     out.push(formToggle(form.teachFreshCli, editor.t("form.teach_fresh_cli"), "teach_fresh_cli"));
   }
   return out;
@@ -9521,130 +9630,102 @@ function worktreeFields(): WidgetSpec[] {
   return out;
 }
 
-// SSH backend: host, remote path, identity file, extra ssh arguments. The
-// examples that lived in the labels' parentheticals and in the value slots
-// sit under their fields instead — a value slot shows a value.
-// SSH backend. With hosts in `~/.ssh/config` the Host control is a picker of
-// them (design §4.1): choosing one is a click, and user, port and identity
-// come from the config entry, so those fields never appear — the config is
-// the source of truth and the dialog only points at it (§4.2). `Other
-// host…` reveals them; with no config at all they show directly (§4.3).
-function sshBodyFields(): WidgetSpec[] {
-  if (!form) return [];
-  const hostLabel = splitLabel("form.ssh_host_label").label;
-  const manual = (): WidgetSpec[] => [
-    ...field(splitLabel("form.ssh_identity_label").label, form!.sshIdentity, {
-      key: "ssh_identity",
-      placeholder: editor.t("form.ssh_identity_placeholder"),
-    }),
-    ...field(splitLabel("form.ssh_options_label").label, form!.sshOptions, {
-      key: "ssh_options",
-      placeholder: splitPlaceholder(editor.t("form.ssh_options_placeholder")).placeholder,
-      note: splitPlaceholder(editor.t("form.ssh_options_placeholder")).note,
-    }),
-  ];
-  const out: WidgetSpec[] = [];
-  if (formUsesMachines()) {
-    // The Machine control already offers the config hosts (§5.1): a picked
-    // one needs nothing more here, `Other host…` needs the manual fields.
-    if (sshOther()) {
-      out.push(
-        ...field(editor.t("form.ssh_target_label"), form.sshHost, {
-          key: "ssh_host",
-          note: editor.t("form.ssh_host_note"),
-        }),
-        ...manual(),
-      );
-    }
-  } else if (form.sshHosts.length === 0) {
-    out.push(
-      ...field(hostLabel, form.sshHost, {
+// The connection section (§3.8): what identifies the machine when it is
+// typed by hand — the SSH target with its identity and options, or the
+// cluster's target / context / namespace / pod. Empty for Local, a config
+// host, a saved machine and the devcontainer: their connection is known.
+function connectionFields(): WidgetSpec[] {
+  if (!form || form.machineId) return [];
+  if (form.backend === "ssh" && sshOther()) {
+    const options = splitPlaceholder(editor.t("form.ssh_options_placeholder"));
+    return [
+      ...field(editor.t("form.ssh_target_label"), form.sshHost, {
         key: "ssh_host",
-        note: editor.t("form.ssh_no_config_note"),
+        note: editor.t("form.ssh_host_note"),
       }),
-      ...manual(),
-    );
-  } else {
-    out.push(
-      dropdown([...form.sshHosts.map((h) => h.alias), editor.t("form.ssh_other_host")], {
-        selectedIndex: form.sshPick,
-        label: hostLabel,
-        labelWidth: FORM_LABEL_W,
-        key: "ssh_host_pick",
+      ...field(splitLabel("form.ssh_identity_label").label, form.sshIdentity, {
+        key: "ssh_identity",
+        placeholder: editor.t("form.ssh_identity_placeholder"),
       }),
-    );
-    if (sshOther()) {
-      out.push(
-        ...field(editor.t("form.ssh_target_label"), form.sshHost, {
-          key: "ssh_host",
-          note: editor.t("form.ssh_host_note"),
+      ...field(splitLabel("form.ssh_options_label").label, form.sshOptions, {
+        key: "ssh_options",
+        placeholder: options.placeholder,
+        note: options.note,
+      }),
+    ];
+  }
+  if (form.backend === "kubernetes") {
+    const hasTarget = form.k8sTarget.value.trim().length > 0;
+    const fields = field(splitLabel("form.k8s_target_label").label, form.k8sTarget, {
+      key: "k8s_target",
+      note: editor.t("form.k8s_target_note"),
+    });
+    if (!hasTarget) {
+      fields.push(
+        ...field(splitLabel("form.k8s_context_label").label, form.k8sContext, {
+          key: "k8s_context",
+          placeholder: editor.t("form.k8s_context_placeholder"),
         }),
-        ...manual(),
+        ...field(formLabel("form.k8s_namespace_label"), form.k8sNamespace, {
+          key: "k8s_namespace",
+          placeholder: editor.t("form.k8s_namespace_placeholder"),
+        }),
+        ...field(formLabel("form.k8s_pod_label"), form.k8sPod, {
+          key: "k8s_pod",
+          placeholder: editor.t("form.k8s_pod_placeholder"),
+        }),
       );
-    } else {
-      // The resolved target, dim, so a pick can be checked without opening
-      // the config.
-      out.push(fieldNote(sshResolvedTarget(form.sshHosts[form.sshPick])));
     }
+    return fields;
   }
-  out.push(
-    ...field(formLabel("form.ssh_remote_path_label"), form.sshPath, {
-      key: "ssh_path",
-      note: editor.t("form.ssh_remote_path_placeholder"),
-    }),
-  );
-  if (sshOther()) out.push(...rememberFields());
-  return out;
+  return [];
 }
 
-// Kubernetes backend: a saved target, or explicit context/namespace/pod/ws.
-function k8sBodyFields(): WidgetSpec[] {
+// One Project Path in every mode (§3.8): the directory the workspace is
+// rooted at, wherever that is. The hint under it says what blank means.
+function projectPathFields(): WidgetSpec[] {
   if (!form) return [];
-  const hasTarget = form.k8sTarget.value.trim().length > 0;
-  const target = splitLabel("form.k8s_target_label");
-  const fields = field(target.label, form.k8sTarget, {
-    key: "k8s_target",
-    note: editor.t("form.k8s_target_note"),
-  });
-  if (!hasTarget) {
-    fields.push(
-      ...field(splitLabel("form.k8s_context_label").label, form.k8sContext, {
-        key: "k8s_context",
-        placeholder: editor.t("form.k8s_context_placeholder"),
-      }),
-      ...field(formLabel("form.k8s_namespace_label"), form.k8sNamespace, {
-        key: "k8s_namespace",
-        placeholder: editor.t("form.k8s_namespace_placeholder"),
-      }),
-      ...field(formLabel("form.k8s_pod_label"), form.k8sPod, {
-        key: "k8s_pod",
-        placeholder: splitPlaceholder(editor.t("form.k8s_pod_placeholder")).placeholder,
-        note: splitPlaceholder(editor.t("form.k8s_pod_placeholder")).note,
-      }),
-      ...field(formLabel("form.k8s_workspace_label"), form.k8sWorkspace, {
-        key: "k8s_workspace",
-        placeholder: editor.t("form.k8s_workspace_placeholder"),
-      }),
-    );
-  }
-  fields.push(fieldNote(splitPlaceholder(noteText(editor.t("form.k8s_hint"))).placeholder));
-  fields.push(...rememberFields());
-  return fields;
-}
-
-// The backend-specific top fields, chosen by the `Run in` radio.
-function backendBodyFields(): WidgetSpec[] {
-  if (!form) return [];
+  const lbl = formLabel("form.project_path");
+  const m = form.machineId ? machineById(form.machineId) : null;
   switch (form.backend) {
     case "local":
       return localBodyFields();
-    case "ssh":
-      return form.machineId ? machineSshFields() : sshBodyFields();
-    case "kubernetes":
-      return form.machineId ? machineK8sFields() : k8sBodyFields();
     case "devcontainer":
-      return devcontainerBodyFields();
+      return field(lbl, form.projectPath, {
+        key: "project_path",
+        placeholder: form.defaultProjectPath || editor.t("form.devcontainer_path_placeholder"),
+        note: editor.t("form.devcontainer_hint"),
+      });
+    case "ssh":
+      return field(lbl, form.sshPath, {
+        key: "ssh_path",
+        placeholder: m?.path || undefined,
+        note: m?.path ? editor.t("form.machine_path_note") : editor.t("form.ssh_remote_path_placeholder"),
+      });
+    case "kubernetes":
+      return field(lbl, form.k8sWorkspace, {
+        key: "k8s_workspace",
+        placeholder: m?.path || editor.t("form.k8s_workspace_placeholder"),
+        note: m?.path ? editor.t("form.machine_path_note") : editor.t("form.k8s_workspace_note"),
+      });
   }
+}
+
+// Whether the form is on a host or cluster typed by hand — the one the
+// `Remember this machine` toggle can save.
+function typedMachine(): boolean {
+  if (!form || form.machineId) return false;
+  return (form.backend === "ssh" && sshOther()) || form.backend === "kubernetes";
+}
+
+// The mode-only tail (§3.8): what has no equivalent elsewhere — the worktree
+// group for Local, `Remember this machine` for a typed host or cluster.
+// Each starts with its own blank row.
+function modeTailFields(): WidgetSpec[] {
+  if (!form || form.target !== "new") return [];
+  if (form.backend === "local") return worktreeFields();
+  if (typedMachine()) return rememberFields();
+  return [];
 }
 
 // While a submit is in flight the dialog is *disabled*: the editable fields
@@ -9784,6 +9865,7 @@ function measureVariant(mutate: () => void, build: () => WidgetSpec[]): number {
     machineId: form.machineId,
     k8sTarget: form.k8sTarget.value,
     createWorktree: form.createWorktree,
+    remember: form.remember,
   };
   try {
     mutate();
@@ -9794,29 +9876,33 @@ function measureVariant(mutate: () => void, build: () => WidgetSpec[]): number {
     form.machineId = saved.machineId;
     form.k8sTarget.value = saved.k8sTarget;
     form.createWorktree = saved.createWorktree;
+    form.remember = saved.remember;
   }
 }
 
-// The tallest shape the backend section can take — local, SSH from the
-// picker, SSH typed by hand, Kubernetes with no target yet, a devcontainer,
-// and every saved machine — so the rows below it never move when `Run in`
-// or `Machine` changes.
-function backendBodyRowsMax(): number {
+// The tallest shape the connection section can take — an SSH host typed by
+// hand, or a cluster with no named target — so the rows below it never move
+// when `Machine` changes.
+function connectionRowsMax(): number {
   if (!form) return 0;
   const f = form;
   const variants: Array<() => void> = [
-    () => { f.backend = "local"; f.machineId = null; },
-    () => { f.backend = "ssh"; f.machineId = null; f.sshPick = 0; },
     () => { f.backend = "ssh"; f.machineId = null; f.sshPick = f.sshHosts.length; },
     () => { f.backend = "kubernetes"; f.machineId = null; f.k8sTarget.value = ""; },
-    () => { f.backend = "devcontainer"; f.machineId = null; },
   ];
-  for (const m of loadMachines()) {
-    variants.push(() => { f.backend = m.kind === "ssh" ? "ssh" : "kubernetes"; f.machineId = m.id; });
-  }
   let max = 0;
-  for (const v of variants) max = Math.max(max, measureVariant(v, backendBodyFields));
+  for (const v of variants) max = Math.max(max, measureVariant(v, connectionFields));
   return max;
+}
+
+// The tallest shape the mode-only tail can take: the worktree group open,
+// or `Remember this machine` with its name field.
+function tailRowsMax(): number {
+  if (!form) return 0;
+  const f = form;
+  const worktree = measureVariant(() => { f.backend = "local"; f.machineId = null; f.createWorktree = true; }, modeTailFields);
+  const remember = measureVariant(() => { f.backend = "ssh"; f.machineId = null; f.sshPick = f.sshHosts.length; f.remember = true; }, modeTailFields);
+  return Math.max(6, worktree, remember);
 }
 
 // The footer both layouts share: the action buttons, and the hint bar (or
@@ -9828,7 +9914,8 @@ function formFooterRows(creating: boolean): WidgetSpec[] {
     "Esc",
   );
   const buttons = creating
-    ? wrappingRow(
+    ? row(
+      flexSpacer(),
       withAccel(
         button(editor.t("form.btn_create"), {
           intent: "primary",
@@ -9847,7 +9934,8 @@ function formFooterRows(creating: boolean): WidgetSpec[] {
       spacer(2),
       cancel,
     )
-    : wrappingRow(
+    : row(
+      flexSpacer(),
       withAccel(
         button(editor.t("run_agent.btn_run"), {
           intent: "primary",
@@ -9873,27 +9961,27 @@ function formFooterRows(creating: boolean): WidgetSpec[] {
       ]),
       flexSpacer(),
     );
-  return [buttons, spacer(0), footer];
+  return [buttons, footer];
 }
 
-// The form at one constant size. Every section that can change shape —
-// the backend selector and its body, the agent's extra fields, the
-// worktree fields, the agent switches — is reserved at the tallest shape
-// it can take and padded with blank rows otherwise, so flipping `Launch
-// in`, `Run in`, `Machine`, the agent or the worktree toggle changes what
-// is in a section, never where the sections are or how tall the dialog
-// is. In `Current workspace` mode the workspace sections show, in place,
-// which workspace the agent will run in.
+// The form at one constant size (§3.8). Every section that can change
+// shape — the connection block, the Project Path's hint, the agent's extra
+// fields, the switches, the mode-only tail — is reserved at the tallest
+// shape it can take and padded with blank rows otherwise, so flipping
+// `Launch in`, `Machine`, the agent or the worktree toggle changes what is
+// in a section, never where the sections are or how tall the dialog is. In
+// `Current workspace` mode the workspace sections show, in place, which
+// workspace the agent will run in.
 function buildFormSpecFixed(): WidgetSpec {
   if (!form) return col();
   const creating = form.target === "new";
-  const local = creating && form.backend === "local";
-  const bodyRows = backendBodyRowsMax();
+  const connRows = connectionRowsMax();
   const children: WidgetSpec[] = [targetRow()];
   if (creating) {
     children.push(
-      ...padRows(formUsesMachines() ? machineRow() : [backendRow()], 2),
-      ...padRows(backendBodyFields(), bodyRows),
+      ...padRows(machineRow(), 2),
+      ...padRows(connectionFields(), connRows),
+      ...padRows(projectPathFields(), 2),
       ...field(formLabel("form.workspace_name"), form.name, {
         key: "name",
         placeholder: form.defaultSessionName || editor.t("form.auto_generating"),
@@ -9909,27 +9997,24 @@ function buildFormSpecFixed(): WidgetSpec {
           label(editor.t("form.runs_here", { name }), { labelWidth: FORM_LABEL_W }),
           fieldNote(here.root),
         ],
-        bodyRows,
+        connRows,
       ),
-      ...blankRows(1),
+      ...blankRows(3),
     );
   }
   children.push(agentPresetRow());
-  // The custom command (with its SSH note) and the start prompt: reserved
-  // together at their tallest, whichever backend is selected.
+  // The custom command (with its SSH note) or the start prompt — an agent
+  // shows one or the other — reserved at the command's tallest, whichever
+  // backend is selected.
   const agentExtra = [...(cmdVisible() ? cmdField() : []), ...startPromptFields()];
   const cmdRows = Math.max(
     measureVariant(() => { form!.backend = "local"; }, cmdField),
     measureVariant(() => { form!.backend = "ssh"; }, cmdField),
   );
-  children.push(...padRows(agentExtra, cmdRows + 1));
-  // The worktree section (its own leading blank row included), reserved
-  // at its tallest: toggle on, with the checkout and new-branch fields.
-  const worktreeRows = local
-    ? Math.max(worktreeFields().length, measureVariant(() => { form!.createWorktree = true; }, worktreeFields))
-    : 0;
-  children.push(...padRows(local ? worktreeFields() : [], Math.max(6, worktreeRows)));
+  children.push(...padRows(agentExtra, cmdRows));
   children.push(spacer(0), ...padRows(agentSwitchFields(), 2));
+  // The mode-only tail (its own leading blank row included), at its tallest.
+  children.push(...padRows(modeTailFields(), tailRowsMax()));
   children.push(spacer(0), ...formFooterRows(creating));
   return col(...children);
 }
@@ -9941,15 +10026,16 @@ function buildFormSpecCompact(): WidgetSpec {
   if (form.submitting) return buildConnectingView();
 
   const creating = form.target === "new";
-  const local = creating && form.backend === "local";
   // The title + border are native modal-frame chrome drawn by the host
   // (see `openForm`), so the spec starts straight at the target switch.
   const children: WidgetSpec[] = [targetRow()];
   if (creating) {
+    const conn = connectionFields();
     children.push(
-      ...(formUsesMachines() ? machineRow() : [backendRow()]),
+      ...machineRow(),
+      ...conn,
       spacer(0),
-      ...backendBodyFields(),
+      ...projectPathFields(),
       ...field(formLabel("form.workspace_name"), form.name, {
         key: "name",
         // Concrete default (e.g. "session-3") rather than the literal
@@ -9962,11 +10048,9 @@ function buildFormSpecCompact(): WidgetSpec {
   children.push(agentPresetRow());
   if (cmdVisible()) children.push(...cmdField());
   children.push(...startPromptFields());
-  // Worktree + branch controls create a workspace, so the whole group is
-  // meaningless when running in the current one.
-  if (local) children.push(...worktreeFields());
   const switches = agentSwitchFields();
   if (switches.length > 0) children.push(spacer(0), ...switches);
+  children.push(...modeTailFields());
   children.push(spacer(0), ...formFooterRows(creating));
   return col(...children);
 }
@@ -10612,6 +10696,15 @@ function gateAgentOptions(
   };
 }
 
+// The argv a remote transport runs: the agent command with its auto-mode
+// flag and start prompt folded in (the same resolution the local launch
+// does), for an agent the registry knows; anything else passes through.
+function remoteAgentArgv(cmd: string, o: AgentOptionInputs): string[] {
+  const argv = splitAgentCmd(cmd);
+  const gated = gateAgentOptions(cmd, o);
+  return resolveAgentLaunch(argv, { auto: gated.auto, prompt: gated.startPrompt }).launch;
+}
+
 interface LocalSpecInputs extends AgentOptionInputs {
   projectPath: string;
   /// Explicit workspace name; "" ⇒ auto-generated at create time.
@@ -10667,7 +10760,7 @@ function buildSshSpec(o: SshSpecInputs): CaptureResult {
   const user = at > 0 ? hostPart.slice(0, at) : undefined;
   const host = at >= 0 ? hostPart.slice(at + 1) : hostPart;
   if (!host) return { ok: false, error: editor.t("err.ssh_host_required") };
-  const agentArgv = splitAgentCmd(o.cmd);
+  const agentArgv = remoteAgentArgv(o.cmd, o);
   const target = user ? `${user}@${host}` : host;
   const label = o.name || `ssh:${target}`;
   const spec: RemoteAgentSpec = {
@@ -10698,7 +10791,7 @@ function buildSshSpec(o: SshSpecInputs): CaptureResult {
   };
 }
 
-interface K8sSpecInputs {
+interface K8sSpecInputs extends AgentOptionInputs {
   /// Named target from `.fresh/k8s.json`; when set, `pod` is still required.
   target: string;
   context: string;
@@ -10714,7 +10807,7 @@ function buildK8sSpec(o: K8sSpecInputs): CaptureResult {
   if (!o.namespace || !o.pod) {
     return { ok: false, error: editor.t("err.k8s_ns_pod_required") };
   }
-  const agentArgv = splitAgentCmd(o.cmd);
+  const agentArgv = remoteAgentArgv(o.cmd, o);
   const detail = `${o.namespace}/${o.pod}`;
   const label = o.name || `k8s:${detail}`;
   const spec: RemoteAgentSpec = {
@@ -10758,7 +10851,7 @@ function captureCreateSpec(f: NewSessionForm): CaptureResult {
   const agentOptions: AgentOptionInputs = {
     auto: f.autoMode,
     prompt: f.startPrompt.value.trim(),
-    teach: f.teachFreshCli,
+    teach: f.teachFreshCli && f.backend === "local",
   };
 
   if (f.backend === "local") {
@@ -10804,6 +10897,7 @@ function captureCreateSpec(f: NewSessionForm): CaptureResult {
     }
     if (m.pod.startsWith("-l")) return { ok: false, error: editor.t("machine.err_selector_launch") };
     return buildK8sSpec({
+      ...agentOptions,
       target: "",
       context: m.context,
       namespace: m.namespace,
@@ -10821,6 +10915,7 @@ function captureCreateSpec(f: NewSessionForm): CaptureResult {
 
   if (f.backend === "kubernetes") {
     return buildK8sSpec({
+      ...agentOptions,
       target: f.k8sTarget.value.trim(),
       context: f.k8sContext.value.trim(),
       namespace: f.k8sNamespace.value.trim(),
@@ -13575,17 +13670,6 @@ editor.on("widget_event", (e) => {
       openFormDropdown = payload.open === true ? e.widget_key : null;
       return;
     }
-    if (e.event_type === "change" && e.widget_key === "backend") {
-      // The `Run in` radio moved (←/→, Home/End, or a click on an option):
-      // the host owns the selection and reports the new index.
-      const payload = (e.payload ?? {}) as Record<string, unknown>;
-      const index = payload.index;
-      if (typeof index === "number") {
-        const next = SESSION_BACKENDS[index];
-        if (next) selectBackend(next.id);
-      }
-      return;
-    }
     if (e.event_type === "change" && e.widget_key === "machine") {
       // The Machine control moved (design §5.1): the option decides the
       // backend and the host state; the body follows.
@@ -13603,19 +13687,6 @@ editor.on("widget_event", (e) => {
       form.remember = typeof checked === "boolean" ? checked : !form.remember;
       rebuildFormFocusCycle();
       renderForm();
-      return;
-    }
-    if (e.event_type === "change" && e.widget_key === "ssh_host_pick") {
-      // The Host picker moved: a config host hides the manual fields,
-      // `Other host…` reveals them.
-      const payload = (e.payload ?? {}) as Record<string, unknown>;
-      const index = payload.index;
-      if (typeof index === "number" && index !== form.sshPick) {
-        form.sshPick = index;
-        form.lastError = null;
-        rebuildFormFocusCycle();
-        renderForm();
-      }
       return;
     }
     if (e.event_type === "change" && e.widget_key === "target_dropdown") {
@@ -14096,20 +14167,32 @@ editor.on("widget_event", (e) => {
       openForm({ fromPicker: true });
       return;
     }
+    // The title bar's `×` → hide the dock.
+    if (e.event_type === "activate" && e.widget_key === "dock-close") {
+      if (dockMode) closeOpenDialog();
+      return;
+    }
     // The header's `/ search` → open the search row and type.
     if (e.event_type === "activate" && e.widget_key === "search-toggle") {
       openDockSearch();
       return;
     }
-    // The attention line's `jump` → the workspace that needs you.
-    if (e.event_type === "activate" && e.widget_key === "attention-jump") {
-      jumpToAttention();
+    // A press outside an open dock menu: close it (the press itself goes
+    // on to whatever it was aimed at).
+    if (e.event_type === "dismiss") {
+      if (e.widget_key === DOCK_MENU_OVERLAY_KEY && openDialog.dockMenu !== null) {
+        dockMenuDismissedAt = Date.now();
+        closeDockMenu();
+      } else if (e.widget_key === DOCK_PROJECT_OVERLAY_KEY && openDialog.projectMenuOpen) {
+        dockMenuDismissedAt = Date.now();
+        closeProjectMenu();
+      }
       return;
     }
     // The header's `⋯` → toggle its menu.
     if (e.event_type === "activate" && e.widget_key === "dock-menu") {
       if (openDialog.dockMenu?.kind === "main") closeDockMenu();
-      else openDockMenu({ kind: "main", index: 0 });
+      else if (Date.now() - dockMenuDismissedAt > 300) openDockMenu({ kind: "main", index: 0 });
       return;
     }
     // The `⋯` / "Move to folder…" dropdown list: ↑/↓ move its

@@ -989,13 +989,33 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                 _ => fresh_ui::Key::Str("overlay".into()),
             };
             let anchor = row().h(Sizing::Cells(0)).key(k.clone());
-            fresh_ui::stack().children([
-                anchor,
-                fresh_ui::layer()
-                    .anchor(fresh_ui::Anchor::Node(k))
-                    .place(fresh_ui::Place::Over)
-                    .child(node(child, width, cx)),
-            ])
+            // **When it closes is the layer's to say** — the rule the
+            // dropdown pop-over states, for a plugin-drawn menu. A press
+            // outside the overlay reports a `dismiss` on its key (a keyed
+            // overlay is one the plugin can answer for; an unkeyed one is
+            // left alone) and goes on to what it was aimed at, so a plugin
+            // that draws something other than a menu is not charged the
+            // click.
+            let widget_key = key.clone().unwrap_or_default();
+            let slot = cx.slot;
+            let mut layer = fresh_ui::layer()
+                .anchor(fresh_ui::Anchor::Node(k))
+                .place(fresh_ui::Place::Over)
+                .child(node(child, width, cx));
+            if !widget_key.is_empty() {
+                layer = layer
+                    .dismiss(fresh_ui::Dismiss {
+                        pass_through: true,
+                        ..fresh_ui::Dismiss::OUTSIDE_POINTER
+                    })
+                    .on_dismiss(move |_| {
+                        UiMsg::Ui(super::msg::UiFact::WidgetOverlayDismiss {
+                            slot,
+                            key: widget_key.clone(),
+                        })
+                    });
+            }
+            fresh_ui::stack().children([anchor, layer])
         }
         // **The same node, and its two modes are one property.** A popup is
         // an `Overlay` that may escape the panel's clipping: `screen_space`

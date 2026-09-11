@@ -150,8 +150,9 @@ because fewer rows are hidden.
 ### 2.4 The `⋯` menu
 
 Three of the four header controls are *settings*, not actions, and settings
-belong in a menu. Folder creation joins them, and the dock's title row and
-its `×` are absorbed too — closing the dock is rare and `Alt+O` undoes it.
+belong in a menu. Folder creation joins them. The dock's title row stays:
+`Orchestrator` names the panel the way the explorer's title names it, and
+its `×` is the mouse route to hiding the dock (`Alt+O` is the keyboard's).
 
 The menu is short and fixed, so it has no scrollbar. That contrast is
 deliberate: a track means the region scrolls.
@@ -389,6 +390,220 @@ alignment and one footer; today they share a form but not a visual system.
 │      Remote path   [                                             ]         │
 │                      ↳ blank = remote home                                 │
 │                                                                            │
+└────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 3.8 One field set across modes
+
+§3.4–§3.6 and §4–§5 each drew the dialog for one mode, and the modes
+drifted: the local shape had a `Run in` radio, the SSH shape a `Host`
+picker, the Kubernetes shape neither; the path field was `Project Path`,
+`Remote Path` or `Workspace path` depending on the mode and sat in a
+different row each time; `Start prompt` and `Auto mode` showed for a
+local agent only. Switching modes reshuffled the dialog.
+
+One grid instead. The rows are fixed; a mode changes what is *in* a
+section, never where the sections are.
+
+| Row | Section | Local | SSH host from `~/.ssh/config` | Other host… | Kubernetes… | Saved machine |
+|---|---|---|---|---|---|---|
+| 1 | `Launch in` | same | same | same | same | same |
+| 2 | `Machine` + what it resolves to | `Local` | the alias | `Other host…` | `Kubernetes…` | its name |
+| 3 | Connection (padded) | — | — | Target · Identity · SSH options | Target · Context · Namespace · Pod | — |
+| 4 | `Project Path` + hint | local dir | remote dir | remote dir | dir in the pod | dir on the machine |
+| 5 | `Workspace Name` | same | same | same | same | same |
+| 6 | `Agent` · Command · `Start prompt` | same | same | same | same | same |
+| 7 | Switches | Auto · Teach Fresh CLI | Auto | Auto | Auto | Auto |
+| 8 | Mode-only (padded) | worktree group | — | Remember this machine | Remember this machine | — |
+| 9 | Buttons, right-aligned | same | same | same | same | same |
+
+Three rules, and the one place each is deliberately not uniform:
+
+- **`Machine` is always there, with `Local` as its first option.** The
+  `Run in` radio is gone; with no saved machines the dropdown still
+  offers `Local`, the ssh-config hosts, `Other host…`, `Kubernetes…`,
+  `Devcontainer` and `Add machine…`.
+- **One `Project Path`.** It is the directory the workspace is rooted at
+  wherever that is; the hint under it says what blank means for this
+  mode (`blank uses this default`, `blank = remote home`, `blank = the
+  machine's default path`, `/workspace`).
+- **The agent block is the same in every mode.** `Start prompt` and
+  `Auto mode` are properties of the agent, not of where it runs, so a
+  remote launch takes them too. `Teach Fresh CLI` stays local-only: the
+  CLI it teaches drives *this* editor over a local socket, which a shell
+  on another machine cannot reach — so the switch is absent there rather
+  than present and ignored.
+- **What has no equivalent stays mode-only, and sits last.** The
+  worktree group (local only), and `Remember this machine` (a typed host
+  or cluster only). Their section is reserved at its tallest so the
+  buttons never move.
+
+Connection fields stay directly under `Machine` rather than joining the
+mode-only tail: `Target`, `Identity file` and `Namespace`/`Pod` *are* the
+machine when it is typed by hand, and reading "where" before "what" is
+the order every other mode already has.
+
+**Local.** The connection section is empty; the worktree group is the
+mode-only tail.
+
+```
+┌─ New Workspace ─────────────────────────────────────────────────────────[×]┐
+│                                                                            │
+│        Launch in   [ New workspace        ▾]                               │
+│          Machine   [ Local                ▾]                               │
+│                    ↳ this computer                                         │
+│                                                                            │
+│                                                                            │
+│                                                                            │
+│                                                                            │
+│                                                                            │
+│                                                                            │
+│                                                                            │
+│▸    Project Path   [ ~/code/payments-api                         ]         │
+│                    ↳ blank uses this default                               │
+│   Workspace Name   [ payments-api-3                              ]         │
+│            Agent   [ claude               ▾]                               │
+│     Start prompt   [ Harden token validation…                    ]         │
+│                                                                            │
+│                    [ ] Auto mode — fewer approval prompts                  │
+│                    [v] Teach agent the Fresh CLI                           │
+│                                                                            │
+│                    [v] Create a git worktree                               │
+│  Checkout branch   [ main                                        ]         │
+│  New branch name   [ fix-webhook-retry                           ]         │
+├────────────────────────────────────────────────────────────────────────────┤
+│         [ Create Workspace ] ^⏎   [ Create in Background ]   [ Cancel ] Esc│
+└────────────────────────────────────────────────────────────────────────────┘
+```
+
+**A host from `~/.ssh/config`.** The alias is the machine; ssh resolves
+user, port and identity from the entry, so no connection field is asked.
+Every shared row is where it was.
+
+```
+┌─ New Workspace ─────────────────────────────────────────────────────────[×]┐
+│                                                                            │
+│        Launch in   [ New workspace        ▾]                               │
+│          Machine   [ build-01             ▾]                               │
+│                    ↳ deploy@build-01.ci.internal                           │
+│                                                                            │
+│                                                                            │
+│                                                                            │
+│                                                                            │
+│                                                                            │
+│                                                                            │
+│                                                                            │
+│▸    Project Path   [ /srv/payments-api                           ]         │
+│                    ↳ blank = remote home                                   │
+│   Workspace Name   [ payments-api-3                              ]         │
+│            Agent   [ claude               ▾]                               │
+│     Start prompt   [ Harden token validation…                    ]         │
+│                                                                            │
+│                    [ ] Auto mode — fewer approval prompts                  │
+│                                                                            │
+│                                                                            │
+│                                                                            │
+│                                                                            │
+│                                                                            │
+├────────────────────────────────────────────────────────────────────────────┤
+│         [ Create Workspace ] ^⏎   [ Create in Background ]   [ Cancel ] Esc│
+└────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Other host…** The connection section fills; `Remember this machine`
+takes the tail.
+
+```
+┌─ New Workspace ─────────────────────────────────────────────────────────[×]┐
+│                                                                            │
+│        Launch in   [ New workspace        ▾]                               │
+│          Machine   [ Other host…          ▾]                               │
+│                                                                            │
+│                                                                            │
+│▸          Target   [ noam@10.4.2.19                              ]         │
+│                    ↳ user@host:port · or paste ssh://host/path             │
+│    Identity file   [ ~/.ssh/id_ml                                ]         │
+│      SSH options   [ -J bastion                                  ]         │
+│                    ↳ passed to every ssh call                              │
+│                                                                            │
+│     Project Path   [ /srv/payments-api                           ]         │
+│                    ↳ blank = remote home                                   │
+│   Workspace Name   [ payments-api-3                              ]         │
+│            Agent   [ claude               ▾]                               │
+│     Start prompt   [ Harden token validation…                    ]         │
+│                                                                            │
+│                    [ ] Auto mode — fewer approval prompts                  │
+│                                                                            │
+│                                                                            │
+│                    [v] Remember this machine                               │
+│               as   [ gpu-box               ]                               │
+│                                                                            │
+├────────────────────────────────────────────────────────────────────────────┤
+│         [ Create Workspace ] ^⏎   [ Create in Background ]   [ Cancel ] Esc│
+└────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Kubernetes…** Same section, different fields; the path is the
+directory inside the pod.
+
+```
+┌─ New Workspace ─────────────────────────────────────────────────────────[×]┐
+│                                                                            │
+│        Launch in   [ New workspace        ▾]                               │
+│          Machine   [ Kubernetes…          ▾]                               │
+│                                                                            │
+│                                                                            │
+│▸          Target   [                                             ]         │
+│                    ↳ .fresh/k8s.json target · or attach below              │
+│          Context   [ gke_prod_us-central1                        ]         │
+│        Namespace   [ research                                    ]         │
+│              Pod   [ trainer-0                                   ]         │
+│                                                                            │
+│     Project Path   [ /workspace                                  ]         │
+│                    ↳ directory inside the pod                              │
+│   Workspace Name   [ payments-api-3                              ]         │
+│            Agent   [ claude               ▾]                               │
+│     Start prompt   [ Harden token validation…                    ]         │
+│                                                                            │
+│                    [ ] Auto mode — fewer approval prompts                  │
+│                                                                            │
+│                                                                            │
+│                    [ ] Remember this machine                               │
+│                                                                            │
+│                                                                            │
+├────────────────────────────────────────────────────────────────────────────┤
+│         [ Create Workspace ] ^⏎   [ Create in Background ]   [ Cancel ] Esc│
+└────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Run Agent.** `Launch in: Current workspace` keeps the grid and blanks
+the workspace sections; the agent block is in the same rows as above.
+
+```
+┌─ Run Agent ─────────────────────────────────────────────────────────────[×]┐
+│                                                                            │
+│        Launch in   [ Current workspace    ▾]                               │
+│                                                                            │
+│                                                                            │
+│                    runs in this workspace: payments-api                    │
+│                    ↳ ~/code/payments-api                                   │
+│                                                                            │
+│                                                                            │
+│                                                                            │
+│                                                                            │
+│                                                                            │
+│                                                                            │
+│▸           Agent   [ claude               ▾]                               │
+│     Start prompt   [ Review the diff on this branch              ]         │
+│                                                                            │
+│                    [ ] Auto mode — fewer approval prompts                  │
+│                    [v] Teach agent the Fresh CLI                           │
+│                                                                            │
+│                                                                            │
+│                                                                            │
+│                                                                            │
+├────────────────────────────────────────────────────────────────────────────┤
+│                                                 [ Run ] ^⏎   [ Cancel ] Esc│
 └────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -740,7 +955,7 @@ Widget library (`crates/fresh-editor-core/src/widgets`):
 Dock (§2): the header is `[ + New ]` … `/ search` `⋯`; `+ New` opens the
 dialog directly; the `⋯` menu holds New Folder, Manage workspaces, the
 density rows, the two show switches, the project scope and Hide dock (the
-title row and its `×` are gone, §2.4); search is on demand (§2.5) with a
+title row keeps its `×`, §2.4); search is on demand (§2.5) with a
 match count. The dock opens by default (`autoOpenDock: true`; blurred,
 so the editor keeps the keyboard).
 
@@ -757,7 +972,8 @@ not looking at is also announced in the status bar (`● name needs you
 (F8 jumps)`, with an optional terminal bell), and one command —
 `Orchestrator: Jump to Attention`, bindable as `orchestrator_jump` —
 walks the pending workspaces and then returns to where it started;
-the attention line's `jump` is the mouse route. `blocked` and `done`
+the attention line carries counts only (a `jump` button was tried
+and dropped: it read as a state, not a control). `blocked` and `done`
 are heuristics over the output stream — good enough for the attention
 line, never a guarantee. The patterns are data: the built-in set
 (v1) yields to `<data dir>/orchestrator/detection-rules.json`, which
@@ -781,12 +997,19 @@ and an agent share one workspace) needs a new host concept between
 window and buffer; nothing in the plugin can stand in for it.
 
 Dialogs (§3): one grid for New Workspace and Run Agent (§3.4–3.6);
-`Run in` is a radio; no boxes; hints under fields (§3.7); disclosure is
-value-driven (the command field follows `custom…`, the branch fields
-follow the worktree toggle) so the `Advanced…` fold is gone; footer
-buttons keep `[ Label ]` and carry their accelerator; Devcontainer left the
-`Run in` set; instructions moved from placeholders to `↳` hints under
-the fields.
+no boxes; hints under fields (§3.7); disclosure is value-driven (the
+command field follows `custom…`, the branch fields follow the worktree
+toggle) so the `Advanced…` fold is gone; footer buttons keep `[ Label ]`,
+carry their accelerator and sit flush right; instructions moved from
+placeholders to `↳` hints under the fields. The `Run in` radio was built
+and then retired for §3.8: one field set across modes — `Machine` is
+always the host control (Local first), the connection fields sit under
+it, one `Project Path` roots the workspace in every mode, the agent
+block (`Start prompt`, `Auto mode`) is the same everywhere, and the
+mode-only tail (worktree group, `Remember this machine`) comes last. The
+dialog is one fixed size: each section is reserved at its tallest shape
+and padded, so changing `Launch in`, `Machine` or the agent never moves
+a row.
 
 SSH host picker (§4): `Host` is a dropdown over the aliases of
 `~/.ssh/config` (multi-alias `Host` lines, `Include` followed,
@@ -800,7 +1023,10 @@ radio, `[ Test ]` (ssh `BatchMode` with an 8 s timeout, or `kubectl
 get pods`) whose result is a `✓ connected · uname · git · cores` or
 `✗ …` label with a hint, and `[ Save anyway ]` after a failure; the
 `Machines` list with `[ Add ] [ New workspace ] [ Edit ] [ Test ]
-[ Remove ]`; and, once any machine is saved, the dialogs collapse
-`Run in` to one `Machine` control (Local, saved machines, ssh-config
-hosts, `Other host…`, `Kubernetes…`, `Add machine…`) with
+[ Remove ]`, which also lists the hosts `~/.ssh/config` names (launch
+on one, test it, or save it as a machine of its own; not removable —
+the file is not Fresh's); `Add Machine` offers those hosts in a `Host`
+picker that fills Name and Target from the alias; and the dialogs'
+`Machine` control (Local, saved machines, ssh-config hosts, `Other
+host…`, `Kubernetes…`, Devcontainer, `Add machine…`) carries
 `[v] Remember this machine as [ name ]` under a manual host.

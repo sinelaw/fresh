@@ -891,6 +891,16 @@ pub enum UiFact {
     WidgetPopupDismiss {
         slot: super::widgets::Slot,
     },
+    /// A press landed outside a panel's `Overlay` — a plugin-drawn menu
+    /// floating over the panel's rows. The layer says when (the same rule
+    /// as `WidgetPopupDismiss`); the plugin is told which overlay, as a
+    /// `dismiss` event on its key, and decides what closing means. The
+    /// press goes on to what it was aimed at: a click on a row while the
+    /// dock's `⋯` menu is up both closes the menu and selects the row.
+    WidgetOverlayDismiss {
+        slot: super::widgets::Slot,
+        key: String,
+    },
     SettingsItemHover(Option<usize>),
     /// A press on a nullable setting's `[Inherit]`, which unsets it.
     SettingsInherit(usize),

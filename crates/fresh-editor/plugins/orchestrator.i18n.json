@@ -303,7 +303,6 @@
     "cmd.reload_rules": "Orchestrator: Презареждане на правилата за откриване",
     "cmd.reload_rules_desc": "Препрочита <директория с данни>/orchestrator/detection-rules.json и изтегля detectionRulesUrl, ако е зададен",
     "dock.done_count": "%{n} готови",
-    "dock.jump_btn": "скок",
     "dock.menu_hide": "Скриване на дока  %{key}",
     "dock.menu_machines": "Машини…",
     "dock.menu_manage": "Управление на работните области…",
@@ -377,7 +376,10 @@
     "form.runs_here": "изпълнява се в тази работна област: %{name}",
     "explain.title": "Защо това състояние",
     "explain.recent_lines": "последни редове от изхода",
-    "explain.rules_bad": "%{loaded} — %{path} не е файл с правила"
+    "explain.rules_bad": "%{loaded} — %{path} не е файл с правила",
+    "machine.from_ssh_config": "~/.ssh/config",
+    "form.machine_path_note": "празно = пътят по подразбиране на машината",
+    "form.k8s_workspace_note": "директория в пода"
   },
   "cs": {
     "cmd.open": "Orchestrator: Otevřít",
@@ -683,7 +685,6 @@
     "cmd.reload_rules": "Orchestrator: Znovu načíst pravidla detekce",
     "cmd.reload_rules_desc": "Znovu načte <datový adresář>/orchestrator/detection-rules.json a stáhne detectionRulesUrl, je-li nastaveno",
     "dock.done_count": "%{n} hotovo",
-    "dock.jump_btn": "skočit",
     "dock.menu_hide": "Skrýt dok  %{key}",
     "dock.menu_machines": "Stroje…",
     "dock.menu_manage": "Spravovat pracovní prostory…",
@@ -757,7 +758,10 @@
     "form.runs_here": "běží v tomto pracovním prostoru: %{name}",
     "explain.title": "Proč tento stav",
     "explain.recent_lines": "poslední řádky výstupu",
-    "explain.rules_bad": "%{loaded} — %{path} není soubor pravidel"
+    "explain.rules_bad": "%{loaded} — %{path} není soubor pravidel",
+    "machine.from_ssh_config": "~/.ssh/config",
+    "form.machine_path_note": "prázdné = výchozí cesta stroje",
+    "form.k8s_workspace_note": "adresář uvnitř podu"
   },
   "de": {
     "cmd.open": "Orchestrator: Öffnen",
@@ -1063,7 +1067,6 @@
     "cmd.reload_rules": "Orchestrator: Erkennungsregeln neu laden",
     "cmd.reload_rules_desc": "<Datenverzeichnis>/orchestrator/detection-rules.json neu lesen und detectionRulesUrl abrufen, falls gesetzt",
     "dock.done_count": "%{n} fertig",
-    "dock.jump_btn": "springen",
     "dock.menu_hide": "Dock ausblenden  %{key}",
     "dock.menu_machines": "Maschinen…",
     "dock.menu_manage": "Arbeitsbereiche verwalten…",
@@ -1137,7 +1140,10 @@
     "form.runs_here": "läuft in diesem Arbeitsbereich: %{name}",
     "explain.title": "Warum dieser Zustand",
     "explain.recent_lines": "letzte Ausgabezeilen",
-    "explain.rules_bad": "%{loaded} — %{path} ist keine Regeldatei"
+    "explain.rules_bad": "%{loaded} — %{path} ist keine Regeldatei",
+    "machine.from_ssh_config": "~/.ssh/config",
+    "form.machine_path_note": "leer = Standardpfad der Maschine",
+    "form.k8s_workspace_note": "Verzeichnis im Pod"
   },
   "en": {
     "cmd.open": "Orchestrator: Open",
@@ -1301,7 +1307,6 @@
     "dock.search_btn": "/ search",
     "dock.need_you": "%{n} need you",
     "dock.done_count": "%{n} done",
-    "dock.jump_btn": "jump",
     "notify.needs_you": "%{name} needs you",
     "notify.done": "%{name} finished",
     "notify.jump_key": "(%{key} jumps)",
@@ -1517,7 +1522,10 @@
     "form.runs_here": "runs in this workspace: %{name}",
     "explain.title": "Why this state",
     "explain.recent_lines": "last lines of output",
-    "explain.rules_bad": "%{loaded} — %{path} is not a rules file"
+    "explain.rules_bad": "%{loaded} — %{path} is not a rules file",
+    "machine.from_ssh_config": "~/.ssh/config",
+    "form.machine_path_note": "blank = the machine's default path",
+    "form.k8s_workspace_note": "directory inside the pod"
   },
   "es": {
     "cmd.open": "Orchestrator: Abrir",
@@ -1823,7 +1831,6 @@
     "cmd.reload_rules": "Orchestrator: Recargar reglas de detección",
     "cmd.reload_rules_desc": "Releer <directorio de datos>/orchestrator/detection-rules.json y descargar detectionRulesUrl si está definido",
     "dock.done_count": "%{n} listos",
-    "dock.jump_btn": "saltar",
     "dock.menu_hide": "Ocultar dock  %{key}",
     "dock.menu_machines": "Máquinas…",
     "dock.menu_manage": "Gestionar espacios de trabajo…",
@@ -1897,7 +1904,10 @@
     "form.runs_here": "se ejecuta en este espacio de trabajo: %{name}",
     "explain.title": "Por qué este estado",
     "explain.recent_lines": "últimas líneas de salida",
-    "explain.rules_bad": "%{loaded} — %{path} no es un archivo de reglas"
+    "explain.rules_bad": "%{loaded} — %{path} no es un archivo de reglas",
+    "machine.from_ssh_config": "~/.ssh/config",
+    "form.machine_path_note": "vacío = ruta predeterminada de la máquina",
+    "form.k8s_workspace_note": "directorio dentro del pod"
   },
   "fr": {
     "cmd.open": "Orchestrator : ouvrir",
@@ -2203,7 +2213,6 @@
     "cmd.reload_rules": "Orchestrator : Recharger les règles de détection",
     "cmd.reload_rules_desc": "Relire <dossier de données>/orchestrator/detection-rules.json et récupérer detectionRulesUrl si défini",
     "dock.done_count": "%{n} terminé(s)",
-    "dock.jump_btn": "aller",
     "dock.menu_hide": "Masquer le dock  %{key}",
     "dock.menu_machines": "Machines…",
     "dock.menu_manage": "Gérer les espaces de travail…",
@@ -2277,7 +2286,10 @@
     "form.runs_here": "s'exécute dans cet espace de travail : %{name}",
     "explain.title": "Pourquoi cet état",
     "explain.recent_lines": "dernières lignes de sortie",
-    "explain.rules_bad": "%{loaded} — %{path} n'est pas un fichier de règles"
+    "explain.rules_bad": "%{loaded} — %{path} n'est pas un fichier de règles",
+    "machine.from_ssh_config": "~/.ssh/config",
+    "form.machine_path_note": "vide = chemin par défaut de la machine",
+    "form.k8s_workspace_note": "répertoire dans le pod"
   },
   "it": {
     "cmd.open": "Orchestrator: Apri",
@@ -2583,7 +2595,6 @@
     "cmd.reload_rules": "Orchestrator: Ricarica regole di rilevamento",
     "cmd.reload_rules_desc": "Rilegge <cartella dati>/orchestrator/detection-rules.json e scarica detectionRulesUrl se impostato",
     "dock.done_count": "%{n} finiti",
-    "dock.jump_btn": "vai",
     "dock.menu_hide": "Nascondi dock  %{key}",
     "dock.menu_machines": "Macchine…",
     "dock.menu_manage": "Gestisci spazi di lavoro…",
@@ -2657,7 +2668,10 @@
     "form.runs_here": "viene eseguito in questo spazio di lavoro: %{name}",
     "explain.title": "Perché questo stato",
     "explain.recent_lines": "ultime righe di output",
-    "explain.rules_bad": "%{loaded} — %{path} non è un file di regole"
+    "explain.rules_bad": "%{loaded} — %{path} non è un file di regole",
+    "machine.from_ssh_config": "~/.ssh/config",
+    "form.machine_path_note": "vuoto = percorso predefinito della macchina",
+    "form.k8s_workspace_note": "directory nel pod"
   },
   "ja": {
     "cmd.open": "Orchestrator: 開く",
@@ -2963,7 +2977,6 @@
     "cmd.reload_rules": "Orchestrator: 検出ルールを再読み込み",
     "cmd.reload_rules_desc": "<データディレクトリ>/orchestrator/detection-rules.json を再読み込みし、detectionRulesUrl が設定されていれば取得",
     "dock.done_count": "%{n} 完了",
-    "dock.jump_btn": "移動",
     "dock.menu_hide": "ドックを隠す  %{key}",
     "dock.menu_machines": "マシン…",
     "dock.menu_manage": "ワークスペースを管理…",
@@ -3037,7 +3050,10 @@
     "form.runs_here": "このワークスペースで実行: %{name}",
     "explain.title": "この状態の理由",
     "explain.recent_lines": "出力の最後の行",
-    "explain.rules_bad": "%{loaded} — %{path} はルールファイルではありません"
+    "explain.rules_bad": "%{loaded} — %{path} はルールファイルではありません",
+    "machine.from_ssh_config": "~/.ssh/config",
+    "form.machine_path_note": "空欄 = マシンの既定パス",
+    "form.k8s_workspace_note": "Pod 内のディレクトリ"
   },
   "ko": {
     "cmd.open": "Orchestrator: 열기",
@@ -3343,7 +3359,6 @@
     "cmd.reload_rules": "Orchestrator: 감지 규칙 다시 불러오기",
     "cmd.reload_rules_desc": "<데이터 디렉터리>/orchestrator/detection-rules.json을 다시 읽고, detectionRulesUrl이 설정되어 있으면 가져옵니다",
     "dock.done_count": "%{n}개 완료",
-    "dock.jump_btn": "이동",
     "dock.menu_hide": "독 숨기기  %{key}",
     "dock.menu_machines": "머신…",
     "dock.menu_manage": "워크스페이스 관리…",
@@ -3417,7 +3432,10 @@
     "form.runs_here": "이 워크스페이스에서 실행: %{name}",
     "explain.title": "이 상태인 이유",
     "explain.recent_lines": "출력의 마지막 줄",
-    "explain.rules_bad": "%{loaded} — %{path}은(는) 규칙 파일이 아닙니다"
+    "explain.rules_bad": "%{loaded} — %{path}은(는) 규칙 파일이 아닙니다",
+    "machine.from_ssh_config": "~/.ssh/config",
+    "form.machine_path_note": "비워두면 머신의 기본 경로",
+    "form.k8s_workspace_note": "파드 내부의 디렉터리"
   },
   "pt-BR": {
     "cmd.open": "Orchestrator: Abrir",
@@ -3723,7 +3741,6 @@
     "cmd.reload_rules": "Orchestrator: Recarregar regras de detecção",
     "cmd.reload_rules_desc": "Reler <diretório de dados>/orchestrator/detection-rules.json e baixar detectionRulesUrl se definido",
     "dock.done_count": "%{n} concluídos",
-    "dock.jump_btn": "ir",
     "dock.menu_hide": "Ocultar dock  %{key}",
     "dock.menu_machines": "Máquinas…",
     "dock.menu_manage": "Gerenciar espaços de trabalho…",
@@ -3797,7 +3814,10 @@
     "form.runs_here": "roda neste espaço de trabalho: %{name}",
     "explain.title": "Por que este estado",
     "explain.recent_lines": "últimas linhas de saída",
-    "explain.rules_bad": "%{loaded} — %{path} não é um arquivo de regras"
+    "explain.rules_bad": "%{loaded} — %{path} não é um arquivo de regras",
+    "machine.from_ssh_config": "~/.ssh/config",
+    "form.machine_path_note": "vazio = caminho padrão da máquina",
+    "form.k8s_workspace_note": "diretório dentro do pod"
   },
   "ru": {
     "cmd.open": "Orchestrator: Открыть",
@@ -4103,7 +4123,6 @@
     "cmd.reload_rules": "Orchestrator: Перезагрузить правила обнаружения",
     "cmd.reload_rules_desc": "Перечитать <каталог данных>/orchestrator/detection-rules.json и загрузить detectionRulesUrl, если задан",
     "dock.done_count": "%{n} готово",
-    "dock.jump_btn": "перейти",
     "dock.menu_hide": "Скрыть док  %{key}",
     "dock.menu_machines": "Машины…",
     "dock.menu_manage": "Управление рабочими пространствами…",
@@ -4177,7 +4196,10 @@
     "form.runs_here": "запускается в этом рабочем пространстве: %{name}",
     "explain.title": "Почему такое состояние",
     "explain.recent_lines": "последние строки вывода",
-    "explain.rules_bad": "%{loaded} — %{path} не файл правил"
+    "explain.rules_bad": "%{loaded} — %{path} не файл правил",
+    "machine.from_ssh_config": "~/.ssh/config",
+    "form.machine_path_note": "пусто = путь машины по умолчанию",
+    "form.k8s_workspace_note": "каталог внутри пода"
   },
   "th": {
     "cmd.open": "Orchestrator: เปิด",
@@ -4483,7 +4505,6 @@
     "cmd.reload_rules": "Orchestrator: โหลดกฎการตรวจจับใหม่",
     "cmd.reload_rules_desc": "อ่าน <ไดเรกทอรีข้อมูล>/orchestrator/detection-rules.json ใหม่ และดึง detectionRulesUrl ถ้าตั้งค่าไว้",
     "dock.done_count": "เสร็จ %{n}",
-    "dock.jump_btn": "ไป",
     "dock.menu_hide": "ซ่อนด็อก  %{key}",
     "dock.menu_machines": "เครื่อง…",
     "dock.menu_manage": "จัดการเวิร์กสเปซ…",
@@ -4557,7 +4578,10 @@
     "form.runs_here": "รันในเวิร์กสเปซนี้: %{name}",
     "explain.title": "ทำไมจึงเป็นสถานะนี้",
     "explain.recent_lines": "บรรทัดสุดท้ายของเอาต์พุต",
-    "explain.rules_bad": "%{loaded} — %{path} ไม่ใช่ไฟล์กฎ"
+    "explain.rules_bad": "%{loaded} — %{path} ไม่ใช่ไฟล์กฎ",
+    "machine.from_ssh_config": "~/.ssh/config",
+    "form.machine_path_note": "ว่าง = พาธเริ่มต้นของเครื่อง",
+    "form.k8s_workspace_note": "ไดเรกทอรีภายใน pod"
   },
   "uk": {
     "cmd.open": "Orchestrator: Відкрити",
@@ -4863,7 +4887,6 @@
     "cmd.reload_rules": "Orchestrator: Перезавантажити правила виявлення",
     "cmd.reload_rules_desc": "Перечитати <каталог даних>/orchestrator/detection-rules.json і завантажити detectionRulesUrl, якщо задано",
     "dock.done_count": "%{n} готово",
-    "dock.jump_btn": "перейти",
     "dock.menu_hide": "Сховати док  %{key}",
     "dock.menu_machines": "Машини…",
     "dock.menu_manage": "Керування робочими просторами…",
@@ -4937,7 +4960,10 @@
     "form.runs_here": "запускається в цьому робочому просторі: %{name}",
     "explain.title": "Чому такий стан",
     "explain.recent_lines": "останні рядки виводу",
-    "explain.rules_bad": "%{loaded} — %{path} не файл правил"
+    "explain.rules_bad": "%{loaded} — %{path} не файл правил",
+    "machine.from_ssh_config": "~/.ssh/config",
+    "form.machine_path_note": "порожньо = типовий шлях машини",
+    "form.k8s_workspace_note": "каталог усередині пода"
   },
   "vi": {
     "cmd.open": "Orchestrator: Mở",
@@ -5243,7 +5269,6 @@
     "cmd.reload_rules": "Orchestrator: Tải lại quy tắc phát hiện",
     "cmd.reload_rules_desc": "Đọc lại <thư mục dữ liệu>/orchestrator/detection-rules.json và tải detectionRulesUrl nếu được đặt",
     "dock.done_count": "%{n} xong",
-    "dock.jump_btn": "nhảy",
     "dock.menu_hide": "Ẩn dock  %{key}",
     "dock.menu_machines": "Máy…",
     "dock.menu_manage": "Quản lý không gian làm việc…",
@@ -5317,7 +5342,10 @@
     "form.runs_here": "chạy trong không gian làm việc này: %{name}",
     "explain.title": "Vì sao có trạng thái này",
     "explain.recent_lines": "các dòng đầu ra cuối cùng",
-    "explain.rules_bad": "%{loaded} — %{path} không phải là tệp quy tắc"
+    "explain.rules_bad": "%{loaded} — %{path} không phải là tệp quy tắc",
+    "machine.from_ssh_config": "~/.ssh/config",
+    "form.machine_path_note": "để trống = đường dẫn mặc định của máy",
+    "form.k8s_workspace_note": "thư mục bên trong pod"
   },
   "zh-CN": {
     "cmd.open": "Orchestrator：打开",
@@ -5623,7 +5651,6 @@
     "cmd.reload_rules": "Orchestrator：重新加载检测规则",
     "cmd.reload_rules_desc": "重新读取 <数据目录>/orchestrator/detection-rules.json，并在设置了 detectionRulesUrl 时拉取",
     "dock.done_count": "%{n} 个已完成",
-    "dock.jump_btn": "跳转",
     "dock.menu_hide": "隐藏停靠栏  %{key}",
     "dock.menu_machines": "机器…",
     "dock.menu_manage": "管理工作区…",
@@ -5697,6 +5724,9 @@
     "form.runs_here": "在此工作区运行：%{name}",
     "explain.title": "为何是此状态",
     "explain.recent_lines": "输出的最后几行",
-    "explain.rules_bad": "%{loaded} — %{path} 不是规则文件"
+    "explain.rules_bad": "%{loaded} — %{path} 不是规则文件",
+    "machine.from_ssh_config": "~/.ssh/config",
+    "form.machine_path_note": "留空 = 机器的默认路径",
+    "form.k8s_workspace_note": "Pod 内的目录"
   }
 }

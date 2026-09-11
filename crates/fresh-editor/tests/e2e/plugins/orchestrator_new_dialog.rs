@@ -811,10 +811,9 @@ fn bracketed_paste_routes_to_focused_dialog_field() {
 /// — neither inserted into any field nor leaked into the obscured
 /// buffer.
 ///
-/// The form's tab cycle always starts with the "Run in:" backend
-/// tabs (`[local, ssh, kubernetes, devcontainer, project_path, …]`)
+/// The form's tab cycle runs `Launch in`, `Machine`, then the fields,
 /// and opens with `project_path` focused, so a single Shift+Tab walks
-/// focus back onto the `devcontainer` backend tab — a non-text Button,
+/// focus back onto the `Machine` dropdown — a non-text widget,
 /// regardless of git / worktree state. Pasting there must be
 /// swallowed. Without the fix the paste falls through to the buffer;
 /// revealing the buffer after Esc shows the marker and this fails.
@@ -827,8 +826,8 @@ fn bracketed_paste_ignored_when_non_text_widget_focused() {
 
     open_new_session_form(&mut harness);
 
-    // Walk focus off the Project Path text field onto a backend tab
-    // (a non-text Button) — the tabbable immediately before it.
+    // Walk focus off the Project Path text field onto the Machine
+    // dropdown (a non-text widget) — the tabbable immediately before it.
     harness
         .send_key(KeyCode::BackTab, KeyModifiers::NONE)
         .unwrap();
@@ -974,33 +973,34 @@ fn open_form_on(workspace: &PathBuf) -> EditorTestHarness {
     harness
 }
 
-/// Tab moves linearly between *fields* — one stop per radio group, not
-/// one per option. Walking a full cycle lands the marker on the "Run in:"
-/// radio exactly once and the "Agent:" selector exactly once (the options
-/// inside each are ←/→'s, never Tab stops), and reaches `[ Create & Visit ]`.
+/// Tab moves linearly between *fields* — one stop per selector, not one
+/// per option. Walking a full cycle lands the marker on the "Machine:"
+/// dropdown exactly once and the "Agent:" selector exactly once (the
+/// options inside each are ←/→'s, never Tab stops), and reaches
+/// `[ Create & Visit ]`.
 #[test]
 fn tab_is_linear_one_stop_per_radio_group() {
     let (_temp, workspace) = set_up_workspace();
     let mut harness = open_form_on(&workspace);
 
-    // Advance to the single "Run in:" stop — the anchor for one cycle.
-    // (The form opens focused on Project Path, so the "Run in:" tab is a
+    // Advance to the single "Machine:" stop — the anchor for one cycle.
+    // (The form opens focused on Project Path, so the "Machine:" stop is a
     // few stops away.)
     let mut guard = 0;
-    while !focused_line(&harness.screen_to_string()).contains("Run in:") {
+    while !focused_line(&harness.screen_to_string()).contains("Machine:") {
         harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
         harness.tick_and_render().unwrap();
         guard += 1;
         assert!(
             guard < 20,
-            "Tab never reached the 'Run in:' stop. Screen:\n{}",
+            "Tab never reached the 'Machine:' stop. Screen:\n{}",
             harness.screen_to_string(),
         );
     }
 
     // Walk exactly one full cycle: collect the focused line at each stop
-    // starting from the "Run in:" anchor, tabbing until the marker lands
-    // back on a "Run in:" line. Counting over a fixed number of presses
+    // starting from the "Machine:" anchor, tabbing until the marker lands
+    // back on a "Machine:" line. Counting over a fixed number of presses
     // would over-count once the press count exceeds the cycle length;
     // bounding on "back to the anchor" makes the assertions independent
     // of how many fields the active backend has.
@@ -1009,13 +1009,13 @@ fn tab_is_linear_one_stop_per_radio_group() {
         harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
         harness.tick_and_render().unwrap();
         let line = focused_line(&harness.screen_to_string());
-        if line.contains("Run in:") {
+        if line.contains("Machine:") {
             break; // back to the anchor — one full cycle walked
         }
         cycle_lines.push(line);
         assert!(
             cycle_lines.len() < 20,
-            "focus cycle never returned to the 'Run in:' anchor. Screen:\n{}",
+            "focus cycle never returned to the 'Machine:' anchor. Screen:\n{}",
             harness.screen_to_string(),
         );
     }
@@ -1025,11 +1025,11 @@ fn tab_is_linear_one_stop_per_radio_group() {
     let mut saw_create = false;
     let mut saw_inactive_option = false;
     for line in &cycle_lines {
-        if line.contains("Run in:") {
+        if line.contains("Machine:") {
             run_in_stops += 1;
-            // The radio is one stop, and the marker sits on the row — with
-            // Local still the filled option, since Tab never changes it.
-            if !line.contains("(•) Local") {
+            // The dropdown is one stop, and the marker sits on the row — with
+            // Local still the value, since Tab never changes it.
+            if !line.contains("[Local") {
                 saw_inactive_option = true;
             }
         }
@@ -1049,13 +1049,13 @@ fn tab_is_linear_one_stop_per_radio_group() {
 
     assert!(
         !saw_inactive_option,
-        "Tab must never land on an inactive radio option (←/→ changes the option). \
+        "Tab must never land on an inactive option (←/→ changes the option). \
          Screen:\n{}",
         harness.screen_to_string(),
     );
     assert_eq!(
         run_in_stops, 1,
-        "the 'Run in:' group is a single Tab stop per cycle (got {run_in_stops})",
+        "the 'Machine:' control is a single Tab stop per cycle (got {run_in_stops})",
     );
     assert_eq!(
         agent_stops, 1,
@@ -1064,49 +1064,53 @@ fn tab_is_linear_one_stop_per_radio_group() {
     assert!(saw_create, "Tab must reach the [ Create Workspace ] button");
 }
 
-/// ←/→ changes the option *within* the "Run in:" radio (and swaps the
-/// body), while Tab leaves the option alone. This is the split the help
-/// line documents: Tab between fields, ←/→ within a group.
+/// ←/→ changes the option *within* the "Machine:" dropdown (and swaps the
+/// connection section), while Tab leaves the option alone. This is the
+/// split the help line documents: Tab between fields, ←/→ within a group.
 #[test]
 fn arrows_switch_run_in_selector_option() {
     let (_temp, workspace) = set_up_workspace();
     let mut harness = open_form_on(&workspace);
 
-    // Shift+Tab from the initial Project Path focus wraps to the active
-    // "Run in:" tab (the first stop in the cycle).
+    // Shift+Tab from the initial Project Path focus lands on the Machine
+    // control (the stop before it).
     harness
         .send_key(KeyCode::BackTab, KeyModifiers::NONE)
         .unwrap();
     harness.tick_and_render().unwrap();
     assert!(
-        focused_line(&harness.screen_to_string()).contains("Run in:"),
-        "Shift+Tab should land focus on the Run in selector. Screen:\n{}",
+        focused_line(&harness.screen_to_string()).contains("Machine:"),
+        "Shift+Tab should land focus on the Machine control. Screen:\n{}",
         harness.screen_to_string(),
     );
 
-    // → moves to the next option (SSH) and the body swaps to SSH fields.
+    // → moves to the next option (`Other host…`, with no ~/.ssh/config and
+    // no saved machines) and the connection section fills with the SSH
+    // fields. Project Path stays — it is the one path field in every mode.
     harness
         .send_key(KeyCode::Right, KeyModifiers::NONE)
         .unwrap();
     harness
-        .wait_until(|h| h.screen_to_string().contains("Host:"))
+        .wait_until(|h| h.screen_to_string().contains("Target:"))
         .unwrap();
     assert!(
-        focused_line(&harness.screen_to_string()).contains("(•) SSH"),
-        "→ should fill the SSH option. Screen:\n{}",
+        focused_line(&harness.screen_to_string()).contains("Other host"),
+        "→ should pick `Other host…`. Screen:\n{}",
         harness.screen_to_string(),
     );
+    harness.assert_screen_contains("Project Path");
 
-    // ← moves back to Local and restores the local body (Project Path).
+    // ← moves back to Local: the SSH fields go, Project Path stays.
     harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
     harness
-        .wait_until(|h| h.screen_to_string().contains("Project Path"))
+        .wait_until(|h| !h.screen_to_string().contains("Target:"))
         .unwrap();
     assert!(
-        focused_line(&harness.screen_to_string()).contains("(•) Local"),
-        "← should fill the Local option again. Screen:\n{}",
+        focused_line(&harness.screen_to_string()).contains("[Local"),
+        "← should pick Local again. Screen:\n{}",
         harness.screen_to_string(),
     );
+    harness.assert_screen_contains("Project Path");
 }
 
 /// Esc is scoped: the first Esc closes an open completion dropdown
@@ -1148,7 +1152,7 @@ fn esc_closes_dropdown_first_then_cancels_dialog() {
 
 /// Ctrl+Enter submits the form from anywhere — here from a text field,
 /// where a bare Enter would only advance focus. The form leaves its
-/// editable state (the "Run in:" selector row disappears as the dialog
+/// editable state (the "Machine:" control disappears as the dialog
 /// switches to the connecting/creating view or closes outright).
 #[test]
 #[cfg_attr(target_os = "windows", ignore)]
@@ -1171,17 +1175,17 @@ fn ctrl_enter_submits_from_a_text_field() {
     let mut harness = open_form_on(&workspace);
 
     // Focus is on the Project Path text field. A bare Enter here would
-    // advance focus (and keep the editable "Run in" radio). Ctrl+Enter
-    // must instead submit — the editable radio row goes away.
+    // advance focus (and keep the editable "Machine" control). Ctrl+Enter
+    // must instead submit — the editable control goes away.
     assert!(
-        harness.screen_to_string().contains("(•) Local"),
-        "precondition: the editable Run-in radio is showing",
+        harness.screen_to_string().contains("Machine:"),
+        "precondition: the editable Machine control is showing",
     );
     harness
         .send_key(KeyCode::Enter, KeyModifiers::CONTROL)
         .unwrap();
     harness
-        .wait_until(|h| !h.screen_to_string().contains("(•) Local"))
+        .wait_until(|h| !h.screen_to_string().contains("Machine:"))
         .unwrap();
 }
 
@@ -1677,12 +1681,12 @@ fn run_agent_and_new_workspace_are_one_dialog() {
     harness.assert_screen_contains("New workspace");
     harness.assert_screen_contains("Project Path");
     harness.assert_screen_contains("Workspace Name");
-    harness.assert_screen_contains("Run in:");
+    harness.assert_screen_contains("Machine:");
     harness.assert_screen_contains("Agent:");
 
     // Flip "Launch in" to the current workspace. The form opens focused on
-    // Project Path, so Shift+Tab twice reaches the switch (via the `Run in`
-    // radio, which is a single stop).
+    // Project Path, so Shift+Tab twice reaches the switch (via the `Machine`
+    // control, which is a single stop).
     harness
         .send_key(KeyCode::BackTab, KeyModifiers::NONE)
         .unwrap();
@@ -1706,7 +1710,7 @@ fn run_agent_and_new_workspace_are_one_dialog() {
     harness.assert_screen_contains("Current workspace");
     harness.assert_screen_not_contains("Project Path");
     harness.assert_screen_not_contains("Workspace Name");
-    harness.assert_screen_not_contains("Run in:");
+    harness.assert_screen_not_contains("Machine:");
     // The agent selector is shared by both shapes, so it stays.
     harness.assert_screen_contains("Agent:");
 
@@ -1726,7 +1730,7 @@ fn run_agent_and_new_workspace_are_one_dialog() {
         .wait_until(|h| h.screen_to_string().contains("Project Path"))
         .unwrap();
     harness.assert_screen_contains("ORCHESTRATOR :: New Workspace");
-    harness.assert_screen_contains("Run in:");
+    harness.assert_screen_contains("Machine:");
 }
 
 /// The agent list ends in "custom…", whose whole purpose is to let the user

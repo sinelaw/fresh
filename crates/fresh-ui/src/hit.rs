@@ -969,11 +969,29 @@ impl<M: 'static> Ui<M> {
             // often a whole panel body as a single row, and suppressing the
             // dismissal over a body would leave no outside at all. A caller
             // that wants this says which node it means.
+            //
+            // **And only the part of it that answers a press.** The anchor is
+            // usually a whole row — a dropdown's label, its `[value ▼]`
+            // button, and the blank run after it — and only the button
+            // toggles. A press on the label or the blank run reaches no
+            // handler, so nothing would close the list if this dismissal
+            // stood aside for it: the user clicked beside the trigger and
+            // the list stayed up. The exemption is for the press the anchor
+            // will act on itself; the rest of its rectangle is outside.
             let anchored_on = match &geom.anchor {
                 crate::desc::Anchor::Node(k) => self.find_by_key(k),
                 _ => None,
             };
-            if anchored_on.is_some_and(|a| paths.iter().any(|p| p.contains(&a))) {
+            let on_trigger = anchored_on.is_some_and(|a| {
+                paths.iter().any(|p| {
+                    p.iter().position(|&e| e == a).is_some_and(|i| {
+                        p[i..]
+                            .iter()
+                            .any(|&n| !self.listeners(n, GestureKind::Press, false).is_empty())
+                    })
+                })
+            });
+            if on_trigger {
                 continue;
             }
             if let Some(h) = self.dismiss_handler(lid) {
