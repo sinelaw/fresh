@@ -517,7 +517,7 @@ impl Prompt {
     ///
     /// # Example
     /// ```
-    /// # use fresh::prompt::{Prompt, PromptType};
+    /// # use fresh::view::prompt::{Prompt, PromptType};
     /// let mut prompt = Prompt::new("Search: ".to_string(), PromptType::Search);
     /// prompt.set_input_plain("current".to_string());
     /// prompt.set_cursor_byte(7);
@@ -744,7 +744,7 @@ impl Prompt {
     ///
     /// # Example
     /// ```
-    /// # use fresh::prompt::{Prompt, PromptType};
+    /// # use fresh::view::prompt::{Prompt, PromptType};
     /// let mut prompt = Prompt::new("Find: ".to_string(), PromptType::OpenFile);
     /// prompt.set_input_plain("hello world".to_string());
     /// prompt.set_cursor_byte(0); // At start of "hello"
@@ -766,7 +766,7 @@ impl Prompt {
     ///
     /// # Example
     /// ```
-    /// # use fresh::prompt::{Prompt, PromptType};
+    /// # use fresh::view::prompt::{Prompt, PromptType};
     /// let mut prompt = Prompt::new("Find: ".to_string(), PromptType::OpenFile);
     /// prompt.set_input_plain("hello world".to_string());
     /// prompt.set_cursor_byte(5); // After "hello"
@@ -788,7 +788,7 @@ impl Prompt {
     ///
     /// # Example
     /// ```
-    /// # use fresh::prompt::{Prompt, PromptType};
+    /// # use fresh::view::prompt::{Prompt, PromptType};
     /// let mut prompt = Prompt::new("Find: ".to_string(), PromptType::OpenFile);
     /// prompt.set_input_plain("hello world".to_string());
     /// prompt.set_cursor_byte(5); // After "hello"
@@ -819,7 +819,7 @@ impl Prompt {
     ///
     /// # Example
     /// ```
-    /// # use fresh::prompt::{Prompt, PromptType};
+    /// # use fresh::view::prompt::{Prompt, PromptType};
     /// let mut prompt = Prompt::new("Search: ".to_string(), PromptType::Search);
     /// prompt.set_input_plain("test query".to_string());
     /// assert_eq!(prompt.get_text(), "test query");
@@ -834,7 +834,7 @@ impl Prompt {
     ///
     /// # Example
     /// ```
-    /// # use fresh::prompt::{Prompt, PromptType};
+    /// # use fresh::view::prompt::{Prompt, PromptType};
     /// let mut prompt = Prompt::new("Find: ".to_string(), PromptType::OpenFile);
     /// prompt.set_input_plain("some text".to_string());
     /// prompt.set_cursor_byte(9);
@@ -855,7 +855,7 @@ impl Prompt {
     ///
     /// # Example
     /// ```
-    /// # use fresh::prompt::{Prompt, PromptType};
+    /// # use fresh::view::prompt::{Prompt, PromptType};
     /// let mut prompt = Prompt::new("Command: ".to_string(), PromptType::QuickOpen);
     /// prompt.set_input_plain("save".to_string());
     /// prompt.set_cursor_byte(4);

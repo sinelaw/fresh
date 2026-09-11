@@ -34,8 +34,10 @@
 //!
 //! Structural invariants maintained at all times:
 //!
-//!     self.map.len() == self.order.len()
-//!     self.current_bytes <= self.byte_budget  (after any insert)
+//! ```text
+//! self.map.len() == self.order.len()
+//! self.current_bytes <= self.byte_budget  (after any insert)
+//! ```
 
 use crate::state::EditorState;
 use crate::view::ui::split_rendering::base_tokens::build_base_tokens;

@@ -96,6 +96,29 @@ jobs:
       - name: Check build without plugins feature
         run: cargo check --no-default-features --features runtime --all-targets
 
+  # 1.95 stays the default for everything else here; this is the standing
+  # check that the tree still compiles on current stable. Pinned rather than
+  # `stable` so a Rust release cannot turn it red on its own. RUSTUP_TOOLCHAIN
+  # is the only override rust-toolchain.toml respects, and keys rust-cache
+  # separately. No fmt or clippy: both differ between versions.
+  newer-toolchain:
+    name: rust 1.98 (non-default)
+    runs-on: ubuntu-latest
+    env:
+      RUSTUP_TOOLCHAIN: "1.98"
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Install Rust 1.98
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch
+        with:
+          toolchain: "1.98"
+      - name: Cache Cargo dependencies
+        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - name: Check
+        run: cargo check --workspace --all-targets --all-features
+
   # install.sh is the entry point for `curl ... | sh`, and it is the one script
   # here whose failure modes users hit before they have anything else installed.
   # shellcheck's own job below lints workflow `run:` blocks only, so the
