@@ -2104,7 +2104,9 @@ impl Editor {
                     Slot::Dock => Some(crate::app::PanelSlot::Dock),
                     Slot::Sidebar(i) => Some(crate::app::PanelSlot::Sidebar(i)),
                     Slot::Floating => Some(crate::app::PanelSlot::Floating),
-                    Slot::Pane(_) | Slot::PromptToolbar | Slot::Settings | Slot::SettingsEntry => None,
+                    Slot::Pane(_) | Slot::PromptToolbar | Slot::Settings | Slot::SettingsEntry => {
+                        None
+                    }
                 };
                 let panel_key = panel.and_then(|p| self.panel(p).map(|p| p.panel_key.clone()));
                 if let Some(panel_key) = panel_key {
