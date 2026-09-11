@@ -1687,281 +1687,31 @@ impl BindingSource {
 
 /// Log that a configured keybinding entry was dropped because its key name did
 /// not parse, so a rejected binding leaves a trace in the log instead of dying
-/// silently (issue #1128: `"key": "asterisk"` was ignored with no feedback
-/// anywhere).
-/// A key a config entry can name in words, and the spellings it answers to.
-///
-/// The tables below plus [`fresh_input_parser::keypad::KEYPAD_KEYS`] are the
-/// whole accepted vocabulary, and they are data rather than match arms for two
-/// reasons: `parse_key` reads them, and so does the generator that writes the
-/// table in `docs/configuration/keyboard.md`. A name that is not documented is
-/// a name nobody can find.
-pub struct KeyName {
-    /// Accepted spellings, lowercase. The first is canonical — the one the
-    /// generated documentation lists and the one to prefer in examples.
-    pub names: &'static [&'static str],
-    /// What the name resolves to.
-    pub code: KeyCode,
-}
+/// The keypad and media families stay here, where the input-parser crate is
+/// available.
+pub use fresh_editor_core::keys::{Key, KeyName, KeySeq, NAMED_KEYS, PUNCTUATION_KEYS};
 
-/// Keys that have a name of their own — neither a character nor the keypad.
-///
-/// Every spelling `keybinding_editor::helpers::key_code_to_config_name` can
-/// write must appear here, or the editor would record a binding that its own
-/// loader then rejects; `config_names_round_trip` holds that.
-pub const NAMED_KEYS: &[KeyName] = &[
-    KeyName {
-        names: &["enter"],
-        code: KeyCode::Enter,
-    },
-    KeyName {
-        names: &["backspace"],
-        code: KeyCode::Backspace,
-    },
-    KeyName {
-        names: &["delete", "del"],
-        code: KeyCode::Delete,
-    },
-    KeyName {
-        names: &["insert", "ins"],
-        code: KeyCode::Insert,
-    },
-    KeyName {
-        names: &["tab"],
-        code: KeyCode::Tab,
-    },
-    KeyName {
-        names: &["backtab"],
-        code: KeyCode::BackTab,
-    },
-    KeyName {
-        names: &["escape", "esc"],
-        code: KeyCode::Esc,
-    },
-    KeyName {
-        names: &["space"],
-        code: KeyCode::Char(' '),
-    },
-    KeyName {
-        names: &["left"],
-        code: KeyCode::Left,
-    },
-    KeyName {
-        names: &["right"],
-        code: KeyCode::Right,
-    },
-    KeyName {
-        names: &["up"],
-        code: KeyCode::Up,
-    },
-    KeyName {
-        names: &["down"],
-        code: KeyCode::Down,
-    },
-    KeyName {
-        names: &["home"],
-        code: KeyCode::Home,
-    },
-    KeyName {
-        names: &["end"],
-        code: KeyCode::End,
-    },
-    KeyName {
-        names: &["pageup"],
-        code: KeyCode::PageUp,
-    },
-    KeyName {
-        names: &["pagedown"],
-        code: KeyCode::PageDown,
-    },
-    // Lock and system keys. A terminal speaking the kitty keyboard protocol
-    // reports these (the input parser decodes them at codepoints 57358-57363),
-    // so the keybinding editor can record one — and without a name here it
-    // would write a `{:?}` spelling that the loader then refused, which is the
-    // `Insert` bug one line up, repeated.
-    KeyName {
-        names: &["capslock"],
-        code: KeyCode::CapsLock,
-    },
-    KeyName {
-        names: &["scrolllock"],
-        code: KeyCode::ScrollLock,
-    },
-    KeyName {
-        names: &["numlock"],
-        code: KeyCode::NumLock,
-    },
-    KeyName {
-        names: &["printscreen"],
-        code: KeyCode::PrintScreen,
-    },
-    KeyName {
-        names: &["pause"],
-        code: KeyCode::Pause,
-    },
-    KeyName {
-        names: &["menu"],
-        code: KeyCode::Menu,
-    },
-];
-
-/// X11 keysym spellings for ASCII punctuation.
-///
-/// A single-character key name is still the canonical spelling (and what the
-/// keybinding editor writes back), but people reach for the X11 keysym name
-/// they know — `"key": "asterisk"` is what issue #1128 was actually configured
-/// with, and it bound nothing at all. JSON also makes some of these awkward to
-/// write literally (`"\\"` for backslash, `"\""` for the double quote), so a
-/// name is the friendlier spelling.
-pub const PUNCTUATION_KEYS: &[KeyName] = &[
-    KeyName {
-        names: &["asterisk", "star"],
-        code: KeyCode::Char('*'),
-    },
-    KeyName {
-        names: &["plus"],
-        code: KeyCode::Char('+'),
-    },
-    KeyName {
-        names: &["minus", "hyphen"],
-        code: KeyCode::Char('-'),
-    },
-    KeyName {
-        names: &["slash"],
-        code: KeyCode::Char('/'),
-    },
-    KeyName {
-        names: &["period", "dot"],
-        code: KeyCode::Char('.'),
-    },
-    KeyName {
-        names: &["equal", "equals"],
-        code: KeyCode::Char('='),
-    },
-    KeyName {
-        names: &["backslash"],
-        code: KeyCode::Char('\\'),
-    },
-    KeyName {
-        names: &["comma"],
-        code: KeyCode::Char(','),
-    },
-    KeyName {
-        names: &["semicolon"],
-        code: KeyCode::Char(';'),
-    },
-    KeyName {
-        names: &["colon"],
-        code: KeyCode::Char(':'),
-    },
-    KeyName {
-        names: &["apostrophe", "quote"],
-        code: KeyCode::Char('\''),
-    },
-    KeyName {
-        names: &["quotedbl", "doublequote"],
-        code: KeyCode::Char('"'),
-    },
-    KeyName {
-        names: &["grave", "backtick"],
-        code: KeyCode::Char('`'),
-    },
-    KeyName {
-        names: &["tilde"],
-        code: KeyCode::Char('~'),
-    },
-    KeyName {
-        names: &["exclam", "exclamation"],
-        code: KeyCode::Char('!'),
-    },
-    KeyName {
-        names: &["at"],
-        code: KeyCode::Char('@'),
-    },
-    KeyName {
-        names: &["numbersign", "hash"],
-        code: KeyCode::Char('#'),
-    },
-    KeyName {
-        names: &["dollar"],
-        code: KeyCode::Char('$'),
-    },
-    KeyName {
-        names: &["percent"],
-        code: KeyCode::Char('%'),
-    },
-    KeyName {
-        names: &["asciicircum", "caret"],
-        code: KeyCode::Char('^'),
-    },
-    KeyName {
-        names: &["ampersand"],
-        code: KeyCode::Char('&'),
-    },
-    KeyName {
-        names: &["underscore"],
-        code: KeyCode::Char('_'),
-    },
-    KeyName {
-        names: &["bar", "pipe"],
-        code: KeyCode::Char('|'),
-    },
-    KeyName {
-        names: &["question"],
-        code: KeyCode::Char('?'),
-    },
-    KeyName {
-        names: &["less", "lessthan"],
-        code: KeyCode::Char('<'),
-    },
-    KeyName {
-        names: &["greater", "greaterthan"],
-        code: KeyCode::Char('>'),
-    },
-    KeyName {
-        names: &["parenleft"],
-        code: KeyCode::Char('('),
-    },
-    KeyName {
-        names: &["parenright"],
-        code: KeyCode::Char(')'),
-    },
-    KeyName {
-        names: &["bracketleft"],
-        code: KeyCode::Char('['),
-    },
-    KeyName {
-        names: &["bracketright"],
-        code: KeyCode::Char(']'),
-    },
-    KeyName {
-        names: &["braceleft"],
-        code: KeyCode::Char('{'),
-    },
-    KeyName {
-        names: &["braceright"],
-        code: KeyCode::Char('}'),
-    },
-];
-
-/// Resolve an already-lowercased key name against every table.
-///
-/// The last two come from the parser's own tables rather than a second
-/// hand-written list, so a name that binds and a key that arrives agree by
-/// construction: the keypad, whose names are aliases for the key the terminal
-/// actually reports (`kp_multiply` *is* `*` by the time the editor sees it),
-/// and the media and modifier keys, which are not aliases — nothing on the
-/// main keyboard means "mute".
-pub fn key_name_to_code(lower: &str) -> Option<KeyCode> {
-    NAMED_KEYS
-        .iter()
-        .chain(PUNCTUATION_KEYS)
-        .find(|k| k.names.contains(&lower))
-        .map(|k| k.code)
-        .or_else(|| fresh_input_parser::keypad::code_for_keysym(lower))
+fn terminal_key_names(lower: &str) -> Option<KeyCode> {
+    fresh_input_parser::keypad::code_for_keysym(lower)
         .or_else(|| fresh_input_parser::media_modifier::code_for_keysym(lower))
 }
 
+/// Resolve an already-lowercased key name against every table.
+pub fn key_name_to_code(lower: &str) -> Option<KeyCode> {
+    fresh_editor_core::keys::name_to_code(lower, Some(terminal_key_names))
+}
+
+/// The entry point for any key written as a string.
+pub fn parse_key_seq(s: &str) -> Option<KeySeq> {
+    KeySeq::parse(s, Some(terminal_key_names))
+}
+
+pub fn parse_key_press(s: &str) -> Option<Key> {
+    parse_key_seq(s)?.single()
+}
+
+/// silently (issue #1128: `"key": "asterisk"` was ignored with no feedback
+/// anywhere).
 fn warn_invalid_key(key: &str, action: &str) {
     tracing::warn!(
         "Invalid keybinding in config: unknown key \"{key}\" for action \"{action}\" (binding ignored)"
@@ -2034,42 +1784,23 @@ impl KeybindingResolver {
             };
 
             if let Some(action) = Action::from_str(&binding.action, &binding.args) {
-                // Check if this is a chord binding (has keys field)
-                if !binding.keys.is_empty() {
-                    // Parse the chord sequence
-                    let mut sequence = Vec::new();
-                    for key_press in &binding.keys {
-                        if let Some(key_code) = Self::parse_key(&key_press.key) {
-                            let modifiers = Self::parse_modifiers(&key_press.modifiers);
-                            sequence.push((key_code, modifiers));
-                        } else {
-                            // Invalid key in sequence, skip this binding
-                            warn_invalid_key(&key_press.key, &binding.action);
-                            break;
-                        }
-                    }
-
-                    // Only add if all keys in sequence were valid
-                    if sequence.len() == binding.keys.len() && !sequence.is_empty() {
+                let Some(sequence) = Self::binding_sequence(binding) else {
+                    continue;
+                };
+                match sequence.as_slice() {
+                    [(key_code, modifiers)] => self.insert_binding_with_equivalents(
+                        context,
+                        *key_code,
+                        *modifiers,
+                        action,
+                        Self::binding_key_name(binding),
+                    ),
+                    _ => {
                         self.default_chord_bindings
                             .entry(context)
                             .or_default()
                             .insert(sequence, action);
                     }
-                } else if let Some(key_code) = Self::parse_key(&binding.key) {
-                    // Single key binding (legacy format)
-                    let modifiers = Self::parse_modifiers(&binding.modifiers);
-
-                    // Insert the primary binding
-                    self.insert_binding_with_equivalents(
-                        context,
-                        key_code,
-                        modifiers,
-                        action,
-                        &binding.key,
-                    );
-                } else {
-                    warn_invalid_key(&binding.key, &binding.action);
                 }
             }
         }
@@ -2153,37 +1884,22 @@ impl KeybindingResolver {
             }
 
             if let Some(action) = Action::from_str(&binding.action, &binding.args) {
-                // Check if this is a chord binding (has keys field)
-                if !binding.keys.is_empty() {
-                    // Parse the chord sequence
-                    let mut sequence = Vec::new();
-                    for key_press in &binding.keys {
-                        if let Some(key_code) = Self::parse_key(&key_press.key) {
-                            let modifiers = Self::parse_modifiers(&key_press.modifiers);
-                            sequence.push((key_code, modifiers));
-                        } else {
-                            // Invalid key in sequence, skip this binding
-                            warn_invalid_key(&key_press.key, &binding.action);
-                            break;
-                        }
+                let Some(sequence) = Self::binding_sequence(binding) else {
+                    continue;
+                };
+                match sequence.as_slice() {
+                    [(key_code, modifiers)] => {
+                        self.bindings
+                            .entry(context)
+                            .or_default()
+                            .insert((*key_code, *modifiers), action);
                     }
-
-                    // Only add if all keys in sequence were valid
-                    if sequence.len() == binding.keys.len() && !sequence.is_empty() {
+                    _ => {
                         self.chord_bindings
                             .entry(context)
                             .or_default()
                             .insert(sequence, action);
                     }
-                } else if let Some(key_code) = Self::parse_key(&binding.key) {
-                    // Single key binding (legacy format)
-                    let modifiers = Self::parse_modifiers(&binding.modifiers);
-                    self.bindings
-                        .entry(context)
-                        .or_default()
-                        .insert((key_code, modifiers), action);
-                } else {
-                    warn_invalid_key(&binding.key, &binding.action);
                 }
             }
         }
@@ -2205,6 +1921,36 @@ impl KeybindingResolver {
         (!sequence.is_empty()).then_some(sequence)
     }
 
+    /// From `keys`, `chord`, or `key` + `modifiers`, in that order, so the
+    /// split fields win. The compact form is parsed rather than rewritten into
+    /// them: they cannot spell keypad and media names, or Meta and Hyper.
+    fn binding_sequence(
+        binding: &crate::config::Keybinding,
+    ) -> Option<Vec<(KeyCode, KeyModifiers)>> {
+        if !binding.keys.is_empty() {
+            return Self::parse_chord_sequence(binding);
+        }
+        if binding.key.is_empty() && !binding.chord.is_empty() {
+            let Some(seq) = parse_key_seq(&binding.chord) else {
+                warn_invalid_key(&binding.chord, &binding.action);
+                return None;
+            };
+            return Some(seq.keys().iter().map(|k| (k.code(), k.mods())).collect());
+        }
+        let Some(code) = Self::parse_key(&binding.key) else {
+            warn_invalid_key(&binding.key, &binding.action);
+            return None;
+        };
+        Some(vec![(code, Self::parse_modifiers(&binding.modifiers))])
+    }
+
+    fn binding_key_name(binding: &crate::config::Keybinding) -> &str {
+        match binding.key.is_empty() {
+            false => &binding.key,
+            true => &binding.chord,
+        }
+    }
+
     /// Apply an `unbind` entry: take the built-in binding for its key (or
     /// chord) in `context` out of scope. Nothing is bound in its place, so
     /// the key falls through to whatever else binds it — a broader context,
@@ -2213,25 +1959,22 @@ impl KeybindingResolver {
     /// The removal is remembered so a plugin registering the same key for
     /// the same mode later (or again, after a reload) stays removed.
     fn unbind(&mut self, context: KeyContext, binding: &crate::config::Keybinding) {
-        if !binding.keys.is_empty() {
-            let Some(sequence) = Self::parse_chord_sequence(binding) else {
-                return;
-            };
-            if let Some(chords) = self.default_chord_bindings.get_mut(&context) {
-                chords.remove(&sequence);
-            }
-            if let Some(chords) = self.plugin_chord_defaults.get_mut(&context) {
-                chords.remove(&sequence);
-            }
-            self.removed_chords.insert((context, sequence));
-            return;
-        }
-
-        let Some(key_code) = Self::parse_key(&binding.key) else {
-            warn_invalid_key(&binding.key, &binding.action);
+        let Some(sequence) = Self::binding_sequence(binding) else {
             return;
         };
-        let key = (key_code, Self::parse_modifiers(&binding.modifiers));
+        let key = match sequence.as_slice() {
+            [one] => *one,
+            _ => {
+                if let Some(chords) = self.default_chord_bindings.get_mut(&context) {
+                    chords.remove(&sequence);
+                }
+                if let Some(chords) = self.plugin_chord_defaults.get_mut(&context) {
+                    chords.remove(&sequence);
+                }
+                self.removed_chords.insert((context, sequence));
+                return;
+            }
+        };
         if let Some(map) = self.default_bindings.get_mut(&context) {
             map.remove(&key);
             // A keymap binding brings its terminal equivalents along
@@ -3709,6 +3452,210 @@ impl KeybindingResolver {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_compact_entry_binds_what_its_split_field_equivalent_binds() {
+        fn resolver_for(b: crate::config::Keybinding) -> KeybindingResolver {
+            let mut config = crate::config::Config::default();
+            config.keybindings.push(b);
+            KeybindingResolver::new(&config)
+        }
+        fn entry(action: &str) -> crate::config::Keybinding {
+            crate::config::Keybinding {
+                key: String::new(),
+                modifiers: Vec::new(),
+                keys: Vec::new(),
+                chord: String::new(),
+                action: action.to_string(),
+                args: std::collections::HashMap::new(),
+                when: Some("normal".to_string()),
+            }
+        }
+        let compact = resolver_for(crate::config::Keybinding {
+            chord: "C-S-Left".into(),
+            ..entry("save")
+        });
+        let split = resolver_for(crate::config::Keybinding {
+            key: "left".into(),
+            modifiers: vec!["ctrl".into(), "shift".into()],
+            ..entry("save")
+        });
+        let ev = KeyEvent::new(KeyCode::Left, KeyModifiers::CONTROL | KeyModifiers::SHIFT);
+        assert_eq!(compact.resolve(&ev, KeyContext::Normal), Action::Save);
+        assert_eq!(
+            compact.resolve(&ev, KeyContext::Normal),
+            split.resolve(&ev, KeyContext::Normal)
+        );
+
+        let press = |k: &str, m: Vec<String>| crate::config::KeyPress {
+            key: k.to_string(),
+            modifiers: m,
+        };
+        let compact = resolver_for(crate::config::Keybinding {
+            chord: "C-x C-s".into(),
+            ..entry("save")
+        });
+        let split = resolver_for(crate::config::Keybinding {
+            keys: vec![
+                press("x", vec!["ctrl".into()]),
+                press("s", vec!["ctrl".into()]),
+            ],
+            ..entry("save")
+        });
+        let ctrl_x = KeyEvent::new(KeyCode::Char('x'), KeyModifiers::CONTROL);
+        let ctrl_s = KeyEvent::new(KeyCode::Char('s'), KeyModifiers::CONTROL);
+        for r in [&compact, &split] {
+            assert_eq!(
+                r.resolve_chord(&[], &ctrl_x, KeyContext::Normal),
+                ChordResolution::Partial
+            );
+            assert_eq!(
+                r.resolve_chord(
+                    &[(KeyCode::Char('x'), KeyModifiers::CONTROL)],
+                    &ctrl_s,
+                    KeyContext::Normal
+                ),
+                ChordResolution::Complete(Action::Save)
+            );
+        }
+    }
+
+    #[test]
+    fn a_compact_entry_binds_keys_the_split_fields_cannot_spell() {
+        fn bound(chord: &str) -> Option<(KeyCode, KeyModifiers)> {
+            let mut config = crate::config::Config::default();
+            config.keybindings.push(crate::config::Keybinding {
+                key: String::new(),
+                modifiers: Vec::new(),
+                keys: Vec::new(),
+                chord: chord.to_string(),
+                action: "save".to_string(),
+                args: std::collections::HashMap::new(),
+                when: Some("mode:compact".to_string()),
+            });
+            let r = KeybindingResolver::new(&config);
+            let ctx = KeyContext::Mode("compact".to_string());
+            let expected = parse_key_press(chord).expect("the test names a real key");
+            r.explicit_binding(&KeyEvent::new(expected.code(), expected.mods()), &ctx)
+                .map(|_| (expected.code(), expected.mods()))
+        }
+        for chord in ["Meta-s", "H-s", "kp_begin", "C-kp_begin"] {
+            let key = parse_key_press(chord).expect("names a real key");
+            assert_eq!(
+                bound(chord),
+                Some((key.code(), key.mods())),
+                "{chord:?} did not bind the key it names"
+            );
+        }
+        // `Meta-s` must leave plain `s` unbound.
+        let mut config = crate::config::Config::default();
+        config.keybindings.push(crate::config::Keybinding {
+            key: String::new(),
+            modifiers: Vec::new(),
+            keys: Vec::new(),
+            chord: "Meta-s".into(),
+            action: "save".to_string(),
+            args: std::collections::HashMap::new(),
+            when: Some("mode:compact".to_string()),
+        });
+        let r = KeybindingResolver::new(&config);
+        assert_eq!(
+            r.explicit_binding(
+                &KeyEvent::new(KeyCode::Char('s'), KeyModifiers::NONE),
+                &KeyContext::Mode("compact".to_string())
+            ),
+            None,
+            "the Meta modifier was dropped and bound bare `s`"
+        );
+    }
+
+    /// In a mode context of its own, where nothing else is bound.
+    #[test]
+    fn the_split_fields_take_precedence_over_the_compact_form() {
+        let mut config = crate::config::Config::default();
+        config.keybindings.push(crate::config::Keybinding {
+            key: "left".into(),
+            modifiers: Vec::new(),
+            keys: Vec::new(),
+            chord: "C-S-Right".into(),
+            action: "save".to_string(),
+            args: std::collections::HashMap::new(),
+            when: Some("mode:precedence".to_string()),
+        });
+        let r = KeybindingResolver::new(&config);
+        let ctx = KeyContext::Mode("precedence".to_string());
+        assert_eq!(
+            r.explicit_binding(&KeyEvent::new(KeyCode::Left, KeyModifiers::NONE), &ctx),
+            Some(Action::Save),
+            "the split fields are what bound"
+        );
+        assert_eq!(
+            r.explicit_binding(
+                &KeyEvent::new(KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::SHIFT),
+                &ctx
+            ),
+            None,
+            "and the compact field was ignored, not also applied"
+        );
+    }
+
+    #[test]
+    fn the_compact_form_and_the_split_fields_name_the_same_keys() {
+        let modifier_sets: &[(&[&str], &str)] = &[
+            (&[], ""),
+            (&["ctrl"], "C-"),
+            (&["shift"], "S-"),
+            (&["alt"], "M-"),
+            (&["ctrl", "shift"], "C-S-"),
+        ];
+        for entry in NAMED_KEYS.iter().chain(PUNCTUATION_KEYS) {
+            for name in entry.names {
+                for (mod_names, prefix) in modifier_sets {
+                    let owned: Vec<String> = mod_names.iter().map(|m| m.to_string()).collect();
+                    let code = KeybindingResolver::parse_key_public(name)
+                        .unwrap_or_else(|| panic!("{name:?} did not parse as a config key"));
+                    let mods = KeybindingResolver::parse_modifiers_public(&owned);
+                    assert_eq!(
+                        parse_key_press(&format!("{prefix}{name}")),
+                        Some(Key::new(code, mods)),
+                        "{prefix}{name} vs the split fields"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_terminal_only_families_resolve_through_the_one_parser() {
+        for name in ["kp_begin", "kp_enter", "kp_0"] {
+            assert!(
+                parse_key_press(name).is_some(),
+                "{name:?} did not resolve through parse_key_seq"
+            );
+            assert_eq!(
+                parse_key_press(name).map(|k| k.code()),
+                key_name_to_code(name),
+                "{name:?} disagreed with the resolver's own lookup"
+            );
+        }
+        assert_eq!(
+            parse_key_press("C-kp_begin").map(|k| k.mods()),
+            Some(KeyModifiers::CONTROL)
+        );
+    }
+
+    #[test]
+    fn a_binding_string_is_one_press_or_a_sequence() {
+        for single in ["g", "C-f", "M-o", "F", "?", "Esc", "BackTab"] {
+            let seq = parse_key_seq(single).unwrap_or_else(|| panic!("{single:?}"));
+            assert!(seq.single().is_some(), "{single:?} should be one press");
+        }
+        for chord in ["g g", "z z", "z a", "C-x C-s"] {
+            let seq = parse_key_seq(chord).unwrap_or_else(|| panic!("{chord:?}"));
+            assert_eq!(seq.single(), None, "{chord:?} should be a sequence");
+            assert_eq!(seq.keys().len(), 2, "{chord:?}");
+        }
+    }
     use super::*;
 
     #[test]
@@ -3783,6 +3730,7 @@ mod tests {
             key: "asterisk".to_string(),
             modifiers: vec!["ctrl".to_string()],
             keys: Vec::new(),
+            chord: String::new(),
             action: "duplicate_line".to_string(),
             args: HashMap::new(),
             when: None,
@@ -3808,6 +3756,7 @@ mod tests {
             key: "kp_enter".to_string(),
             modifiers: vec!["ctrl".to_string()],
             keys: Vec::new(),
+            chord: String::new(),
             action: "duplicate_line".to_string(),
             args: HashMap::new(),
             when: None,
@@ -3816,6 +3765,7 @@ mod tests {
             key: "kp_begin".to_string(),
             modifiers: Vec::new(),
             keys: Vec::new(),
+            chord: String::new(),
             action: "select_all".to_string(),
             args: HashMap::new(),
             when: None,
@@ -3992,6 +3942,7 @@ mod tests {
             key: "no_such_key_name".to_string(),
             modifiers: vec!["ctrl".to_string()],
             keys: Vec::new(),
+            chord: String::new(),
             action: "duplicate_line".to_string(),
             args: HashMap::new(),
             when: None,
@@ -4010,6 +3961,7 @@ mod tests {
                     modifiers: Vec::new(),
                 },
             ],
+            chord: String::new(),
             action: "save".to_string(),
             args: HashMap::new(),
             when: None,
@@ -4019,6 +3971,7 @@ mod tests {
             key: "f6".to_string(),
             modifiers: Vec::new(),
             keys: Vec::new(),
+            chord: String::new(),
             action: "save".to_string(),
             args: HashMap::new(),
             when: None,
@@ -4164,6 +4117,7 @@ mod tests {
             key: "p".to_string(),
             modifiers: vec!["shift".to_string()],
             keys: Vec::new(),
+            chord: String::new(),
             action: "save".to_string(),
             args: HashMap::new(),
             when: Some("normal".to_string()),
@@ -4208,6 +4162,7 @@ mod tests {
             key: "f".to_string(),
             modifiers: vec!["alt".to_string(), "shift".to_string()],
             keys: Vec::new(),
+            chord: String::new(),
             action: "save".to_string(),
             args: HashMap::new(),
             when: Some("normal".to_string()),
@@ -4581,6 +4536,7 @@ mod tests {
             key: "esc".to_string(),
             modifiers: vec![],
             keys: vec![],
+            chord: String::new(),
             action: "quit".to_string(), // Override Esc in popup context to quit
             args: HashMap::new(),
             when: Some("popup".to_string()),
@@ -4637,6 +4593,7 @@ mod tests {
             key: "f".to_string(),
             modifiers: vec!["ctrl".to_string()],
             keys: vec![],
+            chord: String::new(),
             action: "command_palette".to_string(),
             args: HashMap::new(),
             when: None, // Default to normal context
@@ -4698,6 +4655,7 @@ mod tests {
             key: "h".to_string(),
             modifiers: vec!["alt".to_string()],
             keys: vec![],
+            chord: String::new(),
             action: "command_palette".to_string(),
             args: HashMap::new(),
             when: None,
@@ -4730,6 +4688,7 @@ mod tests {
             key: "h".to_string(),
             modifiers: vec!["alt".to_string()],
             keys: vec![],
+            chord: String::new(),
             action: "command_palette".to_string(),
             args: HashMap::new(),
             when: Some("global".to_string()),
@@ -4758,6 +4717,7 @@ mod tests {
             key: "n".to_string(),
             modifiers: vec!["alt".to_string()],
             keys: vec![],
+            chord: String::new(),
             action: "move_down".to_string(),
             args: HashMap::new(),
             when: Some("global".to_string()),
@@ -4766,6 +4726,7 @@ mod tests {
             key: "n".to_string(),
             modifiers: vec!["alt".to_string()],
             keys: vec![],
+            chord: String::new(),
             action: "move_word_right".to_string(),
             args: HashMap::new(),
             when: Some("normal".to_string()),
@@ -5185,6 +5146,7 @@ mod tests {
             key: "f".to_string(),
             modifiers: vec!["alt".to_string()],
             keys: vec![],
+            chord: String::new(),
             action: "move_word_right".to_string(),
             args: HashMap::new(),
             when: Some("normal".to_string()),
@@ -5203,6 +5165,7 @@ mod tests {
             key: "f2".to_string(),
             modifiers: vec![],
             keys: vec![],
+            chord: String::new(),
             action: "menu_open".to_string(),
             args: [(
                 "name".to_string(),

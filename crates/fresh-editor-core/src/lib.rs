@@ -19,6 +19,7 @@ pub mod types;
 #[cfg(feature = "runtime")]
 pub mod config_io;
 
+pub mod keys;
 pub mod model;
 pub mod primitives;
 pub mod theme;

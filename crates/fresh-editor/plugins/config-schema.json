@@ -1417,6 +1417,10 @@
             "$ref": "#/$defs/KeyPress"
           }
         },
+        "chord": {
+          "description": "The whole binding as one string — `\"C-x\"`, `\"C-S-Left\"`, `\"C-x C-s\"`.\nAn alternative to `key` + `modifiers` and `keys`, which take\nprecedence when present.",
+          "type": "string"
+        },
         "action": {
           "description": "Action to perform (e.g., \"insert_char\", \"move_left\"), or \"unbind\" to\nremove the built-in binding for this key instead of binding anything.",
           "type": "string"

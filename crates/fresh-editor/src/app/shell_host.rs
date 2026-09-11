@@ -1948,6 +1948,9 @@ impl Editor {
             let stales = !msg.is_pointer_transient();
             match msg {
                 crate::view::shell::msg::UiMsg::Action(action) => {
+                    // A key the tree answered never reaches the buffer route
+                    // that would clear the prefix.
+                    self.active_window_mut().chord_state.clear();
                     // Straight into the pipeline that has always applied
                     // actions; nothing about it changes.
                     if let Err(e) = self.handle_action(action.clone()) {
@@ -1987,6 +1990,12 @@ impl Editor {
     fn apply_ui_fact(&mut self, fact: crate::view::shell::msg::UiFact, ev: EventFacts) {
         use crate::view::shell::msg::UiFact;
         match fact {
+            UiFact::ChordPending { code, modifiers } => {
+                self.active_window_mut().chord_state.push((code, modifiers));
+            }
+            UiFact::ChordAbandoned => {
+                self.active_window_mut().chord_state.clear();
+            }
             // The tree found the widget; the dispatch behind this is the one
             // all three frontends already share, and it does not change.
             // `None` for the clicked byte: the byte range in the hit is a

@@ -108,6 +108,17 @@ pub struct Keymap {
     /// binds Space, `/` or a digit binds them for the controls, and a
     /// field with the keyboard still types them.
     pub text_focused: bool,
+    /// The window's pending chord prefix. Shared rather than per-panel: a
+    /// panel's mode is its buffer's mode.
+    pub chord: Vec<(crossterm::event::KeyCode, crossterm::event::KeyModifiers)>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum Bound {
+    Run(crate::input::keybindings::Action),
+    /// Extends a chord the mode binds.
+    Pending,
+    None,
 }
 
 impl std::fmt::Debug for Keymap {
@@ -122,15 +133,57 @@ impl Keymap {
     /// The action `mode` explicitly binds `k` to, if any — and none for a
     /// printable key while a text field has the keyboard (see
     /// [`Keymap::text_focused`]).
-    fn action(&self, k: fresh_ui::KeyPress) -> Option<crate::input::keybindings::Action> {
+    fn action(&self, k: fresh_ui::KeyPress) -> Bound {
         let printable = matches!(k.code, fresh_ui::KeyCode::Char(_))
             && (k.mods == fresh_ui::Mods::NONE || k.mods == fresh_ui::Mods::SHIFT);
         if self.text_focused && printable {
-            return None;
+            return Bound::None;
         }
-        let ev = super::input::crossterm_key_event(k)?;
+        let Some(ev) = super::input::crossterm_key_event(k) else {
+            return Bound::None;
+        };
         let ctx = crate::input::keybindings::KeyContext::Mode(self.mode.clone());
-        self.resolver.read().ok()?.explicit_binding(&ev, &ctx)
+        let Ok(resolver) = self.resolver.read() else {
+            return Bound::None;
+        };
+        // `explicit_binding` rather than `resolve`: a panel takes only what
+        // its mode names.
+        use crate::input::keybindings::ChordResolution;
+        match resolver.resolve_chord(&self.chord, &ev, ctx.clone()) {
+            ChordResolution::Complete(action) => return Bound::Run(action),
+            ChordResolution::Partial => return Bound::Pending,
+            ChordResolution::NoMatch => {}
+        }
+        match resolver.explicit_binding(&ev, &ctx) {
+            Some(action) => Bound::Run(action),
+            None => Bound::None,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub enum Captured {
+    Claim(UiMsg),
+    Report(UiMsg),
+    Decline,
+}
+
+/// Separate from the tree plumbing so it can be tested without a `Ui`.
+fn captured(km: &Keymap, key: fresh_ui::KeyPress) -> Captured {
+    match km.action(key) {
+        Bound::Run(action) => Captured::Claim(UiMsg::Action(action)),
+        Bound::Pending => match super::input::crossterm_key_event(key) {
+            Some(ev) => Captured::Claim(UiMsg::Ui(super::msg::UiFact::ChordPending {
+                code: ev.code,
+                modifiers: ev.modifiers,
+            })),
+            None => Captured::Decline,
+        },
+        // A declined key never reaches the buffer route that would clear it.
+        Bound::None if !km.chord.is_empty() => {
+            Captured::Report(UiMsg::Ui(super::msg::UiFact::ChordAbandoned))
+        }
+        Bound::None => Captured::Decline,
     }
 }
 
@@ -490,10 +543,13 @@ pub fn interior(
     body: Node<UiMsg>,
 ) -> Node<UiMsg> {
     let capture: Option<Capture> = keymap.map(|km| {
-        Rc::new(move |e: &fresh_ui::Event| {
-            let action = km.action(e.key?)?;
-            e.stop();
-            Some(UiMsg::Action(action))
+        Rc::new(move |e: &fresh_ui::Event| match captured(&km, e.key?) {
+            Captured::Claim(msg) => {
+                e.stop();
+                Some(msg)
+            }
+            Captured::Report(msg) => Some(msg),
+            Captured::Decline => None,
         }) as Capture
     });
     interior_capturing(slot, capture, rests_empty, body)
@@ -985,6 +1041,7 @@ mod tests {
             key: "enter".to_string(),
             modifiers: Vec::new(),
             keys: Vec::new(),
+            chord: String::new(),
             action: "save".to_string(),
             args: std::collections::HashMap::new(),
             when: Some("mode:form".to_string()),
@@ -1052,6 +1109,7 @@ mod tests {
             mode: "form".into(),
             resolver: resolver.clone(),
             text_focused: false,
+            chord: Vec::new(),
         }));
         let got = ui.dispatch(enter);
         assert!(got.claimed, "the keymap claims what it binds");
@@ -1072,6 +1130,124 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_modes_chord_resolves_on_its_panel() {
+        use crate::input::keybindings::{Action, KeybindingResolver};
+        let mut config = crate::config::Config::default();
+        config.keybindings.push(crate::config::Keybinding {
+            key: String::new(),
+            modifiers: Vec::new(),
+            keys: vec![
+                crate::config::KeyPress {
+                    key: "z".into(),
+                    modifiers: Vec::new(),
+                },
+                crate::config::KeyPress {
+                    key: "a".into(),
+                    modifiers: Vec::new(),
+                },
+            ],
+            chord: String::new(),
+            action: "save".to_string(),
+            args: std::collections::HashMap::new(),
+            when: Some("mode:review".to_string()),
+        });
+        let resolver =
+            std::sync::Arc::new(std::sync::RwLock::new(KeybindingResolver::new(&config)));
+        let km = |chord: Vec<(crossterm::event::KeyCode, crossterm::event::KeyModifiers)>| Keymap {
+            mode: "review".into(),
+            resolver: resolver.clone(),
+            text_focused: false,
+            chord,
+        };
+        let press = |c| fresh_ui::KeyPress::with(fresh_ui::KeyCode::Char(c), Mods::NONE);
+
+        assert_eq!(
+            km(Vec::new()).action(press('z')),
+            Bound::Pending,
+            "`z` starts the chord the mode binds"
+        );
+        let prefix = vec![(
+            crossterm::event::KeyCode::Char('z'),
+            crossterm::event::KeyModifiers::NONE,
+        )];
+        assert_eq!(
+            km(prefix.clone()).action(press('a')),
+            Bound::Run(Action::Save),
+            "`z a` is the mode's binding"
+        );
+        assert_eq!(
+            km(prefix).action(press('q')),
+            Bound::None,
+            "`z q` is not a binding, so `q` is the panel's to pass on"
+        );
+    }
+
+    /// `z`, a key continuing nothing, then `a` must not complete `z a`.
+    #[test]
+    fn a_prefix_the_mode_does_not_continue_is_abandoned() {
+        use crate::input::keybindings::KeybindingResolver;
+        let mut config = crate::config::Config::default();
+        config.keybindings.push(crate::config::Keybinding {
+            key: String::new(),
+            modifiers: Vec::new(),
+            keys: vec![
+                crate::config::KeyPress {
+                    key: "z".into(),
+                    modifiers: Vec::new(),
+                },
+                crate::config::KeyPress {
+                    key: "a".into(),
+                    modifiers: Vec::new(),
+                },
+            ],
+            chord: String::new(),
+            action: "save".to_string(),
+            args: std::collections::HashMap::new(),
+            when: Some("mode:review".to_string()),
+        });
+        let resolver =
+            std::sync::Arc::new(std::sync::RwLock::new(KeybindingResolver::new(&config)));
+        let prefix = vec![(
+            crossterm::event::KeyCode::Char('z'),
+            crossterm::event::KeyModifiers::NONE,
+        )];
+        let km = Keymap {
+            mode: "review".into(),
+            resolver,
+            text_focused: false,
+            chord: prefix,
+        };
+        assert_eq!(
+            km.action(fresh_ui::KeyPress::with(
+                fresh_ui::KeyCode::Char('x'),
+                Mods::NONE
+            )),
+            Bound::None
+        );
+        assert!(
+            matches!(
+                captured(
+                    &km,
+                    fresh_ui::KeyPress::with(fresh_ui::KeyCode::Char('x'), Mods::NONE)
+                ),
+                Captured::Report(UiMsg::Ui(UiFact::ChordAbandoned))
+            ),
+            "a declined key should report the prefix abandoned"
+        );
+        let idle = Keymap {
+            chord: Vec::new(),
+            ..km
+        };
+        assert!(matches!(
+            captured(
+                &idle,
+                fresh_ui::KeyPress::with(fresh_ui::KeyCode::Char('x'), Mods::NONE)
+            ),
+            Captured::Decline
+        ));
+    }
+
     /// **A focused text field takes a printable key ahead of the mode.**
     /// The mode binds Space; while a field has the keyboard, Space is
     /// typed into it (the fallback names the panel, and the router feeds
@@ -1086,6 +1262,7 @@ mod tests {
                 key: key.to_string(),
                 modifiers: Vec::new(),
                 keys: Vec::new(),
+                chord: String::new(),
                 action: action.to_string(),
                 args: std::collections::HashMap::new(),
                 when: Some("mode:form".to_string()),
@@ -1097,20 +1274,29 @@ mod tests {
             mode: "form".into(),
             resolver,
             text_focused: true,
+            chord: Vec::new(),
         };
         let space = fresh_ui::KeyPress::with(fresh_ui::KeyCode::Char(' '), Mods::NONE);
-        assert_eq!(km.action(space), None, "Space is the field's");
+        assert_eq!(km.action(space), Bound::None, "Space is the field's");
         let shifted = fresh_ui::KeyPress::with(fresh_ui::KeyCode::Char('A'), Mods::SHIFT);
-        assert_eq!(km.action(shifted), None, "a shifted letter is still typed");
+        assert_eq!(
+            km.action(shifted),
+            Bound::None,
+            "a shifted letter is still typed"
+        );
         let enter = fresh_ui::KeyPress::with(fresh_ui::KeyCode::Enter, Mods::NONE);
-        assert_eq!(km.action(enter), Some(Action::Save), "Enter is the mode's");
+        assert_eq!(
+            km.action(enter),
+            Bound::Run(Action::Save),
+            "Enter is the mode's"
+        );
         let km = Keymap {
             text_focused: false,
             ..km
         };
         assert_eq!(
             km.action(space),
-            Some(Action::Save),
+            Bound::Run(Action::Save),
             "with no field focused the mode binds Space"
         );
     }

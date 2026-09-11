@@ -2270,13 +2270,13 @@ impl SettingsState {
         };
         match &item.control {
             SettingControl::Toggle { .. } => {
-                let o = live::named(&mut self.controls, &spec, &path, "Enter");
+                let o = live::named(&mut self.controls, &spec, &path, live::ENTER);
                 self.absorb(&path, &o.fx.events);
             }
             SettingControl::Number { .. } | SettingControl::Dropdown { .. } => {
                 let opens_list = matches!(item.control, SettingControl::Dropdown { .. });
                 self.controls.focus_key = path.clone();
-                let o = live::named(&mut self.controls, &spec, &path, "Enter");
+                let o = live::named(&mut self.controls, &spec, &path, live::ENTER);
                 self.absorb(&path, &o.fx.events);
                 // An open list makes its card taller; the window is asked to
                 // hold the taller card, which is the same request as any
@@ -2304,7 +2304,7 @@ impl SettingsState {
                 if self.composite_cursor().is_none() {
                     self.enter_composite(true);
                 }
-                let o = live::named(&mut self.controls, &spec, &path, "Enter");
+                let o = live::named(&mut self.controls, &spec, &path, live::ENTER);
                 self.absorb(&path, &o.fx.events);
             }
             SettingControl::Complex { .. } => {}
@@ -2539,7 +2539,7 @@ impl SettingsState {
         let spec = self.spec_for(&key)?;
         let outcome = match (&spec, ev.code) {
             (fresh_core::api::WidgetSpec::DualList { .. }, crossterm::event::KeyCode::Enter) => {
-                live::named(&mut self.controls, &spec, &key, "Space")
+                live::named(&mut self.controls, &spec, &key, live::SPACE)
             }
             _ => live::key(&mut self.controls, &spec, &key, ev),
         };
@@ -2615,8 +2615,8 @@ impl SettingsState {
                 live::drop_state(&mut self.controls, &path);
                 return;
             }
-            Some(SettingControl::Dropdown { .. }) => "Escape",
-            _ => "Enter",
+            Some(SettingControl::Dropdown { .. }) => live::ESCAPE,
+            _ => live::ENTER,
         };
         let o = live::named(&mut self.controls, &spec, &path, name);
         self.absorb(&path, &o.fx.events);
@@ -2632,7 +2632,7 @@ impl SettingsState {
         let Some((path, spec)) = self.current_spec() else {
             return;
         };
-        let o = live::named(&mut self.controls, &spec, &path, "Escape");
+        let o = live::named(&mut self.controls, &spec, &path, live::ESCAPE);
         self.absorb(&path, &o.fx.events);
     }
 

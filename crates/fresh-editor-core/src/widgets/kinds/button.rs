@@ -21,10 +21,10 @@ impl WidgetImpl for Button {
         _widget_key: &str,
         _panel: &mut crate::widgets::WidgetPanelState,
         _viewport: super::Viewport,
-        key: &str,
+        key: &crate::keys::KeySeq,
         fx: &mut super::KeyFx,
     ) -> super::KeyDisposition {
-        if !matches!(key, "Enter" | "Space") {
+        if !key.single().is_some_and(super::activates) {
             return super::KeyDisposition::Pass;
         }
         // Disabled buttons don't fire activate. The renderer already
