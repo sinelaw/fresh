@@ -1092,13 +1092,8 @@ impl Editor {
                 self.handle_widget_text_char(panel_key, &text);
             }
             WidgetAction::Key { key } => {
-                // **The one place a widget key string becomes a value.** Both
-                // producers meet here — the router's own keystrokes and a
-                // plugin's `widgetKey(...)` — so the vocabulary is parsed once
-                // and every kind downstream matches a typed press rather than
-                // re-matching text. A name that does not parse is dropped with
-                // a trace, which is what an unrecognised name always did, only
-                // audibly.
+                // Where a widget key string becomes a value: both the
+                // router's keystrokes and a plugin's `widgetKey(...)`.
                 match crate::input::keybindings::parse_key_seq(&key) {
                     Some(seq) => self.handle_widget_key(panel_key, &seq),
                     None => tracing::debug!(
@@ -1315,8 +1310,7 @@ impl Editor {
         }
         .cloned();
         let widget = widget.as_ref();
-        // The panel's own fallbacks answer unmodified keys only; anything
-        // with a modifier that no kind took belongs to the surface beneath.
+        // The panel's fallbacks answer unmodified keys only.
         use crossterm::event::KeyCode;
         let Some(key) = key.single().filter(|k| k.mods().is_empty()) else {
             return;
@@ -3018,9 +3012,6 @@ impl Editor {
             Some(p) if !p.focus_key.is_empty() => p.focus_key.clone(),
             _ => return,
         };
-        // `TextInputKey` is the plugin-facing wire, so its key arrives as a
-        // name and is parsed here — the same boundary `WidgetAction::Key`
-        // crosses, for the same reason.
         let Some(press) = crate::input::keybindings::parse_key_press(key) else {
             tracing::debug!(target: "fresh::widgets", %key, "text input key did not parse; dropped");
             return;

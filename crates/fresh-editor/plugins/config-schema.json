@@ -1418,7 +1418,7 @@
           }
         },
         "chord": {
-          "description": "The whole binding as one compact string — `\"C-x\"`, `\"C-S-Left\"`, or a\nchord as `\"C-x C-s\"`.\n\nThe same syntax a plugin mode's binding table and the widget wire\nspeak, and it parses through the same one parser, so a spelling that\nworks in one place works in all of them. This is an *alternative* to\nthe split fields, not a replacement: `key` + `modifiers` and `keys`\nkeep working exactly as before, and take precedence over this when\nboth are present.\n\nIt is a separate field rather than an extra spelling accepted by\n`key`, because `key` names a key literally — `\"-\"` is the minus key —\nand reading modifier prefixes out of it would make that ambiguous.",
+          "description": "The whole binding as one compact string — `\"C-x\"`, `\"C-S-Left\"`, or a\nchord as `\"C-x C-s\"`. The syntax a plugin mode's binding table uses.\n\nAn alternative to the split fields, which take precedence when both\nare present. Separate from `key` because `key` names a key literally\n(`\"-\"` is the minus key), so prefixes there would be ambiguous.",
           "type": "string"
         },
         "action": {

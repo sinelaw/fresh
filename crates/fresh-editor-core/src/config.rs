@@ -2692,18 +2692,11 @@ pub struct Keybinding {
     pub keys: Vec<KeyPress>,
 
     /// The whole binding as one compact string — `"C-x"`, `"C-S-Left"`, or a
-    /// chord as `"C-x C-s"`.
+    /// chord as `"C-x C-s"`. The syntax a plugin mode's binding table uses.
     ///
-    /// The same syntax a plugin mode's binding table and the widget wire
-    /// speak, and it parses through the same one parser, so a spelling that
-    /// works in one place works in all of them. This is an *alternative* to
-    /// the split fields, not a replacement: `key` + `modifiers` and `keys`
-    /// keep working exactly as before, and take precedence over this when
-    /// both are present.
-    ///
-    /// It is a separate field rather than an extra spelling accepted by
-    /// `key`, because `key` names a key literally — `"-"` is the minus key —
-    /// and reading modifier prefixes out of it would make that ambiguous.
+    /// An alternative to the split fields, which take precedence when both
+    /// are present. Separate from `key` because `key` names a key literally
+    /// (`"-"` is the minus key), so prefixes there would be ambiguous.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub chord: String,
 

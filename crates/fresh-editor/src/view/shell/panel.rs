@@ -108,26 +108,18 @@ pub struct Keymap {
     /// binds Space, `/` or a digit binds them for the controls, and a
     /// field with the keyboard still types them.
     pub text_focused: bool,
-    /// The window's pending chord prefix, so a mode's multi-key bindings
-    /// resolve on a panel the way they already do on its buffer.
-    ///
-    /// **The panel's mode is the buffer's mode**, so the prefix is shared
-    /// rather than per-panel: `z` pressed on the FILES sidebar and `a` on the
-    /// diff are one `z a`, because one keymap is answering both. Until this
-    /// existed the panel resolved single keys only, so a mode's chord was
-    /// simply dead whenever a widget panel held the keyboard — the review
-    /// mode's `z a` / `z r` (collapse / expand all files) among them.
+    /// The window's pending chord prefix, shared rather than per-panel: a
+    /// panel's mode is its buffer's mode, so `z` on a sidebar and `a` on the
+    /// diff are one `z a`.
     pub chord: Vec<(crossterm::event::KeyCode, crossterm::event::KeyModifiers)>,
 }
 
 /// What a panel's mode makes of a key.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Bound {
-    /// The mode binds it — run this action.
     Run(crate::input::keybindings::Action),
-    /// It extends a chord the mode binds. Claim it and wait for the rest.
+    /// Extends a chord the mode binds; claim it and wait for the rest.
     Pending,
-    /// The mode has nothing for it; it belongs to whatever is beneath.
     None,
 }
 
@@ -156,12 +148,9 @@ impl Keymap {
         let Ok(resolver) = self.resolver.read() else {
             return Bound::None;
         };
-        // **Chords first, then the mode's explicit single-key bindings** —
-        // the same order and the same resolver the buffer's own route uses
-        // (`router::chord_or_key`). The single-key leg stays `explicit_binding`
-        // rather than the full `resolve`, because a panel takes only what its
-        // mode actually names; everything else is the widgets' and the
-        // surface's, and always has been.
+        // Chords first, then explicit single-key bindings — the order
+        // `router::chord_or_key` uses. `explicit_binding` rather than the
+        // full `resolve`: a panel takes only what its mode names.
         use crate::input::keybindings::ChordResolution;
         match resolver.resolve_chord(&self.chord, &ev, ctx.clone()) {
             ChordResolution::Complete(action) => return Bound::Run(action),
@@ -176,22 +165,16 @@ impl Keymap {
 }
 
 /// What a panel's capture leg does with a key.
-///
-/// Three outcomes rather than two, because "the mode declined this" and "the
-/// mode declined this *and* the prefix it was holding is done" are different
-/// facts and only one of them needs reporting.
 #[derive(Debug, Clone)]
 pub enum Captured {
-    /// Claim the key: nothing beneath sees it.
+    /// Claim it; nothing beneath sees it.
     Claim(UiMsg),
-    /// Let the key through, but report this.
+    /// Let it through, but report this.
     Report(UiMsg),
-    /// Not the mode's; say nothing.
     Decline,
 }
 
-/// The capture leg's decision, separated from the tree plumbing so it can be
-/// exercised without standing one up.
+/// Separated from the tree plumbing so it can be tested without a `Ui`.
 fn captured(km: &Keymap, key: fresh_ui::KeyPress) -> Captured {
     match km.action(key) {
         Bound::Run(action) => Captured::Claim(UiMsg::Action(action)),
@@ -202,11 +185,8 @@ fn captured(km: &Keymap, key: fresh_ui::KeyPress) -> Captured {
             })),
             None => Captured::Decline,
         },
-        // **An abandoned prefix must not poison the next key.** The buffer's
-        // own route clears the chord state on anything but a partial match; a
-        // key the panel's mode declines never reaches that route, so a stale
-        // `z` would sit in the window waiting to turn some later `a` into a
-        // `z a` nobody typed.
+        // The buffer's route clears the prefix on anything but a partial
+        // match, and a declined key never reaches it.
         Bound::None if !km.chord.is_empty() => {
             Captured::Report(UiMsg::Ui(super::msg::UiFact::ChordAbandoned))
         }
@@ -571,14 +551,11 @@ pub fn interior(
 ) -> Node<UiMsg> {
     let capture: Option<Capture> = keymap.map(|km| {
         Rc::new(move |e: &fresh_ui::Event| match captured(&km, e.key?) {
-            // Claimed: the mode's action, or a prefix that belongs to the
-            // chord being typed — either way nothing beneath may see it.
             Captured::Claim(msg) => {
                 e.stop();
                 Some(msg)
             }
-            // Reported but not claimed: the key is still the widgets' and the
-            // surface's; the message only says the prefix is done.
+            // Not claimed: the key is still the widgets' and the surface's.
             Captured::Report(msg) => Some(msg),
             Captured::Decline => None,
         }) as Capture
@@ -1161,16 +1138,7 @@ mod tests {
         );
     }
 
-    /// **A mode's chord resolves on a panel, not only on its buffer.**
-    ///
-    /// The review mode binds `z a` to collapse-all, and its FILES and
-    /// COMMENTS sidebars are widget panels. A panel's keymap resolved single
-    /// keys only, so the `z` was never accumulated and the chord was simply
-    /// dead whenever a sidebar held the keyboard — while the same keystrokes
-    /// worked with the diff focused, through the window's own chord state.
-    ///
-    /// The prefix is that same window state, because the panel's mode *is*
-    /// the buffer's mode: one keymap, one half-typed sequence.
+    /// A mode's chord resolves on a panel, not only on its buffer.
     #[test]
     fn a_modes_chord_resolves_on_its_panel() {
         use crate::input::keybindings::{Action, KeybindingResolver};
@@ -1203,13 +1171,11 @@ mod tests {
         };
         let press = |c| fresh_ui::KeyPress::with(fresh_ui::KeyCode::Char(c), Mods::NONE);
 
-        // The first press is claimed as a prefix rather than run or declined.
         assert_eq!(
             km(Vec::new()).action(press('z')),
             Bound::Pending,
             "`z` starts the chord the mode binds"
         );
-        // With that prefix held, the second press completes it.
         let prefix = vec![(
             crossterm::event::KeyCode::Char('z'),
             crossterm::event::KeyModifiers::NONE,
@@ -1219,8 +1185,6 @@ mod tests {
             Bound::Run(Action::Save),
             "`z a` is the mode's binding"
         );
-        // A key that does not continue it is nobody's here — it falls to the
-        // widgets, exactly as an unbound key always did.
         assert_eq!(
             km(prefix).action(press('q')),
             Bound::None,
@@ -1228,14 +1192,7 @@ mod tests {
         );
     }
 
-    /// **An abandoned prefix does not poison the next key.**
-    ///
-    /// `z` starts the mode's `z a`, then a key that continues nothing —
-    /// one the widgets take — and then `a`. If the prefix survived the key
-    /// in the middle, that `a` would complete a `z a` nobody typed. The
-    /// buffer's own route clears on anything but a partial match; the panel
-    /// leg has to say so too, and it says so by reporting the abandonment
-    /// rather than by silently holding on.
+    /// `z`, then a key continuing nothing, then `a` must not complete `z a`.
     #[test]
     fn a_prefix_the_mode_does_not_continue_is_abandoned() {
         use crate::input::keybindings::KeybindingResolver;
@@ -1270,8 +1227,6 @@ mod tests {
             text_focused: false,
             chord: prefix,
         };
-        // `x` continues nothing the mode binds, so the mode declines it —
-        // and the prefix it was holding is done.
         assert_eq!(
             km.action(fresh_ui::KeyPress::with(
                 fresh_ui::KeyCode::Char('x'),
@@ -1279,8 +1234,7 @@ mod tests {
             )),
             Bound::None
         );
-        // …and the capture leg reports that abandonment rather than
-        // silently holding on.
+        // The capture leg reports the abandonment.
         assert!(
             matches!(
                 captured(
@@ -1291,8 +1245,7 @@ mod tests {
             ),
             "a declined key should report the prefix abandoned"
         );
-        // With no prefix pending there is nothing to report, and the key is
-        // simply not the mode's.
+        // With no prefix pending there is nothing to report.
         let idle = Keymap {
             chord: Vec::new(),
             ..km

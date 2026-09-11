@@ -32,8 +32,7 @@ use crate::input::keybindings::{Key, KeySeq};
 use crate::widgets::kinds::{behavior, KeyDisposition, KeyFx, Viewport};
 use crate::widgets::{WidgetInstanceState, WidgetPanelState};
 
-/// What a key is to a widget kind: a press its vocabulary distinguishes, or
-/// text to type.
+/// A press the widget vocabulary distinguishes, or text to type.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum KeyName {
     Press(Key),
@@ -42,16 +41,10 @@ pub enum KeyName {
 
 /// The press a widget kind knows a keystroke as.
 ///
-/// **This used to format a name** — `"S-Left"`, `"C-a"`, `"Shift+Tab"` — into
-/// a string the kinds then re-matched, a third copy of the panel router's own
-/// formatter. It builds the value now, so the settings surface and the panel
-/// router cannot disagree about what a keystroke is.
-///
-/// Each arm keeps the modifier *masking* the spelling used to imply: an arrow
-/// key carried only Ctrl and Shift into its name, and a character chord only
-/// Ctrl and Alt, so a stray Alt on an arrow did not turn it into a key the
-/// kinds decline. Dropping that would be a behaviour change wearing a
-/// refactor's clothes.
+/// Each arm masks to the modifiers its key means something by — Ctrl and
+/// Shift on an arrow, Ctrl and Alt on a character chord — so a stray
+/// modifier does not turn it into a key the kinds decline. `router` masks the
+/// same way, and the two feed the same kinds.
 pub fn key_name(ev: &KeyEvent) -> Option<KeyName> {
     const CARET: KeyModifiers = KeyModifiers::CONTROL.union(KeyModifiers::SHIFT);
     const CHORD: KeyModifiers = KeyModifiers::CONTROL.union(KeyModifiers::ALT);
@@ -115,15 +108,13 @@ pub fn key(store: &mut WidgetPanelState, spec: &WidgetSpec, key: &str, ev: &KeyE
     Outcome { disposition, fx }
 }
 
-/// The presses a *surface* makes on a control's behalf, as values rather
-/// than names. These are the settings UI's own decisions — commit this edit,
-/// leave this dropdown — not keystrokes the user made.
+/// Presses the surface makes on a control's behalf, not keystrokes the user
+/// made.
 pub const ENTER: Key = Key::plain(KeyCode::Enter);
 pub const ESCAPE: Key = Key::plain(KeyCode::Esc);
 pub const SPACE: Key = Key::plain(KeyCode::Char(' '));
 
-/// Hand a press to the control's kind — a surface's own decision (Enter to
-/// activate, Escape to leave) rather than a keystroke the user made.
+/// Hand a press to the control's kind — the surface's own decision.
 pub fn named(store: &mut WidgetPanelState, spec: &WidgetSpec, key: &str, press: Key) -> Outcome {
     let mut fx = KeyFx::default();
     let disposition = behavior(spec).on_key(
@@ -429,10 +420,9 @@ mod tests {
     }
 
     #[test]
-    /// The settings surface and the widget vocabulary agree about what a
-    /// keystroke *is*. The expected side is written as a name and resolved by
-    /// the one parser, so this asserts agreement between two vocabularies
-    /// rather than restating a formatter's output.
+    /// The expected side is a name resolved by the shared parser, so this
+    /// asserts agreement between two vocabularies rather than restating a
+    /// formatter's output.
     fn keys_are_the_presses_the_kinds_know() {
         let n = |c, m| key_name(&ev(c, m));
         assert_eq!(

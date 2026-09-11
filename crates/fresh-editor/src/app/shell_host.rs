@@ -1948,12 +1948,8 @@ impl Editor {
             let stales = !msg.is_pointer_transient();
             match msg {
                 crate::view::shell::msg::UiMsg::Action(action) => {
-                    // **An action ends a chord.** The buffer's own route
-                    // clears the prefix on anything but a partial match, and
-                    // a key the tree answered never reaches that route — so
-                    // the same discipline is applied here, at the one place
-                    // the tree's actions land. Without it a completed `z a`
-                    // would leave its `z` behind to poison the next key.
+                    // An action ends a chord, and a key the tree answered
+                    // never reaches the route that would clear the prefix.
                     self.active_window_mut().chord_state.clear();
                     // Straight into the pipeline that has always applied
                     // actions; nothing about it changes.
@@ -1994,10 +1990,6 @@ impl Editor {
     fn apply_ui_fact(&mut self, fact: crate::view::shell::msg::UiFact, ev: EventFacts) {
         use crate::view::shell::msg::UiFact;
         match fact {
-            // A panel's mode claimed this key as part of a chord it binds.
-            // The prefix is the window's — one keymap, one half-typed
-            // sequence — so this is the same push the buffer's own route
-            // makes, from the surface that answered first.
             UiFact::ChordPending { code, modifiers } => {
                 self.active_window_mut().chord_state.push((code, modifiers));
             }

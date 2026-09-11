@@ -99,10 +99,6 @@ impl WidgetImpl for Text {
             {
                 Pass
             }
-            // **One predicate where twenty names used to be.** The list here
-            // was the cross product of eight codes and four modifier sets,
-            // written out by hand — which is why `C-S-Home` was missing from
-            // it. `super::text_caret` is that set, stated once.
             _ if super::text_caret(key) => {
                 text_key(spec, widget_key, panel, key, fx);
                 Consumed
@@ -1624,11 +1620,6 @@ pub fn text_key(
         });
         return;
     }
-    // **No re-parse.** This used to take the key back apart from its name,
-    // through a private table that was a fourth copy of the vocabulary. The
-    // press is already a value; the shared text-key table speaks
-    // `KeyEvent`, so the conversion is a total function rather than a lookup
-    // that could fail to recognise a key the caller had just matched.
     let event = key.to_key_event();
     if is_read_only && key_mutates(&event) {
         return;

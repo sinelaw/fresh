@@ -108,8 +108,7 @@ impl WidgetImpl for List {
         let Some(key) = key.single() else {
             return super::KeyDisposition::Pass;
         };
-        // Every key a list answers is unmodified; a chord on one belongs to
-        // whatever is underneath.
+        // Every key a list answers is unmodified.
         if !key.mods().is_empty() {
             return super::KeyDisposition::Pass;
         }

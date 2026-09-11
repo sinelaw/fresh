@@ -548,8 +548,6 @@ mod tests {
         }
     }
 
-    /// Tests name a key the way a plugin or a config would; the one parser
-    /// turns it into the press the kind actually sees.
     fn key(spec: &WidgetSpec, panel: &mut WidgetPanelState, k: &str) -> (KeyDisposition, KeyFx) {
         let mut fx = KeyFx::default();
         let seq: crate::keys::KeySeq = k.parse().expect("test key name parses");

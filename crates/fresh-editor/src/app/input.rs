@@ -595,12 +595,8 @@ impl Editor {
                 true
             }
             WidgetKeyOutcome::SmartKey(key) => {
-                // **The wire is still a string**, because `WidgetAction::Key`
-                // is what a plugin's own `widgetKey(...)` produces and that is
-                // a public contract. What changed is that the host no longer
-                // *thinks* in strings on either side of it: the router hands
-                // over a value, this prints it once, and the runtime parses it
-                // straight back at the boundary.
+                // The wire stays a string: `WidgetAction::Key` is what a
+                // plugin's `widgetKey(...)` produces, and that is public.
                 self.handle_widget_command(
                     &panel_key,
                     fresh_core::api::WidgetAction::Key {

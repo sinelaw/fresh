@@ -188,13 +188,6 @@ pub enum WidgetKeyOutcome {
     /// then unmount the panel.
     CancelAndUnmount,
     /// Route a smart key through the widget command dispatcher.
-    ///
-    /// **A value, not a name.** This used to be a `String` the router
-    /// formatted and every widget kind re-matched as text, so the two halves
-    /// could disagree with no compile error — which is how a panel's
-    /// Shift+Tab came to be silently dead. The press is now typed the whole
-    /// way in; the only string left is the one the plugin wire carries, and
-    /// it is parsed straight back at the boundary.
     SmartKey(KeySeq),
     /// Feed a printable character to the focused TextInput.
     TextChar(char),
@@ -242,30 +235,19 @@ pub fn widget_panel_key(
     // the editor there. See [`WidgetPanelView::page`].
     let reader = view.page && !view.focused_widget_is_text;
 
-    // **Which codes a widget answers, and which modifiers ride along.**
-    //
-    // This replaced two blocks of `format!`, and the masks below are the
-    // half of those blocks that was not spelling. The old formatter named
-    // `Alt`+Left `"Left"` — it built the name from the base key and only the
-    // prefixes that arm cared about — so an Alt-modified arrow reached the
-    // kinds as a plain one. Forwarding the raw modifier set instead looks
-    // tidier and is a behaviour change: the kinds decline what they do not
-    // recognise, so `Alt`+Left would arrive modified, match nothing, and be
-    // swallowed doing nothing at all.
-    //
-    // `view::settings::live::key_name` masks the same way for the same
-    // reason; the two surfaces feed the same kinds and have to agree.
+    // Which codes a widget answers, and which modifiers ride along. A
+    // modifier the vocabulary has no meaning for is dropped, not forwarded:
+    // the kinds decline what they do not recognise, so an `Alt`+Left that
+    // kept its Alt would match nothing and be swallowed.
+    // `view::settings::live::key_name` masks the same way.
     const CARET: KeyModifiers = KeyModifiers::CONTROL.union(KeyModifiers::SHIFT);
     let widget_key = match code {
-        // Shift is the whole of Tab's vocabulary (`Key::new` folds it into
-        // `BackTab`); `BackTab` is already that key, and Enter has none.
         KeyCode::Tab => Some(modifiers & KeyModifiers::SHIFT),
         KeyCode::BackTab | KeyCode::Enter => Some(KeyModifiers::NONE),
         // Ctrl deletes a word rather than a character (`Text::on_key`).
         KeyCode::Backspace | KeyCode::Delete => Some(modifiers & KeyModifiers::CONTROL),
         KeyCode::PageUp | KeyCode::PageDown if !reader => Some(KeyModifiers::NONE),
-        // The caret keys carry their modifiers: a field's selection is
-        // extended by Shift and its words are stepped by Ctrl.
+        // Shift extends a field's selection, Ctrl steps by word.
         KeyCode::Home
         | KeyCode::End
         | KeyCode::Left
@@ -723,12 +705,8 @@ mod tests {
         );
     }
 
-    /// **A modifier the vocabulary has no meaning for is dropped, not
-    /// forwarded.** The name this used to build carried only the prefixes
-    /// its arm cared about, so `Alt`+Left reached the kinds as a plain
-    /// `Left`. Forwarding the raw modifier set instead is a behaviour
-    /// change that hides as a tidy-up: the kinds decline what they do not
-    /// recognise, so the key would be swallowed and do nothing at all.
+    /// A modifier the vocabulary has no meaning for is dropped, not
+    /// forwarded — the kinds would decline it and swallow the key.
     #[test]
     fn a_key_carries_only_the_modifiers_its_vocabulary_distinguishes() {
         let kb = resolver();
@@ -743,8 +721,6 @@ mod tests {
             WidgetKeyOutcome::SmartKey(seq) => seq.single().expect("one press"),
             other => panic!("{code:?} + {mods:?} was {other:?}"),
         };
-        // Alt means nothing to a caret key, an edit key, Enter or a page
-        // key — each still arrives as the key itself.
         for code in [
             KeyCode::Left,
             KeyCode::Right,
@@ -764,7 +740,6 @@ mod tests {
                 "Alt+{code:?} should reach the kinds unmodified"
             );
         }
-        // Shift is not a page key's or Enter's either.
         assert_eq!(
             press(KeyCode::PageUp, KeyModifiers::SHIFT),
             Key::new(KeyCode::PageUp, KeyModifiers::NONE)
@@ -773,8 +748,7 @@ mod tests {
             press(KeyCode::Enter, KeyModifiers::CONTROL | KeyModifiers::SHIFT),
             Key::new(KeyCode::Enter, KeyModifiers::NONE)
         );
-        // …but Ctrl on an edit key and Ctrl/Shift on a caret key are the
-        // vocabulary's own, and survive.
+        // Ctrl on an edit key and Ctrl/Shift on a caret key survive.
         assert_eq!(
             press(
                 KeyCode::Backspace,

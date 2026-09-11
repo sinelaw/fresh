@@ -2732,14 +2732,8 @@ impl Editor {
 
         let mode_context = KeyContext::Mode(name.clone());
 
-        // **A binding's key is parsed in one place** — `parse_key_seq`, the
-        // editor's single entry point for a key written as a string. This
-        // loop used to carry its own parser and its own name table (`RET`,
-        // `SPC`, `PGUP`, …), which is how a mode could bind a name the rest
-        // of the editor did not know, and vice versa. The compact syntax
-        // covers both shapes: one press (`g`, `C-f`) or a sequence separated
-        // by spaces (`g g`, `z z`, `C-x C-s`), so what used to be two branches
-        // over a hand-split string is now a question about what parsed.
+        // One press (`g`, `C-f`) or a space-separated sequence (`g g`,
+        // `C-x C-s`); which it is follows from what parsed.
         for (key_str, command) in &bindings {
             let Some(seq) = parse_key_seq(key_str) else {
                 tracing::warn!("Failed to parse key binding: {}", key_str);
