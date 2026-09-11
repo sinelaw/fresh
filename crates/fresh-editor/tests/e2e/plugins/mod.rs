@@ -10,6 +10,8 @@ pub mod buffer_info_splits;
 pub mod command_keybinding_editor;
 pub mod config_changed_adoption;
 pub mod csharp_restore_trust;
+#[cfg(unix)]
+pub mod dap;
 pub mod dashboard;
 pub mod hostile_plugin;
 // The three modules below drive the in-tree fake-devcontainer

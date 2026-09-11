@@ -27,6 +27,7 @@
     "clangd_support.ts",
     "code-tour.ts",
     "csharp_support.ts",
+    "dap.ts",
     "dashboard.ts",
     "deno_lsp.ts",
     "devcontainer.ts",
