@@ -70,7 +70,7 @@ tracing = "0.1"
 schemars = { version = "1.2", features = ["preserve_order"] }
 rquickjs = { version = "0.11", features = ["futures", "macro"] }
 rquickjs-serde = "0.5"
-oxc_allocator = "0.128.0"
+oxc_allocator = "0.134.0"
 oxc_ast = "0.128.0"
 oxc_parser = "0.128.0"
 oxc_transformer = "0.128.0"
