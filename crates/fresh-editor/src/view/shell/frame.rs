@@ -537,7 +537,15 @@ pub fn frame_tree(f: Frame) -> Node<UiMsg> {
                     None => row(),
                 },
             )
-            .h(cells(f.prompt_line)),
+            // `Auto` when shown, so a confirmation prompt that wraps on a
+            // narrow terminal takes the rows it needs (issue #3214); zero
+            // when hidden, keeping the reserved-but-empty rectangle callers
+            // anchor to.
+            .h(if f.prompt_line {
+                Sizing::Auto
+            } else {
+                Sizing::Cells(0)
+            }),
         ]),
     ]);
     // Overlays, in paint order — which is declaration order, and is decided
