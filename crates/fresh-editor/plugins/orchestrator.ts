@@ -3643,12 +3643,16 @@ function buildPreviewPane(s: AgentSession | undefined): WidgetSpec {
       disabled: deleteDisabled,
     }),
   );
+  // Placeholder and on-disk rows have no window of their own: an embed
+  // keyed on their synthetic (negative) id would fall back to the active
+  // window and show an unrelated workspace under this row's header.
+  const hasWindow = s.id > 0 && !s.pending;
   const embedWidget = windowEmbed({
-    windowId: s.id,
+    windowId: hasWindow ? s.id : 0,
     rows: embedRows,
     key: "live-preview",
   });
-  const body = detailsOn
+  const body = detailsOn || !hasWindow
     ? col(
         buttonRow,
         spacer(0),
@@ -4572,6 +4576,7 @@ function openControlRoom(
   opts: { dock?: boolean; blurred?: boolean } = {},
 ): void {
   const asDock = opts?.dock === true;
+  if (asDock) noteLayoutChange();
   const startBlurred = asDock && opts?.blurred === true;
   if (openPanel) {
     // If the dock is showing and the user asked for the modal picker
@@ -4762,6 +4767,7 @@ function restoreDockBehindPicker(): boolean {
 }
 
 function closeOpenDialog(): void {
+  noteLayoutChange();
   if (openPanel) {
     openPanel.unmount();
     openPanel = null;
@@ -8179,7 +8185,7 @@ function machineKindTag(m: Machine): string {
 function machineWorkspaceCount(m: Machine): number {
   let n = 0;
   for (const s of orchestratorSessions.values()) {
-    if (!s.remote) continue;
+    if (s.discovered || !s.remote) continue;
     if (m.kind === "ssh" && s.remote.kind === "ssh") {
       const bare = m.target.replace(/^ssh:\/\//, "").replace(/:\d+$/, "");
       if (s.remote.detail === bare || s.remote.detail === m.target) n++;
@@ -8192,7 +8198,7 @@ function machineWorkspaceCount(m: Machine): number {
 
 function localWorkspaceCount(): number {
   let n = 0;
-  for (const s of orchestratorSessions.values()) if (!s.remote) n++;
+  for (const s of orchestratorSessions.values()) if (!s.discovered && !s.remote) n++;
   return n;
 }
 
@@ -9164,6 +9170,9 @@ function revertMachineAdd(): void {
   if (!form || !form.machineAddArmed) return;
   form.machineAddArmed = false;
   applyMachinePick(form.machinePickBefore);
+  // The dropdown's selection is host-owned after first render, so a
+  // re-render alone leaves it showing `Add machine…`: push the pick back.
+  formPanel?.setDropdown("machine", form.machinePick);
   rebuildFormFocusCycle();
   renderForm();
 }
@@ -13354,6 +13363,10 @@ editor.on("widget_event", (e) => {
     handleMachinesEvent(e);
     return;
   }
+  if (explainPanel && e.panel_id === explainPanel.id()) {
+    handleExplainEvent(e);
+    return;
+  }
   // ---------------------------------------------------------------------
   // "New Folder" dialog: name field, organize checkbox, Cancel / Create.
   // ---------------------------------------------------------------------
@@ -14305,6 +14318,15 @@ editor.on("ready", () => {
 // startup), not the agent — so selecting a session doesn't flash it
 // `working`.
 const ACTIVATION_GRACE_MS = 1500;
+// When the layout changes (the terminal resized, the dock shown or
+// hidden) every terminal redraws at once; that burst is not the agent
+// working. Output inside this window from a session that was quiet is
+// ignored — a real burst that starts at the same moment counts from its
+// next line.
+let layoutChangedAt = 0;
+function noteLayoutChange(): void {
+  layoutChangedAt = Date.now();
+}
 
 editor.on("active_window_changed", () => {
   const s = orchestratorSessions.get(editor.activeWindow());
@@ -14338,6 +14360,7 @@ editor.on("active_window_changed", () => {
 // the spec so the *plugin's* row-count knobs adopt the new
 // viewport at the same time.
 editor.on("resize", () => {
+  noteLayoutChange();
   if (openDialog && openPanel) {
     // Make the dock responsive: re-issue its width on every resize so it
     // scales with the terminal. Uses the focus-preserving `dock_width`
@@ -14397,6 +14420,14 @@ editor.on("terminal_output", (payload) => {
     // becomes active — that's not the agent working, and counting it
     // would flash the card to `working` on every selection.
     if (s.activatedAt !== undefined && Date.now() - s.activatedAt < ACTIVATION_GRACE_MS) {
+      return;
+    }
+    // Likewise the redraw every terminal emits when the layout changes
+    // (a resize, the dock toggled): a quiet session stays quiet.
+    if (
+      Date.now() - layoutChangedAt < ACTIVATION_GRACE_MS &&
+      (s.lastOutputAt === null || Date.now() - s.lastOutputAt >= IDLE_AFTER_MS)
+    ) {
       return;
     }
     // Stamp the moment of output. `sessionState` turns this into
@@ -14556,8 +14587,100 @@ editor.registerCommand(
 // which way its "Launch in" switch starts. One form, one submit path — the two
 // used to be separate dialogs, and the current-workspace one silently dropped
 // the agent-resume argv.
+// ── Explain State popup ────────────────────────────────────────────────
+// The chain behind a badge is several lines, and the status bar elides
+// it to a few words on a normal-width terminal, so it opens as a small
+// popup; the one-line summary still goes to the status bar and the log.
+const EXPLAIN_MODE = "orchestrator-explain";
+let explainPanel: FloatingWidgetPanel | null = null;
+
+function closeExplainPopup(): void {
+  if (!explainPanel) return;
+  explainPanel.unmount();
+  explainPanel = null;
+  editor.setEditorMode(null);
+  restoreDockAfterDialog();
+}
+
+function openExplainPopup(s: AgentSession, ex: StateExplanation): void {
+  closeExplainPopup();
+  yieldDockToDialog();
+  const dim = { fg: "ui.menu_disabled_fg" };
+  const sym = STATE_SYMBOL[ex.state];
+  const name = workspaceCustomName(s) || s.hostLabel || s.label;
+  // The popup is 70% of the screen wide; wrap the reasons to fit inside
+  // its borders (long ones quote a regex or a terminal line) with a
+  // hanging indent so each bullet stays one item.
+  const inner = Math.max(30, Math.floor(editor.getScreenSize().width * 0.7) - 6);
+  const wrap = (text: string, first: string, rest: string): string[] => {
+    const out: string[] = [];
+    let line = first;
+    for (const word of text.split(" ")) {
+      const candidate = line === first || line === rest ? line + word : `${line} ${word}`;
+      if (editor.stringWidth(candidate) > inner && line !== first && line !== rest) {
+        out.push(line);
+        line = rest + word;
+      } else {
+        line = candidate;
+      }
+    }
+    out.push(line);
+    return out;
+  };
+  const head = raw([
+    styledRow([
+      { text: `${sym.glyph} ${ex.state}`, style: { fg: sym.fg, bold: true } },
+      { text: `   ${name}`, style: { bold: true } },
+    ]),
+  ]);
+  const reasons = raw(
+    ex.reasons.flatMap((r) => wrap(r, "• ", "  ").map((l) => styledRow([{ text: l }]))),
+  );
+  const rules = raw([
+    styledRow([{
+      text: editor.t("explain.rules_loaded", { version: String(ex.rules.version), source: ex.rules.source }),
+      style: dim,
+    }]),
+  ]);
+  const parts: WidgetSpec[] = [head, spacer(0), reasons, spacer(0), rules];
+  if (ex.recentLines.length > 0) {
+    const lines: TextPropertyEntry[] = [styledRow([{ text: editor.t("explain.recent_lines"), style: dim }])];
+    for (const l of ex.recentLines.slice(-6)) {
+      const line = editor.stringWidth(l) > inner - 2 ? `${l.slice(0, inner - 3)}…` : l;
+      lines.push(styledRow([{ text: `  ${line}`, style: { ...dim, italic: true } }]));
+    }
+    parts.push(spacer(0), raw(lines));
+  }
+  parts.push(spacer(0), withAccel(button(editor.t("machine.btn_close"), { key: "explain-close" }), "Esc"));
+  explainPanel = new FloatingWidgetPanel();
+  explainPanel.mount(col(...parts), {
+    widthPct: 70,
+    heightPct: 60,
+    focusMarker: true,
+    title: editor.t("explain.title"),
+    closable: true,
+  });
+  editor.floatingPanelControl(explainPanel.id(), "fullscreen", 1);
+  editor.setEditorMode(EXPLAIN_MODE);
+  explainPanel.setFocusKey("explain-close");
+}
+
+editor.defineMode(EXPLAIN_MODE, [["Enter", "orchestrator_explain_close"]], true, true);
+registerHandler("orchestrator_explain_close", closeExplainPopup);
+
+function handleExplainEvent(e: WidgetEvt): void {
+  if (e.event_type === "cancel") {
+    // Esc / click-outside: the host already unmounted the panel.
+    explainPanel = null;
+    editor.setEditorMode(null);
+    restoreDockAfterDialog();
+    return;
+  }
+  if (e.event_type === "activate" && e.widget_key === "explain-close") closeExplainPopup();
+}
+
 // Explain the state badge of the dock's selected workspace (or the active
-// one): one line in the status bar, the full chain in the log.
+// one): a popup with the chain, one line in the status bar, all of it in the log.
 registerHandler("orchestrator_explain", () => {
   let id: number | null = null;
   const selKey = openDialog?.dockSelKey;
@@ -14575,6 +14698,7 @@ registerHandler("orchestrator_explain", () => {
   const line = explainSummaryLine(s, ex);
   editor.setStatus(line);
   editor.info(`orchestrator: ${line}\n  recent lines: ${JSON.stringify(ex.recentLines)}`);
+  openExplainPopup(s, ex);
 });
 editor.registerCommand("%cmd.explain", "%cmd.explain_desc", "orchestrator_explain", null, {
   terminalBypass: true,

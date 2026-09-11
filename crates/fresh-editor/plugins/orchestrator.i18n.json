@@ -374,7 +374,9 @@
     "preview.state_blocked": "ви чака",
     "preview.state_done": "готово",
     "preview.state_unknown": "няма сигнал",
-    "form.runs_here": "изпълнява се в тази работна област: %{name}"
+    "form.runs_here": "изпълнява се в тази работна област: %{name}",
+    "explain.title": "Защо това състояние",
+    "explain.recent_lines": "последни редове от изхода"
   },
   "cs": {
     "cmd.open": "Orchestrator: Otevřít",
@@ -751,7 +753,9 @@
     "preview.state_blocked": "potřebuje vás",
     "preview.state_done": "hotovo",
     "preview.state_unknown": "žádný signál",
-    "form.runs_here": "běží v tomto pracovním prostoru: %{name}"
+    "form.runs_here": "běží v tomto pracovním prostoru: %{name}",
+    "explain.title": "Proč tento stav",
+    "explain.recent_lines": "poslední řádky výstupu"
   },
   "de": {
     "cmd.open": "Orchestrator: Öffnen",
@@ -1128,7 +1132,9 @@
     "preview.state_blocked": "braucht dich",
     "preview.state_done": "fertig",
     "preview.state_unknown": "kein Signal",
-    "form.runs_here": "läuft in diesem Arbeitsbereich: %{name}"
+    "form.runs_here": "läuft in diesem Arbeitsbereich: %{name}",
+    "explain.title": "Warum dieser Zustand",
+    "explain.recent_lines": "letzte Ausgabezeilen"
   },
   "en": {
     "cmd.open": "Orchestrator: Open",
@@ -1505,7 +1511,9 @@
     "form.new_branch_worktree_only": "worktree only",
     "form.launch_in": "Launch in",
     "menu.dock": "Orchestrator Dock",
-    "form.runs_here": "runs in this workspace: %{name}"
+    "form.runs_here": "runs in this workspace: %{name}",
+    "explain.title": "Why this state",
+    "explain.recent_lines": "last lines of output"
   },
   "es": {
     "cmd.open": "Orchestrator: Abrir",
@@ -1882,7 +1890,9 @@
     "preview.state_blocked": "te necesita",
     "preview.state_done": "listo",
     "preview.state_unknown": "sin señal",
-    "form.runs_here": "se ejecuta en este espacio de trabajo: %{name}"
+    "form.runs_here": "se ejecuta en este espacio de trabajo: %{name}",
+    "explain.title": "Por qué este estado",
+    "explain.recent_lines": "últimas líneas de salida"
   },
   "fr": {
     "cmd.open": "Orchestrator : ouvrir",
@@ -2259,7 +2269,9 @@
     "preview.state_blocked": "vous attend",
     "preview.state_done": "terminé",
     "preview.state_unknown": "aucun signal",
-    "form.runs_here": "s'exécute dans cet espace de travail : %{name}"
+    "form.runs_here": "s'exécute dans cet espace de travail : %{name}",
+    "explain.title": "Pourquoi cet état",
+    "explain.recent_lines": "dernières lignes de sortie"
   },
   "it": {
     "cmd.open": "Orchestrator: Apri",
@@ -2636,7 +2648,9 @@
     "preview.state_blocked": "ha bisogno di te",
     "preview.state_done": "finito",
     "preview.state_unknown": "nessun segnale",
-    "form.runs_here": "viene eseguito in questo spazio di lavoro: %{name}"
+    "form.runs_here": "viene eseguito in questo spazio di lavoro: %{name}",
+    "explain.title": "Perché questo stato",
+    "explain.recent_lines": "ultime righe di output"
   },
   "ja": {
     "cmd.open": "Orchestrator: 開く",
@@ -3013,7 +3027,9 @@
     "preview.state_blocked": "要対応",
     "preview.state_done": "完了",
     "preview.state_unknown": "信号なし",
-    "form.runs_here": "このワークスペースで実行: %{name}"
+    "form.runs_here": "このワークスペースで実行: %{name}",
+    "explain.title": "この状態の理由",
+    "explain.recent_lines": "出力の最後の行"
   },
   "ko": {
     "cmd.open": "Orchestrator: 열기",
@@ -3390,7 +3406,9 @@
     "preview.state_blocked": "확인 필요",
     "preview.state_done": "완료",
     "preview.state_unknown": "신호 없음",
-    "form.runs_here": "이 워크스페이스에서 실행: %{name}"
+    "form.runs_here": "이 워크스페이스에서 실행: %{name}",
+    "explain.title": "이 상태인 이유",
+    "explain.recent_lines": "출력의 마지막 줄"
   },
   "pt-BR": {
     "cmd.open": "Orchestrator: Abrir",
@@ -3767,7 +3785,9 @@
     "preview.state_blocked": "precisa de você",
     "preview.state_done": "concluído",
     "preview.state_unknown": "sem sinal",
-    "form.runs_here": "roda neste espaço de trabalho: %{name}"
+    "form.runs_here": "roda neste espaço de trabalho: %{name}",
+    "explain.title": "Por que este estado",
+    "explain.recent_lines": "últimas linhas de saída"
   },
   "ru": {
     "cmd.open": "Orchestrator: Открыть",
@@ -4144,7 +4164,9 @@
     "preview.state_blocked": "ждёт вас",
     "preview.state_done": "готово",
     "preview.state_unknown": "нет сигнала",
-    "form.runs_here": "запускается в этом рабочем пространстве: %{name}"
+    "form.runs_here": "запускается в этом рабочем пространстве: %{name}",
+    "explain.title": "Почему такое состояние",
+    "explain.recent_lines": "последние строки вывода"
   },
   "th": {
     "cmd.open": "Orchestrator: เปิด",
@@ -4521,7 +4543,9 @@
     "preview.state_blocked": "ต้องการคุณ",
     "preview.state_done": "เสร็จ",
     "preview.state_unknown": "ไม่มีสัญญาณ",
-    "form.runs_here": "รันในเวิร์กสเปซนี้: %{name}"
+    "form.runs_here": "รันในเวิร์กสเปซนี้: %{name}",
+    "explain.title": "ทำไมจึงเป็นสถานะนี้",
+    "explain.recent_lines": "บรรทัดสุดท้ายของเอาต์พุต"
   },
   "uk": {
     "cmd.open": "Orchestrator: Відкрити",
@@ -4898,7 +4922,9 @@
     "preview.state_blocked": "чекає на вас",
     "preview.state_done": "готово",
     "preview.state_unknown": "немає сигналу",
-    "form.runs_here": "запускається в цьому робочому просторі: %{name}"
+    "form.runs_here": "запускається в цьому робочому просторі: %{name}",
+    "explain.title": "Чому такий стан",
+    "explain.recent_lines": "останні рядки виводу"
   },
   "vi": {
     "cmd.open": "Orchestrator: Mở",
@@ -5275,7 +5301,9 @@
     "preview.state_blocked": "cần bạn",
     "preview.state_done": "xong",
     "preview.state_unknown": "không có tín hiệu",
-    "form.runs_here": "chạy trong không gian làm việc này: %{name}"
+    "form.runs_here": "chạy trong không gian làm việc này: %{name}",
+    "explain.title": "Vì sao có trạng thái này",
+    "explain.recent_lines": "các dòng đầu ra cuối cùng"
   },
   "zh-CN": {
     "cmd.open": "Orchestrator：打开",
@@ -5652,6 +5680,8 @@
     "preview.state_blocked": "需要你",
     "preview.state_done": "已完成",
     "preview.state_unknown": "无信号",
-    "form.runs_here": "在此工作区运行：%{name}"
+    "form.runs_here": "在此工作区运行：%{name}",
+    "explain.title": "为何是此状态",
+    "explain.recent_lines": "输出的最后几行"
   }
 }
