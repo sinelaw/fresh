@@ -254,6 +254,7 @@ impl Editor {
 
         // Cancel any pending LSP requests since the text is changing
         self.active_window_mut().cancel_pending_lsp_requests();
+        self.clear_ghost_text();
 
         if let Some(events) = self
             .active_window_mut()
