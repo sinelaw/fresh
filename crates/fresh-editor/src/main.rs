@@ -3808,10 +3808,16 @@ fn has_flag(flags: &[&str], name: &str) -> bool {
 /// is a usage error (exit 2), like any other malformed flag.
 fn parse_timeout_flag(flags: &[&str], default: u64) -> u64 {
     match flag_value(flags, "--timeout") {
-        Some(v) => v.parse().unwrap_or_else(|_| {
-            eprintln!("--timeout wants a number of seconds, got '{}'", v);
-            std::process::exit(2);
-        }),
+        Some(v) => match v.parse::<u64>() {
+            Ok(n) if n > 0 => n,
+            _ => {
+                eprintln!(
+                    "--timeout wants a whole number of seconds, at least 1, got '{}'",
+                    v
+                );
+                std::process::exit(2);
+            }
+        },
         None => default,
     }
 }

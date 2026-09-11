@@ -179,9 +179,27 @@ fn auto_open_can_be_switched_off() {
     let mut h = EditorTestHarness::with_config_and_working_dir(120, 32, config, root).unwrap();
     h.render().unwrap();
     h.editor_mut().fire_ready_hook();
-    // Let the ready hook round-trip through the plugin thread: open the
-    // dock the normal way and close it again, which can only complete
-    // after the plugin has processed everything queued before it.
+    // Let the ready hook round-trip through the plugin thread with a
+    // command that does not touch the dock — the Machines dialog — and
+    // only then look: a dock that wrongly auto-opened is on screen now,
+    // and the assertion fails instead of the toggle below closing it and
+    // the wait after it hanging.
+    h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.wait_for_prompt().unwrap();
+    h.type_text("Orchestrator: Machines").unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Orchestrator: Machines"))
+        .unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    // The dialog's own button, not the palette row that also says
+    // "Machines".
+    h.wait_until(|h| h.screen_to_string().contains("Add machine"))
+        .unwrap();
+    h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| !h.screen_to_string().contains("Add machine"))
+        .unwrap();
+    h.assert_screen_not_contains("+ New");
+    // Then the dock the normal way, and closed again.
     open_dock(&mut h);
     h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();

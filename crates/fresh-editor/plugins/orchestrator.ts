@@ -465,6 +465,12 @@ interface NewSessionForm {
   // `machineOptions()`.
   machineId: string | null;
   machinePick: number;
+  // `Add machine…` is armed by moving the Machine control onto it and
+  // fires on Enter — never on the move itself, which the dropdown reports
+  // for every ←/→ step (and wraps), so a stray keystroke can't throw the
+  // form away. Esc / Tab put the control back on `machinePickBefore`.
+  machineAddArmed: boolean;
+  machinePickBefore: number;
   // `Remember this machine` (§5.2): save a hand-typed host or cluster to the
   // registry on submit, under `rememberAs` (blank = a name from the target).
   remember: boolean;
@@ -2259,12 +2265,26 @@ function parseDetectionRules(raw: string): Omit<DetectionRules, "source"> | null
   };
 }
 
+// Bounds on what a rules file may ask for: the patterns run on the plugin
+// thread against every terminal line, and a fetched file is remote,
+// mutable data — so no pattern longer than this, no more than this many,
+// and no window that never trims.
+const RULES_MAX_PATTERNS = 64;
+const RULES_MAX_PATTERN_LEN = 200;
+
+function clampNum(v: number | undefined, lo: number, hi: number, dflt: number): number {
+  return Math.min(hi, Math.max(lo, v ?? dflt));
+}
+
 function applyDetectionRules(rules: DetectionRules): void {
-  detectionRules = rules;
-  BLOCKED_PATTERNS = compileBlocked(rules.blocked);
-  WORK_MIN_MS = rules.workMinMs ?? 1500;
-  IDLE_AFTER_MS = rules.idleAfterMs ?? 5000;
-  RECENT_LINES = Math.max(1, Math.floor(rules.recentLines ?? 6));
+  const blocked = rules.blocked
+    .filter((p) => p.length <= RULES_MAX_PATTERN_LEN)
+    .slice(0, RULES_MAX_PATTERNS);
+  detectionRules = { ...rules, blocked };
+  BLOCKED_PATTERNS = compileBlocked(blocked);
+  WORK_MIN_MS = clampNum(rules.workMinMs, 200, 60_000, 1500);
+  IDLE_AFTER_MS = clampNum(rules.idleAfterMs, 1000, 120_000, 5000);
+  RECENT_LINES = Math.floor(clampNum(rules.recentLines, 1, 50, 6));
 }
 
 // Load the rules file if there is one (else the built-ins), then — when
@@ -2278,14 +2298,17 @@ async function loadDetectionRules(): Promise<DetectionRules> {
   if (local) applyDetectionRules({ ...local, source: "file" });
   else if (raw) editor.warn(`orchestrator: ${path} is not a rules file, using built-in rules`);
   const url = (dockSettings().detectionRulesUrl ?? "").trim();
-  if (url) {
+  if (url && /^https?:\/\//i.test(url)) {
+    // The editor's own HTTP client, into a scratch file beside the rules;
+    // the file only replaces the rules once it parses and is newer.
+    const scratch = editor.pathJoin(editor.getDataDir(), "orchestrator", "detection-rules.fetched.json");
     try {
-      const r = await editor.spawnHostProcess("curl", ["-fsSL", "--max-time", "10", url]);
-      const remote = r.exit_code === 0 ? parseDetectionRules(r.stdout) : null;
+      const r = await editor.httpFetch(url, scratch);
+      const fetched = r.exit_code === 0 ? editor.readFile(editor.localPath(scratch)) : null;
+      const remote = fetched ? parseDetectionRules(fetched) : null;
       if (!remote) {
-        editor.warn(`orchestrator: could not fetch detection rules from ${url}`);
+        editor.warn(`orchestrator: could not fetch detection rules from ${url}: ${r.stderr || "not a rules file"}`);
       } else if (remote.version > (local?.version ?? 0)) {
-        editor.createDir(editor.pathJoin(editor.getDataDir(), "orchestrator"));
         editor.writeFile(editor.localPath(path), JSON.stringify(remote, null, 2));
         applyDetectionRules({ ...remote, source: "url" });
         editor.info(`orchestrator: detection rules v${remote.version} fetched from ${url}`);
@@ -2293,6 +2316,8 @@ async function loadDetectionRules(): Promise<DetectionRules> {
     } catch (e) {
       editor.warn(`orchestrator: detection rules fetch failed: ${String(e)}`);
     }
+  } else if (url) {
+    editor.warn(`orchestrator: detectionRulesUrl must be http(s): ${url}`);
   }
   return detectionRules;
 }
@@ -8215,6 +8240,7 @@ async function testMachine(m: Machine): Promise<MachineTestResult> {
       ...(port ? ["-p", port] : []),
       ...(m.identity.trim() ? ["-i", expandHome(m.identity.trim())] : []),
       ...(m.options.trim() ? m.options.trim().split(/\s+/) : []),
+      "--",
       dest,
       "uname -sr; git --version 2>/dev/null; nproc 2>/dev/null",
     ];
@@ -8879,10 +8905,10 @@ function sshIncludeFiles(pattern: string): string[] {
   const slash = full.lastIndexOf("/");
   const dir = slash >= 0 ? full.slice(0, slash) : ".";
   const leaf = slash >= 0 ? full.slice(slash + 1) : full;
-  if (!/[*?]/.test(leaf)) return editor.fileExists(full) ? [full] : [];
+  if (!/[*?]/.test(leaf)) return editor.fileExists(editor.localPath(full)) ? [full] : [];
   const re = new RegExp("^" + leaf.replace(/[.+^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*").replace(/\?/g, ".") + "$");
   try {
-    return editor.readDir(dir)
+    return editor.readDir(editor.localPath(dir))
       .filter((e) => !e.is_dir && re.test(e.name))
       .map((e) => `${dir}/${e.name}`)
       .sort();
@@ -8897,9 +8923,10 @@ function sshIncludeFiles(pattern: string): string[] {
 // dropped; ssh's first-obtained-value-wins rule is kept per alias.
 function parseSshConfig(path: string, hosts: SshConfigHost[], depth: number): void {
   if (depth > 8) return;
-  // A missing file reads back as null or undefined depending on the host
-  // path it was asked through; either way there is nothing to parse.
-  const text = editor.readFile(path);
+  // The config lives on this machine even when the active window is a
+  // remote one, hence `localPath`. A missing file reads back as null or
+  // undefined depending on the path form; either way nothing to parse.
+  const text = editor.readFile(editor.localPath(path));
   if (!text) return;
   let block: SshConfigHost[] = [];
   for (const raw of text.split(/\r?\n/)) {
@@ -9122,16 +9149,37 @@ function machineOptionNote(o: MachineOption): string {
 // The Machine control moved: set the backend and the host state the option
 // stands for. `Add machine…` leaves the form for the dialog, which comes
 // back here with the new machine chosen.
+// Enter on an armed `Add machine…`: leave for the dialog (which comes back
+// to a fresh form with the new machine chosen). `true` when it fired.
+function commitMachineAdd(): boolean {
+  if (!form || !form.machineAddArmed) return false;
+  form.machineAddArmed = false;
+  cancelForm();
+  openMachineDialog(null, "form");
+  return true;
+}
+
+// Esc / Tab away from an armed `Add machine…`: back to the previous pick.
+function revertMachineAdd(): void {
+  if (!form || !form.machineAddArmed) return;
+  form.machineAddArmed = false;
+  applyMachinePick(form.machinePickBefore);
+  rebuildFormFocusCycle();
+  renderForm();
+}
+
 function applyMachinePick(index: number): void {
   if (!form) return;
   const opts = machineOptions();
   const o = opts[index];
   if (!o) return;
   if (o.kind === "add") {
-    cancelForm();
-    openMachineDialog(null, "form");
+    if (!form.machineAddArmed) form.machinePickBefore = form.machinePick;
+    form.machinePick = index;
+    form.machineAddArmed = true;
     return;
   }
+  form.machineAddArmed = false;
   form.machinePick = index;
   form.machineId = null;
   switch (o.kind) {
@@ -9276,6 +9324,10 @@ function rememberMachineFromForm(f: NewSessionForm): void {
       path: f.sshPath.value.trim(),
     });
   } else if (f.backend === "kubernetes") {
+    // A `.fresh/k8s.json` target names the pod for the launch; the manual
+    // fields are then blank and a machine saved from them could never be
+    // tested or launched. Nothing to remember in that case.
+    if (f.k8sTarget.value.trim() && !(f.k8sNamespace.value.trim() && f.k8sPod.value.trim())) return;
     upsertMachine({
       ...base,
       kind: "kubernetes",
@@ -9677,7 +9729,195 @@ function formIsSubmittable(): boolean {
   }
 }
 
+// The dialog keeps one size and one layout whatever its switches say (see
+// `buildFormSpecFixed`), unless the terminal is too short to hold that
+// layout with a few rows to spare, in which case it falls back to the
+// compact, content-sized form.
+const FIXED_FORM_SCREEN_MARGIN = 4;
+
 function buildFormSpec(): WidgetSpec {
+  if (!form) return col();
+  if (form.submitting) return buildConnectingView();
+  const fixed = buildFormSpecFixed();
+  const rows = (fixed as { children?: unknown[] }).children?.length ?? 0;
+  const h = editor.getScreenSize().height;
+  // Two rows of frame, and the button row may wrap on a narrow terminal.
+  if (h <= 0 || rows + 3 <= h - FIXED_FORM_SCREEN_MARGIN) return fixed;
+  return buildFormSpecCompact();
+}
+
+function blankRows(n: number): WidgetSpec[] {
+  return Array.from({ length: Math.max(0, n) }, () => spacer(0));
+}
+
+// `rows` padded with blank rows to `n` (never truncated: a variant that
+// outgrows its reservation still shows everything, the dialog just grows).
+function padRows(rows: WidgetSpec[], n: number): WidgetSpec[] {
+  return [...rows, ...blankRows(n - rows.length)];
+}
+
+// Run a spec builder against a temporarily altered form and put the form
+// back, so a section can be measured in every shape it can take.
+function measureVariant(mutate: () => void, build: () => WidgetSpec[]): number {
+  if (!form) return 0;
+  const saved = {
+    backend: form.backend,
+    sshPick: form.sshPick,
+    machineId: form.machineId,
+    k8sTarget: form.k8sTarget.value,
+    createWorktree: form.createWorktree,
+  };
+  try {
+    mutate();
+    return build().length;
+  } finally {
+    form.backend = saved.backend;
+    form.sshPick = saved.sshPick;
+    form.machineId = saved.machineId;
+    form.k8sTarget.value = saved.k8sTarget;
+    form.createWorktree = saved.createWorktree;
+  }
+}
+
+// The tallest shape the backend section can take — local, SSH from the
+// picker, SSH typed by hand, Kubernetes with no target yet, a devcontainer,
+// and every saved machine — so the rows below it never move when `Run in`
+// or `Machine` changes.
+function backendBodyRowsMax(): number {
+  if (!form) return 0;
+  const f = form;
+  const variants: Array<() => void> = [
+    () => { f.backend = "local"; f.machineId = null; },
+    () => { f.backend = "ssh"; f.machineId = null; f.sshPick = 0; },
+    () => { f.backend = "ssh"; f.machineId = null; f.sshPick = f.sshHosts.length; },
+    () => { f.backend = "kubernetes"; f.machineId = null; f.k8sTarget.value = ""; },
+    () => { f.backend = "devcontainer"; f.machineId = null; },
+  ];
+  for (const m of loadMachines()) {
+    variants.push(() => { f.backend = m.kind === "ssh" ? "ssh" : "kubernetes"; f.machineId = m.id; });
+  }
+  let max = 0;
+  for (const v of variants) max = Math.max(max, measureVariant(v, backendBodyFields));
+  return max;
+}
+
+// The footer both layouts share: the action buttons, and the hint bar (or
+// the last error in its place — the row is the same either way).
+function formFooterRows(creating: boolean): WidgetSpec[] {
+  if (!form) return [];
+  const cancel = withAccel(
+    button(editor.t("form.btn_cancel"), { intent: "danger", key: "cancel" }),
+    "Esc",
+  );
+  const buttons = creating
+    ? wrappingRow(
+      withAccel(
+        button(editor.t("form.btn_create"), {
+          intent: "primary",
+          key: "create-visit",
+          disabled: !formIsSubmittable(),
+          focusable: true,
+        }),
+        "^⏎",
+      ),
+      spacer(2),
+      button(editor.t("form.btn_create_bg"), {
+        key: "create-bg",
+        disabled: !formIsSubmittable(),
+        focusable: true,
+      }),
+      spacer(2),
+      cancel,
+    )
+    : wrappingRow(
+      withAccel(
+        button(editor.t("run_agent.btn_run"), {
+          intent: "primary",
+          key: "create-visit",
+          focusable: true,
+        }),
+        "^⏎",
+      ),
+      spacer(2),
+      cancel,
+    );
+  const footer = form.lastError
+    ? label(editor.t("form.error_prefix") + form.lastError, {
+      labelWidth: FORM_LABEL_W,
+      style: { fg: "diagnostic.error_fg", bold: true },
+    })
+    : row(
+      flexSpacer(),
+      hintBar([
+        { keys: "Tab", label: editor.t("hint.form_next") },
+        { keys: "←→", label: editor.t("hint.form_change") },
+        { keys: "↑↓", label: editor.t("hint.form_suggest") },
+      ]),
+      flexSpacer(),
+    );
+  return [buttons, spacer(0), footer];
+}
+
+// The form at one constant size. Every section that can change shape —
+// the backend selector and its body, the agent's extra fields, the
+// worktree fields, the agent switches — is reserved at the tallest shape
+// it can take and padded with blank rows otherwise, so flipping `Launch
+// in`, `Run in`, `Machine`, the agent or the worktree toggle changes what
+// is in a section, never where the sections are or how tall the dialog
+// is. In `Current workspace` mode the workspace sections show, in place,
+// which workspace the agent will run in.
+function buildFormSpecFixed(): WidgetSpec {
+  if (!form) return col();
+  const creating = form.target === "new";
+  const local = creating && form.backend === "local";
+  const bodyRows = backendBodyRowsMax();
+  const children: WidgetSpec[] = [targetRow()];
+  if (creating) {
+    children.push(
+      ...padRows(formUsesMachines() ? machineRow() : [backendRow()], 2),
+      ...padRows(backendBodyFields(), bodyRows),
+      ...field(formLabel("form.workspace_name"), form.name, {
+        key: "name",
+        placeholder: form.defaultSessionName || editor.t("form.auto_generating"),
+      }),
+    );
+  } else {
+    const here = currentWorkspaceIds();
+    const name = orchestratorSessions.get(here.windowId)?.label || editor.pathBasename(here.root) || here.root;
+    children.push(
+      ...blankRows(2),
+      ...padRows(
+        [
+          label(editor.t("form.runs_here", { name }), { labelWidth: FORM_LABEL_W }),
+          fieldNote(here.root),
+        ],
+        bodyRows,
+      ),
+      ...blankRows(1),
+    );
+  }
+  children.push(agentPresetRow());
+  // The custom command (with its SSH note) and the start prompt: reserved
+  // together at their tallest, whichever backend is selected.
+  const agentExtra = [...(cmdVisible() ? cmdField() : []), ...startPromptFields()];
+  const cmdRows = Math.max(
+    measureVariant(() => { form!.backend = "local"; }, cmdField),
+    measureVariant(() => { form!.backend = "ssh"; }, cmdField),
+  );
+  children.push(...padRows(agentExtra, cmdRows + 1));
+  // The worktree section (its own leading blank row included), reserved
+  // at its tallest: toggle on, with the checkout and new-branch fields.
+  const worktreeRows = local
+    ? Math.max(worktreeFields().length, measureVariant(() => { form!.createWorktree = true; }, worktreeFields))
+    : 0;
+  children.push(...padRows(local ? worktreeFields() : [], Math.max(6, worktreeRows)));
+  children.push(spacer(0), ...padRows(agentSwitchFields(), 2));
+  children.push(spacer(0), ...formFooterRows(creating));
+  return col(...children);
+}
+
+// The content-sized form, for terminals too short for the fixed layout.
+function buildFormSpecCompact(): WidgetSpec {
   if (!form) return col();
   // Disabled/connecting state: read-only summary + Cancel-only.
   if (form.submitting) return buildConnectingView();
@@ -9709,75 +9949,7 @@ function buildFormSpec(): WidgetSpec {
   if (local) children.push(...worktreeFields());
   const switches = agentSwitchFields();
   if (switches.length > 0) children.push(spacer(0), ...switches);
-  // Remote backends connect asynchronously and the dialog stays open until
-  // the session is real (see `runRemoteAttach`); the in-flight state is
-  // `buildConnectingView` (the early return above).
-  if (form.lastError) {
-    children.push(
-      spacer(0),
-      label(editor.t("form.error_prefix") + form.lastError, {
-        labelWidth: FORM_LABEL_W,
-        style: { fg: "ui.status_error_indicator_fg", bold: true },
-      }),
-    );
-  }
-  // === The footer. ==========================================================
-  // Buttons stay buttons — `[ Label ]` is what says "this acts" everywhere in
-  // the TUI — and each carries its accelerator beside it. wrappingRow so the
-  // buttons reflow onto a second line on a narrow form instead of the last
-  // one being clipped off the right edge. Running in the current workspace
-  // creates nothing, so there is no foreground/background pair to offer —
-  // just "Run".
-  const cancel = withAccel(
-    button(editor.t("form.btn_cancel"), { intent: "danger", key: "cancel" }),
-    "Esc",
-  );
-  children.push(
-    spacer(0),
-    creating
-      ? wrappingRow(
-        withAccel(
-          button(editor.t("form.btn_create"), {
-            intent: "primary",
-            key: "create-visit",
-            disabled: !formIsSubmittable(),
-            focusable: true,
-          }),
-          "^⏎",
-        ),
-        spacer(2),
-        button(editor.t("form.btn_create_bg"), {
-          key: "create-bg",
-          disabled: !formIsSubmittable(),
-          focusable: true,
-        }),
-        spacer(2),
-        cancel,
-      )
-      : wrappingRow(
-        withAccel(
-          button(editor.t("run_agent.btn_run"), {
-            intent: "primary",
-            key: "create-visit",
-            focusable: true,
-          }),
-          "^⏎",
-        ),
-        spacer(2),
-        cancel,
-      ),
-    spacer(0),
-    // The keys the buttons don't spell: how to move, and what ↑↓ do here.
-    row(
-      flexSpacer(),
-      hintBar([
-        { keys: "Tab", label: editor.t("hint.form_next") },
-        { keys: "←→", label: editor.t("hint.form_change") },
-        { keys: "↑↓", label: editor.t("hint.form_suggest") },
-      ]),
-      flexSpacer(),
-    ),
-  );
+  children.push(spacer(0), ...formFooterRows(creating));
   return col(...children);
 }
 
@@ -9818,6 +9990,8 @@ function openForm(options?: { fromPicker?: boolean; target?: RunAgentTarget }): 
     sshPick: 0,
     machineId: null,
     machinePick: 0,
+    machineAddArmed: false,
+    machinePickBefore: 0,
     remember: false,
     rememberAs: { value: "", cursor: 0 },
     sshPath: { value: "", cursor: 0 },
@@ -12102,11 +12276,18 @@ async function runAgent(options: RunAgentOptions = {}): Promise<AgentLaunchResul
   while (Date.now() < deadline) {
     const out = terminalOutputAt.get(terminalId);
     const exit = terminalExitAt.get(terminalId);
-    if (out !== undefined && out >= launchedAt) {
-      return { ...ids, agent, ready: true, state: stateOf() };
-    }
+    const printed = out !== undefined && out >= launchedAt;
     if (exit !== undefined && exit >= launchedAt) {
-      return { ...ids, agent, ready: false, state: stateOf(), error: `${cmd || "terminal"} exited before it produced output` };
+      return {
+        ...ids,
+        agent,
+        ready: false,
+        state: stateOf(),
+        error: `${cmd || "terminal"} exited ${printed ? "right after starting" : "before it produced output"}`,
+      };
+    }
+    if (printed) {
+      return { ...ids, agent, ready: true, state: stateOf() };
     }
     await editor.delay(200);
   }
@@ -12939,6 +13120,7 @@ registerHandler("orchestrator_form_key_tab", () => {
   // fires `completion_accept` (no `focus` event to snap back from).
   // With no popup, the host always advances and fires an authoritative
   // `focus` event, so the optimistic advance just avoids a frame lag.
+  revertMachineAdd();
   if (!completionVisibleForFocused()) {
     advanceFormFocus(1);
   }
@@ -12969,6 +13151,9 @@ registerHandler("orchestrator_form_key_enter", () => {
   // handle both directions. (Mouse click on the `[value ▼]` trigger already
   // opens it via the host's `dropdown_toggle` hit.)
   if (formDropdownFocused()) {
+    // An armed `Add machine…` commits on Enter whether the list is open
+    // (Enter closes it) or the control was moved with ←/→ while closed.
+    if (formFocusedKey() === "machine" && commitMachineAdd()) return;
     dispatchFormKey("Enter");
     return;
   }
@@ -12985,6 +13170,7 @@ registerHandler(
     // (The convention is that S-Tab is the "go back" gesture;
     // overloading it to accept-then-go-back is more confusing
     // than useful.)
+    revertMachineAdd();
     closeCompletion();
     advanceFormFocus(-1);
     dispatchFormKey("Shift+Tab");
@@ -13005,6 +13191,11 @@ registerHandler("orchestrator_form_key_escape", () => {
   // falls through to `cancelForm` below.
   if (openFormDropdown !== null && formFocusedKey() === openFormDropdown) {
     dispatchFormKey("Escape");
+    return;
+  }
+  // An armed `Add machine…` is a choice not yet made: Esc unmakes it.
+  if (form?.machineAddArmed) {
+    revertMachineAdd();
     return;
   }
   if (form) cancelForm();
@@ -13373,8 +13564,6 @@ editor.on("widget_event", (e) => {
       const index = payload.index;
       if (typeof index === "number" && index !== form.machinePick) {
         applyMachinePick(index);
-        // `Add machine…` closed the form for its dialog.
-        if (!form) return;
         rebuildFormFocusCycle();
         renderForm();
       }
@@ -14276,7 +14465,6 @@ editor.on("terminal_output", (payload) => {
 
 editor.on("terminal_exit", (payload) => {
   terminalExitAt.set(payload.terminal_id, Date.now());
-  terminalOutputAt.delete(payload.terminal_id);
   const s = orchestratorSessions.get(payload.window_id);
   // Only the session's own agent terminal (or any terminal, when it has
   // none) resets the row: a side shell closing must not blank the badge.
