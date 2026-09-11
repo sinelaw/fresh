@@ -637,6 +637,61 @@ pub(super) fn inject_virtual_lines(
 struct InlineHintCell {
     text: String,
     style: Option<ViewTokenStyle>,
+    /// See [`InlineHint::pad_to_column`].
+    pad_to_column: Option<u32>,
+}
+
+/// The splice's output, carrying the column its current row has reached and the
+/// hints waiting for that row to end.
+///
+/// Only a `pad_to_column` hint reads the column, but every push has to maintain
+/// it, so it lives on the sink rather than being recomputed per hint. Advances
+/// match `WrapMachine`'s, since the two measure the same rows.
+struct SplicedRow {
+    tokens: Vec<ViewTokenWire>,
+    col: usize,
+    /// Hints waiting for the end of the row they were anchored in.
+    row_end: Vec<(String, Option<ViewTokenStyle>, u32)>,
+}
+
+impl SplicedRow {
+    /// Emit a hint at the end of the row its anchor fell in, rather than at the
+    /// anchor. Deferred until [`Self::push`] reaches the row's end.
+    fn defer_to_row_end(&mut self, text: String, style: Option<ViewTokenStyle>, target: u32) {
+        self.row_end.push((text, style, target));
+    }
+
+    fn flush_row_end(&mut self) {
+        for (text, style, target) in std::mem::take(&mut self.row_end) {
+            let end = self.col + crate::primitives::visual_layout::visual_width(&text, self.col);
+            let pad = (target as usize).saturating_sub(end);
+            let cell = format!("{}{text}", " ".repeat(pad));
+            self.col += crate::primitives::visual_layout::visual_width(&cell, self.col);
+            self.tokens.push(ViewTokenWire {
+                source_offset: None,
+                kind: ViewTokenWireKind::Text(cell),
+                style,
+            });
+        }
+    }
+
+    fn push(&mut self, token: ViewTokenWire) {
+        if matches!(
+            token.kind,
+            ViewTokenWireKind::Newline | ViewTokenWireKind::Break
+        ) {
+            self.flush_row_end();
+        }
+        match &token.kind {
+            ViewTokenWireKind::Newline | ViewTokenWireKind::Break => self.col = 0,
+            ViewTokenWireKind::Text(s) => {
+                self.col += crate::primitives::visual_layout::visual_width(s, self.col)
+            }
+            ViewTokenWireKind::Space => self.col += 1,
+            ViewTokenWireKind::BinaryByte(_) => self.col += 4,
+        }
+        self.tokens.push(token);
+    }
 }
 
 /// One inline hint, resolved: everything the splice needs and no borrow of
@@ -654,6 +709,9 @@ pub struct InlineHint {
     /// would have to assume one, and a snapshot that disagrees with the live
     /// marker makes the index lay out a line the renderer never draws.
     pub gravity: crate::view::virtual_text::MarkerGravity,
+    /// Draw the hint at the END of the row its anchor falls in, left-padded to
+    /// end at this column. See [`splice_inline_virtual_text`].
+    pub pad_to_column: Option<u32>,
     /// `None` when the caller passed no theme — the scroll-math and index
     /// paths, where only the cell's *width* matters and nothing is drawn.
     pub style: Option<ViewTokenStyle>,
@@ -694,6 +752,7 @@ pub fn resolve_inline_hints(
             text: vtext.text.clone(),
             position: vtext.position,
             gravity: vtext.gravity,
+            pad_to_column: vtext.pad_to_column,
             style: theme.map(|t| token_style_from_ratatui(vtext.resolved_style(t))),
         })
         .collect()
@@ -735,20 +794,23 @@ pub fn splice_inline_virtual_text(
     // order. `before` stores the raw hint text — its leading-space padding
     // depends on whether the anchor cell is a newline, decided while
     // walking the token stream below.
-    let mut before: HashMap<usize, Vec<(String, Option<ViewTokenStyle>)>> = HashMap::new();
+    let mut before: HashMap<usize, Vec<(String, Option<ViewTokenStyle>, Option<u32>)>> =
+        HashMap::new();
     let mut after: HashMap<usize, Vec<InlineHintCell>> = HashMap::new();
     for hint in hints {
         match hint.position {
             VirtualTextPosition::BeforeChar => {
-                before
-                    .entry(hint.anchor)
-                    .or_default()
-                    .push((hint.text.clone(), hint.style.clone()));
+                before.entry(hint.anchor).or_default().push((
+                    hint.text.clone(),
+                    hint.style.clone(),
+                    hint.pad_to_column,
+                ));
             }
             VirtualTextPosition::AfterChar => {
                 after.entry(hint.anchor).or_default().push(InlineHintCell {
-                    text: format!(" {}", hint.text),
+                    text: hint.text.clone(),
                     style: hint.style.clone(),
+                    pad_to_column: hint.pad_to_column,
                 });
             }
             // Line-level positions are handled by `inject_virtual_lines`.
@@ -762,7 +824,11 @@ pub fn splice_inline_virtual_text(
         style,
     };
 
-    let mut out: Vec<ViewTokenWire> = Vec::with_capacity(tokens.len());
+    let mut out = SplicedRow {
+        tokens: Vec::with_capacity(tokens.len()),
+        col: 0,
+        row_end: Vec::new(),
+    };
     // Whether nothing of this line's own source has been emitted yet. Only
     // used to recognise a newline that *is* the whole line — an empty line —
     // whose hints have no neighbouring text to be separated from.
@@ -791,8 +857,11 @@ pub fn splice_inline_virtual_text(
                             });
                         }
                         seg_start = anchor;
-                        for (text, style) in hints {
-                            out.push(virt(format!("{text} "), style.clone()));
+                        for (text, style, target) in hints {
+                            match target {
+                                Some(t) => out.defer_to_row_end(text.clone(), style.clone(), *t),
+                                None => out.push(virt(format!("{text} "), style.clone())),
+                            }
                         }
                     }
                     seg.push(ch);
@@ -805,7 +874,14 @@ pub fn splice_inline_virtual_text(
                         });
                         seg_start = token_start + byte_idx;
                         for hint in hints {
-                            out.push(virt(hint.text.clone(), hint.style.clone()));
+                            match hint.pad_to_column {
+                                Some(t) => {
+                                    out.defer_to_row_end(hint.text.clone(), hint.style.clone(), t)
+                                }
+                                None => {
+                                    out.push(virt(format!(" {}", hint.text), hint.style.clone()))
+                                }
+                            }
                         }
                     }
                 }
@@ -831,7 +907,11 @@ pub fn splice_inline_virtual_text(
                 let anchor_is_newline = matches!(kind, ViewTokenWireKind::Newline);
                 let empty_line = anchor_is_newline && line_start_cell;
                 if let Some(hints) = before.get(&anchor) {
-                    for (text, style) in hints {
+                    for (text, style, target) in hints {
+                        if let Some(t) = target {
+                            out.defer_to_row_end(text.clone(), style.clone(), *t);
+                            continue;
+                        }
                         let padded = match (anchor_is_newline, empty_line) {
                             (_, true) => text.clone(),
                             (true, false) => format!(" {text} "),
@@ -844,7 +924,12 @@ pub fn splice_inline_virtual_text(
                 out.push(token);
                 if let Some(hints) = after_hints {
                     for hint in hints {
-                        out.push(virt(hint.text.clone(), hint.style.clone()));
+                        match hint.pad_to_column {
+                            Some(t) => {
+                                out.defer_to_row_end(hint.text.clone(), hint.style.clone(), t)
+                            }
+                            None => out.push(virt(format!(" {}", hint.text), hint.style.clone())),
+                        }
                     }
                 }
             }
@@ -854,7 +939,8 @@ pub fn splice_inline_virtual_text(
         }
     }
 
-    out
+    out.flush_row_end();
+    out.tokens
 }
 
 #[cfg(test)]
@@ -946,5 +1032,150 @@ mod soft_break_tests {
             })
             .collect();
         assert_eq!(tail, "onetwo", "no source character may be dropped");
+    }
+}
+
+/// Where a hint anchored on a line break is drawn — the contract markdown
+/// compose's code-block rails are anchored by.
+#[cfg(test)]
+mod line_break_hint_tests {
+    use super::*;
+    use crate::view::virtual_text::MarkerGravity;
+
+    fn line_with_break() -> Vec<ViewTokenWire> {
+        let mut tokens: Vec<ViewTokenWire> = "one"
+            .char_indices()
+            .map(|(i, c)| ViewTokenWire {
+                source_offset: Some(i),
+                kind: ViewTokenWireKind::Text(c.to_string()),
+                style: None,
+            })
+            .collect();
+        tokens.push(ViewTokenWire {
+            source_offset: Some(3),
+            kind: ViewTokenWireKind::Newline,
+            style: None,
+        });
+        tokens
+    }
+
+    fn hint(anchor: usize, position: VirtualTextPosition) -> InlineHint {
+        InlineHint {
+            anchor,
+            text: "|".to_string(),
+            position,
+            gravity: MarkerGravity::Right,
+            pad_to_column: None,
+            style: None,
+        }
+    }
+
+    /// Cells after the break — i.e. the head of the next row.
+    fn past_the_break(tokens: &[ViewTokenWire]) -> String {
+        let br = tokens
+            .iter()
+            .position(|t| matches!(t.kind, ViewTokenWireKind::Newline))
+            .expect("the line break survives the splice");
+        tokens[br + 1..]
+            .iter()
+            .filter_map(|t| match &t.kind {
+                ViewTokenWireKind::Text(s) => Some(s.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// So nothing that must stay on its own row can be anchored that way.
+    #[test]
+    fn an_after_hint_on_a_line_break_is_drawn_past_it() {
+        let out = splice_inline_virtual_text(
+            line_with_break(),
+            &[hint(3, VirtualTextPosition::AfterChar)],
+        );
+        assert_eq!(past_the_break(&out), " |");
+    }
+
+    #[test]
+    fn a_before_hint_on_a_line_break_is_drawn_at_the_end_of_its_line() {
+        let out = splice_inline_virtual_text(
+            line_with_break(),
+            &[hint(3, VirtualTextPosition::BeforeChar)],
+        );
+        assert_eq!(past_the_break(&out), "");
+        let head: String = out
+            .iter()
+            .take_while(|t| !matches!(t.kind, ViewTokenWireKind::Newline))
+            .filter_map(|t| match &t.kind {
+                ViewTokenWireKind::Text(s) => Some(s.clone()),
+                _ => None,
+            })
+            .collect();
+        // Padded on both sides — a caller sizing its own padding counts this.
+        assert_eq!(head, "one | ");
+    }
+
+    /// A target column is measured against the row being spliced, so the same
+    /// hint text lands on the same column whatever the content ahead of it —
+    /// the property that lets an emitter working from a stale snapshot still
+    /// place a column correctly.
+    #[test]
+    fn a_padded_hint_ends_at_its_target_column_whatever_precedes_it() {
+        let col_of_glyph = |text: &str| {
+            let tokens: Vec<ViewTokenWire> = text
+                .char_indices()
+                .map(|(i, c)| ViewTokenWire {
+                    source_offset: Some(i),
+                    kind: ViewTokenWireKind::Text(c.to_string()),
+                    style: None,
+                })
+                .chain(std::iter::once(ViewTokenWire {
+                    source_offset: Some(text.len()),
+                    kind: ViewTokenWireKind::Newline,
+                    style: None,
+                }))
+                .collect();
+            let mut h = hint(text.len(), VirtualTextPosition::BeforeChar);
+            h.pad_to_column = Some(20);
+            let out = splice_inline_virtual_text(tokens, &[h]);
+            let rendered: String = out
+                .iter()
+                .take_while(|t| !matches!(t.kind, ViewTokenWireKind::Newline))
+                .filter_map(|t| match &t.kind {
+                    ViewTokenWireKind::Text(s) => Some(s.clone()),
+                    _ => None,
+                })
+                .collect();
+            rendered.chars().count()
+        };
+        assert_eq!(col_of_glyph("one"), 20);
+        assert_eq!(col_of_glyph("one two three"), 20);
+        // Past the target there is nothing left to pad with, so the row simply
+        // runs long rather than the glyph being dropped.
+        assert_eq!(col_of_glyph(&"x".repeat(25)), 26);
+    }
+
+    /// Why the break is a safe anchor: deleting the character in front of it
+    /// does not move the hint to another row.
+    #[test]
+    fn deleting_the_last_character_does_not_move_a_break_anchored_hint() {
+        let tokens: Vec<ViewTokenWire> = vec![
+            ViewTokenWire {
+                source_offset: Some(0),
+                kind: ViewTokenWireKind::Text("o".to_string()),
+                style: None,
+            },
+            ViewTokenWire {
+                source_offset: Some(1),
+                kind: ViewTokenWireKind::Text("n".to_string()),
+                style: None,
+            },
+            ViewTokenWire {
+                source_offset: Some(2),
+                kind: ViewTokenWireKind::Newline,
+                style: None,
+            },
+        ];
+        let out = splice_inline_virtual_text(tokens, &[hint(2, VirtualTextPosition::BeforeChar)]);
+        assert_eq!(past_the_break(&out), "");
     }
 }

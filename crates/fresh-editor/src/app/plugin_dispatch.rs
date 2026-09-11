@@ -488,6 +488,7 @@ impl Editor {
                 color,
                 use_bg,
                 before,
+                epoch,
             } => {
                 self.handle_add_virtual_text(
                     buffer_id,
@@ -497,6 +498,7 @@ impl Editor {
                     color,
                     use_bg,
                     before,
+                    epoch,
                 );
             }
             PluginCommand::AddVirtualTextStyled {
@@ -509,6 +511,8 @@ impl Editor {
                 bold,
                 italic,
                 before,
+                epoch,
+                pad_to_column,
             } => {
                 self.handle_add_virtual_text_styled(
                     buffer_id,
@@ -520,6 +524,8 @@ impl Editor {
                     bold,
                     italic,
                     before,
+                    epoch,
+                    pad_to_column,
                 );
             }
             PluginCommand::RemoveVirtualText {

@@ -3841,6 +3841,9 @@ pub enum PluginCommand {
         color: (u8, u8, u8),
         use_bg: bool, // true = use color as background, false = use as foreground
         before: bool, // true = before char, false = after char
+        /// See [`Self::AddVirtualTextStyled::epoch`].
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        epoch: Option<u64>,
     },
 
     /// Add virtual text with full styling — fg/bg can be RGB or theme
@@ -3858,6 +3861,19 @@ pub enum PluginCommand {
         bold: bool,
         italic: bool,
         before: bool,
+        /// Buffer version `position` was computed against, auto-stamped from the
+        /// hook epoch; the editor remaps it forward so a lagged hook's coordinate
+        /// still anchors where it meant. `None` = anchor verbatim.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        epoch: Option<u64>,
+        /// Left-pad the hint so it *ends* at this column of its rendered row,
+        /// measured at paint time. Lets a decoration that draws a column — a
+        /// code block's right-hand rail — hold that column without the emitter
+        /// knowing the row's live width, which it cannot: it computes against a
+        /// hook epoch the buffer has already moved past. `None` = the usual
+        /// one-space inlay padding.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pad_to_column: Option<u32>,
     },
 
     /// Remove a virtual text by ID

@@ -801,7 +801,8 @@ pub struct JsEditorApi {
     /// the `lines_changed` epoch belongs to, and that buffer's version. `None`
     /// when no epoch-bearing hook is on the stack. Set by `emit_to` around
     /// handler invocation and read by the coordinate-bearing command senders
-    /// (conceals, soft-breaks, virtual lines) via [`Self::hook_epoch_for`], which
+    /// (conceals, soft-breaks, virtual lines, inline hints) via
+    /// [`Self::hook_epoch_for`], which
     /// returns the epoch only for commands targeting that same buffer — versions
     /// are per-buffer, so stamping buffer A's version on a command for buffer B
     /// would remap against unrelated deltas. The plugin never threads the epoch
@@ -4616,6 +4617,7 @@ impl JsEditorApi {
                 color: (r, g, b),
                 use_bg,
                 before,
+                epoch: self.hook_epoch_for(buffer_id),
             })
             .is_ok()
     }
@@ -4668,6 +4670,7 @@ impl JsEditorApi {
         let bg = parse_color_spec("bg", &options);
         let bold: bool = options.get("bold").unwrap_or(false);
         let italic: bool = options.get("italic").unwrap_or(false);
+        let pad_to_column: Option<u32> = options.get("padToColumn").ok();
 
         // Track virtual text ID for cleanup on unload.
         self.plugin_tracked_state
@@ -4689,6 +4692,8 @@ impl JsEditorApi {
                 bold,
                 italic,
                 before,
+                epoch: self.hook_epoch_for(buffer_id),
+                pad_to_column,
             });
         Ok(true)
     }

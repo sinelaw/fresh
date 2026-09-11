@@ -605,3 +605,241 @@ fn prose_below_a_block_is_not_framed_when_the_view_starts_mid_document() {
         "back at the top, the one real block still frames.\nScreen:\n{screen}"
     );
 }
+
+// The two below assert on the frame drawn BETWEEN an edit and the plugin's next
+// decoration pass — the one a person watches while typing, and the only one the
+// glitch survives in. No timing needed: neither `apply_event` nor `render`
+// drains the plugin's replies, so the lagged frame is what the assertion sees.
+
+#[cfg(feature = "plugins")]
+const EDITED_DOC: &str = "# Doc\n\n```rust\nfn answer() -> u32 { 42 }\n```\n\nTail.\n";
+#[cfg(feature = "plugins")]
+const EDITED_CODE: &str = "fn answer() -> u32 { 42 }";
+
+/// A framed block with its rails settled, and its code line's byte range.
+#[cfg(feature = "plugins")]
+fn settled_block() -> (EditorTestHarness, tempfile::TempDir, std::ops::Range<usize>) {
+    let (mut harness, tmp) = compose_harness(EDITED_DOC);
+    harness
+        .wait_until(|h| h.screen_to_string().contains('└'))
+        .expect("compose mode should frame the fenced block");
+    park_cursor_at_top(&mut harness);
+    harness
+        .wait_until_stable(|h| h.screen_to_string().contains('└'))
+        .expect("the frame should settle before the edit under test");
+
+    let start = EDITED_DOC.find(EDITED_CODE).expect("code line in the doc");
+    (harness, tmp, start..start + EDITED_CODE.len())
+}
+
+/// The columns of the top border's corners, and the row the code sits on.
+#[cfg(feature = "plugins")]
+fn border_and_body(screen: &str) -> ((usize, usize), String) {
+    let border = screen
+        .lines()
+        .find(|l| l.contains('┌') && !l.contains('┬'))
+        .expect("top border on screen");
+    let cols: Vec<usize> = border
+        .chars()
+        .enumerate()
+        .filter(|(_, c)| "┌┐─".contains(*c))
+        .map(|(i, _)| i)
+        .collect();
+    let body = screen
+        .lines()
+        .find(|l| l.contains("fn answer"))
+        .unwrap_or_else(|| panic!("code line on screen.\nScreen:\n{screen}"))
+        .to_string();
+    ((cols[0], cols[cols.len() - 1]), body)
+}
+
+/// Deleting the last character of a code line must not take the right edge with
+/// it: a rail anchored after that character used to collapse onto the line break
+/// and be drawn on the row below, walking the edge across the page.
+///
+/// The rail must also still be *on the corner*: the renderer pads it to the
+/// frame's column from the live row, so the lagging pass cannot move the edge.
+#[cfg(feature = "plugins")]
+#[test]
+fn deleting_the_last_character_of_a_code_line_keeps_the_rail_on_that_line() {
+    use fresh::model::event::Event;
+
+    let (mut harness, _tmp, code) = settled_block();
+    let cursor_id = harness.editor().active_cursors().primary_id();
+
+    harness
+        .apply_event(Event::Delete {
+            range: code.end - 1..code.end,
+            deleted_text: "}".to_string(),
+            cursor_id,
+        })
+        .unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    let ((left, right), body) = border_and_body(&screen);
+    let rails: Vec<usize> = body
+        .chars()
+        .enumerate()
+        .filter(|(_, c)| *c == '│')
+        .map(|(i, _)| i)
+        .collect();
+
+    assert_eq!(
+        rails.len(),
+        2,
+        "the code row lost a rail to the keystroke that deleted the character \
+         the rail trailed — it was drawn on the row below instead.\nScreen:\n{screen}"
+    );
+    assert_eq!(rails[0], left, "the opening rail moved.\nScreen:\n{screen}");
+    assert_eq!(
+        rails[1], right,
+        "the block's right edge moved while a keystroke was in flight.\nScreen:\n{screen}"
+    );
+}
+
+/// The mirror case: an insertion at the end of the line lands *after* a hint
+/// anchored on the old last character, drawing the typed character outside the
+/// box. Right gravity on the line break keeps the rail in front of it.
+#[cfg(feature = "plugins")]
+#[test]
+fn typing_at_the_end_of_a_code_line_stays_inside_the_frame() {
+    use fresh::model::event::Event;
+
+    let (mut harness, _tmp, code) = settled_block();
+    let cursor_id = harness.editor().active_cursors().primary_id();
+
+    harness
+        .apply_event(Event::Insert {
+            position: code.end,
+            text: "Z".to_string(),
+            cursor_id,
+        })
+        .unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    let ((_, right), body) = border_and_body(&screen);
+
+    let z = body
+        .chars()
+        .position(|c| c == 'Z')
+        .unwrap_or_else(|| panic!("the typed character should be on screen.\nScreen:\n{screen}"));
+    let closing = body
+        .char_indices()
+        .filter(|(_, c)| *c == '│')
+        .map(|(i, _)| body[..i].chars().count())
+        .next_back()
+        .expect("a closing rail on the code row");
+
+    assert!(
+        z < closing,
+        "the character just typed was drawn OUTSIDE the block: it is at column \
+         {z}, past the rail that closes its row at {closing}.\nScreen:\n{screen}"
+    );
+    // Exactly on the corner, mid-keystroke: the renderer pads the rail from the
+    // row it is drawing, so no lag of the emitting pass can move the edge.
+    assert_eq!(
+        closing, right,
+        "the block's right edge moved while a keystroke was in flight.\nScreen:\n{screen}"
+    );
+}
+
+/// Every blank row of a fenced block keeps its rails as lines are inserted into
+/// it — the invariant a per-line decoration cannot state for itself.
+///
+/// Enter in a markdown buffer is `markdown_source`'s handler, which edits
+/// through `insertAtCursor` rather than the keyboard action, so it bypassed
+/// both paths that maintain the plugin line-offer set. A line created that way
+/// inherited the byte range of one already offered and was never offered again,
+/// so it was drawn with no sides — and the lines below it merely *shifted*,
+/// staying "seen", so their decorations were evicted by id collision (the ids
+/// are derived from byte offsets) with nothing to re-add them. Both show up as
+/// blank rows inside the box, and they accumulate with every Enter.
+#[cfg(feature = "plugins")]
+#[test]
+fn blank_rows_inserted_into_a_block_keep_their_rails() {
+    use crate::common::harness::{copy_plugin, copy_plugin_lib};
+    use crate::common::tracing::init_tracing_from_env;
+
+    init_tracing_from_env();
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().join("project");
+    std::fs::create_dir(&project_root).unwrap();
+    let plugins_dir = project_root.join("plugins");
+    std::fs::create_dir(&plugins_dir).unwrap();
+    copy_plugin(&plugins_dir, "markdown_compose");
+    // The plugin that owns Enter in a markdown buffer, and whose edit path is
+    // the one under test.
+    copy_plugin(&plugins_dir, "markdown_source");
+    copy_plugin_lib(&plugins_dir);
+
+    let md_path = project_root.join("code.md");
+    std::fs::write(
+        &md_path,
+        "# Doc\n\n```rust\nfn a() {}\n\nfn b() {}\n```\n\nTail.\n",
+    )
+    .unwrap();
+
+    let mut harness = EditorTestHarness::create(
+        100,
+        30,
+        HarnessOptions::new()
+            .with_working_dir(project_root.clone())
+            .without_empty_plugins_dir()
+            .with_full_grammar_registry(),
+    )
+    .unwrap();
+    harness.open_file(&md_path).unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.wait_for_prompt().unwrap();
+    harness.type_text("Toggle Compose").unwrap();
+    harness.wait_for_screen_contains("Toggle Compose").unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.wait_for_prompt_closed().unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains('└'))
+        .expect("compose mode should frame the fenced block");
+
+    // Onto the blank line inside the block, then open more of them.
+    harness
+        .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+        .unwrap();
+    for _ in 0..4 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    }
+    harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+    harness.wait_for_async_quiescence(6).unwrap();
+    for _ in 0..3 {
+        harness
+            .send_key(KeyCode::Enter, KeyModifiers::NONE)
+            .unwrap();
+        harness.wait_for_async_quiescence(6).unwrap();
+    }
+    harness.wait_for_async_quiescence(8).unwrap();
+
+    let screen = harness.screen_to_string();
+    let (left, right) = frame_edges(&screen, "┌").expect("top border on screen");
+    let rows: Vec<&str> = screen.lines().collect();
+    let top = rows.iter().position(|l| l.contains('┌')).unwrap();
+    let bottom = rows.iter().position(|l| l.contains('└')).unwrap();
+
+    for (i, row) in rows.iter().enumerate().take(bottom).skip(top + 1) {
+        let rails: Vec<usize> = row
+            .chars()
+            .enumerate()
+            .filter(|(_, c)| *c == '│')
+            .map(|(j, _)| j)
+            .collect();
+        assert_eq!(
+            (rails.first().copied(), rails.last().copied()),
+            (Some(left), Some(right)),
+            "row {i} of the block is missing a side.\nScreen:\n{screen}"
+        );
+    }
+}
