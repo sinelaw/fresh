@@ -3133,6 +3133,221 @@ mod tests {
     }
 
     #[test]
+    fn test_ocaml_ecosystem_highlight_categories() {
+        let mut registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        registry.apply_language_config(&crate::config::Config::default().languages);
+        let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
+
+        let ocaml = "(* startup file *)\nlet rec identity x = x\n";
+        let ocaml_buffer = Buffer::from_str(ocaml, 0, test_fs());
+        let mut ocaml_engine = HighlightEngine::for_file(Path::new(".ocamlinit"), None, &registry);
+        assert_eq!(ocaml_engine.backend_name(), "textmate");
+        ocaml_engine.highlight_viewport(&ocaml_buffer, 0, ocaml_buffer.len(), &theme, 0);
+        assert_eq!(
+            ocaml_engine.category_at_position(ocaml.find("startup").unwrap()),
+            Some(HighlightCategory::Comment)
+        );
+        assert_eq!(
+            ocaml_engine.category_at_position(ocaml.find("let").unwrap()),
+            Some(HighlightCategory::Keyword)
+        );
+
+        let coq = "(* outer (* nested *) comment *)\nTheorem identity : forall x, x = x.\nProof. intros. reflexivity. Qed.\n";
+        let coq_buffer = Buffer::from_str(coq, 0, test_fs());
+        let coq_project = tempfile::tempdir().unwrap();
+        std::fs::write(coq_project.path().join("_CoqProject"), "").unwrap();
+        let coq_path = coq_project.path().join("identity.v");
+        let detected = crate::primitives::detected_language::DetectedLanguage::from_path(
+            &coq_path,
+            None,
+            &registry,
+            &crate::config::Config::default().languages,
+        );
+        assert_eq!(detected.name, "coq");
+        assert_eq!(detected.display_name, "Coq/Rocq");
+        let mut coq_engine = detected.highlighter;
+        assert_eq!(coq_engine.backend_name(), "textmate");
+        coq_engine.highlight_viewport(&coq_buffer, 0, coq_buffer.len(), &theme, 0);
+        for (needle, expected) in [
+            ("nested", HighlightCategory::Comment),
+            ("Theorem", HighlightCategory::Keyword),
+            ("identity", HighlightCategory::Function),
+            ("forall", HighlightCategory::Keyword),
+            ("reflexivity", HighlightCategory::Function),
+        ] {
+            assert_eq!(
+                coq_engine.category_at_position(coq.find(needle).unwrap()),
+                Some(expected),
+                "unexpected Coq/Rocq category for {needle:?}"
+            );
+        }
+
+        let dune = "(library\n (name example)\n (libraries unix)\n (action (run %{bin:tool} --version)))\n";
+        let dune_buffer = Buffer::from_str(dune, 0, test_fs());
+        let mut dune_engine = HighlightEngine::for_file(Path::new("dune"), None, &registry);
+        assert_eq!(dune_engine.backend_name(), "textmate");
+        dune_engine.highlight_viewport(&dune_buffer, 0, dune_buffer.len(), &theme, 0);
+        for (needle, expected) in [
+            ("library", HighlightCategory::Keyword),
+            ("name", HighlightCategory::Type),
+            ("run", HighlightCategory::Function),
+            ("%{bin:tool}", HighlightCategory::Variable),
+        ] {
+            assert_eq!(
+                dune_engine.category_at_position(dune.find(needle).unwrap()),
+                Some(expected),
+                "unexpected Dune category for {needle:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_dafny_highlight_categories() {
+        let mut registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        registry.apply_language_config(&crate::config::Config::default().languages);
+        let mut engine = HighlightEngine::for_file(Path::new("verified.dfy"), None, &registry);
+        assert_eq!(engine.backend_name(), "textmate");
+
+        let content = concat!(
+            "/* outer /* nested */ comment */\n",
+            "@verify(true)\n",
+            "method Max(x: int, y: int) returns (m: int)\n",
+            "  requires x >= 0\n",
+            "  ensures m >= x && m >= y\n",
+            "{\n",
+            "  var message := @\"verified \"\"value\"\"\";\n",
+            "  m := if x > y then x else y;\n",
+            "  print message;\n",
+            "}\n",
+        );
+        let buffer = Buffer::from_str(content, 0, test_fs());
+        let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
+        engine.highlight_viewport(&buffer, 0, buffer.len(), &theme, 0);
+
+        for (needle, expected) in [
+            ("nested", HighlightCategory::Comment),
+            ("@verify", HighlightCategory::Attribute),
+            ("method", HighlightCategory::Keyword),
+            ("Max", HighlightCategory::Function),
+            ("int", HighlightCategory::Type),
+            ("requires", HighlightCategory::Keyword),
+            ("0", HighlightCategory::Number),
+            ("verified", HighlightCategory::String),
+            (">=", HighlightCategory::Operator),
+        ] {
+            assert_eq!(
+                engine.category_at_position(content.find(needle).unwrap()),
+                Some(expected),
+                "unexpected Dafny category for {needle:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_nginx_highlight_categories() {
+        let mut registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        registry.apply_language_config(&crate::config::Config::default().languages);
+        let mut engine = HighlightEngine::for_file(Path::new("nginx.conf"), None, &registry);
+        assert_eq!(engine.backend_name(), "textmate");
+
+        let content = concat!(
+            "# TLS reverse proxy\n",
+            "events { worker_connections 1024; }\n",
+            "http {\n",
+            "  upstream backend {\n",
+            "    server 127.0.0.1:8080;\n",
+            "  }\n",
+            "  server {\n",
+            "    listen 443 ssl;\n",
+            "    location ~* \\.(?:css|js)$ {\n",
+            "      proxy_set_header Host $host;\n",
+            "      proxy_pass http://backend;\n",
+            "      add_header X-Trace \"$request_id\";\n",
+            "    }\n",
+            "  }\n",
+            "}\n",
+        );
+        let buffer = Buffer::from_str(content, 0, test_fs());
+        let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
+        engine.highlight_viewport(&buffer, 0, buffer.len(), &theme, 0);
+
+        for (needle, expected) in [
+            ("TLS reverse proxy", HighlightCategory::Comment),
+            ("events", HighlightCategory::Keyword),
+            ("upstream", HighlightCategory::Keyword),
+            ("listen", HighlightCategory::Function),
+            ("443", HighlightCategory::Number),
+            ("~*", HighlightCategory::Operator),
+            ("\\.(?:css|js)$", HighlightCategory::String),
+            ("$host", HighlightCategory::Variable),
+            ("http://backend", HighlightCategory::String),
+            ("$request_id", HighlightCategory::Variable),
+        ] {
+            assert_eq!(
+                engine.category_at_position(content.find(needle).unwrap()),
+                Some(expected),
+                "unexpected Nginx category for {needle:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_smtlib2_highlight_categories() {
+        let mut registry =
+            GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());
+        registry.apply_language_config(&crate::config::Config::default().languages);
+        let mut engine = HighlightEngine::for_file(Path::new("constraints.smt2"), None, &registry);
+        assert_eq!(engine.backend_name(), "textmate");
+
+        let content = concat!(
+            "; prove a small arithmetic constraint\n",
+            "(set-logic QF_LIA)\n",
+            "(set-option :produce-models true)\n",
+            "(declare-const x Int)\n",
+            "(declare-fun bounded (Int) Bool)\n",
+            "(assert (! (and (> x 10) (bounded x)) :named |main constraint|))\n",
+            "(assert (= #b1010 #x0A))\n",
+            "(assert (= ((_ extract 3 0) #b1010) (_ bv10 4)))\n",
+            "(echo \"quote: \"\"ok\"\"\")\n",
+            "(check-sat)\n",
+            "(get-model)\n",
+        );
+        let buffer = Buffer::from_str(content, 0, test_fs());
+        let theme = Theme::load_builtin(theme::THEME_LIGHT).unwrap();
+        engine.highlight_viewport(&buffer, 0, buffer.len(), &theme, 0);
+
+        for (needle, expected) in [
+            ("prove a small", HighlightCategory::Comment),
+            ("set-logic", HighlightCategory::Keyword),
+            ("QF_LIA", HighlightCategory::Constant),
+            (":produce-models", HighlightCategory::Attribute),
+            ("true", HighlightCategory::Number),
+            ("declare-const", HighlightCategory::Keyword),
+            ("x Int", HighlightCategory::Variable),
+            ("Int", HighlightCategory::Type),
+            ("bounded", HighlightCategory::Function),
+            ("and", HighlightCategory::Operator),
+            ("10", HighlightCategory::Number),
+            (":named", HighlightCategory::Attribute),
+            ("|main constraint|", HighlightCategory::Variable),
+            ("#b1010", HighlightCategory::Number),
+            ("extract", HighlightCategory::Function),
+            ("bv10", HighlightCategory::Number),
+            ("quote:", HighlightCategory::String),
+            ("check-sat", HighlightCategory::Keyword),
+        ] {
+            assert_eq!(
+                engine.category_at_position(content.find(needle).unwrap()),
+                Some(expected),
+                "unexpected SMT-LIB 2 category for {needle:?}"
+            );
+        }
+    }
+
+    #[test]
     fn test_fish_indented_control_keywords_stay_keywords() {
         let registry =
             GrammarRegistry::load(&crate::primitives::grammar::LocalGrammarLoader::embedded_only());

@@ -213,6 +213,16 @@ pub const DART_GRAMMAR: &str = include_str!("../../grammars/dart.sublime-syntax"
 pub const ELIXIR_GRAMMAR: &str = include_str!("../../grammars/elixir.sublime-syntax");
 /// Embedded F# grammar
 pub const FSHARP_GRAMMAR: &str = include_str!("../../grammars/fsharp.sublime-syntax");
+/// Embedded Coq/Rocq proof-assistant grammar
+pub const COQ_GRAMMAR: &str = include_str!("../../grammars/coq.sublime-syntax");
+/// Embedded Dune build-language grammar
+pub const DUNE_GRAMMAR: &str = include_str!("../../grammars/dune.sublime-syntax");
+/// Embedded Dafny verification-language grammar
+pub const DAFNY_GRAMMAR: &str = include_str!("../../grammars/dafny.sublime-syntax");
+/// Embedded Nginx configuration grammar
+pub const NGINX_GRAMMAR: &str = include_str!("../../grammars/nginx.sublime-syntax");
+/// Embedded SMT-LIB 2 / Z3 input grammar
+pub const SMTLIB2_GRAMMAR: &str = include_str!("../../grammars/smtlib2.sublime-syntax");
 /// Embedded Nix grammar
 pub const NIX_GRAMMAR: &str = include_str!("../../grammars/nix.sublime-syntax");
 /// Embedded HCL/Terraform grammar
@@ -785,6 +795,11 @@ impl GrammarRegistry {
             (DART_GRAMMAR, "Dart"),
             (ELIXIR_GRAMMAR, "Elixir"),
             (FSHARP_GRAMMAR, "FSharp"),
+            (COQ_GRAMMAR, "Coq/Rocq"),
+            (DUNE_GRAMMAR, "Dune"),
+            (DAFNY_GRAMMAR, "Dafny"),
+            (NGINX_GRAMMAR, "Nginx"),
+            (SMTLIB2_GRAMMAR, "SMT-LIB 2"),
             (NIX_GRAMMAR, "Nix"),
             (HCL_GRAMMAR, "HCL"),
             (PROTOBUF_GRAMMAR, "Protocol Buffers"),
@@ -907,6 +922,13 @@ impl GrammarRegistry {
             ("gitignore", "Gitignore"),
             ("fsharp", "FSharp"),
             ("f#", "FSharp"),
+            ("coq", "Coq/Rocq"),
+            ("rocq", "Coq/Rocq"),
+            ("dfy", "Dafny"),
+            ("smt", "SMT-LIB 2"),
+            ("smt2", "SMT-LIB 2"),
+            ("smt-lib", "SMT-LIB 2"),
+            ("z3", "SMT-LIB 2"),
             ("terraform", "HCL"),
             ("tf", "HCL"),
             ("po", "Gettext PO"),
@@ -1275,6 +1297,20 @@ impl GrammarRegistry {
             }
             for filename in &entry.filenames {
                 by_filename.entry(filename.clone()).or_insert(idx);
+            }
+        }
+
+        // `short_name` is the preferred alias exposed as metadata, but every
+        // declared alias must remain usable for lookup (for example both
+        // `coq` and `rocq`, or `bash`, `shell`, and `sh`).
+        for (short, full) in Self::built_in_aliases() {
+            if let Some(&idx) = by_name.get(&full.to_lowercase()) {
+                by_name.entry(short.to_lowercase()).or_insert(idx);
+            }
+        }
+        for (short, full) in &self.aliases {
+            if let Some(&idx) = by_name.get(&full.to_lowercase()) {
+                by_name.entry(short.to_lowercase()).or_insert(idx);
             }
         }
 
@@ -2484,6 +2520,121 @@ mod tests {
             assert_eq!(entry.display_name, name);
             assert!(entry.engines.syntect.is_some());
             assert!(entry.engines.tree_sitter.is_none());
+        }
+    }
+
+    #[test]
+    fn test_ocaml_ecosystem_embedded_grammars_load_and_resolve() {
+        for (grammar, name) in [(COQ_GRAMMAR, "Coq/Rocq"), (DUNE_GRAMMAR, "Dune")] {
+            SyntaxDefinition::load_from_str(grammar, true, Some(name))
+                .unwrap_or_else(|e| panic!("{name} grammar should parse: {e}"));
+        }
+
+        let mut registry = GrammarRegistry::default();
+        let config = crate::config::Config::default();
+        registry.apply_language_config(&config.languages);
+
+        for (path, expected) in [
+            ("proof.coq", "Coq/Rocq"),
+            ("_CoqProject", "Coq/Rocq"),
+            ("dune", "Dune"),
+            ("dune-project", "Dune"),
+            ("dune-workspace.dev", "Dune"),
+            ("library.dune", "Dune"),
+            (".ocamlinit", "OCaml"),
+        ] {
+            let entry = registry
+                .find_by_path(Path::new(path), None)
+                .unwrap_or_else(|| panic!("{path} should resolve"));
+            assert_eq!(entry.display_name, expected, "for {path}");
+            assert!(entry.engines.syntect.is_some(), "for {path}");
+        }
+
+        let vlang = registry
+            .find_by_path(Path::new("main.v"), None)
+            .expect(".v must remain assigned to V for compatibility");
+        assert_eq!(vlang.display_name, "V");
+
+        assert_eq!(
+            registry
+                .find_by_name("rocq")
+                .expect("Rocq alias should resolve")
+                .display_name,
+            "Coq/Rocq"
+        );
+    }
+
+    #[test]
+    fn test_dafny_embedded_grammar_loads_and_resolves() {
+        let syntax = SyntaxDefinition::load_from_str(DAFNY_GRAMMAR, true, Some("Dafny"))
+            .expect("Dafny grammar should parse");
+        assert!(syntax.file_extensions.iter().any(|ext| ext == "dfy"));
+
+        let mut registry = GrammarRegistry::default();
+        registry.apply_language_config(&crate::config::Config::default().languages);
+        let entry = registry
+            .find_by_path(Path::new("verified.dfy"), None)
+            .expect(".dfy files should resolve");
+        assert_eq!(entry.display_name, "Dafny");
+        assert!(entry.engines.syntect.is_some());
+        assert!(entry.engines.tree_sitter.is_none());
+        assert_eq!(
+            registry
+                .find_by_name("dfy")
+                .expect("dfy alias should resolve")
+                .display_name,
+            "Dafny"
+        );
+    }
+
+    #[test]
+    fn test_nginx_embedded_grammar_loads_and_resolves() {
+        let syntax = SyntaxDefinition::load_from_str(NGINX_GRAMMAR, true, Some("Nginx"))
+            .expect("Nginx grammar should parse");
+        assert!(syntax.file_extensions.iter().any(|ext| ext == "nginx"));
+
+        let mut registry = GrammarRegistry::default();
+        registry.apply_language_config(&crate::config::Config::default().languages);
+        for path in [
+            "nginx.conf",
+            "reverse-proxy.nginx",
+            "reverse-proxy.nginx.conf",
+            "/etc/nginx/conf.d/default.conf",
+            "/etc/nginx/sites-enabled/default",
+        ] {
+            let entry = registry
+                .find_by_path(Path::new(path), None)
+                .unwrap_or_else(|| panic!("{path} should resolve"));
+            assert_eq!(entry.display_name, "Nginx", "for {path}");
+            assert!(entry.engines.syntect.is_some(), "for {path}");
+            assert!(entry.engines.tree_sitter.is_none(), "for {path}");
+        }
+    }
+
+    #[test]
+    fn test_smtlib2_embedded_grammar_loads_and_resolves() {
+        let syntax = SyntaxDefinition::load_from_str(SMTLIB2_GRAMMAR, true, Some("SMT-LIB 2"))
+            .expect("SMT-LIB 2 grammar should parse");
+        assert!(syntax.file_extensions.iter().any(|ext| ext == "smt2"));
+
+        let mut registry = GrammarRegistry::default();
+        registry.apply_language_config(&crate::config::Config::default().languages);
+        let entry = registry
+            .find_by_path(Path::new("constraints.smt2"), None)
+            .expect(".smt2 files should resolve");
+        assert_eq!(entry.display_name, "SMT-LIB 2");
+        assert!(entry.engines.syntect.is_some());
+        assert!(entry.engines.tree_sitter.is_none());
+
+        for alias in ["smt", "smt2", "smt-lib", "z3"] {
+            assert_eq!(
+                registry
+                    .find_by_name(alias)
+                    .unwrap_or_else(|| panic!("{alias} alias should resolve"))
+                    .display_name,
+                "SMT-LIB 2",
+                "for alias {alias}"
+            );
         }
     }
 

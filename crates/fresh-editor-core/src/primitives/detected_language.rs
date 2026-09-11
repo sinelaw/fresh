@@ -91,6 +91,27 @@ impl DetectedLanguage {
             d
         };
 
+        // A context-sensitive config result can intentionally differ from the
+        // path catalog's extension result. For example, `.v` defaults to V but
+        // is promoted to Coq/Rocq when an ancestor has `_CoqProject`. Resolve
+        // the detected config language's grammar first so the status-bar ID,
+        // highlighter, and language-specific settings cannot disagree.
+        if let Some(id) = config_lang_id.as_deref() {
+            if let Some(lang_config) = languages.get(id) {
+                let grammar_name = if lang_config.grammar.is_empty() {
+                    id
+                } else {
+                    lang_config.grammar.as_str()
+                };
+                if let Some(entry) = registry
+                    .find_by_name(grammar_name)
+                    .or_else(|| registry.find_by_name(id))
+                {
+                    return override_name(Self::from_entry(entry, registry));
+                }
+            }
+        }
+
         if let Some(entry) = registry.find_by_path(path, first_line) {
             return override_name(Self::from_entry(entry, registry));
         }

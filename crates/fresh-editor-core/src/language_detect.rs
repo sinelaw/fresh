@@ -34,7 +34,30 @@ pub fn detect_language(
         return Some("cpp".to_string());
     }
 
+    // `.v` is shared by V and Coq/Rocq. Preserve V as the compatibility
+    // default, but treat a project marker in an ancestor as decisive context.
+    if detected.as_deref() == Some("vlang")
+        && path.extension().and_then(|e| e.to_str()) == Some("v")
+        && languages.contains_key("coq")
+        && file_in_coq_project(path)
+    {
+        return Some("coq".to_string());
+    }
+
     detected
+}
+
+/// Returns true when `path` is inside a Coq/Rocq project tree.
+fn file_in_coq_project(path: &std::path::Path) -> bool {
+    let Some(start_dir) = path.parent() else {
+        return false;
+    };
+
+    start_dir.ancestors().any(|dir| {
+        ["_CoqProject", "_RocqProject"]
+            .iter()
+            .any(|marker| dir.join(marker).is_file())
+    })
 }
 
 /// Pure config/path-based language detection without filesystem probing.

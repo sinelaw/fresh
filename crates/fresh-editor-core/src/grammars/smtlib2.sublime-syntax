@@ -1,0 +1,143 @@
+%YAML 1.2
+---
+name: SMT-LIB 2
+file_extensions: [smt2]
+scope: source.smtlib2
+
+contexts:
+  main:
+    - include: comments
+    - include: strings
+    - include: quoted-symbols
+    - include: declarations
+    - include: commands
+    - include: attributes
+    - include: indexed-identifiers
+    - include: bit-vector-literals
+    - include: numbers
+    - include: sorts
+    - include: constants
+    - include: reserved-words
+    - include: operators
+    - include: builtins
+    - include: function-calls
+    - include: punctuation
+
+  comments:
+    - match: ';.*$'
+      scope: comment.line.semicolon.smtlib2
+
+  strings:
+    # SMT-LIB strings escape a quote by doubling it; backslashes are literal.
+    - match: '"'
+      push:
+        - meta_scope: string.quoted.double.smtlib2
+        - match: '""'
+          scope: constant.character.escape.smtlib2
+        - match: '"'
+          pop: true
+
+  quoted-symbols:
+    - match: '\|'
+      push:
+        - meta_scope: variable.other.quoted-symbol.smtlib2
+        - match: '\|'
+          pop: true
+
+  declarations:
+    - match: '(\()\s*(set-logic)\s+([A-Za-z][A-Za-z0-9_+-]*)'
+      captures:
+        1: punctuation.section.parens.begin.smtlib2
+        2: keyword.control.command.smtlib2
+        3: constant.language.logic.smtlib2
+    - match: '(\()\s*(declare-sort|define-sort)\s+([A-Za-z~!@$%^&*_=+<>.?/\-][A-Za-z0-9~!@$%^&*_=+<>.?/\-]*)'
+      captures:
+        1: punctuation.section.parens.begin.smtlib2
+        2: keyword.declaration.smtlib2
+        3: entity.name.type.smtlib2
+    - match: '(\()\s*(declare-const)\s+([A-Za-z~!@$%^&*_=+<>.?/\-][A-Za-z0-9~!@$%^&*_=+<>.?/\-]*)'
+      captures:
+        1: punctuation.section.parens.begin.smtlib2
+        2: keyword.declaration.smtlib2
+        3: variable.other.constant.smtlib2
+    - match: '(\()\s*(declare-fun|define-fun|define-fun-rec)\s+([A-Za-z~!@$%^&*_=+<>.?/\-][A-Za-z0-9~!@$%^&*_=+<>.?/\-]*)'
+      captures:
+        1: punctuation.section.parens.begin.smtlib2
+        2: keyword.declaration.smtlib2
+        3: entity.name.function.smtlib2
+    - match: '(\()\s*(declare-datatype|declare-codatatype)\s+([A-Za-z~!@$%^&*_=+<>.?/\-][A-Za-z0-9~!@$%^&*_=+<>.?/\-]*)'
+      captures:
+        1: punctuation.section.parens.begin.smtlib2
+        2: keyword.declaration.smtlib2
+        3: entity.name.type.smtlib2
+
+  commands:
+    # Standard SMT-LIB commands plus common Z3 optimization/fixedpoint commands.
+    - match: '(\()\s*(assert|assert-soft|check-sat|check-sat-assuming|check-sat-using|declare-datatypes|declare-codatatypes|define-funs-rec|echo|exit|get-assertions|get-assignment|get-info|get-model|get-objectives|get-option|get-proof|get-unsat-assumptions|get-unsat-core|get-value|maximize|minimize|pop|push|reset|reset-assertions|set-info|set-option|simplify|apply|help|display|eval|declare-rel|declare-var|rule|query|set-predicate-representation)\b'
+      captures:
+        1: punctuation.section.parens.begin.smtlib2
+        2: keyword.control.command.smtlib2
+
+  attributes:
+    - match: ':[A-Za-z0-9~!@$%^&*_=+<>.?/\-]+'
+      scope: entity.other.attribute-name.smtlib2
+
+  indexed-identifiers:
+    - match: '(?<=\(_)\s*(bv[0-9]+)\s+([0-9]+)'
+      captures:
+        1: constant.numeric.bit-vector.smtlib2
+        2: constant.numeric.integer.smtlib2
+    - match: '(?<=\(_)\s*(extract|repeat|zero_extend|sign_extend|rotate_left|rotate_right|to_fp|to_fp_unsigned|fp\.to_ubv|fp\.to_sbv)(?=\s)'
+      captures:
+        1: support.function.builtin.smtlib2
+
+  bit-vector-literals:
+    - match: '#b[01]+'
+      scope: constant.numeric.binary.smtlib2
+    - match: '#x[0-9A-Fa-f]+'
+      scope: constant.numeric.hex.smtlib2
+
+  numbers:
+    - match: '(?<![A-Za-z0-9_.])(?:0|[1-9][0-9]*)\.[0-9]+(?![A-Za-z0-9_.])'
+      scope: constant.numeric.decimal.smtlib2
+    - match: '(?<![A-Za-z0-9_.])(?:0|[1-9][0-9]*)(?![A-Za-z0-9_.])'
+      scope: constant.numeric.integer.smtlib2
+
+  sorts:
+    - match: '\b(Bool|Int|Real|String|RegLan|RoundingMode|Array|BitVec|FloatingPoint|Seq|Set|Bag|RegEx)\b'
+      scope: support.type.smtlib2
+
+  constants:
+    - match: '\b(true|false)\b'
+      scope: constant.language.boolean.smtlib2
+    - match: '\b(sat|unsat|unknown|success|unsupported)\b'
+      scope: constant.language.result.smtlib2
+    - match: '\b(RNE|RNA|RTP|RTN|RTZ|roundNearestTiesToEven|roundNearestTiesToAway|roundTowardPositive|roundTowardNegative|roundTowardZero)\b'
+      scope: constant.language.rounding-mode.smtlib2
+
+  reserved-words:
+    - match: '(?<=\()\s*(let|forall|exists|match|par|lambda|as|!)\b'
+      captures:
+        1: keyword.control.smtlib2
+    - match: '(?<=\()\s*(_)(?=\s)'
+      captures:
+        1: keyword.other.index.smtlib2
+
+  operators:
+    - match: '(?<=\()\s*(=>|=|distinct|and|or|xor|not|ite|\+|-|\*|/|div|mod|abs|<|<=|>|>=)(?=\s|\))'
+      captures:
+        1: keyword.operator.smtlib2
+
+  builtins:
+    - match: '(?<=\()\s*(select|store|const|map|to_real|to_int|is_int|concat|extract|repeat|zero_extend|sign_extend|rotate_left|rotate_right|bvnot|bvand|bvor|bvxor|bvnand|bvnor|bvxnor|bvneg|bvadd|bvsub|bvmul|bvudiv|bvsdiv|bvurem|bvsrem|bvsmod|bvshl|bvlshr|bvashr|bvult|bvule|bvugt|bvuge|bvslt|bvsle|bvsgt|bvsge|str\.\+\+|str\.len|str\.at|str\.substr|str\.contains|str\.prefixof|str\.suffixof|str\.indexof|str\.replace|str\.to_int|int\.to_str|str\.in_re|str\.to_re|re\.\+\+|re\.union|re\.inter|re\.\*|re\.\+|re\.opt|re\.range|seq\.unit|seq\.empty|seq\.\+\+)(?=\s|\))'
+      captures:
+        1: support.function.builtin.smtlib2
+
+  function-calls:
+    - match: '(?<=\()\s*([A-Za-z~!@$%^&*_=+<>.?/\-][A-Za-z0-9~!@$%^&*_=+<>.?/\-]*)'
+      captures:
+        1: variable.function.smtlib2
+
+  punctuation:
+    - match: '[()]'
+      scope: punctuation.section.parens.smtlib2
