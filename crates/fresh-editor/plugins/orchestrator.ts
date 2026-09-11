@@ -9913,9 +9913,19 @@ function formFooterRows(creating: boolean): WidgetSpec[] {
     button(editor.t("form.btn_cancel"), { intent: "danger", key: "cancel" }),
     "Esc",
   );
+  // Flush right when the buttons fit on one line; on a form too narrow for
+  // that they wrap onto several lines from the left instead, so none is
+  // clipped off the right edge. The fit is judged generously from the
+  // labels (a `[ label ]`, its accelerator and the gaps between).
+  const labels = creating
+    ? [editor.t("form.btn_create"), editor.t("form.btn_create_bg"), editor.t("form.btn_cancel")]
+    : [editor.t("run_agent.btn_run"), editor.t("form.btn_cancel")];
+  const need = labels.reduce((n, l) => n + editor.stringWidth(l) + 4, 0) + labels.length * 6 + 6;
+  const avail = Math.floor(editor.getScreenSize().width * 0.75) - 4;
+  const buttonRow = (...kids: WidgetSpec[]): WidgetSpec =>
+    need <= avail ? row(flexSpacer(), ...kids) : wrappingRow(...kids);
   const buttons = creating
-    ? row(
-      flexSpacer(),
+    ? buttonRow(
       withAccel(
         button(editor.t("form.btn_create"), {
           intent: "primary",
@@ -9934,8 +9944,7 @@ function formFooterRows(creating: boolean): WidgetSpec[] {
       spacer(2),
       cancel,
     )
-    : row(
-      flexSpacer(),
+    : buttonRow(
       withAccel(
         button(editor.t("run_agent.btn_run"), {
           intent: "primary",

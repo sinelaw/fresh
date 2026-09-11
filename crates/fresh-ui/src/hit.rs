@@ -20,7 +20,7 @@ use crate::event::{
     Axis, Ctl, Event, Flow, GestureKind, Input, KeyPress, Mods, MouseButton, Phase,
     SelectionOnFocus,
 };
-use crate::render::geom::Point;
+use crate::render::geom::{Point, Rect};
 use crate::render::object::{Hit, RenderId};
 use crate::schedule::Ui;
 
@@ -982,13 +982,26 @@ impl<M: 'static> Ui<M> {
                 crate::desc::Anchor::Node(k) => self.find_by_key(k),
                 _ => None,
             };
+            //
+            // "Part of the anchor" is geometric, not structural: a `gesture()`
+            // wrapper carries the handler for the keyed node *inside* it (the
+            // menu bar's labels are built that way), so the nodes that count
+            // are those on the path whose rectangle lies within the anchor's
+            // — the anchor, its descendants, and a wrapper the same size.
             let on_trigger = anchored_on.is_some_and(|a| {
+                let ar = self.rect_of(a);
+                let within = |r: Rect| {
+                    r.x >= ar.x
+                        && r.y >= ar.y
+                        && r.x + i32::from(r.w) <= ar.x + i32::from(ar.w)
+                        && r.y + i32::from(r.h) <= ar.y + i32::from(ar.h)
+                };
                 paths.iter().any(|p| {
-                    p.iter().position(|&e| e == a).is_some_and(|i| {
-                        p[i..]
-                            .iter()
-                            .any(|&n| !self.listeners(n, GestureKind::Press, false).is_empty())
-                    })
+                    p.contains(&a)
+                        && p.iter().any(|&n| {
+                            within(self.rect_of(n))
+                                && !self.listeners(n, GestureKind::Press, false).is_empty()
+                        })
                 })
             });
             if on_trigger {

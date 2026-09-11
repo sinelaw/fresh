@@ -3709,10 +3709,10 @@ fn settings_modal_covers_the_full_screen_and_dims_the_dock() {
     );
 }
 
-/// The `⋯` menu's last row hides the dock — the title row and its `×` were
-/// absorbed into the menu, since closing the dock is rare and the accelerator
-/// that opens it undoes it. Choosing the row runs the same teardown Esc and
-/// "Orchestrator: Toggle Dock" run: the whole dock column goes away.
+/// The `⋯` menu's last row hides the dock, the same teardown Esc and
+/// "Orchestrator: Toggle Dock" run: the whole dock column goes away. The
+/// title bar above the action row keeps its `×` as the mouse route to the
+/// same thing; the action row itself carries the `⋯` menu.
 #[test]
 fn dock_menu_hide_dock_hides_the_dock() {
     let (_tmp, root) = setup_project("alphaproj");
@@ -3722,11 +3722,18 @@ fn dock_menu_hide_dock_hides_the_dock() {
     h.render().unwrap();
     open_dock(&mut h);
 
-    // No title row, no `×`: the header is the action row alone.
-    let header = h.screen_row_text(row_of(&h, "+ New") as u16);
+    // The title bar carries the `×`; the action row under it carries `⋯`.
+    let action_row = row_of(&h, "+ New");
+    let header = h.screen_row_text(action_row as u16);
     assert!(
-        !header.contains('×') && header.contains("⋯"),
-        "the dock header carries the ⋯ menu, not a title-bar ×:\n{}",
+        header.contains("⋯") && !header.contains('×'),
+        "the dock's action row carries the ⋯ menu:\n{}",
+        h.screen_to_string()
+    );
+    let title = h.screen_row_text((action_row - 1) as u16);
+    assert!(
+        title.contains("Orchestrator") && title.contains('×'),
+        "the dock's title bar sits above the action row with its ×:\n{}",
         h.screen_to_string()
     );
 
