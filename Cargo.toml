@@ -75,7 +75,7 @@ oxc_ast = "0.128.0"
 oxc_parser = "0.128.0"
 oxc_transformer = "0.128.0"
 oxc_codegen = { version = "0.128.0", default-features = false }
-oxc_span = "0.128.0"
+oxc_span = "0.134.0"
 oxc_semantic = "0.128.0"
 oxc_diagnostics = "0.128.0"
 oxc_isolated_declarations = "0.128.0"
