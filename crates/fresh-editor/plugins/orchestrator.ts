@@ -9885,15 +9885,21 @@ function openForm(options?: { fromPicker?: boolean; target?: RunAgentTarget }): 
 function mountFormPanel(focusKey?: string): void {
   if (!form || !formPanel) return;
   const creating = form.target === "new";
-  // Width 60 / height 90: the host shrinks the panel to its actual
+  // Width 70 / height 90: the host shrinks the panel to its actual
   // content height when content is shorter than the requested cap,
   // so a generous height ceiling doesn't waste space on tall
   // terminals (the form usually renders ~20 rows). The previous
   // 50% cap was a fixed canvas in disguise — on a 24-row terminal
   // it left the dialog 12 rows tall, clipping the Branch input,
   // the Cancel / Create Session buttons, and the hint bar.
+  //
+  // Width: the right-aligned label column (`FORM_LABEL_W`) takes ~17
+  // cells off every value, and the Project Path completion list sits
+  // under the value, so a candidate only shows whole when the dialog
+  // leaves ~90 cells for it — a macOS temp path with a directory name
+  // is 80. 60% of a 160-column terminal did not; 70% does.
   formPanel.mount(buildFormSpec(), {
-    widthPct: 60,
+    widthPct: 70,
     heightPct: 90,
     // Reserve the `▸ ` focus-marker gutter: focus is then legible from
     // a plain terminal capture (driveable by automation) and the
