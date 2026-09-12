@@ -15,6 +15,7 @@ fn snapshot(spec: &fresh_ui::LayoutSpec) -> String {
         let what = match &i.draw {
             Draw::Fill => "fill".to_string(),
             Draw::Wash => "wash".to_string(),
+            Draw::Rule(g) => format!("rule:{g}"),
             Draw::Border(bs) => format!("border:{bs:?}"),
             Draw::Selectable => "selectable".to_string(),
             Draw::Scrim(s) => format!("scrim {s:?}"),

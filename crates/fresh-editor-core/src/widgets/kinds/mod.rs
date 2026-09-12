@@ -1,6 +1,6 @@
 //! Per-kind widget behaviour behind a single trait.
 //!
-//! This is the one behaviour authority `docs/internal/retained-mode-ui.md` §3.5 names:
+//! This is the one behaviour authority `docs/internal/retained-mode-ui.md` "Where each surface lives" names:
 //! `WidgetSpec` stays a closed, serializable wire type (it crosses the
 //! plugin sandbox boundary and feeds the row and web renderers), while
 //! the *behaviour* for each kind lives in one `WidgetImpl` per kind,
@@ -10,15 +10,11 @@
 //! that only ever sees its own variant.
 //!
 //! The migration that built this module was incremental (kind by kind,
-//! behaviour-preserving, guarded by the render unit tests); it is now
-//! complete — [`behavior`] is total and `render::render_collected` is a
-//! pure delegation to it.
-//!
-//! The trait currently has a single entry point, [`WidgetImpl::collect`],
-//! mirroring today's one-pass renderer. The later phases of the plan grow
-//! it (`measure`/`arrange` when the constraint layout lands, `on_event`
-//! when input dispatch moves off the per-kind probes in
-//! `app/widget_runtime.rs`) without moving the code again.
+//! behaviour-preserving); [`behavior`] is total. The trait used to carry the
+//! text projection's `collect` as well — the one-pass renderer that turned a
+//! spec into rows — and that is gone with the projection: a kind's rows are
+//! the description's (`view::shell::widgets`), and what a kind still answers
+//! for is its state, its keys and its presses.
 
 mod button;
 mod component;
@@ -37,18 +33,12 @@ mod toggle;
 pub mod tree;
 mod window_embed;
 
-use std::collections::HashMap;
-
 use fresh_core::api::WidgetSpec;
 
-use super::registry::WidgetInstanceState;
-use super::render::{CollectedOutput, RenderContext};
-
-/// Static box-tree metadata for one widget node: what its
-/// [`crate::widgets::LayoutBox`] should carry, derived from the spec
-/// alone. `render_collected` combines this with the collected row count
-/// to push the node's box after `collect` returns, so containers only
-/// ever handle child-box *merging*.
+/// Static metadata for one widget node, derived from the spec alone: what
+/// it is, whether it can take focus and under which key, and the dispatch
+/// flags the host's routing reads. The one place each kind states these
+/// facts — every focus ring and every routing decision asks here.
 #[derive(Debug, Clone, Default)]
 pub struct BoxMeta {
     pub kind: &'static str,
@@ -250,22 +240,9 @@ pub enum KeyDisposition {
 /// mismatched variant is a dispatch bug and renders nothing rather
 /// than panicking).
 pub trait WidgetImpl: Sync {
-    /// Render this node (and, for containers, its subtree) into rows,
-    /// hit areas, and next-tick instance state. Semantics are identical
-    /// to the corresponding arm of the legacy `render_collected` match.
-    fn collect(
-        &self,
-        spec: &WidgetSpec,
-        prev: &HashMap<String, WidgetInstanceState>,
-        next_state: &mut HashMap<String, WidgetInstanceState>,
-        ctx: RenderContext<'_>,
-        panel_width: u32,
-    ) -> CollectedOutput;
-
-    /// This node's layout-box metadata: the tag, key, and dispatch
-    /// flags its [`crate::widgets::LayoutBox`] carries. Each impl
-    /// answers for its own variant — there is deliberately no central
-    /// kind→tag table.
+    /// This node's metadata: the tag, key, and dispatch flags the host's
+    /// routing and every focus ring read. Each impl answers for its own
+    /// variant — there is deliberately no central kind→tag table.
     fn box_meta(&self, spec: &WidgetSpec) -> BoxMeta;
 
     /// A key event dispatched to the focused widget before the

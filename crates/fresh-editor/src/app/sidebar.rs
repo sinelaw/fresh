@@ -419,15 +419,6 @@ impl super::Editor {
         self.renumber_sidebar_panels();
     }
 
-    /// The sidebar column's width in columns, measured against the chrome
-    /// beside the dock — the same number the frame lays it out at.
-    pub(crate) fn sidebar_cols(&self) -> u16 {
-        let dock_cols = self.dock_cols();
-        self.active_window()
-            .file_explorer_width
-            .to_cols(self.terminal_width.saturating_sub(dock_cols))
-    }
-
     /// The plugin section that owns the keyboard, if one does.
     pub(crate) fn focused_sidebar_panel(&self) -> Option<usize> {
         self.sidebar_sections

@@ -128,7 +128,7 @@ pub(crate) type PopupAreaLayout = (usize, Rect, Rect, usize, usize, Option<Rect>
 ///     press in that space, so no origin travels with it)
 ///
 /// This list is the ONE enumeration of the parallel geometry path
-/// (recorded by ruling; `docs/internal/retained-mode-ui.md` §3.7 retires it).
+/// (recorded by ruling; `docs/internal/retained-mode-ui.md` "The keyed geometry index" retires it).
 /// ADDING A SURFACE HERE REQUIRES A RULING — the
 /// event-time derivation is the default, and this class must not
 /// grow surface by surface without one; retiring it entirely is the

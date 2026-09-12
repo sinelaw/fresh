@@ -534,7 +534,15 @@ impl<M: 'static> Ui<M> {
         // gesture wrapped around it. Computing it here means a listener reads
         // the byte without knowing which leaf under it holds the text, and
         // means it is computed once rather than per handler.
-        let text_byte = self.text_byte_at(target, pos);
+        // **A captured pointer still reports the byte under it.** While a
+        // gesture holds the pointer the path ends at that gesture, which has
+        // no text; the run inside it does. Ask the target first, then the
+        // deepest descendant under the pointer that answers — so a drag
+        // across a wrapped run extends a selection by byte exactly as its
+        // press placed the caret by byte.
+        let text_byte = self
+            .text_byte_at(target, pos)
+            .or_else(|| self.text_byte_under(target, pos));
         // Routed by capture: the path is the captor's, not the pointer's.
         let captured = self
             .captured
@@ -682,7 +690,15 @@ impl<M: 'static> Ui<M> {
             mods,
             delta: 0,
             axis: Axis::Vertical,
-            text_byte: self.text_byte_at(n, pos),
+            // **A captured pointer still reports the byte under it.** The
+            // capturer is the gesture that took the press, and a gesture has
+            // no text; the run inside it does. Ask the capturer first, then
+            // the deepest descendant under the pointer that answers — so a
+            // drag across a wrapped run extends a selection by byte exactly
+            // as its press placed the caret by byte.
+            text_byte: self
+                .text_byte_at(n, pos)
+                .or_else(|| self.text_byte_under(n, pos)),
             captured: false,
             key: None,
             clicks: 1,
@@ -912,6 +928,25 @@ impl<M: 'static> Ui<M> {
     /// One hop: element to its render object, which answers for itself. The
     /// object is asked because it is the only thing that knows where its
     /// shaping put each character; see `Event::text_byte`.
+    /// The byte under `pos` answered by the deepest descendant of `root`
+    /// whose rectangle holds the point — what a captured event asks when the
+    /// capturer itself has no text. Depth-first, first answer wins.
+    fn text_byte_under(&self, root: ElementId, pos: Point) -> Option<usize> {
+        let kids = self.arena.get(root)?.children.clone();
+        for k in kids {
+            if !self.rect_of(k).contains(pos) {
+                continue;
+            }
+            if let Some(b) = self.text_byte_under(k, pos) {
+                return Some(b);
+            }
+            if let Some(b) = self.text_byte_at(k, pos) {
+                return Some(b);
+            }
+        }
+        None
+    }
+
     fn text_byte_at(&self, id: ElementId, pos: Point) -> Option<usize> {
         let r = self.arena.get(id)?.render?;
         let obj = self.render.get(r)?.obj.as_ref()?;

@@ -131,10 +131,9 @@ fn column(interior: Option<super::panel::Interior>) -> Node<UiMsg> {
         // An empty slot: a column with nothing in it, which nothing paints.
         None => row(),
         Some(i) => fresh_ui::layout_reader(move |info: fresh_ui::LayoutInfo| {
-            // **The interior is not the column.** The runtime lays this same
-            // spec at `floating_panel_inner_width` — `width_cols - 2` for a
-            // left dock — and the painter draws the divider into the column's
-            // last cell. Handed the whole column, the description came out two
+            // **The interior is not the column.** The runtime used to lay
+            // this same spec at `width_cols - 2` for a left dock, and the
+            // painter draws the divider into the column's last cell. Handed the whole column, the description came out two
             // columns wider than that, and anything a `flexSpacer` pins to the
             // right edge — the title bar's `[×]` above all — was laid out past
             // the visible edge and clipped away entirely. (It was also two
@@ -155,6 +154,7 @@ fn column(interior: Option<super::panel::Interior>) -> Node<UiMsg> {
                     marker_gutter: i.marker_gutter,
                     hovered_item_key: i.hovered_item_key.clone(),
                     hovered_popup_row: i.hovered_popup_row.clone(),
+                    reveal: i.reveal.clone(),
                     avail_height: i.avail_height,
                     scrollbar_reveal: i.scrollbar_reveal,
                     surface: super::widgets::panel_surface(),
@@ -245,8 +245,8 @@ fn column(interior: Option<super::panel::Interior>) -> Node<UiMsg> {
 /// The column's last cell, which the painter draws the draggable divider into
 /// and the interior therefore may not use.
 ///
-/// **One, not the runtime's two.** `floating_panel_inner_width` takes two for a
-/// left dock — the divider, and a column of slack it wraps against — and the
+/// **One, not the runtime's two.** The runtime's inner width took two for a
+/// left dock — the divider, and a column of slack it wrapped against — and the
 /// description took the same two so that a `flexSpacer` and a `divider()`
 /// would agree about where the right edge is. They agreed by both stopping
 /// short of it, which left the slack column empty: a hovered row's band ended
@@ -421,6 +421,7 @@ mod tests {
                     hovered_key: None,
                     hovered_item_key: String::new(),
                     hovered_popup_row: String::new(),
+                    reveal: fresh_ui::behavior::anchor::Anchor::new(),
                     marker_gutter: false,
                     avail_height: None,
                     scrollbar_reveal: None,
@@ -624,6 +625,7 @@ mod tests {
                     hovered_key: None,
                     hovered_item_key: String::new(),
                     hovered_popup_row: String::new(),
+                    reveal: fresh_ui::behavior::anchor::Anchor::new(),
                     marker_gutter: false,
                     avail_height: None,
                     scrollbar_reveal: None,

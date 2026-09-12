@@ -352,7 +352,7 @@ impl Editor {
         // combination and terminal size — `tests/ui_shell_frame_parity.rs` is
         // the standing proof, and it keeps both derivations honest now that
         // only one of them runs here.
-        // See `docs/internal/retained-mode-ui.md` §3.1.
+        // See `docs/internal/retained-mode-ui.md` "The shape".
         // The settings search list's window, from the band the tree placed
         // last frame. This is the one mutation the description needs made
         // *before* it is built: the row it describes says "(1-3 of 298)", and
@@ -1304,7 +1304,7 @@ impl Editor {
         // above): every described surface files its items' rects and keys as
         // it folds. What is still blank is a *tier*, not a surface: an item
         // whose ink resolved to literal colours files nothing — defect
-        // `Paint::Lit` in `docs/internal/retained-mode-ui.md` §3.3.
+        // `Paint::Lit` in `docs/internal/retained-mode-ui.md` "Smaller residue".
 
         // Software mouse cursor (GPM) and keyboard-capture dimming — both
         // read already-painted cells, so they run after the main draw.
@@ -3905,6 +3905,9 @@ impl Editor {
         );
         self.shell_ui = Some(ui);
         self.shell_description_stale = false;
+        // The pane panels' buffers are the rows this layout settled — see
+        // `app::pane_mirror`.
+        self.mirror_pane_panels();
     }
 
     /// The frame's second half: the display list of the tree as
@@ -6348,6 +6351,7 @@ impl Editor {
             },
             hovered_item_key: self.widget_registry.hover_keys(&key).1,
             hovered_popup_row: String::new(),
+            reveal: self.prose_reveal_for(&key),
             marker_gutter: false,
             avail_height: None,
             scrollbar_reveal: None,
@@ -6392,8 +6396,8 @@ impl Editor {
     /// **All of it is host state the spec does not carry** — the focused
     /// widget, the widget and row under the pointer, whether the focus-marker
     /// gutter is reserved, the auto-size row budget, and the instance state
-    /// the stateful kinds are authoritative for. The runtime read the same
-    /// list off a `RenderContext`; here it is resolved once, where the
+    /// the stateful kinds are authoritative for. The text projection read
+    /// the same list off its own context; here it is resolved once, where the
     /// description is built, and handed down.
     ///
     /// `None` means there is no panel in the slot, or none mounted in the
@@ -6403,6 +6407,20 @@ impl Editor {
     /// is the same question without the clone, and the surfaces that route a
     /// press by it (`view::shell::dock::column`,
     /// `render_floating_widget_panel`) must keep asking the same one.
+    /// The reveal anchor a panel's markdown document is scrolled through —
+    /// the same one every frame, because an anchor binds to its element on
+    /// mount and a new one each frame would bind to nothing.
+    pub(crate) fn prose_reveal_for(
+        &self,
+        key: &crate::widgets::PanelKey,
+    ) -> std::rc::Rc<fresh_ui::behavior::anchor::Anchor> {
+        self.prose_reveal
+            .borrow_mut()
+            .entry(key.clone())
+            .or_insert_with(fresh_ui::behavior::anchor::Anchor::new)
+            .clone()
+    }
+
     pub(crate) fn panel_interior(
         &self,
         slot: crate::app::PanelSlot,
@@ -6439,6 +6457,7 @@ impl Editor {
             hovered_key: Some(panel.hovered_widget_key.clone()).filter(|k| !k.is_empty()),
             hovered_item_key: panel.hovered_item_key.clone(),
             hovered_popup_row: panel.hovered_popup_row.clone(),
+            reveal: self.prose_reveal_for(&key),
             marker_gutter: panel.focus_marker,
             avail_height: self.floating_panel_inner_height(slot),
             // **The dock's bars are overlay bars.** Every other panel draws
@@ -6490,55 +6509,30 @@ impl Editor {
     }
 
     pub(crate) fn panel_description(&self) -> Option<crate::view::shell::panel::Panel> {
-        use crate::primitives::display_width::str_width;
         use crate::view::shell::panel::{Panel, Spot};
 
         let p = self.panel(crate::app::PanelSlot::Floating)?;
-        // Every row the spec produced, borders excluded — `WindowEmbed`
-        // reservations included, since each contributes its blank entries and
-        // an `EmbedRect` painted over them. This is the count the painter's
-        // `entries.len() + 2` used, kept as the one measurement the tree needs
-        // from the runtime.
-        //
-        // **Only one of the two is still read.** A described box measures its
-        // own height (`Panel::height` answers `Sizing::Auto`), so
-        // `content_rows` survives for a panel whose interior is a `Host` —
-        // which today means no panel at all. `content_cols` is live: an
-        // anchored popup hugs its content horizontally and the interior is
-        // built by a `layout_reader` that needs a width as a number, so the
-        // mirror answers for it. See `Panel::anchored_width`, which is where
-        // that exception is argued and what retires it.
-        let content_rows = p.entries.len() as u16;
+        // Neither axis is measured here: a described box is as tall as its
+        // rows and as wide as its widest one, and the interior states both.
         let spot = match p.placement {
             super::PanelPlacement::Centered => Spot::Centered {
                 width_pct: p.width_pct,
-                content_rows,
             },
-            super::PanelPlacement::Anchored { x, y } => Spot::Anchored {
-                x,
-                y,
-                content_cols: p
-                    .entries
-                    .iter()
-                    .map(|e| str_width(&e.text) as u16)
-                    .max()
-                    .unwrap_or(0),
-                content_rows,
-            },
+            super::PanelPlacement::Anchored { x, y } => Spot::Anchored { x, y },
             // The dock panel's frame is the dock column's, not this box's —
             // and a sidebar section's is its column's.
             super::PanelPlacement::LeftDock { .. }
             | super::PanelPlacement::SidebarSection { .. } => return None,
         };
         Some(Panel {
-            // **`None` means there is no panel mounted in the slot**, and
-            // nothing else. This used to say "described when every variant of
-            // the spec is one the tree describes, and painted whole
-            // otherwise" — the `covered` gate, which ran out of `false` arms
-            // and was deleted in 2.4. `panel_interior` asks one question, and
-            // it is the same one `panel_is_described` asks; `WindowEmbed` is
-            // described like everything else, as a `Host` leaf.
-            interior: self.panel_interior(crate::app::PanelSlot::Floating),
+            // **No interior means no panel**: a slot whose panel the registry
+            // does not hold has nothing to describe, and there is no frame.
+            // This used to say "described when every variant of the spec is
+            // one the tree describes, and painted whole otherwise" — the
+            // `covered` gate, which ran out of `false` arms and was deleted;
+            // `WindowEmbed` is described like everything else, as a `Host`
+            // leaf.
+            interior: self.panel_interior(crate::app::PanelSlot::Floating)?,
             spot,
             title: p.title.clone(),
             closable: p.closable,

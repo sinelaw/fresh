@@ -1,4 +1,4 @@
-//! Chrome surfaces' hover reactions, and the pointer grabs.
+//! Chrome surfaces' hover reactions.
 //!
 //! What a [`ChromeComponent`] declares today is one thing: how its surface
 //! reacts to a hover-target change (`on_hover_change`). Everything else this
@@ -6,9 +6,11 @@
 //! tree and its validated memo, the pointer walk over those boxes, the ranked
 //! keyboard walk, and last the overlay-layer stack that told `get_key_context`
 //! and the PTY gate which surface was up (both read the tree now: `app::
-//! overlay`). The modules below keep the `Editor` methods the tree's facts
-//! land in for each surface. `docs/internal/retained-mode-ui.md` §3.1 moves
-//! the two hover reactions beside their surfaces and deletes this module.
+//! overlay`), and last the pointer grab — its final member was the markdown
+//! document's drag-to-select, and that is the run's own captured gesture now.
+//! The modules below keep the `Editor` methods the tree's facts land in for
+//! each surface. Moving the two hover reactions beside their surfaces deletes
+//! this module.
 
 mod base;
 mod context_menu;
@@ -23,55 +25,6 @@ mod status_bar;
 
 use super::types::HoverTarget;
 use super::Editor;
-
-/// The active pointer GRAB, if any: press-established routing that
-/// owns the pointer until release. Grabs are NOT bubble dispatch — a
-/// drag must keep routing to its owner even when the pointer crosses
-/// an alternate-screen terminal or any other surface (the btop-resize
-/// bug). The FULL press-to-release roster lives here: the terminal
-/// forward sink suppresses forwarding for every grab, and
-/// `handle_mouse_drag` dispatches on the grab instead of a
-/// hand-ordered flag ladder. Derived from live drag state.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum PointerGrab {
-    /// Drag-to-select in a widget markdown/text document.
-    WidgetText,
-}
-
-/// The grab in effect for the current event, if any. The terminal
-/// forward sink consults this instead of a hand-listed field check,
-/// and the Drag arm dispatches on it. Checked in the old drag
-/// ladder's order so precedence is unchanged when (rarely) two flags
-/// coexist.
-///
-/// **Five grabs have left, and they left by becoming what this imitates.**
-/// The dock's width, a split separator, the file explorer's width and both of
-/// a pane's scrollbars are dragged by a *node*, and a node that calls
-/// `capture_pointer` on its press keeps every move and the release wherever
-/// the pointer goes — so there is nothing to rank and nothing to keep in
-/// sync. The two scrollbars are the ones that show why the ranking existed at
-/// all: a thumb drag leaves the bar's own column on its first step, which is
-/// precisely the case a re-hit-test would get wrong and the flag ladder was
-/// built to survive.
-///
-/// What is left below are the drags whose press is not a node's: they retire
-/// with their surfaces, the same way these did (`view::shell::grip`,
-/// `view::shell::splits::scrollbar`).
-pub(crate) fn pointer_grab(ed: &Editor) -> Option<PointerGrab> {
-    if ed.widget_text_drag.is_some() {
-        return Some(PointerGrab::WidgetText);
-    }
-    // A panel's list scrollbar was a grab here, for the dock and the floating
-    // panel first and then for a buffer-mounted panel. A described panel's
-    // list is a viewport whose bar captures the pointer itself, and every
-    // mounted panel is described, so no panel scrollbar is a grab of this
-    // walk's any more.
-    // A tab drag was a grab here, and so were the buffer's text selection
-    // and a live terminal grid's selection intent. The tab's node and the
-    // pane's content leaf capture the pointer on their press, so their moves
-    // and their release never reach this walk.
-    None
-}
 
 /// Whether a cell is inside a rectangle.
 ///

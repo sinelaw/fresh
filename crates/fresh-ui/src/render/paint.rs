@@ -13,6 +13,17 @@ use crate::render::geom::{Rect, Size};
 use crate::render::object::{Geom, RenderId};
 use crate::render::spec::{CursorSpec, Draw, DrawList, Item, LayoutSpec, ThemeKey};
 use crate::schedule::Ui;
+use crate::ElementId;
+
+/// Whether a paint walk honours the clips layout recorded.
+#[derive(Clone, Copy)]
+enum Clipping {
+    /// The frame's walk: an ancestor's clip cuts what is under it.
+    Inherited,
+    /// A subtree read for its content: every node is clipped only by
+    /// itself, so nothing a viewport scrolled away is lost.
+    None,
+}
 
 impl<M: 'static> Ui<M> {
     pub(crate) fn flush_paint(&mut self, frame: Size) {
@@ -20,7 +31,7 @@ impl<M: 'static> Ui<M> {
         spec.clear();
         spec.frame = frame;
         if let Some(root) = self.render_root {
-            self.paint_render(root, &mut spec);
+            self.paint_render(root, &mut spec, Clipping::Inherited);
             // Everything from here on came out of a layer. Recorded before the
             // loop rather than derived after it, because a scrim carries no key
             // and an unkeyed layer leaves no index entry — nothing outside can
@@ -75,7 +86,7 @@ impl<M: 'static> Ui<M> {
                 draw: Draw::Scrim(kind),
             });
         }
-        self.paint_render(lr, spec);
+        self.paint_render(lr, spec, Clipping::Inherited);
         if spec.cursor.is_none() {
             spec.cursor = under.filter(|c| {
                 !spec.items[painted_from..]
@@ -85,13 +96,37 @@ impl<M: 'static> Ui<M> {
         }
     }
 
-    fn paint_render(&mut self, r: RenderId, spec: &mut LayoutSpec) {
+    /// The display list of one subtree, unclipped.
+    ///
+    /// Every item the subtree would paint if nothing above it cut it — the
+    /// rows a viewport has scrolled out of its window included — in absolute
+    /// coordinates, each with its own rectangle as its clip, and in-flow only:
+    /// a layer declared inside the subtree is not part of it. It is not a
+    /// frame: nothing is drawn and the frame's own list is untouched. For a
+    /// host that keeps a text mirror of a subtree somewhere the screen is not
+    /// and needs the rows the screen does not show.
+    pub fn paint_subtree(&mut self, root: ElementId) -> LayoutSpec {
+        let mut spec = LayoutSpec {
+            frame: self.frame_size,
+            ..LayoutSpec::default()
+        };
+        if let Some(r) = self.render_for(root) {
+            self.paint_render(r, &mut spec, Clipping::None);
+        }
+        spec.layers_from = spec.items.len();
+        spec
+    }
+
+    fn paint_render(&mut self, r: RenderId, spec: &mut LayoutSpec, clipping: Clipping) {
         let (element, rect, clip, theme, classes, key, kids, out_of_flow) = {
             let Some(n) = self.render.get(r) else { return };
             (
                 n.element,
                 n.data.rect,
-                n.data.clip,
+                match clipping {
+                    Clipping::Inherited => n.data.clip,
+                    Clipping::None => n.data.rect,
+                },
                 n.theme.clone(),
                 n.classes.clone(),
                 n.key.clone(),
@@ -122,26 +157,34 @@ impl<M: 'static> Ui<M> {
         // separates a control's box from its contents once the list is flat:
         // the `Fill` is where the button *is*, the runs inside it are what the
         // button *says*, and both wear the class.
-        let (names_itself, wash) = self
+        let (names_itself, ground) = self
             .arena
             .get(element)
             .map(|e| {
                 let d = resolve(&e.desc);
+                // A rule is a ground the backend tiles, so naming one makes
+                // the box paint exactly as naming a theme or a class does —
+                // otherwise a rule on an otherwise-unthemed box would have
+                // nowhere to be said.
+                let ground = match &d.desc {
+                    crate::desc::Desc::Box(b) if b.rule.is_some() => {
+                        Some(Draw::Rule(b.rule.clone().expect("checked")))
+                    }
+                    crate::desc::Desc::Box(b) if b.wash => Some(Draw::Wash),
+                    _ => None,
+                };
                 (
                     e.desc.theme.is_some()
                         || d.theme.is_some()
                         || e.desc.classes.is_some()
-                        || d.classes.is_some(),
-                    matches!(&d.desc, crate::desc::Desc::Box(b) if b.wash),
+                        || d.classes.is_some()
+                        || matches!(ground, Some(Draw::Rule(_))),
+                    ground,
                 )
             })
-            .unwrap_or((false, false));
+            .unwrap_or((false, None));
         if names_itself && !rect.is_empty() {
-            let ground = match wash {
-                true => Draw::Wash,
-                false => Draw::Fill,
-            };
-            list.push(ground, Geom { rect, clip });
+            list.push(ground.unwrap_or(Draw::Fill), Geom { rect, clip });
         }
 
         if let Some(obj) = self.render.get(r).and_then(|n| n.obj.as_ref()) {
@@ -156,7 +199,7 @@ impl<M: 'static> Ui<M> {
             if self.render.get(k).map(|n| n.out_of_flow).unwrap_or(false) {
                 continue;
             }
-            self.paint_render(k, spec);
+            self.paint_render(k, spec, clipping);
         }
         let _ = out_of_flow;
 

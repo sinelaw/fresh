@@ -5271,44 +5271,22 @@ impl Editor {
         // so a plugin that re-mounts (e.g. reopening a panel with
         // a fresh prefill) sees its spec values take effect. To
         // *preserve* state across renders, the plugin uses Update.
-        let prev = std::collections::HashMap::new();
-        // A mount paints from scratch: no previous window either, so
-        // every list starts at the top.
-        let prev_painted = std::collections::HashMap::new();
-        let prev_focus = String::new();
-        let panel_width = self.widget_panel_width(buffer_id);
         let avail_height = self.widget_panel_height(buffer_id);
-        // A mount has nothing panned yet.
-        let h_pan = std::collections::HashMap::new();
-        let out = self.render_panel_spec(
+        let ink = self.markdown_ink();
+        let out = crate::widgets::resolve_panel(
             &spec,
-            &prev,
-            &prev_painted,
-            &prev_focus,
-            panel_width,
-            avail_height,
+            &std::collections::HashMap::new(),
+            "",
             options.auto_focus_first(),
-            &h_pan,
+            Some(ink.ctx()),
         );
         self.record_widget_panel_render_height(&panel_key, avail_height);
-        // KNOWN LIMITATION (deliberate; retired by `docs/internal/retained-mode-ui.md` §3.5):
-        // buffer-mounted panels consume only the base rows + hits —
-        // `out.overlays` and `out.popup` are DROPPED, and the click
-        // path resolves with `on_overlay=false`. The popup/overlay
-        // channels (Overlay children, open Dropdown pop-overs, Text
-        // completions) work only in the floating/dock slots today;
-        // wiring them for mounted panels needs paint-time compositing
-        // over split content — a renderer arc of its own. A mounted
-        // panel using those channels will neither paint nor click them:
-        // prefer a floating slot for popup-bearing UI until that lands.
         self.widget_registry.mount(
             panel_key.clone(),
             buffer_id,
             spec,
             out.instance_states,
             out.focus_key,
-            out.painted,
-            out.boxes,
             options.auto_focus_first(),
             options.page(),
             options.focus_follows_cursor(),
@@ -5330,22 +5308,13 @@ impl Editor {
         {
             state.interactive_widget_panel = true;
         }
-        let entries = out.entries;
-        if let Err(e) = self.set_virtual_buffer_content(buffer_id, entries.clone()) {
-            tracing::error!(
-                "Failed to render mounted widget panel {} into {:?}: {}",
-                panel_key,
-                buffer_id,
-                e
-            );
-        } else {
-            tracing::debug!(
-                "Mounted widget panel {} into buffer {:?}",
-                panel_key,
-                buffer_id
-            );
-        }
-        self.apply_widget_focus_cursor(buffer_id, &entries, out.focus_cursor);
+        // The buffer's rows are the tree's, written once the frame lays the
+        // panel out — see `app::pane_mirror`.
+        tracing::debug!(
+            "Mounted widget panel {} into buffer {:?}",
+            panel_key,
+            buffer_id
+        );
     }
 
     fn handle_update_widget_panel(
@@ -5366,23 +5335,17 @@ impl Editor {
                 return;
             }
         };
-        let prev_painted = self
-            .widget_registry
-            .get(panel_key)
-            .map(|p| p.painted.clone())
-            .unwrap_or_default();
         let prev_focus = self
             .widget_registry
             .focus_key(panel_key)
             .map(|s| s.to_string())
             .unwrap_or_default();
-        let buffer_id_for_width = self
+        let buffer_id = self
             .widget_registry
             .buffer_and_spec(panel_key)
             .map(|(b, _)| b)
             .unwrap_or(BufferId(0));
-        let panel_width = self.widget_panel_width(buffer_id_for_width);
-        let avail_height = self.widget_panel_height(buffer_id_for_width);
+        let avail_height = self.widget_panel_height(buffer_id);
         // The policy the mount set, not a fresh default: a repaint that
         // resolved focus differently from the mount is exactly the drift
         // `auto_focus_first` exists to prevent.
@@ -5391,39 +5354,22 @@ impl Editor {
             .get(panel_key)
             .map(|p| p.auto_focus_first)
             .unwrap_or(true);
-        // The reader's sideways fold: a repaint that dropped it would slide
-        // every row back to its resting window under a reader who panned.
-        let h_pan = self
-            .widget_registry
-            .get(panel_key)
-            .map(|p| p.h_pan.clone())
-            .unwrap_or_default();
-        let out = self.render_panel_spec(
+        let ink = self.markdown_ink();
+        let out = crate::widgets::resolve_panel(
             &spec,
             &prev,
-            &prev_painted,
             &prev_focus,
-            panel_width,
-            avail_height,
             auto_focus_first,
-            &h_pan,
+            Some(ink.ctx()),
         );
         self.record_widget_panel_render_height(panel_key, avail_height);
-        let entries = out.entries;
-        match self.widget_registry.update(
-            panel_key,
-            spec,
-            out.instance_states,
-            out.focus_key,
-            out.painted,
-            out.boxes,
-        ) {
-            Ok(buffer_id) => {
-                if let Err(e) = self.set_virtual_buffer_content(buffer_id, entries.clone()) {
-                    tracing::error!("Failed to render updated widget panel {}: {}", panel_key, e);
-                }
-                self.apply_widget_focus_cursor(buffer_id, &entries, out.focus_cursor);
-            }
+        match self
+            .widget_registry
+            .update(panel_key, spec, out.instance_states, out.focus_key)
+        {
+            // The buffer's rows are the tree's, written once the frame lays
+            // the new spec out — see `app::pane_mirror`.
+            Ok(_) => {}
             Err(()) => {
                 tracing::debug!(
                     "UpdateWidgetPanel for unknown panel {} ignored (not mounted)",
@@ -5596,12 +5542,16 @@ impl Editor {
                 // Update completion popup state on a Text widget.
                 // Non-empty `items` opens the popup and resets the
                 // host-managed selection to the top candidate;
-                // empty closes it. The instance state has to
-                // exist first (a SetCompletions arriving before
-                // any render is dropped on the floor — Text
-                // instance state is seeded on first render of
-                // the spec).
+                // empty closes it. The candidates are host state a
+                // field nobody has typed in does not have yet, so this
+                // is one of the handlers that seeds it
+                // (`text::ensure_text_state`).
                 if let Some(panel) = self.widget_registry.get_mut(panel_key) {
+                    if let Some(widget) =
+                        crate::widgets::find_widget_by_key(&panel.spec, &widget_key).cloned()
+                    {
+                        crate::widgets::kinds::text::ensure_text_state(&widget, &widget_key, panel);
+                    }
                     if let Some(crate::widgets::WidgetInstanceState::Text {
                         completions,
                         completion_selected_index,
@@ -5740,6 +5690,7 @@ impl Editor {
 
     fn handle_unmount_widget_panel(&mut self, panel_key: &crate::widgets::PanelKey) {
         self.page_anchors.remove(panel_key);
+        self.pane_mirrors.remove(panel_key);
         match self.widget_registry.unmount(panel_key) {
             Some(buffer_id) => {
                 tracing::debug!(
@@ -5830,7 +5781,6 @@ impl Editor {
             placement,
             focused: !start_blurred,
             mode,
-            entries: Vec::new(),
             scrollbar_zone_hovered: false,
             scrollbar_flash_until: None,
             fullscreen: false,
@@ -5844,59 +5794,33 @@ impl Editor {
             hovered_item_key: String::new(),
             hovered_popup_row: String::new(),
         });
-        let prev = std::collections::HashMap::new();
-        // A mount paints from scratch — no previous window either.
-        let prev_painted = std::collections::HashMap::new();
-        let prev_focus = String::new();
-        let panel_width = self.floating_panel_inner_width(slot);
-        // A fresh mount has nothing hovered: the pointer hasn't been
-        // resolved against this panel's hit areas yet, and the next
-        // `Moved` event will do so.
-        let out = {
-            let theme_guard = self.theme.read().unwrap();
-            super::widget_runtime::render_floating_spec(
-                focus_marker,
-                &spec,
-                &prev,
-                &prev_painted,
-                &prev_focus,
-                panel_width,
-                self.floating_panel_inner_height(slot),
-                "",
-                "",
-                "",
-                Some(crate::widgets::MarkdownCtx {
-                    theme: &theme_guard,
-                    grammars: Some(self.grammar_registry.as_ref()),
-                }),
-                // Floating and dock slots keep the historical seeding;
-                // only a panel that declared otherwise at mount opts out.
-                true,
-                // A mount has nothing panned yet.
-                None,
-            )
-        };
-        let entries = out.entries;
+        // A mount is a clean slate: no state and no focus yet. The tree lays
+        // the panel out on the next frame; what the registry needs now is the
+        // spec resolved against nothing — the focus clamp, and the state the
+        // description reads.
+        let ink = self.markdown_ink();
+        let out = crate::widgets::resolve_panel(
+            &spec,
+            &std::collections::HashMap::new(),
+            "",
+            // Floating and dock slots keep the historical seeding;
+            // only a panel that declared otherwise at mount opts out.
+            true,
+            Some(ink.ctx()),
+        );
         self.widget_registry.mount(
             panel_key.clone(),
             buffer_id,
             spec,
             out.instance_states,
             out.focus_key,
-            out.painted,
-            out.boxes,
-            // Floating and dock panels render through
-            // `render_floating_spec`, which seeds focus unconditionally;
-            // record what they actually rendered under rather than a
-            // policy they do not read.
+            // Floating and dock panels seed focus unconditionally; record
+            // what they resolved under rather than a policy they do not read.
             true,
             // Not a page, and with no buffer caret to track.
             false,
             false,
         );
-        if let Some(fwp) = self.panel_mut(slot) {
-            fwp.entries = entries;
-        }
         tracing::debug!(
             "Mounted floating widget panel {} ({}%x{}%)",
             panel_key,
@@ -5944,7 +5868,6 @@ impl Editor {
             placement: super::PanelPlacement::SidebarSection { rows },
             focused: false,
             mode: None,
-            entries: Vec::new(),
             scrollbar_zone_hovered: false,
             scrollbar_flash_until: None,
             fullscreen: false,
@@ -5960,53 +5883,30 @@ impl Editor {
         if let Some(p) = self.panel_mut(slot) {
             p.focused = false;
         }
-        let prev = std::collections::HashMap::new();
-        let prev_painted = std::collections::HashMap::new();
-        let prev_focus = String::new();
-        let panel_width = self.floating_panel_inner_width(slot);
-        let out = {
-            let theme_guard = self.theme.read().unwrap();
-            super::widget_runtime::render_floating_spec(
-                false,
-                &spec,
-                &prev,
-                &prev_painted,
-                &prev_focus,
-                panel_width,
-                self.floating_panel_inner_height(slot),
-                "",
-                "",
-                "",
-                Some(crate::widgets::MarkdownCtx {
-                    theme: &theme_guard,
-                    grammars: Some(self.grammar_registry.as_ref()),
-                }),
-                // As the dock: keep the historical focus seeding.
-                true,
-                // A mount has nothing panned yet.
-                None,
-            )
-        };
-        let entries = out.entries;
+        // As the dock: a clean slate, resolved against nothing.
+        let ink = self.markdown_ink();
+        let out = crate::widgets::resolve_panel(
+            &spec,
+            &std::collections::HashMap::new(),
+            "",
+            // As the dock: keep the historical focus seeding.
+            true,
+            Some(ink.ctx()),
+        );
         self.widget_registry.mount(
             panel_key.clone(),
             slot.buffer_id(),
             spec,
             out.instance_states,
             out.focus_key,
-            out.painted,
-            out.boxes,
-            // As the dock: `render_floating_spec` seeds focus
-            // unconditionally, so record what was rendered under.
+            // As the dock: focus is seeded unconditionally, so record what
+            // was resolved under.
             true,
             // Not a page, and — as the dock — with no buffer caret of its
             // own to track.
             false,
             false,
         );
-        if let Some(fwp) = self.panel_mut(slot) {
-            fwp.entries = entries;
-        }
         if !start_blurred {
             self.focus_sidebar_section(index);
         }
@@ -6026,79 +5926,31 @@ impl Editor {
         // The description reads what this writes; see
         // `Editor::shell_description_stale`.
         self.shell_description_stale = true;
-        let Some(slot) = self.slot_of_panel(panel_key) else {
+        if self.slot_of_panel(panel_key).is_none() {
             tracing::debug!(
                 "UpdateFloatingWidget for unknown / mismatched panel {} ignored",
                 panel_key
             );
             return;
-        };
+        }
         let prev = self
             .widget_registry
             .instance_states(panel_key)
             .cloned()
-            .unwrap_or_default();
-        let prev_painted = self
-            .widget_registry
-            .get(panel_key)
-            .map(|p| p.painted.clone())
             .unwrap_or_default();
         let prev_focus = self
             .widget_registry
             .focus_key(panel_key)
             .map(|s| s.to_string())
             .unwrap_or_default();
-        let panel_width = self.floating_panel_inner_width(slot);
-        let focus_marker = self.panel(slot).map(|f| f.focus_marker).unwrap_or(false);
-        // Carry the live hover through a plugin-driven update, so a spec
-        // refresh under a stationary pointer doesn't drop the highlight.
-        let hover_key = self
-            .panel(slot)
-            .map(|f| f.hovered_widget_key.clone())
-            .unwrap_or_default();
-        let hover_item_key = self
-            .panel(slot)
-            .map(|f| f.hovered_item_key.clone())
-            .unwrap_or_default();
-        let hover_popup_row = self
-            .panel(slot)
-            .map(|f| f.hovered_popup_row.clone())
-            .unwrap_or_default();
-        let out = {
-            let theme_guard = self.theme.read().unwrap();
-            super::widget_runtime::render_floating_spec(
-                focus_marker,
-                &spec,
-                &prev,
-                &prev_painted,
-                &prev_focus,
-                panel_width,
-                self.floating_panel_inner_height(slot),
-                &hover_key,
-                &hover_item_key,
-                &hover_popup_row,
-                Some(crate::widgets::MarkdownCtx {
-                    theme: &theme_guard,
-                    grammars: Some(self.grammar_registry.as_ref()),
-                }),
-                // Floating and dock slots keep the historical seeding;
-                // only a panel that declared otherwise at mount opts out.
-                true,
-                // A mount has nothing panned yet.
-                None,
-            )
-        };
-        let entries = out.entries;
+        // The state carried, the focus re-clamped onto the new spec; the tree
+        // lays the new spec out on the next frame. Hover is the panel's own
+        // and survives a spec refresh on it untouched.
+        let ink = self.markdown_ink();
+        let out = crate::widgets::resolve_panel(&spec, &prev, &prev_focus, true, Some(ink.ctx()));
         if self
             .widget_registry
-            .update(
-                panel_key,
-                spec,
-                out.instance_states,
-                out.focus_key,
-                out.painted,
-                out.boxes,
-            )
+            .update(panel_key, spec, out.instance_states, out.focus_key)
             .is_err()
         {
             tracing::debug!(
@@ -6106,9 +5958,6 @@ impl Editor {
                 panel_key
             );
             return;
-        }
-        if let Some(fwp) = self.panel_mut(slot) {
-            fwp.entries = entries;
         }
     }
 

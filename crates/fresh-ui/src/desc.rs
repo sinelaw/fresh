@@ -205,6 +205,9 @@ pub struct BoxProps {
     /// The box's ground is a wash: it recolours what is already painted
     /// under it and keeps the text. See [`Node::wash`].
     pub wash: bool,
+    /// The box's ground is this cluster, tiled across its rect, rather than a
+    /// blank fill. See [`Node::rule`].
+    pub rule: Option<std::rc::Rc<str>>,
 }
 
 /// How a run gives up cells it was not given.
@@ -1603,6 +1606,34 @@ impl<M> Node<M> {
     /// What a drop target's highlight over a pane's text is.
     pub fn wash(mut self) -> Self {
         self.box_props().wash = true;
+        self
+    }
+
+    /// Paint this box's ground by **tiling `glyph` across its rectangle**,
+    /// instead of filling it blank.
+    ///
+    /// A rule is as wide as the space it is given, and it must not be the
+    /// thing that decides how wide that is. Stated as text of a computed
+    /// length — `"─".repeat(n)` — it is both: it needs `n` from the caller,
+    /// and once built it measures `n` wide, so under an [`Sizing::Auto`]
+    /// parent it sets the very width it was asked about. That is what kept
+    /// an anchored panel's box measuring to the frame rather than to its
+    /// content.
+    ///
+    /// Stated as a ground, it is neither. Leave its extent along the rule
+    /// [`Sizing::Auto`]: a box with no children measures nothing there, so it
+    /// contributes nothing to its container's intrinsic measure, and the
+    /// container's [`Align::Stretch`] then widens it to whatever the
+    /// container settled on. (Not [`Sizing::Flex`] — on a container's cross
+    /// axis a flexible child is measured at the whole extent whether or not
+    /// that extent is definite, which is the loop again.) The backend decides
+    /// what "tiled" means: the terminal repeats the cluster, and a DOM
+    /// backend is free to draw a line and ignore the glyph entirely.
+    ///
+    /// Naming a rule makes the box paint, the way naming a theme or a class
+    /// does.
+    pub fn rule(mut self, glyph: impl Into<std::rc::Rc<str>>) -> Self {
+        self.box_props().rule = Some(glyph.into());
         self
     }
 

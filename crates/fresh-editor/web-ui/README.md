@@ -25,7 +25,7 @@ the core; each frontend only renders it.
   browser to lay out; the tree's own items (`Editor::tree_view()` →
   `regions.tree`) are folded into DOM at the cells the tree placed them at
   (`js/72-tree.js`), and a click comes back as a cell like a terminal click.
-  See `docs/internal/retained-mode-ui.md` §3.9.
+  See `docs/internal/retained-mode-ui.md`, "The web".
   Each item carries **both the fold's colours and the theme keys they were read
   from** — `--fold-bg` / `--fold-fg` inline, `data-fg` / `data-bg` naming the
   keys, and `data-surface-kind` naming the surface — so a web theme dresses a
