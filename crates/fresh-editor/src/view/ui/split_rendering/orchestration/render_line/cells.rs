@@ -682,11 +682,21 @@ impl CellPass<'_, '_, '_> {
             None => None,
         };
 
-        // Pre-resolved active overlays for this cell. Empty slice when
-        // byte_pos is None (ANSI continuation / virtual cells) — matches
-        // pre-sweep behaviour where `bp = None` short-circuited overlay
-        // filtering.
-        let cell_overlays: &[&Overlay] = if byte_pos.is_some() {
+        // Pre-resolved active overlays for this cell. A cell with no source
+        // byte of its own — a spliced inlay hint — wears what the text it was
+        // spliced into wears, or it punches a hole through the band an
+        // `extend_to_line_end` overlay paints across the row. Before the row's
+        // first glyph the sweep still stands on the previous row, so move it
+        // onto this one; after it, it is already on the hint's neighbour.
+        let row_start_byte = input.view_line.source_start_byte;
+        if byte_pos.is_none() && self.first_line_byte_pos.is_none() {
+            if let Some(bp) = row_start_byte {
+                self.overlay_sweep.advance_to(bp);
+            }
+        }
+        // A row with no source bytes at all (a plugin's virtual line) keeps
+        // its own styling.
+        let cell_overlays: &[&Overlay] = if byte_pos.is_some() || row_start_byte.is_some() {
             self.overlay_sweep.at_cursor()
         } else {
             &[]

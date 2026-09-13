@@ -143,3 +143,227 @@ fn overlay_extend_to_line_end_fills_empty_source_line() {
         );
     }
 }
+
+/// The band's trailing cells must name a foreground the terminal can invert.
+///
+/// A block cursor is painted by the terminal, which inverts the two colours it
+/// finds in the cell it sits on. Past the end of a line there is no text, so
+/// the `extend_to_line_end` fill *is* what the cursor inverts — and the fill
+/// used to state `fg = bg`, which inverts to itself: a caret that cannot be
+/// seen anywhere inside a code-tour step's band. The fill is ground, so it
+/// states the ground's foreground, exactly as the cells past a plain line's
+/// end do.
+#[test]
+fn overlay_extend_to_line_end_fill_keeps_a_visible_cursor() {
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.type_text("hi").unwrap();
+    harness.render().unwrap();
+
+    harness
+        .apply_event(Event::AddOverlay {
+            namespace: Some(OverlayNamespace::from_string("repro".into())),
+            range: 0..2,
+            face: OverlayFace::Background { color: (0, 80, 0) },
+            priority: 50,
+            message: None,
+            extend_to_line_end: true,
+            url: None,
+        })
+        .unwrap();
+    harness.render().unwrap();
+
+    let editor_fg = harness.editor().theme().editor_fg;
+    let buf = harness.buffer();
+    let row = (0..buf.area.height)
+        .find(|y| {
+            (0..buf.area.width)
+                .map(|x| buf[(x, *y)].symbol())
+                .collect::<String>()
+                .contains("hi")
+        })
+        .expect("could not find 'hi' on screen");
+
+    // The cursor sits just past "hi" — the first cell of the fill — and the
+    // rest of the band is the same ground it would move onto.
+    let hi_end = (0..buf.area.width)
+        .find(|x| buf[(*x, row)].symbol() == "h")
+        .expect("could not locate 'h' on the row")
+        + 2;
+    for x in [hi_end, hi_end + 1, 40] {
+        let style = buf[(x, row)].style();
+        assert_eq!(
+            style.bg,
+            Some(Color::Rgb(0, 80, 0)),
+            "col {x}: expected the band's bg",
+        );
+        assert_ne!(
+            style.fg, style.bg,
+            "col {x}: the band's fill inverts to itself — a block cursor \
+             there is invisible",
+        );
+        assert_eq!(
+            style.fg,
+            Some(editor_fg),
+            "col {x}: the fill is ground, so it states the ground's fg",
+        );
+    }
+}
+
+/// An inlay hint inside a band wears the band.
+///
+/// LSP inlay hints are spliced into the row as cells with no source byte, and
+/// the overlay sweep only ran for cells that had one — so the hint kept the
+/// plain editor background and punched a hole through a code-tour step's
+/// highlight.
+#[test]
+fn overlay_extend_to_line_end_covers_inlay_hints() {
+    use fresh::view::virtual_text::VirtualTextPosition;
+    use ratatui::style::Style;
+
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.type_text("let x = 5;").unwrap();
+    harness.render().unwrap();
+
+    // A type hint after `x` (byte 5) and a parameter hint before `5` (byte 8),
+    // the two shapes an LSP produces: `AfterChar` and `BeforeChar`.
+    {
+        let state = harness.editor_mut().active_state_mut();
+        let hint_style = Style::default().fg(Color::Rgb(128, 128, 128));
+        state.virtual_texts.add(
+            &mut state.marker_list,
+            5,
+            ": i32".to_string(),
+            hint_style,
+            VirtualTextPosition::AfterChar,
+            0,
+        );
+        state.virtual_texts.add(
+            &mut state.marker_list,
+            8,
+            "n:".to_string(),
+            hint_style,
+            VirtualTextPosition::BeforeChar,
+            0,
+        );
+    }
+    harness.render().unwrap();
+
+    harness
+        .apply_event(Event::AddOverlay {
+            namespace: Some(OverlayNamespace::from_string("repro".into())),
+            range: 0..10,
+            face: OverlayFace::Background { color: (0, 80, 0) },
+            priority: 50,
+            message: None,
+            extend_to_line_end: true,
+            url: None,
+        })
+        .unwrap();
+    harness.render().unwrap();
+
+    let buf = harness.buffer();
+    let row = (0..buf.area.height)
+        .find(|y| {
+            (0..buf.area.width)
+                .map(|x| buf[(x, *y)].symbol())
+                .collect::<String>()
+                .contains("let x")
+        })
+        .expect("could not find the code line on screen");
+    let text: String = (0..buf.area.width)
+        .map(|x| buf[(x, row)].symbol())
+        .collect();
+
+    for hint in [": i32", "n:"] {
+        let start = text
+            .find(hint)
+            .unwrap_or_else(|| panic!("hint {hint:?} is not on screen: {text:?}"));
+        for (i, _) in hint.char_indices() {
+            let x = (start + i) as u16;
+            assert_eq!(
+                buf[(x, row)].style().bg,
+                Some(Color::Rgb(0, 80, 0)),
+                "hint {hint:?} col {x}: an inlay hint inside the band must \
+                 wear the band's bg, not punch a hole in it. Row: {text:?}",
+            );
+        }
+    }
+}
+
+/// …and a hint on the line *after* a band stays outside it.
+///
+/// The hint borrows its anchor's styling, not the styling of whatever cell
+/// the renderer happened to paint last: a `BeforeChar` hint opening the line
+/// below a band is spliced in before any of that line's own bytes, and the
+/// band's last byte — the newline it ends on — is the one the overlay sweep
+/// still stood on.
+#[test]
+fn overlay_extend_to_line_end_leaves_the_next_line_s_hints_alone() {
+    use fresh::view::virtual_text::VirtualTextPosition;
+    use ratatui::style::Style;
+
+    let mut harness = EditorTestHarness::new(80, 24).unwrap();
+    harness.type_text("let x = 5;\nfoo();").unwrap();
+    harness.render().unwrap();
+
+    // A hint in front of `foo` — the first byte of the second line (11).
+    {
+        let state = harness.editor_mut().active_state_mut();
+        state.virtual_texts.add(
+            &mut state.marker_list,
+            11,
+            "call:".to_string(),
+            Style::default().fg(Color::Rgb(128, 128, 128)),
+            VirtualTextPosition::BeforeChar,
+            0,
+        );
+    }
+    harness.render().unwrap();
+
+    // The band covers the first line and the newline that ends it, the way a
+    // code tour's step range does.
+    harness
+        .apply_event(Event::AddOverlay {
+            namespace: Some(OverlayNamespace::from_string("repro".into())),
+            range: 0..11,
+            face: OverlayFace::Background { color: (0, 80, 0) },
+            priority: 50,
+            message: None,
+            extend_to_line_end: true,
+            url: None,
+        })
+        .unwrap();
+    harness.render().unwrap();
+
+    let buf = harness.buffer();
+    let row_of = |needle: &str| {
+        (0..buf.area.height)
+            .find(|y| {
+                (0..buf.area.width)
+                    .map(|x| buf[(x, *y)].symbol())
+                    .collect::<String>()
+                    .contains(needle)
+            })
+            .unwrap_or_else(|| panic!("could not find {needle:?} on screen"))
+    };
+    let banded = row_of("let x");
+    let below = row_of("call:");
+    assert_eq!(
+        buf[(40, banded)].style().bg,
+        Some(Color::Rgb(0, 80, 0)),
+        "the first line should carry the band",
+    );
+
+    let text: String = (0..buf.area.width)
+        .map(|x| buf[(x, below)].symbol())
+        .collect();
+    let start = text.find("call:").expect("hint is not on screen");
+    for i in 0.."call:".len() {
+        let x = (start + i) as u16;
+        assert_ne!(
+            buf[(x, below)].style().bg,
+            Some(Color::Rgb(0, 80, 0)),
+            "hint col {x}: the line below the band is not in it. Row: {text:?}",
+        );
+    }
+}
