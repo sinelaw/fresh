@@ -61,32 +61,105 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # Keystrokes, as an xterm-compatible terminal sends them.
 CTRL_Q = b"\x11"
+CTRL_B = b"\x02"
+CTRL_P = b"\x10"
+CTRL_S = b"\x13"
 CTRL_END = b"\x1b[1;5F"
 CTRL_HOME = b"\x1b[1;5H"
 PAGE_DOWN = b"\x1b[6~"
 PAGE_UP = b"\x1b[5~"
+CTRL_PAGE_UP = b"\x1b[5;5~"
 CTRL_PAGE_DOWN = b"\x1b[6;5~"
-CTRL_S = b"\x13"
+TAB = b"\t"
+ENTER = b"\r"
+BACKSPACE = b"\x7f"
 
-# The scripted workload: (label, bytes, repeats). Kept to keys whose default
-# binding is stable (see crates/fresh-editor-core/keymaps/default.json) so
-# the profile measures the editor, not a keymap change.
-WORKLOAD = [
-    ("walk to end of buffer", CTRL_END, 1),
-    ("page up through it", PAGE_UP, 6),
-    ("page down through it", PAGE_DOWN, 6),
-    ("back to the top", CTRL_HOME, 1),
-    ("type", b"fn memory_profile_probe() {}", 1),
+
+def step(label, keys, reps=1, settle=1.0):
+    """One workload step. `settle` scales the wait for the editor to go quiet,
+    for steps that do far more work than a keystroke (creating a workspace
+    forks git and a shell)."""
+    return (label, keys, reps, settle)
+
+
+def palette_file(name):
+    """Open a file through the palette. It opens in `>command` mode, so the
+    leading backspace drops the `>` and puts it in file mode."""
+    return CTRL_P + BACKSPACE + name.encode() + ENTER
+
+
+def palette_command(name):
+    return CTRL_P + name.encode() + ENTER
+
+
+# Workload 1: editing. Walk each buffer end to end, type, save, switch buffer.
+EDIT_WORKLOAD = [
+    step("walk to end of buffer", CTRL_END),
+    step("page up through it", PAGE_UP, 6),
+    step("page down through it", PAGE_DOWN, 6),
+    step("back to the top", CTRL_HOME),
+    step("type", b"fn memory_profile_probe() {}"),
     # Save so the quit at the end is not held up by a "buffer is modified"
     # prompt: the files are throwaway copies, so writing them costs nothing
     # and it keeps the run unattended.
-    ("save", CTRL_S, 1),
-    ("next buffer", CTRL_PAGE_DOWN, 1),
-    ("walk to end of buffer", CTRL_END, 1),
-    ("page up through it", PAGE_UP, 6),
-    ("next buffer", CTRL_PAGE_DOWN, 1),
-    ("walk to end of buffer", CTRL_END, 1),
+    step("save", CTRL_S),
+    step("next buffer", CTRL_PAGE_DOWN),
+    step("walk to end of buffer", CTRL_END),
+    step("page up through it", PAGE_UP, 6),
+    step("next buffer", CTRL_PAGE_DOWN),
+    step("walk to end of buffer", CTRL_END),
 ]
+
+# Workload 2: the orchestrator. Several workspaces, each a git worktree with
+# its own terminal, file explorer and buffers, over a real git repo so the git
+# plugins have something to do.
+#
+# Every keystroke here was worked out against the running editor (the trust
+# dialog's default is *not* trust, the palette opens in command mode, and the
+# New Workspace dialog needs four tabs to reach its Create button), so treat
+# the sequence as load-bearing rather than illustrative.
+ORCHESTRATOR_FILES = ["README.md", "Cargo.toml", "main.rs"]
+
+
+def orchestrator_workload(workspaces=3):
+    steps = [
+        # The security dialog owns the first keystrokes in a folder the editor
+        # has not seen before. `t` selects "Trust folder & Allow Tooling",
+        # Enter confirms -- without it the whole run profiles a modal dialog.
+        step("trust the folder", b"t"),
+        step("confirm trust", ENTER, settle=2.0),
+        step("open the orchestrator doc", palette_file("orchestrator-sessions"), settle=1.5),
+        step("open the file explorer", CTRL_B, settle=1.5),
+    ]
+    for i in range(workspaces):
+        steps += [
+            step("workspace %d: open dialog" % (i + 1), palette_command("orchestrator: new work"), settle=1.5),
+            # Four tabs from the Project Path field to [ Create Workspace ].
+            step("workspace %d: reach Create" % (i + 1), TAB, 4),
+            # Creating one forks git for a worktree and spawns the shell, so
+            # it needs far longer than a keystroke to go quiet.
+            step("workspace %d: create" % (i + 1), ENTER, settle=6.0),
+            step("workspace %d: file explorer" % (i + 1), CTRL_B, settle=1.5),
+        ]
+        for name in ORCHESTRATOR_FILES:
+            steps.append(step("workspace %d: open %s" % (i + 1, name), palette_file(name), settle=2.0))
+        steps += [
+            step("workspace %d: highlight to end" % (i + 1), CTRL_END, settle=1.5),
+            # Back to the workspace's terminal, and give git something to do
+            # in it -- the git plugins watch the repo, and the terminal has to
+            # emulate the output.
+            step("workspace %d: back to terminal" % (i + 1), CTRL_PAGE_UP, len(ORCHESTRATOR_FILES) + 1),
+            # --no-pager on purpose: an interactive pager would still own the
+            # terminal at the end of the run and swallow the quit.
+            step("workspace %d: run git in it" % (i + 1), b"git --no-pager log --oneline -20\r", settle=2.0),
+        ]
+    return steps
+
+
+WORKLOADS = {
+    "edit": lambda: EDIT_WORKLOAD,
+    "orchestrator": orchestrator_workload,
+}
 
 
 def log(msg):
@@ -108,13 +181,15 @@ def default_files():
     return found
 
 
-def spawn_pty(argv, env, cols=120, rows=40):
+def spawn_pty(argv, env, cols=140, rows=45, cwd=None):
     """Fork the child onto the slave end of a new pty, and return (pid, master)."""
     pid, fd = pty.fork()
     if pid == 0:
         os.environ.clear()
         os.environ.update(env)
         try:
+            if cwd:
+                os.chdir(cwd)
             os.execvp(argv[0], argv)
         except Exception as exc:  # pragma: no cover - child side
             sys.stderr.write("exec failed: %r\n" % (exc,))
@@ -132,17 +207,27 @@ def write_keys(fd, data):
         return False
 
 
-def drain(fd, quiet=0.5, maxwait=120.0):
-    """Read until the child stops writing for `quiet` seconds.
+def drain(fd, quiet=0.5, maxwait=120.0, quiet_bytes=1024):
+    """Read until the child stops doing visible work, and return what it wrote.
+
+    "Stops" is not "emits nothing": parts of this UI animate -- the
+    orchestrator dock repaints a spinner while a workspace is being prepared
+    -- so a strict no-output test would wait out the whole cap on every step
+    that starts one. A window of `quiet` seconds carrying less than
+    `quiet_bytes` counts as idle, which a spinner satisfies and a real
+    repaint does not.
 
     Waiting on output rather than sleeping a fixed amount is what keeps the
-    workload honest under Valgrind, where every step is 20-50x slower than
-    native and a fixed sleep would race the editor's repaint.
+    workload honest under Valgrind, where every step is tens of times slower
+    and a fixed sleep would race the editor.
     """
     buf = bytearray()
     start = time.time()
+    window_start = start
+    window_bytes = 0
     while True:
         r, _, _ = select.select([fd], [], [], quiet)
+        now = time.time()
         if not r:
             return bytes(buf)
         try:
@@ -152,7 +237,12 @@ def drain(fd, quiet=0.5, maxwait=120.0):
         if not data:
             return bytes(buf)
         buf += data
-        if time.time() - start > maxwait:
+        window_bytes += len(data)
+        if now - window_start >= quiet:
+            if window_bytes < quiet_bytes:
+                return bytes(buf)
+            window_start, window_bytes = now, 0
+        if now - start > maxwait:
             return bytes(buf)
 
 
@@ -172,44 +262,76 @@ def isolated_env(home):
     }
 
 
-def run_workload(argv, env, quiet, rss_samples=None, cols=120, rows=40):
-    """Drive one editor launch through WORKLOAD and return its exit status.
+def run_workload(argv, env, quiet, steps, rss_samples=None, cols=140, rows=45, cwd=None,
+                 max_step=30.0, verbose=False, screen_out=None):
+    """Drive one editor launch through `steps` and return its exit status.
 
     `rss_samples` (a list) turns on /proc sampling of the editor process.
     """
-    pid, fd = spawn_pty(argv, env, cols, rows)
+    pid, fd = spawn_pty(argv, env, cols, rows, cwd=cwd)
     sampler = ProcSampler(pid, rss_samples) if rss_samples is not None else None
+    last_screen = bytearray()
     try:
         if sampler:
             sampler.sample("start")
-        drain(fd, quiet=quiet, maxwait=180.0)
+        drain(fd, quiet=quiet, maxwait=max_step * 3)
         if sampler:
             sampler.sample("after startup")
-        for label, keys, reps in WORKLOAD:
+        for label, keys, reps, settle in steps:
+            started = time.time()
+            nbytes = 0
             for _ in range(reps):
                 if not write_keys(fd, keys):
                     break
-                drain(fd, quiet=quiet)
+                # The cap matters: parts of this UI animate (the dock's
+                # "preparing workspace" spinner), and a screen that never goes
+                # quiet would otherwise hold a step open indefinitely.
+                nbytes += len(drain(fd, quiet=quiet * settle, maxwait=max_step * settle))
+            if verbose:
+                log("  %-42s %5.1fs %8d bytes" % (label[:42], time.time() - started, nbytes))
             if sampler:
                 sampler.sample(label)
-        write_keys(fd, CTRL_Q)
-        drain(fd, quiet=quiet)
-        # The workload saves before quitting, so there should be no prompt --
-        # but if something else left a buffer dirty, answer "discard" rather
-        # than hang. Valgrind only writes its profile on a clean exit, so a
-        # run that ends in SIGKILL produces nothing at all.
-        write_keys(fd, b"d")
-        drain(fd, quiet=quiet)
-        deadline = time.time() + 180.0
+        # Quitting, defensively. The last step leaves focus in a terminal, so
+        # step out of it first -- a terminal pane is entitled to swallow
+        # Ctrl+Q. Then answer, in order, the prompts a loaded editor can raise
+        # on the way out: unsaved buffers, and the quit confirmation. A key
+        # that no prompt is waiting for lands in a buffer we are about to
+        # discard, which costs nothing.
+        for keys in (CTRL_PAGE_DOWN, CTRL_Q, b"d", b"y", ENTER):
+            if not write_keys(fd, keys):
+                break
+            tail = drain(fd, quiet=quiet, maxwait=max_step)
+            if tail:
+                last_screen[:] = tail[-4096:]
+            done, status = os.waitpid(pid, os.WNOHANG)
+            if done:
+                return status
+
+        deadline = time.time() + max_step * 4
         while time.time() < deadline:
             done, status = os.waitpid(pid, os.WNOHANG)
             if done:
                 return status
-            drain(fd, quiet=0.2, maxwait=1.0)
-        log("editor did not exit in time; killing it")
+            tail = drain(fd, quiet=0.5, maxwait=2.0)
+            if tail:
+                last_screen[:] = tail[-4096:]
+        # SIGTERM, not SIGKILL: Valgrind dumps its profile for a process
+        # terminating on a signal it can see, and nothing at all for one that
+        # is killed outright. The screen dump says what the editor was waiting
+        # for, which is the only way to debug a workload from out here.
+        log("editor did not exit; sending SIGTERM (the profile may be short)")
+        os.kill(pid, signal.SIGTERM)
+        for _ in range(20):
+            done, status = os.waitpid(pid, os.WNOHANG)
+            if done:
+                return status
+            drain(fd, quiet=0.5, maxwait=1.0)
         os.kill(pid, signal.SIGKILL)
         return os.waitpid(pid, 0)[1]
     finally:
+        if screen_out and last_screen:
+            with open(screen_out, "wb") as f:
+                f.write(bytes(last_screen))
         try:
             os.close(fd)
         except OSError:
@@ -523,13 +645,25 @@ def main():
     ap.add_argument("--tool", choices=("massif", "dhat", "rss"), default="massif")
     ap.add_argument("--binary", default=os.path.join(REPO, "target/profiling/fresh"))
     ap.add_argument("--out", default=os.path.join(REPO, "target/memory-profile"))
-    ap.add_argument("--files", nargs="*", help="files for the editor to open (default: a few repo sources)")
+    ap.add_argument("--workload", choices=tuple(WORKLOADS), default="edit",
+                    help="edit: open files and walk/type through them. "
+                         "orchestrator: several workspaces, each a git worktree with its own "
+                         "terminal, file explorer and buffers, over a throwaway clone of the repo")
+    ap.add_argument("--workspaces", type=int, default=3,
+                    help="orchestrator workload: how many workspaces to spawn (default 3)")
+    ap.add_argument("--repo", default=REPO,
+                    help="orchestrator workload: repository to clone and work in (default: this one)")
+    ap.add_argument("--files", nargs="*", help="edit workload: files to open (default: a few repo sources)")
     ap.add_argument("--pages-as-heap", action="store_true",
                     help="massif: account every mapped page, not just malloc -- "
                          "totals then include the binary, stacks and mmap'd arenas")
     ap.add_argument("--quiet-window", type=float, default=None,
                     help="seconds of silence that counts as 'the editor is done repainting' "
                          "(default: 0.8 native, 2.5 under massif, 5 under dhat)")
+    ap.add_argument("--max-step", type=float, default=None,
+                    help="hard cap in seconds on how long one workload step may take "
+                         "(default: 25 native, 120 under Valgrind)")
+    ap.add_argument("--verbose", action="store_true", help="log each workload step as it runs")
     ap.add_argument("--top", type=int, default=25)
     ap.add_argument("--json", help="also write the machine-readable numbers here")
     args = ap.parse_args()
@@ -539,22 +673,38 @@ def main():
     if args.tool != "rss" and not shutil.which("valgrind"):
         sys.exit("valgrind is not installed; use --tool rss for a no-Valgrind RSS timeline")
 
-    files = args.files or default_files()
     os.makedirs(args.out, exist_ok=True)
     stamp = time.strftime("%Y%m%d-%H%M%S")
-    home = tempfile.mkdtemp(prefix="fresh-memprof-home-")
+    # Short, and deliberately not under a deep scratch path: the editor's
+    # control socket lives under $XDG_RUNTIME_DIR, and a unix socket path over
+    # ~108 bytes fails to bind with "exceeds capacity of sun_path", which costs
+    # the editor its command socket and the profile its realism.
+    home = tempfile.mkdtemp(prefix="fmp-", dir="/tmp")
     env = isolated_env(home)
-    # A modified buffer would make quit prompt; the workload types, so copy the
-    # files into the throwaway home and edit those instead of the repo's.
-    workdir = os.path.join(home, "work")
-    os.makedirs(workdir, exist_ok=True)
-    copies = []
-    for path in files:
-        dest = os.path.join(workdir, os.path.basename(path))
-        shutil.copyfile(path, dest)
-        copies.append(dest)
+    cwd = None
 
-    editor_args = [args.binary, "--no-upgrade-check", "--no-restore"] + copies
+    if args.workload == "orchestrator":
+        # Work in a throwaway clone: the workload creates worktree workspaces,
+        # and each one cuts a branch in the repository it was started from.
+        cwd = os.path.join(home, "repo")
+        log("cloning %s into %s (workspaces cut branches; the real checkout stays clean)" % (args.repo, cwd))
+        subprocess.run(["git", "clone", "--quiet", args.repo, cwd], check=True)
+        steps = WORKLOADS[args.workload](args.workspaces)
+        opened = ["README.md"]
+    else:
+        files = args.files or default_files()
+        # A modified buffer would make quit prompt; the workload types, so copy
+        # the files into the throwaway home and edit those instead of the repo's.
+        workdir = os.path.join(home, "work")
+        os.makedirs(workdir, exist_ok=True)
+        opened = []
+        for path in files:
+            dest = os.path.join(workdir, os.path.basename(path))
+            shutil.copyfile(path, dest)
+            opened.append(dest)
+        steps = WORKLOADS[args.workload]()
+
+    editor_args = [args.binary, "--no-upgrade-check", "--no-restore"] + opened
     # How long a gap in the editor's output means "it has finished repainting".
     # It has to grow with the slowdown the tool imposes, or the workload starts
     # typing into an editor that is still painting the previous step: dhat
@@ -586,14 +736,17 @@ def main():
         out_file = os.path.join(args.out, "rss.%s.json" % stamp)
         argv = editor_args
 
-    log("workload files: %s" % ", ".join(os.path.basename(c) for c in copies))
+    log("workload: %s (%d steps)" % (args.workload, len(steps)))
     log("running: %s" % " ".join(argv))
     if args.tool != "rss":
         log("Valgrind makes this 20-50x slower than native; a full run is minutes, not seconds.")
 
     samples = [] if args.tool == "rss" else None
     started = time.time()
-    status = run_workload(argv, env, quiet, rss_samples=samples)
+    max_step = args.max_step if args.max_step is not None else (25.0 if args.tool == "rss" else 120.0)
+    screen_out = os.path.join(args.out, "last-screen.%s.txt" % stamp)
+    status = run_workload(argv, env, quiet, steps, rss_samples=samples, cwd=cwd,
+                          max_step=max_step, verbose=args.verbose, screen_out=screen_out)
     elapsed = time.time() - started
     log("editor exited (status %d) after %.1fs" % (status, elapsed))
 
