@@ -449,3 +449,84 @@ on a workload that spawns worktrees and shells it runs several times slower
 again than massif -- the run was still in its first workspace when it was
 stopped. The open question it would answer: whether those 2 MiB sync buffers
 are ever written to at all.
+
+## 7. Reproducing these numbers yourself
+
+Everything in this document comes out of two commands. Both take minutes, not
+hours, and neither needs anything installed beyond what is listed here.
+
+### What you need
+
+```sh
+# the profiler (massif, dhat and ms_print ship with it)
+sudo apt-get install -y valgrind
+
+# only for the production figure: the musl target and its C toolchain,
+# the same pair .github/workflows/musl-builds.yml installs
+rustup target add x86_64-unknown-linux-musl
+sudo apt-get install -y musl-tools
+```
+
+Python 3 with no third-party packages. Linux only: the harness reads
+`/proc/<pid>/smaps` and allocates a pty.
+
+### The two runs
+
+**Resident memory, as shipped.** The static musl release binary is the real
+artifact, so it is the one to ask "how much memory does Fresh use":
+
+```sh
+cargo build --release --target x86_64-unknown-linux-musl --bin fresh
+scripts/memory-profile.py --tool rss --workload orchestrator --workspaces 3 \
+    --binary target/x86_64-unknown-linux-musl/release/fresh
+```
+
+~5 minutes, most of it the workload driving the editor at real speed. Prints
+the RSS timeline step by step, the peak, and the `smaps` table that says what
+each part of that memory *is*.
+
+**Where the heap goes, by subsystem.** This one needs symbols, which the
+release binary does not have, so it runs against the `profiling` build:
+
+```sh
+cargo build --profile profiling --bin fresh
+scripts/memory-profile.py --tool massif --workload orchestrator --workspaces 3 --top 30
+```
+
+~10 minutes: Valgrind is 20-50x slower than native, and the workload spawns
+three git worktrees inside that. Prints heap over time, then the peak snapshot
+broken down by subsystem and by allocation site.
+
+Add `--verbose` to either to watch the workload step by step — the first thing
+to look at if a run stops behaving. Raw profiles are kept under
+`target/memory-profile/`, so a run can be re-analyzed without re-running it,
+and the massif run also writes an `ms_print` report beside its profile with
+the full allocation tree.
+
+### Where the clip numbers come from
+
+`scripts/clips/memory-rss-breakdown.json` and `memory-live-data.json` are
+transcriptions of those two outputs, and nothing else:
+
+| clip slice | comes from |
+|---|---|
+| Working data 46 MB | rss table: `anonymous` 45.6 + `heap (brk)` 0.4 |
+| Program code 13.6 MB | rss table: `editor binary: code` |
+| Built-in data 9.9 MB | rss table: `editor binary: read-only data` |
+| Startup fixups 1.0, Thread space 0.25 | rss table: the remaining two rows |
+| 71 MB total | rss run: `Peak RSS (VmHWM)` |
+| every slice of the live-data clip | massif: the `By subsystem` table |
+
+The live-data clip merges massif's four smallest rows — the UI tree, serde
+values, screen buffers and regexes — into one "Everything else" slice, and
+rounds. Nothing else is editorial.
+
+### If your numbers differ
+
+They will, a little, and two differences are expected rather than
+interesting. Parse volume varies between runs because the workload steps
+forward on a quiet screen rather than a fixed schedule, so totals move by
+tens of percent while per-site figures hold (see §5b). And the `orchestrator`
+workload clones this repository into a throwaway directory and cuts branches
+in the clone, so a different checkout means different files, different
+highlighting, and a different number on every row.
