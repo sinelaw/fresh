@@ -1,5 +1,16 @@
 # Release Notes
 
+## 0.5.2
+
+For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
+
+> Most config options below can be changed in the **Settings UI** - run **Open Settings** from the command palette (`Ctrl+P`).
+
+### Bug Fixes
+
+* **Stale LSP diagnostics after a vi-mode line delete** - `dd` (and any other plugin-driven edit) left the language server analysing the deleted text, so its warnings survived the edit and the save, and hover stopped working on the file (#3258, reported and fixed by @thedadams)
+* **Save All handed each language server the focused buffer's text** under every other saved file's name (#3258)
+
 ## 0.5.1
 
 For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).

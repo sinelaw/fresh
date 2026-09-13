@@ -1446,9 +1446,16 @@ impl Editor {
             text,
             cursor_id: CursorId(0),
         };
-        let lsp_changes = self
-            .active_window()
-            .collect_lsp_changes_for_buffer(buffer_id, &event);
+        // Deriving the change reads the line up to the edit to convert byte
+        // offsets into UTF-16 positions; on a one-long-line file that is
+        // megabytes per edit, and it is wasted when the buffer has no server
+        // to receive it.
+        let lsp_changes = if self.active_window().lsp_change_could_be_sent(buffer_id) {
+            self.active_window()
+                .collect_lsp_changes_for_buffer(buffer_id, &event)
+        } else {
+            Vec::new()
+        };
         let edited = if let Some(state) = self
             .windows
             .get_mut(&self.active_window)
@@ -1516,9 +1523,13 @@ impl Editor {
             deleted_text,
             cursor_id: CursorId(0),
         };
-        let lsp_changes = self
-            .active_window()
-            .collect_lsp_changes_for_buffer(buffer_id, &event);
+        // Gated as in `handle_insert_text`.
+        let lsp_changes = if self.active_window().lsp_change_could_be_sent(buffer_id) {
+            self.active_window()
+                .collect_lsp_changes_for_buffer(buffer_id, &event)
+        } else {
+            Vec::new()
+        };
         let edited = if let Some(state) = self
             .windows
             .get_mut(&self.active_window)
@@ -1619,10 +1630,15 @@ impl Editor {
         };
         let split_id = self.split_manager().active_split();
         let active_buf = self.active_buffer();
-        let lsp_changes = self
-            .active_window()
-            .collect_lsp_changes_for_buffer(active_buf, &event);
-        self.active_window_mut()
+        // Gated as in `handle_insert_text`.
+        let lsp_changes = if self.active_window().lsp_change_could_be_sent(active_buf) {
+            self.active_window()
+                .collect_lsp_changes_for_buffer(active_buf, &event)
+        } else {
+            Vec::new()
+        };
+        let edited = self
+            .active_window_mut()
             .apply_event_to_buffer(active_buf, split_id, &event);
         self.active_event_log_mut().append(event);
         // This path bypasses apply_event_to_active_buffer (it's how the markdown
@@ -1631,8 +1647,12 @@ impl Editor {
         // keep stale coordinates and corrupt.
         #[cfg(feature = "plugins")]
         self.shift_plugin_markers_for_edit(active_buf, cursor_pos, 0, text_len);
-        self.active_window_mut()
-            .send_lsp_changes_for_buffer(active_buf, lsp_changes);
+        // Only for an edit that landed, as in the two handlers above: a change
+        // sent for one that did not diverges the server with no path back.
+        if edited {
+            self.active_window_mut()
+                .send_lsp_changes_for_buffer(active_buf, lsp_changes);
+        }
     }
 
     /// Handle DeleteSelection command

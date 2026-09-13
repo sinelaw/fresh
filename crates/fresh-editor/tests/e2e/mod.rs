@@ -190,6 +190,8 @@ pub mod lsp_multi_semantic_tokens;
 pub mod lsp_multi_server_diagnostic_pull;
 pub mod lsp_no_config;
 pub mod lsp_order;
+#[cfg(feature = "plugins")]
+pub mod lsp_plugin_edit_desync;
 pub mod lsp_popup_focus_keybinding;
 pub mod lsp_publish_diagnostics_capability;
 pub mod lsp_server_lifecycle_cleanup;
