@@ -553,7 +553,9 @@ scripts/memory-profile.py --pid $(pgrep -x fresh)
 ```
 
 Same table as the `--tool rss` run: RSS now, peak, thread count, and what each
-part of the memory is.
+part of the memory is. A one-file session a few seconds after startup reads
+53.3 MiB against the three-workspace workload's 71.3, which is the shape to
+expect: most of it is there before you open anything.
 
 **Heap by subsystem.** Valgrind cannot attach to a running process, so the
 session has to start under it. Use a build with symbols — the release binary
