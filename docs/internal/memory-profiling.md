@@ -212,6 +212,37 @@ written; the rest is write-only scratch (Oniguruma, QuickJS, and
   which massif sees. Do not quote the massif total as "how much memory fresh
   uses"; quote `--tool rss` for that.
 
+## 5b. Comparing two runs
+
+Run-to-run, the *totals* are not repeatable: an A/B of two binaries differing
+only by two allocation fixes measured 1.8 GiB of churn against 2.4 GiB, with
+Oniguruma — which neither change touches — accounting for the difference. The
+workload is driven by wall-clock quiet windows, so a faster editor fits more
+repaints (and so more parsing) into the same window. Faster code doing more
+work per step is the profile behaving correctly; it is not a regression, and
+it is not a result either.
+
+So compare per-site, and normalize. The two fixes above, same workload, same
+harness, one run each:
+
+| | baseline | after | change |
+|---|---|---|---|
+| reconcile journal, bytes | 29.0 MiB | 2.5 MiB | **−91%** |
+| reconcile journal, blocks | 1,138 | 140 | −88% |
+| `get_text_range_mut`, bytes | 43.9 MiB | 14.7 MiB | **−67%** |
+| `get_text_range_mut`, blocks | 69,289 | 68,365 | −1% |
+| total churn | 1.8 GiB | 2.4 GiB | +38% |
+| Oniguruma churn (parse volume) | 881 MiB | 1.5 GiB | +75% |
+
+Both fixes read exactly as intended: the journal reallocates 88% less often,
+and the line-start search performs the same number of reads (−1%) while
+copying two thirds less. Normalized against Oniguruma churn as a proxy for how
+much parsing a run did, they are −95% and −81%.
+
+The general rule: a per-site figure at a comparable call count is evidence, a
+total is not. If you want totals to mean something, hold the parse volume
+fixed — same file, same scroll distance — and say so alongside the number.
+
 ## 6. A second baseline: the loaded editor
 
 Run on 2026-09-13, same binary, `--workload orchestrator --workspaces 3`:
