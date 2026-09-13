@@ -320,6 +320,63 @@ rest is answered mapping by mapping out of `/proc/<pid>/smaps`, which
 - **Everything else is noise**: stacks, relocations and kernel mappings
   together are under half a megabyte.
 
+#### Inside the binary's ~30 MiB
+
+The two binary rows are the parts of the file the kernel has actually paged
+in. What is in them, from `nm` (code) and from the sections and the embedded
+assets (read-only data):
+
+**`.text`, 17.5 MiB — 16.5 MiB of it resident.** By crate:
+
+| crate | size | share |
+|---|---|---|
+| `fresh` (the editor binary itself) | 3.29 MiB | 18.2% |
+| `core` | 2.63 MiB | 14.5% |
+| `fresh-editor-core` | 1.27 MiB | 7.0% |
+| `alloc` | 1.24 MiB | 6.9% |
+| hashbrown | 0.64 MiB | 3.5% |
+| serde_json | 0.63 MiB | 3.5% |
+| `std` | 0.61 MiB | 3.4% |
+| `fresh-plugin-runtime` | 0.57 MiB | 3.1% |
+| tokio | 0.54 MiB | 3.0% |
+| serde | 0.49 MiB | 2.7% |
+| QuickJS (C) | 0.34 MiB | 1.9% |
+| rquickjs | 0.44 MiB | 2.5% |
+| oxc (all crates) | ~0.5 MiB | 2.8% |
+| rustls | 0.24 MiB | 1.3% |
+| everything else + unnamed | ~4.7 MiB | 26% |
+
+`core`, `alloc` and `std` are not the standard library sitting there being
+large: they are *our* generic instantiations, monomorphized into the crate
+that defines the generic. Read those rows as "the cost of how much we
+instantiate", not as a dependency.
+
+**The read-only mapping, ~21 MiB of sections — 13.2 MiB resident.** Three
+things live there, and only the first is data:
+
+| section | size | what it is |
+|---|---|---|
+| `.rodata` | 11.7 MiB | constants and embedded assets, below |
+| `.eh_frame` + `.eh_frame_hdr` + `.gcc_except_table` | 7.0 MiB | unwinding and landing pads — what `panic = "abort"` drops |
+| `.rela.dyn` | 2.6 MiB | load-time relocations |
+
+And `.rodata` itself is mostly things we chose to embed:
+
+| content | size |
+|---|---|
+| embedded plugins (`include_dir!` over `plugins/`) | 4.4 MiB (2.7 MiB of `.ts`, 1.7 MiB of per-plugin i18n JSON) |
+| tree-sitter parse tables | 2.1 MiB |
+| editor locale catalogs (15 JSON files) | 1.8 MiB |
+| syntect dumps (`default_newlines` + `default_nonewlines` + themes) | 0.7 MiB |
+| encoding_rs + chardetng tables | 0.15 MiB |
+| string literals, panic messages, vtables, format strings | ~1.7 MiB |
+
+Two of those rows are worth a second look. The locale catalogs are 1.8 MiB in
+`.rodata` *and* 1.8 MiB on the heap, because `register_locales` copies each
+one into a `Box<str>` (§5) — the same bytes twice. And syntect ships two
+parse-table dumps, `newlines` and `nonewlines`, of which a given run uses
+one.
+
 One caveat that matters for reading the first two rows: this is a glibc,
 dynamically linked build, and the split between `brk` and anonymous mappings
 is glibc's allocator strategy, not Fresh's. Production ships a static musl
