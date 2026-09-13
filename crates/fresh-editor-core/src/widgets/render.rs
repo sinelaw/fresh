@@ -77,13 +77,6 @@ const FOCUS_MARKER: &str = "▸ ";
 // two display columns the marker occupies, so reserving the gutter
 // keeps control widths identical whether or not they're focused.
 const FOCUS_GUTTER_BLANK: &str = "  ";
-// Display columns the focus-marker gutter occupies (`FOCUS_MARKER` /
-// `FOCUS_GUTTER_BLANK`) and the columns a framed button spends on its
-// own `[ ` / ` ]` chrome. Both are reserved when stretching a
-// `full_width` button so the finished control lands on the panel width
-// exactly.
-const FOCUS_GUTTER_COLS: usize = 2;
-
 /// The two-column gutter prefix a focusable control leads with when
 /// the render reserves the focus-marker gutter
 /// (`Ctx::marker_gutter` in the description): `▸ ` for the focused control,
@@ -392,31 +385,6 @@ fn collect_tabbable(spec: &WidgetSpec, out: &mut Vec<String>) {
     for c in spec.children() {
         collect_tabbable(c, out);
     }
-}
-
-/// Pad (or `…`-truncate) a `full_width` button's label so the finished
-/// control spans exactly `panel_width` display columns.
-///
-/// The chrome the renderer is about to add is reserved here rather than
-/// trimmed afterwards, so the band never overshoots the row: a framed
-/// button spends 4 columns on `[ ` / ` ]`, plus 2 more on the
-/// focus-marker gutter when the panel opted into one. A bare button is
-/// all label.
-///
-/// Padding goes through the shared column helper: menu labels carry
-/// `…`, `▾` and box glyphs, and byte-counted padding both misaligns the
-/// row and risks slicing a multi-byte char.
-pub fn fill_button_label(label: &str, bare: bool, marker_gutter: bool, panel_width: u32) -> String {
-    let chrome = if bare {
-        0
-    } else {
-        crate::widgets::frame::Frame::BUTTON.chrome()
-            + if marker_gutter { FOCUS_GUTTER_COLS } else { 0 }
-    };
-    let target = (panel_width as usize).saturating_sub(chrome).max(1);
-    let mut filled = label.to_string();
-    pad_or_truncate_cols(&mut filled, target);
-    filled
 }
 
 /// Blank full-height-padding row used to pad a List to its
@@ -1089,7 +1057,7 @@ pub fn wrap_entry_between(
     } else if cur_cols > inner_width {
         // Tail-truncate at the byte where the display width reaches
         // `inner_width`, then if there's room make the final column an
-        // `…` so the cut is visible (mirrors `pad_or_truncate_cols`).
+        // `…` so the cut is visible.
         let byte_cutoff = crate::primitives::display_width::byte_offset_at_visual_column(
             &child.text,
             inner_width,
@@ -3469,45 +3437,6 @@ fn pad_or_truncate_line(line: &str, target: usize) -> String {
         let mut out: String = chars.iter().take(keep).collect();
         out.push('…');
         out
-    }
-}
-
-/// Pad / truncate `text` to exactly `cols` display columns, in
-/// place. Uses char count as the display-width approximation —
-/// good for ASCII; wide-char-aware width would need
-/// `unicode-width`, but no current caller relies on that.
-///
-/// When truncating, the final visible column is replaced with `…`
-/// so the cut is visually distinguishable from a value that
-/// happens to be exactly `cols` long. Degenerate `cols == 0` and
-/// `cols == 1` (no room for the ellipsis itself) fall back to a
-/// plain cut.
-pub fn pad_or_truncate_cols(text: &mut String, cols: usize) {
-    // Measure in display columns, not chars: a `漢` or `😀` is one char
-    // but two columns, and char-counted padding pushed every border to
-    // the right of a wide glyph out of alignment.
-    let cur = crate::primitives::display_width::str_width(text);
-    if cur < cols {
-        for _ in 0..(cols - cur) {
-            text.push(' ');
-        }
-    } else if cur > cols {
-        // Cut at the byte where the display width reaches `cols`, then
-        // if we have room make the last column an `…` so the truncation
-        // is visible. A wide glyph straddling the cut is dropped whole,
-        // leaving a one-column gap the pad below fills.
-        let cutoff = crate::primitives::display_width::byte_offset_at_visual_column(text, cols);
-        text.truncate(cutoff);
-        if cols >= 2 {
-            while crate::primitives::display_width::str_width(text) > cols.saturating_sub(1) {
-                text.pop();
-            }
-            text.push('…');
-        }
-        let w = crate::primitives::display_width::str_width(text);
-        for _ in 0..cols.saturating_sub(w) {
-            text.push(' ');
-        }
     }
 }
 

@@ -1365,16 +1365,18 @@ mod tests {
 
     /// **An anchored popup hugs its content, and nothing inside it decides
     /// how wide that is.** The shape is the orchestrator dock's right-click
-    /// menu (`contextMenuSpec`): a title row, rows whose labels the plugin
-    /// padded to the widest, a divider, a hint row — plus one row with a
-    /// full-width tint, which is what a selected item is. Four things used
-    /// to set the width to the frame here, each by being measured at the
-    /// whole extent it was handed: the divider (`"─".repeat(width)`), the
-    /// body row (`Flex(1)` on the box's cross axis), a tinted entry's fill
-    /// row (the same), and a list or tree with no row count (`flex(1)` sets
-    /// both axes). Each is `Auto` now and the column's `Stretch` widens it
-    /// to what the box settled on — so the box settles on its widest row,
-    /// and everything else follows it out to that edge.
+    /// menu (`contextMenuSpec`): a title row, menu rows, a divider, a hint
+    /// row — plus one row with a full-width tint, which is what a selected
+    /// item is. Five things used to set the width to the frame here, each by
+    /// being measured at the whole extent it was handed: the divider
+    /// (`"─".repeat(width)`), the body row (`Flex(1)` on the box's cross
+    /// axis), a tinted entry's fill row (the same), a list or tree with no
+    /// row count (`flex(1)` sets both axes) — and a `fullWidth` button, whose
+    /// fill was a label padded out to the enclosing *panel's* columns, which
+    /// is why the plugin padded its own menu labels to the widest instead and
+    /// left the band hugging the word. Each is `Auto` now and the column's
+    /// `Stretch` widens it to what the box settled on — so the box settles on
+    /// its widest row, and everything else follows it out to that edge.
     #[test]
     fn an_anchored_popup_is_as_wide_as_its_widest_row_not_its_rule() {
         use fresh_core::api::{OverlayColorSpec, OverlayOptions, WidgetSpec};
@@ -1397,10 +1399,25 @@ mod tests {
             entries: vec![TextPropertyEntry::text(t)],
             key: None,
         };
+        // A menu row as the plugin now writes one: `fullWidth`, and its label
+        // is its label — no padding to the widest, which is what asks the box
+        // a question it is in the middle of answering.
+        let menu_row = |label: &str| WidgetSpec::Button {
+            label: label.into(),
+            focused: false,
+            intent: Default::default(),
+            key: Some(label.into()),
+            disabled: false,
+            focusable: true,
+            bare: true,
+            full_width: true,
+            hover_style: None,
+            style: None,
+        };
         let spec = WidgetSpec::Col {
             children: vec![
                 raw(" Session"),
-                raw(" Visit"),
+                menu_row(" Visit "),
                 WidgetSpec::Raw {
                     entries: vec![selected],
                     key: None,
@@ -1437,7 +1454,10 @@ mod tests {
             .filter(|i| i.rect.h == 1 && i.rect.x == bx.x as i32 + 1)
             .map(|i| i.rect.w)
             .collect();
-        assert!(!widths.is_empty(), "a rule and a tint were painted");
+        assert!(
+            widths.len() >= 3,
+            "a rule, a tint and a menu row were painted: {widths:?}"
+        );
         assert!(
             widths.iter().all(|w| *w == inner),
             "each spans the inner width {inner}: {widths:?}"
