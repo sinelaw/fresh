@@ -1,0 +1,38 @@
+{
+  "name": "memory-live-data",
+  "render": {
+    "size": [1080, 1080],
+    "fps": 60,
+    "title": "fresh 0.5.1 — inside the 46 MB of live data",
+    "intro_caption": ["What the editor is holding", "largest first"],
+    "outro_caption": ["Half of it is there before you type",
+                      "plugins, grammars and terminals, allocated at startup"],
+    "timing": {"grow": 0.8, "intro": 1.2, "move": 0.4, "hold": 1.25,
+               "regroup": 0.35, "outro": 1.2},
+    "donut": {
+      "unit": "MB",
+      "total": "46 MB",
+      "total_label": "live",
+      "thickness": 0.40,
+      "items": [
+        {"label": "Editor state", "value": 13.2,
+         "note": "highlight spans, layout cells and the buffer index"},
+        {"label": "Plugin runtime", "value": 9.0,
+         "note": "the QuickJS heap — fixed at startup, flat as you work"},
+        {"label": "Terminals", "value": 6.8,
+         "note": "6 MB of it is an unused 2 MB sync buffer per terminal"},
+        {"label": "Unattributed", "value": 6.2, "visit": false,
+         "note": "stacks the profiler truncated before naming an owner"},
+        {"label": "syntect", "value": 3.6,
+         "note": "compiled grammars and one parse stack per line on screen"},
+        {"label": "Plugin host", "value": 3.0, "visit": false,
+         "note": "commands, hooks and per-plugin translations"},
+        {"label": "Everything else", "value": 3.5, "visit": false,
+         "note": "the UI tree, config values, screen buffers, regexes"},
+        {"label": "Translations", "value": 1.8, "visit": false,
+         "note": "15 locale catalogues, copied out of the binary"}
+      ]
+    }
+  },
+  "encode": {"crf": 18, "preset": "slow"}
+}
