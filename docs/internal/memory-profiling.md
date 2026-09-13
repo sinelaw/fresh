@@ -204,12 +204,15 @@ written; the rest is write-only scratch (Oniguruma, QuickJS, and
 
 ### What this says
 
-- **Footprint and churn have different owners.** The retained-mode UI holds
-  the most memory (the `desc::Node` tree is cloned wholesale, and the element
-  arena and undo log grow alongside it — see
+- **Footprint and churn have different owners.** The retained-mode UI is the
+  largest thing live at this run's peak (the `desc::Node` tree is cloned
+  wholesale, and the element arena and undo log grow alongside it — see
   [retained-mode-ui.md](retained-mode-ui.md)); highlighting holds under 4% of
   it and does 59% of the allocation. Ask which question you are asking before
-  picking the tool.
+  picking the tool. But see §6 before reading the UI's 12.5 MiB as a resting
+  cost: on a workload whose peak lands elsewhere the same subsystem holds
+  1.3 MiB, so this is a rebuild spike that the peak snapshot happened to
+  catch.
 - **The plugin runtime is a third of the heap** (QuickJS plus the host side),
   all of it established at startup. `--no-plugins` is therefore the single
   biggest lever on memory, and a useful A/B when profiling something else.
@@ -244,17 +247,24 @@ does anything, 20 MiB for everything after.
 
 ### Heap at the peak: 47.0 MiB
 
-| subsystem | bytes | share | share in the `edit` workload |
+| subsystem | bytes | share | the same subsystem in the `edit` workload |
 |---|---|---|---|
-| editor state | 13.2 MiB | 28.1% | 7.6% |
-| QuickJS (plugin runtime) | 9.0 MiB | 19.2% | 24.6% |
-| terminal emulation | 6.8 MiB | 14.4% | — |
-| syntect | 3.6 MiB | 7.6% | 0.8% |
-| plugins (host side) | 3.0 MiB | 6.3% | 8.5% |
-| i18n / locales | 1.8 MiB | 3.8% | 5.1% |
-| retained-mode UI | 1.3 MiB | 2.8% | 35.7% |
-| serde / json | 1.2 MiB | 2.6% | 3.5% |
-| unattributed | 6.2 MiB | 13.1% | 12.7% |
+| editor state | 13.2 MiB | 28.1% | 2.7 MiB |
+| QuickJS (plugin runtime) | 9.0 MiB | 19.2% | 8.6 MiB |
+| terminal emulation | 6.8 MiB | 14.4% | — (no terminals in it) |
+| syntect | 3.6 MiB | 7.6% | 294 KiB |
+| plugins (host side) | 3.0 MiB | 6.3% | 3.0 MiB |
+| i18n / locales | 1.8 MiB | 3.8% | 1.8 MiB |
+| retained-mode UI | 1.3 MiB | 2.8% | 12.5 MiB |
+| serde / json | 1.2 MiB | 2.6% | 1.2 MiB |
+| unattributed | 6.2 MiB | 13.1% | 4.4 MiB |
+
+The last column is in bytes, not shares, on purpose: the two runs peak at
+different totals (34.9 MiB and 47.0 MiB), so a share moving between them says
+as much about the other subsystems as about this one. In bytes the split is
+plain -- QuickJS, the plugin host and i18n are flat startup costs, editor
+state and syntect grow with open buffers, and terminal emulation is new
+because the editing workload has no terminals.
 
 Three things this workload says that the editing one could not:
 
