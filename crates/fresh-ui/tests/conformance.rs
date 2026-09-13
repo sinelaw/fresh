@@ -1994,6 +1994,38 @@ fn a_selected_byte_range_is_washed_across_the_rows_the_wrap_put_it_on() {
     assert!(washes(20, echo..bravo).is_empty());
 }
 
+/// **Two panels, one widget key, each its own rows.** A widget's key is
+/// unique only inside the panel that owns it; `text_rows` searches the frame
+/// and would answer for whichever panel comes first. `text_rows_in` is asked
+/// from a panel's own root, as `item_window_in` is, and each panel's run
+/// answers with the rows *its* width shaped.
+#[test]
+fn text_rows_are_read_from_the_subtree_that_owns_the_key() {
+    let run = Key::Str("prose".into());
+    let doc = "alpha beta gamma delta epsilon zeta";
+    let panel = |root: &str, w: u16| -> Node<()> {
+        col()
+            .key(Key::Str(root.into()))
+            .w(Sizing::Cells(w))
+            .child(text(doc).wrap().key(run.clone()))
+    };
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(
+        fresh_ui::row().children([panel("left", 12), panel("right", 40)]),
+        Size::new(60, 4),
+    );
+    let left = ui.find_by_key(&Key::Str("left".into())).expect("left");
+    let right = ui.find_by_key(&Key::Str("right".into())).expect("right");
+    let (_, l) = ui.text_rows_in(left, &run).expect("the left run");
+    let (_, r) = ui.text_rows_in(right, &run).expect("the right run");
+    assert!(l.len() > r.len(), "narrower wraps into more rows: {} vs {}", l.len(), r.len());
+    assert_eq!(r.len(), 1, "forty columns holds the whole line");
+    // And the frame-wide read is whichever comes first — the ambiguity the
+    // rooted form exists to remove.
+    let (_, first) = ui.text_rows(&run).expect("some run");
+    assert_eq!(first.len(), l.len());
+}
+
 /// **The wrap's rows are readable after layout, so "one rendered row down" is
 /// answerable without a second wrap** (L5).
 ///
