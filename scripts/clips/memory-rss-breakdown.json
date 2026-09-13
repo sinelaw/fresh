@@ -8,16 +8,16 @@
     "fps": 60,
     "title": "fresh 0.5.1 \u2014 where 71 MB of memory goes",
     "intro_caption": [
-      "71 MB while you work",
-      "three projects open, three shells, nine files"
+      "Fresh memory usage breakdown (musl)",
+      "71 MB in use \u2014 three projects, three shells, nine files"
     ],
     "outro_caption": [
       "Fresh memory usage breakdown (musl)",
       "46 MB working data, 25 MB program and built-ins"
     ],
     "timing": {
-      "grow": 0.9,
-      "intro": 1.4,
+      "grow": 0.5,
+      "intro": 2.3,
       "move": 0.45,
       "hold": 2.1,
       "regroup": 0.4,
