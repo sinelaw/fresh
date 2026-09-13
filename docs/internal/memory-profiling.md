@@ -48,19 +48,10 @@ massif's ASCII graph of heap over time.
 
 ### The `profiling` profile
 
-`[profile.profiling]` in the root `Cargo.toml` inherits `release` — same
-`opt-level = "z"`, so allocation behaviour matches a shipped binary — and
-changes only what a profiler needs:
-
-| | why |
-|---|---|
-| `debug = 1` | line tables, so a stack frame reads `syntect::parsing::…​ (parser.rs:412)` rather than a bare address |
-| `strip = false` | `dist` strips; a stripped binary profiles as one anonymous frame |
-| `lto = false`, `codegen-units = 16` | fat LTO inlines across crate boundaries until allocations can no longer be attributed to the crate that made them — and it is a ~20 minute single-threaded link |
-
-Do not profile a `dev` build: `[profile.dev]` sets `debug = 0` (see
-CONTRIBUTING), and unoptimized code allocates differently enough that the
-breakdown misleads.
+Build with `cargo build --profile profiling --bin fresh`, never a `dev` build:
+a stripped or fat-LTO binary profiles as a handful of anonymous frames, and
+`[profile.dev]` carries no line tables. [profiling.md](profiling.md) has the
+profile's settings and the reasoning behind each one.
 
 ## 3. What the harness does
 
