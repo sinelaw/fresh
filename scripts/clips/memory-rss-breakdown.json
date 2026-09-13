@@ -12,8 +12,8 @@
       "three projects open, three shells, nine files"
     ],
     "outro_caption": [
-      "A third of it is the program itself",
-      "and that part never grows as you work"
+      "Fresh memory usage breakdown (musl)",
+      "46 MB working data, 25 MB program and built-ins"
     ],
     "timing": {
       "grow": 0.9,
