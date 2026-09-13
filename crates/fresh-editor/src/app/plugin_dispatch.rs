@@ -3227,7 +3227,15 @@ impl Editor {
             }
         };
 
-        let new_total = if let Some(state) = self
+        // Growing the buffer is an edit like any other, so a server holding
+        // this document has to be told. The append is described as an
+        // insertion at the old end of file, which has to be converted to an
+        // LSP position before the bytes land (#3258).
+        let lsp_wanted = self
+            .active_window()
+            .lsp_change_could_be_sent(actual_buffer_id);
+
+        let (new_total, appended) = if let Some(state) = self
             .windows
             .get_mut(&self.active_window)
             .map(|w| &mut w.buffers)
@@ -3235,14 +3243,32 @@ impl Editor {
             .get_mut(&actual_buffer_id)
         {
             let old = state.buffer.total_bytes();
+            let append_at = (lsp_wanted && new_size > old)
+                .then(|| state.buffer.position_to_lsp_position(old))
+                .map(|(line, character)| lsp_types::Position::new(line as u32, character as u32));
             if new_size > old {
                 state.buffer.extend_streaming(&path, new_size);
             }
-            state.buffer.total_bytes()
+            let new_total = state.buffer.total_bytes();
+            let appended = append_at
+                .filter(|_| new_total > old)
+                .map(|at| (at, state.get_text_range(old, new_total)));
+            (new_total, appended)
         } else {
             self.resolve_json_callback::<Option<usize>>(request_id, None);
             return;
         };
+
+        if let Some((at, text)) = appended {
+            self.active_window_mut().send_lsp_changes_for_buffer(
+                actual_buffer_id,
+                vec![lsp_types::TextDocumentContentChangeEvent {
+                    range: Some(lsp_types::Range::new(at, at)),
+                    range_length: None,
+                    text,
+                }],
+            );
+        }
 
         self.resolve_json_callback(request_id, Some(new_total));
     }

@@ -441,6 +441,21 @@ impl crate::app::window::Window {
         buffer_id: BufferId,
         entries: Vec<crate::primitives::text_property::TextPropertyEntry>,
     ) -> Result<(), String> {
+        // A file-backed buffer is nobody's to rewrite wholesale from a plugin:
+        // its text belongs to the file, and the servers holding it are told
+        // about edits through the plugin edit commands, not through this.
+        // `SetSyntaxRegions` refuses a non-virtual buffer for the same reason
+        // (#3258).
+        if !self
+            .buffer_metadata
+            .get(&buffer_id)
+            .is_some_and(|meta| meta.is_virtual())
+        {
+            return Err(format!(
+                "{buffer_id:?} is not a plugin-composed buffer; its content is the file's"
+            ));
+        }
+
         let state = self
             .buffers
             .get_mut(&buffer_id)
