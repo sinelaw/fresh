@@ -27,8 +27,20 @@ cargo build --profile profiling --bin fresh
 scripts/memory-profile.py                 # heap breakdown (Valgrind massif)
 scripts/memory-profile.py --tool rss      # RSS timeline, no Valgrind, seconds
 scripts/memory-profile.py --tool dhat     # allocation churn and lifetimes
-scripts/memory-profile.py --files a.rs b.ts   # your own workload files
+scripts/memory-profile.py --files a.rs b.ts               # your own files
+scripts/memory-profile.py --workload orchestrator --verbose   # the loaded editor
 ```
+
+Two workloads, because they answer different questions:
+
+| `--workload` | what it drives | what it tells you |
+|---|---|---|
+| `edit` (default) | three files opened on the command line, walked end to end, typed into, saved | what a buffer and its highlighting cost |
+| `orchestrator` | several workspaces, each a git worktree with its own window, terminal, file explorer and buffers, over a throwaway clone of the repo | what the editor costs when it is actually loaded, and what each additional workspace adds |
+
+`--verbose` logs each step as it runs, with its wall time and how many bytes
+the editor painted — the first thing to look at when a workload stops
+behaving.
 
 Output lands in `target/memory-profile/`. The massif run also writes an
 `ms_print` report next to the raw profile with the full allocation tree and
@@ -205,3 +217,72 @@ written; the rest is write-only scratch (Oniguruma, QuickJS, and
   The rest is the mapped binary, thread stacks and allocator arenas, none of
   which massif sees. Do not quote the massif total as "how much memory fresh
   uses"; quote `--tool rss` for that.
+
+## 6. A second baseline: the loaded editor
+
+Run on 2026-09-13, same binary, `--workload orchestrator --workspaces 3`:
+open `orchestrator-sessions.md` and the file explorer, then three times over
+create a workspace (a git worktree, its own window and a bash terminal),
+open its file explorer and three buffers, highlight one end to end, and run
+`git --no-pager log` in its terminal -- all against a throwaway clone of this
+repository, so the git plugins have a real repo to watch.
+
+### Resident memory, native
+
+| after | RSS | anon |
+|---|---|---|
+| process start | 10.3 MiB | 7.4 MiB |
+| startup complete | 88.2 MiB | 58.2 MiB |
+| file explorer open | 90.4 MiB | 59.9 MiB |
+| workspace 1 fully up | 97.3 MiB | 66.6 MiB |
+| workspace 2 fully up | 102.8 MiB | 72.1 MiB |
+| workspace 3 fully up | 107.7 MiB | 77.1 MiB |
+
+A whole workspace -- worktree, window, terminal, file explorer, three buffers
+-- costs about **5.5 MiB**. Startup still dominates: 88 MiB before the user
+does anything, 20 MiB for everything after.
+
+### Heap at the peak: 47.0 MiB
+
+| subsystem | bytes | share | share in the `edit` workload |
+|---|---|---|---|
+| editor state | 13.2 MiB | 28.1% | 7.6% |
+| QuickJS (plugin runtime) | 9.0 MiB | 19.2% | 24.6% |
+| terminal emulation | 6.8 MiB | 14.4% | — |
+| syntect | 3.6 MiB | 7.6% | 0.8% |
+| plugins (host side) | 3.0 MiB | 6.3% | 8.5% |
+| i18n / locales | 1.8 MiB | 3.8% | 5.1% |
+| retained-mode UI | 1.3 MiB | 2.8% | 35.7% |
+| serde / json | 1.2 MiB | 2.6% | 3.5% |
+| unattributed | 6.2 MiB | 13.1% | 12.7% |
+
+Three things this workload says that the editing one could not:
+
+- **A terminal costs a flat 2 MiB before it emits a byte.** The largest
+  single site in the whole profile is `vte::ansi::SyncState::default` at
+  6.0 MiB: `Vec::with_capacity(SYNC_BUFFER_SIZE)` with `SYNC_BUFFER_SIZE =
+  0x20_0000`, allocated eagerly per parser for DEC synchronized updates that
+  most sessions never use. Three terminals, 6 MiB, 13% of the peak.
+  Allocating it on first use is an upstream `vte` change. Alacritty's grid
+  adds ~800 KiB per terminal on top, which is memory actually in use.
+- **The plugin runtime does not scale with workspaces**: 9.0 MiB here against
+  8.6 MiB with three files open. It is a fixed startup cost -- which is what
+  makes it the biggest lever on footprint, and what makes it *not* a concern
+  for heavy use.
+- **The retained-mode UI's 35.7% in the editing profile was a spike, not a
+  resting cost.** Here the same subsystem is 2.8%. `desc::Node` cloning is an
+  allocation burst during rebuilds, so it belongs with the churn findings
+  (§5) rather than the footprint ones -- and a peak-snapshot share is only
+  ever "what was live at one instant", not "what this subsystem holds".
+
+Editor state taking the top slot is mostly highlight spans (`spec_extend` of
+`highlight_entries`, 2.4 MiB) and `ChromeLayout::reset_cell_*` (2.3 MiB),
+across nine open buffers in three windows.
+
+### Not measured yet
+
+No dhat profile for this workload. dhat instruments every memory access, and
+on a workload that spawns worktrees and shells it runs several times slower
+again than massif -- the run was still in its first workspace when it was
+stopped. The open question it would answer: whether those 2 MiB sync buffers
+are ever written to at all.
