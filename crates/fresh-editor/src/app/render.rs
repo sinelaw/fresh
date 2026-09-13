@@ -352,7 +352,7 @@ impl Editor {
         // combination and terminal size — `tests/ui_shell_frame_parity.rs` is
         // the standing proof, and it keeps both derivations honest now that
         // only one of them runs here.
-        // See `docs/internal/retained-mode-ui.md` §3.1.
+        // See `docs/internal/retained-mode-ui.md` "The shape".
         // The settings search list's window, from the band the tree placed
         // last frame. This is the one mutation the description needs made
         // *before* it is built: the row it describes says "(1-3 of 298)", and
@@ -1304,7 +1304,7 @@ impl Editor {
         // above): every described surface files its items' rects and keys as
         // it folds. What is still blank is a *tier*, not a surface: an item
         // whose ink resolved to literal colours files nothing — defect
-        // `Paint::Lit` in `docs/internal/retained-mode-ui.md` §3.3.
+        // `Paint::Lit` in `docs/internal/retained-mode-ui.md` "Smaller residue".
 
         // Software mouse cursor (GPM) and keyboard-capture dimming — both
         // read already-painted cells, so they run after the main draw.
@@ -6492,7 +6492,6 @@ impl Editor {
     }
 
     pub(crate) fn panel_description(&self) -> Option<crate::view::shell::panel::Panel> {
-        use crate::primitives::display_width::str_width;
         use crate::view::shell::panel::{Panel, Spot};
 
         let p = self.panel(crate::app::PanelSlot::Floating)?;
@@ -6502,14 +6501,12 @@ impl Editor {
         // `entries.len() + 2` used, kept as the one measurement the tree needs
         // from the runtime.
         //
-        // **Only one of the two is still read.** A described box measures its
-        // own height (`Panel::height` answers `Sizing::Auto`), so
-        // `content_rows` survives for a panel whose interior is a `Host` —
-        // which today means no panel at all. `content_cols` is live: an
-        // anchored popup hugs its content horizontally and the interior is
-        // built by a `layout_reader` that needs a width as a number, so the
-        // mirror answers for it. See `Panel::anchored_width`, which is where
-        // that exception is argued and what retires it.
+        // **Neither axis is the mirror's any more.** A described box measures
+        // its own height (`Panel::height` answers `Sizing::Auto`) and, since
+        // a rule became a ground rather than text of a computed length, its
+        // own width too — so this count survives only for a panel whose
+        // interior is a `Host`, which today means no panel at all. It is kept
+        // for that case and goes with it.
         let content_rows = p.entries.len() as u16;
         let spot = match p.placement {
             super::PanelPlacement::Centered => Spot::Centered {
@@ -6522,7 +6519,7 @@ impl Editor {
                 content_cols: p
                     .entries
                     .iter()
-                    .map(|e| str_width(&e.text) as u16)
+                    .map(|e| crate::primitives::display_width::str_width(&e.text) as u16)
                     .max()
                     .unwrap_or(0),
                 content_rows,

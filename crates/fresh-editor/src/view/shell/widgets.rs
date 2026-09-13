@@ -383,11 +383,15 @@ fn tree_rows(content: u32, visible: u32) -> u16 {
 
 /// The description for a covered spec.
 ///
-/// `width` is the panel's inner content width, which two variants need before
-/// layout can run: a `Divider` is as wide as the panel by definition, and the
-/// runtime pads rows to it. Passing it in rather than reading it back is the
-/// rule §4.4 states — this is *content* resolved from a known extent, not
-/// geometry recorded from a paint.
+/// `width` is the panel's inner content width, which some variants still
+/// take as a number before layout can run — a row's child allocation, a
+/// card's column, a full-width button's fill, the runtime's row padding.
+/// Passing it in rather than reading it back is the rule §4.4 states — this
+/// is *content* resolved from a known extent, not geometry recorded from a
+/// paint. A `Divider` used to be the first name on that list and is not on
+/// it any more: it is a ground the backend tiles (`Node::rule`), sized by
+/// layout, and needs no number at all. Every remaining reader of `width` is
+/// the same kind of thing and retires the same way.
 pub fn node(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>) -> Node<UiMsg> {
     // A spec with no container above it is laid into a column: that is what
     // the panel body and the settings field are, and what the runtime's own
@@ -839,27 +843,38 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
         // Full width by definition — "so the separator always matches the
         // rendered width, including a user-dragged dock, without the plugin
         // computing the width itself".
-        // **A rule is as wide as the panel, and `width` is that width.**
+        // **A rule fills; it does not measure.**
         //
-        // It is text of a computed length rather than something that fills,
-        // which is fine and stays fine *because* the caller passes the same
-        // number it lays the subtree out at. Where those two diverge — the
-        // dock, laid one column short of the painter's divider — everything
-        // else pins to the laid width by flex and this pins to the parameter,
-        // and the title bar's `×` comes to rest one column off the rule it
-        // lines up with. The fix is to keep them equal, not to make this fill;
-        // see `shell::dock::DIVIDER_COLS`.
+        // This was `glyph.repeat(width)` — text of a computed length, which
+        // needed the caller's number and then *was* that number wide. Under
+        // an `Auto` box that made it the thing deciding the width it had been
+        // asked about, which is why an anchored panel could not say `Auto`
+        // and kept the mirror's column count instead
+        // (`panel::Panel::anchored_width`, now gone).
+        //
+        // As a ground the backend tiles (`Node::rule`), it is neither. Its
+        // width is `Auto`, not `Flex`: on a column's cross axis a flexible
+        // child is measured at the whole extent, definite or not
+        // (`prim::range`), which would be the same loop again. An `Auto` box
+        // with no children measures nothing, so it contributes nothing to
+        // the column's width, and the column's `Stretch` then widens it to
+        // whatever that width settled on. The dock's one-column divergence
+        // goes with it — there is no parameter left to disagree with the
+        // laid width.
         WidgetSpec::Divider { ch, style, .. } => {
             let glyph = match ch.is_empty() {
                 true => "─",
                 false => ch.as_str(),
             };
-            let n = width as usize / glyph.chars().count().max(1);
             let ink = match style {
                 Some(o) => ink_of(o, &cx.surface),
                 None => cx.surface.clone(),
             };
-            text_runs([Run::themed(glyph.repeat(n), ink.to_string())]).h(Sizing::Cells(1))
+            row()
+                .rule(glyph)
+                .theme(ink.to_string())
+                .w(Sizing::Auto)
+                .h(Sizing::Cells(1))
         }
         // The formatter is the runtime's own: what a hint row *says* is domain
         // knowledge and does not move.
@@ -1347,7 +1362,11 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
             let node = keyed(fresh_ui::ComponentExt::node(list), state_key(key));
             match visible_rows {
                 Some(r) => node.h(Sizing::Cells(*r as u16)),
-                None => node.flex(1),
+                // Height only. `flex(1)` set both axes, and a flexible width
+                // on a column's cross axis is measured at the whole extent —
+                // frame-wide under an `Auto` box. The width stays `Auto`;
+                // the column stretches it.
+                None => node.h(Sizing::Flex(1)),
             }
         }
         // **A card list is a list whose items are blocks.**
@@ -1527,7 +1546,11 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
             let node = keyed(fresh_ui::ComponentExt::node(list), state_key(key));
             match visible_rows {
                 Some(r) => node.h(Sizing::Cells(*r as u16)),
-                None => node.flex(1),
+                // Height only. `flex(1)` set both axes, and a flexible width
+                // on a column's cross axis is measured at the whole extent —
+                // frame-wide under an `Auto` box. The width stays `Auto`;
+                // the column stretches it.
+                None => node.h(Sizing::Flex(1)),
             }
         }
         // **A tree is a flat list whose expansion belongs to the plugin.**
@@ -1727,11 +1750,19 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
             // sized to its content stops where the text does — and the two
             // things that belong at the panel's edge, the row band and the
             // overlay scrollbar, stop with it.
-            let node = node.w(Sizing::Pct(100));
+            // `Auto`, not `Pct(100)`: a percentage of an `Auto` column's
+            // incoming extent is the frame. The column's `Stretch` widens an
+            // `Auto` child to the width it settled on, which in the dock is
+            // the dock and in a box that hugs is the widest row.
+            let node = node.w(Sizing::Auto);
             let node = pan_to_widget(node, cx.slot, &tree_key);
             match visible_rows {
                 Some(r) => node.h(Sizing::Cells(tree_rows(at, *r))),
-                None => node.flex(1),
+                // Height only. `flex(1)` set both axes, and a flexible width
+                // on a column's cross axis is measured at the whole extent —
+                // frame-wide under an `Auto` box. The width stays `Auto`;
+                // the column stretches it.
+                None => node.h(Sizing::Flex(1)),
             }
         }
         WidgetSpec::Tree {
@@ -1897,7 +1928,11 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
             let node = pan_to_widget(node, slot, &tree_key);
             match visible_rows {
                 Some(r) => node.h(Sizing::Cells(tree_rows(n as u32, *r))),
-                None => node.flex(1),
+                // Height only. `flex(1)` set both axes, and a flexible width
+                // on a column's cross axis is measured at the whole extent —
+                // frame-wide under an `Auto` box. The width stays `Auto`;
+                // the column stretches it.
+                None => node.h(Sizing::Flex(1)),
             }
         }
         // **A multi-line field's rows are built one at a time, from lines.**
@@ -3482,9 +3517,12 @@ fn button_node(
         .next_back()
         .filter(|_| !disabled)
     {
+        // `Auto` wide, not `Flex`: on a column's cross axis a flexible child
+        // is measured at the whole extent, frame-wide under a box that hugs.
+        // The column's `Stretch` widens an `Auto` row to what it settled on.
         Some(o) => row()
             .h(Sizing::Cells(1))
-            .w(Sizing::Flex(1))
+            .w(Sizing::Auto)
             .theme(ink_of(o, surface).to_string())
             .child(n),
         None => n,
@@ -3504,11 +3542,17 @@ pub fn entry_row(entry: &TextPropertyEntry, surface: &Ink) -> Node<UiMsg> {
     let n =
         text_runs(entry_runs(entry, &[], surface).into_iter().map(|(_, r)| r)).h(Sizing::Cells(1));
     match extended_ground(entry, surface) {
-        // Flexed as well as themed: a fill only reaches the end of the line if
-        // the node does, and "to the end of the line" is the whole claim.
+        // Themed, and `Auto` wide: "to the end of the line" is the enclosing
+        // column's to grant, and it does — its `Stretch` widens an `Auto`
+        // child to whatever width it settled on. `Flex` said the same thing
+        // in a definite column and something else in an `Auto` one: on a
+        // column's cross axis a flexible child is measured at the whole
+        // extent, so a tinted row inside a box that hugs its content made
+        // the box the width of the frame. A selected menu row is exactly
+        // such a row.
         Some(ink) => row()
             .h(Sizing::Cells(1))
-            .w(Sizing::Flex(1))
+            .w(Sizing::Auto)
             .theme(ink.to_string())
             .child(n),
         None => n,
@@ -4311,6 +4355,22 @@ mod tests {
         for item in ui.spec().in_flow() {
             let r = item.rect;
             match &item.draw {
+                // A rule is one cluster the backend tiles across the item's
+                // rect — the mirror is a second backend, and it learns the
+                // kind the same day the fold does (the button's sides taught
+                // that: a mirror that knows `Border` but not the new kind
+                // draws nothing and the parity test reads as a regression).
+                fresh_ui::Draw::Rule(g) => {
+                    let w = fresh_ui::glyph::width(g).max(1) as i32;
+                    let c = g.chars().next().unwrap_or(' ');
+                    for y in r.y..r.y + r.h as i32 {
+                        let mut x = r.x;
+                        while x + w <= r.x + r.w as i32 {
+                            put(&mut grid, &mut bottom, x, y, c);
+                            x += w;
+                        }
+                    }
+                }
                 fresh_ui::Draw::Lines(lines) => {
                     for (i, l) in lines.iter().enumerate() {
                         for (j, c) in l.chars().enumerate() {
@@ -5641,20 +5701,22 @@ mod tests {
         };
         let mut ui: Ui<UiMsg> = Ui::new();
         ui.frame(node(&spec, WIDTH, &cx()), Size::new(WIDTH, 24));
-        // A divider is as wide as the width it was given, so its glyph count
-        // reports that width back.
+        // A divider is as wide as the column it sits in, and that width is
+        // the rule item's own rectangle — not a glyph count. It used to be:
+        // the rule was `"─".repeat(width)`, so its text reported the number
+        // it was handed. As a ground the backend tiles, the description
+        // carries one cluster and layout decides how many, so the width is
+        // read where every other width is read.
         let rule = ui
             .spec()
             .in_flow()
             .iter()
             .find_map(|i| match &i.draw {
-                fresh_ui::Draw::Lines(l) if l.iter().any(|s| s.starts_with('─')) => {
-                    Some(l[0].chars().count())
-                }
+                fresh_ui::Draw::Rule(g) if g.as_ref() == "─" => Some(i.rect.w),
                 _ => None,
             })
             .expect("the rule");
-        assert_eq!(rule, (WIDTH - 4) as usize);
+        assert_eq!(rule, WIDTH - 4);
     }
 
     /// An entry's inline overlays become runs, split at the overlay

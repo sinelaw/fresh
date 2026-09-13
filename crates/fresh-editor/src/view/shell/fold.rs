@@ -246,7 +246,12 @@ pub fn fold_band(
         if let Some(sink) = provenance.as_deref_mut() {
             if matches!(
                 item.draw,
-                Draw::Fill | Draw::Wash | Draw::Border(_) | Draw::Lines(_) | Draw::Scrollbar { .. }
+                Draw::Fill
+                    | Draw::Wash
+                    | Draw::Rule(_)
+                    | Draw::Border(_)
+                    | Draw::Lines(_)
+                    | Draw::Scrollbar { .. }
             ) {
                 sink.item(rect, clip, &item.theme);
             }
@@ -268,6 +273,10 @@ pub fn fold_band(
             // A wash keeps the text it covers: the theme's ground over the
             // cells, their symbols and foregrounds as they were.
             Draw::Wash => wash(buf, rect, style, clip),
+            // A rule is a ground made of a cluster: how many of it fit is a
+            // function of the rectangle, which is the point — the caller
+            // never said how wide it is.
+            Draw::Rule(g) => tile(buf, rect, g, style, clip),
             Draw::Border(bs) => border(buf, item.rect, style, clip, *bs),
             Draw::Scrim(Scrim::Opaque) => fill(buf, frame, ' ', style, frame),
             // Dimming is a backend decision; the library only says "everything
@@ -537,6 +546,24 @@ fn fill(buf: &mut Buffer, r: Rect, ch: char, style: Style, clip: Rect) {
     for y in r.y..r.y.saturating_add(r.height) {
         for x in r.x..r.x.saturating_add(r.width) {
             put(buf, x, y, ch, style, clip);
+        }
+    }
+}
+
+/// Tile `g` across `r` — the terminal's reading of [`Draw::Rule`].
+///
+/// A cluster wider than one cell is laid whole or not at all, so a rule of
+/// `"──"` on an odd width leaves the last column blank rather than splitting
+/// the cluster across the edge. The row is filled left to right; nothing is
+/// centred, because a rule that re-centred itself as its box grew would move
+/// under a resize.
+fn tile(buf: &mut Buffer, r: Rect, g: &str, style: Style, clip: Rect) {
+    let w = fresh_ui::glyph::width(g).max(1);
+    for y in r.y..r.y.saturating_add(r.height) {
+        let mut x = r.x;
+        while x.saturating_add(w) <= r.x.saturating_add(r.width) {
+            put_symbol(buf, x, y, g, w, style, clip);
+            x = x.saturating_add(w);
         }
     }
 }
