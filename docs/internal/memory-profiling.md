@@ -147,12 +147,57 @@ The largest single sites behind those rows:
 | `fresh_plugin_runtime::thread::execute_prepared_plugin` | 1.7 MiB |
 | `Vec` of `fresh_ui::element::Undo<UiMsg>` | 1.1 MiB |
 
-Three things worth knowing from this:
+### Allocation churn (`--tool dhat`)
 
-- **The retained-mode UI is the biggest heap consumer, not highlighting.**
-  The `desc::Node` tree is cloned wholesale and the element arena and undo
-  log grow alongside it — see [retained-mode-ui.md](retained-mode-ui.md) for
-  what those are. Syntax highlighting, the usual suspect, is under 1%.
+Same workload, ~2 minutes of scripted editing: **1.7 GiB allocated across
+5.1M blocks**, of which 35.2 MiB is live at the peak (an independent
+confirmation of massif's 34.9 MiB, from a tool that counts differently) and
+5.1 MiB is still live at exit.
+
+Churn ranks the subsystems very differently from footprint:
+
+| subsystem | allocated | share | blocks |
+|---|---|---|---|
+| syntect | 1.0 GiB | 59.1% | 1,738,881 |
+| editor state | 311.4 MiB | 17.6% | 1,533,467 |
+| oxc (TS transpile) | 121.2 MiB | 6.8% | 68,807 |
+| retained-mode UI | 104.4 MiB | 5.9% | 336,083 |
+| QuickJS | 99.4 MiB | 5.6% | 973,420 |
+
+**Highlighting holds 3% of the heap and does 59% of the allocation.** Almost
+all of it is Oniguruma, syntect's regex engine: `onig_search_with_param`
+allocates ~5 KiB of match state per call (806 MiB over 166k calls) and
+`onig_new_match_param` a 72-byte block per call (584,649 of them). Footprint
+profiling would never have surfaced this; it is a CPU and allocator-pressure
+problem wearing a memory profile.
+
+dhat also records how much of each block was ever read or written, which
+finds copies nobody asked for. The clearest one:
+
+    site                                            allocated  blocks     read   written
+    fresh_editor_core::model::buffer::TextBuffer::   22.0 MiB   5,901   5.8 KiB  22.0 MiB
+
+`LineIterator::find_line_start_backward` calls `get_text_range_mut` to scan
+backwards for a newline. That materializes a fresh `Vec<u8>` of the scan
+chunk — ~3.8 KiB on average, fully written — and then `rposition` reads, on
+this workload, a single byte of it before dropping it: 5,901 calls, 22 MiB
+copied, 5,901 bytes actually read. It sits on the render path
+(`line_token_stream` -> `build_base_tokens` -> `LineIterator::new`), so it
+repeats per repaint. A backward scan that borrows from the piece tree
+instead of copying out of it would delete the whole 22 MiB.
+
+Of the 31.8 MiB allocated and never read at all, only 637 KiB was never even
+written; the rest is write-only scratch (Oniguruma, QuickJS, and
+`apply_theme_runs`, which writes 5.4 MiB nothing ever reads back).
+
+### What this says
+
+- **Footprint and churn have different owners.** The retained-mode UI holds
+  the most memory (the `desc::Node` tree is cloned wholesale, and the element
+  arena and undo log grow alongside it — see
+  [retained-mode-ui.md](retained-mode-ui.md)); highlighting holds under 4% of
+  it and does 59% of the allocation. Ask which question you are asking before
+  picking the tool.
 - **The plugin runtime is a third of the heap** (QuickJS plus the host side),
   all of it established at startup. `--no-plugins` is therefore the single
   biggest lever on memory, and a useful A/B when profiling something else.

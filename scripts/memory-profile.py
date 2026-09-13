@@ -470,24 +470,49 @@ def summarize_dhat(path, top=25):
     print("Still live at exit           : %s" % human(at_exit))
     print("Allocated and never read     : %s" % human(never_read))
 
-    rollup = {}
+    live = {}
+    churn = {}
+    churn_blocks = {}
     for pp in pps:
         name = attribute(site(pp)) or "unattributed"
-        rollup[name] = rollup.get(name, 0) + pp.get("gb", 0)
+        live[name] = live.get(name, 0) + pp.get("gb", 0)
+        churn[name] = churn.get(name, 0) + pp.get("tb", 0)
+        churn_blocks[name] = churn_blocks.get(name, 0) + pp.get("tbk", 0)
+
     print()
     print("Live at the peak, by subsystem:")
     print("%-42s %12s %8s" % ("subsystem", "bytes", "share"))
     print("-" * 64)
-    for name, nbytes in sorted(rollup.items(), key=lambda kv: -kv[1])[:top]:
+    for name, nbytes in sorted(live.items(), key=lambda kv: -kv[1])[:top]:
         if nbytes:
             print("%-42s %12s %7.1f%%" % (name, human(nbytes), 100.0 * nbytes / max(peak_live, 1)))
 
+    # Churn is the dimension massif cannot show, and it ranks the subsystems
+    # very differently from footprint: something can hold almost nothing and
+    # still dominate the allocator.
     print()
-    print("Biggest churn (total bytes allocated, however briefly):")
-    print("%-52s %10s %10s" % ("site", "allocated", "blocks"))
-    print("-" * 74)
+    print("Allocated over the whole run, by subsystem (churn):")
+    print("%-42s %12s %8s %12s" % ("subsystem", "bytes", "share", "blocks"))
+    print("-" * 78)
+    for name, nbytes in sorted(churn.items(), key=lambda kv: -kv[1])[:top]:
+        if nbytes:
+            print("%-42s %12s %7.1f%% %12s" % (name, human(nbytes), 100.0 * nbytes / max(total_alloc, 1),
+                                               "{:,}".format(churn_blocks[name])))
+
+    print()
+    print("Biggest churn by site. `read`/`written` are how much of that memory")
+    print("was ever loaded from or stored to -- allocated-and-written-but-never-read")
+    print("is copying somebody never asked for.")
+    print("%-46s %10s %9s %9s %9s" % ("site", "allocated", "blocks", "read", "written"))
+    print("-" * 88)
     for pp in sorted(pps, key=lambda p: -p.get("tb", 0))[:top]:
-        print("%-52s %10s %10s" % (site(pp)[:52], human(pp.get("tb", 0)), "{:,}".format(pp.get("tbk", 0))))
+        print("%-46s %10s %9s %9s %9s" % (
+            site(pp)[:46],
+            human(pp.get("tb", 0)),
+            "{:,}".format(pp.get("tbk", 0)),
+            human(pp.get("rb", 0)),
+            human(pp.get("wb", 0)),
+        ))
 
 
 # ------------------------------------------------------------------ main ---
