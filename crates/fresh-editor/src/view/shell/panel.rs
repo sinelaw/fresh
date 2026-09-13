@@ -197,6 +197,13 @@ pub struct Interior {
     /// How far each keyed rows widget is panned sideways, in display columns.
     /// See [`super::widgets::Ctx::h_pan`].
     pub h_pan: std::rc::Rc<std::collections::HashMap<String, i32>>,
+    /// The handle a markdown document's viewport is anchored to, so the host
+    /// can ask it to reveal the row holding a byte (`Anchor::reveal_byte`)
+    /// after a key moved the caret — the tree shaped the rows, so the tree
+    /// says which row that is. One per panel, kept by the host across
+    /// frames: an anchor binds to its element on mount and a fresh one each
+    /// frame would bind to nothing.
+    pub reveal: std::rc::Rc<fresh_ui::behavior::anchor::Anchor>,
     pub focus_key: String,
     /// See [`super::widgets::Ctx::keyboard`].
     pub keyboard: bool,
@@ -831,6 +838,7 @@ fn body(p: &Panel) -> Node<UiMsg> {
                 slot: super::widgets::Slot::Floating,
                 states: &i.states,
                 h_pan: &i.h_pan,
+                reveal: i.reveal.clone(),
                 focus_key: i.focus_key.clone(),
                 keyboard: i.keyboard,
 
@@ -1088,6 +1096,7 @@ mod tests {
             hovered_key: None,
             hovered_item_key: String::new(),
             hovered_popup_row: String::new(),
+            reveal: fresh_ui::behavior::anchor::Anchor::new(),
             marker_gutter: false,
             avail_height: None,
             scrollbar_reveal: None,
@@ -1478,6 +1487,7 @@ mod tests {
             hovered_key: None,
             hovered_item_key: String::new(),
             hovered_popup_row: String::new(),
+            reveal: fresh_ui::behavior::anchor::Anchor::new(),
             marker_gutter: false,
             avail_height: None,
             scrollbar_reveal: None,
@@ -1562,6 +1572,7 @@ mod tests {
             hovered_key: None,
             hovered_item_key: String::new(),
             hovered_popup_row: String::new(),
+            reveal: fresh_ui::behavior::anchor::Anchor::new(),
             marker_gutter: false,
             avail_height: None,
             scrollbar_reveal: None,
@@ -1618,6 +1629,7 @@ mod tests {
             hovered_key: None,
             hovered_item_key: String::new(),
             hovered_popup_row: String::new(),
+            reveal: fresh_ui::behavior::anchor::Anchor::new(),
             marker_gutter: false,
             avail_height: None,
             scrollbar_reveal: None,
@@ -1687,6 +1699,7 @@ mod tests {
             hovered_key: None,
             hovered_item_key: String::new(),
             hovered_popup_row: String::new(),
+            reveal: fresh_ui::behavior::anchor::Anchor::new(),
             marker_gutter: false,
             avail_height: None,
             scrollbar_reveal: None,
@@ -1745,6 +1758,7 @@ mod tests {
             hovered_key: None,
             hovered_item_key: String::new(),
             hovered_popup_row: String::new(),
+            reveal: fresh_ui::behavior::anchor::Anchor::new(),
             marker_gutter: false,
             avail_height: None,
             scrollbar_reveal: None,

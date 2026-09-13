@@ -1404,3 +1404,52 @@ fn a_pointer_modal_claims_what_it_lets_nothing_answer() {
     assert!(got.claimed);
     assert_eq!(pressed.get(), 0);
 }
+
+/// **A captured move still reports the byte under the pointer.** The gesture
+/// that took the press is the capturer, and it has no text — the run inside
+/// it does. A drag across a wrapped run extends by byte the way its press
+/// placed by byte, or a selection could start but never grow.
+#[test]
+fn a_captured_move_reports_the_byte_under_it() {
+    use fresh_ui::{gesture, text, viewport, Event, GestureKind, Input, Mods, MouseButton, Point, Size, Ui};
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    let seen: Rc<RefCell<Vec<Option<usize>>>> = Rc::new(RefCell::new(Vec::new()));
+    let (s1, s2) = (seen.clone(), seen.clone());
+    let doc = "alpha bravo charlie delta echo foxtrot golf";
+    let tree = viewport(
+        gesture(text(doc).wrap())
+            .on(
+                GestureKind::Press,
+                Rc::new(move |e: &Event| {
+                    s1.borrow_mut().push(e.text_byte);
+                    e.capture_pointer();
+                    e.stop();
+                    None
+                }),
+            )
+            .on(
+                GestureKind::Move,
+                Rc::new(move |e: &Event| {
+                    s2.borrow_mut().push(e.text_byte);
+                    None
+                }),
+            ),
+    )
+    .h(fresh_ui::Sizing::Cells(4));
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(tree, Size::new(12, 4));
+    ui.dispatch(Input::press(Point::new(1, 0), MouseButton::Left, Mods::NONE));
+    ui.dispatch(Input::Move {
+        pos: Point::new(3, 1),
+        mods: Mods::NONE,
+    });
+    let got = seen.borrow().clone();
+    assert_eq!(got.len(), 2);
+    assert_eq!(got[0], Some(1), "the press: byte 1 of the first row");
+    assert!(
+        matches!(got[1], Some(b) if b > 1),
+        "the captured move: a byte on the second row, not None: {:?}",
+        got[1]
+    );
+}
