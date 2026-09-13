@@ -457,8 +457,10 @@ hours, and neither needs anything installed beyond what is listed here.
 
 ### What you need
 
+Debian / Ubuntu:
+
 ```sh
-# the profiler (massif, dhat and ms_print ship with it)
+# the profiler (massif, dhat and ms_print all ship with it)
 sudo apt-get install -y valgrind
 
 # only for the production figure: the musl target and its C toolchain,
@@ -467,8 +469,41 @@ rustup target add x86_64-unknown-linux-musl
 sudo apt-get install -y musl-tools
 ```
 
-Python 3 with no third-party packages. Linux only: the harness reads
-`/proc/<pid>/smaps` and allocates a pty.
+Arch:
+
+```sh
+sudo pacman -S --needed valgrind
+
+rustup target add x86_64-unknown-linux-musl
+sudo pacman -S --needed musl
+export PATH="/usr/lib/musl/bin:$PATH"   # see below
+```
+
+Two Arch-specific things, both of which cost an afternoon if you meet them
+without warning:
+
+- **`musl-gcc` is not on `PATH`.** Arch's `musl` package puts it at
+  `/usr/lib/musl/bin/musl-gcc`, where the `cc` crate — which builds
+  Oniguruma and QuickJS for the musl target — will not find it. Either put
+  that directory on `PATH` as above, or set
+  `CC_x86_64_unknown_linux_musl=/usr/lib/musl/bin/musl-gcc`. Debian's
+  `musl-tools` installs it as `/usr/bin/musl-gcc`, which is why this only
+  bites here.
+- **Valgrind breaks across a glibc bump**, with "a function redirection which
+  is mandatory for this platform-tool combination cannot be set up" at
+  startup. It means Valgrind is older than the glibc it is being pointed at;
+  on a rolling release that is a normal Tuesday. Update `valgrind`, or side-step
+  it entirely by profiling a *musl* build, which carries its own libc and needs
+  no redirections: `cargo build --profile profiling --target x86_64-unknown-linux-musl`
+  gives a binary with symbols that Valgrind will run whatever glibc is
+  installed.
+
+Building Fresh itself needs what the AUR package's `makedepends` name —
+`cargo` (via `rustup`, since the workspace pins a toolchain) and `clang` —
+plus `base-devel` for the C dependencies.
+
+Python 3 with no third-party packages; Arch's `python` is already 3.x. Linux
+only, either way: the harness reads `/proc/<pid>/smaps` and allocates a pty.
 
 ### The two runs
 
