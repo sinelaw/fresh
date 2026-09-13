@@ -96,6 +96,13 @@ pub enum UiMsg {
 /// comparable, and tests compare facts.
 #[derive(Clone, Debug, PartialEq)]
 pub enum UiFact {
+    /// Part of a chord a panel's mode binds; see `panel::Keymap::chord`.
+    ChordPending {
+        code: crossterm::event::KeyCode,
+        modifiers: crossterm::event::KeyModifiers,
+    },
+    /// A key continued none of the pending prefix.
+    ChordAbandoned,
     /// A press landed on a plugin widget, carrying what that press means.
     ///
     /// **What replaces the byte-range scan.** The runtime recorded a

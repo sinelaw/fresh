@@ -41,6 +41,40 @@ use std::collections::HashMap;
 
 use fresh_core::api::WidgetSpec;
 
+use crate::keys::KeySeq;
+
+mod vocab {
+    use crate::keys::Key;
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    pub fn activates(key: Key) -> bool {
+        key.mods().is_empty() && matches!(key.code(), KeyCode::Enter | KeyCode::Char(' '))
+    }
+
+    pub fn ctrl_char(key: Key, c: char) -> bool {
+        key.mods() == KeyModifiers::CONTROL && key.code() == KeyCode::Char(c)
+    }
+
+    /// Caret and edit keys under any combination of Shift and Ctrl.
+    pub fn text_caret(key: Key) -> bool {
+        const CARET: KeyModifiers = KeyModifiers::CONTROL.union(KeyModifiers::SHIFT);
+        key.mods().difference(CARET).is_empty()
+            && matches!(
+                key.code(),
+                KeyCode::Left
+                    | KeyCode::Right
+                    | KeyCode::Up
+                    | KeyCode::Down
+                    | KeyCode::Home
+                    | KeyCode::End
+                    | KeyCode::Backspace
+                    | KeyCode::Delete
+            )
+    }
+}
+
+pub(crate) use vocab::{activates, ctrl_char, text_caret};
+
 use super::registry::WidgetInstanceState;
 use super::render::{CollectedOutput, RenderContext};
 
@@ -281,13 +315,14 @@ pub trait WidgetImpl: Sync {
     /// on `fx` — the dispatcher rerenders and fires them after the
     /// handler returns. `viewport` is the window the key acts inside
     /// (paging), handed down rather than looked up — see [`Viewport`].
+    /// A [`KeySeq`] because the wire can carry a chord; no kind binds one.
     fn on_key(
         &self,
         _spec: &WidgetSpec,
         _widget_key: &str,
         _panel: &mut crate::widgets::WidgetPanelState,
         _viewport: Viewport,
-        _key: &str,
+        _key: &KeySeq,
         _fx: &mut KeyFx,
     ) -> KeyDisposition {
         KeyDisposition::Pass

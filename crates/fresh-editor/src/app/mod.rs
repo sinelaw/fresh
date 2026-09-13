@@ -252,7 +252,7 @@ use crate::types::{LspLanguageConfig, LspServerConfig};
 use crate::view::file_tree::{FileTree, FileTreeView};
 use crate::view::prompt::PromptType;
 use crate::view::split::{SplitManager, SplitViewState};
-use crossterm::event::{KeyCode, KeyModifiers};
+use crossterm::event::KeyCode;
 use ratatui::Frame;
 use std::collections::HashMap;
 use std::ops::Range;
@@ -2110,91 +2110,10 @@ impl Editor {
     }
 }
 
-/// Parse a key string like "RET", "C-n", "M-x", "q" into KeyCode and KeyModifiers
-///
-/// Supports:
-/// - Single characters: "a", "q", etc.
-/// - Function keys: "F1", "F2", etc.
-/// - Special keys: "RET", "TAB", "ESC", "SPC", "DEL", "BS"
-/// - Modifiers: "C-" (Control), "M-" (Alt/Meta), "S-" (Shift)
-/// - Combinations: "C-n", "M-x", "C-M-s", etc.
-#[cfg(any(feature = "plugins", test))]
-fn parse_key_string(key_str: &str) -> Option<(KeyCode, KeyModifiers)> {
-    use crossterm::event::{KeyCode, KeyModifiers};
-
-    let mut modifiers = KeyModifiers::NONE;
-    let mut remaining = key_str;
-
-    // Parse modifiers
-    loop {
-        if remaining.starts_with("C-") {
-            modifiers |= KeyModifiers::CONTROL;
-            remaining = &remaining[2..];
-        } else if remaining.starts_with("M-") {
-            modifiers |= KeyModifiers::ALT;
-            remaining = &remaining[2..];
-        } else if remaining.starts_with("S-") {
-            modifiers |= KeyModifiers::SHIFT;
-            remaining = &remaining[2..];
-        } else {
-            break;
-        }
-    }
-
-    // Parse the key
-    // Use uppercase for matching special keys, but preserve original for single chars
-    let upper = remaining.to_uppercase();
-    let code = match upper.as_str() {
-        "RET" | "RETURN" | "ENTER" => KeyCode::Enter,
-        "TAB" => KeyCode::Tab,
-        "BACKTAB" => KeyCode::BackTab,
-        "ESC" | "ESCAPE" => KeyCode::Esc,
-        "SPC" | "SPACE" => KeyCode::Char(' '),
-        "DEL" | "DELETE" => KeyCode::Delete,
-        "BS" | "BACKSPACE" => KeyCode::Backspace,
-        "UP" => KeyCode::Up,
-        "DOWN" => KeyCode::Down,
-        "LEFT" => KeyCode::Left,
-        "RIGHT" => KeyCode::Right,
-        "HOME" => KeyCode::Home,
-        "END" => KeyCode::End,
-        "PAGEUP" | "PGUP" => KeyCode::PageUp,
-        "PAGEDOWN" | "PGDN" => KeyCode::PageDown,
-        "MENU" => KeyCode::Menu,
-        s if s.starts_with('F') && s.len() > 1 => {
-            // Function key (F1-F12)
-            if let Ok(n) = s[1..].parse::<u8>() {
-                KeyCode::F(n)
-            } else {
-                return None;
-            }
-        }
-        _ if remaining.len() == 1 => {
-            // Single character - use ORIGINAL remaining, not uppercased
-            // For uppercase letters, add SHIFT modifier so 'J' != 'j'
-            let c = remaining.chars().next()?;
-            if c.is_ascii_uppercase() {
-                modifiers |= KeyModifiers::SHIFT;
-            }
-            KeyCode::Char(c.to_ascii_lowercase())
-        }
-        _ => return None,
-    };
-
-    // Plugins commonly spell Shift+Tab as "S-Tab"; terminals deliver
-    // BackTab and the lookup-side `normalize_key` strips the redundant
-    // SHIFT. Normalize on the binding side too so "S-Tab" and "BackTab"
-    // both register as `(BackTab, NONE)` and match.
-    if code == KeyCode::Tab && modifiers.contains(KeyModifiers::SHIFT) {
-        return Some((KeyCode::BackTab, modifiers.difference(KeyModifiers::SHIFT)));
-    }
-
-    Some((code, modifiers))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crossterm::event::KeyModifiers;
     use lsp_types::{Position, Range as LspRange, TextDocumentContentChangeEvent};
     use tempfile::TempDir;
 
@@ -2208,28 +2127,6 @@ mod tests {
     /// Create a test filesystem
     fn test_filesystem() -> Arc<dyn FileSystem + Send + Sync> {
         Arc::new(crate::model::filesystem::StdFileSystem)
-    }
-
-    #[test]
-    fn parse_key_string_shift_tab_normalizes_to_backtab() {
-        use crossterm::event::{KeyCode, KeyModifiers};
-        // Plugins write "S-Tab" in their defineMode binding tables; the
-        // terminal delivers BackTab (with SHIFT stripped by normalize_key
-        // on lookup). Without this normalization, the binding never
-        // matches.
-        assert_eq!(
-            parse_key_string("S-Tab"),
-            Some((KeyCode::BackTab, KeyModifiers::NONE)),
-        );
-        assert_eq!(
-            parse_key_string("BackTab"),
-            Some((KeyCode::BackTab, KeyModifiers::NONE)),
-        );
-        // Plain Tab is unaffected.
-        assert_eq!(
-            parse_key_string("Tab"),
-            Some((KeyCode::Tab, KeyModifiers::NONE)),
-        );
     }
 
     #[test]

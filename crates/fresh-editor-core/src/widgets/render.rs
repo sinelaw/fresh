@@ -9205,7 +9205,8 @@ pub mod tests {
         let vp = viewport_of(&panel, "cards");
         assert_eq!(vp.items, 4, "four cards on screen");
         let mut fx = crate::widgets::kinds::KeyFx::default();
-        behavior(&spec).on_key(&spec, "cards", &mut panel, vp, "PageDown", &mut fx);
+        let page_down: crate::keys::KeySeq = "PageDown".parse().unwrap();
+        behavior(&spec).on_key(&spec, "cards", &mut panel, vp, &page_down, &mut fx);
         let sel = match panel.instance_states.get("cards") {
             Some(WidgetInstanceState::List { selected_index, .. }) => *selected_index,
             _ => panic!("the list kept its state"),

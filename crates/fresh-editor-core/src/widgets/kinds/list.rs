@@ -101,15 +101,23 @@ impl WidgetImpl for List {
         widget_key: &str,
         panel: &mut crate::widgets::WidgetPanelState,
         viewport: super::Viewport,
-        key: &str,
+        key: &crate::keys::KeySeq,
         fx: &mut super::KeyFx,
     ) -> super::KeyDisposition {
-        match key {
-            "Up" | "Down" => {
-                let delta = if key == "Up" { -1 } else { 1 };
+        use crossterm::event::KeyCode;
+        let Some(key) = key.single() else {
+            return super::KeyDisposition::Pass;
+        };
+        // Every key a list answers is unmodified.
+        if !key.mods().is_empty() {
+            return super::KeyDisposition::Pass;
+        }
+        match key.code() {
+            KeyCode::Up | KeyCode::Down => {
+                let delta = if key.code() == KeyCode::Up { -1 } else { 1 };
                 select_move(spec, widget_key, panel, delta, fx);
             }
-            "PageUp" | "PageDown" => {
+            KeyCode::PageUp | KeyCode::PageDown => {
                 // **A page is a window of items, and it arrives as one.**
                 // `select_move`'s delta counts items — it adds it to the
                 // selection and clamps against the item *count* — so a row
@@ -122,10 +130,14 @@ impl WidgetImpl for List {
                 //
                 // One item of overlap so the user keeps a visual anchor.
                 let page = viewport.items.saturating_sub(1).max(1) as i32;
-                let delta = if key == "PageUp" { -page } else { page };
+                let delta = if key.code() == KeyCode::PageUp {
+                    -page
+                } else {
+                    page
+                };
                 select_move(spec, widget_key, panel, delta, fx);
             }
-            "Enter" | "Space" => {
+            KeyCode::Enter | KeyCode::Char(' ') => {
                 if let Some(ev) = activate_event(spec, widget_key, panel) {
                     fx.events.push(ev);
                 }

@@ -188,15 +188,20 @@ impl WidgetImpl for Tree {
         widget_key: &str,
         panel: &mut crate::widgets::WidgetPanelState,
         viewport: super::Viewport,
-        key: &str,
+        key: &crate::keys::KeySeq,
         fx: &mut super::KeyFx,
     ) -> super::KeyDisposition {
-        match key {
-            "Up" | "Down" => {
-                let delta = if key == "Up" { -1 } else { 1 };
+        use crossterm::event::{KeyCode, KeyModifiers};
+        const SHIFT: KeyModifiers = KeyModifiers::SHIFT;
+        let Some(key) = key.single() else {
+            return super::KeyDisposition::Pass;
+        };
+        match (key.code(), key.mods()) {
+            (KeyCode::Up, m) | (KeyCode::Down, m) if m.is_empty() => {
+                let delta = if key.code() == KeyCode::Up { -1 } else { 1 };
                 select_move(spec, widget_key, panel, delta, fx);
             }
-            "PageUp" | "PageDown" => {
+            (KeyCode::PageUp, m) | (KeyCode::PageDown, m) if m.is_empty() => {
                 // A Tree paces in *nodes*, and the window arrives in
                 // them: `viewport.items` is the row budget already
                 // divided by the rows one node occupies (bordered cards
@@ -205,11 +210,15 @@ impl WidgetImpl for Tree {
                 // division is the resolver's — this seam only pages.
                 // One node of overlap so the user keeps a visual anchor.
                 let page = viewport.items.saturating_sub(1).max(1) as i32;
-                let delta = if key == "PageUp" { -page } else { page };
+                let delta = if key.code() == KeyCode::PageUp {
+                    -page
+                } else {
+                    page
+                };
                 select_move(spec, widget_key, panel, delta, fx);
             }
-            "Left" | "Right" => {
-                lateral(spec, widget_key, panel, key == "Right", fx);
+            (KeyCode::Left, m) | (KeyCode::Right, m) if m.is_empty() => {
+                lateral(spec, widget_key, panel, key.code() == KeyCode::Right, fx);
             }
             // Panning. `Left`/`Right` are collapse/expand — the tree meaning
             // every OS tree widget and the ARIA tree pattern give them — so
@@ -217,7 +226,10 @@ impl WidgetImpl for Tree {
             // read-only, single-select tree does not have: extend selection.
             // (`Alt`+arrows are back/forward, `Ctrl`+arrows word-wise; both
             // are bound.) Issue #1580.
-            "S-Left" | "S-Right" | "S-Home" | "S-End" => {
+            (KeyCode::Left, SHIFT)
+            | (KeyCode::Right, SHIFT)
+            | (KeyCode::Home, SHIFT)
+            | (KeyCode::End, SHIFT) => {
                 let bounds = crate::widgets::render::pan_bounds(spec, viewport.cols, None);
                 // `S-End` is "the end of the row I am on", not "the end of
                 // the longest row": the pan is shared, rows of unequal length
@@ -233,14 +245,14 @@ impl WidgetImpl for Tree {
                     // it still had a tail to show. Fall back to the longest.
                     .filter(|&r| r > 0)
                     .unwrap_or(bounds.1);
-                let delta = match key {
-                    "S-Left" => Some(-PAN_COLUMNS),
-                    "S-Right" => Some(PAN_COLUMNS),
+                let delta = match key.code() {
+                    KeyCode::Left => Some(-PAN_COLUMNS),
+                    KeyCode::Right => Some(PAN_COLUMNS),
                     // Home is where each row's content says it should rest —
                     // its own match — not the head of the line. The head is a
                     // few more `S-Left`s away, and a reader who wants the
                     // match back should not have to pan to find it.
-                    "S-Home" => None,
+                    KeyCode::Home => None,
                     // Far enough that the per-row clamp lands every row on
                     // its own tail — and no further, so `S-Left` walks back
                     // from the end of the longest row rather than from a
@@ -254,12 +266,12 @@ impl WidgetImpl for Tree {
                     return super::KeyDisposition::Pass;
                 }
             }
-            "Enter" => {
+            (KeyCode::Enter, m) if m.is_empty() => {
                 if let Some(ev) = activate_event(spec, widget_key, panel) {
                     fx.events.push(ev);
                 }
             }
-            "Space" => {
+            (KeyCode::Char(' '), m) if m.is_empty() => {
                 // On a checkable Tree, Space is the conventional
                 // checkbox key — toggle the focused row (matching what
                 // a click on its `[v]`/`[ ]` glyph would do). Falls

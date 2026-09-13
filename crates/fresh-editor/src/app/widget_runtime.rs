@@ -1091,9 +1091,14 @@ impl Editor {
             WidgetAction::TextInputChar { text } => {
                 self.handle_widget_text_char(panel_key, &text);
             }
-            WidgetAction::Key { key } => {
-                self.handle_widget_key(panel_key, &key);
-            }
+            WidgetAction::Key { key } => match crate::input::keybindings::parse_key_seq(&key) {
+                Some(seq) => self.handle_widget_key(panel_key, &seq),
+                None => tracing::debug!(
+                    target: "fresh::widgets",
+                    %key,
+                    "widget key did not parse; dropped"
+                ),
+            },
         }
     }
 
@@ -1229,7 +1234,11 @@ impl Editor {
         }
     }
 
-    fn handle_widget_key(&mut self, panel_key: &crate::widgets::PanelKey, key: &str) {
+    fn handle_widget_key(
+        &mut self,
+        panel_key: &crate::widgets::PanelKey,
+        key: &crate::input::keybindings::KeySeq,
+    ) {
         // Smart key dispatch — route to the right specialized
         // handler based on focused widget kind. See WidgetAction::Key
         // doc for the dispatch table.
@@ -1297,11 +1306,15 @@ impl Editor {
         }
         .cloned();
         let widget = widget.as_ref();
-        match key {
-            "Tab" => self.handle_widget_focus_advance(panel_key, 1),
-            "Shift+Tab" => self.handle_widget_focus_advance(panel_key, -1),
-            "Up" | "Down" => {
-                let delta = if key == "Up" { -1 } else { 1 };
+        use crossterm::event::KeyCode;
+        let Some(key) = key.single().filter(|k| k.mods().is_empty()) else {
+            return;
+        };
+        match key.code() {
+            KeyCode::Tab => self.handle_widget_focus_advance(panel_key, 1),
+            KeyCode::BackTab => self.handle_widget_focus_advance(panel_key, -1),
+            KeyCode::Up | KeyCode::Down => {
+                let delta = if key.code() == KeyCode::Up { -1 } else { 1 };
                 // Picker-style nav, capability-declared: the focused
                 // kind says whether panel arrows should walk the focus
                 // ring instead (`arrows_advance_focus` — Button/Toggle,
@@ -1346,7 +1359,7 @@ impl Editor {
                     }
                 }
             }
-            "Enter" => match widget {
+            KeyCode::Enter => match widget {
                 Some(fresh_core::api::WidgetSpec::Text { .. }) => {
                     // Multi-line Enter (newline, or markdown
                     // activate) is kind-owned in on_key; what
@@ -2698,7 +2711,13 @@ impl Editor {
         if self.widget_registry.get(panel_key).is_none() {
             return false;
         }
-        self.handle_widget_key(panel_key, "C-a");
+        self.handle_widget_key(
+            panel_key,
+            &crate::input::keybindings::KeySeq::one(crate::input::keybindings::Key::new(
+                crossterm::event::KeyCode::Char('a'),
+                crossterm::event::KeyModifiers::CONTROL,
+            )),
+        );
         true
     }
 
@@ -2710,7 +2729,13 @@ impl Editor {
         if self.widget_registry.get(panel_key).is_none() {
             return false;
         }
-        self.handle_widget_key(panel_key, "C-c");
+        self.handle_widget_key(
+            panel_key,
+            &crate::input::keybindings::KeySeq::one(crate::input::keybindings::Key::new(
+                crossterm::event::KeyCode::Char('c'),
+                crossterm::event::KeyModifiers::CONTROL,
+            )),
+        );
         true
     }
 
@@ -2721,7 +2746,13 @@ impl Editor {
         if self.widget_registry.get(panel_key).is_none() {
             return false;
         }
-        self.handle_widget_key(panel_key, "C-x");
+        self.handle_widget_key(
+            panel_key,
+            &crate::input::keybindings::KeySeq::one(crate::input::keybindings::Key::new(
+                crossterm::event::KeyCode::Char('x'),
+                crossterm::event::KeyModifiers::CONTROL,
+            )),
+        );
         true
     }
 
@@ -2976,8 +3007,12 @@ impl Editor {
             Some(p) if !p.focus_key.is_empty() => p.focus_key.clone(),
             _ => return,
         };
+        let Some(press) = crate::input::keybindings::parse_key_press(key) else {
+            tracing::debug!(target: "fresh::widgets", %key, "text input key did not parse; dropped");
+            return;
+        };
         self.with_kind_mutation(panel_key, &focus_key, |spec, wkey, panel, fx| {
-            crate::widgets::kinds::text::text_key(spec, wkey, panel, key, fx);
+            crate::widgets::kinds::text::text_key(spec, wkey, panel, press, fx);
         });
     }
 

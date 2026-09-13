@@ -6362,6 +6362,7 @@ impl Editor {
                     mode: mode.to_string(),
                     resolver: self.keybindings.clone(),
                     text_focused: self.panel_focused_widget_is_text(&key),
+                    chord: self.active_window().chord_state.clone(),
                 }),
             markdown: Some(self.markdown_ink()),
         })
@@ -6468,6 +6469,7 @@ impl Editor {
                         mode,
                         resolver: self.keybindings.clone(),
                         text_focused: self.panel_focused_widget_is_text(&key),
+                        chord: self.active_window().chord_state.clone(),
                     }),
                 crate::app::PanelSlot::Sidebar(_) => None,
             },

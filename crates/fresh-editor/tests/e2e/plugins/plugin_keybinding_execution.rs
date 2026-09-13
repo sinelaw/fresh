@@ -24,6 +24,7 @@ fn test_plugin_command_executes_via_keybinding() {
         key: "m".to_string(),
         modifiers: vec!["alt".to_string()],
         keys: vec![],
+        chord: String::new(),
         action: "marker_insert_action".to_string(),
         args: std::collections::HashMap::new(),
         when: None,
