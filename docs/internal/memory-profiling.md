@@ -289,6 +289,44 @@ Editor state taking the top slot is mostly highlight spans (`spec_extend` of
 `highlight_entries`, 2.4 MiB) and `ChromeLayout::reset_cell_*` (2.3 MiB),
 across nine open buffers in three windows.
 
+### Where the ~100 MiB actually is
+
+massif only ever sees the heap, and the heap is a third of the process. The
+rest is answered mapping by mapping out of `/proc/<pid>/smaps`, which
+`--tool rss` now prints. Final state of the three-workspace run:
+
+| mapping | RSS | share |
+|---|---|---|
+| anonymous (allocator arenas + thread stacks) | 48.2 MiB | 45.3% |
+| heap (`brk`) | 25.3 MiB | 23.8% |
+| editor binary: code | 16.5 MiB | 15.5% |
+| editor binary: read-only data | 13.2 MiB | 12.4% |
+| shared libraries | 2.8 MiB | 2.7% |
+| main thread stack | 196 KiB | 0.2% |
+| editor binary: data + relocations | 148 KiB | 0.1% |
+| **total** | **106.4 MiB** | |
+
+17 threads. Read it as three parts:
+
+- **~30 MiB is the binary itself**, paged in as it runs: `.text` is 17.5 MiB
+  and `.rodata` 11.7 MiB in this build, and nearly all of both ends up
+  resident. Debug info is not in that -- `.debug_*` is mapped but never read,
+  so the `profiling` profile's 199 MB on disk costs nothing at runtime. This
+  is also the part a `release` build (fat LTO, `opt-level = "z"`) shrinks and
+  this profile does not measure.
+- **~74 MiB is the allocator** (`brk` plus anonymous), against the ~47 MiB
+  massif reports as live allocations. The difference is the allocator's own
+  bookkeeping, its free lists, and one stack per thread.
+- **Everything else is noise**: stacks, relocations and kernel mappings
+  together are under half a megabyte.
+
+One caveat that matters for reading the first two rows: this is a glibc,
+dynamically linked build, and the split between `brk` and anonymous mappings
+is glibc's allocator strategy, not Fresh's. Production ships a static musl
+binary, whose allocator partitions memory differently and whose shared
+library row disappears into the binary. The figures that carry over are the
+live heap and the binary's own text and rodata; the arena split does not.
+
 ### Not measured yet
 
 No dhat profile for this workload. dhat instruments every memory access, and

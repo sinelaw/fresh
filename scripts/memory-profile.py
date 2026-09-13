@@ -263,14 +263,16 @@ def isolated_env(home):
 
 
 def run_workload(argv, env, quiet, steps, rss_samples=None, cols=140, rows=45, cwd=None,
-                 max_step=30.0, verbose=False, screen_out=None):
+                 max_step=30.0, verbose=False, screen_out=None, maps_out=None):
     """Drive one editor launch through `steps` and return its exit status.
 
     `rss_samples` (a list) turns on /proc sampling of the editor process.
     """
     pid, fd = spawn_pty(argv, env, cols, rows, cwd=cwd)
-    sampler = ProcSampler(pid, rss_samples) if rss_samples is not None else None
+    sampler = ProcSampler(pid, rss_samples, exe=argv[0]) if rss_samples is not None else None
     last_screen = bytearray()
+    if sampler is not None and maps_out is not None:
+        maps_out.append(sampler)
     try:
         if sampler:
             sampler.sample("start")
@@ -338,12 +340,62 @@ def run_workload(argv, env, quiet, steps, rss_samples=None, cols=140, rows=45, c
             pass
 
 
+
+SMAPS_CATEGORIES = (
+    # (label, predicate on (path, perms))
+    ("editor binary: code", lambda path, perms, exe: path == exe and "x" in perms),
+    ("editor binary: read-only data", lambda path, perms, exe: path == exe and perms.startswith("r--")),
+    ("editor binary: data + relocations", lambda path, perms, exe: path == exe),
+    ("shared libraries", lambda path, perms, exe: path.endswith(".so") or ".so." in path),
+    ("heap (brk)", lambda path, perms, exe: path == "[heap]"),
+    ("main thread stack", lambda path, perms, exe: path == "[stack]"),
+    ("anonymous (malloc arenas, thread stacks)", lambda path, perms, exe: path == ""),
+    ("other file mappings", lambda path, perms, exe: not path.startswith("[")),
+    ("kernel mappings", lambda path, perms, exe: True),
+)
+
+
+def smaps_breakdown(pid, exe):
+    """Split a live process's resident memory by what each mapping *is*.
+
+    massif only ever sees the heap. This is the other question -- what the
+    other two thirds of RSS are -- and the only place it can be answered is
+    /proc/<pid>/smaps, mapping by mapping.
+    """
+    totals = {}          # label -> [rss_kb, pss_kb, count]
+    path, perms = "", ""
+    header = re.compile(r"^[0-9a-f]+-[0-9a-f]+ (\S{4}) \S+ \S+ \S+\s*(.*)$")
+    try:
+        with open("/proc/%d/smaps" % pid) as f:
+            for line in f:
+                m = header.match(line)
+                if m:
+                    perms, path = m.group(1), m.group(2).strip()
+                    continue
+                if not line.startswith(("Rss:", "Pss:")):
+                    continue
+                kb = int(line.split()[1])
+                label = next(lbl for lbl, pred in SMAPS_CATEGORIES if pred(path, perms, exe))
+                row = totals.setdefault(label, [0, 0, 0])
+                if line.startswith("Rss:"):
+                    row[0] += kb
+                    row[2] += 1
+                else:
+                    row[1] += kb
+    except OSError:
+        return {}
+    return totals
+
+
 class ProcSampler:
     """Reads resident memory straight out of /proc for the live process."""
 
-    def __init__(self, pid, out):
+    def __init__(self, pid, out, exe=""):
         self.pid = pid
         self.out = out
+        self.exe = exe
+        self.maps = {}
+        self.threads = 0
 
     def sample(self, label):
         pid = self.pid
@@ -364,6 +416,15 @@ class ProcSampler:
                             rec[key.rstrip(":")] = int(line.split()[1])
         except OSError:
             pass
+        try:
+            self.threads = len(os.listdir("/proc/%d/task" % pid))
+        except OSError:
+            pass
+        # Keep the most recent one: the run ends at its fullest, and reading
+        # smaps is far too slow to do more often than once a step.
+        breakdown = smaps_breakdown(pid, self.exe)
+        if breakdown:
+            self.maps = breakdown
         self.out.append(rec)
 
 
@@ -664,6 +725,10 @@ def main():
                     help="hard cap in seconds on how long one workload step may take "
                          "(default: 25 native, 120 under Valgrind)")
     ap.add_argument("--verbose", action="store_true", help="log each workload step as it runs")
+    ap.add_argument("--env", action="append", default=[], metavar="KEY=VALUE",
+                    help="extra environment for the editor, repeatable. The allocator knobs are "
+                         "the interesting ones: MALLOC_ARENA_MAX=2 answers how much of RSS is "
+                         "glibc's per-thread arenas rather than live data")
     ap.add_argument("--top", type=int, default=25)
     ap.add_argument("--json", help="also write the machine-readable numbers here")
     args = ap.parse_args()
@@ -681,6 +746,9 @@ def main():
     # the editor its command socket and the profile its realism.
     home = tempfile.mkdtemp(prefix="fmp-", dir="/tmp")
     env = isolated_env(home)
+    for entry in args.env:
+        key, _, value = entry.partition("=")
+        env[key] = value
     cwd = None
 
     if args.workload == "orchestrator":
@@ -745,8 +813,10 @@ def main():
     started = time.time()
     max_step = args.max_step if args.max_step is not None else (25.0 if args.tool == "rss" else 120.0)
     screen_out = os.path.join(args.out, "last-screen.%s.txt" % stamp)
+    samplers = []
     status = run_workload(argv, env, quiet, steps, rss_samples=samples, cwd=cwd,
-                          max_step=max_step, verbose=args.verbose, screen_out=screen_out)
+                          max_step=max_step, verbose=args.verbose, screen_out=screen_out,
+                          maps_out=samplers)
     elapsed = time.time() - started
     log("editor exited (status %d) after %.1fs" % (status, elapsed))
 
@@ -787,6 +857,25 @@ def main():
         if samples:
             print()
             print("Peak RSS (VmHWM): %s" % human(max(r.get("VmHWM", 0) for r in samples) * 1024))
+        maps = samplers[0].maps if samplers else {}
+        if maps:
+            total_rss = sum(v[0] for v in maps.values())
+            print()
+            print("=" * 78)
+            print("WHAT THAT RESIDENT MEMORY *IS* (final state, from /proc/<pid>/smaps)")
+            print("=" * 78)
+            print("%-44s %10s %10s %7s" % ("mapping", "RSS", "PSS", "share"))
+            print("-" * 74)
+            for label, (rss_kb, pss_kb, count) in sorted(maps.items(), key=lambda kv: -kv[1][0]):
+                print("%-44s %10s %10s %6.1f%%" % (
+                    label, human(rss_kb * 1024), human(pss_kb * 1024),
+                    100.0 * rss_kb / max(total_rss, 1)))
+            print("-" * 74)
+            print("%-44s %10s" % ("total", human(total_rss * 1024)))
+            print()
+            print("Threads: %d. Anonymous memory is malloc's arenas plus one stack per" % samplers[0].threads)
+            print("thread, which /proc does not separate; massif's heap total is the part")
+            print("of it that is live allocations.")
         print()
         print("Samples:       %s" % out_file)
 
