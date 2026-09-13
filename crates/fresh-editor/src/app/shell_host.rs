@@ -1314,7 +1314,6 @@ pub mod shell_theme {
         format!("{fg}/{bg}")
     }
 
-
     /// The same, with text attributes the theme does not carry.
     pub fn attrs(fg: &str, bg: &str, attrs: &[&str]) -> String {
         Ink {
@@ -2302,7 +2301,8 @@ impl Editor {
                 // Off the run is one of its two ends, and the fact says which:
                 // a drag that leaves the last row selects to the document's
                 // end, one that leaves the first selects back to its start, as
-                // both did in the buffer.
+                // both did in the buffer. Reading `None` as "the end" alone
+                // made a drag upward past the top select forward to it.
                 let target = match byte {
                     Some(b) => b,
                     None if above => 0,

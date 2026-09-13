@@ -959,10 +959,7 @@ impl<M: 'static> Ui<M> {
         self.text_rows_of(el)
     }
 
-    fn text_rows_of(
-        &mut self,
-        el: ElementId,
-    ) -> Option<(String, Vec<crate::render::prim::Row>)> {
+    fn text_rows_of(&mut self, el: ElementId) -> Option<(String, Vec<crate::render::prim::Row>)> {
         let r = self.render_for(el)?;
         let mut obj = self.render.get_mut(r)?.obj.take()?;
         let out = obj

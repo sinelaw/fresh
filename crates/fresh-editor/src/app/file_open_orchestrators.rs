@@ -1154,12 +1154,17 @@ impl crate::app::window::Window {
         }
 
         // If the current buffer is empty and unmodified, replace it instead of creating a new one
-        // Note: Don't replace composite buffers (they appear empty but are special views).
+        // Note: Don't replace composite buffers (they appear empty but are special views),
+        // nor a buffer that hosts a widget panel: its rows are the tree's mirror
+        // (`app::pane_mirror`), written on the next frame, so it is empty between its
+        // mount and that frame — and it was the git log's own list buffer that a
+        // `git show` opened from the same tick replaced.
         // Suppressed when `allow_replace_empty` is false — see
         // `open_file_for_preview` for the rationale.
         let replace_current = allow_replace_empty && {
             let current_state = self.buffers.get(&self.active_buffer()).unwrap();
             !current_state.is_composite_buffer
+                && !current_state.interactive_widget_panel
                 && current_state.buffer.is_empty()
                 && !current_state.buffer.is_modified()
                 && current_state.buffer.file_path().is_none()

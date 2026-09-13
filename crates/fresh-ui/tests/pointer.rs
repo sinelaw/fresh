@@ -1411,7 +1411,9 @@ fn a_pointer_modal_claims_what_it_lets_nothing_answer() {
 /// placed by byte, or a selection could start but never grow.
 #[test]
 fn a_captured_move_reports_the_byte_under_it() {
-    use fresh_ui::{gesture, text, viewport, Event, GestureKind, Input, Mods, MouseButton, Point, Size, Ui};
+    use fresh_ui::{
+        gesture, text, viewport, Event, GestureKind, Input, Mods, MouseButton, Point, Size, Ui,
+    };
     use std::cell::RefCell;
     use std::rc::Rc;
     let seen: Rc<RefCell<Vec<Option<usize>>>> = Rc::new(RefCell::new(Vec::new()));
@@ -1439,7 +1441,11 @@ fn a_captured_move_reports_the_byte_under_it() {
     .h(fresh_ui::Sizing::Cells(4));
     let mut ui: Ui<()> = Ui::new();
     ui.frame(tree, Size::new(12, 4));
-    ui.dispatch(Input::press(Point::new(1, 0), MouseButton::Left, Mods::NONE));
+    ui.dispatch(Input::press(
+        Point::new(1, 0),
+        MouseButton::Left,
+        Mods::NONE,
+    ));
     ui.dispatch(Input::Move {
         pos: Point::new(3, 1),
         mods: Mods::NONE,
