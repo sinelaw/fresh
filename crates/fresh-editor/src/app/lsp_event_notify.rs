@@ -25,6 +25,15 @@ impl Window {
         event: &Event,
     ) -> Vec<TextDocumentContentChangeEvent> {
         let Some(state) = self.buffers.get(&buffer_id) else {
+            debug_assert!(
+                false,
+                "collect_lsp_changes_for_buffer: {buffer_id:?} is not in this window; \
+                 its edit would go unreported to the server"
+            );
+            tracing::warn!(
+                "collect_lsp_changes_for_buffer: no state for {:?}",
+                buffer_id
+            );
             return Vec::new();
         };
         match event {
@@ -204,22 +213,18 @@ impl crate::app::window::Window {
             }
         };
 
-        // Get the file path for language detection
-        // Use buffer's stored language
-        let language = match self
-            .buffers
-            .get(&self.active_buffer())
-            .map(|s| s.language.clone())
-        {
-            Some(l) => l,
-            None => {
-                tracing::debug!("notify_lsp_save: no buffer state");
-                return;
-            }
+        // From `buffer_id`, not the active buffer: Save All saves every modified
+        // buffer, and taking the text from whichever one happens to be focused
+        // hands each server another file's contents under this file's URI
+        // (#3258).
+        let Some(state) = self.buffers.get(&buffer_id) else {
+            tracing::debug!("notify_lsp_save: no buffer state for {:?}", buffer_id);
+            return;
         };
+        let language = state.language.clone();
 
         // Get the full text to send with didSave
-        let full_text = match self.active_state().buffer.to_string() {
+        let full_text = match state.buffer.to_string() {
             Some(t) => t,
             None => {
                 tracing::debug!("notify_lsp_save: buffer not fully loaded");

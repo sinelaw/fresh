@@ -19,6 +19,8 @@
 //! divergence observable as the editor's error indicator.
 
 use crate::common::harness::EditorTestHarness;
+// `handle_plugin_command` only exists in a build with plugins.
+#[cfg(feature = "plugins")]
 use fresh_core::api::PluginCommand;
 
 /// The server's most recent `PUBLISH` line, or `None` before it publishes one.
@@ -207,6 +209,7 @@ fn count_from_log(log: &str, prefix: &str) -> usize {
 /// keyboard edits. Vi mode implements `dd` with `editor.deleteRange`, so a
 /// missing notification here leaves the server holding the deleted line.
 #[test]
+#[cfg(feature = "plugins")]
 #[cfg_attr(target_os = "windows", ignore)]
 fn plugin_delete_range_notifies_lsp() -> anyhow::Result<()> {
     let temp_dir = tempfile::tempdir()?;
