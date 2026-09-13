@@ -698,12 +698,77 @@ def summarize_dhat(path, top=25):
         ))
 
 
+def print_maps_table(maps, threads):
+    """The /proc/<pid>/smaps roll-up: what each part of RSS actually is."""
+    total_rss = sum(v[0] for v in maps.values())
+    print()
+    print("=" * 78)
+    print("WHAT THAT RESIDENT MEMORY *IS* (from /proc/<pid>/smaps)")
+    print("=" * 78)
+    print("%-44s %10s %10s %7s" % ("mapping", "RSS", "PSS", "share"))
+    print("-" * 74)
+    for label, (rss_kb, pss_kb, _count) in sorted(maps.items(), key=lambda kv: -kv[1][0]):
+        print("%-44s %10s %10s %6.1f%%" % (
+            label, human(rss_kb * 1024), human(pss_kb * 1024),
+            100.0 * rss_kb / max(total_rss, 1)))
+    print("-" * 74)
+    print("%-44s %10s" % ("total", human(total_rss * 1024)))
+    print()
+    print("Threads: %d. Anonymous memory is the allocator's arenas plus one stack" % threads)
+    print("per thread, which /proc does not separate; massif's heap total is the")
+    print("part of it that is live allocations.")
+
+
+def snapshot_pid(pid, top=25):
+    """Break down a process that is already running -- your own session, as it
+    is right now. No workload, nothing spawned, nothing slowed down: this only
+    reads /proc, so the editor does not notice it happened."""
+    try:
+        exe = os.readlink("/proc/%d/exe" % pid)
+    except OSError as exc:
+        sys.exit("cannot read /proc/%d: %s" % (pid, exc))
+    rec = {}
+    with open("/proc/%d/status" % pid) as f:
+        for line in f:
+            if line.startswith(("Name:", "VmRSS:", "VmHWM:", "VmSize:", "Threads:")):
+                key, val = line.split(":", 1)
+                rec[key] = val.strip()
+    print("pid %d  %s" % (pid, exe))
+    print("RSS now %s, peak %s (VmHWM), %s threads" % (
+        human(int(rec.get("VmRSS", "0 kB").split()[0]) * 1024),
+        human(int(rec.get("VmHWM", "0 kB").split()[0]) * 1024),
+        rec.get("Threads", "?")))
+    maps = smaps_breakdown(pid, exe)
+    if not maps:
+        sys.exit("no mappings read; is the process still alive?")
+    print_maps_table(maps, int(rec.get("Threads", 0)))
+
+
+def analyze_profile(path, top=25):
+    """Summarize a profile this run did not produce -- one left behind by a
+    session you drove yourself under Valgrind."""
+    with open(path, "rb") as f:
+        head = f.read(2048)
+    if head.lstrip().startswith(b"{"):
+        summarize_dhat(path, top=top)
+    elif b"massif" in head or b"mem_heap_B" in head:
+        summarize_massif(path, top=top)
+    else:
+        sys.exit("%s looks like neither a massif nor a dhat profile" % path)
+
+
 # ------------------------------------------------------------------ main ---
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--tool", choices=("massif", "dhat", "rss"), default="massif")
+    ap.add_argument("--pid", type=int,
+                    help="break down a process that is already running -- an interactive "
+                         "session of your own -- and exit. Reads /proc only")
+    ap.add_argument("--analyze", metavar="PROFILE",
+                    help="summarize an existing massif or dhat profile and exit, e.g. one "
+                         "left by a session you drove yourself under Valgrind")
     ap.add_argument("--binary", default=os.path.join(REPO, "target/profiling/fresh"))
     ap.add_argument("--out", default=os.path.join(REPO, "target/memory-profile"))
     ap.add_argument("--workload", choices=tuple(WORKLOADS), default="edit",
@@ -732,6 +797,13 @@ def main():
     ap.add_argument("--top", type=int, default=25)
     ap.add_argument("--json", help="also write the machine-readable numbers here")
     args = ap.parse_args()
+
+    if args.pid:
+        snapshot_pid(args.pid, top=args.top)
+        return
+    if args.analyze:
+        analyze_profile(args.analyze, top=args.top)
+        return
 
     if not os.path.exists(args.binary):
         sys.exit("no binary at %s\n  build it with: cargo build --profile profiling --bin fresh" % args.binary)
@@ -859,23 +931,7 @@ def main():
             print("Peak RSS (VmHWM): %s" % human(max(r.get("VmHWM", 0) for r in samples) * 1024))
         maps = samplers[0].maps if samplers else {}
         if maps:
-            total_rss = sum(v[0] for v in maps.values())
-            print()
-            print("=" * 78)
-            print("WHAT THAT RESIDENT MEMORY *IS* (final state, from /proc/<pid>/smaps)")
-            print("=" * 78)
-            print("%-44s %10s %10s %7s" % ("mapping", "RSS", "PSS", "share"))
-            print("-" * 74)
-            for label, (rss_kb, pss_kb, count) in sorted(maps.items(), key=lambda kv: -kv[1][0]):
-                print("%-44s %10s %10s %6.1f%%" % (
-                    label, human(rss_kb * 1024), human(pss_kb * 1024),
-                    100.0 * rss_kb / max(total_rss, 1)))
-            print("-" * 74)
-            print("%-44s %10s" % ("total", human(total_rss * 1024)))
-            print()
-            print("Threads: %d. Anonymous memory is malloc's arenas plus one stack per" % samplers[0].threads)
-            print("thread, which /proc does not separate; massif's heap total is the part")
-            print("of it that is live allocations.")
+            print_maps_table(maps, samplers[0].threads)
         print()
         print("Samples:       %s" % out_file)
 

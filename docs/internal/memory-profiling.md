@@ -538,6 +538,43 @@ to look at if a run stops behaving. Raw profiles are kept under
 and the massif run also writes an `ms_print` report beside its profile with
 the full allocation tree.
 
+### From a session you are driving yourself
+
+The workloads exist so two runs are comparable. When the question is instead
+"what is *this* session holding, right now, after the day I have just had",
+there are two ways in and they answer different halves of it.
+
+**Resident memory, live, costing nothing.** This only reads `/proc`, so the
+editor does not notice it happened — and it works on the release binary,
+since a mapping breakdown needs no symbols:
+
+```sh
+scripts/memory-profile.py --pid $(pgrep -x fresh)
+```
+
+Same table as the `--tool rss` run: RSS now, peak, thread count, and what each
+part of the memory is.
+
+**Heap by subsystem.** Valgrind cannot attach to a running process, so the
+session has to start under it. Use a build with symbols — the release binary
+profiles as one anonymous frame:
+
+```sh
+cargo build --profile profiling --bin fresh
+valgrind --tool=massif --massif-out-file=/tmp/fresh.massif \
+    --detailed-freq=5 --max-snapshots=60 --threshold=0.2 --depth=20 \
+    target/profiling/fresh
+#   ... work in it as you normally would, then quit with Ctrl+Q
+scripts/memory-profile.py --analyze /tmp/fresh.massif --top 30
+```
+
+Three things to know before you spend an afternoon in there. It will be 20-50x
+slower — usable for a real session, but you will feel every keystroke. **The
+exit has to be clean**: massif writes its profile when the process ends
+normally, and a killed process leaves nothing at all, so quit the editor
+rather than closing the terminal. And `--analyze` takes a dhat profile just as
+happily, if `--tool=dhat --dhat-out-file=...` is what you ran.
+
 ### Where the clip numbers come from
 
 `scripts/clips/memory-rss-breakdown.json` and `memory-live-data.json` are
