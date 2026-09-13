@@ -32,29 +32,29 @@
         {
           "label": "Working data",
           "value": 46.0,
-          "note": "What the editor is holding"
+          "note": "Loaded files, caches, runtime state"
         },
         {
           "label": "Program code",
           "value": 13.6,
-          "note": "The editor itself"
+          "note": "Machine code from the fresh binary"
         },
         {
           "label": "Built-in data",
           "value": 9.9,
-          "note": "What ships inside the program"
+          "note": "Plugins, grammars, themes, translations"
         },
         {
           "label": "Startup fixups",
           "value": 1.0,
           "visit": false,
-          "note": "Loader bookkeeping"
+          "note": "Address fixups applied at load"
         },
         {
           "label": "Thread space",
           "value": 0.25,
           "visit": false,
-          "note": "Scratch space for threads"
+          "note": "The main thread's stack"
         }
       ]
     }

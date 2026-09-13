@@ -32,28 +32,28 @@
         {
           "label": "Files on screen",
           "value": 13.2,
-          "note": "Open files, ready to draw"
+          "note": "Open files, plus indexes and caches"
         },
         {
           "label": "JavaScript engine",
           "value": 9.0,
-          "note": "Runs the built-in plug-ins"
+          "note": "QuickJS heap, for running plug-ins"
         },
         {
           "label": "Terminals",
           "value": 6.8,
-          "note": "Shells running inside the editor"
+          "note": "Terminal grids and parser buffers"
         },
         {
           "label": "Untraced",
           "value": 6.2,
           "visit": false,
-          "note": "Not traced to an owner"
+          "note": "Allocations the profiler couldn't attribute"
         },
         {
           "label": "Syntax rules",
           "value": 3.6,
-          "note": "What gets coloured, per language"
+          "note": "Syntect grammars, per open language"
         },
         {
           "label": "Plug-in wiring",
