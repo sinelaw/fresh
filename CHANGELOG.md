@@ -11,6 +11,8 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 * **Startup crash on an empty buffer with unsaved changes** - hit crash-recovery restores where the deletion itself was the unsaved change, panicking on every launch (#3236, reported by @CC-Hsu)
 * **A closed Welcome tab's panel no longer keeps trying to repaint itself** on every resize
 * **Git gutter survives an external revert** of the open file instead of going stale until the buffer is reopened
+* **The cursor stays visible past the end of a highlighted line** - a code tour's step band, a diff row and any other full-width highlight painted their trailing cells in a single colour, and the terminal's block cursor inverts the cell it sits on, so it inverted to itself
+* **Inlay hints inside a highlighted range wear the highlight** instead of punching a hole in the band with the plain editor background
 
 ## 0.5.0
 
