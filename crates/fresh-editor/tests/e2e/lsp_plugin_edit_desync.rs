@@ -11,12 +11,12 @@
 //! appearing in a second file — which came from `didSave` carrying the focused
 //! buffer's text under another buffer's URI.
 
+use crate::common::fake_lsp::{saved_text, server_document, write_document_tracking_server};
 use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness};
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::{Config, PluginConfig};
 use fresh::input::keybindings::Action::PluginAction;
 use std::fs;
-use std::path::Path;
 
 /// Line 3 is the one `dd` removes.
 const INITIAL_TEXT: &str =
@@ -24,143 +24,6 @@ const INITIAL_TEXT: &str =
 
 /// What the buffer holds once line 3 is deleted.
 const AFTER_DD_TEXT: &str = "fn main() {\n    let keep = 1;\n    println!(\"{keep}\");\n}\n";
-
-/// A fake LSP server that keeps its own copy of the document and logs it as
-/// `DOC <json-encoded text>` after each notification it applies.
-///
-/// Arguments: `<log>`.
-fn write_document_tracking_server(dir: &Path) -> std::path::PathBuf {
-    let script = r#"#!/usr/bin/env python3
-import sys, os, json
-
-LOG = sys.argv[1]
-fin = os.fdopen(sys.stdin.fileno(), "rb", 0)
-fout = os.fdopen(sys.stdout.fileno(), "wb", 0)
-
-docs = {}
-
-
-def log(msg):
-    with open(LOG, "a") as f:
-        f.write(msg + "\n")
-
-
-def send(payload):
-    body = json.dumps(payload).encode()
-    fout.write(b"Content-Length: %d\r\n\r\n" % len(body) + body)
-
-
-def read_message():
-    length = 0
-    while True:
-        line = fin.readline()
-        if not line:
-            return None
-        line = line.strip()
-        if not line:
-            break
-        key, _, value = line.decode().partition(":")
-        if key.strip().lower() == "content-length":
-            length = int(value.strip())
-    if length <= 0:
-        return None
-    body = b""
-    while len(body) < length:
-        chunk = fin.read(length - len(body))
-        if not chunk:
-            return None
-        body += chunk
-    return json.loads(body.decode())
-
-
-def apply_change(text, change):
-    # A change with no range replaces the whole document.
-    if change.get("range") is None:
-        return change["text"]
-    lines = text.split("\n")
-
-    def offset(pos):
-        line = max(0, min(pos["line"], len(lines) - 1))
-        base = sum(len(l) + 1 for l in lines[:line])
-        return base + min(pos["character"], len(lines[line]))
-
-    start = max(0, min(offset(change["range"]["start"]), len(text)))
-    end = max(start, min(offset(change["range"]["end"]), len(text)))
-    return text[:start] + change["text"] + text[end:]
-
-
-while True:
-    msg = read_message()
-    if msg is None:
-        break
-    method = msg.get("method")
-    params = msg.get("params") or {}
-
-    if method == "initialize":
-        send({"jsonrpc": "2.0", "id": msg.get("id"),
-              "result": {"capabilities": {"textDocumentSync": 2}}})
-    elif method == "shutdown":
-        send({"jsonrpc": "2.0", "id": msg.get("id"), "result": None})
-    elif method == "exit":
-        break
-    elif method == "textDocument/didOpen":
-        doc = params["textDocument"]
-        docs[doc["uri"]] = doc["text"]
-        log("DOC " + json.dumps(docs[doc["uri"]]))
-    elif method == "textDocument/didChange":
-        doc = params["textDocument"]
-        uri = doc["uri"]
-        text = docs.get(uri, "")
-        for change in params.get("contentChanges", []):
-            text = apply_change(text, change)
-        docs[uri] = text
-        log("DOC " + json.dumps(text))
-    elif method == "textDocument/didSave":
-        doc = params["textDocument"]
-        log("DIDSAVE %s %s" % (doc["uri"], json.dumps(params.get("text"))))
-    elif msg.get("id") is not None:
-        send({"jsonrpc": "2.0", "id": msg["id"], "result": None})
-"#;
-
-    let script_path = dir.join("document_tracking_lsp.py");
-    fs::write(&script_path, script).expect("write fake server");
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = fs::metadata(&script_path)
-            .expect("script metadata")
-            .permissions();
-        perms.set_mode(0o755);
-        fs::set_permissions(&script_path, perms).expect("chmod script");
-    }
-
-    script_path
-}
-
-/// The document the server currently holds, read fresh: it appends as it works.
-fn server_document(log_file: &Path) -> Option<String> {
-    let log = fs::read_to_string(log_file).ok()?;
-    let last = log.lines().rev().find_map(|l| l.strip_prefix("DOC "))?;
-    serde_json::from_str::<String>(last).ok()
-}
-
-/// The text the server was handed by the `didSave` for the file named
-/// `basename`, or `None` if it has had no such save.
-fn saved_text(log_file: &Path, basename: &str) -> Option<String> {
-    let log = fs::read_to_string(log_file).ok()?;
-    let line = log
-        .lines()
-        .rev()
-        .filter_map(|l| l.strip_prefix("DIDSAVE "))
-        .find(|rest| {
-            rest.split(' ')
-                .next()
-                .is_some_and(|uri| uri.ends_with(basename))
-        })?;
-    let (_uri, text) = line.split_once(' ')?;
-    serde_json::from_str::<Option<String>>(text).ok().flatten()
-}
 
 /// The fake server as Rust's language server, with vi_mode loaded on request.
 fn lsp_harness(
@@ -394,6 +257,49 @@ fn save_all_sends_each_buffer_its_own_text() -> anyhow::Result<()> {
         saved_text(&log_file, "beta.rs").as_deref(),
         Some(beta_on_disk.as_str()),
         "the didSave for beta.rs must carry beta.rs's text.\nLog:\n{}",
+        fs::read_to_string(&log_file).unwrap_or_default()
+    );
+
+    Ok(())
+}
+
+/// A plugin growing a buffer to match a file written underneath it
+/// (`refreshBufferFromDisk`, the `spawnProcess`/`stdoutTo` tailing path) must
+/// tell the server about the appended bytes.
+#[test]
+#[cfg_attr(target_os = "windows", ignore)] // fake server is a POSIX script
+fn refresh_buffer_from_disk_notifies_the_server() -> anyhow::Result<()> {
+    let (mut harness, _temp_dir, main_file, log_file) = lsp_harness(false)?;
+    let project_root = main_file.parent().expect("file has a parent").to_path_buf();
+
+    let tailed = project_root.join("tailed.rs");
+    let first = "fn one() {}\n";
+    fs::write(&tailed, first)?;
+
+    harness.open_file(&tailed)?;
+    harness.render()?;
+    harness.wait_until(|_| server_document(&log_file).as_deref() == Some(first))?;
+
+    // Something else appends to the file, and the plugin asks for the buffer
+    // to catch up.
+    let grown = format!("{first}fn two() {{}}\n");
+    fs::write(&tailed, &grown)?;
+
+    let buffer_id = harness.editor().active_buffer();
+    harness.editor_mut().handle_plugin_command(
+        fresh_core::api::PluginCommand::RefreshBufferFromDisk {
+            buffer_id,
+            request_id: 1,
+        },
+    )?;
+
+    harness.wait_until(|h| h.get_buffer_content().as_deref() == Some(grown.as_str()))?;
+    harness.wait_until(|_| server_document(&log_file).as_deref() == Some(grown.as_str()))?;
+
+    assert_eq!(
+        server_document(&log_file).as_deref(),
+        Some(grown.as_str()),
+        "the server's copy must follow the appended bytes.\nLog:\n{}",
         fs::read_to_string(&log_file).unwrap_or_default()
     );
 
