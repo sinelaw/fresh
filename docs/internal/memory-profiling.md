@@ -401,10 +401,46 @@ one.
 
 One caveat that matters for reading the first two rows: this is a glibc,
 dynamically linked build, and the split between `brk` and anonymous mappings
-is glibc's allocator strategy, not Fresh's. Production ships a static musl
-binary, whose allocator partitions memory differently and whose shared
-library row disappears into the binary. The figures that carry over are the
-live heap and the binary's own text and rodata; the arena split does not.
+is glibc's allocator strategy, not Fresh's. The section below measures the
+static musl release binary that actually ships, where the same session peaks
+at 71.3 MiB rather than 106.4 -- most of the difference being allocator
+overhead that only glibc has.
+
+### The artifact that actually ships (static musl, release)
+
+Everything above was measured on a `profiling` build: glibc, dynamically
+linked, no LTO. Production is a static-PIE musl binary built with fat LTO and
+`opt-level = "z"` (`.github/workflows/musl-builds.yml`). Same workload, same
+harness, `--binary target/x86_64-unknown-linux-musl/release/fresh`:
+
+| | profiling / glibc | release / musl |
+|---|---|---|
+| after startup | 88.2 MiB | **53.2 MiB** |
+| peak, three workspaces | 106.4 MiB | **71.3 MiB** |
+| per workspace | ~5.5 MiB | ~5.1 MiB |
+
+| mapping | glibc | musl |
+|---|---|---|
+| allocator (`brk` + anonymous) | 73.5 MiB | **46.0 MiB** |
+| binary: code | 16.5 MiB | 13.6 MiB |
+| binary: read-only data | 13.2 MiB | 9.9 MiB |
+| binary: data + relocations | 148 KiB | 1.0 MiB |
+| shared libraries | 2.8 MiB | — (static) |
+
+Three things to take from it:
+
+- **The 26 MiB of "allocator overhead" was glibc's, and is not in production.**
+  musl's mallocng holds 46.0 MiB against the ~47 MiB massif measures as live,
+  so its overhead is small enough to disappear into the difference between two
+  runs; glibc's per-thread arenas across 17 threads were the whole of it.
+  (`brk` is 376 KiB here because musl mmaps nearly everything.)
+- **LTO and `opt-level = "z"` take ~6 MiB off the binary's resident pages**
+  (code 17.5 -> 14.2 MiB of section, unwind tables 6.3 -> 3.0 MiB, relocations
+  2.6 -> 1.2 MiB), and static linking removes the 2.8 MiB of shared libraries.
+  Static-PIE pays 1.0 MiB back in dirtied relocation pages.
+- **The proportions shift, so the priorities do.** vte's eager sync buffers are
+  8.4% of production RSS rather than 5.6%; `panic = "abort"` is worth 3.0 MiB
+  here, not 7.0. Measure the shipped artifact before ranking anything.
 
 ### Not measured yet
 
