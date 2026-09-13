@@ -84,7 +84,7 @@ tree-sitter-highlight = "0.26.3"
 crossterm = "0.29"
 winit = "0.30"
 wgpu = "28.0"
-lsp-types = "0.97"
+lsp-types = { version = "0.97", features = ["proposed"] }
 ts-rs = { version = "12.0", features = ["serde_json", "no-serde-warnings"] }
 # Add more as needed during refactor
 

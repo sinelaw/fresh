@@ -6,6 +6,35 @@ use crate::common::harness::EditorTestHarness;
 use fresh::view::theme;
 
 use crossterm::event::{KeyCode, KeyModifiers};
+use ratatui::style::Modifier;
+
+fn screen_text_cell(
+    harness: &EditorTestHarness,
+    text: &str,
+    text_char_offset: usize,
+) -> Option<(u16, u16)> {
+    for y in 0..harness.buffer().area.height {
+        let row = harness.get_row_text(y);
+        if let Some(byte_col) = row.find(text) {
+            let x = row[..byte_col].chars().count() + text_char_offset;
+            return Some((x as u16, y));
+        }
+    }
+    None
+}
+
+fn screen_text_char_is_dim(
+    harness: &EditorTestHarness,
+    text: &str,
+    text_char_offset: usize,
+) -> bool {
+    let Some((x, y)) = screen_text_cell(harness, text, text_char_offset) else {
+        return false;
+    };
+    harness
+        .get_cell_style(x, y)
+        .is_some_and(|style| style.add_modifier.contains(Modifier::DIM))
+}
 
 /// Test that completion popup text is not mangled
 #[test]
@@ -249,6 +278,178 @@ fn test_lsp_completion_popup() -> anyhow::Result<()> {
         buffer_content.contains("test_variable"),
         "Expected 'test_variable' to be inserted into buffer, got: {buffer_content}"
     );
+
+    Ok(())
+}
+
+/// Test LSP inline completion renders ghost text
+#[test]
+#[cfg_attr(
+    target_os = "windows",
+    ignore = "FakeLspServer uses a Bash script which is not available on Windows"
+)]
+fn test_lsp_inline_completion_ghost_text() -> anyhow::Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let _fake_server = FakeLspServer::spawn(temp_dir.path())?;
+
+    let test_file = temp_dir.path().join("test.rs");
+    std::fs::write(&test_file, "")?;
+
+    let mut config = fresh::config::Config::default();
+    config.editor.enable_ghost_text = true;
+    config.editor.completion_popup_auto_show = true;
+    config.editor.quick_suggestions = true;
+    config.editor.quick_suggestions_delay_ms = 0;
+    config.lsp.insert(
+        "rust".to_string(),
+        fresh::types::LspLanguageConfig::Multi(vec![fresh::services::lsp::LspServerConfig {
+            command: FakeLspServer::script_path(temp_dir.path())
+                .to_string_lossy()
+                .to_string(),
+            args: Some(vec![]),
+            enabled: true,
+            auto_start: true,
+            process_limits: fresh::services::process_limits::ProcessLimits::default(),
+            initialization_options: None,
+            ..Default::default()
+        }]),
+    );
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        config,
+        temp_dir.path().to_path_buf(),
+    )?;
+
+    harness.open_file(&test_file)?;
+    harness.render()?;
+
+    harness.type_text("hel")?;
+    harness.wait_until(|h| {
+        let screen = h.screen_to_string();
+        screen.contains("hel")
+            && screen.contains("lo_world")
+            && screen_text_char_is_dim(h, "hello_world", 3)
+    })?;
+
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE)?;
+    harness.wait_until(|h| {
+        let screen = h.screen_to_string();
+        screen.contains("hel") && !screen.contains("lo_world")
+    })?;
+
+    Ok(())
+}
+
+/// Test Tab accepts LSP inline completion ghost text.
+#[test]
+#[cfg_attr(
+    target_os = "windows",
+    ignore = "FakeLspServer uses a Bash script which is not available on Windows"
+)]
+fn test_lsp_inline_completion_tab_accepts_ghost_text() -> anyhow::Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let _fake_server = FakeLspServer::spawn(temp_dir.path())?;
+
+    let test_file = temp_dir.path().join("test.rs");
+    std::fs::write(&test_file, "")?;
+
+    let mut config = fresh::config::Config::default();
+    config.editor.enable_ghost_text = true;
+    config.editor.completion_popup_auto_show = true;
+    config.editor.quick_suggestions = true;
+    config.editor.quick_suggestions_delay_ms = 0;
+    config.lsp.insert(
+        "rust".to_string(),
+        fresh::types::LspLanguageConfig::Multi(vec![fresh::services::lsp::LspServerConfig {
+            command: FakeLspServer::script_path(temp_dir.path())
+                .to_string_lossy()
+                .to_string(),
+            args: Some(vec![]),
+            enabled: true,
+            auto_start: true,
+            process_limits: fresh::services::process_limits::ProcessLimits::default(),
+            initialization_options: None,
+            ..Default::default()
+        }]),
+    );
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        config,
+        temp_dir.path().to_path_buf(),
+    )?;
+
+    harness.open_file(&test_file)?;
+    harness.render()?;
+
+    harness.type_text("hel")?;
+    harness.wait_until(|h| {
+        let screen = h.screen_to_string();
+        screen.contains("hel")
+            && screen.contains("lo_world")
+            && screen_text_char_is_dim(h, "hello_world", 3)
+    })?;
+
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE)?;
+    harness.type_text("X")?;
+    harness.wait_until(|h| h.screen_to_string().contains("hello_worldX"))?;
+
+    Ok(())
+}
+
+/// Test LSP inline completion does not require the completion popup to auto-show.
+#[test]
+#[cfg_attr(
+    target_os = "windows",
+    ignore = "FakeLspServer uses a Bash script which is not available on Windows"
+)]
+fn test_lsp_inline_completion_without_popup_auto_show() -> anyhow::Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let _fake_server = FakeLspServer::spawn(temp_dir.path())?;
+
+    let test_file = temp_dir.path().join("test.rs");
+    std::fs::write(&test_file, "")?;
+
+    let mut config = fresh::config::Config::default();
+    config.editor.enable_ghost_text = true;
+    config.editor.completion_popup_auto_show = false;
+    config.editor.quick_suggestions = true;
+    config.editor.quick_suggestions_delay_ms = 0;
+    config.lsp.insert(
+        "rust".to_string(),
+        fresh::types::LspLanguageConfig::Multi(vec![fresh::services::lsp::LspServerConfig {
+            command: FakeLspServer::script_path(temp_dir.path())
+                .to_string_lossy()
+                .to_string(),
+            args: Some(vec![]),
+            enabled: true,
+            auto_start: true,
+            process_limits: fresh::services::process_limits::ProcessLimits::default(),
+            initialization_options: None,
+            ..Default::default()
+        }]),
+    );
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        config,
+        temp_dir.path().to_path_buf(),
+    )?;
+
+    harness.open_file(&test_file)?;
+    harness.render()?;
+
+    harness.type_text("hel")?;
+    harness.wait_until(|h| {
+        let screen = h.screen_to_string();
+        screen.contains("hel")
+            && screen.contains("lo_world")
+            && screen_text_char_is_dim(h, "hello_world", 3)
+    })?;
 
     Ok(())
 }

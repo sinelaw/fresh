@@ -383,11 +383,11 @@ fn create_client_capabilities() -> ClientCapabilities {
         FoldingRangeCapability, FoldingRangeClientCapabilities, FoldingRangeKind,
         FoldingRangeKindCapability, GeneralClientCapabilities, GotoCapability,
         HoverClientCapabilities, InlayHintClientCapabilities, InlayHintWorkspaceClientCapabilities,
-        MarkupKind, PublishDiagnosticsClientCapabilities, RenameClientCapabilities,
-        SemanticTokensWorkspaceClientCapabilities, SignatureHelpClientCapabilities, TagSupport,
-        TextDocumentClientCapabilities, TextDocumentSyncClientCapabilities,
-        WorkspaceClientCapabilities, WorkspaceEditClientCapabilities,
-        WorkspaceSymbolClientCapabilities,
+        InlineCompletionClientCapabilities, MarkupKind, PublishDiagnosticsClientCapabilities,
+        RenameClientCapabilities, SemanticTokensWorkspaceClientCapabilities,
+        SignatureHelpClientCapabilities, TagSupport, TextDocumentClientCapabilities,
+        TextDocumentSyncClientCapabilities, WorkspaceClientCapabilities,
+        WorkspaceEditClientCapabilities, WorkspaceSymbolClientCapabilities,
     };
 
     ClientCapabilities {
@@ -491,6 +491,9 @@ fn create_client_capabilities() -> ClientCapabilities {
                     ..Default::default()
                 }),
                 ..Default::default()
+            }),
+            inline_completion: Some(InlineCompletionClientCapabilities {
+                dynamic_registration: Some(true),
             }),
             hover: Some(HoverClientCapabilities {
                 dynamic_registration: Some(true),
@@ -703,6 +706,11 @@ fn extract_capability_summary(caps: &ServerCapabilities) -> ServerCapabilitySumm
             .as_ref()
             .and_then(|cp| cp.trigger_characters.clone())
             .unwrap_or_default(),
+        inline_completion: match caps.inline_completion_provider.as_ref() {
+            Some(lsp_types::OneOf::Left(true)) => true,
+            Some(lsp_types::OneOf::Right(_)) => true,
+            _ => false,
+        },
         definition: bool_or_options(&caps.definition_provider, |p| match p {
             lsp_types::OneOf::Left(v) => *v,
             lsp_types::OneOf::Right(_) => true,
@@ -814,6 +822,16 @@ enum LspCommand {
         uri: Uri,
         line: u32,
         character: u32,
+    },
+
+    /// Request inline completion at position (textDocument/inlineCompletion)
+    InlineCompletion {
+        request_id: u64,
+        uri: Uri,
+        line: u32,
+        character: u32,
+        trigger_kind: lsp_types::InlineCompletionTriggerKind,
+        selected_completion_info: Option<lsp_types::SelectedCompletionInfo>,
     },
 
     /// Request go-to-definition
@@ -2339,6 +2357,69 @@ impl LspState {
         }
     }
 
+    /// Handle inline completion request
+    async fn handle_inline_completion(
+        &self,
+        request_id: u64,
+        uri: Uri,
+        line: u32,
+        character: u32,
+        trigger_kind: lsp_types::InlineCompletionTriggerKind,
+        selected_completion_info: Option<lsp_types::SelectedCompletionInfo>,
+        pending: &PendingRequests,
+    ) -> Result<(), String> {
+        tracing::trace!(
+            "LSP: inline completion request at {}:{}:{}",
+            uri.as_str(),
+            line,
+            character
+        );
+
+        let params = lsp_types::InlineCompletionParams {
+            work_done_progress_params: WorkDoneProgressParams::default(),
+            text_document_position: Self::text_document_position(uri, line, character),
+            context: lsp_types::InlineCompletionContext {
+                trigger_kind,
+                selected_completion_info,
+            },
+        };
+
+        match self
+            .send_request_sequential_tracked::<_, Value>(
+                lsp_types::request::InlineCompletionRequest::METHOD,
+                Some(params),
+                pending,
+                Some(request_id),
+            )
+            .await
+        {
+            Ok(result) => {
+                let items =
+                    serde_json::from_value::<Option<lsp_types::InlineCompletionResponse>>(result)
+                        .ok()
+                        .flatten()
+                        .map(|response| match response {
+                            lsp_types::InlineCompletionResponse::Array(items) => items,
+                            lsp_types::InlineCompletionResponse::List(list) => list.items,
+                        })
+                        .unwrap_or_default();
+
+                let _ = self
+                    .async_tx
+                    .send(AsyncMessage::LspInlineCompletion { request_id, items });
+                Ok(())
+            }
+            Err(e) => {
+                tracing::debug!("Inline completion request failed: {}", e);
+                let _ = self.async_tx.send(AsyncMessage::LspInlineCompletion {
+                    request_id,
+                    items: vec![],
+                });
+                Err(e)
+            }
+        }
+    }
+
     /// Handle completionItem/resolve request
     async fn handle_completion_resolve(
         &self,
@@ -3566,6 +3647,35 @@ impl LspTask {
                     } else {
                         tracing::trace!("LSP not initialized, sending empty completion");
                         let _ = state.async_tx.send(AsyncMessage::LspCompletion {
+                            request_id,
+                            items: vec![],
+                        });
+                    }
+                }
+                LspCommand::InlineCompletion {
+                    request_id,
+                    uri,
+                    line,
+                    character,
+                    trigger_kind,
+                    selected_completion_info,
+                } => {
+                    if initialized {
+                        tracing::info!("Processing InlineCompletion request for {}", uri.as_str());
+                        spawn_request!(state, pending, |s, p| s
+                            .handle_inline_completion(
+                                request_id,
+                                uri,
+                                line,
+                                character,
+                                trigger_kind,
+                                selected_completion_info,
+                                &p,
+                            )
+                            .await);
+                    } else {
+                        tracing::trace!("LSP not initialized, sending empty inline completion");
+                        let _ = state.async_tx.send(AsyncMessage::LspInlineCompletion {
                             request_id,
                             items: vec![],
                         });
@@ -5182,6 +5292,28 @@ impl LspHandle {
                 character,
             })
             .map_err(|_| "Failed to send completion command".to_string())
+    }
+
+    /// Request inline completion at position.
+    pub fn inline_completion(
+        &self,
+        request_id: u64,
+        uri: Uri,
+        line: u32,
+        character: u32,
+        trigger_kind: lsp_types::InlineCompletionTriggerKind,
+        selected_completion_info: Option<lsp_types::SelectedCompletionInfo>,
+    ) -> Result<(), String> {
+        self.command_tx
+            .try_send(LspCommand::InlineCompletion {
+                request_id,
+                uri,
+                line,
+                character,
+                trigger_kind,
+                selected_completion_info,
+            })
+            .map_err(|_| "Failed to send inline completion command".to_string())
     }
 
     /// Request go-to-definition
