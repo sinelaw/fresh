@@ -32,7 +32,7 @@
         {
           "label": "Working data",
           "value": 46.0,
-          "note": "Loaded files, caches, runtime state"
+          "note": "28% per-file data, 19% JS runtime, 14% terminals"
         },
         {
           "label": "Program code",
