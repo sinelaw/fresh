@@ -4714,63 +4714,41 @@ function dockMenuOptions(): MenuOption[] {
 // A dropdown/context-menu row. Menu entries are *rows in a list*, not
 // framed actions: a `[ ]` frame around every line turns the popup into a
 // column of ragged brackets and leaves the highlight hugging the label
-// instead of the popup. `bare` drops the frame; how the row reaches its
-// full width depends on where the menu lives — see `menuRows`.
+// instead of the popup. `bare` drops the frame, and `fullWidth` makes the
+// row's band span whatever width the menu turns out to have.
+//
+// The one column of air on each side is an inset, not alignment: it is the
+// same on every row and at every width.
 function menuItemButton(
   label: string,
   key: string,
-  opts?: {
-    intent?: "primary" | "danger";
-    disabled?: boolean;
-    width?: number;
-    fullWidth?: boolean;
-  },
+  opts?: { intent?: "primary" | "danger"; disabled?: boolean },
 ): WidgetSpec {
-  const width = opts?.width ?? 0;
-  const pad = Math.max(0, width - editor.stringWidth(label));
-  return button(" " + label + " ".repeat(pad) + " ", {
+  return button(" " + label + " ", {
     key,
     bare: true,
-    fullWidth: opts?.fullWidth ?? false,
+    fullWidth: true,
     intent: opts?.intent ?? "normal",
     disabled: opts?.disabled ?? false,
   });
 }
 
-// Lay out a set of menu entries so every row's focus/hover band spans
-// the whole menu row rather than hugging its label. Which width "the
-// whole row" means depends on the surface, so the caller says:
+// Lay out a set of menu entries so every row's focus/hover band spans the
+// whole menu row rather than hugging its label.
 //
-// * `fill: false` (the default) — an anchored popup panel the host
-//   sizes to its widest row. Padding every label to the widest one is
-//   what makes the rows uniform *and* what sets the popup's width.
-//   Filling here would stretch the popup to the panel width (~half the
-//   screen), so the shared label width does the aligning.
-// * `fill: true` — a dropdown that lives inside the dock's own panel,
-//   where the enclosing `labeledSection` pads every row out to the dock
-//   width anyway. The widest label is then far short of the row, and
-//   the band stopped there while the row visibly ran on to the border.
-//   `fullWidth` hands the padding to the host, which knows the width it
-//   actually rendered at — including a user-dragged dock.
-//
-// Deliberately no `flexSpacer` in either mode: it pads with dead space
-// beside the row rather than with the row itself, so the highlight
-// would still stop at the label.
+// **Every row says `fullWidth` and nothing here measures anything.** This
+// used to pad each label out to the widest one — with a second mode that
+// handed the padding to the host instead — because `fullWidth` was itself
+// padding, applied at the enclosing panel's width: filling inside an
+// anchored popup stretched the popup to the panel. It is a width now (the
+// host sizes the box to its content and lets the column stretch it), so a
+// popup still hugs its widest row and every row's band still reaches that
+// row's end. Both modes were the same request all along.
 function menuRows(
   items: { label: string; key: string; intent?: "primary" | "danger"; disabled?: boolean }[],
-  opts?: { fill?: boolean },
 ): WidgetSpec[] {
-  const fill = opts?.fill ?? false;
-  const width = fill
-    ? 0
-    : items.reduce((w, it) => Math.max(w, editor.stringWidth(it.label)), 0);
   return items.map((it) =>
-    menuItemButton(it.label, it.key, {
-      intent: it.intent,
-      disabled: it.disabled,
-      width,
-      fullWidth: fill,
-    })
+    menuItemButton(it.label, it.key, { intent: it.intent, disabled: it.disabled })
   );
 }
 

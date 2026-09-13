@@ -1152,13 +1152,6 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
             // advertising itself as live would lie.
             let hovered = !disabled && cx.is_hovered(key);
             let hover = hover_style.as_ref().filter(|_| hovered);
-            // Stretched by padding the *label*, before the chrome goes on, so
-            // the finished control is exactly `width` columns and the focus
-            // band spans the row rather than hugging the word.
-            let filled = full_width.then(|| {
-                crate::widgets::fill_button_label(label, *bare, cx.marker_gutter, width as u32)
-            });
-            let label = filled.as_deref().unwrap_or(label);
             let n = button_node(
                 label,
                 *intent,
@@ -1167,6 +1160,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                 hovered,
                 *disabled,
                 cx.marker_gutter,
+                *full_width,
                 hover,
                 style.as_ref(),
                 &cx.surface,
@@ -2198,7 +2192,8 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                                 // and must travel on — and the drag itself must
                                 // not, or a pointer crossing a terminal pane
                                 // mid-selection has its motion forwarded into
-                                // that PTY.
+                                // that PTY (what the deleted `PointerGrab`
+                                // guard used to stop).
                                 if !e.captured {
                                     return None;
                                 }
@@ -3390,6 +3385,7 @@ fn button_node(
     hovered: bool,
     disabled: bool,
     marker_gutter: bool,
+    full_width: bool,
     declared_hover: Option<&OverlayOptions>,
     resting: Option<&OverlayOptions>,
     surface: &Ink,
@@ -3402,22 +3398,40 @@ fn button_node(
     let ink = shell_style::button_ink(&classes, surface, resting_ink.as_ref(), hover_ink.as_ref());
     let name = ink.to_string();
 
-    // **The box is exactly as wide as the frame plus the label.** Stated, not
-    // left to the cross-axis default: a `col` inside a `col` stretches, and a
-    // stretched button paints its focus band across the whole panel instead of
-    // hugging the word. The width comes from the same `reserved_x` the padding
-    // does, so the frame, the room made for it, and the box all move together.
+    // **The box is exactly as wide as the frame plus the label — unless it was
+    // asked to fill its row.** Stated, not left to the cross-axis default: a
+    // `col` inside a `col` stretches, and a stretched button paints its focus
+    // band across the whole panel instead of hugging the word. The width comes
+    // from the same `reserved_x` the padding does, so the frame, the room made
+    // for it, and the box all move together.
+    //
+    // **`full_width` is that width, not a longer label.** It used to be spelled
+    // by padding the label out to the panel's columns (`fill_button_label`) so
+    // that a band which paints the button's own cells would reach the row's
+    // end — geometry written into the content, which is the thing a caller
+    // cannot know (a dock the user dragged) and the thing layout already
+    // answers. `Auto` and not `Flex`, for the reason the extended-ground row
+    // below states: a flexible child on a column's cross axis measures at the
+    // whole extent, which would stretch a box that hugs. `Auto` contributes
+    // the label's own width to that measure and the column's `Stretch` widens
+    // it to whatever the column settled on.
     let reserved = shell_style::cascade(&classes).reserved_x();
     let inner = fresh_ui::glyph::width(label);
     let boxed = col()
         .classes(&classes)
         .theme(name.clone())
         .h(Sizing::Cells(1))
-        .w(Sizing::Cells(
-            inner.saturating_add(reserved.saturating_mul(2)),
-        ))
+        .w(match full_width {
+            true => Sizing::Auto,
+            false => Sizing::Cells(inner.saturating_add(reserved.saturating_mul(2))),
+        })
         .pad(reserved, 0)
-        .child(text(label));
+        // Truncation is the run's to declare for the same reason the width is
+        // the box's: only measurement knows whether the label fit. `Tail`
+        // keeps the head and marks the cut, which is what a label wants (the
+        // padding helper's `…` did the same by hand, at a width it had to be
+        // told).
+        .child(text(label).elide(fresh_ui::desc::Elide::Tail));
 
     // `bare` never took the gutter: the marker exists to give a *word* the
     // shape of a focused control, and a glyph affordance already has one.
@@ -3429,11 +3443,14 @@ fn button_node(
             let gutter = fresh_ui::glyph::width(marker);
             row()
                 .h(Sizing::Cells(1))
-                .w(Sizing::Cells(
-                    gutter
-                        .saturating_add(inner)
-                        .saturating_add(reserved.saturating_mul(2)),
-                ))
+                .w(match full_width {
+                    true => Sizing::Auto,
+                    false => Sizing::Cells(
+                        gutter
+                            .saturating_add(inner)
+                            .saturating_add(reserved.saturating_mul(2)),
+                    ),
+                })
                 // The gutter wears the button's ink, so a focus band runs
                 // unbroken from the marker to the closing bracket.
                 .child(text(marker).theme(name))
@@ -4113,6 +4130,63 @@ pub(crate) mod tests {
             hover_style: None,
             style: None,
         }
+    }
+
+    /// **`fullWidth` is a width, not a longer label.**
+    ///
+    /// The band a focused or hovered button paints is its box's ground, so
+    /// "spans the row" is a question about the box: a plain button hugs its
+    /// word, a full-width one reaches the row's end, and the label is the
+    /// label in both. It used to be spelled by padding the label with spaces
+    /// out to a width the caller supplied (`fill_button_label`) — geometry
+    /// written into the content, and the reason the same request could not be
+    /// made inside a popup that hugs what it holds.
+    #[test]
+    fn full_width_widens_the_box_and_leaves_the_label_alone() {
+        let filled = |full: bool| {
+            let mut b = button("Go", Some("go"), false, false);
+            if let WidgetSpec::Button { full_width, .. } = &mut b {
+                *full_width = full;
+            }
+            b
+        };
+        let spec = WidgetSpec::Col {
+            children: vec![filled(false), filled(true)],
+            key: None,
+        };
+        let mut ui: Ui<UiMsg> = Ui::new();
+        ui.frame(node(&spec, WIDTH, &cx()), Size::new(WIDTH, 8));
+        // The ground each button's box paints, by the row it is on.
+        let ground = |y: i32| {
+            ui.spec()
+                .in_flow()
+                .iter()
+                .filter(|i| matches!(i.draw, fresh_ui::Draw::Fill) && i.rect.y == y)
+                .map(|i| i.rect.w)
+                .max()
+                .expect("a button paints a ground")
+        };
+        assert!(
+            ground(0) < WIDTH,
+            "a plain button hugs its word: {} of {WIDTH}",
+            ground(0)
+        );
+        assert_eq!(ground(1), WIDTH, "a full-width one reaches the row's end");
+        // Same word on both rows, and the frame follows the box: the closing
+        // bracket sits at the end of the row it was widened to.
+        let rows = rows_of(&ui);
+        assert_eq!(rows[0].trim(), "[ Go ]");
+        assert!(
+            rows[1].starts_with("[ Go"),
+            "the label, unpadded: {:?}",
+            rows[1]
+        );
+        assert_eq!(
+            rows[1].trim_end().chars().count(),
+            WIDTH as usize,
+            "and its frame closes at the row's end: {:?}",
+            rows[1]
+        );
     }
 
     /// **The seam.** A press delivers the widget's own event — the identity
