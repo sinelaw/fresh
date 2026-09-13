@@ -70,6 +70,7 @@ other docs assume.
 | [search-and-diff.md](search-and-diff.md) | In-buffer search/replace, project-wide search and live grep, the diff/review (hunk) viewer and its `Arc::ptr_eq` piece-tree diff, git-log viewing, and the keyboard-macro system. |
 | [editor-ux-features.md](editor-ux-features.md) | Smaller shipped features without their own doc: markdown compose/preview, code tour, the input calibration wizard, vi mode, i18n, the menu/command-palette/help/bookmarks cluster, and warning/notification UX. |
 | [testing.md](testing.md) | The testing layers, the headless scenario framework (tests as data, replayed against `EditorTestApi`), the ANSI capture backend, the `TimeSource` determinism abstraction, and CI structure. |
+| [memory-profiling.md](memory-profiling.md) | Where the running editor's memory goes: the pty-driven profiling harness (`scripts/memory-profile.py`), the `profiling` cargo profile, how allocation stacks are attributed to subsystems, and a measured baseline. |
 
 ### Plans (forward-looking)
 | Doc | What it covers |

@@ -196,6 +196,36 @@ Two rules follow from the boundary:
   the dependency graph between `cargo build` and `cargo test`, which is the
   exact trap the `vte` entry in `crates/fresh-editor/Cargo.toml` documents.
 
+## Memory Profiling
+
+`scripts/memory-profile.py` answers "where does the running editor's memory
+go", per subsystem and per allocation site. It drives the real binary over a
+pseudo-terminal through a fixed workload — open files, walk them end to end,
+type, save, switch buffer — and profiles that, because a TUI that nothing is
+typing at tells you about startup, not about editing.
+
+```sh
+cargo build --profile profiling --bin fresh
+scripts/memory-profile.py                # heap breakdown by subsystem (Valgrind massif)
+scripts/memory-profile.py --tool rss     # RSS timeline, no Valgrind, ~25s
+scripts/memory-profile.py --tool dhat    # allocation churn and lifetimes
+```
+
+Results land in `target/memory-profile/`, raw profile included, so a run can
+be re-analyzed without re-running it. See
+[docs/internal/memory-profiling.md](docs/internal/memory-profiling.md) for how
+the attribution works and how to read the output.
+
+**Use the `profiling` profile, not `dev` or `release`.**
+`[profile.profiling]` inherits `release` — same `opt-level = "z"`, so
+allocation behaviour matches a shipped binary — and adds back only what a
+profiler needs: `debug = 1` for line tables, no `strip`, and `lto = false`
+with `codegen-units = 16`, because fat LTO inlines across crate boundaries
+until an allocation can no longer be attributed to the crate that made it
+(and costs a ~20 minute single-threaded link). A `dev` build is the wrong
+answer twice over: `debug = 0` leaves no line tables, and unoptimized code
+allocates differently enough to mislead.
+
 ## Commit Hygiene
 
 - Commit messages must describe the **motivation / goal** of each commit, not just what changed
