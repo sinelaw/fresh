@@ -1,39 +1,83 @@
 {
   "name": "memory-live-data",
   "render": {
-    "size": [1080, 1080],
+    "size": [
+      1080,
+      1080
+    ],
     "fps": 60,
-    "title": "fresh 0.5.1 — inside the 46 MB the editor holds",
-    "intro_caption": ["What the editor is holding",
-                      "biggest first"],
-    "outro_caption": ["Half of it is there before you type a key",
-                      "plug-ins, language rules and shells load at startup"],
-    "timing": {"grow": 0.8, "intro": 1.2, "move": 0.4, "hold": 1.25,
-               "regroup": 0.35, "outro": 1.2},
+    "title": "fresh 0.5.1 \u2014 inside the 46 MB the editor holds",
+    "intro_caption": [
+      "What the editor is holding",
+      "biggest first"
+    ],
+    "outro_caption": [
+      "Half of it is there before you type a key",
+      "plug-ins, language rules and shells load at startup"
+    ],
+    "timing": {
+      "grow": 0.8,
+      "intro": 1.2,
+      "move": 0.4,
+      "hold": 1.25,
+      "regroup": 0.35,
+      "outro": 1.2
+    },
     "donut": {
       "unit": "MB",
       "total": "46 MB",
       "total_label": "held",
-      "thickness": 0.40,
+      "thickness": 0.4,
       "items": [
-        {"label": "Files on screen", "value": 13.2,
-         "note": "The text you have open, plus the colouring, line wrapping and layout worked out for it"},
-        {"label": "JavaScript engine", "value": 9.0,
-         "note": "A small engine that runs the editor's plug-ins. Loaded once at startup, whatever you do next"},
-        {"label": "Terminals", "value": 6.8,
-         "note": "The three shells running inside the editor. Most of this is a buffer they never use"},
-        {"label": "Untraced", "value": 6.2, "visit": false,
-         "note": "Memory the profiler could not trace back to who asked for it"},
-        {"label": "Syntax rules", "value": 3.6,
-         "note": "The patterns that decide what gets coloured, one set per language on screen"},
-        {"label": "Plug-in wiring", "value": 3.0, "visit": false,
-         "note": "The commands, menu entries and hooks each plug-in adds to the editor"},
-        {"label": "Everything else", "value": 3.5, "visit": false,
-         "note": "Screen buffers, settings, the widget tree behind the interface"},
-        {"label": "Translations", "value": 1.8, "visit": false,
-         "note": "Fifteen languages of interface text, all loaded whether you use them or not"}
+        {
+          "label": "Files on screen",
+          "value": 13.2,
+          "note": "Open files, ready to draw"
+        },
+        {
+          "label": "JavaScript engine",
+          "value": 9.0,
+          "note": "Runs the built-in plug-ins"
+        },
+        {
+          "label": "Terminals",
+          "value": 6.8,
+          "note": "Shells running inside the editor"
+        },
+        {
+          "label": "Untraced",
+          "value": 6.2,
+          "visit": false,
+          "note": "Not traced to an owner"
+        },
+        {
+          "label": "Syntax rules",
+          "value": 3.6,
+          "note": "What gets coloured, per language"
+        },
+        {
+          "label": "Plug-in wiring",
+          "value": 3.0,
+          "visit": false,
+          "note": "Plug-in commands and hooks"
+        },
+        {
+          "label": "Everything else",
+          "value": 3.5,
+          "visit": false,
+          "note": "Settings, screen buffers, widgets"
+        },
+        {
+          "label": "Translations",
+          "value": 1.8,
+          "visit": false,
+          "note": "Interface text, fifteen languages"
+        }
       ]
     }
   },
-  "encode": {"crf": 18, "preset": "slow"}
+  "encode": {
+    "crf": 18,
+    "preset": "slow"
+  }
 }

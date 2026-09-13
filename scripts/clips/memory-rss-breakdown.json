@@ -1,33 +1,66 @@
 {
   "name": "memory-rss-breakdown",
   "render": {
-    "size": [1080, 1080],
+    "size": [
+      1080,
+      1080
+    ],
     "fps": 60,
-    "title": "fresh 0.5.1 — where 71 MB of memory goes",
-    "intro_caption": ["71 MB while you work",
-                      "three projects open, three shells, nine files"],
-    "outro_caption": ["A third of it is the program itself",
-                      "and that part never grows as you work"],
-    "timing": {"grow": 0.9, "intro": 1.4, "move": 0.45, "hold": 1.5,
-               "regroup": 0.4, "outro": 1.4},
+    "title": "fresh 0.5.1 \u2014 where 71 MB of memory goes",
+    "intro_caption": [
+      "71 MB while you work",
+      "three projects open, three shells, nine files"
+    ],
+    "outro_caption": [
+      "A third of it is the program itself",
+      "and that part never grows as you work"
+    ],
+    "timing": {
+      "grow": 0.9,
+      "intro": 1.4,
+      "move": 0.45,
+      "hold": 1.5,
+      "regroup": 0.4,
+      "outro": 1.4
+    },
     "donut": {
       "unit": "MB",
       "total": "71 MB",
       "total_label": "in use",
-      "thickness": 0.40,
+      "thickness": 0.4,
       "items": [
-        {"label": "Working data", "value": 46.0,
-         "note": "Your open files, and everything the editor worked out about them while you edit"},
-        {"label": "Program code", "value": 13.6,
-         "note": "The editor itself, loaded into memory so the processor can run it"},
-        {"label": "Built-in data", "value": 9.9,
-         "note": "Things baked into the program: plug-ins, language rules, translations"},
-        {"label": "Startup fixups", "value": 1.0, "visit": false,
-         "note": "Bookkeeping written once when the program is loaded"},
-        {"label": "Thread space", "value": 0.25, "visit": false,
-         "note": "Scratch space for the editor's background threads"}
+        {
+          "label": "Working data",
+          "value": 46.0,
+          "note": "What the editor is holding"
+        },
+        {
+          "label": "Program code",
+          "value": 13.6,
+          "note": "The editor itself"
+        },
+        {
+          "label": "Built-in data",
+          "value": 9.9,
+          "note": "What ships inside the program"
+        },
+        {
+          "label": "Startup fixups",
+          "value": 1.0,
+          "visit": false,
+          "note": "Loader bookkeeping"
+        },
+        {
+          "label": "Thread space",
+          "value": 0.25,
+          "visit": false,
+          "note": "Scratch space for threads"
+        }
       ]
     }
   },
-  "encode": {"crf": 18, "preset": "slow"}
+  "encode": {
+    "crf": 18,
+    "preset": "slow"
+  }
 }
