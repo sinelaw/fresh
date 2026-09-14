@@ -5585,6 +5585,7 @@ interface HookEventMap {
 		cursor_id: number;
 		old_position: number;
 		new_position: number;
+		/** 1-indexed, unlike `getCursorLine()` and LSP line numbers. */
 		line: number;
 		text_properties: Record<string, unknown>[];
 	};

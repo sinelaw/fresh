@@ -127,30 +127,37 @@ function navigateToSymbol(
   }
 }
 
+async function fetchSymbols(
+  filePath: string,
+  language: string,
+  bufferId: number,
+): Promise<SymbolItem[]> {
+  const uri = editor.pathToFileUri(filePath);
+  const result = await editor.sendLspRequest(
+    language,
+    "textDocument/documentSymbol",
+    {
+      textDocument: { uri },
+    },
+  );
+
+  const symbols = parseSymbols(result);
+
+  await attachLineText(symbols, bufferId);
+
+  return symbols;
+}
+
 async function loadSymbols(
   filePath: string,
   language: string,
   bufferId: number,
-  reportErrors = true,
 ): Promise<SymbolItem[]> {
   try {
-    const uri = editor.pathToFileUri(filePath);
-    const result = await editor.sendLspRequest(
-      language,
-      "textDocument/documentSymbol",
-      {
-        textDocument: { uri },
-      },
-    );
-
-    const symbols = parseSymbols(result);
-
-    await attachLineText(symbols, bufferId);
-
-    return symbols;
+    return await fetchSymbols(filePath, language, bufferId);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    if (reportErrors) editor.setStatus(`LSP symbols failed: ${msg}`);
+    editor.setStatus(`LSP symbols failed: ${msg}`);
     return [];
   }
 }
@@ -476,7 +483,14 @@ async function refreshBreadcrumbs(bufferId: number): Promise<void> {
     return;
   }
 
-  const symbols = await loadSymbols(filePath, language, bufferId, false);
+  let symbols: SymbolItem[];
+  try {
+    symbols = await fetchSymbols(filePath, language, bufferId);
+  } catch {
+    // Leave the cache unset rather than recording "no symbols" — the server
+    // may simply not be up yet, and a later refresh can still fill it in.
+    return;
+  }
   if (breadcrumbRefreshGeneration.get(bufferId) !== generation) return;
   breadcrumbSymbols.set(bufferId, symbols);
   if (editor.getActiveBufferId() === bufferId) {
@@ -503,7 +517,8 @@ editor.on("buffer_activated", (data) => {
 });
 
 editor.on("cursor_moved", (data) => {
-  if (data.cursor_id === 0) publishBreadcrumbs(data.buffer_id, data.line);
+  // `line` is 1-indexed here; LSP symbol ranges are 0-indexed.
+  if (data.cursor_id === 0) publishBreadcrumbs(data.buffer_id, data.line - 1);
 });
 
 editor.on("after_insert", (data) => scheduleBreadcrumbRefresh(data.buffer_id));
@@ -512,6 +527,15 @@ editor.on("after_file_revert", (data) => scheduleBreadcrumbRefresh(data.buffer_i
 editor.on("buffer_closed", (data) => {
   breadcrumbSymbols.delete(data.buffer_id);
   breadcrumbRefreshGeneration.delete(data.buffer_id);
+});
+
+editor.on("diagnostics_updated", () => {
+  // There is no lsp-ready event to wait on; a diagnostics push is the first
+  // sign a server is answering. Retry the buffer if its symbols never loaded.
+  const bufferId = editor.getActiveBufferId();
+  if (bufferId !== null && !breadcrumbSymbols.has(bufferId)) {
+    scheduleBreadcrumbRefresh(bufferId);
+  }
 });
 
 editor.on("ready", () => {

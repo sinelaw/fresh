@@ -63,6 +63,12 @@ const TEST_FILE_CONTENT: &str = r#"class MyClass {
 "#;
 
 fn setup_lsp_test() -> anyhow::Result<(EditorTestHarness, tempfile::TempDir)> {
+    setup_lsp_test_with_script(FAKE_LSP_SCRIPT)
+}
+
+fn setup_lsp_test_with_script(
+    script: &str,
+) -> anyhow::Result<(EditorTestHarness, tempfile::TempDir)> {
     let temp_dir = tempfile::TempDir::new()?;
     let project_root = temp_dir.path().to_path_buf();
 
@@ -72,7 +78,7 @@ fn setup_lsp_test() -> anyhow::Result<(EditorTestHarness, tempfile::TempDir)> {
     copy_plugin_lib(&plugins_dir);
 
     let script_path = project_root.join("fake_lsp.sh");
-    fs::write(&script_path, FAKE_LSP_SCRIPT)?;
+    fs::write(&script_path, script)?;
 
     #[cfg(unix)]
     {
@@ -430,4 +436,158 @@ fn selected_suggestion_text(harness: &EditorTestHarness) -> Option<String> {
         }
     }
     None
+}
+
+/// The breadcrumb row sits between the tab bar and the first buffer line.
+/// Addressed by screen row, because the buffer's own `class MyClass {` line
+/// would otherwise match a search for the crumb text.
+fn breadcrumb_row(harness: &EditorTestHarness, row: usize) -> String {
+    harness
+        .screen_to_string()
+        .lines()
+        .nth(row)
+        .unwrap_or_default()
+        .trim()
+        .to_string()
+}
+
+/// Find the row showing a nested trail, which only the breadcrumb row can be:
+/// `>` separators never appear in the buffer text.
+fn nested_breadcrumb_row(harness: &EditorTestHarness) -> Option<usize> {
+    harness
+        .screen_to_string()
+        .lines()
+        .position(|line| line.contains("MyClass > "))
+}
+
+/// Clicking a crumb jumps the cursor, so the trail must redraw for where the
+/// cursor landed instead of keeping the path it was clicked from.
+#[test]
+#[cfg_attr(windows, ignore)]
+fn test_lsp_symbol_breadcrumbs_refresh_after_crumb_click() -> anyhow::Result<()> {
+    let (mut harness, _temp_dir) = setup_lsp_test()?;
+
+    // Into myMethod's body, so the trail is two crumbs deep.
+    harness.send_key_repeat(KeyCode::Down, KeyModifiers::NONE, 6)?;
+    harness.wait_until(|h| {
+        h.screen_to_string()
+            .lines()
+            .any(|line| line.contains("MyClass > myMethod"))
+    })?;
+
+    let row = nested_breadcrumb_row(&harness).expect("nested breadcrumb row");
+    let screen = harness.screen_to_string();
+    let class_col = screen
+        .lines()
+        .nth(row)
+        .and_then(|line| line.find("MyClass"))
+        .expect("class crumb") as u16;
+
+    // Clicking the outer crumb lands the cursor on the class name, which is
+    // outside myMethod — the trail must drop back to the class alone.
+    harness.mouse_click(class_col, row as u16)?;
+    harness.wait_until(|h| !breadcrumb_row(h, row).contains("myMethod"))?;
+    assert_eq!(breadcrumb_row(&harness, row), "MyClass");
+
+    Ok(())
+}
+
+/// The trail is computed from the cursor's line, so a cursor resting on a
+/// symbol's last line still belongs to that symbol.
+#[test]
+#[cfg_attr(windows, ignore)]
+fn test_lsp_symbol_breadcrumbs_on_symbol_last_line() -> anyhow::Result<()> {
+    let (mut harness, _temp_dir) = setup_lsp_test()?;
+
+    // Let the first symbol fetch settle, so what the trail shows next comes
+    // from the cursor move alone and not from a refresh landing behind it.
+    harness.wait_until(|h| {
+        h.screen_to_string()
+            .lines()
+            .any(|line| line.trim() == "MyClass")
+    })?;
+    let row = harness
+        .screen_to_string()
+        .lines()
+        .position(|line| line.trim() == "MyClass")
+        .expect("breadcrumb row");
+
+    // Line 4 (1-indexed) is the constructor's closing brace — its last line.
+    harness.send_key_repeat(KeyCode::Down, KeyModifiers::NONE, 3)?;
+    harness.wait_until(|h| breadcrumb_row(h, row) == "MyClass > constructor")?;
+
+    Ok(())
+}
+
+/// Fails the first `documentSymbol` (as a server that has not finished
+/// starting does), then publishes diagnostics and answers normally.
+const LATE_START_LSP_SCRIPT: &str = r#"#!/bin/bash
+read_message() {
+    local content_length=0
+    while IFS=: read -r key value; do
+        key=$(echo "$key" | tr -d '\r\n')
+        value=$(echo "$value" | tr -d '\r\n ')
+        if [ "$key" = "Content-Length" ]; then
+            content_length=$value
+        fi
+        if [ -z "$key" ]; then
+            break
+        fi
+    done
+    if [ $content_length -gt 0 ]; then
+        dd bs=1 count=$content_length 2>/dev/null
+    fi
+}
+send_message() {
+    local message="$1"
+    local length=${#message}
+    echo -en "Content-Length: $length\r\n\r\n$message"
+}
+asked=0
+while true; do
+    msg=$(read_message)
+    if [ -z "$msg" ]; then
+        break
+    fi
+    method=$(echo "$msg" | grep -o '"method":"[^"]*"' | cut -d'"' -f4)
+    msg_id=$(echo "$msg" | grep -o '"id":[0-9]*' | cut -d':' -f2)
+    uri=$(echo "$msg" | grep -o '"uri":"[^"]*"' | head -1 | cut -d'"' -f4)
+    case "$method" in
+        "initialize")
+            send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"capabilities":{"documentSymbolProvider":true,"textDocumentSync":1}}}'
+            ;;
+        "initialized") ;;
+        "textDocument/didOpen"|"textDocument/didChange"|"textDocument/didSave") ;;
+        "textDocument/documentSymbol")
+            if [ "$asked" = "0" ]; then
+                asked=1
+                send_message '{"jsonrpc":"2.0","id":'$msg_id',"error":{"code":-32603,"message":"server still starting"}}'
+                send_message '{"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{"uri":"'$uri'","diagnostics":[]}}'
+            else
+                send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":[{"name":"MyClass","kind":5,"range":{"start":{"line":0,"character":0},"end":{"line":8,"character":1}},"selectionRange":{"start":{"line":0,"character":6},"end":{"line":0,"character":13}}}]}'
+            fi
+            ;;
+        "shutdown")
+            send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":null}'
+            break
+            ;;
+    esac
+done
+"#;
+
+/// A symbol fetch that failed because the server was not up yet must not be
+/// cached as "this buffer has no symbols" — the trail has to fill in once
+/// the server starts answering.
+#[test]
+#[cfg_attr(windows, ignore)]
+fn test_lsp_symbol_breadcrumbs_recover_from_failed_fetch() -> anyhow::Result<()> {
+    let (mut harness, _temp_dir) = setup_lsp_test_with_script(LATE_START_LSP_SCRIPT)?;
+
+    harness.wait_until(|h| {
+        h.screen_to_string()
+            .lines()
+            .any(|line| line.trim() == "MyClass")
+    })?;
+
+    Ok(())
 }

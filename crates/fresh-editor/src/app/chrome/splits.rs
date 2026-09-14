@@ -44,8 +44,13 @@ impl Editor {
             return;
         };
         self.focus_split(pane, buffer_id);
+        let old_position = self.active_cursors().primary().position;
         self.active_window_mut()
             .set_buffer_cursor_in_splits(buffer_id, position, &[pane]);
+        // Every other click that moves the caret fires `cursor_moved`; this
+        // one has to raise it by hand, or the trail keeps the path it was
+        // clicked from.
+        self.notify_cursor_moved(old_position, position);
     }
 
     /// Double-click on a split's content rect: the Splits component's
