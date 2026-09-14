@@ -3675,6 +3675,34 @@ mod tests {
             Some(KeyCode::BackTab)
         );
         assert_eq!(KeybindingResolver::parse_key("a"), Some(KeyCode::Char('a')));
+        assert_eq!(KeybindingResolver::parse_key("ü"), Some(KeyCode::Char('ü')));
+        assert_eq!(KeybindingResolver::parse_key("ö"), Some(KeyCode::Char('ö')));
+        assert_eq!(KeybindingResolver::parse_key("ä"), Some(KeyCode::Char('ä')));
+        assert_eq!(KeybindingResolver::parse_key("Ü"), Some(KeyCode::Char('ü')));
+        assert_eq!(KeybindingResolver::parse_key("ab"), None);
+    }
+
+    /// A non-ASCII key must register from config, not merely parse: German
+    /// layouts bind Ctrl+ü, and the byte-length check dropped it at load.
+    #[test]
+    fn test_umlaut_key_from_config_resolves() {
+        let mut config = Config::default();
+        config.keybindings.push(crate::config::Keybinding {
+            key: "ü".to_string(),
+            modifiers: vec!["ctrl".to_string()],
+            keys: Vec::new(),
+            chord: String::new(),
+            action: "lsp_hover".to_string(),
+            args: HashMap::new(),
+            when: Some("normal".to_string()),
+        });
+        let resolver = KeybindingResolver::new(&config);
+        let event = KeyEvent::new(KeyCode::Char('ü'), KeyModifiers::CONTROL);
+        assert_eq!(
+            resolver.resolve(&event, KeyContext::Normal),
+            Action::LspHover,
+            "Ctrl+ü from config must resolve after parse_key accepts a Unicode scalar"
+        );
     }
 
     /// Issue #1128: the reporter wrote `"key": "asterisk"` (the X11
