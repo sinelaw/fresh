@@ -695,10 +695,10 @@ only "go install the .deb" downloads it with no verification at all, whereas we
 fetch it, checksum it and attestation-check it. Stopping before `dpkg` costs a
 keystroke. Stopping before the download would cost them their only verification.
 
-The peer evidence points the same way: herdr's docs say `herdr update` is for
-its own installer and "Homebrew, mise, and Nix installs are updated through
-those package managers instead"; Zed ships `ZED_UPDATE_EXPLANATION` so packagers
-can replace the updater with a message; hunk has no updater at all. The
+The peer evidence points the same way: one peer's docs say its `update` command
+is for its own installer and "Homebrew, mise, and Nix installs are updated
+through those package managers instead"; Zed ships `ZED_UPDATE_EXPLANATION` so
+packagers can replace the updater with a message; hunk has no updater at all. The
 outlier is opencode, which shells out to whichever of seven managers it can
 detect — and which also resolves provenance by pattern-matching the executable
 path, the design §4.4 removed.
