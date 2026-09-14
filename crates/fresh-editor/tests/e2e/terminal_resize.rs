@@ -65,6 +65,7 @@ fn test_kitty_split_resize_in_focused_terminal_dock() {
             key: key.into(),
             modifiers: vec!["ctrl".into(), "shift".into(), "super".into()],
             keys: Vec::new(),
+            chord: String::new(),
             action: action.into(),
             args: Default::default(),
             when: Some("terminal".into()),
