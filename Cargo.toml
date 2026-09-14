@@ -222,3 +222,24 @@ opt-level = 3
 opt-level = 3
 [profile.test.package.rquickjs-serde]
 opt-level = 3
+
+# Profile for runtime memory profiling (see `scripts/memory-profile.sh`).
+#
+# Inherits `release` — same opt-level ("z"), so allocation behaviour matches
+# the shipped binary — and changes only what a profiler needs:
+#
+#   * debug = 1  — line tables, so Valgrind/massif can name the file:line an
+#                  allocation came from instead of just a mangled symbol.
+#   * strip      — off, explicitly: `dist` strips, and a stripped binary
+#                  profiles as one anonymous frame.
+#   * lto/CGUs   — fat LTO with codegen-units = 1 is a ~20 minute single
+#                  threaded link here, and it inlines across crate boundaries
+#                  so heavily that allocation stacks stop being attributable
+#                  to the crate that made them. Thin LTO off + 16 CGUs keeps
+#                  the build usable and the stacks readable.
+[profile.profiling]
+inherits = "release"
+debug = 1
+strip = false
+lto = false
+codegen-units = 16

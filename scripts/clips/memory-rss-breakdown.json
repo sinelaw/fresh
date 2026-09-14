@@ -1,0 +1,68 @@
+{
+  "name": "memory-rss-breakdown",
+  "render": {
+    "size": [
+      1080,
+      1080
+    ],
+    "fps": 60,
+    "title": "fresh \u2014 where 103 MB of memory goes",
+    "intro_caption": [
+      "Fresh memory usage breakdown (musl)",
+      "103 MB in use \u2014 a live session, 37 threads"
+    ],
+    "outro_caption": [
+      "Fresh memory usage breakdown (musl)",
+      "81 MB working data, 22 MB program and built-ins"
+    ],
+    "timing": {
+      "grow": 0.5,
+      "intro": 2.3,
+      "move": 0.45,
+      "hold": 2.1,
+      "regroup": 0.4,
+      "outro": 1.4
+    },
+    "donut": {
+      "style": "ansi",
+      "charset": "unicode",
+      "unit": "MB",
+      "total": "103 MB",
+      "total_label": "in use",
+      "thickness": 0.4,
+      "items": [
+        {
+          "label": "Working data",
+          "value": 80.6,
+          "note": "Loaded files, caches, runtime state"
+        },
+        {
+          "label": "Program code",
+          "value": 13.8,
+          "note": "Machine code from the fresh binary"
+        },
+        {
+          "label": "Built-in data",
+          "value": 7.0,
+          "note": "Plugins, grammars, themes, translations"
+        },
+        {
+          "label": "Startup fixups",
+          "value": 1.0,
+          "visit": false,
+          "note": "Address fixups applied at load"
+        },
+        {
+          "label": "Thread space",
+          "value": 0.25,
+          "visit": false,
+          "note": "The main thread's stack"
+        }
+      ]
+    }
+  },
+  "encode": {
+    "crf": 18,
+    "preset": "slow"
+  }
+}
