@@ -390,103 +390,10 @@ function selectWithCount(action: string, count: number): void {
   }
 }
 
-function cutCharacterwiseSelection(hasSelectedRange: boolean): boolean {
-  if (!hasSelectedRange) {
-    return false;
-  }
 
-  editor.executeAction("cut");
-  memory.lastYankWasLinewise = false;
-  return true;
-}
 
-function copyCharacterwiseSelection(hasSelectedRange: boolean): boolean {
-  if (!hasSelectedRange) {
-    return false;
-  }
 
-  memory.lastYankWasLinewise = false;
-  editor.executeAction("copy");
-  return true;
-}
 
-async function canSelectionActionSelect(action: string, count: number): Promise<boolean> {
-  if (count <= 0) {
-    return false;
-  }
-
-  const cursor = editor.getPrimaryCursor();
-  const position = cursor?.position ?? editor.getCursorPosition();
-  const line = cursor?.line ?? null;
-  const bufferId = editor.getActiveBufferId();
-
-  switch (action) {
-    case "select_left":
-    case "select_word_left":
-    case "select_document_start":
-      return position > 0;
-    case "select_right":
-    case "select_word_right":
-    case "vi_select_word_end":
-    case "select_document_end":
-      return position < editor.getBufferLength(bufferId);
-    case "select_to_paragraph_up":
-      return position > 0;
-    case "select_to_paragraph_down":
-      return position < editor.getBufferLength(bufferId);
-    case "select_line_start": {
-      if (line === null) {
-        return false;
-      }
-      const lineStart = await editor.getLineStartPosition(line);
-      return lineStart !== null && position > lineStart;
-    }
-    case "select_line_end": {
-      if (line === null) {
-        return false;
-      }
-      const lineEnd = await editor.getLineEndPosition(line);
-      return lineEnd !== null && position < lineEnd;
-    }
-    case "select_up":
-      return line !== null && line > 0;
-    case "select_down": {
-      if (line === null) {
-        return false;
-      }
-      const lineCount = await editor.getBufferLineCount();
-      return lineCount !== null && line < lineCount - 1;
-    }
-    default:
-      return true;
-  }
-}
-
-async function selectThenCutCharacterwise(action: string, count: number): Promise<boolean> {
-  const hasSelectedRange = await canSelectionActionSelect(action, count);
-  if (!hasSelectedRange) {
-    return false;
-  }
-
-  selectWithCount(action, count);
-  if (action === "vi_select_word_end") {
-    editor.executeAction("select_right");
-  }
-  return cutCharacterwiseSelection(true);
-}
-
-async function selectThenCopyCharacterwise(action: string, count: number): Promise<boolean> {
-  const hasSelectedRange = await canSelectionActionSelect(action, count);
-  if (!hasSelectedRange) {
-    return false;
-  }
-
-  selectWithCount(action, count);
-  if (action === "vi_select_word_end") {
-    editor.executeAction("select_right");
-  }
-  return copyCharacterwiseSelection(true);
-}
 
 function getLinewiseReplacementText(deletedText: string): string | null {
   const trailingTerminator = deletedText.match(/(\r\n|\n|\r)$/);
@@ -696,22 +603,68 @@ async function rangeFromMotion(
   return charwiseRange(origin, target);
 }
 
-// Map motion actions to their selection equivalents
-const motionToSelection: Record<string, string> = {
-  move_left: "select_left",
-  move_right: "select_right",
-  move_up: "select_up",
-  move_down: "select_down",
-  move_word_left: "select_word_left",
-  move_word_right: "select_word_right",
-  vi_move_word_end: "vi_select_word_end",
-  move_to_paragraph_up: "select_to_paragraph_up",
-  move_to_paragraph_down: "select_to_paragraph_down",
-  move_line_start: "select_line_start",
-  move_line_end: "select_line_end",
-  move_document_start: "select_document_start",
-  move_document_end: "select_document_end",
+// The motions an operator can take, each resolving to a target byte offset,
+// each with the kind that turns that target into a range.
+//
+// This is the last of the three command paths to be folded in. The word
+// motions and the text objects already resolved their own ranges; these were
+// still composing the host's `select_*` actions and consuming whatever
+// selection came out, which is why `d%` silently did nothing (no selection
+// equivalent existed) and why the inclusive/exclusive distinction had to be
+// re-derived at each site that cared.
+interface OperatorMotion {
+  kind: MotionKind;
+  // Resolved against the *operator's* semantics, which are not always the
+  // caret's: `l` will not move the caret past a line's last character, but
+  // `dl` deletes that character.
+  resolve: (origin: number, count: number) => Promise<number | null>;
+}
+
+async function lineStartTarget(origin: number): Promise<number | null> {
+  return findLineStartAtPosition(editor.getActiveBufferId(), origin);
+}
+
+async function lineEndTarget(origin: number): Promise<number | null> {
+  const line = editor.getPrimaryCursor()?.line ?? null;
+  if (line === null) {
+    return null;
+  }
+  const end = await editor.getLineEndPosition(line);
+  return end === null ? null : Math.max(end, origin);
+}
+
+async function paragraphTarget(origin: number, count: number, forward: boolean): Promise<number | null> {
+  const bufferId = editor.getActiveBufferId();
+  const text = await editor.getBufferText(bufferId, 0, editor.getBufferLength(bufferId));
+  let index = byteOffsetToStringIndex(text, origin);
+  if (!forward) {
+    for (let i = 0; i < Math.max(1, count); i++) {
+      index = paragraphUpMotionTargetIndex(text, index);
+    }
+    return stringIndexToByteOffset(text, index);
+  }
+  let reachedEof = false;
+  for (let i = 0; i < Math.max(1, count); i++) {
+    const next = paragraphDownMotionTargetIndex(text, index);
+    index = next.index;
+    reachedEof = next.reachedEof;
+  }
+  // At the end of the buffer the motion stops *on* the last character rather
+  // than at a paragraph break, so the range has to reach past it.
+  return stringIndexToByteOffset(text, reachedEof ? nextStringIndex(text, index) : index);
+}
+
+const OPERATOR_MOTIONS: Record<string, OperatorMotion> = {
+  move_left: { kind: "exclusive", resolve: (o, c) => horizontalTarget(o, c, false, false) },
+  move_right: { kind: "exclusive", resolve: (o, c) => horizontalTarget(o, c, true, false) },
+  move_line_start: { kind: "exclusive", resolve: (o) => lineStartTarget(o) },
+  // `$` is inclusive in Vim's vocabulary, but the editor's line end already
+  // sits one past the last character, which is where an exclusive range ends.
+  move_line_end: { kind: "exclusive", resolve: (o) => lineEndTarget(o) },
+  move_to_paragraph_up: { kind: "exclusive", resolve: (o, c) => paragraphTarget(o, c, false) },
+  move_to_paragraph_down: { kind: "exclusive", resolve: (o, c) => paragraphTarget(o, c, true) },
 };
+
 
 function stringIndexToByteOffset(text: string, index: number): number {
   return editor.utf8ByteLength(text.slice(0, index));
@@ -1076,6 +1029,21 @@ function paragraphDownEofIndex(text: string): number {
   return contentEnd === 0 ? 0 : previousStringIndex(text, contentEnd);
 }
 
+// `{`: the previous empty line, or the start of the buffer. Mirrors
+// `paragraphDownMotionTargetIndex` below.
+function paragraphUpMotionTargetIndex(text: string, startIndex: number): number {
+  let lineStart = lineStartIndex(text, Math.min(startIndex, text.length));
+  while (lineStart > 0) {
+    lineStart = lineStartIndex(text, previousStringIndex(text, lineStart));
+    const nextLineStart = nextLineStartIndex(text, lineStart);
+    const lineContent = text.slice(lineStart, nextLineStart);
+    if (lineContent.replace(/[\r\n]+$/, "") === "") {
+      return lineStart;
+    }
+  }
+  return 0;
+}
+
 function paragraphDownMotionTargetIndex(text: string, startIndex: number): { index: number; reachedEof: boolean } {
   let lineStart = nextLineStartIndex(text, startIndex);
   while (lineStart < text.length) {
@@ -1090,28 +1058,6 @@ function paragraphDownMotionTargetIndex(text: string, startIndex: number): { ind
   return { index: paragraphDownEofIndex(text), reachedEof: true };
 }
 
-async function computeParagraphDownOperatorRange(count: number): Promise<{ start: number; end: number } | null> {
-  const start = editor.getCursorPosition();
-  if (start === null) {
-    return null;
-  }
-
-  const bufferId = editor.getActiveBufferId();
-  const bufferText = await editor.getBufferText(bufferId, 0, editor.getBufferLength(bufferId));
-  let target = byteOffsetToStringIndex(bufferText, start);
-  let reachedEof = false;
-  for (let i = 0; i < Math.max(1, count); i++) {
-    const next = paragraphDownMotionTargetIndex(bufferText, target);
-    target = next.index;
-    reachedEof = next.reachedEof;
-  }
-
-  const endIndex = reachedEof ? nextStringIndex(bufferText, target) : target;
-  return {
-    start,
-    end: stringIndexToByteOffset(bufferText, endIndex),
-  };
-}
 
 function byteLengthOfCharAt(text: string, index: number): number {
   if (index < 0 || index >= text.length) {
@@ -1484,44 +1430,6 @@ async function applyLineOpIndent(operator: string, count: number): Promise<void>
   await applyIndentToLineRange(operator, firstLineStart, Math.max(1, count));
 }
 
-// >motion / <motion: indent the whole lines the motion spans. Built entirely
-// from ordered editor actions (select-by-motion, then indent the selection) so
-// it never relies on reading a position back mid-handler — the plugin's cursor
-// snapshot is not refreshed until the handler yields. Extending the active end
-// to its line end makes a forward/downward motion include the destination line
-// even when it stops at column 0, matching Vim's line-wise `>`.
-async function applyIndentViaMotion(
-  operator: string,
-  selectAction: string,
-  motionAction: string,
-  count: number,
-): Promise<void> {
-  const bufferId = editor.getActiveBufferId();
-  if (isActiveBufferEditingDisabled(bufferId)) {
-    switchMode("normal");
-    return;
-  }
-  const startPos = editor.getCursorPosition();
-  recordChange({ type: "operator-motion", operator, motion: motionAction, count });
-
-  for (let i = 0; i < Math.max(1, count); i++) {
-    editor.executeAction(selectAction);
-  }
-  editor.executeAction("select_line_end");
-  editor.executeAction(operator === ">" ? "insert_tab" : "dedent_selection");
-  memory.lastYankWasLinewise = false;
-
-  // Leave the cursor on the first non-blank of the line the motion started on
-  // (its byte offset is unchanged by indenting at line starts).
-  if (startPos !== null) {
-    const firstLineStart = await findLineStartAtPosition(bufferId, startPos);
-    await placeCursorAtFirstNonBlank(bufferId, firstLineStart);
-  } else {
-    switchMode("normal");
-    return;
-  }
-  switchMode("normal");
-}
 
 async function computeWordOperatorRange(
   family: WordFamily,
@@ -1715,42 +1623,28 @@ async function applyOperatorWithMotion(
     return;
   }
 
-  // Record last change for '.' repeat (only for delete and change, not yank)
-  if (records) {
-    recordChange({ type: "operator-motion", operator, motion: motionAction, count });
-  }
-
-  const selectAction = motionToSelection[motionAction];
-  if (!selectAction) {
-    editor.debug(`No selection equivalent for motion: ${motionAction}`);
+  const motion = OPERATOR_MOTIONS[motionAction];
+  if (motion === undefined) {
+    editor.debug(`No operator motion for: ${motionAction}`);
     switchMode("normal");
     return;
   }
 
-  if (operator === ">" || operator === "<") {
-    await applyIndentViaMotion(operator, selectAction, motionAction, count);
+  const origin = editor.getCursorPosition();
+  const target = origin === null ? null : await motion.resolve(origin, count);
+  if (origin === null || target === null) {
+    switchMode("normal");
     return;
   }
 
-  switch (operator) {
-    case "d": // delete
-      await selectThenCutCharacterwise(selectAction, count);
-      break;
-    case "c": // change (delete and enter insert mode)
-      if (await selectThenCutCharacterwise(selectAction, count)) {
-        switchMode("insert");
-        return; // Don't switch back to normal mode
-      }
-      break;
-    case "y": // yank
-      if (await selectThenCopyCharacterwise(selectAction, count)) {
-        // Move cursor back to start of selection (left side)
-        editor.executeAction("move_left");
-      }
-      break;
+  // Record last change for '.' repeat (only for delete and change, not yank),
+  // and only once the motion has resolved: a motion that cannot move fails the
+  // whole operator, and must not overwrite what `.` is holding on its way out.
+  if (records) {
+    recordChange({ type: "operator-motion", operator, motion: motionAction, count });
   }
 
-  switchMode("normal");
+  await applyOperator(operator, await rangeFromMotion(origin, target, motion.kind));
 }
 
 // Handle motion in operator-pending mode
@@ -2402,23 +2296,40 @@ async function charsAvailableOnLine(forward: boolean): Promise<number> {
   return [...text].length;
 }
 
-async function vi_delete_char() : Promise<void> {
-  const count = Math.min(consumeCount(), await charsAvailableOnLine(true));
-  if (count <= 0) {
-    return;
+// The range `x`/`X`/`s` take: `count` characters from the caret, stopping at
+// the line's own end. `horizontalTarget` does the bounding, which is why these
+// no longer clamp against `charsAvailableOnLine` first — Vim's `5x` on a
+// two-character line deletes both rather than refusing, unlike `5r`.
+async function charwiseCountRange(count: number, forward: boolean): Promise<OperatorRange | null> {
+  const origin = editor.getCursorPosition();
+  if (origin === null) {
+    return null;
   }
+  const target = await horizontalTarget(origin, count, forward, false);
+  return target === null ? null : charwiseRange(origin, target);
+}
+
+// The range `D`/`C` take: the caret to the end of its line.
+async function toLineEndRange(): Promise<OperatorRange | null> {
+  const origin = editor.getCursorPosition();
+  if (origin === null) {
+    return null;
+  }
+  const target = await lineEndTarget(origin);
+  return target === null ? null : charwiseRange(origin, target);
+}
+
+async function vi_delete_char() : Promise<void> {
+  const count = consumeCount();
   recordChange({ type: "simple", action: "delete_forward", count });
-  await selectThenCutCharacterwise("select_right", count);
+  await applyOperator("d", await charwiseCountRange(count, true));
 }
 registerHandler("vi_delete_char", vi_delete_char);
 
 async function vi_delete_char_before() : Promise<void> {
-  const count = Math.min(consumeCount(), await charsAvailableOnLine(false));
-  if (count <= 0) {
-    return;
-  }
+  const count = consumeCount();
   recordChange({ type: "simple", action: "delete_backward", count });
-  await selectThenCutCharacterwise("select_left", count);
+  await applyOperator("d", await charwiseCountRange(count, false));
 }
 registerHandler("vi_delete_char_before", vi_delete_char_before);
 
@@ -2478,24 +2389,21 @@ async function replaceCharsUnderCursor(replacement: string, count: number): Prom
 async function vi_substitute() : Promise<void> {
   const count = consumeCount();
   recordChange({ type: "simple", action: "substitute", count });
-  if (await selectThenCutCharacterwise("select_right", count)) {
-    switchMode("insert");
-  }
+  await applyOperator("c", await charwiseCountRange(count, true));
 }
 registerHandler("vi_substitute", vi_substitute);
 
 // Delete to end of line (D)
 async function vi_delete_to_end() : Promise<void> {
   recordChange({ type: "operator-motion", operator: "d", motion: "move_line_end" });
-  await selectThenCutCharacterwise("select_line_end", 1);
+  await applyOperator("d", await toLineEndRange());
 }
 registerHandler("vi_delete_to_end", vi_delete_to_end);
 
 // Change to end of line (C)
 async function vi_change_to_end() : Promise<void> {
   recordChange({ type: "operator-motion", operator: "c", motion: "move_line_end" });
-  await selectThenCutCharacterwise("select_line_end", 1);
-  switchMode("insert");
+  await applyOperator("c", await toLineEndRange());
 }
 registerHandler("vi_change_to_end", vi_change_to_end);
 
@@ -2561,17 +2469,18 @@ async function replayChange(change: LastChange, count: number): Promise<void> {
       // Simple actions like x, X, s
       if (change.action === "substitute") {
         // Substitute: delete chars and insert text
-        if ((await selectThenCutCharacterwise("select_right", count)) && change.insertedText) {
+        await applyOperator("c", await charwiseCountRange(count, true), { enterInsert: false });
+        if (change.insertedText) {
           editor.insertAtCursor(change.insertedText);
         }
       } else if (change.action) {
         // Simple action like delete_forward, delete_backward
         if (change.action === "delete_forward") {
-          await selectThenCutCharacterwise("select_right", count);
+          await applyOperator("d", await charwiseCountRange(count, true));
         } else if (change.action === "join_lines") {
           await joinLines(Math.max(1, count - 1));
         } else if (change.action === "delete_backward") {
-          await selectThenCutCharacterwise("select_left", count);
+          await applyOperator("d", await charwiseCountRange(count, false));
         } else {
           executeWithCount(change.action, count);
         }
@@ -3114,7 +3023,16 @@ function visualHead(): number | null {
 
 // The offset `count` characters left or right of `from`, stopping at the
 // caret's own line — Vim's `h` and `l` do not wrap.
-async function horizontalTarget(from: number, count: number, forward: boolean): Promise<number | null> {
+//
+// `clampToLastCharacter` is the difference between the caret's `l`, which will
+// not step past a line's last character, and `dl`'s, which must reach one past
+// it to delete that character.
+async function horizontalTarget(
+  from: number,
+  count: number,
+  forward: boolean,
+  clampToLastCharacter: boolean = true,
+): Promise<number | null> {
   const bufferId = editor.getActiveBufferId();
   const lineStart = await findLineStartAtPosition(bufferId, from);
   const lineText = (await safeGetBufferText(bufferId, lineStart, lineStart + 4096)) ?? "";
@@ -3127,8 +3045,7 @@ async function horizontalTarget(from: number, count: number, forward: boolean): 
     }
     index = next;
   }
-  // `l` stops on the last character; only visual mode's head may sit there.
-  if (forward && index >= bounded.length && bounded.length > 0) {
+  if (clampToLastCharacter && forward && index >= bounded.length && bounded.length > 0) {
     index = previousStringIndex(bounded, bounded.length);
   }
   return lineStart + stringIndexToByteOffset(bounded, index);
@@ -4095,22 +4012,12 @@ async function executeFindCharOperator(
   // Save for ; and , repeat (vim records the find even in operator form).
   memory.lastFindChar = { type: findType, char };
 
-  // Convert the cursor→target column span into a byte range. Column indices are
-  // measured in the line string; byte offsets are derived from the live cursor
-  // byte offset plus the UTF-8 length of the intervening text.
-  let start: number;
-  let end: number;
-  if (targetCol > col) {
-    // Forward: include the landing character.
-    const between = editor.utf8ByteLength(lineText.substring(col, targetCol));
-    start = cursorPos;
-    end = cursorPos + between + byteLengthOfCharAt(lineText, targetCol);
-  } else {
-    // Backward: from the landing column up to the cursor.
-    const between = editor.utf8ByteLength(lineText.substring(targetCol, col));
-    start = cursorPos - between;
-    end = cursorPos;
-  }
+  // The landing column becomes a byte offset: column indices are measured in
+  // the line string, byte offsets from the live caret plus the UTF-8 length of
+  // the text between.
+  const target = targetCol > col
+    ? cursorPos + editor.utf8ByteLength(lineText.substring(col, targetCol))
+    : cursorPos - editor.utf8ByteLength(lineText.substring(targetCol, col));
 
   // Record for '.' repeat (delete/change only, matching operator-motion).
   if (record && (operator === "d" || operator === "c")) {
@@ -4123,7 +4030,11 @@ async function executeFindCharOperator(
     });
   }
 
-  await applyOperatorWithRange(operator, start, end);
+  // `f` and `t` are inclusive motions, `F` and `T` exclusive — the same
+  // distinction `rangeFromMotion` applies to every other motion, rather than
+  // the `+ byteLengthOfCharAt` this used to do by hand.
+  const kind: MotionKind = findType === "f" || findType === "t" ? "inclusive" : "exclusive";
+  await applyOperator(operator, await rangeFromMotion(cursorPos, target, kind));
 }
 
 // Commands to enter find-char mode (async; await getNextKey internally)
@@ -4290,11 +4201,10 @@ async function vi_op_doc_end(): Promise<void> {
 }
 registerHandler("vi_op_doc_end", vi_op_doc_end);
 
-// NOTE: operator + `%` (d%/c%/y%) is currently a no-op. `applyOperatorWithMotion`
-// resolves a motion via `motionToSelection`, and `goto_matching_bracket` is not
-// in that map, so it bails without deleting. Making this work needs a
-// selection-extending action (e.g. `select_to_matching_bracket`) plus a
-// `motionToSelection` entry. See test_vi_bug_d_percent_ignored.
+// NOTE: operator + `%` (d%/c%/y%) is currently a no-op — `goto_matching_bracket`
+// has no entry in `OPERATOR_MOTIONS`, so the operator bails without deleting.
+// Making it work now needs only a resolver returning the matching bracket's
+// offset, with kind "inclusive". See test_vi_bug_d_percent_ignored.
 async function vi_op_matching_bracket(): Promise<void> {
   await handleMotionWithOperator("goto_matching_bracket");
 }
@@ -4306,24 +4216,7 @@ async function vi_op_paragraph_up(): Promise<void> {
 registerHandler("vi_op_paragraph_up", vi_op_paragraph_up);
 
 async function vi_op_paragraph_down(): Promise<void> {
-  if (!state.pending) {
-    switchMode("normal");
-    return;
-  }
-
-  const operator = state.pending.operator;
-  const count = consumeCount();
-  if (operator === "d" || operator === "c") {
-    recordChange({ type: "operator-motion", operator, motion: "move_to_paragraph_down", count });
-  }
-
-  const range = await computeParagraphDownOperatorRange(count);
-  if (range === null) {
-    switchMode("normal");
-    return;
-  }
-
-  await applyOperatorWithRange(operator, range.start, range.end);
+  await handleMotionWithOperator("move_to_paragraph_down");
 }
 registerHandler("vi_op_paragraph_down", vi_op_paragraph_down);
 
