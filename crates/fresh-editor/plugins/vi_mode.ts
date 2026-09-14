@@ -1432,7 +1432,7 @@ async function lineSpanOfRange(
 
 // Move the cursor to the first non-blank character of the line starting at
 // `lineStart` (Vim leaves the cursor there after >>/<<).
-async function placeCursorAtFirstNonBlank(bufferId: number, lineStart: number): Promise<void> {
+async function firstNonBlankOffset(bufferId: number, lineStart: number): Promise<number> {
   const bufferLength = editor.getBufferLength(bufferId);
   const sampleEnd = Math.min(bufferLength, lineStart + 4096);
   const sample = await editor.getBufferText(bufferId, lineStart, sampleEnd);
@@ -1441,7 +1441,11 @@ async function placeCursorAtFirstNonBlank(bufferId: number, lineStart: number): 
     index++;
   }
   const offset = lineStart + editor.utf8ByteLength(sample.slice(0, index));
-  editor.setBufferCursor(bufferId, Math.min(offset, bufferLength));
+  return Math.min(offset, bufferLength);
+}
+
+async function placeCursorAtFirstNonBlank(bufferId: number, lineStart: number): Promise<void> {
+  editor.setBufferCursor(bufferId, await firstNonBlankOffset(bufferId, lineStart));
 }
 
 // Indent (">") or dedent ("<") `lineCount` whole lines starting at
@@ -3063,27 +3067,49 @@ async function vi_vblock_dedent() : Promise<void> {
 registerHandler("vi_vblock_dedent", vi_vblock_dedent);
 
 // Visual mode motions - these extend the selection
-function vi_vis_left() : void {
-  clearComputedVisualRange();
-  executeWithCount("select_left");
+// The charwise visual motions all compute a head and let
+// `selectVisualRangeToTarget` build the range around the anchor. Driving the
+// host's `select_*` instead lost the character `v` started on whenever the head
+// crossed behind the anchor: the host's selection has no anchor character, so
+// `vhd` and `vkd` shrank the selection to nothing instead of growing it the
+// other way.
+async function vi_vis_left() : Promise<void> {
+  const head = visualHead();
+  if (head === null) return;
+  const target = await horizontalTarget(head, consumeCount(), false);
+  if (target !== null) {
+    await selectVisualRangeToTarget(target);
+  }
 }
 registerHandler("vi_vis_left", vi_vis_left);
 
-function vi_vis_down() : void {
-  clearComputedVisualRange();
-  executeWithCount("select_down");
+async function vi_vis_down() : Promise<void> {
+  const head = visualHead();
+  if (head === null) return;
+  const target = await verticalTarget(head, consumeCount());
+  if (target !== null) {
+    await selectVisualRangeToTarget(target);
+  }
 }
 registerHandler("vi_vis_down", vi_vis_down);
 
-function vi_vis_up() : void {
-  clearComputedVisualRange();
-  executeWithCount("select_up");
+async function vi_vis_up() : Promise<void> {
+  const head = visualHead();
+  if (head === null) return;
+  const target = await verticalTarget(head, -consumeCount());
+  if (target !== null) {
+    await selectVisualRangeToTarget(target);
+  }
 }
 registerHandler("vi_vis_up", vi_vis_up);
 
-function vi_vis_right() : void {
-  clearComputedVisualRange();
-  executeWithCount("select_right");
+async function vi_vis_right() : Promise<void> {
+  const head = visualHead();
+  if (head === null) return;
+  const target = await horizontalTarget(head, consumeCount(), true);
+  if (target !== null) {
+    await selectVisualRangeToTarget(target);
+  }
 }
 registerHandler("vi_vis_right", vi_vis_right);
 
@@ -3105,6 +3131,59 @@ async function charEndOffset(bufferId: number, offset: number): Promise<number> 
   const codePoint = sample.codePointAt(0);
   const char = String.fromCodePoint(codePoint ?? sample.charCodeAt(0));
   return Math.min(offset + editor.utf8ByteLength(char), length);
+}
+
+// Vim's head: the character the caret sits *on*, not the exclusive end of the
+// host's selection. `selectVisualRangeToTarget` writes it, so every motion that
+// goes through that stays consistent with the next one.
+function visualHead(): number | null {
+  return state.visual?.head ?? state.visual?.anchor ?? editor.getCursorPosition();
+}
+
+// The offset `count` characters left or right of `from`, stopping at the
+// caret's own line — Vim's `h` and `l` do not wrap.
+async function horizontalTarget(from: number, count: number, forward: boolean): Promise<number | null> {
+  const bufferId = editor.getActiveBufferId();
+  const lineStart = await findLineStartAtPosition(bufferId, from);
+  const lineText = (await safeGetBufferText(bufferId, lineStart, lineStart + 4096)) ?? "";
+  const bounded = lineText.split(/\r?\n/, 1)[0] ?? "";
+  let index = byteOffsetToStringIndex(bounded, from - lineStart);
+  for (let i = 0; i < Math.max(1, count); i++) {
+    const next = forward ? nextStringIndex(bounded, index) : previousStringIndex(bounded, index);
+    if (next === index || next < 0 || next > bounded.length) {
+      break;
+    }
+    index = next;
+  }
+  // `l` stops on the last character; only visual mode's head may sit there.
+  if (forward && index >= bounded.length && bounded.length > 0) {
+    index = previousStringIndex(bounded, bounded.length);
+  }
+  return lineStart + stringIndexToByteOffset(bounded, index);
+}
+
+// The offset on the line `delta` away, at the same column as `from` — the
+// character boundary at or before it, so a multi-byte line cannot split.
+async function verticalTarget(from: number, delta: number): Promise<number | null> {
+  const bufferId = editor.getActiveBufferId();
+  const cursorLine = editor.getPrimaryCursor()?.line ?? null;
+  const lastLine = await lastContentLine(bufferId);
+  if (cursorLine === null || lastLine === null) {
+    return null;
+  }
+  const fromLineStart = await findLineStartAtPosition(bufferId, from);
+  const column = from - fromLineStart;
+
+  const targetLine = Math.max(0, Math.min(cursorLine + delta, lastLine));
+  const targetStart = await editor.getLineStartPosition(targetLine);
+  const targetEnd = await editor.getLineEndPosition(targetLine);
+  if (targetStart === null) {
+    return null;
+  }
+  const limit = targetEnd === null ? targetStart : Math.max(targetStart, targetEnd);
+  const lineText = (await safeGetBufferText(bufferId, targetStart, limit)) ?? "";
+  const index = byteOffsetToStringIndex(lineText, Math.min(column, limit - targetStart));
+  return targetStart + stringIndexToByteOffset(lineText, index);
 }
 
 // Extend a visual selection backwards.
@@ -3184,17 +3263,29 @@ function vi_vis_line_end() : void {
 }
 registerHandler("vi_vis_line_end", vi_vis_line_end);
 
-function vi_vis_doc_start() : void {
-  clearComputedVisualRange();
+async function vi_vis_doc_start() : Promise<void> {
   consumeCount();
-  editor.executeAction("select_document_start");
+  await selectVisualRangeToTarget(0);
 }
 registerHandler("vi_vis_doc_start", vi_vis_doc_start);
 
-function vi_vis_doc_end() : void {
-  clearComputedVisualRange();
+async function vi_vis_doc_end() : Promise<void> {
+  const explicitCount = state.count;
   consumeCount();
-  editor.executeAction("select_document_end");
+  const bufferId = editor.getActiveBufferId();
+  const lastLine = await lastContentLine(bufferId);
+  if (lastLine === null) {
+    return;
+  }
+  // Like normal-mode `G`: the last line with content, or the counted line, and
+  // on its first non-blank — not the buffer's last byte, which would take the
+  // whole final line with it.
+  const target = explicitCount === null ? lastLine : Math.min(Math.max(0, explicitCount - 1), lastLine);
+  const lineStart = await editor.getLineStartPosition(target);
+  if (lineStart === null) {
+    return;
+  }
+  await selectVisualRangeToTarget(await firstNonBlankOffset(bufferId, lineStart));
 }
 registerHandler("vi_vis_doc_end", vi_vis_doc_end);
 
@@ -3379,17 +3470,30 @@ registerHandler("vi_vis_dedent", vi_vis_dedent);
 
 // The text object each key names, shared by the operator-pending bindings and
 // the visual-mode `i`/`a` capture below.
-const TEXT_OBJECT_FOR_KEY: Record<string, string> = {
-  w: "word",
-  W: "WORD",
-  '"': '"',
-  "'": "'",
-  "`": "`",
-  "(": "(", ")": "(", b: "(",
-  "{": "{", "}": "{", B: "{",
-  "[": "[", "]": "[",
-  "<": "<", ">": "<",
-};
+// The text object each key names, and the operator-pending bindings that reach
+// it. One table: a second copy meant adding an object in two places and having
+// them disagree in between.
+const TEXT_OBJECT_KEYS: Array<{ key: string; object: string; handler: string }> = [
+  { key: "w", object: "word", handler: "vi_to_word" },
+  { key: "W", object: "WORD", handler: "vi_to_WORD" },
+  { key: '"', object: '"', handler: "vi_to_dquote" },
+  { key: "'", object: "'", handler: "vi_to_squote" },
+  { key: "`", object: "`", handler: "vi_to_backtick" },
+  { key: "(", object: "(", handler: "vi_to_paren" },
+  { key: ")", object: "(", handler: "vi_to_paren" },
+  { key: "b", object: "(", handler: "vi_to_paren" },
+  { key: "{", object: "{", handler: "vi_to_brace" },
+  { key: "}", object: "{", handler: "vi_to_brace" },
+  { key: "B", object: "{", handler: "vi_to_brace" },
+  { key: "[", object: "[", handler: "vi_to_bracket" },
+  { key: "]", object: "[", handler: "vi_to_bracket" },
+  { key: "<", object: "<", handler: "vi_to_angle" },
+  { key: ">", object: "<", handler: "vi_to_angle" },
+];
+
+function textObjectForKey(key: string): string | undefined {
+  return TEXT_OBJECT_KEYS.find((entry) => entry.key === key)?.object;
+}
 
 // Re-seat the character-wise visual selection onto an exact byte range.
 async function setVisualRange(start: number, end: number): Promise<void> {
@@ -3426,7 +3530,7 @@ async function enterVisualTextObject(modifier: TextObjectType): Promise<void> {
   // aimed at is gone.
   if (generation !== modalGeneration) return;
 
-  const objectType = ev.key.length === 1 ? TEXT_OBJECT_FOR_KEY[ev.key] : undefined;
+  const objectType = ev.key.length === 1 ? textObjectForKey(ev.key) : undefined;
   if (objectType === undefined) {
     editor.setStatus(getModeIndicator(state.mode));
     return;
@@ -4439,26 +4543,7 @@ function defineViModes(): void {
 
   // Define vi-text-object mode (waiting for object type: w, ", (, etc.)
   editor.defineMode("vi-text-object", [
-    // Word objects
-    ["w", "vi_to_word"],
-    ["W", "vi_to_WORD"],
-
-    // Quote objects
-    ["\"", "vi_to_dquote"],
-    ["'", "vi_to_squote"],
-    ["`", "vi_to_backtick"],
-
-    // Bracket objects
-    ["(", "vi_to_paren"],
-    [")", "vi_to_paren"],
-    ["b", "vi_to_paren"],
-    ["{", "vi_to_brace"],
-    ["}", "vi_to_brace"],
-    ["B", "vi_to_brace"],
-    ["[", "vi_to_bracket"],
-    ["]", "vi_to_bracket"],
-    ["<", "vi_to_angle"],
-    [">", "vi_to_angle"],
+    ...TEXT_OBJECT_KEYS.map(({ key, handler }): ModeBinding => [key, handler]),
 
     // Cancel
     ["Escape", "vi_to_cancel"],

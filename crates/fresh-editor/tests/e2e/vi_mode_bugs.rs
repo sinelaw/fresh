@@ -2392,3 +2392,152 @@ fn test_vi_linewise_operator_fails_at_buffer_edge() {
     wait_normal(&mut harness);
     harness.wait_for_buffer_content("one\ntwo\n").unwrap();
 }
+
+// =============================================================================
+// Bugs found by an unprimed review of this branch, each checked against Vim 9.1
+// =============================================================================
+
+/// `[count]J` near the end of the file joined past the last line, deleting the
+/// trailing newline and appending a space. Vim joins what it can and stops.
+#[test]
+fn test_vi_join_count_stops_at_last_line() {
+    let (mut harness, _td) = vi_mode_harness(80, 24);
+    let fixture = TestFixture::new("test.txt", "aaa\nbbb\nccc\n").unwrap();
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+    enable_vi_mode(&mut harness);
+
+    send_key(&mut harness, 'j');
+    send_key(&mut harness, '5');
+    send_key(&mut harness, 'J');
+
+    harness.wait_for_buffer_content("aaa\nbbb ccc\n").unwrap();
+}
+
+/// Visual `J` took its line span from the line-wise mode's own bookkeeping, so
+/// in charwise visual it always joined exactly one pair.
+#[test]
+fn test_vi_visual_charwise_join_spans_selection() {
+    let (mut harness, _td) = vi_mode_harness(80, 24);
+    let fixture = TestFixture::new("test.txt", "aaa\nbbb\nccc\nddd\n").unwrap();
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+    enable_vi_mode(&mut harness);
+
+    send_key(&mut harness, 'v');
+    harness
+        .wait_until(|h| h.editor().editor_mode() == Some("vi-visual".to_string()))
+        .unwrap();
+    send_key(&mut harness, 'j');
+    send_key(&mut harness, 'j');
+    send_key(&mut harness, 'J');
+
+    harness
+        .wait_for_buffer_content("aaa bbb ccc\nddd\n")
+        .unwrap();
+}
+
+/// `r` replaces on the caret's line only. An unclamped count ran over the line
+/// break; Vim refuses the command outright when the line is too short.
+#[test]
+fn test_vi_replace_char_count_stays_on_line() {
+    let (mut harness, _td) = vi_mode_harness(80, 24);
+    let fixture = TestFixture::new("test.txt", "ab\ncd\n").unwrap();
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+    enable_vi_mode(&mut harness);
+
+    send_key(&mut harness, '5');
+    send_key(&mut harness, 'r');
+    send_key(&mut harness, 'z');
+    wait_normal(&mut harness);
+
+    // Nothing changes: five characters are not available on this line.
+    send_key(&mut harness, 'x');
+    harness.wait_for_buffer_content("b\ncd\n").unwrap();
+}
+
+/// `d3G` deletes to line 3, not to the end of the file. The count was dropped
+/// because a count defaulted to 1 is indistinguishable from no count at all.
+#[test]
+fn test_vi_delete_to_counted_line() {
+    let (mut harness, _td) = vi_mode_harness(80, 24);
+    let fixture = TestFixture::new("test.txt", "aaa\nbbb\nccc\nddd\n").unwrap();
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+    enable_vi_mode(&mut harness);
+
+    send_key(&mut harness, 'd');
+    harness
+        .wait_until(|h| h.editor().editor_mode() == Some("vi-operator-pending".to_string()))
+        .unwrap();
+    send_key(&mut harness, '3');
+    send_key(&mut harness, 'G');
+
+    harness.wait_for_buffer_content("ddd\n").unwrap();
+}
+
+/// A line-wise change leaves an empty line to type into; `.` replayed it as a
+/// plain delete, so the repeated text landed on the following line.
+#[test]
+fn test_vi_linewise_change_dot_repeat() {
+    let (mut harness, _td) = vi_mode_harness(80, 24);
+    let fixture = TestFixture::new("test.txt", "one\ntwo\nthree\nfour\nfive\n").unwrap();
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+    enable_vi_mode(&mut harness);
+
+    send_operator_motion(&mut harness, 'c', 'j');
+    wait_insert(&mut harness);
+    harness.type_text("X").unwrap();
+    escape(&mut harness);
+
+    send_key(&mut harness, 'j');
+    send_key(&mut harness, 'j');
+    send_key(&mut harness, '.');
+
+    harness.wait_for_buffer_content("X\nthree\nX\n").unwrap();
+}
+
+/// `vh` and `vk` have to take the character `v` started on with them. Driving
+/// the host's selection backwards just shrank it to nothing.
+#[test]
+fn test_vi_visual_backward_keeps_anchor_character() {
+    let (mut harness, _td) = vi_mode_harness(80, 24);
+    let fixture = TestFixture::new("test.txt", "hello world\n").unwrap();
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+    enable_vi_mode(&mut harness);
+
+    send_key(&mut harness, 'l');
+    send_key(&mut harness, 'l');
+    send_key(&mut harness, 'l');
+    send_key(&mut harness, 'v');
+    harness
+        .wait_until(|h| h.editor().editor_mode() == Some("vi-visual".to_string()))
+        .unwrap();
+    send_key(&mut harness, 'h');
+    send_key(&mut harness, 'd');
+
+    harness.wait_for_buffer_content("heo world\n").unwrap();
+}
+
+/// Visual `k` grows the selection upward from the anchor.
+#[test]
+fn test_vi_visual_up_keeps_anchor_character() {
+    let (mut harness, _td) = vi_mode_harness(80, 24);
+    let fixture = TestFixture::new("test.txt", "aaa\nbbb\nccc\n").unwrap();
+    harness.open_file(&fixture.path).unwrap();
+    harness.render().unwrap();
+    enable_vi_mode(&mut harness);
+
+    send_key(&mut harness, 'j');
+    send_key(&mut harness, 'v');
+    harness
+        .wait_until(|h| h.editor().editor_mode() == Some("vi-visual".to_string()))
+        .unwrap();
+    send_key(&mut harness, 'k');
+    send_key(&mut harness, 'd');
+
+    harness.wait_for_buffer_content("bb\nccc\n").unwrap();
+}
