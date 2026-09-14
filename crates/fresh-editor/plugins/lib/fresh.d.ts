@@ -1427,6 +1427,8 @@ type HintEntry = {
 	label: string;
 };
 type ButtonKind = "normal" | "primary" | "danger";
+type LabelAlign = "left" | "right";
+type Elide = "none" | "tail" | "head";
 type TreeNode = {
 	/**
 	* The pre-rendered row content (text + per-row overlays).
@@ -1515,6 +1517,17 @@ type WidgetSpec = {
 	* Ignored when the row contains multi-line (block) children.
 	*/
 	wrap: boolean;
+	/**
+	* Settle a wrapping row's lines against its right edge: buttons
+	* flush right while they fit, wrapping from the left when they do
+	* not. Read only when `wrap` is set.
+	*
+	* The point is that the plugin does not have to know which of those
+	* two layouts it is getting — the host lays the row out at a width
+	* the plugin cannot see, and a guess made here is a guess about a
+	* frame that has not happened yet.
+	*/
+	justifyEnd: boolean;
 } | {
 	"kind": "col";
 	children: Array<WidgetSpec>;
@@ -1543,9 +1556,18 @@ type WidgetSpec = {
 	*/
 	labelFirst: boolean;
 	/**
-	* Pad the label to this display width in `label_first`
-	* layout so a column of controls aligns their chips. `0` =
-	* no padding. Defaults to `0`.
+	* The label column a form's controls share, in display cells.
+	* `0` = no column alignment. Defaults to `0`.
+	*
+	* **It means something in both layouts, and not the same thing.**
+	* With `label_first`, it pads this toggle's own label so its chip
+	* lines up with its siblings' value cells. Chip-first, the toggle
+	* has no label in that column at all, so it indents the *chip*
+	* there instead — which is how `[v] Remember this machine` sits
+	* under the fields above it rather than at the panel's edge. A
+	* chip-first toggle in a panel that sets a `label_width` therefore
+	* moves right by that much plus the `: ` its siblings spend;
+	* before this field was read on that path it stayed flush left.
 	*/
 	labelWidth: number;
 	key?: string | null;
@@ -1635,6 +1657,33 @@ type WidgetSpec = {
 	* taller than its window. Defaults to `0`.
 	*/
 	scrollOffset: number;
+	key?: string | null;
+} | {
+	"kind": "radio";
+	/**
+	* The selectable options, in display order.
+	*/
+	options: Array<string>;
+	/**
+	* Initial selected index into `options`. Read at first render
+	* only; instance state takes over thereafter. Clamped to
+	* `[0, options.len())`.
+	*/
+	selectedIndex: number;
+	/**
+	* Optional label rendered before the options. Empty = omitted.
+	*/
+	label?: string;
+	/**
+	* Whether this widget has visual focus. Initial-only once the
+	* host owns focus.
+	*/
+	focused: boolean;
+	/**
+	* Pad the label to this display width so a column of controls
+	* aligns their option cells. `0` = no padding.
+	*/
+	labelWidth: number;
 	key?: string | null;
 } | {
 	"kind": "dualList";
@@ -1731,10 +1780,9 @@ type WidgetSpec = {
 	*/
 	bare: boolean;
 	/**
-	* Stretch the button across the full width it is laid out in
-	* (the panel's content width, or its share of an enclosing
-	* `Row`), padding the label with spaces — and truncating it
-	* with an `…` when the width can't hold it.
+	* Stretch the button across the full width it is laid out in:
+	* the panel's content width, its share of an enclosing `Row`,
+	* or the width an anchored popup settled on.
 	*
 	* This exists because focus / hover paint the button's *own*
 	* cells: a natural-width button leaves the rest of its row
@@ -1742,14 +1790,23 @@ type WidgetSpec = {
 	* row out (a `LabeledSection` pads every child to its inner
 	* width). Dropdown and context-menu entries are rows of a
 	* menu, not free-standing actions, so their highlight has to
-	* span the row — set this on them and the host fills the row
-	* at the width it actually rendered, with no plugin-side
-	* width guess to drift on a resize or a dock drag.
+	* span the row.
 	*
-	* Leave it off for a free-standing action, and off for
-	* anything inside an anchored popup that sizes itself to its
-	* content — filling there stretches the popup to the whole
-	* panel width.
+	* **It is a width, not a longer label.** The host sizes the
+	* button's box to its content and lets the enclosing column
+	* stretch it, so the label stays the label and how wide the
+	* row is stays layout's answer — including an answer nobody
+	* can predict, like a dock the user just dragged. It used to
+	* be spelled by padding the label with spaces out to a width
+	* the caller had to supply, which is why it once carried a
+	* warning against using it inside an anchored popup that hugs
+	* its content: a box sized by its own padded text cannot hug.
+	* A box sized by its content can, and the stretch is then what
+	* widens every row to the widest one — so a menu no longer
+	* pads its labels to align them.
+	*
+	* A label too long for the width it is given is truncated at
+	* the tail with an `…`.
 	*/
 	fullWidth: boolean;
 	/**
@@ -2111,6 +2168,41 @@ type WidgetSpec = {
 	*/
 	rows: number;
 	key?: string | null;
+} | {
+	"kind": "label";
+	text: string;
+	style?: Partial<OverlayOptions>;
+	/**
+	* Indent into the field column of a form whose controls share
+	* this label width. `0` = flush left.
+	*/
+	labelWidth: number;
+	/**
+	* Two or more styled runs on the one row — a state glyph in the
+	* state's colour, then the name it belongs to. When non-empty
+	* these replace `text`, exactly as they do on a
+	* `TextPropertyEntry`; `style` still covers the whole row.
+	* Without this a plugin needing two inks on a line has to drop
+	* to `Raw`, which is a list of whole rows and no longer a label.
+	*/
+	segments?: Array<StyledSegment>;
+	/**
+	* Break the text across rows instead of clipping it, at the width
+	* layout settles on. Continuation rows start at the line's own
+	* leading indent — the marker gutter and `label_width` count, so a
+	* wrapped field hint stays inside the field column — and a word too
+	* long for a row of its own is broken rather than run off the edge.
+	*
+	* The alternative is the plugin wrapping the prose itself, which
+	* means deciding the width, which is layout's answer and not the
+	* plugin's: see `fresh_ui::desc::Wrap`.
+	*/
+	wrap: boolean;
+	/**
+	* How the row marks itself when it does not fit. See [`Elide`].
+	* Ignored when `wrap` is set.
+	*/
+	elide: Elide;
 } | {
 	"kind": "raw";
 	entries: Array<TextPropertyEntry>;
@@ -3612,6 +3704,12 @@ interface EditorAPI {
 	*/
 	getDataDir(): string;
 	/**
+	* The user's home directory as the editor resolved it, or `""` when it
+	* has none. A plugin reading a dotfile asks here rather than reading
+	* `$HOME`, which no test can redirect per-editor.
+	*/
+	getHomeDir(): string;
+	/**
 	* Directory holding terminal scrollback backing files for the current
 	* working directory. Each project root / worktree has its own subdir, so
 	* Universal Search's terminal scope can stay scoped to the active
@@ -4436,18 +4534,15 @@ interface EditorAPI {
 	setBufferShowCursors(bufferId: number, show: boolean): boolean;
 	/**
 	* Choose the grammar a virtual buffer is highlighted with.
-	*
-	* Panel buffers are named `*<panel id>*`, which resolves to no grammar.
-	* A plugin composing a known text shape into one calls this so the host
-	* highlights it instead of the plugin painting per-row overlays. `name`
-	* is resolved like a virtual buffer's own name, so an extension in it
-	* (`"stream.diff"`) selects the grammar.
+	* 
+	* Panel buffers are named `*<panel id>*`, which resolves to no
+	* grammar; a plugin composing a known text shape into one calls this
+	* so the host highlights it instead of the plugin painting overlays.
 	*/
 	setBufferLanguage(bufferId: number, name: string): boolean;
 	/**
-	* Show old/new diff line numbers in a composed diff stream's gutter. The
-	* host derives them from the stream's `@@` headers when the content is
-	* set, so the plugin never numbers a row itself.
+	* Show old/new diff line numbers in a composed diff stream's gutter,
+	* derived by the host from the stream's `@@` headers.
 	*/
 	setBufferDiffGutter(bufferId: number, enabled: boolean): boolean;
 	/**
@@ -4815,7 +4910,7 @@ interface EditorAPI {
 	* Mount a declarative widget panel as a centered floating
 	* overlay (not bound to any virtual buffer).
 	*/
-	mountFloatingWidget(panelId: number, specObj: unknown, widthPct: number, heightPct: number, asDock?: boolean, focusMarker?: boolean, title?: string, closable?: boolean, startBlurred?: boolean, mode?: string): boolean;
+	mountFloatingWidget(panelId: number, specObj: unknown, widthPct: number, heightPct: number, asDock?: boolean, focusMarker?: boolean, title?: string, closable?: boolean, startBlurred?: boolean, mode?: string, labelAlign?: string): boolean;
 	/**
 	* Mount a declarative widget panel as a **sidebar section**: a titled,
 	* collapsible section of the file explorer's column, appended after

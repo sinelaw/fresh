@@ -2189,6 +2189,47 @@ pub enum ButtonKind {
     Danger,
 }
 
+/// Which way a form control's label sits in its `label_width` column.
+///
+/// A panel-wide property, set at mount (`MountFloatingWidget.label_align`)
+/// and read by every `Text` / `Dropdown` / `Toggle` / `Number` / `Radio`
+/// that pads its label to a column — alignment only means something relative to
+/// the siblings sharing that column, so it is not a per-control field.
+/// `Left` is what every panel rendered before the option existed.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, rename_all = "camelCase")]
+pub enum LabelAlign {
+    /// `Name      : [ … ]` — the label starts the column, padding after.
+    #[default]
+    Left,
+    /// `     Name : [ … ]` — padding first, so the colons form one edge.
+    Right,
+}
+
+/// How text that does not fit the width layout gave it gives up the cells.
+///
+/// **The cut is the run's to mark, for the same reason the width is the
+/// box's**: only measurement knows whether the text fit, so a plugin that
+/// appended its own ellipsis had to be told a width first — which is the
+/// duplication this removes. Mirrors `fresh_ui::desc::Elide`; ignored by
+/// wrapping text, which has no overflow to mark.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, rename_all = "camelCase")]
+pub enum Elide {
+    /// Clip, silently — right where the enclosing box already explains the
+    /// overflow. What every row did before the option existed.
+    #[default]
+    None,
+    /// Keep the head, mark the cut at the end: a message, a label, a line of
+    /// output.
+    Tail,
+    /// Keep the tail, mark the cut at the start: a path, whose last component
+    /// is the part worth seeing.
+    Head,
+}
+
 /// Declarative widget tree. Each variant is one node; nested
 /// composition is via `Row { children }` / `Col { children }`.
 ///
@@ -2220,6 +2261,16 @@ pub enum WidgetSpec {
         /// Ignored when the row contains multi-line (block) children.
         #[serde(default)]
         wrap: bool,
+        /// Settle a wrapping row's lines against its right edge: buttons
+        /// flush right while they fit, wrapping from the left when they do
+        /// not. Read only when `wrap` is set.
+        ///
+        /// The point is that the plugin does not have to know which of those
+        /// two layouts it is getting — the host lays the row out at a width
+        /// the plugin cannot see, and a guess made here is a guess about a
+        /// frame that has not happened yet.
+        #[serde(default)]
+        justify_end: bool,
     },
     /// Vertical layout: children stacked top-to-bottom.
     Col {
@@ -2254,9 +2305,18 @@ pub enum WidgetSpec {
         /// the label don't flip the value. Defaults to `false`.
         #[serde(default)]
         label_first: bool,
-        /// Pad the label to this display width in `label_first`
-        /// layout so a column of controls aligns their chips. `0` =
-        /// no padding. Defaults to `0`.
+        /// The label column a form's controls share, in display cells.
+        /// `0` = no column alignment. Defaults to `0`.
+        ///
+        /// **It means something in both layouts, and not the same thing.**
+        /// With `label_first`, it pads this toggle's own label so its chip
+        /// lines up with its siblings' value cells. Chip-first, the toggle
+        /// has no label in that column at all, so it indents the *chip*
+        /// there instead — which is how `[v] Remember this machine` sits
+        /// under the fields above it rather than at the panel's edge. A
+        /// chip-first toggle in a panel that sets a `label_width` therefore
+        /// moves right by that much plus the `: ` its siblings spend;
+        /// before this field was read on that path it stayed flush left.
         #[serde(default)]
         label_width: u32,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2355,6 +2415,40 @@ pub enum WidgetSpec {
         /// taller than its window. Defaults to `0`.
         #[serde(default)]
         scroll_offset: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        key: Option<String>,
+    },
+    /// Inline single-select option group, rendered as
+    /// `label: (•) A   ( ) B   ( ) C` — every option visible in the
+    /// row, the selected one filled. The right shape for a short, fixed
+    /// choice a form asks about (a backend, a scope); a longer or
+    /// open-ended set is a `Dropdown`. Left/Right cycle the selection,
+    /// Home/End jump it, a click on an option selects it; Up/Down walk
+    /// the surrounding form like Tab.
+    ///
+    /// Like `Dropdown`, the *selected index* is host-owned instance
+    /// state after first render; the spec's `selected_index` is a seed
+    /// only. Every change fires `widget_event { event_type: "change",
+    /// payload: { index, value } }`.
+    Radio {
+        /// The selectable options, in display order.
+        options: Vec<String>,
+        /// Initial selected index into `options`. Read at first render
+        /// only; instance state takes over thereafter. Clamped to
+        /// `[0, options.len())`.
+        #[serde(default)]
+        selected_index: i32,
+        /// Optional label rendered before the options. Empty = omitted.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        label: String,
+        /// Whether this widget has visual focus. Initial-only once the
+        /// host owns focus.
+        #[serde(default)]
+        focused: bool,
+        /// Pad the label to this display width so a column of controls
+        /// aligns their option cells. `0` = no padding.
+        #[serde(default)]
+        label_width: u32,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
     },
@@ -2982,6 +3076,45 @@ pub enum WidgetSpec {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
     },
+    /// One row of static text — the hint under a field, a status line,
+    /// a read-only summary. Not focusable, never a hit. `style` colours
+    /// the text (a dim `fg`, italic); `label_width` indents it into a
+    /// form's field column (the column a sibling control's `[` opens
+    /// at for the same `label_width`), so a field's hint sits under its
+    /// value with no column arithmetic in the plugin.
+    Label {
+        text: String,
+        #[ts(type = "Partial<OverlayOptions>")]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        style: Option<OverlayOptions>,
+        /// Indent into the field column of a form whose controls share
+        /// this label width. `0` = flush left.
+        #[serde(default)]
+        label_width: u32,
+        /// Two or more styled runs on the one row — a state glyph in the
+        /// state's colour, then the name it belongs to. When non-empty
+        /// these replace `text`, exactly as they do on a
+        /// `TextPropertyEntry`; `style` still covers the whole row.
+        /// Without this a plugin needing two inks on a line has to drop
+        /// to `Raw`, which is a list of whole rows and no longer a label.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        segments: Vec<crate::text_property::StyledSegment>,
+        /// Break the text across rows instead of clipping it, at the width
+        /// layout settles on. Continuation rows start at the line's own
+        /// leading indent — the marker gutter and `label_width` count, so a
+        /// wrapped field hint stays inside the field column — and a word too
+        /// long for a row of its own is broken rather than run off the edge.
+        ///
+        /// The alternative is the plugin wrapping the prose itself, which
+        /// means deciding the width, which is layout's answer and not the
+        /// plugin's: see `fresh_ui::desc::Wrap`.
+        #[serde(default)]
+        wrap: bool,
+        /// How the row marks itself when it does not fit. See [`Elide`].
+        /// Ignored when `wrap` is set.
+        #[serde(default)]
+        elide: Elide,
+    },
     /// Imperative-virtual-buffer escape hatch. The plugin supplies
     /// `TextPropertyEntry[]` exactly as it would for
     /// `setVirtualBufferContent`; the host inlines those entries into
@@ -3098,6 +3231,7 @@ impl WidgetSpec {
             | WidgetSpec::Number { key, .. }
             | WidgetSpec::Overlay { key, .. }
             | WidgetSpec::Popup { key, .. }
+            | WidgetSpec::Radio { key, .. }
             | WidgetSpec::Raw { key, .. }
             | WidgetSpec::Row { key, .. }
             | WidgetSpec::Spacer { key, .. }
@@ -5760,6 +5894,10 @@ pub enum PluginCommand {
         /// false) so existing panels render unchanged.
         #[serde(default)]
         focus_marker: bool,
+        /// How this panel's form controls align their labels within the
+        /// shared `label_width` column. See [`LabelAlign`].
+        #[serde(default)]
+        label_align: LabelAlign,
         /// Native modal-frame title. When `Some`, a centered panel draws a
         /// title bar into its top border (the declarative dialog's shell,
         /// drawn by the host — not faked with a `labeledSection` inside the

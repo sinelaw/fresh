@@ -3160,6 +3160,7 @@ mod tests {
             scrollbar_flash_until: None,
             fullscreen: false,
             focus_marker: false,
+            label_align: Default::default(),
             title: None,
             closable: false,
             hovered_widget_key: String::new(),

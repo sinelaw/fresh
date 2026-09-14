@@ -152,6 +152,7 @@ fn column(interior: Option<super::panel::Interior>) -> Node<UiMsg> {
 
                     hovered_key: i.hovered_key.clone(),
                     marker_gutter: i.marker_gutter,
+                    label_align: i.label_align,
                     hovered_item_key: i.hovered_item_key.clone(),
                     hovered_popup_row: i.hovered_popup_row.clone(),
                     reveal: i.reveal.clone(),
@@ -423,6 +424,7 @@ mod tests {
                     hovered_popup_row: String::new(),
                     reveal: fresh_ui::behavior::anchor::Anchor::new(),
                     marker_gutter: false,
+                    label_align: Default::default(),
                     avail_height: None,
                     scrollbar_reveal: None,
                     keymap: None,
@@ -627,6 +629,7 @@ mod tests {
                     hovered_popup_row: String::new(),
                     reveal: fresh_ui::behavior::anchor::Anchor::new(),
                     marker_gutter: false,
+                    label_align: Default::default(),
                     avail_height: None,
                     scrollbar_reveal: None,
                     keymap: None,

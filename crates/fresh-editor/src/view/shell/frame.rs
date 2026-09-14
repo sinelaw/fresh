@@ -1438,6 +1438,7 @@ mod tests {
                 hovered_popup_row: String::new(),
                 reveal: fresh_ui::behavior::anchor::Anchor::new(),
                 marker_gutter: false,
+                label_align: Default::default(),
                 avail_height: None,
                 scrollbar_reveal: None,
                 keymap: None,

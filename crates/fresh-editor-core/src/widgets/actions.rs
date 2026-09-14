@@ -45,6 +45,7 @@ fn leaf_key_matches(spec: &WidgetSpec, target: &str) -> bool {
         // through).
         | WidgetSpec::Dropdown { key: Some(k), .. }
         | WidgetSpec::Number { key: Some(k), .. }
+        | WidgetSpec::Radio { key: Some(k), .. }
         | WidgetSpec::DualList { key: Some(k), .. } => k == target,
         _ => false,
     }
@@ -296,6 +297,7 @@ impl ContainsKey for WidgetSpec {
             | WidgetSpec::Text { key, .. }
             | WidgetSpec::List { key, .. }
             | WidgetSpec::Tree { key, .. }
+            | WidgetSpec::Radio { key, .. }
             | WidgetSpec::Raw { key, .. } => key.as_deref() == Some(widget_key),
             _ => false,
         };
@@ -330,6 +332,7 @@ mod tests {
     fn find_widget_by_key_recurses_into_row() {
         let spec = WidgetSpec::Row {
             wrap: false,
+            justify_end: false,
             children: vec![toggle_with_key("a"), toggle_with_key("b")],
             key: None,
         };
@@ -358,6 +361,7 @@ mod tests {
         };
         let spec = WidgetSpec::Row {
             wrap: false,
+            justify_end: false,
             children: vec![toggle_with_key("t"), dropdown],
             key: None,
         };

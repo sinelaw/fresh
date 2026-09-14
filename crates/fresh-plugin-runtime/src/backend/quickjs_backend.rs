@@ -1143,6 +1143,26 @@ impl JsEditorApi {
     }
 }
 
+/// `labelAlign` from the mount options.
+///
+/// **An unrecognised value warns instead of quietly meaning `left`.** The
+/// option is a bare string at the end of a positional argument list, so
+/// `"Right"` or `"end"` is a plausible typo, and its only symptom would be
+/// a form that silently keeps the default gutter — the hardest kind of
+/// bug to attribute to the call that caused it.
+fn parse_label_align(v: Option<&str>) -> fresh_core::api::LabelAlign {
+    match v {
+        Some("right") => fresh_core::api::LabelAlign::Right,
+        Some("left") | None => fresh_core::api::LabelAlign::Left,
+        Some(other) => {
+            tracing::warn!(
+                "mountFloatingWidget: labelAlign {other:?} is not \"left\" or \"right\"; using \"left\""
+            );
+            fresh_core::api::LabelAlign::Left
+        }
+    }
+}
+
 #[plugin_api_impl]
 #[rquickjs::methods(rename_all = "camelCase")]
 impl JsEditorApi {
@@ -3377,6 +3397,16 @@ impl JsEditorApi {
     /// review-diff comments keyed off git state.
     pub fn get_data_dir(&self) -> String {
         self.services.data_dir().to_string_lossy().to_string()
+    }
+
+    /// The user's home directory as the editor resolved it, or `""` when it
+    /// has none. A plugin reading a dotfile asks here rather than reading
+    /// `$HOME`, which no test can redirect per-editor.
+    pub fn get_home_dir(&self) -> String {
+        self.services
+            .home_dir()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default()
     }
 
     /// Directory holding terminal scrollback backing files for the current
@@ -7029,6 +7059,9 @@ impl JsEditorApi {
         // The panel's own keymap: a `defineMode` name whose bindings its
         // keys resolve against first. Optional trailing arg, default none.
         mode: rquickjs::function::Opt<String>,
+        // How the panel's form controls align their labels in the shared
+        // column: `"right"` or `"left"` (default). Optional trailing arg.
+        label_align: rquickjs::function::Opt<String>,
     ) -> rquickjs::Result<bool> {
         let json = js_to_json(&ctx, spec_obj);
         let spec: fresh_core::api::WidgetSpec = match serde_json::from_value(json) {
@@ -7054,6 +7087,7 @@ impl JsEditorApi {
                 closable: closable.0.unwrap_or(false),
                 start_blurred: start_blurred.0.unwrap_or(false),
                 mode: mode.0.filter(|s| !s.is_empty()),
+                label_align: parse_label_align(label_align.0.as_deref()),
             })
             .is_ok())
     }
