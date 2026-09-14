@@ -24,6 +24,8 @@
       "outro": 1.4
     },
     "donut": {
+      "style": "ansi",
+      "charset": "unicode",
       "unit": "MB",
       "total": "103 MB",
       "total_label": "in use",
