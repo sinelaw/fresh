@@ -1020,6 +1020,106 @@ function byteLengthOfCharAt(text: string, index: number): number {
   return editor.utf8ByteLength(String.fromCodePoint(codePoint ?? text.charCodeAt(index)));
 }
 
+// Index of the last line that has content. A file ending in a newline has no
+// line after it in Vim's model, but the editor still places a caret there.
+async function lastContentLine(bufferId: number): Promise<number | null> {
+  const lineCount = editor.getBufferInfo(bufferId)?.line_count ?? null;
+  if (lineCount === null || lineCount <= 0) {
+    return null;
+  }
+  const length = editor.getBufferLength(bufferId);
+  let last = lineCount - 1;
+  const start = await editor.getLineStartPosition(last);
+  if (start !== null && start >= length && last > 0) {
+    last -= 1;
+  }
+  return last;
+}
+
+// Motions Vim treats as *linewise*: an operator over one of these takes whole
+// lines, newline included, not the byte span between the two carets. Without
+// this, `dj` deleted the tail of one line and the head of the next, and `dG`
+// deleted to the end of the buffer charwise.
+const LINEWISE_MOTIONS: Record<string, true> = {
+  move_down: true,
+  move_up: true,
+  move_document_start: true,
+  move_document_end: true,
+};
+
+// The line span an operator+linewise-motion covers, as [firstLine, lineCount].
+async function linewiseSpanForMotion(
+  motionAction: string,
+  count: number,
+): Promise<{ firstLine: number; lineCount: number } | null> {
+  const bufferId = editor.getActiveBufferId();
+  const line = editor.getPrimaryCursor()?.line ?? null;
+  if (line === null) {
+    return null;
+  }
+  switch (motionAction) {
+    case "move_down":
+      return { firstLine: line, lineCount: count + 1 };
+    case "move_up": {
+      const first = Math.max(0, line - count);
+      return { firstLine: first, lineCount: line - first + 1 };
+    }
+    case "move_document_start":
+      return { firstLine: 0, lineCount: line + 1 };
+    case "move_document_end": {
+      const last = await lastContentLine(bufferId);
+      if (last === null || last < line) {
+        return null;
+      }
+      return { firstLine: line, lineCount: last - line + 1 };
+    }
+    default:
+      return null;
+  }
+}
+
+// Apply an operator to whole lines. The linewise helpers all count forward
+// from the caret's line, so a span that starts above the caret is handled by
+// seating the caret on its first line first.
+async function applyOperatorLinewise(
+  operator: string,
+  firstLine: number,
+  lineCount: number,
+): Promise<void> {
+  const bufferId = editor.getActiveBufferId();
+  const start = await editor.getLineStartPosition(firstLine);
+  if (start === null || lineCount <= 0) {
+    switchMode("normal");
+    return;
+  }
+  editor.setBufferCursor(bufferId, start);
+  await editor.flush();
+
+  switch (operator) {
+    case "d":
+      await cutLinewise(lineCount);
+      break;
+    case "y":
+      await yankLinewise(lineCount);
+      break;
+    case "c":
+      await changeLinewise(lineCount);
+      // Flush first, for the reason the other change-operator sites document:
+      // the delete and the caret move are queued, and `switchMode` samples the
+      // caret to open the insert session.
+      await editor.flush();
+      switchMode("insert");
+      return;
+    case ">":
+    case "<":
+      await applyIndentToLineRange(operator, start, lineCount);
+      break;
+    default:
+      break;
+  }
+  switchMode("normal");
+}
+
 async function applyOperatorWithRange(operator: string, start: number, end: number): Promise<void> {
   const rangeStart = Math.min(start, end);
   const rangeEnd = Math.max(start, end);
@@ -1374,6 +1474,16 @@ async function applyOperatorWithMotion(operator: string, motionAction: string, c
   // Record last change for '.' repeat (only for delete and change, not yank)
   if (operator === "d" || operator === "c") {
     recordChange({ type: "operator-motion", operator, motion: motionAction, count });
+  }
+
+  if (LINEWISE_MOTIONS[motionAction]) {
+    const span = await linewiseSpanForMotion(motionAction, count);
+    if (span === null) {
+      switchMode("normal");
+      return;
+    }
+    await applyOperatorLinewise(operator, span.firstLine, span.lineCount);
+    return;
   }
 
   const selectAction = motionToSelection[motionAction];
