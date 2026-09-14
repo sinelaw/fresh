@@ -971,6 +971,57 @@ mod tests {
     }
 
     #[test]
+    fn an_in_flight_chord_outranks_a_modes_single_key_fallthrough() {
+        // A buffer-local mode resolves single keys through the
+        // ui-fallthrough whitelist, which must not claim the second key of
+        // a chord already in flight — mode chords never match a Normal
+        // sequence, so nothing else would hold the prefix.
+        let mut config = config();
+        config.keybindings.push(crate::config::Keybinding {
+            key: String::new(),
+            modifiers: Vec::new(),
+            keys: vec![
+                crate::config::KeyPress {
+                    key: "x".to_string(),
+                    modifiers: vec!["ctrl".to_string()],
+                },
+                crate::config::KeyPress {
+                    key: "q".to_string(),
+                    modifiers: vec!["ctrl".to_string()],
+                },
+            ],
+            chord: String::new(),
+            action: "select_all".to_string(),
+            args: std::collections::HashMap::new(),
+            when: Some("normal".to_string()),
+        });
+        let kb = KeybindingResolver::new(&config);
+        let view = ModeKeyView {
+            effective_mode: Some("markdown-source".to_string()),
+            allows_text_input: false,
+            global_mode_read_only: None,
+        };
+        let ctrl_q = event(KeyCode::Char('q'), KeyModifiers::CONTROL);
+        let ctrl_b = event(KeyCode::Char('b'), KeyModifiers::CONTROL);
+        let pending_ctrl_x = [(KeyCode::Char('x'), KeyModifiers::CONTROL)];
+        // On its own, Ctrl+Q is still the mode's whitelisted fallthrough.
+        assert_eq!(
+            mode_key_disposition(&view, &[], &kb, &ctrl_q),
+            ModeKeyDisposition::Run(Action::Quit)
+        );
+        // After Ctrl+X, the same key completes the chord instead.
+        assert_eq!(
+            mode_key_disposition(&view, &pending_ctrl_x, &kb, &ctrl_q),
+            ModeKeyDisposition::Run(Action::SelectAll)
+        );
+        // A key that extends no chord still gets the mode's fallthrough.
+        assert_eq!(
+            mode_key_disposition(&view, &pending_ctrl_x, &kb, &ctrl_b),
+            ModeKeyDisposition::Run(Action::ToggleFileExplorer)
+        );
+    }
+
+    #[test]
     fn mode_bindings_win_over_capture() {
         // A `defineMode`-style binding (config `when: "mode:NAME"`) must
         // resolve ahead of the text-input capture.
