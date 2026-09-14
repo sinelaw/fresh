@@ -34,6 +34,8 @@ specific to filming *this* program.
 | `fresh-ui-anatomy.json` | explode | the retained UI tree, one element at a time |
 | `fresh-welcome-scroll.json` | solo, stepped | the Welcome screen, scrolled from the wordmark to the theme card, then restyled live |
 | `fresh-dock-cleanup.json` | solo, stepped | 25 unreadable orchestrator rows, filed into folders and renamed by an agent |
+| `fresh-dock-cleanup-short.json` | solo, stepped | the same, cut to 14s for a feed |
+| `fresh-dock-cleanup-short-vertical.json` | solo, stepped | the 14s cut at 9:16 |
 
 `assets/<clip>/fresh/config.json` is a config directory a spec copies in, so a
 capture gets a deliberate theme and a known set of enabled plugins instead of
@@ -171,3 +173,29 @@ renders the state glyph, the label and the on-disk/pending tags — branch and
 the git summary belong to card view, and 25 rows of cards do not fit. The
 fixture's branches and uncommitted work are real (`git-report.json` records
 what the probe saw), the compact dock simply does not draw them.
+
+### The short cuts
+
+`fresh-dock-cleanup-short.json` and its `-vertical` twin are the same take as
+the long clip — same capture block, copied from it by `gen-spec-short.py`
+rather than restated, so the two cuts cannot drift apart when the fixture
+changes. Only `render` differs. Regenerate both with:
+
+```sh
+scripts/clips/assets/fresh-dock-cleanup/gen-spec.py
+scripts/clips/assets/fresh-dock-cleanup/gen-spec-short.py
+scripts/clips/assets/fresh-dock-cleanup/gen-spec-short.py --vertical
+```
+
+The short cut is not the long one with beats deleted. It is three ideas — the
+mess, the ask, the result — and the rename is promoted from three annotated
+beats to a single `swipe`, which is the only moment where an old name and its
+replacement occupy the same pixel. No beat carries a `head` or a `sub`, so the
+caption bar is not drawn at all and the viewport takes its height; every word
+is a note, in the frame, on the picture.
+
+**Prefer the vertical one.** The dock is a 41-column, 34-row rect — 0.54:1,
+within a hair of 9:16. A square frame can only fit that by height, so it
+leaves the surplus width to the editor pane beside it and the dock lands at
+about 40% of the frame. Vertical fills edge to edge at roughly twice the type
+size, for the same 14 seconds and the same beats.

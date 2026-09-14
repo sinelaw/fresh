@@ -1,0 +1,311 @@
+{
+  "name": "fresh-dock-cleanup-short-vertical",
+  "capture": {
+    "geometry": "150x50",
+    "font": "JetBrains Mono 21",
+    "screen": "2600x2000x24",
+    "display": ":99",
+    "settle": 58,
+    "term": "xfce4-terminal",
+    "key_settle": 0.2,
+    "type_settle": 0.5,
+    "copy_dirs": {
+      "~/.cache/fresh-dock-clip/config/fresh": "{scratch}/config/fresh"
+    },
+    "env": {
+      "XDG_CONFIG_HOME": "{scratch}/config",
+      "XDG_DATA_HOME": "{scratch}/data-{pane}",
+      "XDG_STATE_HOME": "{scratch}/state-{pane}",
+      "XDG_CACHE_HOME": "{scratch}/cache-{pane}",
+      "XDG_RUNTIME_DIR": "{scratch}/run-{pane}",
+      "CLIP_HOME": "~/.cache/fresh-dock-clip"
+    },
+    "keys": [
+      {
+        "shot": "before"
+      },
+      {
+        "key": "ctrl+p"
+      },
+      {
+        "sleep": 0.8
+      },
+      {
+        "type": "Clip: Run Agent"
+      },
+      {
+        "sleep": 0.8
+      },
+      {
+        "key": "Return"
+      },
+      {
+        "sleep": 4.4
+      },
+      {
+        "shot": "ask"
+      },
+      {
+        "sleep": 3.08
+      },
+      {
+        "shot": "asked"
+      },
+      {
+        "sleep": 1.92
+      },
+      {
+        "shot": "folders"
+      },
+      {
+        "sleep": 1.8
+      },
+      {
+        "shot": "m1"
+      },
+      {
+        "sleep": 1.9
+      },
+      {
+        "shot": "m2"
+      },
+      {
+        "sleep": 1.9
+      },
+      {
+        "shot": "m3"
+      },
+      {
+        "sleep": 18.3
+      },
+      {
+        "shot": "filed"
+      },
+      {
+        "sleep": 1.8
+      },
+      {
+        "shot": "r1"
+      },
+      {
+        "sleep": 1.9
+      },
+      {
+        "shot": "r2"
+      },
+      {
+        "sleep": 1.9
+      },
+      {
+        "shot": "r3"
+      },
+      {
+        "sleep": 11.9
+      },
+      {
+        "shot": "after"
+      }
+    ],
+    "panes": {
+      "solo": {
+        "argv": [
+          "$FRESH_BIN",
+          "--no-upgrade-check",
+          "--no-restore"
+        ]
+      }
+    }
+  },
+  "render": {
+    "size": [
+      1080,
+      1920
+    ],
+    "fps": 60,
+    "rows": 50,
+    "cols": 150,
+    "title": "fresh \u2014 orchestrator dock",
+    "note_size": 52,
+    "views": {
+      "mess": {
+        "rows": [
+          3,
+          31
+        ],
+        "cols": [
+          0,
+          41
+        ]
+      },
+      "list": {
+        "rows": [
+          3,
+          37
+        ],
+        "cols": [
+          0,
+          41
+        ]
+      },
+      "agent": {
+        "rows": [
+          1,
+          17
+        ],
+        "cols": [
+          32,
+          95
+        ]
+      },
+      "names": {
+        "rows": [
+          3,
+          14
+        ],
+        "cols": [
+          0,
+          41
+        ]
+      }
+    },
+    "outro_caption": [
+      "fresh",
+      "getfresh.dev"
+    ],
+    "timing": {
+      "intro": 0,
+      "zoom": 0,
+      "hold": 2.2,
+      "pan": 0.2,
+      "push": 0.5,
+      "outro": 0.8
+    },
+    "annotations": [
+      {
+        "shot": "before",
+        "view": "mess",
+        "rows": [
+          4,
+          30
+        ],
+        "cols": [
+          0,
+          41
+        ],
+        "hold": 2.2,
+        "note": "messy workspaces",
+        "note_at": "below-right"
+      },
+      {
+        "shots": [
+          "asked",
+          "folders",
+          "m1",
+          "m2"
+        ],
+        "crossfade": 0,
+        "view": "agent",
+        "rows": [
+          3,
+          6
+        ],
+        "cols": [
+          33,
+          90
+        ],
+        "band": false,
+        "hold": 3.2,
+        "note": "ask agent to organize them",
+        "note_at": "below-right"
+      },
+      {
+        "shots": [
+          "folders",
+          "m1",
+          "m2",
+          "m3",
+          "filed"
+        ],
+        "crossfade": 0,
+        "view": "list",
+        "rows": [
+          4,
+          36
+        ],
+        "cols": [
+          0,
+          41
+        ],
+        "band": false,
+        "hold": 2.4
+      },
+      {
+        "shot": "filed",
+        "view": "names",
+        "rows": [
+          5,
+          13
+        ],
+        "cols": [
+          0,
+          41
+        ],
+        "hold": 3.0,
+        "swipe": {
+          "to": "after",
+          "rows": [
+            5,
+            6,
+            7,
+            8,
+            9,
+            11,
+            12
+          ],
+          "at": 0.35,
+          "row": 0.2,
+          "stagger": 0.1,
+          "edge": 3
+        },
+        "note": "renamed to match the work",
+        "note_at": "below-right"
+      },
+      {
+        "shot": "before",
+        "view": "list",
+        "rows": [
+          4,
+          36
+        ],
+        "cols": [
+          0,
+          41
+        ],
+        "hold": 0.5,
+        "label": "BEFORE",
+        "tone": "before",
+        "band": false
+      },
+      {
+        "shot": "after",
+        "view": "list",
+        "rows": [
+          4,
+          36
+        ],
+        "cols": [
+          0,
+          41
+        ],
+        "hold": 0.9,
+        "label": "AFTER",
+        "tone": "after",
+        "band": false
+      }
+    ]
+  },
+  "encode": {
+    "crf": 18,
+    "preset": "slow"
+  }
+}
