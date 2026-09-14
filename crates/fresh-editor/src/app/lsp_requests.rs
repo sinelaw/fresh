@@ -3826,7 +3826,9 @@ impl Editor {
         buffer_id: BufferId,
         content_rect: ratatui::layout::Rect,
     ) -> Option<lsp_types::Command> {
-        let mappings = self.active_layout().view_line_mappings.get(&split_id)?;
+        // The rows a pane last drew are settled on its leaf, not on the window.
+        let pane_view = self.active_window().pane_view(split_id)?;
+        let mappings = &pane_view.rows;
         let visual_row = row.saturating_sub(content_rect.y) as usize;
         let mapping = mappings.get(visual_row)?;
         if mapping.virtual_text_namespace.as_deref() != Some("lsp-code-lens") {

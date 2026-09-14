@@ -74,14 +74,16 @@ done
     script_path
 }
 
-#[test]
-#[cfg_attr(windows, ignore = "uses a Bash fake LSP server")]
-fn test_code_lens_renders_and_executes_command() -> anyhow::Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let log_file = temp_dir.path().join("code_lens.log");
-    let script_path = create_code_lens_lsp_script(temp_dir.path());
-    let test_file = temp_dir.path().join("test.rs");
-    std::fs::write(&test_file, "fn main() {}\n")?;
+/// Open `source` as `test.rs` against the fake code-lens server, waiting until
+/// the server is up. Returns the harness and the path it logs its traffic to.
+fn open_with_code_lens_server(
+    temp_dir: &std::path::Path,
+    source: &str,
+) -> anyhow::Result<(EditorTestHarness, std::path::PathBuf)> {
+    let log_file = temp_dir.join("code_lens.log");
+    let script_path = create_code_lens_lsp_script(temp_dir);
+    let test_file = temp_dir.join("test.rs");
+    std::fs::write(&test_file, source)?;
 
     let mut config = fresh::config::Config::default();
     config.editor.enable_code_lens = true;
