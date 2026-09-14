@@ -2465,10 +2465,9 @@ pub enum WidgetSpec {
         /// button looks under the pointer.
         #[serde(default)]
         bare: bool,
-        /// Stretch the button across the full width it is laid out in
-        /// (the panel's content width, or its share of an enclosing
-        /// `Row`), padding the label with spaces — and truncating it
-        /// with an `…` when the width can't hold it.
+        /// Stretch the button across the full width it is laid out in:
+        /// the panel's content width, its share of an enclosing `Row`,
+        /// or the width an anchored popup settled on.
         ///
         /// This exists because focus / hover paint the button's *own*
         /// cells: a natural-width button leaves the rest of its row
@@ -2476,14 +2475,23 @@ pub enum WidgetSpec {
         /// row out (a `LabeledSection` pads every child to its inner
         /// width). Dropdown and context-menu entries are rows of a
         /// menu, not free-standing actions, so their highlight has to
-        /// span the row — set this on them and the host fills the row
-        /// at the width it actually rendered, with no plugin-side
-        /// width guess to drift on a resize or a dock drag.
+        /// span the row.
         ///
-        /// Leave it off for a free-standing action, and off for
-        /// anything inside an anchored popup that sizes itself to its
-        /// content — filling there stretches the popup to the whole
-        /// panel width.
+        /// **It is a width, not a longer label.** The host sizes the
+        /// button's box to its content and lets the enclosing column
+        /// stretch it, so the label stays the label and how wide the
+        /// row is stays layout's answer — including an answer nobody
+        /// can predict, like a dock the user just dragged. It used to
+        /// be spelled by padding the label with spaces out to a width
+        /// the caller had to supply, which is why it once carried a
+        /// warning against using it inside an anchored popup that hugs
+        /// its content: a box sized by its own padded text cannot hug.
+        /// A box sized by its content can, and the stretch is then what
+        /// widens every row to the widest one — so a menu no longer
+        /// pads its labels to align them.
+        ///
+        /// A label too long for the width it is given is truncated at
+        /// the tail with an `…`.
         #[serde(default)]
         full_width: bool,
         /// Style applied while the pointer is over this button. `None`

@@ -618,7 +618,7 @@ pub fn frame_tree(f: Frame) -> Node<UiMsg> {
         true => chrome.child(super::panel::keys_layer(
             super::widgets::Slot::Floating,
             scope_of(
-                f.panel.as_ref().and_then(|p| p.interior.as_ref()),
+                f.panel.as_ref().map(|p| &p.interior),
                 super::widgets::Slot::Floating,
             ),
         )),
@@ -1416,37 +1416,34 @@ mod tests {
             hover_style: None,
             style: None,
         };
-        let mut p = crate::view::shell::panel::Panel {
-            spot: crate::view::shell::panel::Spot::Centered {
-                width_pct: 60,
-                content_rows: 6,
-            },
+        let p = crate::view::shell::panel::Panel {
+            spot: crate::view::shell::panel::Spot::Centered { width_pct: 60 },
             title: None,
             closable: true,
             focused: true,
             fullscreen: false,
-            interior: None,
-        };
-        p.interior = Some(Interior {
-            spec: std::rc::Rc::new(spec),
-            states: Default::default(),
-            h_pan: Default::default(),
-            focus_key: "create".into(),
-            keyboard: true,
+            interior: Interior {
+                spec: std::rc::Rc::new(spec),
+                states: Default::default(),
+                h_pan: Default::default(),
+                focus_key: "create".into(),
+                keyboard: true,
 
-            page: None,
-            reading: None,
-            selection: Vec::new(),
-            compose: None,
-            hovered_key: None,
-            hovered_item_key: String::new(),
-            hovered_popup_row: String::new(),
-            marker_gutter: false,
-            avail_height: None,
-            scrollbar_reveal: None,
-            keymap: None,
-            markdown: None,
-        });
+                page: None,
+                reading: None,
+                selection: Vec::new(),
+                compose: None,
+                hovered_key: None,
+                hovered_item_key: String::new(),
+                hovered_popup_row: String::new(),
+                reveal: fresh_ui::behavior::anchor::Anchor::new(),
+                marker_gutter: false,
+                avail_height: None,
+                scrollbar_reveal: None,
+                keymap: None,
+                markdown: None,
+            },
+        };
         let mut ui: Ui<UiMsg> = Ui::new();
         ui.frame(
             frame_tree(Frame {

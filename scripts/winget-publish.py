@@ -83,10 +83,16 @@ def main():
         print(f"  {arch}: {release_asset_url(version, target)}")
     print()
 
-    # Check gh is authenticated
+    # Check gh is authenticated. gh's own words are the whole diagnosis: an
+    # expired token, one that lost a scope and one that was never set all fail
+    # here identically, and in CI there is nobody at a terminal to re-run it
+    # and look. Captured so the check itself stays quiet on the happy path.
     result = run(["gh", "auth", "status"], check=False, capture=True)
     if result.returncode != 0:
+        sys.stdout.write(result.stdout)
+        sys.stdout.write(result.stderr)
         print("Please authenticate with GitHub first: gh auth login")
+        print("In CI this is the WINGET_TOKEN secret; see gh's report above.")
         sys.exit(1)
 
     # Compute SHA256

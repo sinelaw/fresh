@@ -1770,11 +1770,12 @@ impl Window {
         buffer_id: BufferId,
         split_id: LeafId,
         event: &crate::model::event::Event,
-    ) {
+    ) -> bool {
         self.buffers
             .with_buffer_and_split(buffer_id, split_id, |state, vs| {
                 state.apply(&mut vs.cursors, event);
-            });
+            })
+            .is_some()
     }
 
     /// Same as [`apply_event_to_buffer`] but operates on a buffer-group

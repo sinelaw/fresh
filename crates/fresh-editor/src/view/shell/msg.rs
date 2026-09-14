@@ -70,6 +70,8 @@ impl UiFact {
                 | UiFact::WidgetPopupHover { .. }
                 | UiFact::WidgetHover { .. }
                 | UiFact::WidgetWheel { .. }
+                | UiFact::WidgetProseDrag { .. }
+                | UiFact::WidgetProseRelease { .. }
                 | UiFact::SettingsItemHover(_)
                 | UiFact::SettingsInheritHover(_)
                 | UiFact::SettingsEntryItemHover(_)
@@ -96,6 +98,44 @@ pub enum UiMsg {
 /// comparable, and tests compare facts.
 #[derive(Clone, Debug, PartialEq)]
 pub enum UiFact {
+    /// Part of a chord a panel's mode binds; see `panel::Keymap::chord`.
+    ChordPending {
+        code: crossterm::event::KeyCode,
+        modifiers: crossterm::event::KeyModifiers,
+    },
+    /// A key continued none of the pending prefix.
+    ChordAbandoned,
+    /// A press on a markdown document's prose, carrying the **byte of the
+    /// document** under the pointer — `Event::text_byte`, answered by the
+    /// wrapped run from the rows layout shaped. What replaces
+    /// `position_markdown_text_cursor_from_click`'s (reflowed line, byte in
+    /// line) pair and the arena it resolved them against.
+    WidgetProsePress {
+        slot: super::widgets::Slot,
+        widget: String,
+        byte: usize,
+        mods: fresh_ui::Mods,
+    },
+    /// The pointer moved with the prose's press still held: the run captured
+    /// it, so this arrives wherever the pointer went, and the byte is the
+    /// document's — or `None` off the run, where `above` says which of its two
+    /// ends the drag reaches. Transient: it moves a selection, never the
+    /// routing.
+    WidgetProseDrag {
+        slot: super::widgets::Slot,
+        widget: String,
+        byte: Option<usize>,
+        /// The pointer is above the run's first row rather than past its last.
+        /// Off the run is one of its ends and only the description knows
+        /// which: the applier has the document, not where the pointer went.
+        above: bool,
+    },
+    /// The prose's press was released. The run held the pointer through the
+    /// drag; this is where the host stops treating moves as a selection.
+    WidgetProseRelease {
+        slot: super::widgets::Slot,
+        widget: String,
+    },
     /// A press landed on a plugin widget, carrying what that press means.
     ///
     /// **What replaces the byte-range scan.** The runtime recorded a

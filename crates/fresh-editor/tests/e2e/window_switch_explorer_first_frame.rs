@@ -41,6 +41,7 @@ fn launch_harness(
         key: "F7".to_string(),
         modifiers: vec![],
         keys: vec![],
+        chord: String::new(),
         action: "next_window".to_string(),
         args: std::collections::HashMap::new(),
         when: None,

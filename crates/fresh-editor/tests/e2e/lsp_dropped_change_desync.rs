@@ -19,6 +19,9 @@
 //! divergence observable as the editor's error indicator.
 
 use crate::common::harness::EditorTestHarness;
+// `handle_plugin_command` only exists in a build with plugins.
+#[cfg(feature = "plugins")]
+use fresh_core::api::PluginCommand;
 
 /// The server's most recent `PUBLISH` line, or `None` before it publishes one.
 ///
@@ -200,6 +203,66 @@ fn count_from_log(log: &str, prefix: &str) -> usize {
         .filter_map(|rest| rest.trim().parse::<usize>().ok())
         .max()
         .unwrap_or(0)
+}
+
+/// Plugin text-edit commands must participate in LSP synchronization just like
+/// keyboard edits. Vi mode implements `dd` with `editor.deleteRange`, so a
+/// missing notification here leaves the server holding the deleted line.
+#[test]
+#[cfg(feature = "plugins")]
+#[cfg_attr(target_os = "windows", ignore)]
+fn plugin_delete_range_notifies_lsp() -> anyhow::Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let script_path = write_document_tracking_server(temp_dir.path());
+    let log_file = temp_dir.path().join("lsp.log");
+    let test_file = temp_dir.path().join("test.rs");
+    std::fs::write(&test_file, "broken\nok")?;
+
+    let mut config = fresh::config::Config::default();
+    config.lsp.insert(
+        "rust".to_string(),
+        fresh::types::LspLanguageConfig::Multi(vec![fresh::services::lsp::LspServerConfig {
+            command: script_path.to_string_lossy().to_string(),
+            args: Some(vec![
+                log_file.to_string_lossy().to_string(),
+                temp_dir.path().join("stall").to_string_lossy().to_string(),
+                CLEAN_TEXT.to_string(),
+            ]),
+            enabled: true,
+            auto_start: true,
+            process_limits: Default::default(),
+            initialization_options: None,
+            env: Default::default(),
+            language_id_overrides: Default::default(),
+            root_markers: Default::default(),
+            name: None,
+            only_features: None,
+            except_features: None,
+        }]),
+    );
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        120,
+        30,
+        config,
+        temp_dir.path().to_path_buf(),
+    )?;
+    harness.open_file(&test_file)?;
+    harness
+        .wait_until(|_| last_publish(&log_file).is_some_and(|line| line.contains("errors=1")))?;
+
+    let buffer_id = harness.editor().active_buffer();
+    harness
+        .editor_mut()
+        .handle_plugin_command(PluginCommand::DeleteRange {
+            buffer_id,
+            range: 0.."broken\n".len(),
+        })?;
+
+    let clean = format!("PUBLISH errors=0 len={}", CLEAN_TEXT.len());
+    harness.wait_until(|_| last_publish(&log_file).as_deref() == Some(clean.as_str()))?;
+    harness.wait_until(|h| !h.screen_to_string().contains("E:1"))?;
+    Ok(())
 }
 
 /// Typing through a stalled server and then restoring the buffer must leave

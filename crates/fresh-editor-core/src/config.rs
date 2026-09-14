@@ -2691,6 +2691,12 @@ pub struct Keybinding {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub keys: Vec<KeyPress>,
 
+    /// The whole binding as one string — `"C-x"`, `"C-S-Left"`, `"C-x C-s"`.
+    /// An alternative to `key` + `modifiers` and `keys`, which take
+    /// precedence when present.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub chord: String,
+
     /// Action to perform (e.g., "insert_char", "move_left"), or "unbind" to
     /// remove the built-in binding for this key instead of binding anything.
     pub action: String,

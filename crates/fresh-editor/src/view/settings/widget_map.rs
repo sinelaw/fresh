@@ -663,7 +663,6 @@ fn section_header(section: &str) -> WidgetSpec {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
 
     #[test]
     fn toggle_maps_to_toggle_widget() {
@@ -935,9 +934,8 @@ mod tests {
     #[test]
     fn mapped_page_renders_coherently_through_widget_runtime() {
         // End-to-end: a settings page maps to a WidgetSpec tree and
-        // renders through the *same* `render_spec` the plugin widget
-        // framework uses — the render path the Settings swap will adopt.
-        use std::collections::HashMap;
+        // lays out through the same description the plugin widget
+        // framework uses.
         let items = vec![
             item(
                 "/editor/word_wrap",
@@ -967,8 +965,7 @@ mod tests {
             ),
         ];
         let tree = settings_items_to_widget(&items);
-        let out = crate::widgets::render_spec(&tree, &HashMap::new(), "", u32::MAX);
-        let screen: String = out.entries.iter().map(|e| e.text.clone()).collect();
+        let screen = crate::view::shell::widgets::tests::rows_at(&tree, 80).join("\n");
         // Section header, form-layout toggle, number value cell, and
         // dropdown button all present in the rendered text.
         assert!(screen.contains("Editor"), "section header: {screen:?}");
@@ -988,26 +985,6 @@ mod tests {
             }
             other => panic!("expected Raw placeholder, got {other:?}"),
         }
-    }
-
-    /// Collect every foreground theme key referenced by the rendered
-    /// entries' inline overlays (row-level styles ride the entries'
-    /// `style`, segment styles become inline overlays at render time).
-    fn rendered_fg_keys(out: &crate::widgets::RenderOutput) -> Vec<String> {
-        let mut keys = Vec::new();
-        for e in &out.entries {
-            let styles = e
-                .inline_overlays
-                .iter()
-                .map(|o| &o.style)
-                .chain(e.style.as_ref());
-            for s in styles {
-                if let Some(OverlayColorSpec::ThemeKey(k)) = &s.fg {
-                    keys.push(k.clone());
-                }
-            }
-        }
-        keys
     }
 
     /// A text list is its rows as fields: one keyed text field per item
@@ -1075,11 +1052,10 @@ mod tests {
             other => panic!("expected the map's list, got {other:?}"),
         }
         let with_cursor = setting_control_to_widget_aligned("/languages", &s, None, Some(0));
-        let out = crate::widgets::render_spec(&with_cursor, &HashMap::new(), "", u32::MAX);
         assert!(
-            out.entries
+            crate::view::shell::widgets::tests::rows_at(&with_cursor, 80)
                 .iter()
-                .any(|e| e.text.contains("[Enter to edit]")),
+                .any(|r| r.contains("[Enter to edit]")),
             "the cursor's row says what Enter does"
         );
         let with_cursor = setting_control_to_widget_aligned("/languages", &s, None, Some(1));
@@ -1122,10 +1098,12 @@ mod tests {
             },
         ] {
             let spec = setting_control_to_widget("/k", &control);
-            let out = crate::widgets::render_spec(&spec, &HashMap::new(), "", u32::MAX);
-            let keys = rendered_fg_keys(&out);
+            let keys: Vec<String> = crate::view::shell::widgets::tests::items_at(&spec, 80)
+                .iter()
+                .map(|i| i.theme.as_str().to_string())
+                .collect();
             assert!(
-                keys.iter().all(|k| k != "ui.tab_active_fg"),
+                keys.iter().all(|k| !k.contains("ui.tab_active_fg")),
                 "tab_active_fg is a tab-surface color, unreadable on the \
                  dialog surface; got {keys:?}"
             );
@@ -1147,63 +1125,59 @@ mod tests {
             display_field: Some("/name".to_string()),
         };
 
+        // Whether the `[+] Add new` row wears the list selection ground: the
+        // row's `y` from the run that names it, then any item on that row
+        // whose theme carries the selection bg.
+        let add_row_selected = |spec: &WidgetSpec| -> bool {
+            let items = crate::view::shell::widgets::tests::items_at(spec, 80);
+            let y = items
+                .iter()
+                .find_map(|i| match &i.draw {
+                    fresh_ui::Draw::Lines(l) if l.iter().any(|s| s.contains("[+] Add new")) => {
+                        Some(i.rect.y)
+                    }
+                    _ => None,
+                })
+                .expect("add-new row");
+            items
+                .iter()
+                .any(|i| i.rect.y == y && i.theme.as_str().contains("ui.popup_selection_bg"))
+        };
         // The cursor on an entry: the add row carries no selection bg.
         let spec = setting_control_to_widget_aligned("/env/detectors", &arr, None, Some(0));
-        let out = crate::widgets::render_spec(&spec, &HashMap::new(), "", u32::MAX);
-        let add_unfocused = out
-            .entries
-            .iter()
-            .find(|e| e.text.contains("[+] Add new"))
-            .expect("add-new row");
         assert!(
-            add_unfocused
-                .style
-                .as_ref()
-                .and_then(|s| s.bg.as_ref())
-                .is_none(),
-            "add row must not highlight while an entry is focused: {add_unfocused:?}"
+            !add_row_selected(&spec),
+            "add row must not highlight while an entry is focused"
         );
-
         // The cursor on the add row: it gets the selection bg.
         let spec = setting_control_to_widget_aligned("/env/detectors", &arr, None, Some(1));
-        let out = crate::widgets::render_spec(&spec, &HashMap::new(), "", u32::MAX);
-        let add_focused = out
-            .entries
-            .iter()
-            .find(|e| e.text.contains("[+] Add new"))
-            .expect("add-new row");
-        let bg = add_focused
-            .style
-            .as_ref()
-            .and_then(|s| s.bg.as_ref())
-            .expect("focused add row must carry a selection background");
         assert!(
-            matches!(bg, OverlayColorSpec::ThemeKey(k) if k == "ui.popup_selection_bg"),
-            "add row highlight uses the list selection bg: {bg:?}"
-        );
-        assert!(
-            add_focused
-                .style
-                .as_ref()
-                .is_some_and(|s| s.extend_to_line_end),
-            "selection bg extends to the line end like a list row"
+            add_row_selected(&spec),
+            "focused add row must carry the list selection background"
         );
     }
 
     /// Every row of a composite control that the user can press must
-    /// carry a hit, and the hit must say *which* row — the settings
+    /// be a keyed node, and the key must say *which* row — the settings
     /// side has no other way to tell "the second extension" from "the
     /// add row" once the body is a description rather than a set of
     /// stashed rects.
     #[test]
     fn every_clickable_row_of_a_composite_control_names_itself() {
-        /// `(widget_key, event)` of every hit, in row order.
-        fn hits(out: &crate::widgets::RenderOutput) -> Vec<(String, &'static str)> {
-            let mut hits: Vec<_> = out.hits.iter().collect();
-            hits.sort_by_key(|h| (h.buffer_row, h.byte_start));
-            hits.iter()
-                .map(|h| (h.event.widget_key.clone(), h.event.event_type))
-                .collect()
+        /// `(widget_key, kind)` of every keyed node, in document order.
+        fn keyed(spec: &WidgetSpec, out: &mut Vec<(String, &'static str)>) {
+            let meta = crate::widgets::kinds::behavior(spec).box_meta(spec);
+            if let Some(k) = meta.key {
+                out.push((k, meta.kind));
+            }
+            for c in spec.children() {
+                keyed(c, out);
+            }
+        }
+        fn keys_of(spec: &WidgetSpec) -> Vec<(String, &'static str)> {
+            let mut out = Vec::new();
+            keyed(spec, &mut out);
+            out
         }
 
         let field = "/languages/cpp/extensions";
@@ -1212,20 +1186,14 @@ mod tests {
             items: vec!["cpp".into(), "cc".into()],
             integer: false,
         };
-        let out = crate::widgets::render_spec(
-            &setting_control_to_widget(field, &list),
-            &HashMap::new(),
-            "",
-            u32::MAX,
-        );
         assert_eq!(
-            hits(&out),
+            keys_of(&setting_control_to_widget(field, &list)),
             vec![
-                (format!("{field}::row::0"), "focus"),
-                (format!("{field}::remove::0"), "activate"),
-                (format!("{field}::row::1"), "focus"),
-                (format!("{field}::remove::1"), "activate"),
-                (format!("{field}::add"), "focus"),
+                (format!("{field}::row::0"), "text"),
+                (format!("{field}::remove::0"), "button"),
+                (format!("{field}::row::1"), "text"),
+                (format!("{field}::remove::1"), "button"),
+                (format!("{field}::add"), "text"),
             ],
             "each item's field and its [x], then the add row's field"
         );
@@ -1238,27 +1206,19 @@ mod tests {
             display_field: None,
             no_add: false,
         };
-        let out = crate::widgets::render_spec(
-            &setting_control_to_widget("/languages", &map),
-            &HashMap::new(),
-            "",
-            u32::MAX,
-        );
-        // A row's hit names the row; the list it belongs to is the owner.
-        let selects: Vec<(String, String, i64)> = out
-            .hits
-            .iter()
-            .filter(|h| h.event.event_type == "select")
-            .map(|h| {
-                (
-                    h.event.owner_key.clone().unwrap_or_default(),
-                    h.event.widget_key.clone(),
-                    h.event.payload["index"].as_i64().unwrap_or(-1),
-                )
-            })
-            .collect();
+        // A row's key names the row; the list it belongs to is the owner.
+        let spec = setting_control_to_widget("/languages", &map);
+        let rows: Vec<(String, String, usize)> =
+            match crate::widgets::find_widget_by_key(&spec, "/languages") {
+                Some(WidgetSpec::List { item_keys, key, .. }) => item_keys
+                    .iter()
+                    .enumerate()
+                    .map(|(i, k)| (key.clone().unwrap_or_default(), k.clone(), i))
+                    .collect(),
+                other => panic!("the map is a keyed list, got {other:?}"),
+            };
         assert_eq!(
-            selects,
+            rows,
             vec![
                 (
                     "/languages".to_string(),

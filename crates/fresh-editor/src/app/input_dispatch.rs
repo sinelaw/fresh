@@ -460,7 +460,10 @@ impl Editor {
             key,
             panel,
             crate::widgets::kinds::Viewport::default(),
-            "Space",
+            &crate::input::keybindings::KeySeq::one(crate::input::keybindings::Key::new(
+                crossterm::event::KeyCode::Char(' '),
+                crossterm::event::KeyModifiers::NONE,
+            )),
             &mut fx,
         );
         self.rerender_widget_panel(&panel_key);
@@ -524,14 +527,7 @@ impl Editor {
                 .unwrap_or_default();
             if self
                 .widget_registry
-                .update(
-                    key,
-                    spec,
-                    states,
-                    focus,
-                    std::collections::HashMap::new(),
-                    Vec::new(),
-                )
+                .update(key, spec, states, focus)
                 .is_err()
             {
                 tracing::warn!("prompt toolbar {key} vanished between the lookup and the update");
@@ -543,8 +539,6 @@ impl Editor {
                 spec,
                 std::collections::HashMap::new(),
                 String::new(),
-                std::collections::HashMap::new(),
-                Vec::new(),
                 // The query input holds the keyboard until a control is
                 // given it.
                 false,
@@ -619,6 +613,7 @@ impl Editor {
             hovered_key: Some(hovered).filter(|k| !k.is_empty()),
             hovered_item_key: hovered_item,
             hovered_popup_row: String::new(),
+            reveal: self.prose_reveal_for(&key),
             marker_gutter: false,
             avail_height: None,
             scrollbar_reveal: None,

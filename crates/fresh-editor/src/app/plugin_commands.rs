@@ -1441,23 +1441,36 @@ impl Editor {
         text: String,
     ) {
         let text_len = text.len();
-        if let Some(state) = self
+        let event = Event::Insert {
+            position,
+            text,
+            cursor_id: CursorId(0),
+        };
+        // Deriving the change reads the line up to the edit to convert byte
+        // offsets into UTF-16 positions; on a one-long-line file that is
+        // megabytes per edit, and it is wasted when the buffer has no server
+        // to receive it.
+        let lsp_changes = if self.active_window().lsp_change_could_be_sent(buffer_id) {
+            self.active_window()
+                .collect_lsp_changes_for_buffer(buffer_id, &event)
+        } else {
+            Vec::new()
+        };
+        let edited = if let Some(state) = self
             .windows
             .get_mut(&self.active_window)
             .expect("active window present")
             .buffer_state_mut(buffer_id)
         {
-            let event = Event::Insert {
-                position,
-                text,
-                cursor_id: CursorId(0),
-            };
             // Apply to buffer with dummy cursors (real cursors adjusted below)
             state.apply(&mut Cursors::default(), &event);
             if let Some(log) = self.active_window_mut().event_logs.get_mut(&buffer_id) {
                 log.append(event);
             }
-        }
+            true
+        } else {
+            false
+        };
         // Adjust cursors in all splits that display this buffer
         for leaf_id in self
             .windows
@@ -1484,6 +1497,10 @@ impl Editor {
         // decorations (e.g. markdown table borders) keep stale coordinates.
         #[cfg(feature = "plugins")]
         self.shift_plugin_markers_for_edit(buffer_id, position, 0, text_len);
+        if edited {
+            self.active_window_mut()
+                .send_lsp_changes_for_buffer(buffer_id, lsp_changes);
+        }
     }
 
     /// Handle DeleteRange command
@@ -1494,24 +1511,40 @@ impl Editor {
     ) {
         let delete_start = range.start;
         let delete_len = range.end.saturating_sub(range.start);
-        if let Some(state) = self
+        let deleted_text = self
+            .windows
+            .get_mut(&self.active_window)
+            .expect("active window present")
+            .buffer_state_mut(buffer_id)
+            .map(|state| state.get_text_range(range.start, range.end))
+            .unwrap_or_default();
+        let event = Event::Delete {
+            range,
+            deleted_text,
+            cursor_id: CursorId(0),
+        };
+        // Gated as in `handle_insert_text`.
+        let lsp_changes = if self.active_window().lsp_change_could_be_sent(buffer_id) {
+            self.active_window()
+                .collect_lsp_changes_for_buffer(buffer_id, &event)
+        } else {
+            Vec::new()
+        };
+        let edited = if let Some(state) = self
             .windows
             .get_mut(&self.active_window)
             .expect("active window present")
             .buffer_state_mut(buffer_id)
         {
-            let deleted_text = state.get_text_range(range.start, range.end);
-            let event = Event::Delete {
-                range,
-                deleted_text,
-                cursor_id: CursorId(0),
-            };
             // Apply to buffer with dummy cursors (real cursors adjusted below)
             state.apply(&mut Cursors::default(), &event);
             if let Some(log) = self.active_window_mut().event_logs.get_mut(&buffer_id) {
                 log.append(event);
             }
-        }
+            true
+        } else {
+            false
+        };
         // Adjust cursors in all splits that display this buffer
         for leaf_id in self
             .windows
@@ -1539,6 +1572,10 @@ impl Editor {
         // markers here too so plugin-tracked decorations ride the deletion.
         #[cfg(feature = "plugins")]
         self.shift_plugin_markers_for_edit(buffer_id, delete_start, delete_len, 0);
+        if edited {
+            self.active_window_mut()
+                .send_lsp_changes_for_buffer(buffer_id, lsp_changes);
+        }
     }
 
     /// Re-evaluate the active window's search-match overlays around a region a
@@ -1593,7 +1630,15 @@ impl Editor {
         };
         let split_id = self.split_manager().active_split();
         let active_buf = self.active_buffer();
-        self.active_window_mut()
+        // Gated as in `handle_insert_text`.
+        let lsp_changes = if self.active_window().lsp_change_could_be_sent(active_buf) {
+            self.active_window()
+                .collect_lsp_changes_for_buffer(active_buf, &event)
+        } else {
+            Vec::new()
+        };
+        let edited = self
+            .active_window_mut()
             .apply_event_to_buffer(active_buf, split_id, &event);
         self.active_event_log_mut().append(event);
         // This path bypasses apply_event_to_active_buffer (it's how the markdown
@@ -1602,6 +1647,12 @@ impl Editor {
         // keep stale coordinates and corrupt.
         #[cfg(feature = "plugins")]
         self.shift_plugin_markers_for_edit(active_buf, cursor_pos, 0, text_len);
+        // Only for an edit that landed, as in the two handlers above: a change
+        // sent for one that did not diverges the server with no path back.
+        if edited {
+            self.active_window_mut()
+                .send_lsp_changes_for_buffer(active_buf, lsp_changes);
+        }
     }
 
     /// Handle DeleteSelection command
@@ -2713,8 +2764,8 @@ impl Editor {
         inherit_normal_bindings: bool,
         plugin_name: Option<String>,
     ) {
-        use super::parse_key_string;
         use crate::input::buffer_mode::BufferMode;
+        use crate::input::keybindings::parse_key_seq;
         use crate::input::keybindings::{Action, KeyContext};
 
         let mode = BufferMode::new(name.clone())
@@ -2732,49 +2783,22 @@ impl Editor {
 
         let mode_context = KeyContext::Mode(name.clone());
 
-        // Parse key bindings from strings
-        // Key strings can be single keys ("g", "C-f") or chord sequences ("g g", "z z")
         for (key_str, command) in &bindings {
-            let parts: Vec<&str> = key_str.split_whitespace().collect();
-
-            if parts.len() == 1 {
-                // Single key binding
-                if let Some((code, modifiers)) = parse_key_string(key_str) {
-                    let action = Action::from_str(command, &std::collections::HashMap::new())
-                        .unwrap_or_else(|| Action::PluginAction(command.clone()));
-                    self.keybindings.write().unwrap().load_plugin_default(
-                        mode_context.clone(),
-                        code,
-                        modifiers,
-                        action,
-                    );
-                } else {
-                    tracing::warn!("Failed to parse key binding: {}", key_str);
+            let Some(seq) = parse_key_seq(key_str) else {
+                tracing::warn!("Failed to parse key binding: {}", key_str);
+                continue;
+            };
+            let action = Action::from_str(command, &std::collections::HashMap::new())
+                .unwrap_or_else(|| Action::PluginAction(command.clone()));
+            let mut kb = self.keybindings.write().unwrap();
+            match seq.single() {
+                Some(key) => {
+                    kb.load_plugin_default(mode_context.clone(), key.code(), key.mods(), action)
                 }
-            } else {
-                // Chord sequence (multiple keys separated by space)
-                let mut sequence = Vec::new();
-                let mut parse_failed = false;
-
-                for part in &parts {
-                    if let Some((code, modifiers)) = parse_key_string(part) {
-                        sequence.push((code, modifiers));
-                    } else {
-                        tracing::warn!("Failed to parse key in chord: {} (in {})", part, key_str);
-                        parse_failed = true;
-                        break;
-                    }
-                }
-
-                if !parse_failed && !sequence.is_empty() {
-                    tracing::debug!("Adding chord binding: {:?} -> {}", sequence, command);
-                    let action = Action::from_str(command, &std::collections::HashMap::new())
-                        .unwrap_or_else(|| Action::PluginAction(command.clone()));
-                    self.keybindings.write().unwrap().load_plugin_chord_default(
-                        mode_context.clone(),
-                        sequence,
-                        action,
-                    );
+                None => {
+                    tracing::debug!("Adding chord binding: {} -> {}", seq, command);
+                    let sequence = seq.keys().iter().map(|k| (k.code(), k.mods())).collect();
+                    kb.load_plugin_chord_default(mode_context.clone(), sequence, action)
                 }
             }
         }
@@ -2800,10 +2824,12 @@ impl Editor {
                         for (key_code, modifiers) in mode_bindings.keys() {
                             let label =
                                 crate::input::keybindings::format_keybinding(key_code, modifiers);
-                            if let Some((_key_str, cmd)) = bindings
-                                .iter()
-                                .find(|(k, _)| parse_key_string(k) == Some((*key_code, *modifiers)))
-                            {
+                            if let Some((_key_str, cmd)) = bindings.iter().find(|(k, _)| {
+                                parse_key_seq(k).and_then(|s| s.single())
+                                    == Some(crate::input::keybindings::Key::new(
+                                        *key_code, *modifiers,
+                                    ))
+                            }) {
                                 let key = format!("{}\0{}", cmd, name);
                                 snapshot.keybinding_labels.insert(key, label);
                             }

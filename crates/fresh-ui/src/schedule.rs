@@ -937,11 +937,29 @@ impl<M: 'static> Ui<M> {
     ///
     /// Takes `&mut self` because a render object is owned by its node: it is
     /// taken out to be asked and put straight back, exactly as layout takes it.
+    /// [`Self::text_rows`], searched from `root` rather than the frame — the
+    /// same standing as [`Self::item_window_in`]. A widget's key is unique
+    /// only inside the panel that owns it, so a host asking on behalf of one
+    /// panel names that panel's subtree, and two panels holding a run under
+    /// the same key each get their own rows.
+    pub fn text_rows_in(
+        &mut self,
+        root: ElementId,
+        key: &crate::key::Key,
+    ) -> Option<(String, Vec<crate::render::prim::Row>)> {
+        let el = self.find_by_key_in(root, key)?;
+        self.text_rows_of(el)
+    }
+
     pub fn text_rows(
         &mut self,
         key: &crate::key::Key,
     ) -> Option<(String, Vec<crate::render::prim::Row>)> {
         let el = self.find_by_key(key)?;
+        self.text_rows_of(el)
+    }
+
+    fn text_rows_of(&mut self, el: ElementId) -> Option<(String, Vec<crate::render::prim::Row>)> {
         let r = self.render_for(el)?;
         let mut obj = self.render.get_mut(r)?.obj.take()?;
         let out = obj

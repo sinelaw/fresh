@@ -594,10 +594,13 @@ impl Editor {
                 let _ = self.widget_registry.unmount(&panel_key);
                 true
             }
-            WidgetKeyOutcome::SmartKey(name) => {
+            WidgetKeyOutcome::SmartKey(key) => {
+                // The wire stays a string: `widgetKey(...)` is public API.
                 self.handle_widget_command(
                     &panel_key,
-                    fresh_core::api::WidgetAction::Key { key: name },
+                    fresh_core::api::WidgetAction::Key {
+                        key: key.to_string(),
+                    },
                 );
                 true
             }

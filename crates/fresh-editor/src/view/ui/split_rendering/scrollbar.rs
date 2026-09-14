@@ -61,7 +61,11 @@ pub(crate) fn scrollbar_line_counts(
         1
     };
 
-    if viewport.line_wrap_enabled
+    // Empty buffers stay out: `scrollbar_visual_row_counts` shortcuts them
+    // without building the index the visual-row basis is read through
+    // (fresh#3236), and one line is one row here anyway.
+    if buffer_len > 0
+        && viewport.line_wrap_enabled
         && total_lines <= MAX_WRAP_SCROLLBAR_LINES
         && buffer_len <= MAX_WRAP_SCROLLBAR_BYTES
     {
@@ -213,10 +217,11 @@ pub(crate) fn resolve_scrollbar_marks(
             })
         }
         MarkerBasis::VisualRows { .. } => {
-            let index = state
-                .wrap_indices
-                .most_recent()
-                .expect("visual-row basis implies a built wrap index");
+            // Marks are decoration on a bar, so an unbuilt index costs this
+            // frame's marks rather than the editor (fresh#3236).
+            let Some(index) = state.wrap_indices.most_recent() else {
+                return std::rc::Rc::from(Vec::new());
+            };
             let buffer = &state.buffer;
             scrollbar_marker::resolve_rows(&state.scrollbar_markers, core.as_ref(), basis, |b| {
                 index.line_first_row(buffer.get_line_number(b)) as u64
@@ -627,5 +632,84 @@ mod tests {
             1_999 * 50 + 1,
             "merging must still cover the last edit"
         );
+    }
+
+    /// fresh#3236: the crash a recovery restore reopened into, where the
+    /// unsaved deletion is what reaches the projection.
+    #[test]
+    fn empty_wrapped_buffer_keeps_the_thumb_off_the_visual_row_basis() {
+        let mut state = state_with_wrapping_lines(10);
+        let len = state.buffer.len();
+        state.buffer.delete(0..len);
+        assert_eq!(state.buffer.len(), 0);
+        assert!(state.buffer.is_modified());
+
+        let vp = narrow_wrapped_viewport();
+        let (total, top, basis) = scrollbar_line_counts(
+            &mut state,
+            &vp,
+            crate::config::LARGE_FILE_THRESHOLD_BYTES,
+            0,
+            Vec::new(),
+        );
+        assert_eq!((total, top), (1, 0));
+        assert_eq!(basis, MarkerBasis::LogicalLines { total: 1 });
+
+        let cells = project(&mut state, basis, 20);
+        let marked: Vec<usize> = cells
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| c.is_some())
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(marked, vec![0], "one row, so one mark on the first cell");
+    }
+
+    /// The other mark source that reaches the projection on an empty buffer.
+    #[test]
+    fn empty_wrapped_buffer_with_a_plugin_marker_projects() {
+        use crate::view::scrollbar_marker::ResolvedMarker;
+
+        let fs: Arc<dyn crate::model::filesystem::FileSystem + Send + Sync> =
+            Arc::new(crate::model::filesystem::StdFileSystem);
+        let mut state = EditorState::new(
+            80,
+            24,
+            crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
+            fs,
+        );
+        state.scrollbar_markers.set_markers(
+            "test",
+            vec![ResolvedMarker {
+                start: 0,
+                end: None,
+                color: fresh_core::api::OverlayColorSpec::Rgb(1, 2, 3),
+                priority: 0,
+            }],
+        );
+
+        let vp = narrow_wrapped_viewport();
+        let (_, _, basis) = scrollbar_line_counts(
+            &mut state,
+            &vp,
+            crate::config::LARGE_FILE_THRESHOLD_BYTES,
+            0,
+            Vec::new(),
+        );
+        assert_eq!(basis, MarkerBasis::LogicalLines { total: 1 });
+        let cells = project(&mut state, basis, 20);
+        assert!(cells.iter().any(Option::is_some));
+    }
+
+    /// The projection does not depend on that basis choice being right.
+    #[test]
+    fn visual_row_basis_without_an_index_drops_marks_instead_of_panicking() {
+        let mut state = state_with_wrapping_lines(10);
+        let len = state.buffer.len();
+        state.buffer.insert(len / 2, "an unsaved edit");
+        assert!(state.wrap_indices.is_empty());
+
+        let cells = project(&mut state, MarkerBasis::VisualRows { total: 40 }, 20);
+        assert!(cells.iter().all(Option::is_none));
     }
 }

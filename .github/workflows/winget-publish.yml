@@ -2,6 +2,9 @@
 
 name: Publish to winget
 
+permissions:
+  contents: read
+
 on:
   workflow_call:
     inputs:

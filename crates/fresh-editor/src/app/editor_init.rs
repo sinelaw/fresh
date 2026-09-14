@@ -689,6 +689,7 @@ impl Editor {
             shell_key_event: None,
             page_anchors: HashMap::new(),
             page_reading: HashMap::new(),
+            pane_mirrors: HashMap::new(),
             suspend_requested: false,
             plugin_global_state: parts.plugin_global_state,
             // Boot-loaded state came *from* disk — nothing is dirty yet.
@@ -720,7 +721,8 @@ impl Editor {
             dock_resizing: false,
             sidebar_sections: vec![sidebar::SidebarSection::explorer()],
             sidebar_drag: None,
-            widget_text_drag: None,
+            prose_drag: None,
+            prose_reveal: std::cell::RefCell::new(HashMap::new()),
             widget_panel_render_heights: std::collections::HashMap::new(),
         };
 

@@ -190,6 +190,8 @@ pub mod lsp_multi_semantic_tokens;
 pub mod lsp_multi_server_diagnostic_pull;
 pub mod lsp_no_config;
 pub mod lsp_order;
+#[cfg(feature = "plugins")]
+pub mod lsp_plugin_edit_desync;
 pub mod lsp_popup_focus_keybinding;
 pub mod lsp_publish_diagnostics_capability;
 pub mod lsp_server_lifecycle_cleanup;
@@ -276,6 +278,7 @@ pub mod restored_terminal_focus;
 pub mod save_as_language_detection;
 pub mod save_nonexistent_directory;
 pub mod scroll_clearing;
+pub mod scroll_offset_wrap_off;
 #[cfg(feature = "plugins")]
 pub mod scrollbar_markers;
 pub mod scrolling;

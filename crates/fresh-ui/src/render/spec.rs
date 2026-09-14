@@ -178,6 +178,15 @@ pub enum Draw {
     /// A background laid over what was painted before it, keeping the text
     /// there: the region inherits its content and takes the theme's ground.
     Wash,
+    /// A ground made of this cluster, **tiled across the item's rect** — a
+    /// rule, a divider, a ruled fill.
+    ///
+    /// The cluster, not the finished string: how many of it fit is a
+    /// function of the rectangle layout settled on, which is the whole
+    /// reason this is a draw kind and not text of a computed length. A
+    /// backend that has a better way to say "a line across here" — a DOM
+    /// border, a canvas stroke — is free to ignore the glyph.
+    Rule(Rc<str>),
     /// A box outline drawn inside `rect`, in the given corner style.
     Border(BorderStyle),
     /// Covers everything painted before it.
