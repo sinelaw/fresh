@@ -74,14 +74,17 @@ done
     script_path
 }
 
-#[test]
-#[cfg_attr(windows, ignore = "uses a Bash fake LSP server")]
-fn test_code_lens_renders_and_executes_command() -> anyhow::Result<()> {
-    let temp_dir = tempfile::tempdir()?;
-    let log_file = temp_dir.path().join("code_lens.log");
-    let script_path = create_code_lens_lsp_script(temp_dir.path());
-    let test_file = temp_dir.path().join("test.rs");
-    std::fs::write(&test_file, "fn main() {}\n")?;
+/// Open `source` as `test.rs` against the fake code-lens server and wait until
+/// the server is ready. Returns the harness and the path the server logs the
+/// traffic it saw to.
+fn open_with_code_lens_server(
+    temp_dir: &std::path::Path,
+    source: &str,
+) -> anyhow::Result<(EditorTestHarness, std::path::PathBuf)> {
+    let log_file = temp_dir.join("code_lens.log");
+    let script_path = create_code_lens_lsp_script(temp_dir);
+    let test_file = temp_dir.join("test.rs");
+    std::fs::write(&test_file, source)?;
 
     let mut config = fresh::config::Config::default();
     config.editor.enable_code_lens = true;
@@ -109,12 +112,31 @@ fn test_code_lens_renders_and_executes_command() -> anyhow::Result<()> {
         24,
         HarnessOptions::new()
             .with_config(config)
-            .with_working_dir(temp_dir.path().to_path_buf()),
+            .with_working_dir(temp_dir.to_path_buf()),
     )?;
     harness.open_file(&test_file)?;
     harness.render()?;
-
     harness.wait_until(|h| h.editor().active_window().is_lsp_server_ready("rust"))?;
+
+    Ok((harness, log_file))
+}
+
+/// The screen cell a needle starts at, as (row, column) in terminal cells.
+fn screen_cell_of(screen: &str, needle: &str) -> Option<(u16, u16)> {
+    screen.lines().enumerate().find_map(|(row, line)| {
+        line.find(needle).map(|byte| {
+            let col = unicode_width::UnicodeWidthStr::width(&line[..byte]);
+            (row as u16, col as u16)
+        })
+    })
+}
+
+#[test]
+#[cfg_attr(windows, ignore = "uses a Bash fake LSP server")]
+fn test_code_lens_renders_and_executes_command() -> anyhow::Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let (mut harness, log_file) = open_with_code_lens_server(temp_dir.path(), "fn main() {}\n")?;
+
     harness.wait_for_screen_contains("Run Test")?;
     assert!(
         harness.screen_to_string().contains("Run Test"),
@@ -128,6 +150,40 @@ fn test_code_lens_renders_and_executes_command() -> anyhow::Result<()> {
     harness.wait_for_screen_contains("Code Lenses")?;
     harness.send_key(KeyCode::Enter, KeyModifiers::NONE)?;
     harness.render()?;
+
+    harness.wait_until(|_| {
+        let log = std::fs::read_to_string(&log_file).unwrap_or_default();
+        log.contains("METHOD:workspace/executeCommand")
+            && log.contains("\"command\":\"test.run\"")
+            && log.contains("\"arguments\":[\"unit\"]")
+    })?;
+
+    Ok(())
+}
+
+/// A lens is run by clicking the title where it is drawn, so drive that:
+/// locate "Run Test" on the rendered screen and press that cell. This is the
+/// only coverage of the mouse path — `code_lens_command_at_screen_position`
+/// resolves the press against the rows the pane last drew, which the command
+/// palette above never reaches.
+#[test]
+#[cfg_attr(windows, ignore = "uses a Bash fake LSP server")]
+fn test_clicking_rendered_code_lens_executes_command() -> anyhow::Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let (mut harness, log_file) = open_with_code_lens_server(temp_dir.path(), "fn main() {}\n")?;
+
+    harness.wait_for_screen_contains("Run Test")?;
+    let screen = harness.screen_to_string();
+    let (row, col) = screen_cell_of(&screen, "Run Test")
+        .unwrap_or_else(|| panic!("code lens must be drawn on screen:\n{screen}"));
+
+    // The lens is a virtual line, so the source it belongs to is still there.
+    assert!(
+        screen.contains("fn main() {}"),
+        "the lens must not displace the source line:\n{screen}"
+    );
+
+    harness.mouse_click(col, row)?;
 
     harness.wait_until(|_| {
         let log = std::fs::read_to_string(&log_file).unwrap_or_default();
