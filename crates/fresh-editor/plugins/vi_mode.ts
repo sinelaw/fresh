@@ -1057,12 +1057,22 @@ async function linewiseSpanForMotion(
   if (line === null) {
     return null;
   }
+  // Vim fails the whole operator when the motion cannot move: `dk` on the
+  // first line and `dj` on the last change nothing at all. Clamping the span
+  // instead would delete the current line, which is the opposite of a no-op.
   switch (motionAction) {
-    case "move_down":
+    case "move_down": {
+      const last = await lastContentLine(bufferId);
+      if (last === null || line + count > last) {
+        return null;
+      }
       return { firstLine: line, lineCount: count + 1 };
+    }
     case "move_up": {
-      const first = Math.max(0, line - count);
-      return { firstLine: first, lineCount: line - first + 1 };
+      if (line - count < 0) {
+        return null;
+      }
+      return { firstLine: line - count, lineCount: count + 1 };
     }
     case "move_document_start":
       return { firstLine: 0, lineCount: line + 1 };
