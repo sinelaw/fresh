@@ -637,51 +637,6 @@ async function getLinewiseRange(count: number): Promise<LinewiseRange | null> {
   return { bufferId, start, end, text, lineTerminator };
 }
 
-async function yankLinewise(count: number): Promise<void> {
-  const range = await getLinewiseRange(count);
-  if (range === null) {
-    return;
-  }
-
-  editor.setClipboard(ensureLinewiseRegisterText(range.text, range.lineTerminator));
-  memory.lastYankWasLinewise = true;
-}
-
-async function cutLinewise(count: number): Promise<void> {
-  const bufferId = editor.getActiveBufferId();
-  if (isActiveBufferEditingDisabled(bufferId)) {
-    return;
-  }
-
-  const range = await getLinewiseRange(count);
-  if (range === null) {
-    return;
-  }
-
-  editor.setClipboard(ensureLinewiseRegisterText(range.text, range.lineTerminator));
-  editor.deleteRange(range.bufferId, range.start, range.end);
-  memory.lastYankWasLinewise = true;
-  editor.setBufferCursor(range.bufferId, Math.min(range.start, editor.getBufferLength(range.bufferId)));
-}
-
-async function changeLinewise(count: number): Promise<void> {
-  const bufferId = editor.getActiveBufferId();
-  if (isActiveBufferEditingDisabled(bufferId)) {
-    return;
-  }
-
-  const range = await getLinewiseRange(count);
-  if (range === null) {
-    return;
-  }
-
-  editor.setClipboard(ensureLinewiseRegisterText(range.text, range.lineTerminator));
-  editor.deleteRange(range.bufferId, range.start, range.end);
-  editor.insertText(range.bufferId, range.start, getLinewiseReplacementText(range.text) ?? range.lineTerminator);
-  editor.setBufferCursor(range.bufferId, range.start);
-  memory.lastYankWasLinewise = true;
-}
-
 // Map motion actions to their selection equivalents
 const motionToSelection: Record<string, string> = {
   move_left: "select_left",
@@ -1156,92 +1111,149 @@ async function applyOperatorLinewise(
 ): Promise<void> {
   const bufferId = editor.getActiveBufferId();
   const start = await editor.getLineStartPosition(firstLine);
-  if (start === null || lineCount <= 0) {
+  if (start === null) {
     switchMode("normal");
     return;
   }
-  editor.setBufferCursor(bufferId, start);
-  await editor.flush();
-
-  switch (operator) {
-    case "d":
-      await cutLinewise(lineCount);
-      break;
-    case "y":
-      await yankLinewise(lineCount);
-      break;
-    case "c":
-      await changeLinewise(lineCount);
-      // Flush first, for the reason the other change-operator sites document:
-      // the delete and the caret move are queued, and `switchMode` samples the
-      // caret to open the insert session.
-      await editor.flush();
-      switchMode("insert");
-      return;
-    case ">":
-    case "<":
-      await applyIndentToLineRange(operator, start, lineCount);
-      break;
-    default:
-      break;
-  }
-  switchMode("normal");
+  await applyOperator(operator, await linewiseRangeAt(bufferId, start, lineCount));
 }
 
-async function applyOperatorWithRange(operator: string, start: number, end: number): Promise<void> {
-  const rangeStart = Math.min(start, end);
-  const rangeEnd = Math.max(start, end);
-  if (rangeEnd <= rangeStart) {
+// ============================================================================
+// Motions, ranges and operators
+// ============================================================================
+//
+// Vim's model, which this plugin follows: a *motion* resolves to a target and
+// a *kind*; the kind decides how the span between the caret and that target
+// becomes a *range*; an *operator* consumes the range. The kind is the whole
+// of the difference between `dw` and `de` (exclusive vs inclusive) and between
+// `dw` and `dj` (charwise vs linewise).
+//
+// Keeping that as data rather than as code at each call site is the point.
+// Before, "this motion is inclusive" was open-coded five separate times — a
+// trailing `select_right` after `vi_select_word_end` in two helpers, another
+// after `select_word_right` in visual `w`, another after `select_line_end` in
+// visual `$`, and a `+ charLength` inside the find-char operator — and "this
+// motion is line-wise" a sixth. Each site could disagree with the others, and
+// several did.
+
+type MotionKind = "exclusive" | "inclusive" | "linewise";
+
+// The one distinction that outlives resolution. A line-wise range covers whole
+// lines, registers as line-wise (so `p` puts it on its own lines rather than
+// inline) and leaves an empty line behind under `c`.
+type RangeShape = "charwise" | "linewise";
+
+interface OperatorRange {
+  start: number; // byte offset, inclusive
+  end: number; // byte offset, exclusive
+  shape: RangeShape;
+  // Where to leave the caret afterwards. Defaults to `start`, which is right
+  // for every operator except `yy` and friends, where Vim does not move it.
+  cursorAfter?: number;
+}
+
+function charwiseRange(start: number, end: number, cursorAfter?: number): OperatorRange {
+  return { start: Math.min(start, end), end: Math.max(start, end), shape: "charwise", cursorAfter };
+}
+
+// The line-wise range covering `lineCount` lines from the line `position` is on.
+async function linewiseRangeAt(
+  bufferId: number,
+  position: number,
+  lineCount: number,
+  cursorAfter?: number,
+): Promise<OperatorRange | null> {
+  if (lineCount <= 0) {
+    return null;
+  }
+  const start = await findLineStartAtPosition(bufferId, position);
+  const end = await findLinewiseEndFromStart(bufferId, start, lineCount);
+  if (end <= start) {
+    return null;
+  }
+  return { start, end, shape: "linewise", cursorAfter };
+}
+
+// The single place `d`, `c`, `y`, `>` and `<` act on a range.
+//
+// Every entry point — operator + motion, operator + text object, operator +
+// find-char, the doubled line operators, and the visual modes — resolves its
+// own range and hands it here. That is what keeps the register shape, the
+// caret's landing place and the `c`-before-insert flush from drifting apart
+// between them, which they did when there were four copies of this switch.
+async function applyOperator(operator: string, range: OperatorRange | null): Promise<void> {
+  if (range === null || range.end <= range.start) {
     switchMode("normal");
     return;
   }
 
   const bufferId = editor.getActiveBufferId();
-
-  // Indent/dedent are line-wise: resolve the byte range to the whole lines it
-  // touches and shift them, rather than operating on the exact byte span.
-  if (operator === ">" || operator === "<") {
-    const span = await lineSpanOfRange(bufferId, rangeStart, rangeEnd);
-    await applyIndentToLineRange(operator, span.firstLineStart, span.lineCount);
-    return;
-  }
-
-  if ((operator === "d" || operator === "c") && isActiveBufferEditingDisabled(bufferId)) {
+  if (operator !== "y" && isActiveBufferEditingDisabled(bufferId)) {
     switchMode("normal");
     return;
   }
 
-  const text = await editor.getBufferText(bufferId, rangeStart, rangeEnd);
-  if (text) {
-    editor.setClipboard(text);
+  // Indent and dedent are line-wise whatever the range's shape: they resolve it
+  // to the whole lines it touches and shift those.
+  if (operator === ">" || operator === "<") {
+    const span = await lineSpanOfRange(bufferId, range.start, range.end);
+    await applyIndentToLineRange(operator, span.firstLineStart, span.lineCount);
+    return;
   }
 
+  const linewise = range.shape === "linewise";
+  const text = (await editor.getBufferText(bufferId, range.start, range.end)) ?? "";
+  const terminator = linewise ? await getLinewiseTerminator(bufferId, range.start, text) : "";
+  if (text) {
+    editor.setClipboard(linewise ? ensureLinewiseRegisterText(text, terminator) : text);
+  }
+  memory.lastYankWasLinewise = linewise;
+
   switch (operator) {
-    case "d":
-      editor.deleteRange(bufferId, rangeStart, rangeEnd);
-      editor.setBufferCursor(bufferId, Math.min(rangeStart, editor.getBufferLength(bufferId)));
-      memory.lastYankWasLinewise = false;
+    case "y":
+      if (range.cursorAfter !== undefined) {
+        editor.setBufferCursor(bufferId, range.cursorAfter);
+      }
       break;
-    case "c":
-      editor.deleteRange(bufferId, rangeStart, rangeEnd);
-      editor.setBufferCursor(bufferId, Math.min(rangeStart, editor.getBufferLength(bufferId)));
-      memory.lastYankWasLinewise = false;
-      // Flush before entering insert, for the reason `enterInsertRepositioned`
-      // documents: `deleteRange` and `setBufferCursor` are queued to the editor
-      // thread, so without this `switchMode("insert")` samples the *pre-command*
-      // cursor as the session start. The Escape-time capture then measures from
-      // there and records surrounding buffer text as if it had been typed, which
-      // `.` replays into the next line (issue #2443, the `c`-operator half).
+
+    case "d":
+      editor.deleteRange(bufferId, range.start, range.end);
+      editor.setBufferCursor(
+        bufferId,
+        Math.min(range.cursorAfter ?? range.start, editor.getBufferLength(bufferId)),
+      );
+      break;
+
+    case "c": {
+      editor.deleteRange(bufferId, range.start, range.end);
+      if (linewise) {
+        // Vim's `cc`/`cj`/`Vc` leave an empty line to type into, rather than
+        // closing the gap the way `d` does.
+        editor.insertText(bufferId, range.start, getLinewiseReplacementText(text) ?? terminator);
+      }
+      editor.setBufferCursor(bufferId, range.start);
+      // Flush before entering insert: `deleteRange` and `setBufferCursor` are
+      // queued to the editor thread, so without this `switchMode("insert")`
+      // samples the *pre-command* cursor as the session start. The Escape-time
+      // capture then measures from there and records surrounding buffer text as
+      // if it had been typed, which `.` replays into the next line (issue
+      // #2443, the `c`-operator half).
       await editor.flush();
       switchMode("insert");
+      if (state.insert !== null) {
+        state.insert.startPos = range.start;
+      }
       return;
-    case "y":
-      editor.setBufferCursor(bufferId, rangeStart);
-      memory.lastYankWasLinewise = false;
-      break;
+    }
   }
 
   switchMode("normal");
+}
+
+// Charwise convenience wrapper: the many callers that already know both byte
+// offsets and have nothing else to say about the range.
+async function applyOperatorWithRange(operator: string, start: number, end: number): Promise<void> {
+  await applyOperator(operator, charwiseRange(start, end));
 }
 
 // ============================================================================
@@ -2152,27 +2164,38 @@ function vi_yank_operator() : void {
 registerHandler("vi_yank_operator", vi_yank_operator);
 
 // Line operations (dd, cc, yy) - support count prefix (3dd = delete 3 lines)
+
+// The line-wise range `dd`/`cc`/`yy` act on: `count` whole lines from the
+// caret's own line. `yy` names its own `cursorAfter` because Vim leaves the
+// caret where it was, unlike `yj`, which moves it to the start of the yank.
+async function lineOperatorRange(count: number, cursorAfter?: number): Promise<OperatorRange | null> {
+  const bufferId = editor.getActiveBufferId();
+  const position = editor.getPrimaryCursor()?.position ?? editor.getCursorPosition();
+  if (position === null) {
+    return null;
+  }
+  return linewiseRangeAt(bufferId, position, count, cursorAfter);
+}
+
 async function vi_delete_line() : Promise<void> {
   const count = consumeCount();
   recordChange({ type: "line-op", action: "delete_line", count });
-  await cutLinewise(count);
-  switchMode("normal");
+  await applyOperator("d", await lineOperatorRange(count));
 }
 registerHandler("vi_delete_line", vi_delete_line);
 
 async function vi_change_line() : Promise<void> {
   const count = consumeCount();
   recordChange({ type: "line-op", action: "change_line", count });
-  await changeLinewise(count);
-  switchMode("insert");
+  await applyOperator("c", await lineOperatorRange(count));
 }
 registerHandler("vi_change_line", vi_change_line);
 
 async function vi_yank_line() : Promise<void> {
   const count = consumeCount();
-  await yankLinewise(count);
+  const position = editor.getPrimaryCursor()?.position ?? editor.getCursorPosition();
+  await applyOperator("y", await lineOperatorRange(count, position ?? undefined));
   editor.setStatus(editor.t("status.yanked_lines", { count: String(count) }));
-  switchMode("normal");
 }
 registerHandler("vi_yank_line", vi_yank_line);
 
@@ -2431,9 +2454,9 @@ async function replayChange(change: LastChange, count: number): Promise<void> {
     case "line-op": {
       // Line operations like dd, cc
       if (change.action === "delete_line") {
-        await cutLinewise(count);
+        await applyOperator("d", await lineOperatorRange(count));
       } else if (change.action === "change_line") {
-        await changeLinewise(count);
+        await applyOperator("c", await lineOperatorRange(count));
         if (change.insertedText) {
           editor.insertAtCursor(change.insertedText);
         }
@@ -3398,10 +3421,7 @@ async function applyTextObject(
     switchMode("normal");
     return;
   }
-  const selectStart = range.start;
-  const selectEnd = range.end;
-
-  await applyOperatorToTextObjectRange(operator, bufferId, selectStart, selectEnd);
+  await applyOperator(operator, charwiseRange(range.start, range.end));
 }
 
 // The byte range a text object covers at the caret, or null when there is no
@@ -3602,65 +3622,6 @@ async function computeTextObjectRange(
     return null;
   }
   return { start: selectStart, end: selectEnd };
-}
-
-async function applyOperatorToTextObjectRange(
-  operator: string,
-  bufferId: number,
-  selectStart: number,
-  selectEnd: number,
-): Promise<void> {
-  // Apply the operator directly using deleteRange/copyRange
-  switch (operator) {
-    case "d": {
-      const deletedText = await editor.getBufferText(bufferId, selectStart, selectEnd);
-      if (deletedText) {
-        editor.setClipboard(deletedText);
-      }
-      editor.deleteRange(bufferId, selectStart, selectEnd);
-      // Land the cursor where the text object was, even if it was forward of the
-      // cursor on the line (e.g. di" from before the quotes).
-      editor.setBufferCursor(bufferId, selectStart);
-      memory.lastYankWasLinewise = false;
-      break;
-    }
-    case "c": {
-      const deletedText = await editor.getBufferText(bufferId, selectStart, selectEnd);
-      if (deletedText) {
-        editor.setClipboard(deletedText);
-      }
-      editor.deleteRange(bufferId, selectStart, selectEnd);
-      // Insert at the deletion point so ci" works even when the quoted string
-      // was forward of the cursor on the line (not just when already inside it).
-      editor.setBufferCursor(bufferId, selectStart);
-      memory.lastYankWasLinewise = false;
-      // Flush before entering insert, for the reason `enterInsertRepositioned`
-      // documents: `deleteRange` and `setBufferCursor` are queued to the editor
-      // thread, so without this `switchMode("insert")` samples the *pre-command*
-      // cursor as the session start. The Escape-time capture then measures from
-      // there and records surrounding buffer text as if it had been typed, which
-      // `.` replays into the next line (issue #2443, the `c`-operator half).
-      await editor.flush();
-      switchMode("insert");
-      return;
-    }
-    case "y": {
-      // For yank, we need to select the range and copy
-      // First move cursor to start
-      editor.setBufferCursor(bufferId, selectStart);
-      // Select the range
-      for (let i = 0; i < selectEnd - selectStart; i++) {
-        editor.executeAction("select_right");
-      }
-      editor.executeAction("copy");
-      memory.lastYankWasLinewise = false;
-      // Move back to start
-      editor.setBufferCursor(bufferId, selectStart);
-      break;
-    }
-  }
-
-  switchMode("normal");
 }
 
 // Helper to find matching bracket pair containing the cursor.
