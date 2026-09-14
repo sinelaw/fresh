@@ -38,4 +38,5 @@ pub use render::{
     render_toggle_form, render_tree_row, resolve_panel, wrap_index, MarkdownCtx, NumberEdit,
     PanelPopup, RenderedTreeRow, ResolvedPanel, DROPDOWN_VISIBLE_OPTIONS,
 };
+pub use render::{render_label, render_radio, RenderedRadio};
 pub use text_click::{row_byte_to_value_byte, value_byte_from_hit};

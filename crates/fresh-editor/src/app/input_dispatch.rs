@@ -615,6 +615,7 @@ impl Editor {
             hovered_popup_row: String::new(),
             reveal: self.prose_reveal_for(&key),
             marker_gutter: false,
+            label_align: Default::default(),
             avail_height: None,
             scrollbar_reveal: None,
             keymap: None,

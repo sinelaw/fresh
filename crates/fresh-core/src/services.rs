@@ -162,6 +162,15 @@ pub trait PluginServiceBridge: Send + Sync + 'static {
     /// Used for long-lived plugin state such as review-diff comment history.
     fn data_dir(&self) -> std::path::PathBuf;
 
+    /// The user's home directory as the editor resolved it
+    /// (`DirectoryContext::home_dir`), or `None` when it has none. A plugin
+    /// reading a dotfile (`~/.ssh/config`) asks here rather than reading
+    /// `$HOME` itself, so a test that redirects the editor's home redirects
+    /// the plugin with it.
+    fn home_dir(&self) -> Option<std::path::PathBuf> {
+        None
+    }
+
     /// Directory holding terminal scrollback backing files for the given
     /// working directory (project root / worktree). Each root gets its own
     /// subdir, so Universal Search's terminal scope can stay scoped to the

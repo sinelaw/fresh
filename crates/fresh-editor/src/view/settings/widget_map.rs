@@ -480,6 +480,7 @@ fn text_list_row(field_key: &str, row: Option<usize>, value: &str) -> WidgetSpec
         children,
         key: None,
         wrap: false,
+        justify_end: false,
     }
 }
 

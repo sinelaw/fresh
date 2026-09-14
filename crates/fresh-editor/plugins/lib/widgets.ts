@@ -65,7 +65,18 @@ export function row(...children: WidgetSpec[]): WidgetSpec {
  * truncated. Children are never split, so wrap a logical group (e.g. a
  * toggle + its accelerator) in a nested `row(...)` to keep it intact. */
 export function wrappingRow(...children: WidgetSpec[]): WidgetSpec {
-  return { kind: "row", children, wrap: true };
+  return { kind: "row", children, wrap: true, justifyEnd: false };
+}
+
+/** A wrapping row whose lines settle against its **right edge**: buttons
+ * flush right while they fit, wrapping from the left when they do not.
+ *
+ * Which of those two a given terminal gets is the host's to decide — it lays
+ * the row out at a width the plugin cannot see, so a plugin that measured to
+ * choose between them would be guessing about a frame that has not happened
+ * yet, and would keep the guess across a resize. */
+export function endRow(...children: WidgetSpec[]): WidgetSpec {
+  return { kind: "row", children, wrap: true, justifyEnd: true };
 }
 
 /** Vertical layout. Children stacked top-to-bottom. */
@@ -79,6 +90,52 @@ export function col(...children: WidgetSpec[]): WidgetSpec {
  * Replaces the per-plugin hand-rolled help row. */
 export function hintBar(entries: HintEntry[]): WidgetSpec {
   return { kind: "hintBar", entries };
+}
+
+/** One row of static text — the hint under a field, a status line, a
+ * read-only summary. Never focusable, never clickable. `style` colours
+ * it (a dim `fg`, `italic`); `labelWidth` indents it into the field
+ * column of a form whose controls share that label width, so a hint
+ * sits under the value it describes. Omit unset keys rather than
+ * passing `undefined` (see `styledRow`).
+ *
+ * Pass `StyledSegment[]` instead of a string for a row that carries
+ * more than one ink — a state glyph in the state's colour followed by
+ * the name it belongs to. The segments are the ones `styledRow` takes;
+ * `style` still covers the whole row.
+ *
+ * `wrap` breaks the text across rows at the width layout settles on,
+ * rather than clipping it: prose, a long hint, a reason that quotes a
+ * pattern. Continuation rows start at the line's own leading indent —
+ * `labelWidth` counts — so a wrapped hint stays inside its field
+ * column. Leave it off for content that is already line-shaped (a
+ * terminal line, a path), which reflowing misrepresents.
+ *
+ * `elide` is how an unwrapped row that does not fit marks the cut:
+ * `"tail"` keeps the head (a message, a line of output), `"head"` keeps
+ * the tail (a path). The default clips silently, which is right when the
+ * enclosing border already says the row ran out of room. Ask for it here
+ * rather than appending your own `…`: only measurement knows whether the
+ * text fit, so doing it yourself means being told a width first. */
+export function label(
+  content: string | StyledSegment[],
+  options?: {
+    style?: Partial<OverlayOptions>;
+    labelWidth?: number;
+    wrap?: boolean;
+    elide?: Elide;
+  },
+): WidgetSpec {
+  const spec: WidgetSpec = {
+    kind: "label",
+    text: typeof content === "string" ? content : "",
+    labelWidth: options?.labelWidth ?? 0,
+    wrap: options?.wrap ?? false,
+    elide: options?.elide ?? "none",
+  };
+  if (typeof content !== "string") spec.segments = content;
+  if (options?.style !== undefined) spec.style = options.style;
+  return spec;
 }
 
 /** Imperative-virtual-buffer escape hatch. Wraps an existing
@@ -224,6 +281,38 @@ export function dropdown(
 ): WidgetSpec {
   return {
     kind: "dropdown",
+    options,
+    selectedIndex: options_?.selectedIndex ?? 0,
+    label: options_?.label ?? "",
+    focused: options_?.focused ?? false,
+    labelWidth: options_?.labelWidth ?? 0,
+    key: options_?.key,
+  };
+}
+
+/** Inline single-select option group, rendered as
+ * `label: (•) A   ( ) B   ( ) C` — every option visible, the selected
+ * one filled. Use it for a short, fixed choice a form asks about (a
+ * backend, a scope); a longer set is a `dropdown`. Left/Right cycle the
+ * selection, Home/End jump it, a click on an option selects it; Up/Down
+ * walk the form like Tab. The selected index is host-owned instance
+ * state after first render (the spec `selectedIndex` is a seed); each
+ * change fires `widget_event { event_type: "change", payload: { index,
+ * value } }`.
+ *
+ * `labelWidth` pads the label so a column of controls aligns. */
+export function radio(
+  options: string[],
+  options_?: {
+    selectedIndex?: number;
+    label?: string;
+    focused?: boolean;
+    labelWidth?: number;
+    key?: string;
+  },
+): WidgetSpec {
+  return {
+    kind: "radio",
     options,
     selectedIndex: options_?.selectedIndex ?? 0,
     label: options_?.label ?? "",
@@ -1246,6 +1335,12 @@ export class FloatingWidgetPanel {
        * widget that holds focus. A dock declares its chords here rather
        * than through the window's editor mode. */
       mode?: string;
+      /** How the panel's form controls (`text` / `dropdown` / `toggle` /
+       * `number` / `radio` with a `labelWidth`) align their labels in the shared
+       * column. `"right"` lines the colons up into one edge — the form
+       * grid; `"left"` (default) is the compact settings-style column.
+       * Panel-wide, because a column aligns as one. */
+      labelAlign?: LabelAlign;
     } = {},
   ): boolean {
     // deno-lint-ignore no-explicit-any
@@ -1264,6 +1359,7 @@ export class FloatingWidgetPanel {
       options.closable ?? false,
       options.startBlurred ?? false,
       options.mode ?? "",
+      options.labelAlign ?? "left",
     );
   }
 

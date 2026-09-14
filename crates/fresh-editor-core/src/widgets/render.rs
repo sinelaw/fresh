@@ -22,9 +22,9 @@
 
 use crate::widgets::registry::WidgetInstanceState;
 use fresh_core::api::{
-    DualListOption, HintEntry, OverlayColorSpec, OverlayOptions, TreeNode, WidgetSpec,
+    DualListOption, HintEntry, LabelAlign, OverlayColorSpec, OverlayOptions, TreeNode, WidgetSpec,
 };
-use fresh_core::text_property::{InlineOverlay, OffsetUnit, TextPropertyEntry};
+use fresh_core::text_property::{InlineOverlay, OffsetUnit, StyledSegment, TextPropertyEntry};
 use std::collections::{HashMap, HashSet};
 
 // Theme keys used by the v1 widget renderers. Centralized so future
@@ -703,13 +703,13 @@ pub fn render_completion_item_overlay(
     selected: bool,
     total_cols: usize,
     scrollbar: Option<char>,
-    marker_gutter: bool,
+    lead: usize,
 ) -> TextPropertyEntry {
     let inner = total_cols.saturating_sub(2).max(1);
     // Reuse the inline-row builder for the body — same layout
-    // rules (2 leading chars, item text, pad-to-(inner-1),
+    // rules (`lead` + 2 leading chars, item text, pad-to-(inner-1),
     // scrollbar in the last column).
-    let body_entry = render_completion_item(item, kind, selected, inner, scrollbar, marker_gutter);
+    let body_entry = render_completion_item(item, kind, selected, inner, scrollbar, lead);
     // Build the wrapped text: `│` + body content + `│`. We
     // strip the body's trailing newline first so the borders
     // sit on the same line.
@@ -830,7 +830,7 @@ fn render_completion_item(
     selected: bool,
     total_cols: usize,
     scrollbar: Option<char>,
-    marker_gutter: bool,
+    lead: usize,
 ) -> TextPropertyEntry {
     // Build the row up to `total_cols - 1` so the scrollbar (or
     // a trailing space when there isn't one) lands at exactly
@@ -840,31 +840,48 @@ fn render_completion_item(
     // candidate text is, so we hand-pad rather than relying on
     // entry-level `pad_to_chars`.
     //
-    // When the panel reserves the focus-marker gutter, the input's
-    // bracketed value is itself shifted right by the two-column gutter
-    // (`▸ ` / two spaces, inserted before its `[`). Lead the candidate
-    // rows by the same two columns so the candidate text stays directly
-    // under the typed value instead of sitting two columns to its left.
-    // Zero when the panel didn't opt into the gutter (every other
-    // popup), so those render exactly as before.
-    let lead = if marker_gutter { 2 } else { 0 };
-    // Budget = total_cols - (2 leading chars) - (gutter lead) - (1 scrollbar col).
+    // `lead` is what the caller measured: the columns between the popup's
+    // left edge and the value's column, less the two leading chars below,
+    // so the candidate text sits directly under the typed value whatever
+    // sits before it on the input row — the focus-marker gutter, a form's
+    // label column, both. See `kinds::text::completion_popup`.
+    // Budget = total_cols - (2 leading chars) - lead - (1 scrollbar col).
     // The two leading chars align the item with the bracketed
     // input value (see the function docstring).
+    //
+    // **Columns throughout, not code points.** `total_cols` and `lead` are
+    // display columns, and the row is laid beside a scrollbar that has to
+    // stay in one column on every row — so a candidate counted in `chars()`
+    // put a CJK path or an emoji branch name past the popup's right edge and
+    // shifted the scrollbar off its column, by one cell per wide character.
+    use crate::primitives::display_width::str_width;
     let text_budget = total_cols.saturating_sub(2 + lead).saturating_sub(1);
-    let item_chars: Vec<char> = item.chars().collect();
-    let (visible_item, truncated): (String, bool) = if item_chars.len() <= text_budget {
-        (item.to_string(), false)
+    let visible_item: String = if str_width(item) <= text_budget {
+        item.to_string()
     } else {
         // Tail-truncate with `…` so the prefix the user typed
-        // stays anchored at the left, which is the common case
-        // for path / branch completions (the divergent part is
-        // at the end).
+        // stays anchored at the left, which is the common case for path /
+        // branch completions (the divergent part is at the end). The `…` is
+        // one column, so the head gets one less than the budget — and a
+        // budget of zero leaves nothing, not an ellipsis in a column that
+        // is not there.
         let keep = text_budget.saturating_sub(1);
-        let head: String = item_chars.iter().take(keep).collect();
-        (format!("{}…", head), true)
+        let mut head = String::new();
+        let mut used = 0usize;
+        let mut buf = [0u8; 4];
+        for ch in item.chars() {
+            let cw = str_width(ch.encode_utf8(&mut buf));
+            if used + cw > keep {
+                break;
+            }
+            head.push(ch);
+            used += cw;
+        }
+        match text_budget {
+            0 => String::new(),
+            _ => format!("{head}…"),
+        }
     };
-    let _ = truncated;
     let scrollbar_ch = scrollbar.unwrap_or(' ');
     let is_history = kind == Some("history");
     // For history rows we replace the second leading space (the
@@ -896,7 +913,7 @@ fn render_completion_item(
     // Pad with spaces between the candidate text and the
     // scrollbar column so all rows have the scrollbar glyph in
     // the same column regardless of candidate length.
-    let used_cols = 2 + lead + visible_item.chars().count();
+    let used_cols = 2 + lead + str_width(&visible_item);
     let pad_cols = total_cols.saturating_sub(used_cols).saturating_sub(1);
     for _ in 0..pad_cols {
         text.push(' ');
@@ -1199,6 +1216,8 @@ pub fn render_toggle(
     label: &str,
     focused: bool,
     marker_gutter: bool,
+    label_width: u32,
+    panel_width: u32,
 ) -> TextPropertyEntry {
     let glyph = if checked { "[v]" } else { "[ ]" };
     // When the panel reserves the focus-marker gutter, every toggle
@@ -1207,8 +1226,17 @@ pub fn render_toggle(
     // changes as focus moves. Panels without the gutter render
     // exactly as before (no prefix).
     let marker = focus_gutter_prefix(focused, marker_gutter);
-    let mut text = String::with_capacity(marker.len() + glyph.len() + 1 + label.len());
+    // In a form, `label_width` is the label column the *other* controls
+    // share; a chip-first toggle has no label there, so it indents its
+    // chip into the field column instead and lines up with their `[`.
+    let indent = field_column_indent(
+        label_width,
+        crate::primitives::display_width::str_width(marker),
+        panel_width,
+    );
+    let mut text = String::with_capacity(marker.len() + indent + glyph.len() + 1 + label.len());
     text.push_str(marker);
+    text.extend(std::iter::repeat_n(' ', indent));
     let glyph_start = text.len();
     text.push_str(glyph);
     text.push(' ');
@@ -1318,6 +1346,7 @@ pub fn render_number(
     label: &str,
     focused: bool,
     label_width: u32,
+    label_align: LabelAlign,
     edit: Option<NumberEdit<'_>>,
     marker_gutter: bool,
 ) -> RenderedNumber {
@@ -1325,7 +1354,7 @@ pub fn render_number(
     let mut text = String::new();
     text.push_str(marker);
     if !label.is_empty() {
-        text.push_str(&pad_label(label, label_width as usize));
+        text.push_str(&pad_label(label, label_width as usize, label_align));
         text.push_str(": ");
     }
     text.push('[');
@@ -1430,14 +1459,23 @@ pub fn render_number(
 
 /// Pad `label` with trailing spaces to `width` display columns
 /// (never truncates — a long label simply overflows its column).
-fn pad_label(label: &str, width: usize) -> String {
+fn pad_label(label: &str, width: usize, align: LabelAlign) -> String {
     let w = crate::primitives::display_width::str_width(label);
     if w >= width {
-        label.to_string()
-    } else {
-        let mut out = label.to_string();
-        out.extend(std::iter::repeat_n(' ', width - w));
-        out
+        return label.to_string();
+    }
+    let pad = std::iter::repeat_n(' ', width - w);
+    match align {
+        LabelAlign::Left => {
+            let mut out = label.to_string();
+            out.extend(pad);
+            out
+        }
+        LabelAlign::Right => {
+            let mut out: String = pad.collect();
+            out.push_str(label);
+            out
+        }
     }
 }
 
@@ -1468,13 +1506,13 @@ pub fn form_label_width(
 /// it's too long, otherwise right-pad. Keeps a form control's value cell
 /// aligned *and* on-screen even when the label itself overflows the
 /// clamped column.
-pub fn fit_label(label: &str, width: usize) -> String {
+pub fn fit_label(label: &str, width: usize, align: LabelAlign) -> String {
     use crate::primitives::display_width::str_width;
     if width == 0 {
         return String::new();
     }
     if str_width(label) <= width {
-        return pad_label(label, width);
+        return pad_label(label, width, align);
     }
     // Truncate to width-1 columns, then append '…'.
     let mut out = String::new();
@@ -1504,6 +1542,7 @@ pub fn render_toggle_form(
     label: &str,
     focused: bool,
     label_width: u32,
+    label_align: LabelAlign,
     panel_width: u32,
     marker_gutter: bool,
 ) -> (TextPropertyEntry, (usize, usize)) {
@@ -1531,7 +1570,7 @@ pub fn render_toggle_form(
         if lw == 0 {
             label.to_string()
         } else {
-            fit_label(label, lw)
+            fit_label(label, lw, label_align)
         }
     };
     let mut text = String::new();
@@ -1581,6 +1620,220 @@ pub fn render_toggle_form(
         truncate_to_chars: None,
     };
     (entry, (chip_start, chip_end))
+}
+
+/// How far a form control's *value* sits from the row's start when its
+/// label column is `label_width` wide: the (clamped) label plus the `: `
+/// separator. Zero when there is no column. What a chip-first `Toggle` and
+/// a `Label` indent by to land in the field column beside a `Text`'s `[`.
+pub fn field_column_indent(label_width: u32, marker_cols: usize, panel_width: u32) -> usize {
+    if label_width == 0 {
+        return 0;
+    }
+    let lw = form_label_width(label_width, marker_cols, "[  ]".len(), panel_width);
+    if lw == 0 {
+        0
+    } else {
+        lw + 2
+    }
+}
+
+/// Render a `Label` row: `{gutter}{indent}{text}`, styled as a whole.
+pub fn render_label(
+    text: &str,
+    style: Option<&OverlayOptions>,
+    label_width: u32,
+    marker_gutter: bool,
+    panel_width: u32,
+    segments: &[StyledSegment],
+) -> TextPropertyEntry {
+    let marker = focus_gutter_prefix(false, marker_gutter);
+    let indent = field_column_indent(
+        label_width,
+        crate::primitives::display_width::str_width(marker),
+        panel_width,
+    );
+    let mut prefix = String::with_capacity(marker.len() + indent);
+    prefix.push_str(marker);
+    prefix.extend(std::iter::repeat_n(' ', indent));
+
+    // Styled runs carry their own inks, so the row is handed on as segments
+    // for `normalize_widths` to concatenate — the same path a plugin's own
+    // entry takes. The gutter and indent lead as an unstyled run so the
+    // offsets it shifts are the ones that reach the paint.
+    if !segments.is_empty() {
+        let mut out = Vec::with_capacity(segments.len() + 1);
+        out.push(StyledSegment {
+            text: prefix,
+            style: None,
+            overlays: Vec::new(),
+        });
+        out.extend(segments.iter().cloned());
+        return TextPropertyEntry {
+            text: String::new(),
+            properties: Default::default(),
+            style: style.cloned(),
+            inline_overlays: Vec::new(),
+            segments: out,
+            pad_to_chars: None,
+            truncate_to_chars: None,
+        };
+    }
+
+    let mut row = String::with_capacity(prefix.len() + text.len());
+    row.push_str(&prefix);
+    let start = row.len();
+    row.push_str(text);
+    let end = row.len();
+    let mut overlays = Vec::new();
+    if let Some(style) = style {
+        if end > start {
+            overlays.push(InlineOverlay {
+                start,
+                end,
+                style: style.clone(),
+                properties: Default::default(),
+                unit: OffsetUnit::Byte,
+            });
+        }
+    }
+    TextPropertyEntry {
+        text: row,
+        properties: Default::default(),
+        style: None,
+        inline_overlays: overlays,
+        segments: Vec::new(),
+        pad_to_chars: None,
+        truncate_to_chars: None,
+    }
+}
+
+/// The gap between two options of a `Radio` row.
+const RADIO_GAP: &str = "   ";
+
+/// The columns a radio's first cell takes — its `(o)` glyph — which is what
+/// the shared label column has to leave room for, as `"[  ]"` is for a
+/// toggle. See [`form_label_width`].
+const RADIO_CELL_COLS: usize = 3;
+
+/// What [`render_radio`] hands back: the row plus, per option, the byte
+/// range of its `(•) name` cell for the click hit areas.
+pub struct RenderedRadio {
+    pub entry: TextPropertyEntry,
+    pub option_ranges: Vec<(usize, usize)>,
+}
+
+/// Render a `Radio` row: `{marker}{label}: (•) A   ( ) B   ( ) C`. The
+/// selected glyph takes the same ink a checked `Toggle` chip does, so
+/// "on" reads the same across the form; focus bands the whole row, as
+/// every other form control's does.
+pub fn render_radio(
+    options: &[String],
+    selected_index: i32,
+    label: &str,
+    focused: bool,
+    label_width: u32,
+    label_align: LabelAlign,
+    marker_gutter: bool,
+    panel_width: u32,
+) -> RenderedRadio {
+    // A radio cannot truncate — every option has to stay readable and
+    // clickable — so a row too wide for the panel gives up its spacing
+    // instead: first the gaps between options, then the label's column.
+    let build = |gap: &str, pad: bool| -> (String, Vec<(usize, usize)>, Vec<InlineOverlay>) {
+        let mut text = String::new();
+        text.push_str(focus_gutter_prefix(focused, marker_gutter));
+        if !label.is_empty() {
+            if pad {
+                // Clamped like every sibling control's, not the raw request:
+                // a `Text` with the same `label_width` opens its value cell at
+                // `form_label_width(...)`, so a radio padding to the unclamped
+                // number would open its options at a different column in a
+                // panel narrow enough for the clamp to bite. The radio's first
+                // cell is its glyph, as `"[  ]"` is a toggle's.
+                let w = form_label_width(
+                    label_width,
+                    crate::primitives::display_width::str_width(focus_gutter_prefix(
+                        focused,
+                        marker_gutter,
+                    )),
+                    RADIO_CELL_COLS,
+                    panel_width,
+                );
+                text.push_str(&pad_label(label, w, label_align));
+            } else {
+                text.push_str(label);
+            }
+            text.push_str(": ");
+        }
+        let mut overlays = Vec::new();
+        let mut option_ranges = Vec::with_capacity(options.len());
+        for (i, opt) in options.iter().enumerate() {
+            if i > 0 {
+                text.push_str(gap);
+            }
+            let start = text.len();
+            let on = i as i32 == selected_index;
+            text.push_str(if on { "(\u{2022})" } else { "( )" });
+            let glyph_end = text.len();
+            text.push(' ');
+            text.push_str(opt);
+            option_ranges.push((start, text.len()));
+            if on {
+                overlays.push(InlineOverlay {
+                    start,
+                    end: glyph_end,
+                    style: OverlayOptions {
+                        fg: Some(OverlayColorSpec::theme_key(KEY_TOGGLE_ON_FG)),
+                        bold: true,
+                        ..Default::default()
+                    },
+                    properties: Default::default(),
+                    unit: OffsetUnit::Byte,
+                });
+            }
+        }
+        (text, option_ranges, overlays)
+    };
+    let fits = |t: &str| {
+        use crate::primitives::display_width::str_width;
+        panel_width == 0 || str_width(t) as u32 <= panel_width
+    };
+    let (mut text, mut option_ranges, mut overlays) = build(RADIO_GAP, true);
+    if !fits(&text) {
+        let (t, r, o) = build(" ", true);
+        (text, option_ranges, overlays) = (t, r, o);
+    }
+    if !fits(&text) {
+        let (t, r, o) = build(" ", false);
+        (text, option_ranges, overlays) = (t, r, o);
+    }
+    if focused {
+        overlays.push(InlineOverlay {
+            start: 0,
+            end: text.len(),
+            style: OverlayOptions {
+                fg: Some(OverlayColorSpec::theme_key(KEY_FOCUSED_FG)),
+                bg: Some(OverlayColorSpec::theme_key(KEY_FOCUSED_BG)),
+                bold: true,
+                ..Default::default()
+            },
+            properties: Default::default(),
+            unit: OffsetUnit::Byte,
+        });
+    }
+    RenderedRadio {
+        entry: TextPropertyEntry {
+            text,
+            properties: Default::default(),
+            style: None,
+            inline_overlays: overlays,
+            segments: Vec::new(),
+            pad_to_chars: None,
+            truncate_to_chars: None,
+        },
+        option_ranges,
+    }
 }
 
 /// Clamp a `Number` value to its optional `[min, max]` bounds.
@@ -1641,6 +1894,7 @@ pub fn render_dropdown(
     label: &str,
     focused: bool,
     label_width: u32,
+    label_align: LabelAlign,
     open: bool,
     scroll_offset: u32,
     marker_gutter: bool,
@@ -1664,7 +1918,7 @@ pub fn render_dropdown(
     let mut text = String::new();
     text.push_str(marker);
     if !label.is_empty() {
-        text.push_str(&pad_label(label, label_width as usize));
+        text.push_str(&pad_label(label, label_width as usize, label_align));
         text.push_str(": ");
     }
     let button_start = text.len();
@@ -1731,7 +1985,7 @@ pub fn render_dropdown(
             + if label.is_empty() {
                 0
             } else {
-                str_width(&pad_label(label, label_width as usize)) + 2
+                str_width(&pad_label(label, label_width as usize, label_align)) + 2
             };
         for (row_i, opt) in options.iter().skip(scroll).take(visible).enumerate() {
             let idx = scroll + row_i;
@@ -3444,6 +3698,48 @@ fn pad_or_truncate_line(line: &str, target: usize) -> String {
 pub mod tests {
     use super::*;
 
+    /// **A completion row is budgeted in columns, and a CJK candidate has
+    /// more columns than characters.** The budget was compared against
+    /// `chars().len()` and the padding computed from `chars().count()`, so a
+    /// candidate of wide characters ran past the popup's right edge and took
+    /// the scrollbar column with it — one cell per wide character. Every row
+    /// of one popup has to end in the same column, whatever is in it.
+    #[test]
+    fn a_wide_completion_candidate_keeps_the_row_inside_its_columns() {
+        use crate::primitives::display_width::str_width;
+        const COLS: usize = 24;
+
+        let narrow =
+            render_completion_item("src/components/index.ts", None, false, COLS, Some('|'), 0);
+        let wide =
+            render_completion_item("プロジェクト/設定/索引.ts", None, false, COLS, Some('|'), 0);
+
+        for (what, entry) in [("ascii", &narrow), ("cjk", &wide)] {
+            let row = entry.text.trim_end_matches('\n');
+            assert_eq!(
+                str_width(row),
+                COLS,
+                "{what} row must be exactly the popup's width: {row:?}",
+            );
+            assert!(
+                row.ends_with('|'),
+                "{what} row must end in the scrollbar column: {row:?}",
+            );
+        }
+    }
+
+    /// A budget with no room for text yields none, rather than an ellipsis
+    /// standing in a column the row does not have.
+    #[test]
+    fn a_completion_row_with_no_text_budget_shows_no_ellipsis() {
+        let entry = render_completion_item("anything", None, false, 3, None, 0);
+        let row = entry.text.trim_end_matches('\n');
+        assert!(
+            !row.contains('\u{2026}'),
+            "no room for text means no text: {row:?}",
+        );
+    }
+
     #[test]
     fn form_toggle_chip_stays_visible_on_narrow_panel() {
         // A page-wide label_width larger than the narrow panel must not
@@ -3457,6 +3753,7 @@ pub mod tests {
             "Highlight Matching Brackets",
             false,
             40, // requested label column wider than the panel
+            LabelAlign::Left,
             panel,
             false,
         );
@@ -3639,11 +3936,38 @@ pub mod tests {
     #[test]
     fn fit_label_truncates_with_ellipsis() {
         // Too long → truncated to width with a trailing `…`.
-        let out = fit_label("VeryLongLanguageName", 8);
+        let out = fit_label("VeryLongLanguageName", 8, LabelAlign::Left);
         assert_eq!(crate::primitives::display_width::str_width(&out), 8);
         assert!(out.ends_with('…'), "expected ellipsis: {out:?}");
         // Fits → right-padded to width.
-        assert_eq!(fit_label("Go", 5), "Go   ");
+        assert_eq!(fit_label("Go", 5, LabelAlign::Left), "Go   ");
+    }
+
+    #[test]
+    fn fit_label_right_aligns_into_the_column() {
+        // The form grid: padding first, so a column of labels shares one
+        // right edge and the colons line up.
+        assert_eq!(fit_label("Go", 5, LabelAlign::Right), "   Go");
+        assert_eq!(fit_label("Agent", 5, LabelAlign::Right), "Agent");
+        // A label wider than the column truncates the same way either
+        // way — there is no column left to align against.
+        let out = fit_label("VeryLongLanguageName", 8, LabelAlign::Right);
+        assert_eq!(crate::primitives::display_width::str_width(&out), 8);
+        assert!(out.ends_with('…'), "expected ellipsis: {out:?}");
+    }
+
+    #[test]
+    fn form_toggle_right_aligned_label_keeps_the_chip_column() {
+        // Right-aligning moves the label, not the chip: the `[v]` opens at
+        // the same column it does left-aligned, so a mixed column of
+        // controls still lines up on the chips.
+        let (left, chip_l) =
+            render_toggle_form(true, false, "Go", false, 8, LabelAlign::Left, 0, false);
+        let (right, chip_r) =
+            render_toggle_form(true, false, "Go", false, 8, LabelAlign::Right, 0, false);
+        assert_eq!(left.text, "Go      : [v]");
+        assert_eq!(right.text, "      Go: [v]");
+        assert_eq!(chip_l, chip_r, "the chip range is the same in both");
     }
 
     #[test]
@@ -3681,7 +4005,7 @@ pub mod tests {
 
     #[test]
     fn toggle_checked_emits_glyph_overlay() {
-        let entry = render_toggle(true, "Case", false, false);
+        let entry = render_toggle(true, "Case", false, false, 0, 40);
         assert_eq!(entry.text, "[v] Case");
         // One overlay for the glyph, no focused overlay.
         assert_eq!(entry.inline_overlays.len(), 1);
@@ -3691,14 +4015,14 @@ pub mod tests {
 
     #[test]
     fn toggle_unchecked_no_glyph_overlay() {
-        let entry = render_toggle(false, "Case", false, false);
+        let entry = render_toggle(false, "Case", false, false, 0, 40);
         assert_eq!(entry.text, "[ ] Case");
         assert_eq!(entry.inline_overlays.len(), 0);
     }
 
     #[test]
     fn toggle_focused_adds_full_entry_overlay() {
-        let entry = render_toggle(true, "Case", true, false);
+        let entry = render_toggle(true, "Case", true, false, 0, 40);
         // Glyph overlay + focused overlay.
         assert_eq!(entry.inline_overlays.len(), 2);
         // Focused overlay spans the full entry.
@@ -4630,7 +4954,17 @@ pub mod tests {
 
     #[test]
     fn number_renders_form_cell_and_value() {
-        let r = render_number(3.0, true, false, "Size", false, 0, None, false);
+        let r = render_number(
+            3.0,
+            true,
+            false,
+            "Size",
+            false,
+            0,
+            LabelAlign::Left,
+            None,
+            false,
+        );
         assert_eq!(r.entry.text, "Size: [  3 ]");
         // The value range covers the inner cell.
         assert_eq!(&r.entry.text[r.value_range.0..r.value_range.1], "  3 ");
@@ -4645,6 +4979,7 @@ pub mod tests {
             "Size",
             false,
             0,
+            LabelAlign::Left,
             Some(NumberEdit {
                 text: "750",
                 cursor: 3,
@@ -4684,6 +5019,17 @@ pub mod tests {
         }
     }
 
+    /// A chip-first toggle in a form indents its chip into the field column
+    /// (`label_width + 2`), so it lines up with a sibling `Text`'s `[`.
+    #[test]
+    fn chip_first_toggle_indents_into_the_form_column() {
+        let entry = render_toggle(false, "Create a worktree", false, false, 8, 60);
+        assert_eq!(entry.text, "          [ ] Create a worktree");
+        // No column: flush left, as before.
+        let entry = render_toggle(false, "Create a worktree", false, false, 0, 60);
+        assert_eq!(entry.text, "[ ] Create a worktree");
+    }
+
     #[test]
     fn wrap_index_wraps_both_directions() {
         assert_eq!(wrap_index(0, -1, 3), 2);
@@ -4700,6 +5046,7 @@ pub mod tests {
             "Color",
             false,
             0,
+            LabelAlign::Left,
             false,
             0,
             false,
@@ -4716,6 +5063,7 @@ pub mod tests {
             "Color",
             true,
             0,
+            LabelAlign::Left,
             true,
             0,
             false,

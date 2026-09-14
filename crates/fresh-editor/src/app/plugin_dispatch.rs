@@ -2010,6 +2010,7 @@ impl Editor {
                 height_pct,
                 as_dock,
                 focus_marker,
+                label_align,
                 title,
                 closable,
                 start_blurred,
@@ -2023,6 +2024,7 @@ impl Editor {
                     height_pct,
                     as_dock,
                     focus_marker,
+                    label_align,
                     title,
                     closable,
                     start_blurred,
@@ -5751,6 +5753,7 @@ impl Editor {
         height_pct: u8,
         as_dock: bool,
         focus_marker: bool,
+        label_align: fresh_core::api::LabelAlign,
         // Native modal-frame chrome for a centered panel (ignored for the
         // dock / anchored). See `FloatingWidgetState::{title,closable}`.
         title: Option<String>,
@@ -5818,6 +5821,7 @@ impl Editor {
             scrollbar_flash_until: None,
             fullscreen: false,
             focus_marker,
+            label_align,
             // The native modal frame is a centered-modal affordance; the dock
             // (left companion) and anchored (context-menu) placements never
             // draw a title bar or close button, so drop the chrome there.
@@ -5905,6 +5909,7 @@ impl Editor {
             scrollbar_flash_until: None,
             fullscreen: false,
             focus_marker: false,
+            label_align: Default::default(),
             title: None,
             closable: false,
             hovered_widget_key: String::new(),

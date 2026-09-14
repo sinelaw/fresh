@@ -330,6 +330,10 @@ impl PluginServiceBridge for EditorServiceBridge {
         self.dir_context.data_dir.clone()
     }
 
+    fn home_dir(&self) -> Option<PathBuf> {
+        self.dir_context.home_dir.clone()
+    }
+
     fn terminal_dir(&self, working_dir: &std::path::Path) -> PathBuf {
         self.dir_context.terminal_dir_for(working_dir)
     }

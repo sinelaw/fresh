@@ -182,6 +182,9 @@ pub struct Ctx<'a> {
     pub hovered_key: Option<String>,
     /// Whether focusable controls reserve the `▸ ` gutter.
     pub marker_gutter: bool,
+    /// Which way form controls align their labels in the shared column.
+    /// Panel-wide, as `marker_gutter` is; see `api::LabelAlign`.
+    pub label_align: fresh_core::api::LabelAlign,
     /// The `List`/`Tree` row the pointer is over. Every row of one list
     /// shares the list's own key, so the row identity travels separately.
     pub hovered_item_key: String,
@@ -277,6 +280,7 @@ impl Ctx<'static> {
 
             hovered_key: None,
             marker_gutter: false,
+            label_align: Default::default(),
             hovered_item_key: String::new(),
             hovered_popup_row: String::new(),
             reveal: fresh_ui::behavior::anchor::Anchor::new(),
@@ -771,7 +775,12 @@ fn on_the_ring(spec: &WidgetSpec, cx: &Ctx<'_>, n: Node<UiMsg>) -> Node<UiMsg> {
 fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<UiMsg> {
     let axis = site.axis;
     match spec {
-        WidgetSpec::Row { children, wrap, .. } => {
+        WidgetSpec::Row {
+            children,
+            wrap,
+            justify_end,
+            ..
+        } => {
             // **A row of blocks splits its width; a row of inline pieces does
             // not.** `allocate_row_child_widths` is the runtime's own rule —
             // a `LabeledSection` with a `width_pct` takes its declared share,
@@ -829,9 +838,10 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                 Some(ink) => r.theme(ink.to_string()),
                 None => r,
             };
-            match wrap {
-                true => r.wrap_children(),
-                false => r,
+            match (wrap, justify_end) {
+                (true, true) => r.wrap_children().justify_end(),
+                (true, false) => r.wrap_children(),
+                _ => r,
             }
         }
         WidgetSpec::Col { children, .. } => col().children(
@@ -893,6 +903,29 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
         WidgetSpec::HintBar { entries, .. } => {
             entry_row(&crate::widgets::render_hint_bar(entries), &cx.surface)
         }
+        // A static row: the same formatter as the runtime, no hit.
+        WidgetSpec::Label {
+            text,
+            style,
+            label_width,
+            segments,
+            wrap,
+            elide,
+            ..
+        } => {
+            let entry = crate::widgets::render_label(
+                text,
+                style.as_ref(),
+                *label_width,
+                cx.marker_gutter,
+                width as u32,
+                segments,
+            );
+            match wrap {
+                true => entry_rows_wrapped(&entry, &cx.surface),
+                false => entry_row_elided(&entry, &cx.surface, elide_of(*elide)),
+            }
+        }
         // Entries the plugin wrote, inlined without interpretation. That is
         // the variant's whole contract, and it is one row per entry.
         WidgetSpec::Raw { entries, .. } => col().children(
@@ -939,6 +972,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                 label,
                 is_focused,
                 *label_width,
+                cx.label_align,
                 resolved
                     .draft
                     .as_ref()
@@ -995,13 +1029,30 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                 _ => fresh_ui::Key::Str("overlay".into()),
             };
             let anchor = row().h(Sizing::Cells(0)).key(k.clone());
-            fresh_ui::stack().children([
-                anchor,
-                fresh_ui::layer()
-                    .anchor(fresh_ui::Anchor::Node(k))
-                    .place(fresh_ui::Place::Over)
-                    .child(node(child, width, cx)),
-            ])
+            // **When it closes is the layer's to say**, as for the dropdown
+            // pop-over. Only a keyed overlay is dismissed — an unkeyed one
+            // has nothing the plugin could answer for — and the press goes
+            // on to its target, so a non-menu overlay is not charged a click.
+            let widget_key = key.clone().unwrap_or_default();
+            let slot = cx.slot;
+            let mut layer = fresh_ui::layer()
+                .anchor(fresh_ui::Anchor::Node(k))
+                .place(fresh_ui::Place::Over)
+                .child(node(child, width, cx));
+            if !widget_key.is_empty() {
+                layer = layer
+                    .dismiss(fresh_ui::Dismiss {
+                        pass_through: true,
+                        ..fresh_ui::Dismiss::OUTSIDE_POINTER
+                    })
+                    .on_dismiss(move |_| {
+                        UiMsg::Ui(super::msg::UiFact::WidgetOverlayDismiss {
+                            slot,
+                            key: widget_key.clone(),
+                        })
+                    });
+            }
+            fresh_ui::stack().children([anchor, layer])
         }
         // **The same node, and its two modes are one property.** A popup is
         // an `Overlay` that may escape the panel's clipping: `screen_space`
@@ -1070,6 +1121,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                     label,
                     is_focused,
                     *label_width,
+                    cx.label_align,
                     width as u32,
                     cx.marker_gutter,
                 ),
@@ -1079,6 +1131,8 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                         label,
                         is_focused,
                         cx.marker_gutter,
+                        *label_width,
+                        width as u32,
                     );
                     let end = e.text.len();
                     (e, (0, end))
@@ -1105,6 +1159,61 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                     owner_key: None,
                 },
             )
+        }
+        // **One row, one hit per option.** The runtime told the options
+        // apart by comparing a clicked byte against a range per option;
+        // `entry_row_hits` splits the row at those same edges so each
+        // `(•) name` cell is its own target, and the kind's `on_pointer`
+        // owns the index — the plugin sees the `change`, never the click.
+        WidgetSpec::Radio {
+            options,
+            selected_index,
+            label,
+            focused,
+            label_width,
+            key,
+        } => {
+            use crate::widgets::kinds::radio as rd;
+            let key = key.as_deref();
+            let is_focused = match key.is_some_and(|k| !k.is_empty()) {
+                true => cx.is_focused(key),
+                false => *focused,
+            };
+            let selected = rd::resolve(options, *selected_index, key, cx.states);
+            let mut rendered = crate::widgets::render_radio(
+                options,
+                selected,
+                label,
+                is_focused,
+                *label_width,
+                cx.label_align,
+                cx.marker_gutter,
+                width as u32,
+            );
+            if cx.is_hovered(key) && !is_focused {
+                crate::widgets::apply_hover_band(&mut rendered.entry);
+            }
+            let widget_key = key.unwrap_or("").to_string();
+            let hits: Vec<_> = rendered
+                .option_ranges
+                .iter()
+                .enumerate()
+                .map(|(index, range)| {
+                    (
+                        *range,
+                        crate::widgets::WidgetEvent {
+                            row_target: false,
+                            context_click: false,
+                            widget_key: widget_key.clone(),
+                            widget_kind: "radio",
+                            payload: serde_json::json!({ "index": index }),
+                            event_type: "radio_select",
+                            owner_key: None,
+                        },
+                    )
+                })
+                .collect();
+            entry_row_hits(&rendered.entry, cx.slot, &cx.surface, &hits)
         }
         // **The first interactive variant, and the seam the rest ride.**
         //
@@ -2284,6 +2393,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                 label,
                 is_focused,
                 *label_width,
+                cx.label_align,
                 st.open,
                 *scroll_offset,
                 cx.marker_gutter,
@@ -2418,13 +2528,14 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
             let label_s = label.clone();
             let placeholder_s = placeholder.clone();
             let key_s = key.map(|k| k.to_string());
-            let (fw, mvc, fullw, bc, sel, lw, gutter, w32) = (
+            let (fw, mvc, fullw, bc, sel, lw, la, gutter, w32) = (
                 *field_width,
                 *max_visible_chars,
                 *full_width,
                 *block_caret,
                 (*sel_start, *sel_end),
                 *label_width,
+                cx.label_align,
                 cx.marker_gutter,
                 width as u32,
             );
@@ -2440,12 +2551,16 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                     bc,
                     sel,
                     lw,
+                    la,
                     is_focused,
                     key_s.as_deref(),
                     gutter,
                     w32,
                 )
             };
+            // Measured once, before the builder moves into the window: the
+            // value's column does not depend on the window.
+            let value_col = build_line(st.scroll).value_col;
             // One press or none — an unkeyed field has none, because an event
             // with no widget to name could not say what it focused — spanning
             // the whole row, and the caret's marker rides in the same split:
@@ -2481,6 +2596,9 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                     },
                 )
             };
+            // The candidates line up under the value: its column is the
+            // row's to say, and where the float starts is the site's.
+            let lead = tx::completion_lead(value_col, site.escape as u32);
             let Some(popup) = tx::completion_popup(
                 &st.completions,
                 *completions_visible_rows,
@@ -2488,7 +2606,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                 st.completion_index,
                 st.completion_navigated,
                 st.completion_scroll,
-                cx.marker_gutter,
+                lead,
             ) else {
                 return field;
             };
@@ -3491,8 +3609,23 @@ fn button_node(
 /// *names* kept instead of resolved colours, because the fold resolves them
 /// and that is what makes the row inspectable and the web able to paint it.
 pub fn entry_row(entry: &TextPropertyEntry, surface: &Ink) -> Node<UiMsg> {
-    let n =
-        text_runs(entry_runs(entry, &[], surface).into_iter().map(|(_, r)| r)).h(Sizing::Cells(1));
+    entry_row_elided(entry, surface, fresh_ui::desc::Elide::None)
+}
+
+/// [`entry_row`] for a row that marks the cut when it does not fit.
+///
+/// Separate rather than a post-applied `.elide()`: `Node::elide` sets the
+/// field only on a `TextRun`, so a row that turned out to carry an extended
+/// ground — a `row()` wrapping the run — would have taken the call and
+/// silently dropped it.
+fn entry_row_elided(
+    entry: &TextPropertyEntry,
+    surface: &Ink,
+    elide: fresh_ui::desc::Elide,
+) -> Node<UiMsg> {
+    let n = text_runs(entry_runs(entry, &[], surface).into_iter().map(|(_, r)| r))
+        .h(Sizing::Cells(1))
+        .elide(elide);
     match extended_ground(entry, surface) {
         // Themed, and `Auto` wide: "to the end of the line" is the enclosing
         // column's to grant, and it does — its `Stretch` widens an `Auto`
@@ -3509,6 +3642,34 @@ pub fn entry_row(entry: &TextPropertyEntry, surface: &Ink) -> Node<UiMsg> {
             .child(n),
         None => n,
     }
+}
+
+/// The tree's name for a spec's [`api::Elide`]. Two enums rather than one
+/// because `fresh-core` states the wire format and does not depend on the
+/// tree; the mapping is the whole of the difference.
+fn elide_of(e: fresh_core::api::Elide) -> fresh_ui::desc::Elide {
+    match e {
+        fresh_core::api::Elide::None => fresh_ui::desc::Elide::None,
+        fresh_core::api::Elide::Tail => fresh_ui::desc::Elide::Tail,
+        fresh_core::api::Elide::Head => fresh_ui::desc::Elide::Head,
+    }
+}
+
+/// [`entry_row`] for text that breaks rather than clipping.
+///
+/// The runs are one logical string that *layout* wraps at the width it
+/// settled on, so the node cannot say `Cells(1)`: its height is what the
+/// wrap turned out to be. `Hanging` starts each continuation at the line's
+/// own leading indent, and `render_label` writes the marker gutter and the
+/// field column as real leading spaces, so a wrapped hint stays inside the
+/// column its field opened.
+///
+/// No extended ground: a row-wide tint is one rect, and a wrapped entry has
+/// as many rows as the width decides. Nothing wrapped wants one today.
+fn entry_rows_wrapped(entry: &TextPropertyEntry, surface: &Ink) -> Node<UiMsg> {
+    text_runs(entry_runs(entry, &[], surface).into_iter().map(|(_, r)| r))
+        .wrapping(fresh_ui::desc::Wrap::Hanging)
+        .h(Sizing::Auto)
 }
 
 /// One styled row whose `range` of bytes answers a press with `hit`.
@@ -3904,6 +4065,7 @@ pub(crate) mod tests {
 
             hovered_key: None,
             marker_gutter: false,
+            label_align: Default::default(),
             hovered_item_key: String::new(),
             hovered_popup_row: String::new(),
             reveal: fresh_ui::behavior::anchor::Anchor::new(),
@@ -4325,6 +4487,70 @@ pub(crate) mod tests {
         }
     }
 
+    fn radio(selected: i32, label_width: u32) -> WidgetSpec {
+        WidgetSpec::Radio {
+            // Short enough to fit `WIDTH` with the gutter or the label column
+            // on — the description clips at the width, the formatter does not.
+            options: vec!["Local".into(), "SSH".into(), "K8s".into()],
+            selected_index: selected,
+            label: "Run in".into(),
+            focused: false,
+            label_width,
+            key: Some("r".into()),
+        }
+    }
+
+    /// **One target per option.** The row is one entry; the description
+    /// splits it at the formatter's own option ranges, so a press on `SSH`
+    /// names index 1 and a press on `K8s` index 2.
+    #[test]
+    fn a_radios_options_are_separate_targets() {
+        let spec = radio(0, 0);
+        let c = cx();
+        assert_eq!(
+            tree_text(&spec, &c),
+            vec!["Run in: (\u{2022}) Local   ( ) SSH   ( ) K8s"]
+        );
+        let mut ui: Ui<UiMsg> = Ui::new();
+        ui.frame(node(&spec, WIDTH, &c), Size::new(WIDTH, 24));
+        let press_at = |ui: &mut Ui<UiMsg>, x: i32| -> Option<i64> {
+            ui.dispatch(fresh_ui::Input::press(
+                fresh_ui::Point::new(x, 0),
+                fresh_ui::MouseButton::Left,
+                fresh_ui::Mods::NONE,
+            ))
+            .msgs
+            .into_iter()
+            .find_map(|m| match m {
+                UiMsg::Ui(UiFact::WidgetHit { event, .. }) => {
+                    Some(event.payload["index"].as_i64().unwrap())
+                }
+                _ => None,
+            })
+        };
+        // The columns come from the formatter's own ranges, not from counting
+        // the row by eye — the split landing on them is the point.
+        let rendered = crate::widgets::render_radio(
+            &["Local".to_string(), "SSH".to_string(), "K8s".to_string()],
+            0,
+            "Run in",
+            false,
+            0,
+            Default::default(),
+            false,
+            WIDTH as u32,
+        );
+        assert_eq!(rendered.option_ranges.len(), 3, "one range per option");
+        for (index, (start, _)) in rendered.option_ranges.iter().enumerate() {
+            let col = rendered.entry.text[..*start].chars().count() as i32;
+            assert_eq!(
+                press_at(&mut ui, col),
+                Some(index as i64),
+                "press on option {index}"
+            );
+        }
+    }
+
     /// **The chip, and only the chip.** In form layout a click on the label
     /// must not flip the value — the settings dialog's contract, which the
     /// runtime kept as a byte range and this keeps as where the nodes are.
@@ -4353,8 +4579,16 @@ pub(crate) mod tests {
         );
         // The chip is at the end of the row; find its column from the
         // formatter's own byte range rather than guessing.
-        let (entry, chip_range) =
-            crate::widgets::render_toggle_form(false, false, "wrap", false, 0, WIDTH as u32, false);
+        let (entry, chip_range) = crate::widgets::render_toggle_form(
+            false,
+            false,
+            "wrap",
+            false,
+            0,
+            Default::default(),
+            WIDTH as u32,
+            false,
+        );
         let chip_col = entry.text[..chip_range.0].chars().count() as i32;
         let got = hit_at(&mut ui, chip_col).expect("a press on the chip is the toggle's");
         let UiFact::WidgetHit { event: hit, .. } = got else {
@@ -4397,8 +4631,17 @@ pub(crate) mod tests {
         };
         assert!(press(&mut ui, 0).is_none(), "the label is not the value");
         // The value cell's column, from the formatter's own byte range.
-        let rendered =
-            crate::widgets::render_number(42.0, true, false, "size", false, 8, None, false);
+        let rendered = crate::widgets::render_number(
+            42.0,
+            true,
+            false,
+            "size",
+            false,
+            8,
+            Default::default(),
+            None,
+            false,
+        );
         let col = rendered.entry.text[..rendered.value_range.0]
             .chars()
             .count() as i32;
@@ -5082,6 +5325,165 @@ pub(crate) mod tests {
         assert_eq!(at(&mut ui, 8), Some("select"), "the label");
     }
 
+    /// **The footer is flush with the panel, not with its widest sibling.**
+    ///
+    /// `justify_end` settles a wrapping row's lines against the row's own main
+    /// extent, and `node()` gives the footer row no width — so it is carried
+    /// to the panel's edge only by the enclosing column stretching it. The
+    /// `fresh-ui` tests for `Justify` all build the row with an explicit
+    /// width, which is the one shape where that cannot go wrong; this builds
+    /// it the way the form does, with the widest sibling *narrower* than the
+    /// panel, so a footer that settled against the content box would stop
+    /// short and this would catch it.
+    #[test]
+    fn a_justified_footer_row_ends_at_the_panel_edge() {
+        const W: u16 = 40;
+        let button = |label: &str| WidgetSpec::Button {
+            label: label.into(),
+            focused: false,
+            intent: Default::default(),
+            key: None,
+            disabled: false,
+            focusable: true,
+            bare: false,
+            full_width: false,
+            hover_style: None,
+            style: None,
+        };
+        let spec = WidgetSpec::Col {
+            children: vec![
+                // The widest sibling, and deliberately short of the panel.
+                a_label("a narrow row", false, 0),
+                WidgetSpec::Row {
+                    children: vec![button("Cancel"), button("Create")],
+                    wrap: true,
+                    justify_end: true,
+                    key: None,
+                },
+            ],
+            key: None,
+        };
+
+        let rows = rows_at(&spec, W);
+        let footer = rows
+            .iter()
+            .find(|r| r.contains("Create"))
+            .unwrap_or_else(|| panic!("the footer must render. Rows:\n{rows:#?}"));
+        assert_eq!(
+            footer.trim_end().chars().count(),
+            W as usize,
+            "the last button must end in the panel's last column, not at the \
+             width of the widest other row. Rows:\n{rows:#?}",
+        );
+    }
+
+    /// A `Label` spec, for the wrap and elide tests below.
+    fn a_label(text: &str, wrap: bool, label_width: u32) -> WidgetSpec {
+        a_label_elided(text, wrap, label_width, fresh_core::api::Elide::None)
+    }
+
+    fn a_label_elided(
+        text: &str,
+        wrap: bool,
+        label_width: u32,
+        elide: fresh_core::api::Elide,
+    ) -> WidgetSpec {
+        WidgetSpec::Label {
+            text: text.into(),
+            style: None,
+            label_width,
+            segments: Vec::new(),
+            wrap,
+            elide,
+        }
+    }
+
+    /// **A wrapping label wraps to the box, not to its own natural width.**
+    /// The thing that could have sunk this: a run whose height is `Auto`
+    /// measuring at the width it wants and widening the column it sits in,
+    /// instead of breaking inside the width the column settled on.
+    #[test]
+    fn a_wrapping_label_breaks_inside_the_width_it_is_given() {
+        let text = "a reason long enough that no terminal this narrow holds it on one row";
+        let flat = rows_at(&a_label(text, false, 0), 30);
+        let wrapped = rows_at(&a_label(text, true, 0), 30);
+
+        assert_eq!(
+            flat.len(),
+            1,
+            "an unwrapped label is still one row. Rows:\n{flat:#?}",
+        );
+        assert!(
+            wrapped.len() > 1,
+            "the label must break rather than clip. Rows:\n{wrapped:#?}",
+        );
+        for row in &wrapped {
+            assert!(
+                row.trim_end().chars().count() <= 30,
+                "no row may exceed the width the box gave it. Rows:\n{wrapped:#?}",
+            );
+        }
+        let joined: String = wrapped
+            .iter()
+            .map(|r| r.trim().to_string())
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(
+            joined.contains("holds it on one row"),
+            "the tail of the text must survive the wrap, not be clipped away. Rows:\n{wrapped:#?}",
+        );
+    }
+
+    /// **The cut is marked by the run, not by the caller.** A row too wide for
+    /// its box is clipped silently by default — right where the border already
+    /// explains it — and says so with an ellipsis when it asks to. Which end
+    /// survives is the difference between a message and a path.
+    #[test]
+    fn an_eliding_label_marks_where_it_was_cut() {
+        use fresh_core::api::Elide;
+        let text = "the agent is waiting for an answer to a question it printed";
+        let at = |e: Elide| rows_at(&a_label_elided(text, false, 0, e), 24).join("");
+
+        let silent = at(Elide::None);
+        assert!(
+            !silent.contains('\u{2026}'),
+            "the default clips without a mark: {silent:?}",
+        );
+
+        let tail = at(Elide::Tail);
+        assert!(tail.contains('\u{2026}'), "`Tail` marks the cut: {tail:?}",);
+        assert!(
+            tail.trim_start().starts_with("the agent"),
+            "`Tail` keeps the head: {tail:?}",
+        );
+
+        let head = at(Elide::Head);
+        assert!(head.contains('\u{2026}'), "`Head` marks the cut: {head:?}",);
+        assert!(
+            head.trim_end().ends_with("printed"),
+            "`Head` keeps the tail: {head:?}",
+        );
+    }
+
+    /// `Wrap::Hanging` indents a continuation to the line's own leading
+    /// whitespace, and `render_label` writes the field column as real leading
+    /// spaces — so a wrapped hint stays inside the column its field opened
+    /// instead of falling back to the panel's left edge.
+    #[test]
+    fn a_wrapped_hint_stays_inside_the_field_column() {
+        let text = "blank means the remote account's home directory on that machine";
+        let rows = rows_at(&a_label(text, true, 8), 44);
+        assert!(rows.len() > 1, "the hint must wrap. Rows:\n{rows:#?}");
+        let indent = |s: &str| s.chars().take_while(|c| *c == ' ').count();
+        for row in &rows[1..] {
+            assert_eq!(
+                indent(row),
+                indent(&rows[0]),
+                "every continuation starts in the field column. Rows:\n{rows:#?}",
+            );
+        }
+    }
+
     /// **The variant whose parity is geometric, not textual.** The runtime
     /// draws this frame as text — `╭─ label ─…─╮` in an entry, `│ … │` around
     /// every child row — because entries are all it has. The tree has a
@@ -5241,6 +5643,7 @@ pub(crate) mod tests {
             label,
             false,
             *label_width,
+            Default::default(),
             true,
             *scroll_offset,
             false,
@@ -5437,6 +5840,7 @@ pub(crate) mod tests {
             "Mode",
             false,
             0,
+            Default::default(),
             false,
             0,
             false,
@@ -6123,6 +6527,7 @@ pub(crate) mod tests {
         let focused = Ctx {
             focus_key: "field".into(),
             marker_gutter: true,
+            label_align: Default::default(),
             ..cx()
         };
         let mut ui: Ui<UiMsg> = Ui::new();
