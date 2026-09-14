@@ -774,9 +774,7 @@ fn open_dock(harness: &mut EditorTestHarness) {
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness
-        .wait_until(|h| {
-            h.screen_to_string().contains("Orchestrator") && h.editor().is_dock_focused()
-        })
+        .wait_until(|h| h.screen_to_string().contains("+ New") && h.editor().is_dock_focused())
         .unwrap();
 }
 
