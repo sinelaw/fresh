@@ -801,6 +801,7 @@ impl<M: 'static> Ui<M> {
         }
         if self.focus_restore == Some(id) {
             self.focus_restore = None;
+            self.focus_restore_scope = None;
         }
         self.hover.retain(|h| *h != id);
         if let Some((targets, _, _)) = &mut self.press {

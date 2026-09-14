@@ -508,6 +508,10 @@ pub struct Ui<M> {
     pub(crate) focus_selection: crate::event::SelectionOnFocus,
     /// Where focus was before a modal took it.
     pub(crate) focus_restore: Option<ElementId>,
+    /// The confinement that held [`Self::focus_restore`] when it was saved.
+    /// A restore into a subtree a layer confined is void once that layer is
+    /// gone — see [`Ui::apply_autofocus`].
+    pub(crate) focus_restore_scope: Option<ElementId>,
     /// Per scope, what its `autofocus` mark named the last time a settle
     /// looked. See [`Ui::apply_autofocus`]: a mark that *moved* since then is
     /// a decision the description made, and focus follows it; a mark that
@@ -584,6 +588,7 @@ impl<M: 'static> Ui<M> {
             focus: None,
             focus_selection: crate::event::SelectionOnFocus::None,
             focus_restore: None,
+            focus_restore_scope: None,
             settled_marks: std::collections::HashMap::new(),
             settled_scope: None,
             traversal: Box::new(crate::focus::ReadingOrder),
