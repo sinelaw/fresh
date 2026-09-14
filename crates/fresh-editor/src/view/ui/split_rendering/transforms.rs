@@ -644,9 +644,9 @@ struct InlineHintCell {
 /// The splice's output, carrying the column its current row has reached and the
 /// hints waiting for that row to end.
 ///
-/// Only a `pad_to_column` hint reads the column, but every push has to maintain
-/// it, so it lives on the sink rather than being recomputed per hint. Advances
-/// match `WrapMachine`'s, since the two measure the same rows.
+/// The column lives on the sink because every push has to maintain it, though
+/// only a `pad_to_column` hint reads it. Advances match `WrapMachine`'s, since
+/// the two measure the same rows.
 struct SplicedRow {
     tokens: Vec<ViewTokenWire>,
     col: usize,
@@ -655,8 +655,7 @@ struct SplicedRow {
 }
 
 impl SplicedRow {
-    /// Emit a hint at the end of the row its anchor fell in, rather than at the
-    /// anchor. Deferred until [`Self::push`] reaches the row's end.
+    /// Emit a hint at the end of the row its anchor fell in, not at the anchor.
     fn defer_to_row_end(&mut self, text: String, style: Option<ViewTokenStyle>, target: u32) {
         self.row_end.push((text, style, target));
     }

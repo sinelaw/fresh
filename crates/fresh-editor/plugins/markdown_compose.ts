@@ -443,10 +443,8 @@ function emitCodeRails(
   // those rows, because the wrap's own hanging indent would push the RAIL right
   // instead of the code.
   const codeIndent = body.length - body.trimStart().length;
-  // The renderer pads the closing rail to this column from the row it is
-  // actually drawing, so the edge cannot lag the text the way a width computed
-  // here does — this pass is always an edit or two behind the buffer, which is
-  // what made the border jump a column while typing.
+  // The renderer pads the rail to this column from the row it is drawing. A
+  // width computed here lags: this pass is always an edit or two behind.
   const railColumn = { ...codeFrameStyle, padToColumn: codeFrameWidth(measure) };
   for (let r = 0; r < rows.length; r++) {
     const row = rows[r];
@@ -465,14 +463,12 @@ function emitCodeRails(
     const pad = inner - displayWidth(rowText) - railIndent;
     if (pad < 0) continue; // unbreakable over-long row: leave the edge open
 
-    // The closing rail hangs off the row's FIRST byte, not its last character
-    // and not its line break: `padToColumn` draws it at the row's end anyway,
-    // so the anchor's only job is to name the row — and this is the one byte in
-    // the row that an edit at the row's end cannot move. A rail anchored at the
-    // end drifts: typing there outruns it, deleting there orphans it onto the
-    // line break, and pressing Enter there carries it onto the NEXT line, whose
-    // own clear then deletes it for good (the line it belongs to is textually
-    // unchanged, so it is never re-offered to put it back).
+    // The closing rail hangs off the row's FIRST byte: `padToColumn` draws it at
+    // the row's end anyway, so the anchor's only job is to name the row, and
+    // this is the one byte an edit at the row's end cannot move. Anchored at the
+    // end it drifts — typing outruns it, deleting orphans it onto the line
+    // break, and Enter carries it onto the next line, whose clear then deletes
+    // it for good.
     editor.addVirtualTextStyled(
       bufferId, `${CODE_RAIL_ID_PREFIX}${byteStart}:${r}:r`, rowStartByte,
       RAIL_GLYPH, railColumn, true,

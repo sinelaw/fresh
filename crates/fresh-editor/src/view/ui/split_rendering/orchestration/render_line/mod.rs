@@ -951,10 +951,9 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
             );
         }
 
-        // x of the last cell on THIS row that carries a source character, which
-        // is where the row's text ends. Per row, and `None` until a source cell
-        // is found: a row that draws none (empty, or carrying only decoration)
-        // has no text end of its own, and must not inherit another row's.
+        // Where THIS row's text ends. Per row, and `None` until a source cell is
+        // found: a row that draws none, empty or carrying only decoration, has
+        // no text end of its own and must not inherit another row's.
         let mut row_text_end_x: Option<u16> = None;
         if !line_spans.is_empty() {
             let row_end_exclusive = row_end_exclusive(current_view_line, &state.buffer);
@@ -1111,8 +1110,7 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
             Some(x) => x
                 .saturating_add(1)
                 .saturating_sub(cells.newline_indicator_cols as u16),
-            // No source cell on this row, so its text ends where text begins:
-            // after the gutter, never inside it.
+            // No source cell, so the row's text ends where text begins.
             None => gutter_width as u16,
         };
         let line_len_chars = line_content.chars().count();

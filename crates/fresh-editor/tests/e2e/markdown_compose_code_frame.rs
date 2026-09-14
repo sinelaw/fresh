@@ -749,13 +749,11 @@ fn typing_at_the_end_of_a_code_line_stays_inside_the_frame() {
 /// it — the invariant a per-line decoration cannot state for itself.
 ///
 /// Enter in a markdown buffer is `markdown_source`'s handler, which edits
-/// through `insertAtCursor` rather than the keyboard action, so it bypassed
-/// both paths that maintain the plugin line-offer set. A line created that way
-/// inherited the byte range of one already offered and was never offered again,
-/// so it was drawn with no sides — and the lines below it merely *shifted*,
-/// staying "seen", so their decorations were evicted by id collision (the ids
-/// are derived from byte offsets) with nothing to re-add them. Both show up as
-/// blank rows inside the box, and they accumulate with every Enter.
+/// through `insertAtCursor` and so bypassed both paths that maintain the plugin
+/// line-offer set. The new line inherited an already-offered byte range and was
+/// never offered again; the lines below it only shifted, staying "seen", so
+/// their decorations were evicted by id collision with nothing to re-add them.
+/// Both draw as sideless rows, and they accumulate with every Enter.
 #[cfg(feature = "plugins")]
 #[test]
 fn blank_rows_inserted_into_a_block_keep_their_rails() {
@@ -847,17 +845,15 @@ fn blank_rows_inserted_into_a_block_keep_their_rails() {
 /// The caret column on a row that drew no source character must be a fact about
 /// that row, not about whichever row happened to draw text last.
 ///
-/// An empty line inside a block renders as rails and padding only, so the
-/// renderer locates no source cell on it. The column it reports as "where this
-/// row's text ends" used to persist across rows, so such a row silently
-/// inherited the previous row's, and the caret landed under the end of the line
-/// above — a hanging indent with no whitespace behind it.
+/// An empty line inside a block draws rails and padding only, so the renderer
+/// locates no source cell on it and used to fall through to the column left by
+/// an earlier row — the caret landing under the end of the line above, a
+/// hanging indent with no whitespace behind it.
 ///
-/// Asserted as an independence property rather than a fixed column: where the
-/// caret belongs on a decoration-only row is a frame-design question still open,
-/// but it cannot be a function of the line above under any answer to it. Two
-/// documents differing only in the length of the code line ABOVE the empty one
-/// must put the caret in the same column.
+/// An independence property rather than a fixed column: where the caret belongs
+/// on a decoration-only row is an open frame-design question, but under no
+/// answer to it can the row above decide. So two documents differing only in
+/// the length of the code line ABOVE the blank one must agree.
 #[cfg(feature = "plugins")]
 #[test]
 fn the_caret_on_a_decoration_only_row_ignores_the_row_above() {

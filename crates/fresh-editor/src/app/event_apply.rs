@@ -46,17 +46,13 @@ impl Editor {
     /// Bring a buffer's `seen_byte_ranges` across one edit that replaced
     /// `[position, position + removed)` with `inserted` bytes.
     ///
-    /// The set keys plugin line offers by byte range, so an edit that shifts
-    /// lines has to shift it too — and a *new* line can otherwise inherit the
-    /// range of one already offered, which makes the editor skip it forever.
-    /// A row that never reaches a per-line decoration plugin never gets its
-    /// decoration, and nothing detects the omission (fresh#3247).
+    /// The set keys plugin line offers by byte range, so a new line can inherit
+    /// the range of one already offered and never be offered again. A row that
+    /// never reaches a per-line decoration plugin never gets its decoration,
+    /// and nothing detects the omission (fresh#3247).
     ///
-    /// Every path that edits a buffer must call this. Two do it through
-    /// `trigger_plugin_hooks_for_event`; the plugin command handlers that edit
-    /// directly (`insertAtCursor`, `deleteRange` — how the markdown plugins
-    /// handle Enter and Tab) call it themselves, next to the marker shift they
-    /// already owe for the same reason.
+    /// **Every path that edits a buffer owes this call**, next to the marker
+    /// shift it already owes for the same reason.
     pub(crate) fn adjust_seen_byte_ranges_for_edit(
         &mut self,
         buffer_id: crate::model::event::BufferId,
@@ -76,11 +72,11 @@ impl Editor {
             .iter()
             .filter_map(|&(start, end)| {
                 if end <= position {
-                    Some((start, end)) // entirely before the edit
+                    Some((start, end))
                 } else if start >= edit_end {
                     Some(((start + inserted) - removed, (end + inserted) - removed))
                 } else {
-                    None // overlaps the edit: its content changed
+                    None // overlaps the edit, so its content changed
                 }
             })
             .collect();
@@ -715,15 +711,11 @@ impl Editor {
                 .send_lsp_changes_for_buffer(buffer_id, full_content_change);
         }
 
-        // This path does not go through `apply_event_to_active_buffer`, so the
-        // `seen_byte_ranges` maintenance that runs there for a single event
-        // never runs here — and a bulk edit is exactly where it is needed. A
-        // line whose *text* is unchanged keeps its range, so it stays "seen"
-        // and is never re-offered, while its per-line decorations have already
-        // been shifted off it by the edit (Enter at the end of a line moves
-        // that line's end-anchored decorations onto the line below, where the
-        // next pass clears them). One re-fire of the viewport, on the same rule
-        // the single-event path uses.
+        // A bulk edit bypasses `apply_event_to_active_buffer`, so it owes the
+        // line-offer upkeep that path does. Re-firing the viewport rather than
+        // shifting ranges: a line whose text is unchanged keeps its range and
+        // stays "seen", while the edit has already carried its end-anchored
+        // decorations onto the line below, where the next pass clears them.
         self.handle_refresh_lines(buffer_id);
 
         Some(bulk_edit)

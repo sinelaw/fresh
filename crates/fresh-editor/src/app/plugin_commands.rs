@@ -469,9 +469,9 @@ impl Editor {
                 .virtual_texts
                 .remove_by_id(&mut state.marker_list, &virtual_text_id);
 
-            // Remapped after the removal above: an unmappable epoch drops the hint
-            // rather than guessing a byte, and returning earlier would strand the
-            // stale one under this id.
+            // After the removal: an unmappable epoch drops the hint rather than
+            // guessing a byte, and returning earlier would strand the stale one
+            // under this id.
             let position = match state.map_plugin_coord(position, epoch) {
                 Some(p) => p,
                 None => return,
@@ -1666,13 +1666,10 @@ impl Editor {
             .active_window_mut()
             .apply_event_to_buffer(active_buf, split_id, &event);
         self.active_event_log_mut().append(event);
-        // This path bypasses apply_event_to_active_buffer (it's how the markdown
-        // plugins insert a newline on Enter, etc.), so the cross-cutting work it
-        // does has to happen here: shift plugin interval markers, or
-        // plugin-tracked decorations (markdown table borders) keep stale
-        // coordinates and corrupt — and bring the plugin line-offer set across
-        // the edit, or a line created by this insert inherits the byte range of
-        // one already offered and is never offered again.
+        // Bypasses apply_event_to_active_buffer (this is how the markdown plugins
+        // insert a newline on Enter), so the cross-cutting work it does happens
+        // here: markers, or plugin-tracked decorations keep stale coordinates and
+        // corrupt, and the line-offer set below.
         #[cfg(feature = "plugins")]
         self.shift_plugin_markers_for_edit(active_buf, cursor_pos, 0, text_len);
         // Only for an edit that landed, as in the two handlers above: a change
@@ -1682,13 +1679,10 @@ impl Editor {
                 .send_lsp_changes_for_buffer(active_buf, lsp_changes);
         }
         if inserted_newline {
-            // Same rule as the keyboard path: a line-count change renumbers
-            // every row below it, and those rows only *shift* — they stay
-            // "seen", so they never re-fire and a per-line decoration plugin
-            // never revisits them. It cannot ride the shift either, because its
-            // decoration ids are derived from byte offsets: a new line landing
-            // on an old offset re-uses the id and evicts the decoration of the
-            // line that moved off it.
+            // Shifting the ranges is not enough when the line count changes: the
+            // rows below only shift, so they stay "seen" and never re-fire, while
+            // a new line landing on an old byte offset re-uses the decoration id
+            // derived from it and evicts the decoration of the line that moved.
             self.handle_refresh_lines(active_buf);
         } else {
             self.adjust_seen_byte_ranges_for_edit(active_buf, cursor_pos, 0, text_len);
