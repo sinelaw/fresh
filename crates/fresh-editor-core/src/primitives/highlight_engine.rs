@@ -3183,6 +3183,33 @@ mod tests {
             );
         }
 
+        // Outside a Coq/Rocq project `.v` stays V, grammar included (#1528).
+        let vlang = "module main\nfn main() {\n\tprintln('hi')\n}\n";
+        let vlang_buffer = Buffer::from_str(vlang, 0, test_fs());
+        let vlang_dir = tempfile::tempdir().unwrap();
+        let vlang_path = vlang_dir.path().join("main.v");
+        let detected_vlang = crate::primitives::detected_language::DetectedLanguage::from_path(
+            &vlang_path,
+            None,
+            &registry,
+            &crate::config::Config::default().languages,
+        );
+        assert_eq!(detected_vlang.name, "vlang");
+        assert_eq!(detected_vlang.display_name, "V");
+        let mut vlang_engine = detected_vlang.highlighter;
+        vlang_engine.highlight_viewport(&vlang_buffer, 0, vlang_buffer.len(), &theme, 0);
+        for (needle, expected) in [
+            ("module", HighlightCategory::Keyword),
+            ("fn", HighlightCategory::Keyword),
+            ("'hi'", HighlightCategory::String),
+        ] {
+            assert_eq!(
+                vlang_engine.category_at_position(vlang.find(needle).unwrap()),
+                Some(expected),
+                "unexpected V category for {needle:?}"
+            );
+        }
+
         let dune = "(library\n (name example)\n (libraries unix)\n (action (run %{bin:tool} --version)))\n";
         let dune_buffer = Buffer::from_str(dune, 0, test_fs());
         let mut dune_engine = HighlightEngine::for_file(Path::new("dune"), None, &registry);
