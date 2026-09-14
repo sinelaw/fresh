@@ -1,0 +1,421 @@
+{
+  "name": "fresh-dock-cleanup",
+  "capture": {
+    "geometry": "150x50",
+    "font": "JetBrains Mono 21",
+    "screen": "2600x2000x24",
+    "display": ":99",
+    "settle": 58,
+    "term": "xfce4-terminal",
+    "key_settle": 0.2,
+    "type_settle": 0.5,
+    "copy_dirs": {
+      "~/.cache/fresh-dock-clip/config/fresh": "{scratch}/config/fresh"
+    },
+    "env": {
+      "XDG_CONFIG_HOME": "{scratch}/config",
+      "XDG_DATA_HOME": "{scratch}/data-{pane}",
+      "XDG_STATE_HOME": "{scratch}/state-{pane}",
+      "XDG_CACHE_HOME": "{scratch}/cache-{pane}",
+      "XDG_RUNTIME_DIR": "{scratch}/run-{pane}",
+      "CLIP_HOME": "~/.cache/fresh-dock-clip"
+    },
+    "keys": [
+      {
+        "shot": "before"
+      },
+      {
+        "key": "ctrl+p"
+      },
+      {
+        "sleep": 0.8
+      },
+      {
+        "type": "Clip: Run Agent"
+      },
+      {
+        "sleep": 0.8
+      },
+      {
+        "key": "Return"
+      },
+      {
+        "sleep": 4.4
+      },
+      {
+        "shot": "ask"
+      },
+      {
+        "sleep": 3.08
+      },
+      {
+        "shot": "asked"
+      },
+      {
+        "sleep": 1.92
+      },
+      {
+        "shot": "folders"
+      },
+      {
+        "sleep": 1.8
+      },
+      {
+        "shot": "m1"
+      },
+      {
+        "sleep": 1.9
+      },
+      {
+        "shot": "m2"
+      },
+      {
+        "sleep": 1.9
+      },
+      {
+        "shot": "m3"
+      },
+      {
+        "sleep": 18.3
+      },
+      {
+        "shot": "filed"
+      },
+      {
+        "sleep": 1.8
+      },
+      {
+        "shot": "r1"
+      },
+      {
+        "sleep": 1.9
+      },
+      {
+        "shot": "r2"
+      },
+      {
+        "sleep": 1.9
+      },
+      {
+        "shot": "r3"
+      },
+      {
+        "sleep": 11.9
+      },
+      {
+        "shot": "after"
+      }
+    ],
+    "panes": {
+      "solo": {
+        "argv": [
+          "$FRESH_BIN",
+          "--no-upgrade-check",
+          "--no-restore"
+        ]
+      }
+    }
+  },
+  "render": {
+    "size": [
+      1080,
+      1080
+    ],
+    "fps": 60,
+    "rows": 50,
+    "cols": 150,
+    "title": "fresh \u2014 orchestrator dock",
+    "note_size": 46,
+    "views": {
+      "before": {
+        "rows": [
+          2,
+          37
+        ],
+        "cols": [
+          0,
+          41
+        ]
+      },
+      "after": {
+        "rows": [
+          2,
+          38
+        ],
+        "cols": [
+          0,
+          41
+        ]
+      },
+      "ask": {
+        "rows": [
+          1,
+          12
+        ],
+        "cols": [
+          31,
+          92
+        ]
+      },
+      "payoff": {
+        "rows": [
+          3,
+          29
+        ],
+        "cols": [
+          0,
+          41
+        ]
+      }
+    },
+    "intro_caption": [
+      "25 workspaces, opened over a fortnight",
+      "not one of the names says what it is"
+    ],
+    "outro_caption": [
+      "fresh",
+      "getfresh.dev"
+    ],
+    "timing": {
+      "intro": 2.2,
+      "zoom": 0.9,
+      "hold": 2.0,
+      "pan": 0.45,
+      "push": 0.9,
+      "outro": 1.4
+    },
+    "annotations": [
+      {
+        "shot": "before",
+        "rows": [
+          4,
+          8
+        ],
+        "cols": [
+          0,
+          41
+        ],
+        "camera": "fit",
+        "hold": 3.0,
+        "head": "one row on the dock",
+        "note": "a worktree, a branch, an agent",
+        "note_at": "below-right"
+      },
+      {
+        "shot": "before",
+        "view": "before",
+        "rows": [
+          4,
+          30
+        ],
+        "cols": [
+          0,
+          41
+        ],
+        "hold": 3.4,
+        "head": "three weeks of this",
+        "note": "25 of them. not one says what it is.",
+        "note_at": "below-right"
+      },
+      {
+        "shot": "asked",
+        "view": "ask",
+        "rows": [
+          3,
+          6
+        ],
+        "cols": [
+          33,
+          90
+        ],
+        "hold": 3.4,
+        "head": "the ask",
+        "note": "one sentence",
+        "note_at": "below-right"
+      },
+      {
+        "shot": "folders",
+        "view": "before",
+        "rows": [
+          4,
+          12
+        ],
+        "cols": [
+          0,
+          41
+        ],
+        "hold": 2.6,
+        "head": "folders first",
+        "note": "one per project",
+        "note_at": "below-right"
+      },
+      {
+        "shot": "m1",
+        "rows": [
+          4,
+          9
+        ],
+        "cols": [
+          0,
+          41
+        ],
+        "camera": "fit",
+        "hold": 2.4,
+        "head": "project_root \u2192 junk",
+        "note": "never opened",
+        "note_at": "below-right"
+      },
+      {
+        "shot": "m2",
+        "rows": [
+          4,
+          9
+        ],
+        "cols": [
+          0,
+          41
+        ],
+        "camera": "fit",
+        "hold": 2.4,
+        "head": "fresh-31 \u2192 fresh",
+        "note": "still running",
+        "note_at": "below-right"
+      },
+      {
+        "shot": "m3",
+        "rows": [
+          4,
+          10
+        ],
+        "cols": [
+          0,
+          41
+        ],
+        "camera": "fit",
+        "hold": 2.4,
+        "head": "session-2 \u2192 junk",
+        "note": "an agent that finished",
+        "note_at": "below-right"
+      },
+      {
+        "shot": "filed",
+        "rows": [
+          13,
+          23
+        ],
+        "cols": [
+          0,
+          41
+        ],
+        "camera": "fit",
+        "hold": 3.2,
+        "head": "and the rest",
+        "note": "nine were junk",
+        "note_at": "below-right"
+      },
+      {
+        "shot": "r1",
+        "rows": [
+          4,
+          10
+        ],
+        "cols": [
+          0,
+          41
+        ],
+        "camera": "fit",
+        "hold": 2.3,
+        "head": "fresh-31",
+        "note": "Folding test harness",
+        "note_at": "below-right"
+      },
+      {
+        "shot": "r2",
+        "rows": [
+          4,
+          10
+        ],
+        "cols": [
+          0,
+          41
+        ],
+        "camera": "fit",
+        "hold": 2.3,
+        "head": "fresh-22",
+        "note": "Status bar plugin",
+        "note_at": "below-right"
+      },
+      {
+        "shot": "r3",
+        "rows": [
+          10,
+          14
+        ],
+        "cols": [
+          0,
+          41
+        ],
+        "camera": "fit",
+        "hold": 2.3,
+        "head": "home-auto-7",
+        "note": "Thermostat scheduler",
+        "note_at": "below-right"
+      },
+      {
+        "shot": "after",
+        "view": "payoff",
+        "rows": [
+          13,
+          23
+        ],
+        "cols": [
+          0,
+          41
+        ],
+        "hold": 4.2,
+        "head": "named, and filed",
+        "note": "junk keeps its names",
+        "note_at": "below-right"
+      },
+      {
+        "shot": "before",
+        "view": "before",
+        "rows": [
+          4,
+          30
+        ],
+        "cols": [
+          0,
+          41
+        ],
+        "hold": 3.0,
+        "label": "BEFORE",
+        "tone": "before",
+        "band": false,
+        "head": "25 rows"
+      },
+      {
+        "shot": "after",
+        "view": "after",
+        "rows": [
+          4,
+          36
+        ],
+        "cols": [
+          0,
+          41
+        ],
+        "hold": 4.0,
+        "label": "AFTER",
+        "tone": "after",
+        "band": false,
+        "transition": "push",
+        "head": "7 folders, 16 named"
+      }
+    ]
+  },
+  "encode": {
+    "crf": 18,
+    "preset": "slow"
+  }
+}

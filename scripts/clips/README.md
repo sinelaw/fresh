@@ -33,6 +33,7 @@ specific to filming *this* program.
 | `fresh-review-syntax.json` | comparison | source highlighted inside a Review Diff stream |
 | `fresh-ui-anatomy.json` | explode | the retained UI tree, one element at a time |
 | `fresh-welcome-scroll.json` | solo, stepped | the Welcome screen, scrolled from the wordmark to the theme card, then restyled live |
+| `fresh-dock-cleanup.json` | solo, stepped | 25 unreadable orchestrator rows, filed into folders and renamed by an agent |
 
 `assets/<clip>/fresh/config.json` is a config directory a spec copies in, so a
 capture gets a deliberate theme and a known set of enabled plugins instead of
@@ -142,3 +143,31 @@ session Restricted — which blocks the `spawnProcess` calls the welcome screen'
 finder and git cards are made of, and puts a red pill in the status bar besides.
 A demo repo of prose and a couple of scripts has no marker in it, opens Trusted,
 and films with its cards alive.
+
+## Staging a dock, not a file
+
+`fresh-dock-cleanup` is the one clip here that films the *orchestrator*
+rather than a buffer, and it needed three things the others did not.
+
+**Scripting the editor from outside is refused, by design.** `fresh --cmd
+script run` and `fresh --cmd init reload` both answer "no capability token:
+script evaluation is not authorized". The token is minted per terminal and
+injected into the PTY (`FRESH_CMD_TOKEN`), so the only two ways in are
+`init.ts`, which runs at startup with the full API, and a process the editor
+itself spawned. This clip uses both: `assets/fresh-dock-cleanup/fresh/init.ts`
+stages the 25 workspaces, and the agent that cleans them up is launched with
+`runAgent` into a real pane, where it inherits a real token and drives the
+dock with `fresh --cmd script run -` like any agent would.
+
+**Pace the agent to a deadline, not to a sum of sleeps.** Every mutation is a
+process spawn and a round trip; sleeping a fixed pause *after* each one makes
+the agent finish a dozen seconds later than the schedule the capture is
+counting against, and the shots then photograph the wrong states. `clip-agent
+--timeline` publishes the schedule and `gen-spec.py` generates the capture's
+sleeps from it, so the two cannot drift.
+
+**The dock's compact row shows the name and nothing else.** `sessionNodeEntry`
+renders the state glyph, the label and the on-disk/pending tags — branch and
+the git summary belong to card view, and 25 rows of cards do not fit. The
+fixture's branches and uncommitted work are real (`git-report.json` records
+what the probe saw), the compact dock simply does not draw them.

@@ -1,0 +1,98 @@
+// Staging for the dock-cleanup clip. Runs at editor startup, which is the
+// only moment a script gets the editor API without a capability token:
+// `fresh --cmd script run` from outside is refused by design, and
+// `init reload` with it. Everything the *clip* films is done later, by the
+// agent process in the pane — this file only builds the mess.
+//
+// @CLIP_HOME@ is substituted by record.sh, so the paths below are absolute
+// by the time the editor reads this.
+const CLIP_HOME = "@CLIP_HOME@";
+const TREE = CLIP_HOME + "/tree";
+const table = JSON.parse(editor.readFile(CLIP_HOME + "/rows.json"));
+
+const say = (m) => editor.writeFile(CLIP_HOME + "/stage.log", m);
+
+(async () => {
+  try {
+    const orch = editor.getPluginApi("orchestrator");
+    if (!orch) { say("no orchestrator api"); return; }
+
+    // Compact, and every row visible: 25 rows of cards do not fit, and a
+    // filtered dock would quietly drop half the mess the clip is about.
+    orch.setDockView("compact");
+    orch.setDockFilter({ text: "", project: null, worktrees: false, showEmpty: true });
+
+    const made = [];
+    for (const row of table.rows) {
+      const opts = {
+        path: TREE + "/" + row.from,
+        name: row.name,
+        worktree: !!row.worktree,
+        visit: false,
+      };
+      if (row.newBranch) opts.newBranch = row.newBranch;
+      // A row that should read as busy gets a real process that keeps
+      // printing; that is what `agentState: "working"` actually measures.
+      if (row.working) opts.agent = CLIP_HOME + "/bin/busy";
+      const r = await orch.newWorkspace(opts);
+      // The auto-name is the terminal title ("fresh-31 · bash — root@vm: …"),
+      // which is far too long for the dock. A manual rename replaces it.
+      orch.renameWorkspace(r.workspaceId, row.name);
+      // Uncommitted work, so the dock's dirty column has something to say.
+      //
+      // It has to be a change to a *tracked* file. The dock's compact row
+      // renders the git summary from `added`/`deleted` — diff line counts —
+      // so a pile of brand-new untracked files leaves the column reading
+      // "clean" however many of them there are. Appending to a committed
+      // file is what actually produces a `+N`.
+      const n = row.dirty || 0;
+      if (n > 0) {
+        const lib = r.root + "/src/lib.rs";
+        const cur = editor.readFile(lib);
+        if (cur !== null) {
+          let add = "";
+          for (let i = 1; i <= n; i++) add += "fn wip_" + i + "() { /* uncommitted */ }\n";
+          editor.writeFile(lib, cur + add);
+        }
+        // A couple of rows should also show a deletion, so the column is not
+        // uniformly "+N".
+        if (n > 3) {
+          const rd = r.root + "/README.md";
+          if (editor.readFile(rd) !== null) editor.writeFile(rd, "# trimmed\n");
+        }
+        editor.writeFile(r.root + "/wip_scratch.txt", "work in progress\n");
+      }
+      made.push({ name: row.name, id: r.workspaceId, root: r.root });
+    }
+
+    // The launch workspace is where the agent will run; give it a name that
+    // is not one of the 25.
+    const self = orch.listWorkspaces().find((w) => w.active);
+    if (self) orch.renameWorkspace(self.workspaceId, "agent");
+
+    editor.writeFile(CLIP_HOME + "/staged.json", JSON.stringify(made, null, 2));
+
+    // The git probe is asynchronous, so the dirty counts the dock shows are
+    // not there the instant a workspace is born. Give it a moment and record
+    // what actually landed, so a take with an empty git column can be told
+    // apart from a fixture that never had one.
+    await editor.delay(9000);
+    editor.writeFile(CLIP_HOME + "/git-report.json", JSON.stringify(
+      orch.listWorkspaces().map((w) => ({ name: w.name, branch: w.branch, git: w.git })), null, 2));
+
+    say("staged " + made.length + " rows at " + new Date().toISOString());
+  } catch (e) {
+    say("STAGE ERROR: " + String((e && e.message) || e));
+  }
+})();
+
+// The clip's own trigger. The agent must not start typing while the capture
+// is still filming the "before" dock, so launching it is a palette command
+// the spec runs between beats rather than something startup does.
+// `terminalBypass` keeps it reachable once focus is inside a terminal pane.
+registerHandler("clipRunAgent", async () => {
+  const orch = editor.getPluginApi("orchestrator");
+  await orch.runAgent({ agent: "@CLIP_HOME@/bin/clip-agent", teach: false });
+});
+editor.registerCommand("Clip: Run Agent", "Launch the dock-cleanup agent",
+                       "clipRunAgent", null, { terminalBypass: true });

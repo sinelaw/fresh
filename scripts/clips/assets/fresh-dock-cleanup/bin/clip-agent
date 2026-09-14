@@ -1,0 +1,218 @@
+#!/usr/bin/env python3
+"""The coding agent the dock-cleanup clip films.
+
+It is scripted, not a language model: the words are fixed so the take is
+repeatable. Everything it *does* is real. Launched by `runAgent` into a real
+Fresh pane, it inherits `FRESH_CMD_TOKEN`, `FRESH_SESSION` and `FRESH_BIN`
+from the editor, and every dock change below is a real call into the real
+orchestrator API, piped to `fresh --cmd script run -` exactly as an agent
+working in a Fresh pane would make it.
+
+Two things about the dock API are load-bearing here and cost time if
+rediscovered:
+
+  * Layout mutations are queued. A read issued in the same script sees
+    pre-mutation state, so each mutation is its own script run and the
+    result is read back in the next one.
+  * A workspace discovered on disk but never opened has a *negative*
+    placeholder `windowId`. Rows are addressed by the durable
+    `workspaceId` throughout, never by window id, so the row kind never
+    has to be special-cased.
+
+`--timeline` prints the schedule as JSON instead of running, so the capture
+spec can be generated against the same numbers the agent will actually keep.
+"""
+from __future__ import annotations
+import json, os, subprocess, sys, time
+
+CLIP_HOME = os.environ.get("CLIP_HOME") or os.path.expanduser("~/.cache/fresh-dock-clip")
+FRESH = os.environ.get("FRESH_BIN") or "fresh"
+ROWS = json.load(open(os.path.join(CLIP_HOME, "rows.json")))
+
+# Wrapped by hand rather than by the terminal: as one 100-column line the
+# sentence needs a camera wide enough to swallow the whole editor, and at that
+# scale nobody can read it. Two lines fit a frame that is still legible.
+PROMPT_LINES = ["organize my workspaces into folders, and rename",
+                "them to match the actual work being done inside them"]
+PROMPT = " ".join(PROMPT_LINES)
+
+# Pacing. The dock is static between mutations, so a shot only has to land
+# inside a plateau — which is why the annotated moves get a wide one and the
+# rest can run fast without the capture having to chase them.
+TYPE_CPS      = 22.0   # characters a second, a human cadence
+THINK         = 1.8
+LEAD_IN       = 1.0    # after the prompt lands, before the first folder
+SLOW_PLATEAU  = 1.9    # the annotated moves/renames
+FAST_PLATEAU  = 0.75   # once the pattern is legible
+N_SLOW_MOVES  = 3
+N_SLOW_RENAME = 3
+# The two phase boundaries are states worth filming — folders made but
+# nothing filed yet, everything filed but nothing renamed yet — and each
+# would otherwise last microseconds.
+FOLDER_PAUSE  = 1.7
+PHASE_PAUSE   = 1.7
+
+DIM, BOLD, CYAN, GREEN, GREY, RESET = (
+    "\033[2m", "\033[1m", "\033[36m", "\033[32m", "\033[90m", "\033[0m")
+
+
+def script(src: str):
+    """Run one TypeScript statement against the live editor and return its JSON."""
+    r = subprocess.run([FRESH, "--cmd", "script", "run", "-"],
+                       input=src, capture_output=True, text=True)
+    if r.returncode != 0:
+        raise RuntimeError((r.stderr or r.stdout).strip()[:400])
+    out = (r.stdout or "").strip()
+    return json.loads(out) if out else None
+
+
+ORCH = 'const o = editor.getPluginApi("orchestrator");'
+
+
+def rows_by_name():
+    """Durable ids, read back after the queue has drained."""
+    ws = script(ORCH + " return o.listWorkspaces().map(w => "
+                       "({name: w.name, id: w.workspaceId, kind: w.kind}));")
+    out = {}
+    for w in ws or []:
+        out.setdefault(w["name"], []).append(w)
+    return out
+
+
+class Clock:
+    """Pace to an absolute schedule, not to a sum of sleeps.
+
+    Every mutation is a `fresh --cmd script run` — a process spawn and a
+    round trip to the editor, tens to hundreds of milliseconds of it. Sleeping
+    a fixed plateau *after* each one makes the agent finish later than the
+    timeline it published, and the capture, which is only counting sleeps,
+    then photographs the wrong states. Holding a deadline instead means the
+    published schedule is the schedule kept, as long as the work fits inside
+    its plateau — and `--timeline --verify` says whether it did.
+    """
+
+    def __init__(self, log_path):
+        self.t0 = time.monotonic()
+        self.deadline = 0.0
+        self.log = open(log_path, "w", buffering=1)
+
+    def step(self, label, plateau):
+        self.deadline += plateau
+        now = time.monotonic() - self.t0
+        slack = self.deadline - now
+        self.log.write(json.dumps({"label": label, "at": round(now, 3),
+                                   "target": round(self.deadline, 3),
+                                   "slack": round(slack, 3)}) + "\n")
+        if slack > 0:
+            time.sleep(slack)
+
+
+def emit(text="", nl=True):
+    sys.stdout.write(text + ("\n" if nl else ""))
+    sys.stdout.flush()
+
+
+def type_out(text, cps=TYPE_CPS):
+    delay = 1.0 / cps
+    for ch in text:
+        sys.stdout.write(ch); sys.stdout.flush(); time.sleep(delay)
+    sys.stdout.write("\n"); sys.stdout.flush()
+
+
+def timeline():
+    """The schedule, as the capture needs to see it."""
+    moves = len(ROWS["rows"])
+    renames = sum(1 for r in ROWS["rows"] if r.get("rename"))
+    steps = [{"label": "prompt", "seconds": round(len(PROMPT) / TYPE_CPS + THINK + LEAD_IN, 2)}]
+    steps.append({"label": "folders", "seconds": FOLDER_PAUSE})
+    for i in range(moves):
+        steps.append({"label": f"move{i}",
+                      "seconds": SLOW_PLATEAU if i < N_SLOW_MOVES else FAST_PLATEAU})
+    steps.append({"label": "filed", "seconds": PHASE_PAUSE})
+    for i in range(renames):
+        steps.append({"label": f"rename{i}",
+                      "seconds": SLOW_PLATEAU if i < N_SLOW_RENAME else FAST_PLATEAU})
+    steps.append({"label": "done", "seconds": 2.0})
+    return {"steps": steps, "total": round(sum(s["seconds"] for s in steps), 2),
+            "moves": moves, "renames": renames,
+            "n_slow_moves": N_SLOW_MOVES, "n_slow_renames": N_SLOW_RENAME}
+
+
+def main():
+    if "--timeline" in sys.argv:
+        print(json.dumps(timeline(), indent=2)); return
+
+    # ── the user asks ────────────────────────────────────────────────────
+    emit()
+    emit(f"{GREEN}●{RESET} {BOLD}fresh-agent{RESET} {GREY}· dock{RESET}")
+    emit()
+    emit(f"{CYAN}>{RESET} ", nl=False)
+    type_out(PROMPT_LINES[0])
+    for cont in PROMPT_LINES[1:]:
+        emit("  ", nl=False)
+        type_out(cont)
+    emit()
+    emit(f"{DIM}  thinking…{RESET}")
+    time.sleep(THINK)
+    emit(f"{DIM}  reading dock: {len(ROWS['rows'])} workspaces, 0 folders{RESET}")
+    time.sleep(LEAD_IN)
+    clock = Clock(os.path.join(CLIP_HOME, "agent-timing.log"))
+
+    # ── phase A: folders, then file every row ────────────────────────────
+    emit()
+    emit(f"{BOLD}  filing{RESET}")
+    folder_ids = {}
+    for name in ROWS["folders"]:
+        fid = script(ORCH + f' return o.createFolder({json.dumps(name)});')
+        folder_ids[name] = fid
+    emit(f"{GREY}  · {len(folder_ids)} folders{RESET}")
+    clock.step("folders", FOLDER_PAUSE)
+
+    known = rows_by_name()
+    used = {}
+    filed = 0
+    for i, row in enumerate(ROWS["rows"]):
+        # Three rows share the name `project_root`; take them in order.
+        k = used.get(row["name"], 0); used[row["name"]] = k + 1
+        cand = known.get(row["name"], [])
+        if k >= len(cand):
+            continue
+        wid = cand[k]["id"]
+        fid = folder_ids[row["folder"]]
+        script(ORCH + f' return o.moveWorkspace({json.dumps(wid)}, {json.dumps(fid)});')
+        filed += 1
+        if i < N_SLOW_MOVES:
+            emit(f"{GREY}  · {row['name']:<14} → {row['folder']}{RESET}")
+        clock.step(f"move{i}", SLOW_PLATEAU if i < N_SLOW_MOVES else FAST_PLATEAU)
+    emit(f"{GREY}  · {filed} filed{RESET}")
+    clock.step("filed", PHASE_PAUSE)
+
+    # ── phase B: rename what survives ────────────────────────────────────
+    emit()
+    emit(f"{BOLD}  renaming{RESET}")
+    used = {}
+    renamed = 0
+    targets = [r for r in ROWS["rows"] if r.get("rename")]
+    for i, row in enumerate(targets):
+        k = used.get(row["name"], 0); used[row["name"]] = k + 1
+        cand = known.get(row["name"], [])
+        if k >= len(cand):
+            continue
+        wid = cand[k]["id"]
+        script(ORCH + f' return o.renameWorkspace({json.dumps(wid)}, {json.dumps(row["rename"])});')
+        renamed += 1
+        if i < N_SLOW_RENAME:
+            emit(f"{GREY}  · {row['name']:<14} → {row['rename']}{RESET}")
+        clock.step(f"rename{i}", SLOW_PLATEAU if i < N_SLOW_RENAME else FAST_PLATEAU)
+    emit(f"{GREY}  · {renamed} renamed{RESET}")
+
+    emit()
+    emit(f"{GREEN}●{RESET} {filed} filed into {len(folder_ids)} folders, {renamed} renamed.")
+    clock.step("done", 2.0)
+    # Stay alive: the pane is on screen for the rest of the take.
+    while True:
+        time.sleep(30)
+
+
+if __name__ == "__main__":
+    main()
