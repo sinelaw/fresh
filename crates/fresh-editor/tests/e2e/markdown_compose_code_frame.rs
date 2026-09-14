@@ -843,3 +843,55 @@ fn blank_rows_inserted_into_a_block_keep_their_rails() {
         );
     }
 }
+
+/// The caret column on a row that drew no source character must be a fact about
+/// that row, not about whichever row happened to draw text last.
+///
+/// An empty line inside a block renders as rails and padding only, so the
+/// renderer locates no source cell on it. The column it reports as "where this
+/// row's text ends" used to persist across rows, so such a row silently
+/// inherited the previous row's, and the caret landed under the end of the line
+/// above — a hanging indent with no whitespace behind it.
+///
+/// Asserted as an independence property rather than a fixed column: where the
+/// caret belongs on a decoration-only row is a frame-design question still open,
+/// but it cannot be a function of the line above under any answer to it. Two
+/// documents differing only in the length of the code line ABOVE the empty one
+/// must put the caret in the same column.
+#[cfg(feature = "plugins")]
+#[test]
+fn the_caret_on_a_decoration_only_row_ignores_the_row_above() {
+    fn caret_column_on_the_blank_code_line(first_code_line: &str) -> u16 {
+        let doc = format!("# Doc\n\n```rust\n{first_code_line}\n\nfn b() {{}}\n```\n\nTail.\n");
+        let (mut harness, _tmp) = compose_harness(&doc);
+        harness
+            .wait_until(|h| h.screen_to_string().contains('└'))
+            .expect("compose mode should frame the fenced block");
+
+        // Onto the blank line inside the block, as in the sibling test above.
+        harness
+            .send_key(KeyCode::Home, KeyModifiers::CONTROL)
+            .unwrap();
+        for _ in 0..4 {
+            harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        }
+        harness.send_key(KeyCode::End, KeyModifiers::NONE).unwrap();
+        harness.wait_for_async_quiescence(8).unwrap();
+
+        let screen = harness.screen_to_string();
+        let (x, _) = harness
+            .render_observing_cursor()
+            .unwrap()
+            .unwrap_or_else(|| panic!("caret should be drawn.\nScreen:\n{screen}"));
+        x
+    }
+
+    let short = caret_column_on_the_blank_code_line("fn a() {}");
+    let long = caret_column_on_the_blank_code_line("fn a() { let x = 1; }");
+
+    assert_eq!(
+        short, long,
+        "the caret on the empty code row moved with the length of the code line \
+         above it, so the row is still inheriting that row's end-of-text column"
+    );
+}
