@@ -52,7 +52,7 @@ const BEFORE_HELP_EN: &str =
 #[command(before_help = BEFORE_HELP_EN)]
 struct Cli {
     /// Run a command instead of opening files
-    /// Commands: daemon (list|attach|new|kill|open-file), config (show|paths), grammar (list), init, update, script (api|check|run|types), help (tour|script)
+    /// Commands: daemon (list|attach|new|kill|open-file), config (show|paths), grammar (list), init, update, script (api|check|run|types), workspace (list), agent (list|get|explain|wait|start), help (tour|script)
     #[arg(long, num_args = 1.., value_name = "COMMAND", allow_hyphen_values = true)]
     cmd: Vec<String>,
 
@@ -491,7 +491,7 @@ impl From<Cli> for Args {
                 // Unknown command
                 _ => {
                     eprintln!("Unknown command: {}", cli.cmd.join(" "));
-                    eprintln!("Available commands: daemon (list|attach|new|kill|info|open-file), config (show|paths), grammar (list), init, update");
+                    eprintln!("Available commands: daemon (list|attach|new|kill|info|open-file), config (show|paths), grammar (list), init, update, script, command, workspace, agent");
                     std::process::exit(1);
                 }
             }
@@ -3739,14 +3739,312 @@ fn run_cmd_command(tokens: &[&str]) -> AnyhowResult<()> {
                 std::process::exit(2);
             }
         },
+        Some("workspace") => {
+            match &rest[1..] {
+                ["list", flags @ ..] => orchestrator_list_command(session, flags, false),
+                _ => {
+                    eprintln!("usage: fresh --cmd workspace list [--json]   every workspace the dock tracks");
+                    std::process::exit(2);
+                }
+            }
+        }
+        Some("agent") => match &rest[1..] {
+            ["list", flags @ ..] => orchestrator_list_command(session, flags, true),
+            ["get", id, flags @ ..] => orchestrator_get_command(session, id, flags),
+            ["explain", id, flags @ ..] => orchestrator_explain_command(session, id, flags),
+            ["wait", id, flags @ ..] => orchestrator_wait_command(session, id, flags),
+            ["start", cmd, flags @ ..] => orchestrator_start_command(session, cmd, flags),
+            _ => {
+                eprintln!("usage: fresh --cmd agent list [--json]                          live workspaces and their agent state");
+                eprintln!("       fresh --cmd agent get <ID> [--json]                      one workspace (ID: workspaceId, window number, or dock name)");
+                eprintln!("       fresh --cmd agent explain <ID> [--json]                  why it shows that state: rule, evidence, timing");
+                eprintln!("       fresh --cmd agent wait <ID> [--until STATE[,STATE]] [--timeout SECS] [--json]");
+                eprintln!("                                                                block until the agent is quiet (or in STATE); exit 3 on timeout");
+                eprintln!("       fresh --cmd agent start <CMD> [--prompt TEXT] [--auto] [--no-teach] [--no-wait] [--timeout SECS] [--json]");
+                eprintln!("                                                                launch CMD in this workspace and confirm it came up; exit 1 if not");
+                std::process::exit(2);
+            }
+        },
         _ => {
             eprintln!("Unknown command: {}", rest.join(" "));
             eprintln!("usage: fresh --cmd script <api|check|run|types> ...");
             eprintln!("       fresh --cmd command <run|list> ...");
+            eprintln!("       fresh --cmd workspace list");
+            eprintln!("       fresh --cmd agent <list|get|explain|wait|start> ...");
             eprintln!("       fresh --cmd init reload");
             std::process::exit(2);
         }
     }
+}
+
+// ===========================================================================
+// `fresh --cmd workspace ...` / `fresh --cmd agent ...` — the orchestrator
+// over the control socket.
+//
+// Each verb is a script evaluated against the running editor through the
+// same channel as `script run`, so it carries the same authorization (the
+// workspace's capability token) and the same targeting (`$FRESH_SESSION`
+// or `--session`). The scripts only call the orchestrator plugin's published
+// API (`editor.getPluginApi("orchestrator")`), so what the CLI prints is
+// exactly what a script could see — stable `workspaceId`s included.
+// ===========================================================================
+
+/// `--name VALUE` or `--name=VALUE`; `None` when the flag is absent. A flag
+/// written with nothing usable after it exits 2 rather than falling back to
+/// the default — for a CLI an agent drives, a silently dropped value is the
+/// worst failure it could have.
+///
+/// **"Nothing usable" includes the next flag.** `--prompt --timeout 30` used
+/// to set the prompt to the literal `--timeout` and then read `30` as a stray
+/// argument, which is precisely the silent drop the paragraph above promises
+/// not to do: the agent asked for a prompt and a timeout and got neither,
+/// with a zero exit. A value that begins with `-` is therefore a usage error,
+/// and `--name=-x` is how you pass one on purpose.
+fn flag_value<'a>(flags: &[&'a str], name: &str) -> Option<&'a str> {
+    match flag_value_checked(flags, name) {
+        Ok(v) => v,
+        Err(msg) => {
+            eprintln!("{msg}");
+            std::process::exit(2);
+        }
+    }
+}
+
+/// [`flag_value`] without the exit, so the rule above can be tested.
+fn flag_value_checked<'a>(flags: &[&'a str], name: &str) -> Result<Option<&'a str>, String> {
+    if let Some(i) = flags.iter().position(|f| *f == name) {
+        return match flags.get(i + 1).copied().filter(|v| !v.starts_with('-')) {
+            Some(v) => Ok(Some(v)),
+            None => Err(format!(
+                "{name} wants a value (use {name}=VALUE for one starting with `-`)"
+            )),
+        };
+    }
+    let prefix = format!("{name}=");
+    Ok(flags.iter().find_map(|f| f.strip_prefix(prefix.as_str())))
+}
+
+/// How a verb's script says "and the outcome was exceptional" through a
+/// channel that only carries the script's return value.
+///
+/// **Record Separator, not a word.** These were `\nTIMED_OUT` and
+/// `\nSTART_FAILED`, matched with `ends_with` and removed with
+/// `trim_end_matches` — so output whose own last line was one of those tokens
+/// set the exit code, and `trim_end_matches` stripped every repetition rather
+/// than the one the script appended. `\x1e` cannot occur in a workspace name,
+/// an agent's error text or a JSON document, and [`strip_sentinel`] removes
+/// exactly one.
+const SENTINEL_TIMED_OUT: &str = "\u{1e}TIMED_OUT";
+const SENTINEL_START_FAILED: &str = "\u{1e}START_FAILED";
+
+/// `(what to print, whether the sentinel was there)`.
+fn strip_sentinel<'a>(text: &'a str, sentinel: &str) -> (&'a str, bool) {
+    match text.strip_suffix(sentinel) {
+        Some(rest) => (rest.trim_end(), true),
+        None => (text.trim_end(), false),
+    }
+}
+
+fn has_flag(flags: &[&str], name: &str) -> bool {
+    flags.iter().any(|f| *f == name)
+}
+
+/// `--timeout SECS`, or `default` when absent. A value that is not a number
+/// is a usage error (exit 2), like any other malformed flag.
+fn parse_timeout_flag(flags: &[&str], default: u64) -> u64 {
+    match flag_value(flags, "--timeout") {
+        Some(v) => match v.parse::<u64>() {
+            Ok(n) if n > 0 => n,
+            _ => {
+                eprintln!(
+                    "--timeout wants a whole number of seconds, at least 1, got '{}'",
+                    v
+                );
+                std::process::exit(2);
+            }
+        },
+        None => default,
+    }
+}
+
+fn orchestrator_api_prelude() -> &'static str {
+    r#"
+    const api = editor.getPluginApi("orchestrator");
+    if (!api) throw new Error("the orchestrator plugin is not loaded in this editor");
+    "#
+}
+
+fn orchestrator_list_command(
+    session: Option<&str>,
+    flags: &[&str],
+    agents_only: bool,
+) -> AnyhowResult<()> {
+    let json = has_flag(flags, "--json");
+    let script = format!(
+        r#"{prelude}
+        const rows = api.listWorkspaces().filter(function (w) {{ return {agents_only} ? w.kind === "live" : true; }});
+        if ({json}) return JSON.stringify(rows, null, 2);
+        if (rows.length === 0) return "no workspaces";
+        const id = function (w) {{ return w.workspaceId || String(w.windowId); }};
+        const cols = [["ID", id], ["STATE", function (w) {{ return w.agentState; }}], ["NAME", function (w) {{ return (w.active ? "* " : "  ") + w.name; }}], ["BRANCH", function (w) {{ return w.branch || ""; }}], ["ROOT", function (w) {{ return w.root; }}]];
+        const wide = function (v) {{ return editor.stringWidth(String(v)); }};
+        const widths = cols.map(function (c) {{ return rows.reduce(function (m, w) {{ return Math.max(m, wide(c[1](w))); }}, wide(c[0])); }});
+        const pad = function (v, n) {{ const s = String(v); return s + " ".repeat(Math.max(0, n - wide(s))); }};
+        const line = function (cells) {{ return cells.map(function (v, i) {{ return i === cols.length - 1 ? String(v) : pad(v, widths[i]); }}).join("  "); }};
+        return [line(cols.map(function (c) {{ return c[0]; }}))].concat(rows.map(function (w) {{ return line(cols.map(function (c) {{ return c[1](w); }})); }})).join("\n");
+        "#,
+        prelude = orchestrator_api_prelude(),
+    );
+    submit_orchestrator_script(session, script)
+}
+
+fn orchestrator_get_command(session: Option<&str>, id: &str, flags: &[&str]) -> AnyhowResult<()> {
+    let json = has_flag(flags, "--json");
+    let target = serde_json::to_string(id)?;
+    let script = format!(
+        r#"{prelude}
+        const w = api.getWorkspace({target});
+        if (!w) throw new Error("no such workspace: " + {target});
+        if ({json}) return JSON.stringify(w, null, 2);
+        const out = [];
+        const put = function (k, v) {{ if (v !== undefined && v !== null && v !== "") out.push(k.padEnd(12) + String(v)); }};
+        put("id", w.workspaceId || w.windowId); put("window", w.windowId); put("name", w.name); put("kind", w.kind);
+        put("active", w.active); put("state", w.agentState); put("branch", w.branch); put("root", w.root);
+        put("project", w.projectPath); put("folder", w.folderId); put("title", w.title); put("backend", w.backend);
+        if (w.git) put("git", "dirty " + (w.git.dirty || 0) + "  ahead " + (w.git.ahead || 0) + "  behind " + (w.git.behind || 0));
+        put("why", w.explain.reasons.join("; "));
+        return out.join("\n");
+        "#,
+        prelude = orchestrator_api_prelude(),
+    );
+    submit_orchestrator_script(session, script)
+}
+
+fn orchestrator_explain_command(
+    session: Option<&str>,
+    id: &str,
+    flags: &[&str],
+) -> AnyhowResult<()> {
+    let json = has_flag(flags, "--json");
+    let target = serde_json::to_string(id)?;
+    let script = format!(
+        r#"{prelude}
+        const w = api.getWorkspace({target});
+        if (!w) throw new Error("no such workspace: " + {target});
+        const ex = w.explain;
+        if ({json}) return JSON.stringify(ex, null, 2);
+        const out = [w.name + ": " + ex.state];
+        ex.reasons.forEach(function (r) {{ out.push("  - " + r); }});
+        if (ex.question !== null) out.push("  question: " + JSON.stringify(ex.question));
+        if (ex.rule !== null) out.push("  rule:     /" + ex.rule + "/i");
+        out.push("  rules:    v" + ex.rules.version + " (" + ex.rules.source + ")");
+        if (ex.recentLines.length) out.push("  recent:   " + JSON.stringify(ex.recentLines));
+        return out.join("\n");
+        "#,
+        prelude = orchestrator_api_prelude(),
+    );
+    submit_orchestrator_script(session, script)
+}
+
+fn orchestrator_wait_command(session: Option<&str>, id: &str, flags: &[&str]) -> AnyhowResult<()> {
+    let json = has_flag(flags, "--json");
+    let target = serde_json::to_string(id)?;
+    let until_flag = flag_value(flags, "--until");
+    let until: Vec<String> = until_flag
+        .map(|v| {
+            v.split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
+    if until_flag.is_some() && until.is_empty() {
+        eprintln!("--until wants at least one state");
+        std::process::exit(2);
+    }
+    for st in &until {
+        if !matches!(
+            st.as_str(),
+            "working" | "blocked" | "done" | "idle" | "unknown"
+        ) {
+            eprintln!(
+                "unknown state '{}': expected working, blocked, done, idle or unknown",
+                st
+            );
+            std::process::exit(2);
+        }
+    }
+    let timeout_secs = parse_timeout_flag(flags, 300);
+    let until_js = if until.is_empty() {
+        "undefined".to_string()
+    } else {
+        serde_json::to_string(&until)?
+    };
+    let script = format!(
+        r#"{prelude}
+        const r = await api.waitForState({target}, {{ until: {until_js}, timeoutMs: {timeout_ms} }});
+        const body = ({json}) ? JSON.stringify(r, null, 2)
+            : (r.workspaceId || r.windowId) + " " + r.state + (r.timedOut ? " (timed out after " : " (after ") + (r.elapsedMs / 1000).toFixed(1) + "s)";
+        return body + (r.timedOut ? {sentinel} : "");
+        "#,
+        sentinel = serde_json::to_string(SENTINEL_TIMED_OUT)?,
+        prelude = orchestrator_api_prelude(),
+        timeout_ms = timeout_secs.saturating_mul(1000),
+    );
+    // The editor holds the reply until the wait settles, so read for as long
+    // as the wait may take (plus slack), not the usual build timeout.
+    let read_timeout = std::time::Duration::from_secs(timeout_secs.saturating_add(15));
+    let text = submit_script_capture(session, script, true, read_timeout, true)?;
+    let (shown, timed_out) = strip_sentinel(&text, SENTINEL_TIMED_OUT);
+    if !shown.is_empty() {
+        println!("{}", shown);
+    }
+    if timed_out {
+        std::process::exit(3);
+    }
+    Ok(())
+}
+
+fn orchestrator_start_command(
+    session: Option<&str>,
+    cmd: &str,
+    flags: &[&str],
+) -> AnyhowResult<()> {
+    let json = has_flag(flags, "--json");
+    let timeout_secs = parse_timeout_flag(flags, 15);
+    let script = format!(
+        r#"{prelude}
+        const r = await api.runAgent({{
+            agent: {cmd},
+            prompt: {prompt},
+            auto: {auto},
+            teach: {teach},
+            wait: {wait},
+            readyTimeoutMs: {timeout_ms},
+        }});
+        const body = ({json}) ? JSON.stringify(r, null, 2)
+            : (r.workspaceId || r.windowId) + " " + r.agent + " " + (r.ready ? "ready" : r.error ? "FAILED: " + r.error : "started (not waited for)") + " state=" + r.state;
+        return body + (r.ready || !r.error ? "" : {sentinel});
+        "#,
+        sentinel = serde_json::to_string(SENTINEL_START_FAILED)?,
+        prelude = orchestrator_api_prelude(),
+        cmd = serde_json::to_string(cmd)?,
+        prompt = serde_json::to_string(flag_value(flags, "--prompt").unwrap_or(""))?,
+        auto = has_flag(flags, "--auto"),
+        teach = !has_flag(flags, "--no-teach"),
+        wait = !has_flag(flags, "--no-wait"),
+        timeout_ms = timeout_secs.saturating_mul(1000),
+    );
+    let read_timeout = std::time::Duration::from_secs(timeout_secs.saturating_add(30));
+    let text = submit_script_capture(session, script, true, read_timeout, true)?;
+    let (shown, failed) = strip_sentinel(&text, SENTINEL_START_FAILED);
+    if !shown.is_empty() {
+        println!("{}", shown);
+    }
+    if failed {
+        std::process::exit(1);
+    }
+    Ok(())
 }
 
 // ===========================================================================
@@ -4262,31 +4560,69 @@ fn script_run(session: Option<&str>, from: &[&str]) -> AnyhowResult<()> {
 /// caller asked for JSON); the convenience verbs return prose meant to be
 /// read, where the surrounding quotes and `\n` escapes would be noise.
 fn submit_script(session: Option<&str>, source: String, unwrap_string: bool) -> AnyhowResult<()> {
+    let text = submit_script_capture(session, source, unwrap_string, cmd_build_timeout(), false)?;
+    if !text.is_empty() {
+        println!("{}", text);
+    }
+    Ok(())
+}
+
+/// `submit_script` for the orchestrator verbs: same channel, plain error
+/// messages.
+fn submit_orchestrator_script(session: Option<&str>, source: String) -> AnyhowResult<()> {
+    let text = submit_script_capture(session, source, true, cmd_build_timeout(), true)?;
+    if !text.is_empty() {
+        println!("{}", text);
+    }
+    Ok(())
+}
+
+/// Run `source` against the editor and return what it returned as text
+/// (a returned string is unwrapped when `unwrap_string`; anything else is
+/// its JSON). A script that throws prints its error and exits 1 here, the
+/// way every `--cmd` verb reports failure.
+fn submit_script_capture(
+    session: Option<&str>,
+    source: String,
+    unwrap_string: bool,
+    read_timeout: std::time::Duration,
+    terse_errors: bool,
+) -> AnyhowResult<String> {
     use fresh::server::protocol::ClientControl;
 
     let socket = resolve_cmd_socket(session)?;
     let mut conn = connect_cmd(&socket)?;
     conn.send(&ClientControl::RunScript { source })?;
 
-    // A script gets the long wait: it can create a workspace (a git worktree
-    // plus an agent process) before it answers, and timing that out would
-    // report a failure about something that is merely still running.
-    let (ok, error, output) = read_script_result(&mut conn, cmd_build_timeout())?;
-    if let Some(out) = output {
-        let text = if unwrap_string {
-            serde_json::from_str::<String>(&out).unwrap_or(out)
-        } else {
-            out
-        };
+    let (ok, error, output) = read_script_result(&mut conn, read_timeout)?;
+    let text = match output {
+        Some(out) if unwrap_string => serde_json::from_str::<String>(&out).unwrap_or(out),
+        Some(out) => out,
+        None => String::new(),
+    };
+    if !ok {
         if !text.is_empty() {
             println!("{}", text);
         }
-    }
-    if !ok {
-        eprintln!("{}", error.unwrap_or_else(|| "script failed".to_string()));
+        let error = error.unwrap_or_else(|| "script failed".to_string());
+        // The orchestrator verbs throw plain messages ("no such workspace");
+        // the QuickJS stack behind them is noise to a shell user, so print
+        // the message alone. A `script run` author keeps the whole thing.
+        let shown = if terse_errors {
+            error
+                .split("    at ")
+                .next()
+                .unwrap_or(&error)
+                .trim_end()
+                .trim_end_matches(':')
+                .to_string()
+        } else {
+            error
+        };
+        eprintln!("{}", shown);
         std::process::exit(1);
     }
-    Ok(())
+    Ok(text)
 }
 
 /// `fresh --cmd init reload` — re-read and run `~/.config/fresh/init.ts` in
@@ -5465,7 +5801,7 @@ fn real_main() -> AnyhowResult<()> {
     if !cli.cmd.is_empty() {
         let cmd_args: Vec<&str> = cli.cmd.iter().map(|s| s.as_str()).collect();
         match cmd_args.as_slice() {
-            ["script", ..] | ["command", ..] => {
+            ["script", ..] | ["command", ..] | ["workspace", ..] | ["agent", ..] => {
                 run_cmd_command(&cmd_args)?;
                 return Ok(());
             }
@@ -6485,6 +6821,74 @@ fn coalesce_mouse_moves(event: InputEvent) -> AnyhowResult<(InputEvent, Option<I
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **A flag with nothing usable after it is a usage error, not a
+    /// default.** The CLI is driven by agents, and `--prompt --timeout 30`
+    /// used to set the prompt to the literal `--timeout` and read `30` as a
+    /// stray argument: the caller asked for two things, got neither, and saw
+    /// a zero exit. `--name=-x` is how a value that really starts with `-` is
+    /// passed.
+    #[test]
+    fn a_flag_swallowing_the_next_flag_is_a_usage_error() {
+        assert_eq!(
+            flag_value_checked(&["--prompt", "hello"], "--prompt"),
+            Ok(Some("hello"))
+        );
+        assert_eq!(
+            flag_value_checked(&["--prompt=hello"], "--prompt"),
+            Ok(Some("hello"))
+        );
+        assert_eq!(flag_value_checked(&["--auto"], "--prompt"), Ok(None));
+
+        assert!(flag_value_checked(&["--prompt"], "--prompt").is_err());
+        assert!(flag_value_checked(&["--prompt", "--timeout", "30"], "--prompt").is_err());
+        assert!(flag_value_checked(&["--prompt", "-x"], "--prompt").is_err());
+
+        // …and the escape hatch still works, so a prompt may begin with a dash.
+        assert_eq!(
+            flag_value_checked(&["--prompt=--not-a-flag"], "--prompt"),
+            Ok(Some("--not-a-flag"))
+        );
+    }
+
+    /// `--timeout` takes a number; anything else is a usage error, and an
+    /// absent flag takes the verb's default.
+    #[test]
+    fn timeout_parses_or_is_a_usage_error() {
+        assert_eq!(parse_timeout_flag(&["--timeout", "30"], 9), 30);
+        assert_eq!(parse_timeout_flag(&["--timeout=30"], 9), 30);
+        assert_eq!(parse_timeout_flag(&[], 9), 9);
+    }
+
+    /// **The sentinel a verb's script appends must not be confusable with the
+    /// output it is appended to.** The tokens were bare words matched with
+    /// `ends_with` and removed with `trim_end_matches`, so a workspace name or
+    /// an agent error ending in one set the exit code, and a body that ended
+    /// in several had them all stripped. The Record Separator cannot occur in
+    /// any of those.
+    #[test]
+    fn a_sentinel_is_stripped_once_and_only_when_the_script_sent_it() {
+        let timed_out = format!("ws-1 idle{SENTINEL_TIMED_OUT}");
+        assert_eq!(
+            strip_sentinel(&timed_out, SENTINEL_TIMED_OUT),
+            ("ws-1 idle", true)
+        );
+
+        // Output that merely *says* the word is output, not a signal.
+        let (shown, hit) = strip_sentinel("ws-1 FAILED: TIMED_OUT", SENTINEL_TIMED_OUT);
+        assert_eq!((shown, hit), ("ws-1 FAILED: TIMED_OUT", false));
+
+        // Exactly one, so a body ending in the token keeps it.
+        let doubled = format!("ws-1 {SENTINEL_TIMED_OUT}{SENTINEL_TIMED_OUT}");
+        let once = format!("ws-1 {SENTINEL_TIMED_OUT}");
+        assert_eq!(
+            strip_sentinel(&doubled, SENTINEL_TIMED_OUT),
+            (once.trim_end(), true)
+        );
+
+        let (shown, hit) = strip_sentinel("{\n  \"ready\": false\n}", SENTINEL_START_FAILED);
+        assert_eq!((shown, hit), ("{\n  \"ready\": false\n}", false));
+    }
 
     /// The scripts the convenience verbs submit must parse, and must call
     /// only API members this build actually has.
