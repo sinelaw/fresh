@@ -8,7 +8,8 @@
 use std::rc::Rc;
 
 use crate::desc::{
-    Align, BoxProps, Dir, LayerProps, Sizing, TextProps, ViewportProps, Wrap, HANGING_MIN_TEXT,
+    Align, BoxProps, Dir, Justify, LayerProps, Sizing, TextProps, ViewportProps, Wrap,
+    HANGING_MIN_TEXT,
 };
 use crate::render::geom::{distribute, Constraints, Point, Rect, Size};
 use crate::render::object::{FocusReg, Geom, LayerGeom, LayoutCx, LayoutInfo, RenderObject};
@@ -519,11 +520,21 @@ pub fn byte_of(rows: &[Row], whole: &str, row: usize, col: i32) -> Option<usize>
 /// features answer opposite questions ("fill the row" and "let the row become
 /// as many rows as it needs") and a container that tried to honour both would
 /// silently do neither. Cross-axis sizing is unaffected.
+#[allow(clippy::too_many_arguments)]
+/// The main extent of children `a..b` laid end to end with `gap` between.
+fn line_main_of(mains: &[u16], gap: u16, a: usize, b: usize) -> u16 {
+    mains[a..b]
+        .iter()
+        .fold(0u16, |x, y| x.saturating_add(*y))
+        .saturating_add(gap.saturating_mul((b - a).saturating_sub(1) as u16))
+}
+
 fn wrap_in(
     c: Constraints,
     cx: &mut dyn LayoutCx,
     dir: Dir,
     align: Align,
+    justify: Justify,
     gap: u16,
     inset: Point,
 ) -> Size {
@@ -589,14 +600,6 @@ fn wrap_in(
         .iter()
         .map(|&(a, b)| crosses[a..b].iter().copied().max().unwrap_or(0))
         .collect();
-    let content_main = lines
-        .iter()
-        .map(|&(a, b)| {
-            let sum = mains[a..b].iter().fold(0u16, |x, y| x.saturating_add(*y));
-            sum.saturating_add(gap.saturating_mul((b - a).saturating_sub(1) as u16))
-        })
-        .max()
-        .unwrap_or(0);
     let content_cross = line_cross
         .iter()
         .fold(0u16, |x, y| x.saturating_add(*y))
@@ -626,9 +629,37 @@ fn wrap_in(
         }
     }
 
+    // **Where a line starts is the box's to say**, and the box's extent is
+    // what the constraint will make of its content — not a guess from the
+    // shape of the constraint. This read `min == max` and fell back to
+    // `content_main` otherwise, which is right at both ends and wrong in
+    // between: a box with a main floor neither zero nor `avail` is laid out
+    // at that floor and had its lines settled against its content instead,
+    // leaving a right-aligned group short of its own edge.
+    //
+    // `content_main` is also re-derived here rather than reused: the
+    // `Align::Stretch` pass above re-measures children, so a line's main
+    // extent can have grown since. Settling against the stale figure made
+    // `line_main` exceed it, and the `saturating_sub` below turned that into
+    // a silent `Justify::Start`.
+    //
+    // Both are corrections of the rule rather than of a reproduced bug: every
+    // justified box in the tree today is either stretched to a definite extent
+    // or hugging from zero, where the old inference and this agree. The cases
+    // that differ are ones nothing constructs yet.
+    let content_main = lines
+        .iter()
+        .map(|&(a, b)| line_main_of(&mains, gap, a, b))
+        .max()
+        .unwrap_or(0);
+    let main_extent = main_of(dir, c.constrain(size_of(dir, content_main, content_cross)));
+    let line_main = |a: usize, b: usize| -> u16 { line_main_of(&mains, gap, a, b) };
     let mut cross_at = 0u16;
     for (li, &(a, b)) in lines.iter().enumerate() {
-        let mut main_at = 0u16;
+        let mut main_at = match justify {
+            Justify::Start => 0u16,
+            Justify::End => main_extent.saturating_sub(line_main(a, b)),
+        };
         for i in a..b {
             let at = point_of(
                 dir,
@@ -730,6 +761,7 @@ impl RenderObject for BoxRender {
                 cx,
                 p.dir,
                 p.align,
+                p.justify,
                 p.gap,
                 Point::new(ins_x as i32, ins_y as i32),
             );
