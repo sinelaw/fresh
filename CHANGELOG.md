@@ -23,6 +23,11 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 * **Vi mode's `I` inserts before the first non-blank**, not in column 1 - column 1 is `gI` (#2447)
 * **Vi mode's `.` repeats `r`** instead of replaying whatever change came before it (#2447)
 * **Vi mode's `;` after `t` advances** instead of landing on the same column forever (#2447)
+* **Vi mode's `vh`, `vk`, `v` + text object and `vG`** - a visual selection moving backwards past its anchor shrank to nothing instead of growing the other way, so `vhd` and `vkd` deleted nothing; `vG` took the whole last line rather than stopping on its first non-blank (#2447)
+* **Vi mode's `5x` and `5r` on non-ASCII text no longer join lines** - the guard that keeps them on their own line measured bytes and compared them against a count of characters, so a line of multi-byte text read as longer than it is; `r` was not guarded at all (#2447)
+* **Vi mode's `[count]J` near the end of a file** - joining past the last line deleted the trailing newline and appended a space; visual `J` joined a single pair regardless of how many lines were selected (#2447)
+* **Vi mode's `d3G` and `d2gg` honour their counts** instead of deleting to the end (or start) of the file (#2447)
+* **Vi mode's `.` after a line-wise change** - `cj` leaves an empty line to type into, but the repeat closed the gap instead, so the text landed on the following line. A line-wise operator that cannot move (`dk` on the first line) also no longer overwrites what `.` is holding on its way to doing nothing (#2447)
 * **Stale LSP diagnostics after a vi-mode line delete** - `dd` (and any other plugin-driven edit) left the language server analysing the deleted text, so its warnings survived the edit and the save, and hover stopped working on the file (#3258, reported and fixed by @thedadams)
 * **Save All handed each language server the focused buffer's text** under every other saved file's name (#3258)
 
