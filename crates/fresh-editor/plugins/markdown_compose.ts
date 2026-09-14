@@ -443,6 +443,9 @@ function emitCodeRails(
   // those rows, because the wrap's own hanging indent would push the RAIL right
   // instead of the code.
   const codeIndent = body.length - body.trimStart().length;
+  // The renderer pads the rail to this column from the row it is drawing. A
+  // width computed here lags: this pass is always an edit or two behind.
+  const railColumn = { ...codeFrameStyle, padToColumn: codeFrameWidth(measure) };
   for (let r = 0; r < rows.length; r++) {
     const row = rows[r];
     if (row.end <= row.start) continue;
@@ -451,25 +454,24 @@ function emitCodeRails(
     // Only the first row has the block's indent as real text ahead of it.
     const railLead = r === 0 ? "" : " ".repeat(blockIndent);
 
+    const rowStartByte = charToByte(lineContent, blockIndent + row.start, byteStart);
     editor.addVirtualTextStyled(
-      bufferId, `${CODE_RAIL_ID_PREFIX}${byteStart}:${r}:l`,
-      charToByte(lineContent, blockIndent + row.start, byteStart),
+      bufferId, `${CODE_RAIL_ID_PREFIX}${byteStart}:${r}:l`, rowStartByte,
       railLead + RAIL_GLYPH + " ".repeat(railIndent), codeFrameStyle, true,
     );
 
     const pad = inner - displayWidth(rowText) - railIndent;
     if (pad < 0) continue; // unbreakable over-long row: leave the edge open
-    // Anchor the closing rail *after the last character* of the row, found by
-    // code point rather than by `end - 1`: a byte before the end lands inside
-    // a multi-byte glyph, and the row's last character is exactly where a
-    // multi-byte glyph is most likely to be.
-    const lastChar = Array.from(rowText).pop() as string;
-    const lastCharStart = charToByte(
-      lineContent, blockIndent + row.end - lastChar.length, byteStart,
-    );
+
+    // The closing rail hangs off the row's FIRST byte: `padToColumn` draws it at
+    // the row's end anyway, so the anchor's only job is to name the row, and
+    // this is the one byte an edit at the row's end cannot move. Anchored at the
+    // end it drifts — typing outruns it, deleting orphans it onto the line
+    // break, and Enter carries it onto the next line, whose clear then deletes
+    // it for good.
     editor.addVirtualTextStyled(
-      bufferId, `${CODE_RAIL_ID_PREFIX}${byteStart}:${r}:r`, lastCharStart,
-      " ".repeat(pad) + RAIL_GLYPH, codeFrameStyle, false,
+      bufferId, `${CODE_RAIL_ID_PREFIX}${byteStart}:${r}:r`, rowStartByte,
+      RAIL_GLYPH, railColumn, true,
     );
   }
 }

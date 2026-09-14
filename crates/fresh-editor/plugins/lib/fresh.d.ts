@@ -4034,6 +4034,15 @@ interface EditorAPI {
 	* be RGB arrays or theme-key strings, plus `bold`/`italic`. Theme
 	* keys are resolved at render time so the label follows theme
 	* changes live.
+	* 
+	* `options.padToColumn` (number) pads the text so it *ends* at that
+	* column of the row, instead of the usual single space of inlay
+	* padding — use it for decoration that has to hold a column, such as
+	* the right edge of a box drawn around a block. The padding is
+	* measured as the row is laid out, so it holds the column even for
+	* the frames between an edit and the `lines_changed` that reports it;
+	* a width you compute here cannot, since your view of the buffer
+	* always trails the one being drawn.
 	*/
 	addVirtualTextStyled(bufferId: number, virtualTextId: string, position: number, text: string, options: Record<string, unknown>, before: boolean): boolean;
 	/**

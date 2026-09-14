@@ -617,10 +617,6 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
 
     let is_empty_buffer = state.buffer.is_empty();
 
-    // x of the last visible cell on the most recent non-empty row
-    // (used for cursor-on-newline placement and `last_line_end`)
-    let mut last_visible_x: u16 = 0;
-
     loop {
         // Get the current ViewLine from the pipeline
         let current_view_line_idx = view_iter_idx;
@@ -955,6 +951,10 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
             );
         }
 
+        // Where THIS row's text ends. Per row, and `None` until a source cell is
+        // found: a row that draws none, empty or carrying only decoration, has
+        // no text end of its own and must not inherit another row's.
+        let mut row_text_end_x: Option<u16> = None;
         if !line_spans.is_empty() {
             let row_end_exclusive = row_end_exclusive(current_view_line, &state.buffer);
             if let Some(x) = locate_cursor_in_view_map(
@@ -967,7 +967,7 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
                 current_row,
                 &mut cursor,
             ) {
-                last_visible_x = x;
+                row_text_end_x = Some(x);
             }
         }
 
@@ -1085,8 +1085,6 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
             &state.buffer,
         ));
 
-        // Track if line was empty before moving line_spans
-        let line_was_empty = line_spans.is_empty();
         lines.push(Line::from(line_spans));
 
         // Detect the trailing empty ViewLine produced by ViewLineIterator
@@ -1105,17 +1103,15 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
         // This ensures the last visible line's metadata is captured.
         //
         // end_x is the cursor position after the last visible character.
-        // For empty lines, last_visible_x stays at 0, so we need to ensure end_x is
-        // at least gutter_width to place the cursor after the gutter, not in it.
-        let end_x = if line_was_empty {
-            gutter_width as u16
-        } else {
+        let end_x = match row_text_end_x {
             // A rendered line-ending indicator adds view-map cells for the
             // newline byte itself; step back over them so the end-of-line
             // cursor lands on the indicator, not past it.
-            last_visible_x
+            Some(x) => x
                 .saturating_add(1)
-                .saturating_sub(cells.newline_indicator_cols as u16)
+                .saturating_sub(cells.newline_indicator_cols as u16),
+            // No source cell, so the row's text ends where text begins.
+            None => gutter_width as u16,
         };
         let line_len_chars = line_content.chars().count();
 
@@ -1135,7 +1131,7 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
                     // Cursor position now includes gutter width (consistent with main cursor tracking).
                     // For empty lines (just newline), cursor should be at gutter width (after gutter);
                     // for lines with content, cursor on newline should be after the content
-                    // (end_x already includes the gutter, via last_visible_x).
+                    // (end_x already includes the gutter, via row_text_end_x).
                     // A virtual-space cursor sits `primary_virtual_cols`
                     // further right of the content end.
                     let vcols = selection.primary_virtual_cols as u16;
