@@ -8,6 +8,13 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 
 ### Bug Fixes
 
+* **Vi mode's visual `0` and `^` include the character `v` started on**, as Vim's do (#2447)
+* **Vi mode: `Y`, `[count]J` and `G`** - `Y` had no binding at all (Vim's `Y` is `yy`); `J` ignored its count, so `3J` joined two lines instead of three, and `.` would not repeat it; `G` landed on the phantom line after a trailing newline, where `x` and `dd` had nothing to act on (#2447)
+* **Vi mode's `x` and `X` no longer join lines** - `x` on an empty line, or at the end of a line, deleted the line break and pulled the next line up; `X` in column 1 did the same backwards. Vim confines both to the current line, and so does Fresh now (#2447)
+* **Vi mode's `Vj` selects two lines, not three** - visual-line `j` extended the selection a line past the caret, so `Vjd` deleted three lines (and left a stray empty one) and `Vj>` indented three. Checked against Vim 9.1 (#2447)
+* **Vi mode's visual `w` includes the character under the head**, as Vim's does - `vwd` removes one more character than `dw` (#2447)
+* **Vi mode's `.` after a change operator no longer pastes surrounding text** - `ci"foo<Esc>` then `.` on another line inserted the *first* line's text instead of what was typed (`b "a "Q" y`), because `c` entered insert mode before its queued delete had landed and the repeat captured from the pre-command cursor. The `o`/`a`/`A` half of this was fixed in #2443; this is the `c` half (#2447)
+* **Vi mode no longer carries a visual selection, a pending operator or insert mode across a buffer switch** - those are byte offsets into the buffer they were taken in, so the next operator resolved against a file no longer on screen; switching buffers now returns to normal mode, and a buffer left mid-selection has it collapsed on the way back in (#2447)
 * **Stale LSP diagnostics after a vi-mode line delete** - `dd` (and any other plugin-driven edit) left the language server analysing the deleted text, so its warnings survived the edit and the save, and hover stopped working on the file (#3258, reported and fixed by @thedadams)
 * **Save All handed each language server the focused buffer's text** under every other saved file's name (#3258)
 

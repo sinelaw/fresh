@@ -1564,21 +1564,26 @@ fn test_vi_delete_char_paste_uses_deleted_char() {
 fn test_vi_empty_characterwise_delete_does_not_cut_line() {
     let (mut harness, _temp_dir) = vi_mode_harness(80, 24);
 
-    let fixture = TestFixture::new("test.txt", "abc\n").unwrap();
+    // Two lines, the second empty: `G` lands on a line that genuinely has no
+    // character to delete. The fixture used to be "abc\n", where `G` reached
+    // an empty line only because it overshot past the trailing newline — so
+    // once `G` was corrected to stop on the last line with content, `x` there
+    // had a character under it and this case stopped testing what it says.
+    let fixture = TestFixture::new("test.txt", "abc\n\n").unwrap();
     harness.open_file(&fixture.path).unwrap();
     harness.render().unwrap();
 
     enable_vi_mode(&mut harness);
 
     send_vi_key(&mut harness, 'X');
-    harness.assert_buffer_content("abc\n");
+    harness.assert_buffer_content("abc\n\n");
 
     send_vi_operator_motion(&mut harness, 'd', '0');
-    harness.assert_buffer_content("abc\n");
+    harness.assert_buffer_content("abc\n\n");
 
     send_vi_key(&mut harness, 'G');
     send_vi_key(&mut harness, 'x');
-    harness.assert_buffer_content("abc\n");
+    harness.assert_buffer_content("abc\n\n");
 }
 
 /// Test 'dw' updates the unnamed register for characterwise paste
@@ -1730,8 +1735,14 @@ fn test_vi_visual_delete() {
         .unwrap();
     harness.render().unwrap();
 
-    // "hello " should be deleted, leaving "world" (semantic waiting)
-    harness.wait_for_buffer_content("world\n").unwrap();
+    // A visual selection includes the character under its head, so `vw` covers
+    // `hello w` and `d` leaves `orld` — one character more than `dw` would
+    // remove. Checked against Vim 9.1.
+    //
+    // This asserted "world\n" while `vW` (test_vi_visual_word_forward_yanks_
+    // selected_text) asserted the inclusive form, so the two were inconsistent
+    // with each other as well as with Vim; `vi_vis_word` was the odd one out.
+    harness.wait_for_buffer_content("orld\n").unwrap();
 }
 
 /// Test 'V' enters visual line mode and 'd' deletes line
