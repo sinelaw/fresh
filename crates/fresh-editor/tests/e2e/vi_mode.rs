@@ -1416,7 +1416,18 @@ fn test_vi_linewise_changes_respect_read_only_buffers() {
             .mark_buffer_read_only(buffer_id, true);
         enable_vi_mode(&mut harness);
 
-        send_vi_operator_motion(&mut harness, 'c', 'c');
+        // Not `send_vi_operator_motion`: that waits for insert mode after a
+        // `c`, and Vim does not enter it here. `cc` on a non-modifiable buffer
+        // reports E21 and stays in normal mode (checked against Vim 9.1) —
+        // entering insert would leave the caret in a mode that cannot type.
+        send_vi_key(&mut harness, 'c');
+        harness
+            .wait_until(|h| h.editor().editor_mode() == Some("vi-operator-pending".to_string()))
+            .unwrap();
+        send_vi_key(&mut harness, 'c');
+        harness
+            .wait_until(|h| h.editor().editor_mode() == Some("vi-normal".to_string()))
+            .unwrap();
 
         harness.assert_buffer_content("AAA\nBBB\n");
     }
