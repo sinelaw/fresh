@@ -288,9 +288,32 @@ when the ids differ — an unguarded close would kill the terminal just spawned.
 
 ### 4.4 Plugin-level agent state
 
-The dock additionally shows a coarse agent state inferred from terminal output
-(e.g. working/idle, plus richer running/awaiting/ready/errored glyphs derived in
-the plugin). This is display-only and not part of the persistence model.
+The dock additionally shows a coarse agent state inferred from terminal output:
+`working` (recent output, or an OSC "running" marker), `blocked` (quiet, and
+the last screen lines read as a question for the user), `done` (quiet after a
+burst of work that happened while the window was not active — cleared on
+activation), `idle`, `unknown` (no output yet, or the terminal exited). Rows
+show `*` / `●` / `✓` / `·` / `?`, folder rows roll up `●n ✓n`, and the dock
+header carries `● N need you · ✓ N done` while either is non-zero. A
+transition into `blocked`/`done` in a non-active window is announced in the
+status bar (`● name needs you (F8 jumps)`, optional bell — see 5.0), and
+`Orchestrator: Jump to Attention` walks the pending workspaces (blocked first)
+and then returns; `Orchestrator: Jump Back` returns at once. Bind a key to
+`orchestrator_jump` / `orchestrator_jump_back` to use them without the palette.
+`blocked`/`done` are heuristics over the output stream, display-only, and not
+part of the persistence model.
+
+The "question on screen" rules are data, not code: the built-in set (v1) can
+be replaced by `<data dir>/orchestrator/detection-rules.json` — `{ "version":
+N, "blocked": ["regex", …], "workMinMs"?, "idleAfterMs"?, "recentLines"? }` —
+and, when `detectionRulesUrl` is set, by a published file fetched at startup
+(and by `Orchestrator: Reload Detection Rules`) whenever its version is newer
+than the local one. `Orchestrator: Explain State` (and `fresh --cmd agent
+explain <ID>`) prints the decision chain — which line matched which rule,
+output age, OSC marker, unseen-work flag, rule-set version and source — so a
+wrong badge is a bug report with evidence. The CLI verbs (`fresh --cmd
+workspace list`, `agent list|get|explain|wait|start`) are documented in
+agent-fresh-cli-exposure-plan.md.
 
 ---
 
@@ -321,10 +344,13 @@ the generated settings widgets.
 
 | Setting               | Default  | Effect                                              |
 | --------------------- | -------- | --------------------------------------------------- |
-| `autoOpenDock`        | `false`  | Open the dock (unfocused) on the `ready` event.      |
+| `autoOpenDock`        | `true`   | Open the dock (unfocused) on the `ready` event.      |
 | `defaultView`         | `"card"` | Density the dock opens at: `card` or `compact`.      |
 | `showAllWorktrees`    | `false`  | Initial state of the "all worktrees" checkbox.       |
 | `showEmptyWorkspaces` | `true`   | Initial state of the "show empty" checkbox (i.e. `hideTrivial = !showEmptyWorkspaces`). |
+| `notifications`       | `"all"`  | Status-bar notice when a background workspace turns `blocked` (`needs-you`) or also `done` (`all`); `off` leaves only the dock's attention line. |
+| `notifySound`         | `false`  | Ring the terminal bell with each notice.             |
+| `detectionRulesUrl`   | `""`     | URL of a published detection-rules JSON; adopted when newer than the local file. |
 
 Each is a *default*, not a lock: the dock's own "view" button and the two
 Filters checkboxes still override it for the rest of the session
