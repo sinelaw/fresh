@@ -3363,23 +3363,24 @@ fn blog_showcase_fresh_0_4_0_ssh_session() {
     snap(&mut h, &mut s, Some("Enter"), 110);
     hold(&mut h, &mut s, 4, 75);
 
-    // --- Switch to the SSH backend by clicking the "Run in: … SSH" tab. -----
-    let (ssh_col, ssh_row) = h
-        .find_text_on_screen("SSH")
-        .expect("the 'Run in:' tab row should offer an SSH backend");
-    snap_mouse(&mut h, &mut s, None, (ssh_col, ssh_row), 100);
-    h.mouse_click(ssh_col, ssh_row).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("Remote Path"))
+    // --- Switch the Machine control to `Other host…`: Shift+Tab from the
+    //     Project Path onto it, then → to the next option (no ~/.ssh/config
+    //     and no saved machines on the demo box). -----------------------------
+    h.send_key(KeyCode::BackTab, KeyModifiers::NONE).unwrap();
+    h.render().unwrap();
+    snap(&mut h, &mut s, Some("⇧Tab"), 60);
+    h.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Target:"))
         .unwrap();
-    snap_mouse(&mut h, &mut s, Some("Click"), (ssh_col, ssh_row), 90);
+    snap(&mut h, &mut s, Some("→"), 90);
     hold(&mut h, &mut s, 2, 55);
 
-    // Enter on the already-active SSH tab dives into the first field (Host).
-    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    // Tab from the Machine control into the first SSH field (Target).
+    h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     h.render().unwrap();
-    snap(&mut h, &mut s, Some("Enter"), 65);
+    snap(&mut h, &mut s, Some("Tab"), 65);
 
-    // --- Host: the fake hostname + the throwaway sshd's port. ---------------
+    // --- Target: the fake hostname + the throwaway sshd's port. -------------
     let host_value = format!("{}:{}", sup::DEMO_HOST, server.port);
     for ch in host_value.chars() {
         h.send_key(KeyCode::Char(ch), KeyModifiers::NONE).unwrap();
@@ -3390,14 +3391,6 @@ fn blog_showcase_fresh_0_4_0_ssh_session() {
 
     // --- The remaining fields fill in quickly (they're the "plumbing"; the
     //     host is the star). Each lands its whole value in one go. -----------
-    // Remote Path: where the session is rooted on the remote.
-    h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-    h.render().unwrap();
-    snap(&mut h, &mut s, Some("Tab"), 45);
-    h.type_text(&server.work.to_string_lossy()).unwrap();
-    h.render().unwrap();
-    snap(&mut h, &mut s, None, 60);
-
     // Identity file: the keypair authorized on the demo sshd.
     h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     h.render().unwrap();
@@ -3416,6 +3409,14 @@ fn blog_showcase_fresh_0_4_0_ssh_session() {
         server.known_hosts.to_string_lossy()
     ))
     .unwrap();
+    h.render().unwrap();
+    snap(&mut h, &mut s, None, 60);
+
+    // Project Path: where the session is rooted on the remote.
+    h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    h.render().unwrap();
+    snap(&mut h, &mut s, Some("Tab"), 45);
+    h.type_text(&server.work.to_string_lossy()).unwrap();
     h.render().unwrap();
     snap(&mut h, &mut s, None, 60);
 

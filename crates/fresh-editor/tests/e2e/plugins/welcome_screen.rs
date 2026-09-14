@@ -89,6 +89,32 @@ fn open_welcome(harness: &mut EditorTestHarness) {
     harness
         .wait_until(|h| h.screen_to_string().contains("JUST EDIT TEXT"))
         .expect("welcome screen renders its three doors");
+    settle(harness);
+}
+
+/// Wait for the page to stop moving: two consecutive frames drawn the same.
+///
+/// The page is centred on its widest row and the rows arrive
+/// asynchronously (`git status` landing, the themes probe), so the
+/// centring can shift by a column after the three doors are up. A test
+/// that reads a position off one frame and clicks it on the next then
+/// lands on the neighbouring character — which for a test that sweeps a
+/// run of text is the difference between selecting it and selecting the
+/// line below.
+///
+/// Bounded, like [`caret_position`]: a page that never settles should
+/// fail the test rather than hang it.
+fn settle(harness: &mut EditorTestHarness) {
+    let mut previous = String::new();
+    for _ in 0..40 {
+        let seen = harness.screen_to_string();
+        if seen == previous {
+            return;
+        }
+        previous = seen;
+        harness.wait_for_async_quiescence(1).unwrap();
+    }
+    panic!("the welcome page never stopped repainting. Screen:\n{previous}");
 }
 
 /// The caret's screen position, waited for rather than sampled.
