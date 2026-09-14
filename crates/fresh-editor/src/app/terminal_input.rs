@@ -211,6 +211,7 @@ mod tests {
                 key: key.to_string(),
                 modifiers: vec!["ctrl".into(), "shift".into(), "super".into()],
                 keys: Vec::new(),
+                chord: String::new(),
                 action: action.to_string(),
                 args: Default::default(),
                 when: Some(when.to_string()),
