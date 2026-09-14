@@ -1159,9 +1159,14 @@ const LINEWISE_MOTIONS: Record<string, true> = {
 };
 
 // The line span an operator+linewise-motion covers, as [firstLine, lineCount].
+// `explicitCount` is the count the user actually typed, or null when there was
+// none. The document motions need the difference: bare `dG` deletes to the end
+// of the file, `d3G` deletes to line 3, and a count defaulted to 1 makes those
+// two indistinguishable.
 async function linewiseSpanForMotion(
   motionAction: string,
   count: number,
+  explicitCount: number | null = null,
 ): Promise<{ firstLine: number; lineCount: number } | null> {
   const bufferId = editor.getActiveBufferId();
   const line = editor.getPrimaryCursor()?.line ?? null;
@@ -1185,14 +1190,21 @@ async function linewiseSpanForMotion(
       }
       return { firstLine: line - count, lineCount: count + 1 };
     }
-    case "move_document_start":
-      return { firstLine: 0, lineCount: line + 1 };
+    case "move_document_start": {
+      // `dgg` goes to the first line, `d3gg` to line 3 (1-based).
+      const target = Math.max(0, (explicitCount ?? 1) - 1);
+      const first = Math.min(target, line);
+      return { firstLine: first, lineCount: Math.abs(line - target) + 1 };
+    }
     case "move_document_end": {
       const last = await lastContentLine(bufferId);
-      if (last === null || last < line) {
+      if (last === null) {
         return null;
       }
-      return { firstLine: line, lineCount: last - line + 1 };
+      // Bare `dG` goes to the last line with content; `d3G` to line 3.
+      const target = explicitCount === null ? last : Math.min(Math.max(0, explicitCount - 1), last);
+      const first = Math.min(target, line);
+      return { firstLine: first, lineCount: Math.abs(line - target) + 1 };
     }
     default:
       return null;
@@ -1279,7 +1291,11 @@ async function linewiseRangeAt(
 // own range and hands it here. That is what keeps the register shape, the
 // caret's landing place and the `c`-before-insert flush from drifting apart
 // between them, which they did when there were four copies of this switch.
-async function applyOperator(operator: string, range: OperatorRange | null): Promise<void> {
+async function applyOperator(
+  operator: string,
+  range: OperatorRange | null,
+  options: { enterInsert?: boolean } = {},
+): Promise<void> {
   if (range === null || range.end <= range.start) {
     switchMode("normal");
     return;
@@ -1338,6 +1354,15 @@ async function applyOperator(operator: string, range: OperatorRange | null): Pro
         editor.insertText(bufferId, range.start, getLinewiseReplacementText(text) ?? terminator);
       }
       editor.setBufferCursor(bufferId, range.start);
+      // `.` replays a change as the delete half plus the recorded keystrokes,
+      // so it wants the range consumed with `c` semantics — the empty line a
+      // line-wise change leaves behind — without the mode switch.
+      if (options.enterInsert === false) {
+        await editor.flush();
+        switchMode("normal");
+        editor.setBufferCursor(bufferId, range.start);
+        return;
+      }
       // Flush before entering insert: `deleteRange` and `setBufferCursor` are
       // queued to the editor thread, so without this `switchMode("insert")`
       // samples the *pre-command* cursor as the session start. The Escape-time
@@ -1661,20 +1686,34 @@ async function selectToPosition(target: number, includeTarget: boolean = false):
 // Apply an operator by turning the motion into a selection, then applying the
 // operator to that selected range.
 // The count parameter specifies how many times to apply the motion (e.g., d3w = delete 3 words)
-async function applyOperatorWithMotion(operator: string, motionAction: string, count: number = 1): Promise<void> {
-  // Record last change for '.' repeat (only for delete and change, not yank)
-  if (operator === "d" || operator === "c") {
-    recordChange({ type: "operator-motion", operator, motion: motionAction, count });
-  }
+async function applyOperatorWithMotion(
+  operator: string,
+  motionAction: string,
+  count: number = 1,
+  explicitCount: number | null = null,
+): Promise<void> {
+  const records = operator === "d" || operator === "c";
 
   if (LINEWISE_MOTIONS[motionAction]) {
-    const span = await linewiseSpanForMotion(motionAction, count);
+    const span = await linewiseSpanForMotion(motionAction, count, explicitCount);
     if (span === null) {
+      // The motion could not move — `dk` on the first line, `dj` on the last —
+      // so the whole operator fails and `.` keeps whatever it was holding.
+      // Recording before this point overwrote it with a change that never
+      // happened.
       switchMode("normal");
       return;
     }
+    if (records) {
+      recordChange({ type: "operator-motion", operator, motion: motionAction, count: explicitCount ?? undefined });
+    }
     await applyOperatorLinewise(operator, span.firstLine, span.lineCount);
     return;
+  }
+
+  // Record last change for '.' repeat (only for delete and change, not yank)
+  if (records) {
+    recordChange({ type: "operator-motion", operator, motion: motionAction, count });
   }
 
   const selectAction = motionToSelection[motionAction];
@@ -1719,8 +1758,9 @@ async function handleMotionWithOperator(motionAction: string): Promise<void> {
   }
 
   const operator = state.pending.operator;
+  const explicitCount = state.count;
   const count = consumeCount();
-  await applyOperatorWithMotion(operator, motionAction, count);
+  await applyOperatorWithMotion(operator, motionAction, count, explicitCount);
 }
 
 // ============================================================================
@@ -2353,11 +2393,18 @@ registerHandler("vi_dedent_line", vi_dedent_line);
 // whether the caret is inside the *buffer*, so both used to select across the
 // newline and silently join two lines — a file-corrupting edit the user did
 // not ask for and would not see.
+// How many *characters* the caret can move within its own line.
+//
+// `x`, `X` and `r` take their counts in characters, so a byte distance is the
+// wrong thing to clamp them with: on a line of two multi-byte characters it
+// reads as six, and `5x` runs past the line end and joins the next line — the
+// very thing the clamp exists to prevent.
 async function charsAvailableOnLine(forward: boolean): Promise<number> {
+  const bufferId = editor.getActiveBufferId();
   const cursor = editor.getPrimaryCursor();
   const position = cursor?.position ?? editor.getCursorPosition();
   const line = cursor?.line ?? null;
-  if (line === null) {
+  if (line === null || position === null) {
     return 0;
   }
   const bound = forward
@@ -2366,7 +2413,15 @@ async function charsAvailableOnLine(forward: boolean): Promise<number> {
   if (bound === null) {
     return 0;
   }
-  return forward ? Math.max(0, bound - position) : Math.max(0, position - bound);
+  const start = Math.min(position, bound);
+  const end = Math.max(position, bound);
+  if (end <= start) {
+    return 0;
+  }
+  const text = (await editor.getBufferText(bufferId, start, end)) ?? "";
+  // Spread, not `.length`: a character outside the BMP is two UTF-16 units and
+  // one keystroke.
+  return [...text].length;
 }
 
 async function vi_delete_char() : Promise<void> {
@@ -2421,12 +2476,18 @@ async function vi_replace_char(): Promise<void> {
 
   const count = consumeCount();
   recordChange({ type: "replace-char", replacement: ev.key, count });
-  replaceCharsUnderCursor(ev.key, count);
+  await replaceCharsUnderCursor(ev.key, count);
   switchMode("normal");
 }
 registerHandler("vi_replace_char", vi_replace_char);
 
-function replaceCharsUnderCursor(replacement: string, count: number): void {
+// `r` replaces characters on the caret's own line and nowhere else: Vim
+// refuses `5rz` outright when fewer than five characters remain, rather than
+// running over the line break the way an unclamped loop would.
+async function replaceCharsUnderCursor(replacement: string, count: number): Promise<void> {
+  if (count > (await charsAvailableOnLine(true))) {
+    return;
+  }
   for (let i = 0; i < count; i++) {
     editor.executeAction("delete_forward");
     editor.insertAtCursor(replacement);
@@ -2536,13 +2597,7 @@ async function replayChange(change: LastChange, count: number): Promise<void> {
         if (change.action === "delete_forward") {
           await selectThenCutCharacterwise("select_right", count);
         } else if (change.action === "join_lines") {
-          // Not an editor action: `J` is composed of three, so the replay has
-          // to go back through the handler rather than `executeWithCount`.
-          for (let i = 0; i < Math.max(1, count - 1); i++) {
-            editor.executeAction("move_line_end");
-            editor.executeAction("delete_forward");
-            editor.insertAtCursor(" ");
-          }
+          await joinLines(Math.max(1, count - 1));
         } else if (change.action === "delete_backward") {
           await selectThenCutCharacterwise("select_left", count);
         } else {
@@ -2571,6 +2626,30 @@ async function replayChange(change: LastChange, count: number): Promise<void> {
 
     case "operator-motion": {
       // Operator + motion like dw, cw, d$
+      if (LINEWISE_MOTIONS[change.motion]) {
+        // A line-wise change leaves an empty line to type into; replaying it
+        // as a plain delete closed the gap instead, and the recorded text
+        // landed on the following line.
+        const span = await linewiseSpanForMotion(change.motion, count, change.count ?? null);
+        if (span === null) {
+          break;
+        }
+        const bufferId = editor.getActiveBufferId();
+        const spanStart = await editor.getLineStartPosition(span.firstLine);
+        if (spanStart === null) {
+          break;
+        }
+        await applyOperator(
+          change.operator === "c" ? "c" : change.operator,
+          await linewiseRangeAt(bufferId, spanStart, span.lineCount),
+          { enterInsert: false },
+        );
+        if (change.operator === "c" && change.insertedText) {
+          editor.insertAtCursor(change.insertedText);
+        }
+        break;
+      }
+
       const wordMotion = wordMotionFromRepeatMotion(change.motion);
       if (change.operator === "c") {
         // A recorded `c` replays as its delete half; the insert follows. The
@@ -2623,7 +2702,7 @@ async function replayChange(change: LastChange, count: number): Promise<void> {
     }
 
     case "replace-char": {
-      replaceCharsUnderCursor(change.replacement, count);
+      await replaceCharsUnderCursor(change.replacement, count);
       break;
     }
 
@@ -2665,19 +2744,34 @@ async function replayChange(change: LastChange, count: number): Promise<void> {
 }
 registerHandler("vi_repeat", vi_repeat);
 
-// Join lines — delete newline at end of current line and insert a space
-function vi_join() : void {
-  // Vim's `[count]J` joins `count` lines, so it performs count-1 joins, and a
-  // count below 2 still joins one pair.
-  const count = Math.max(2, consumeCount());
-  recordChange({ type: "simple", action: "join_lines", count });
-  for (let i = 0; i < count - 1; i++) {
+// Pull the next `joins` lines onto the caret's, a space between each.
+//
+// Bounded by the buffer: an unbounded loop at the end of the file deletes the
+// trailing newline and appends a space to the last line, where Vim joins what
+// it can and stops (and `J` on the last line does nothing at all).
+async function joinLines(joins: number): Promise<void> {
+  const bufferId = editor.getActiveBufferId();
+  const line = editor.getPrimaryCursor()?.line ?? null;
+  const lastLine = await lastContentLine(bufferId);
+  if (line === null || lastLine === null) {
+    return;
+  }
+  for (let i = 0; i < Math.min(joins, lastLine - line); i++) {
     editor.executeAction("move_line_end");
     // Delete the newline character
     editor.executeAction("delete_forward");
     // Insert a space between the joined content
     editor.insertAtCursor(" ");
   }
+}
+
+// Join lines — delete newline at end of current line and insert a space
+async function vi_join() : Promise<void> {
+  // Vim's `[count]J` joins `count` lines, so it performs count-1 joins, and a
+  // count below 2 still joins one pair.
+  const count = Math.max(2, consumeCount());
+  recordChange({ type: "simple", action: "join_lines", count });
+  await joinLines(count - 1);
 }
 registerHandler("vi_join", vi_join);
 
@@ -3358,25 +3452,23 @@ registerHandler("vi_vis_text_object_around", vi_vis_text_object_around);
 // Visual `J` — join every line the selection touches into one. Vim performs
 // one join fewer than the number of selected lines, and a single-line
 // selection still joins it with the line below.
+//
+// The line span comes from the same range every other visual operator takes:
+// reading `state.visual.lines` instead only worked in the line-wise mode,
+// where that field is maintained, so charwise `vjjJ` joined a single pair.
 async function vi_vis_join() : Promise<void> {
   const bufferId = editor.getActiveBufferId();
-  const lines = state.visual?.lines ?? null;
-  const firstLine = lines === null ? null : Math.min(lines.anchor, lines.head);
-  const joins = lines === null ? 1 : Math.max(1, Math.abs(lines.head - lines.anchor));
-
-  if (firstLine !== null) {
-    const start = await editor.getLineStartPosition(firstLine);
-    if (start !== null) {
-      editor.setBufferCursor(bufferId, start);
-      await editor.flush();
-    }
-  }
+  const range = await visualOperatorRange();
   switchMode("normal");
-  for (let i = 0; i < joins; i++) {
-    editor.executeAction("move_line_end");
-    editor.executeAction("delete_forward");
-    editor.insertAtCursor(" ");
+
+  if (range === null) {
+    await joinLines(1);
+    return;
   }
+  const span = await lineSpanOfRange(bufferId, range.start, range.end);
+  editor.setBufferCursor(bufferId, span.firstLineStart);
+  await editor.flush();
+  await joinLines(Math.max(1, span.lineCount - 1));
 }
 registerHandler("vi_vis_join", vi_vis_join);
 
