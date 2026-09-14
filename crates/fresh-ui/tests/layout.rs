@@ -1213,6 +1213,67 @@ fn rects(ui: &Ui<()>, n: usize) -> Vec<Rect> {
     (0..n).map(|i| ui.rect(ui.at(&[0, i]).unwrap())).collect()
 }
 
+/// The same, justified to the main-axis end.
+fn wrapped_end(width: u16, gap: u16, widths: &[u16]) -> Ui<()> {
+    let mut ui = ui();
+    ui.frame(
+        col().child(
+            row()
+                .wrap_children()
+                .justify_end()
+                .gap(gap)
+                .children(
+                    widths
+                        .iter()
+                        .map(|w| text("x").w(Sizing::Cells(*w)).h(Sizing::Cells(1)))
+                        .collect::<Vec<_>>(),
+                )
+                .w(Sizing::Cells(width)),
+        ),
+        Size::new(width, 24),
+    );
+    ui
+}
+
+/// **Flush right while they fit.** A footer's buttons settle against the end
+/// of the row, which is what a caller would otherwise reach for a flex spacer
+/// to get — and a flex spacer is `Auto` inside a wrapping box, by design.
+#[test]
+fn a_justified_wrapping_row_settles_against_the_end() {
+    let ui = wrapped_end(30, 0, &[5, 5]);
+    assert_eq!(
+        rects(&ui, 2),
+        vec![Rect::new(20, 0, 5, 1), Rect::new(25, 0, 5, 1)]
+    );
+}
+
+/// **And wraps from the left when they do not.** Each line is justified on its
+/// own, so the last line ends flush and the full lines are unchanged — nobody
+/// measured the row to decide which of the two layouts this is.
+#[test]
+fn a_justified_wrapping_row_still_wraps() {
+    let ui = wrapped_end(30, 0, &[10, 10, 10, 7]);
+    assert_eq!(
+        rects(&ui, 4),
+        vec![
+            Rect::new(0, 0, 10, 1),
+            Rect::new(10, 0, 10, 1),
+            Rect::new(20, 0, 10, 1),
+            Rect::new(23, 1, 7, 1),
+        ]
+    );
+}
+
+/// Justification is the wrapping box's, and `Start` is what every box did
+/// before the property existed.
+#[test]
+fn an_unjustified_wrapping_row_is_unchanged() {
+    assert_eq!(
+        rects(&wrapped(30, 0, &[5, 5]), 2),
+        vec![Rect::new(0, 0, 5, 1), Rect::new(5, 0, 5, 1)]
+    );
+}
+
 /// Children that fit are laid out exactly as a plain row lays them out — a
 /// wrapping box that never wraps is not a different box.
 #[test]

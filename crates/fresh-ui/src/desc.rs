@@ -182,6 +182,17 @@ pub enum Align {
     End,
 }
 
+/// Which end of the main axis a wrapping box's lines settle against.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Justify {
+    /// Lines start at the main-axis origin. What every box did before.
+    #[default]
+    Start,
+    /// Lines end at the box's main extent — a footer whose buttons sit
+    /// flush right while it fits, and wrap from the left when it does not.
+    End,
+}
+
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub struct BoxProps {
     pub dir: Dir,
@@ -202,6 +213,18 @@ pub struct BoxProps {
     /// Break onto a new line when the next child would not fit, instead of
     /// letting the row overflow. See [`Node::wrap_children`].
     pub wrap: bool,
+    /// Which end of the **main** axis a wrapping box's lines settle against.
+    ///
+    /// `Align` is the cross axis and `Flex` is how a non-wrapping box fills
+    /// the main one — neither answers "push these to the right, and wrap them
+    /// when they do not fit", because `Flex` is deliberately `Auto` inside a
+    /// wrapping box (one flexible child would fill every line and leave
+    /// nothing to wrap). This does, and it is the reason a caller never has to
+    /// measure the row to find out which of the two it wanted.
+    ///
+    /// Only read when [`BoxProps::wrap`] is set; `Start` is what every box did
+    /// before it existed.
+    pub justify: Justify,
     /// The box's ground is a wash: it recolours what is already painted
     /// under it and keeps the text. See [`Node::wash`].
     pub wash: bool,
@@ -1581,6 +1604,16 @@ impl<M> Node<M> {
     /// whole rect.
     pub fn wrap_children(mut self) -> Self {
         self.box_props().wrap = true;
+        self
+    }
+
+    /// Settle a wrapping box's lines against the end of the main axis.
+    ///
+    /// The answer to "flush right while they fit, wrapped from the left when
+    /// they do not" — which is otherwise two layouts a caller has to choose
+    /// between by measuring. Only read when the box wraps.
+    pub fn justify_end(mut self) -> Self {
+        self.box_props().justify = Justify::End;
         self
     }
 
