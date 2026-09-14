@@ -2346,7 +2346,10 @@ fn test_vi_till_repeat_advances() {
     send_key(&mut harness, ';');
     send_key(&mut harness, 'x');
 
-    harness.wait_for_buffer_content("hello wrld foo\n").unwrap();
+    // `to` lands on the `l` before the `o` of "hello". `;` skips that same `o`
+    // and stops before the one in "world", so `x` takes the `w`. Checked
+    // against Vim 9.1.
+    harness.wait_for_buffer_content("hello orld foo\n").unwrap();
 }
 
 /// Vim's `v$` lands *on* the end-of-line position, so the inclusive selection
