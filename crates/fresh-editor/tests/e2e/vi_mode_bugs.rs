@@ -2191,7 +2191,9 @@ fn test_vi_visual_line_up_extends_selection() {
     send_key(&mut harness, 'k');
     send_key(&mut harness, 'd');
 
-    harness.wait_for_buffer_content("one\nfour\nfive\n").unwrap();
+    harness
+        .wait_for_buffer_content("one\nfour\nfive\n")
+        .unwrap();
 }
 
 /// `VJ` joins every line the selection touches. Vim performs one join fewer
