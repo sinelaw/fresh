@@ -621,15 +621,15 @@ fn observer_rt() -> tokio::runtime::Runtime {
 }
 
 /// Test: a blocking request issued after the runtime the channel's transport
-/// tasks ride on has been shut down must return an error, not panic.
+/// tasks ride on has been shut down fails promptly, and says the channel is
+/// closed.
 ///
-/// The runtime belongs to the session keepalive, so it is dropped the moment
-/// a remote session goes away — closing a remote window, or deleting an SSH
-/// workspace from the Orchestrator dock. Background threads holding that
-/// session's filesystem (the git-index resolver, for one) keep making
-/// blocking calls for a while afterwards. Driving those on the dead runtime
-/// made tokio panic inside the request's timeout `Sleep` with "A Tokio 1.x
-/// context was found, but it is being shutdown.", killing the calling thread.
+/// A contract test, not the repro: it already held before #3299 was fixed,
+/// because the submit fails on the write half before any timer is polled.
+/// What it pins is that the settled post-teardown state stays a prompt
+/// `ChannelClosed` — every call after the first one takes this path — rather
+/// than a hang or a panic. `test_transport_runtime_shutdown_mid_request_
+/// errors_not_panics` below is the one that reproduces the panic.
 #[test]
 fn test_blocking_request_after_transport_runtime_shutdown_errors_not_panics() {
     let transport_rt = tokio::runtime::Builder::new_multi_thread()
@@ -667,10 +667,14 @@ fn test_blocking_request_after_transport_runtime_shutdown_errors_not_panics() {
 /// Test: the transport runtime being shut down *while a blocking request is in
 /// flight* must fail that request, not panic on the calling thread.
 ///
-/// This is the reported sequence: the git-index resolver was parked in a
-/// remote `metadata` call on a background thread when the SSH workspace was
-/// deleted from the Orchestrator dock. Waiting for the far end to see the
-/// request is what makes the teardown genuinely mid-flight.
+/// The repro for #3299, and the reported sequence: the git-index resolver was
+/// parked in a remote `metadata` call on a background thread when the SSH
+/// workspace was deleted from the Orchestrator dock, and polling the
+/// request's timeout `Sleep` on the runtime the keepalive had just dropped
+/// panicked with "A Tokio 1.x context was found, but it is being shutdown.".
+/// Waiting for the far end to see the request is what makes the teardown
+/// genuinely mid-flight; without that the submit just fails and the timer is
+/// never reached.
 #[test]
 fn test_transport_runtime_shutdown_mid_request_errors_not_panics() {
     let transport_rt = tokio::runtime::Builder::new_multi_thread()
