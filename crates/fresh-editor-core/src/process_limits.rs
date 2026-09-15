@@ -12,6 +12,26 @@ use std::io;
 use std::fs;
 #[cfg(target_os = "linux")]
 use std::path::{Path, PathBuf};
+#[cfg(target_os = "linux")]
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// Set the first time a cgroup move fails in this process.
+///
+/// The move is what actually puts a child under the limits configured in
+/// `process_limits`; when it fails, those limits are not enforced — for this
+/// child or any later one, because the reason (an unwritable target
+/// `cgroup.procs`) is a property of the host's cgroup setup, not of the
+/// spawn. That is worth saying once, and only once: the editor surfaces
+/// `WARN` in its status bar, and one LSP server start per language would
+/// otherwise keep re-raising the same indicator (issue #1633).
+#[cfg(target_os = "linux")]
+static CGROUP_MOVE_FAILED: AtomicBool = AtomicBool::new(false);
+
+/// True on the first failed cgroup move in this process, false afterwards.
+#[cfg(target_os = "linux")]
+fn first_cgroup_move_failure() -> bool {
+    !CGROUP_MOVE_FAILED.swap(true, Ordering::Relaxed)
+}
 
 /// Action that must be applied to a spawned child process after `Command::spawn`
 /// returns, from the parent process.
@@ -44,12 +64,26 @@ impl PostSpawnAction {
         if let Some(ref cgroup_dir) = self.cgroup_dir {
             let procs_file = cgroup_dir.join("cgroup.procs");
             if let Err(e) = fs::write(&procs_file, format!("{}", _child_pid)) {
-                tracing::info!(
-                    "Failed to move child {} into cgroup {:?}: {}",
-                    _child_pid,
-                    cgroup_dir,
-                    e
-                );
+                // Name the consequence, not just the errno: the memory and
+                // CPU limits reported as applied a moment ago are not in
+                // force. Say it once per process and keep the repeats at
+                // DEBUG for the log file.
+                if first_cgroup_move_failure() {
+                    tracing::warn!(
+                        "Failed to move child {} into cgroup {:?}: {}; \
+                         process limits will not be enforced for spawned processes",
+                        _child_pid,
+                        cgroup_dir,
+                        e
+                    );
+                } else {
+                    tracing::debug!(
+                        "Failed to move child {} into cgroup {:?}: {}",
+                        _child_pid,
+                        cgroup_dir,
+                        e
+                    );
+                }
             }
         }
     }
@@ -539,6 +573,16 @@ mod tests {
                 println!("✗ No writable user cgroup found");
             }
         }
+    }
+
+    /// The one-shot gate behind the cgroup-move warning. Process-global, so
+    /// this is the only test in the binary that touches it.
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn test_cgroup_move_failure_warns_once() {
+        assert!(first_cgroup_move_failure());
+        assert!(!first_cgroup_move_failure());
+        assert!(!first_cgroup_move_failure());
     }
 
     #[test]
