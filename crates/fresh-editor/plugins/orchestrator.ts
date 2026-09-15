@@ -1709,8 +1709,31 @@ function dockFailureRowCount(cols: number): number {
   const s = dockSelectedSession();
   const p = s?.pending;
   if (!s || !p || !pendingActionable(p)) return 0;
+  // **Counted the way the host wraps, not by dividing.** A `wrap: true` label
+  // is word-wrapped with a hanging indent, so `ceil(width / cols)` — which
+  // assumes every column is usable and words may be split — under-counts a
+  // real message ("Permission denied (publickey,gssapi-keyex,…)") and the
+  // dock's last row gets clipped off: exactly the failure this panel exists
+  // to prevent. Greedy word packing here matches the renderer's own rule.
   const w = Math.max(8, cols);
-  const msgRows = Math.max(1, Math.ceil(editor.stringWidth(p.message) / w));
+  let msgRows = 1;
+  let used = 0;
+  for (const word of p.message.split(/\s+/).filter(Boolean)) {
+    const ww = editor.stringWidth(word);
+    if (used === 0) {
+      used = ww;
+    } else if (used + 1 + ww <= w) {
+      used += 1 + ww;
+    } else {
+      msgRows += 1;
+      used = ww;
+    }
+    // A single word longer than the line wraps again on its own.
+    while (used > w) {
+      msgRows += 1;
+      used -= w;
+    }
+  }
   // divider + reason + button row.
   return 2 + msgRows;
 }
@@ -3536,13 +3559,6 @@ function buildPreviewEntries(
   ];
 }
 
-// A session "owns" a removable git worktree when it was created as a
-// dedicated `git worktree add` (project path set, not a shared/in-place
-// root) or was discovered on disk via `git worktree list`. Only these
-// have a worktree to `git worktree remove`/`move`. The launch session
-// (the dir the editor was started in) and in-place sessions run inside
-// a real checkout, so Archive (which moves the worktree) doesn't apply
-// and Delete simply forgets the session without touching the directory.
 // Is there a worktree for Delete to remove at all?
 //
 // `ownsWorktree` answers it for a local session (and for a discovered on-disk
@@ -3555,6 +3571,13 @@ function hasRemovableWorktree(s: AgentSession): boolean {
   return ownsWorktree(s) || looksLikeOurRemoteWorktree(s);
 }
 
+// A session "owns" a removable git worktree when it was created as a
+// dedicated `git worktree add` (project path set, not a shared/in-place
+// root) or was discovered on disk via `git worktree list`. Only these
+// have a worktree to `git worktree remove`/`move`. The launch session
+// (the dir the editor was started in) and in-place sessions run inside
+// a real checkout, so Archive (which moves the worktree) doesn't apply
+// and Delete simply forgets the session without touching the directory.
 function ownsWorktree(s: AgentSession): boolean {
   // "Has an explicit project that's separate from this session's
   // root" means the session is a worktree of that project — Archive
@@ -3917,11 +3940,23 @@ function confirmTouchesWorktree(ids: number[]): boolean {
   });
 }
 
+// Is any target a remote worktree the delete will *not* be able to reach? A
+// disconnected host has no authority to route `git worktree remove` through
+// (see `remoteWorktreeReachable`), so promising it would be the same kind of
+// lie the rest of this dialog was fixed for — the pane says the worktree stays
+// put and why, instead.
+function confirmHasUnreachableRemote(ids: number[]): boolean {
+  return ids.some((id) => {
+    const s = orchestratorSessions.get(id);
+    return !!s && looksLikeOurRemoteWorktree(s) && !remoteWorktreeReachable(s);
+  });
+}
+
 function syncDisclosureLine(): string {
   return editor.t("confirm.sync_line", { branch: `${deriveSyncUser()}/fresh-sessions` });
 }
 
-function confirmActionLines(action: BulkAction, worktree = true): string[] {
+function confirmActionLines(action: BulkAction, worktree = true, unreachable = false): string[] {
   switch (action) {
     case "stop":
       return [
@@ -3955,7 +3990,9 @@ function confirmActionLines(action: BulkAction, worktree = true): string[] {
         editor.t("confirm.delete_line1"),
         ...(worktree
           ? confirmRemoveWorktree
-            ? [editor.t("confirm.delete_line2"), editor.t("confirm.delete_line4")]
+            ? unreachable
+              ? [editor.t("confirm.delete_worktree_unreachable")]
+              : [editor.t("confirm.delete_line2"), editor.t("confirm.delete_line4")]
             : [editor.t("confirm.delete_keep_worktree")]
           : []),
         editor.t("confirm.delete_line3"),
@@ -4042,11 +4079,12 @@ function buildConfirmPane(
     );
   }
   const worktree = action === "delete" && confirmTouchesWorktree(existing);
+  const unreachable = worktree && confirmHasUnreachableRemote(existing);
   entries.push(
     styledRow([{ text: "" }]),
     styledRow([{ text: bulk ? editor.t("confirm.for_each") : editor.t("confirm.this_will") }]),
   );
-  for (const line of confirmActionLines(action, worktree)) {
+  for (const line of confirmActionLines(action, worktree, unreachable)) {
     entries.push(styledRow([{ text: line }]));
   }
   // **Only when files are actually going.** Delete removes nothing on disk for
@@ -4054,7 +4092,7 @@ function buildConfirmPane(
   // both of those the warning describes a loss that does not happen — and a
   // warning that cries wolf is worse than none, because the one that matters
   // stops being read.
-  if (action === "delete" && worktree && confirmRemoveWorktree) {
+  if (action === "delete" && worktree && confirmRemoveWorktree && !unreachable) {
     entries.push(
       styledRow([{ text: "" }]),
       styledRow([
@@ -6705,6 +6743,12 @@ interface LifecycleResult {
   ok: boolean;
   err?: string;
   repoRoot?: string;
+  // Something that succeeded but is worth saying — today, a remote worktree
+  // left on its host. Not an `err`: the delete did what it could, and failing
+  // the row would misreport it. Carried out to the batch rather than written
+  // to the status bar here, because the batch sets its own summary afterwards
+  // and would overwrite anything this wrote.
+  note?: string;
 }
 
 // Archive a single session: SIGKILL its processes (archive is a
@@ -7080,9 +7124,15 @@ async function deleteOne(
   // very window this spawn routes through.
   let remoteLeftBehind: string | null = null;
   if (removeWorktree && !s.discovered && id > 0 && looksLikeOurRemoteWorktree(s)) {
-    if (id !== editor.activeWindow()) editor.setActiveWindow(id);
-    remoteLeftBehind = await removeRemoteWorktree(s);
-    if (!orchestratorSessions.has(id)) return { ok: false, err: editor.t("err.workspace_gone") };
+    if (!remoteWorktreeReachable(s)) {
+      // Disconnected: there is no authority to route through, and forcing one
+      // open here would race the connect (see `remoteWorktreeReachable`).
+      remoteLeftBehind = editor.t("err.remote_disconnected");
+    } else {
+      if (id !== editor.activeWindow()) editor.setActiveWindow(id);
+      remoteLeftBehind = await removeRemoteWorktree(s);
+      if (!orchestratorSessions.has(id)) return { ok: false, err: editor.t("err.workspace_gone") };
+    }
   }
 
   if (!s.discovered && id > 0) {
@@ -7160,14 +7210,13 @@ async function deleteOne(
   // A host that could not be reached does not block the delete — the row goes
   // either way — but it is said out loud, with the path, so the user knows
   // what is still sitting on the far side.
-  if (remoteLeftBehind) {
-    editor.setStatus(
-      editor.t("status.prefix", {
-        msg: editor.t("err.remote_worktree_kept", { path: s.root, error: remoteLeftBehind }),
-      }),
-    );
-  }
-  return { ok: true, repoRoot };
+  return {
+    ok: true,
+    repoRoot,
+    ...(remoteLeftBehind
+      ? { note: editor.t("err.remote_worktree_kept", { path: s.root, error: remoteLeftBehind }) }
+      : {}),
+  };
 }
 
 /// Outcome of a lifecycle batch: how many targets the action ran on
@@ -7176,6 +7225,10 @@ interface LifecycleBatchResult {
   ran: number;
   ok: number;
   lastErr: string;
+  // The first "succeeded, but…" note any member produced (see
+  // `LifecycleResult.note`). One is enough for a status line; the rest of the
+  // batch is reported by the counts.
+  note?: string;
 }
 
 /// Run Archive / Delete over `targets`, batching one sync per touched repo.
@@ -7200,6 +7253,7 @@ async function runLifecycleBatch(
   const touchedRepos = new Set<string>();
   let okCount = 0;
   let lastErr = "";
+  let note = "";
   for (let i = 0; i < targets.length; i++) {
     const id = targets[i];
     const res = action === "archive"
@@ -7208,6 +7262,7 @@ async function runLifecycleBatch(
     if (res.ok) {
       okCount += 1;
       if (res.repoRoot) touchedRepos.add(res.repoRoot);
+      if (res.note && !note) note = res.note;
     } else {
       lastErr = res.err ?? editor.t("err.failed");
     }
@@ -7216,7 +7271,7 @@ async function runLifecycleBatch(
   // The cores deliberately skip this so a batch pushes once per repo rather
   // than once per workspace.
   for (const repo of touchedRepos) triggerSyncAsync(repo);
-  return { ran: targets.length, ok: okCount, lastErr };
+  return { ran: targets.length, ok: okCount, lastErr, ...(note ? { note } : {}) };
 }
 
 /// Signal the agent process groups of `targets`. Shared by the picker's
@@ -7266,7 +7321,7 @@ async function runConfirmedAction(
   // Read the checkbox once, here: the batch below runs across several awaits
   // and the dialog it came from is already gone.
   const removeWorktree = action === "delete" ? confirmRemoveWorktree : true;
-  const { ok: okCount, lastErr } = await runLifecycleBatch(
+  const { ok: okCount, lastErr, note } = await runLifecycleBatch(
     action,
     targets,
     (i, id) => {
@@ -7286,6 +7341,11 @@ async function runConfirmedAction(
     setDialogError(editor.t("err.action_failed", { action, error: lastErr || editor.t("err.unknown_error") }));
   } else if (lastErr) {
     setDialogError(editor.t("err.partial_done", { verb, ok: String(okCount), total: String(targets.length), error: lastErr }));
+  } else if (note) {
+    // Succeeded, with something the user needs to know — say that instead of
+    // the bare count, which would read as "all done" while a directory is
+    // still sitting on a host.
+    editor.setStatus(editor.t("status.prefix", { msg: note }));
   } else {
     editor.setStatus(editor.t("status.bulk_done", { verb, count: String(okCount) }));
   }
@@ -8300,6 +8360,13 @@ function sessionNameBaseFor(repoRoot: string): string {
 // one from another project, leaves the counter alone, and a re-submit of the
 // same name cannot walk it backwards.
 function claimAutoSessionName(name: string): void {
+  // **Only a name this counter issued.** The counter is global across
+  // projects, so a *typed* name that merely ends in digits — `release-2026`,
+  // a ticket number, a date — would drive every later auto-name in every
+  // project past it. The caller establishes provenance by passing the name
+  // only when it is the one the form generated; all this does is advance the
+  // counter past its number, monotonically, so a re-submit cannot walk it
+  // backwards.
   const m = /-(\d+)$/.exec(name);
   if (!m) return;
   const n = parseInt(m[1], 10);
@@ -8714,6 +8781,25 @@ async function createRemoteWorktree(
   return { ok: true, root };
 }
 
+// The ssh argv for a captured spec — the same shape `formSshArgv` builds, but
+// from the transport, so a retry or a row restored after a restart does not
+// need the form that made it. `null` for a transport that is not ssh.
+function specSshArgv(spec: RemoteAgentSpec, connectTimeout: number): string[] | null {
+  const t = spec.transport;
+  if (t.kind !== "ssh") return null;
+  const host = t.host?.trim() ?? "";
+  if (!host) return null;
+  return [
+    "-o", "BatchMode=yes",
+    "-o", `ConnectTimeout=${connectTimeout}`,
+    ...(t.port ? ["-p", String(t.port)] : []),
+    ...(t.identity_file ? ["-i", expandHome(t.identity_file)] : []),
+    ...(t.extra_args ?? []),
+    "--",
+    t.user ? `${t.user}@${host}` : host,
+  ];
+}
+
 // === Host-key trust (trust on first use) ====================================
 //
 // ssh refuses a host key it has never seen, and every ssh call the
@@ -8968,6 +9054,26 @@ const REMOTE_WORKTREE_MARKER = "/.fresh/worktrees/";
 // match only what `createRemoteWorktree` made.
 function looksLikeOurRemoteWorktree(s: AgentSession): boolean {
   return s.remote?.kind === "ssh" && s.root.includes(REMOTE_WORKTREE_MARKER);
+}
+
+// Can the removal actually reach the host *right now*?
+//
+// **This is a safety check, not an optimisation.** The removal routes through
+// the active authority, and `setActiveWindow` on a dormant remote session
+// installs an empty local shell and starts the connect *afterwards*
+// (`PluginCommand::SetActiveWindow`), so a spawn issued straight after the
+// switch races that connect and is served by the LOCAL spawner instead. It
+// would then run `git worktree remove --force` against a remote absolute path
+// on this machine — a no-op if nothing is there, and a deletion of the user's
+// files if anything is. Only a session the host already reports as connected
+// is safe to act on; everything else is left alone and said out loud.
+function remoteWorktreeReachable(s: AgentSession): boolean {
+  // **Asked of the host, not of our own facet.** `s.remote.state` is a display
+  // badge: a freshly created session keeps the `"starting"` its create stamped
+  // on it and nothing promotes it, so testing it here refused the live
+  // sessions this is meant to allow. `WindowInfo.remote.connected` is the
+  // host's own answer and is recomputed every time it is asked.
+  return editor.listWindows().find((w) => w.id === s.id)?.remote?.connected === true;
 }
 
 // Remove a remote worktree over the session's **own** connection.
@@ -10414,13 +10520,33 @@ function plannedWorkspaceName(f: NewSessionForm): string {
 // branch, else the detected default. Blank on a remote host that has not
 // answered yet, where the far side's `git worktree add` picks the fork point
 // and this side would only be guessing.
-function branchPlanNote(f: NewSessionForm, base: string): string {
+// `typedBase` is what the user actually put in "Checkout branch"; `fallback`
+// is the detected default shown there as a placeholder. The two are NOT
+// interchangeable, and conflating them is what this function got wrong first
+// time round: the create has three arms, and which one runs turns on whether
+// Checkout branch was *typed*, not on what the field displays.
+//
+//   new branch set              → cut `newBranch` off the base
+//   new branch blank, base set  → check `base` out; NO new branch is cut
+//   both blank                  → cut `<workspace name>` off the default
+//
+// The middle arm is the one a preview that only looked at "is there a base"
+// described as cutting a branch. It does not: `runLocalCreate` takes its
+// `else if (checkoutBranch)` arm and `createRemoteWorktree` omits `-b`.
+function branchPlanNote(f: NewSessionForm, typedBase: string, fallback: string): string {
   const named = f.newBranch.value.trim();
-  const branch = named || plannedWorkspaceName(f);
+  if (named) {
+    const base = typedBase || fallback;
+    return base
+      ? editor.t("form.branch_plan", { branch: named, base })
+      : editor.t("form.branch_plan_nobase", { branch: named });
+  }
+  if (typedBase) return editor.t("form.branch_plan_checkout", { base: typedBase });
+  const branch = plannedWorkspaceName(f);
   if (!branch) return "";
-  return base
-    ? editor.t(named ? "form.branch_plan" : "form.branch_plan_default", { branch, base })
-    : editor.t(named ? "form.branch_plan_nobase" : "form.branch_plan_default_nobase", { branch });
+  return fallback
+    ? editor.t("form.branch_plan_default", { branch, base: fallback })
+    : editor.t("form.branch_plan_default_nobase", { branch });
 }
 
 // The worktree group (local backend): the toggle, then what it reveals.
@@ -10471,10 +10597,9 @@ function worktreeFields(f: NewSessionForm): WidgetSpec[] {
   // meaningful when a worktree is being created, so it appears with it.
   if (on) {
     const nb = splitLabel("form.new_branch");
-    const base = f.branch.value.trim() || f.defaultBranch;
     out.push(...field(nb.label, f.newBranch, {
       key: "new_branch",
-      note: branchPlanNote(f, base) || undefined,
+      note: branchPlanNote(f, f.branch.value.trim(), f.defaultBranch) || undefined,
     }));
     // Where the files land. A first-run user expects to be taken to their
     // project and is instead dropped in a deep directory under the data dir,
@@ -10606,7 +10731,7 @@ function remoteWorktreeFields(f: NewSessionForm): WidgetSpec[] {
   const nb = splitLabel("form.new_branch");
   out.push(...field(nb.label, f.newBranch, {
     key: "new_branch",
-    note: branchPlanNote(f, f.branch.value.trim() || f.remoteDefaultBranch) || undefined,
+    note: branchPlanNote(f, f.branch.value.trim(), f.remoteDefaultBranch) || undefined,
   }));
   // The remote resolves `$HOME` and the repository's basename itself, so the
   // preview says the shape and fills in the part this side does know — the
@@ -12754,6 +12879,27 @@ async function runRemoteCreate(id: number): Promise<void> {
     // repository, makes the worktree if it is not already there, and answers
     // with the absolute path. A failure here is the create's failure: the row
     // says what the remote said rather than connecting to the wrong place.
+    // **Without a worktree to make, nothing else would ask.** The agent
+    // carrier trusts an unknown key on its own (`accept-new`), so a create
+    // with the worktree toggle off connected silently — while the form had
+    // already promised "you'll be asked to confirm it on create". One cheap
+    // round trip buys the promise back; on a host that is already trusted it
+    // succeeds and costs nothing more.
+    if (spec.backend === "ssh" && !spec.remoteWorktree) {
+      const argv = specSshArgv(spec.spec, REMOTE_CREATE_TIMEOUT_S);
+      if (argv) {
+        const probe = await editor.spawnHostProcess("ssh", [...argv, "true"]);
+        if (!orchestratorSessions.get(id)?.pending) return;
+        if (probe.exit_code !== 0 && isHostKeyFailure(lastNonEmptyLine(probe.stderr))) {
+          const trusted = await offerHostKeyTrust(argv, spec.facet.detail);
+          if (!orchestratorSessions.get(id)?.pending) return;
+          if (!trusted) {
+            failPending(id, editor.t("hostkey.declined"));
+            return;
+          }
+        }
+      }
+    }
     if (spec.backend === "ssh" && spec.remoteWorktree) {
       s.pending.message = editor.t("dock.pending_adding_worktree");
       if (openPanel) refreshOpenDialog();
@@ -12932,7 +13078,15 @@ async function submitForm(visit: boolean): Promise<void> {
   // counter still at 1, and the following dialog offered `<project>-2` again.
   // The branch scan that backs the counter up cannot cover it either — a
   // worktree cut on another machine leaves no ref in this repository.
-  if (captured.spec.backend === "ssh" && captured.spec.remoteWorktree) {
+  // Only when the user left Workspace Name blank, so the name in the spec is
+  // the generated `<project>-N` rather than something they typed. A typed name
+  // is theirs and says nothing about the counter — deriving a base to test
+  // against would not help either, since an ssh form's default name is
+  // generated from the *local* project probe, not the remote repository.
+  if (
+    captured.spec.backend === "ssh" && captured.spec.remoteWorktree &&
+    !form.name.value.trim() && captured.spec.remoteWorktree.name === form.defaultSessionName
+  ) {
     claimAutoSessionName(captured.spec.remoteWorktree.name);
   }
   const picked = machineOptions()[form.machinePick];

@@ -642,6 +642,78 @@ branch surviving) and unchecked (worktree, files and registration all intact,
 only the dock row gone); and a no-worktree session, which shows no checkbox and
 none of the worktree lines.
 
+## Code review, and what it caught
+
+A review pass over the finished branch found six problems. Five were real and
+are fixed; all are worth recording, because three of them are mistakes the
+manual testing above walked straight past.
+
+**The branch preview still lied in one of its three arms.** The create has
+three: a typed new-branch name cuts it off the base; a typed *checkout* branch
+with no new-branch name checks that branch out and cuts nothing; both blank cuts
+`<workspace>` off the default. The preview keyed off "is there a base", so the
+middle arm — the common "put me on `feature`" case — was described as "blank:
+new branch acme-widgets-1, cut from feature". No branch is created there at all.
+
+This one is uncomfortable, because the manual pass *saw* it: a session was
+created on `feature` when the preview had named a new branch, and that was
+written off as "the New branch name field must have been cleared". The evidence
+was on screen and got explained away. The preview now takes the typed base and
+the placeholder default as separate arguments, because which arm runs turns on
+whether Checkout branch was *typed*, not on what the field displays — and the
+third arm says "checks out feature — no new branch is created". Re-verified
+against git: worktree on `feature`, no new branch.
+
+**The remote worktree removal could have deleted local files.** It runs over the
+session's own authority by making its window active first — but
+`PluginCommand::SetActiveWindow` on a *disconnected* remote session installs an
+empty local shell and starts the connect *afterwards*, so a spawn issued right
+after the switch races it and is served by the **local** spawner instead. It
+would then run `git worktree remove --force` against a remote absolute path on
+this machine. Which is not hypothetical here: this test rig uses `127.0.0.1` as
+the "remote", so the path exists locally too.
+
+The fix refuses to act unless the host says the session is connected, and the
+first attempt at that was itself wrong — it tested our own `remote.state`, which
+a freshly created session leaves at `"starting"` for ever (nothing promotes it),
+so it blocked exactly the live sessions it was meant to allow. It asks
+`WindowInfo.remote.connected` now, which is the host's own answer. Verified both
+ways: connected deletes remove the worktree; a delete after the connection was
+killed leaves all of it untouched and says so.
+
+**The trust dialog was only wired into the worktree path.** With the worktree
+toggle off there is no remote `git` step, so the create went straight to
+`attachRemoteAgent` — whose carrier trusts an unknown key on its own — while the
+form had already promised "you'll be asked to confirm it on create". The
+reviewer expected a hard failure; what actually happened was worse in kind if
+not in effect: it succeeded, silently trusting a host the user never saw the
+fingerprint of, which is the whole thing F1 was about. The gate now runs for
+every ssh create, at the cost of one round trip in the no-worktree case.
+
+**The auto-name counter could be driven by a typed name.** `claimAutoSessionName`
+took whatever name the spec carried and advanced the global counter past any
+trailing digits, so naming one workspace `release-2026` would have made every
+later auto-name in every project `<project>-2027`. It is now called only when
+the user left the field blank *and* the spec's name is the one the form
+generated.
+
+**The failure panel's height estimate could clip the dock.** It divided the
+message width by the column count; the host word-wraps with a hanging indent, so
+a real `Permission denied (publickey,…)` takes more rows than that, and the
+tree over-allocated into the dock's last row — the exact failure the panel was
+added to prevent. It now packs words the way the renderer does.
+
+**Two doc comments were separated from their functions** by inserting new code
+between a comment and the item it documented (`ownsWorktree` in the plugin,
+`slow_fake_ssh_on_path` in the test helpers). Both restored.
+
+Also fixed while there: the "left behind" message was written with `setStatus`
+inside `deleteOne` and then immediately overwritten by the batch's own
+"deleted 1 workspace(s)" summary, so the one case where the user most needed
+telling said nothing. It travels out on the result now and replaces the summary.
+And the confirm dialog no longer promises `git worktree remove` for a host it
+cannot reach — it says the worktree stays on the host, and why.
+
 ## Findings that are not defects
 
 The tester was a first-time user with no documentation, which is the point of the
