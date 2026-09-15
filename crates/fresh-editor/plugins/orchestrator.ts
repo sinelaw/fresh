@@ -10193,6 +10193,35 @@ function localBodyFields(): WidgetSpec[] {
   return fields;
 }
 
+// What the workspace will be called: the typed name, or the auto-generated
+// default the Workspace Name field is showing as its placeholder.
+function plannedWorkspaceName(f: NewSessionForm): string {
+  return f.name.value.trim() || f.defaultSessionName;
+}
+
+// The one line that says what `Create` will actually do to the repository.
+//
+// The hint this replaces read "leave empty to use provided branch", and the
+// code does the opposite: with both branch fields blank, `git worktree add`
+// is given `-b <workspace name>` off the default branch, so a user following
+// the hint silently got a branch they never asked for. Rather than restate
+// the rule in better prose — a rule with three arms, two of which depend on
+// fields above — the form names the branch. A preview cannot drift from the
+// behaviour the way a sentence about it can.
+//
+// `base` is the fork point as the create resolves it: the typed Checkout
+// branch, else the detected default. Blank on a remote host that has not
+// answered yet, where the far side's `git worktree add` picks the fork point
+// and this side would only be guessing.
+function branchPlanNote(f: NewSessionForm, base: string): string {
+  const named = f.newBranch.value.trim();
+  const branch = named || plannedWorkspaceName(f);
+  if (!branch) return "";
+  return base
+    ? editor.t(named ? "form.branch_plan" : "form.branch_plan_default", { branch, base })
+    : editor.t(named ? "form.branch_plan_nobase" : "form.branch_plan_default_nobase", { branch });
+}
+
 // The worktree group (local backend): the toggle, then what it reveals.
 // Disclosure is value-driven — the branch field shows on any git path (it
 // drives an in-place checkout when no worktree is cut), the new-branch field
@@ -10241,9 +10270,33 @@ function worktreeFields(f: NewSessionForm): WidgetSpec[] {
   // meaningful when a worktree is being created, so it appears with it.
   if (on) {
     const nb = splitLabel("form.new_branch");
-    out.push(...field(nb.label, f.newBranch, { key: "new_branch", note: nb.hint }));
+    const base = f.branch.value.trim() || f.defaultBranch;
+    out.push(...field(nb.label, f.newBranch, {
+      key: "new_branch",
+      note: branchPlanNote(f, base) || undefined,
+    }));
+    // Where the files land. A first-run user expects to be taken to their
+    // project and is instead dropped in a deep directory under the data dir,
+    // which nothing named beforehand.
+    const name = plannedWorkspaceName(f);
+    if (name) {
+      out.push(fieldNote(
+        editor.t("form.worktree_where", { path: localWorktreePath(f, name) }),
+        { fg: "ui.menu_disabled_fg", italic: true },
+      ));
+    }
   }
   return out;
+}
+
+// The directory `runLocalCreate` will put the worktree in, for the preview.
+// Kept beside the preview rather than shared with the create: the create
+// resolves the repository's canonical root first (a probe this side of the
+// dialog does not run), so the two agree on the shape and the preview shows
+// the project path the user can see in the field above.
+function localWorktreePath(f: NewSessionForm, name: string): string {
+  const project = f.projectPath.value.trim() || f.defaultProjectPath;
+  return editor.pathJoin(editor.getDataDir(), "orchestrator", slugify(project), name);
 }
 
 // Ask the remote whether the path it was given is a repository, and what it
@@ -10350,8 +10403,20 @@ function remoteWorktreeFields(f: NewSessionForm): WidgetSpec[] {
     }),
   );
   const nb = splitLabel("form.new_branch");
-  out.push(...field(nb.label, f.newBranch, { key: "new_branch", note: nb.hint }));
-  out.push(fieldNote(editor.t("form.remote_worktree_where")));
+  out.push(...field(nb.label, f.newBranch, {
+    key: "new_branch",
+    note: branchPlanNote(f, f.branch.value.trim() || f.remoteDefaultBranch) || undefined,
+  }));
+  // The remote resolves `$HOME` and the repository's basename itself, so the
+  // preview says the shape and fills in the part this side does know — the
+  // workspace name — rather than guessing at a path it cannot resolve.
+  const name = plannedWorkspaceName(f);
+  const repo = f.remoteRepoRoot.split("/").filter(Boolean).pop() ?? "";
+  out.push(fieldNote(
+    repo && name
+      ? editor.t("form.remote_worktree_where_at", { path: `~/.fresh/worktrees/${repo}/${name}` })
+      : editor.t("form.remote_worktree_where"),
+  ));
   return out;
 }
 
@@ -14662,6 +14727,10 @@ editor.on("widget_event", (e) => {
         renderForm();
       } else if (field === "branch") {
         scheduleCompletionRefresh("branch");
+        // The branch preview under "New branch name" names the fork point,
+        // so it has to redraw as the fork point is typed — a preview that
+        // lags the field it previews is the stale-hint problem again.
+        renderForm();
       } else {
         // Any other field's change implicitly closes the
         // dropdown (the user moved on).
@@ -14684,7 +14753,14 @@ editor.on("widget_event", (e) => {
         }
         // The remaining Create-gating fields: re-render so the disabled
         // state on the Create buttons tracks what the user has typed.
-        if (field === "ssh_host" || field === "k8s_pod") {
+        //
+        // `name` and `new_branch` are here for the branch/worktree preview:
+        // it names the branch and the directory the create will make, both
+        // of which are derived from these two.
+        if (
+          field === "ssh_host" || field === "k8s_pod" ||
+          field === "name" || field === "new_branch"
+        ) {
           renderForm();
         }
       }
