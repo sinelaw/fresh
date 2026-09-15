@@ -638,37 +638,16 @@ impl Editor {
     }
 }
 
-/// Check if a command exists in the system PATH.
+/// Check if a command exists — on PATH, or as an absolute/relative path.
 fn command_exists(command: &str) -> bool {
-    // Use 'which' on Unix or 'where' on Windows to check if command exists
-    #[cfg(unix)]
-    {
-        Command::new("which")
-            .arg(command)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false)
+    // Use the `which` crate, mirroring the LSP server probe. Shelling out to
+    // Windows' `where` misparsed drive-letter absolute paths as its
+    // `path:pattern` search syntax and reported installed binaries missing
+    // (issue #3281).
+    if command.is_empty() {
+        return false;
     }
-
-    #[cfg(windows)]
-    {
-        Command::new("where")
-            .arg(command)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .hide_window()
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false)
-    }
-
-    #[cfg(not(any(unix, windows)))]
-    {
-        // On other platforms, assume command exists and let it fail at runtime
-        true
-    }
+    which::which(command).is_ok()
 }
 
 /// Detect the shell to use for executing commands.
