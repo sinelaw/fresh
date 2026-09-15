@@ -1128,6 +1128,46 @@ mod tests {
         );
     }
 
+    /// The list still sits above the prompt row when a confirmation prompt
+    /// wraps onto more than one row. It follows the row's top edge, so the
+    /// wrapped prompt and the list never claim the same rows.
+    #[test]
+    fn the_list_stays_above_a_prompt_row_that_wraps() {
+        use crate::view::shell::frame::{frame_tree, region_key, Frame, HostRegion};
+        use crate::view::shell::prompt_line::PromptRow;
+        let mut ui: Ui<UiMsg> = Ui::new();
+        let spec = ui
+            .frame(
+                frame_tree(Frame {
+                    prompt_line: true,
+                    prompt_row: Some(PromptRow {
+                        message: "1 buffer has unsaved changes. (s)ave and quit, \
+                                  (d)iscard and quit, (C)ancel? "
+                            .into(),
+                        wraps: true,
+                        ..Default::default()
+                    }),
+                    suggestions: Some(Suggestions {
+                        rows: rows(3),
+                        selected: Some(0),
+                        place: Place::AbovePrompt,
+                        hints: None,
+                        window: None,
+                    }),
+                    ..Frame::default()
+                }),
+                Size::new(40, 20),
+            )
+            .clone();
+        let list = suggestions_rect(&spec).expect("the list was placed");
+        let prompt = ui.rect_of(ui.find_by_key(&region_key(HostRegion::PromptLine)).unwrap());
+        assert!(prompt.h > 1, "the prompt wrapped: {prompt:?}");
+        assert!(
+            list.bottom() <= prompt.y,
+            "the list must sit above the wrapped prompt: list {list:?}, prompt {prompt:?}"
+        );
+    }
+
     /// **A path keeps its filename; a command keeps its head.**
     ///
     /// `ColumnLayout::names_are_paths` read this off the shape of the list —
