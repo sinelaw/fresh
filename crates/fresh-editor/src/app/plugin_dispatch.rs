@@ -6293,11 +6293,11 @@ impl Editor {
         self.active_window_mut().warning_domains.lsp.clear();
     }
 
-    /// Record a plugin's claim on LSP client commands, restarting any server
-    /// that already handshook without them.
+    /// Record a plugin's claim on LSP client commands, re-handshaking any
+    /// server that already started without them.
     ///
-    /// The restart is not optional bookkeeping: client capabilities are sent
-    /// once, in `initialize`, and LSP provides no way to amend them
+    /// The re-handshake is not optional bookkeeping: client capabilities are
+    /// sent once, in `initialize`, and LSP provides no way to amend them
     /// afterwards. A server that started before the claim would therefore
     /// never learn of it — and some servers gate what they send on exactly
     /// this list (rust-analyzer emits no runnable CodeLens for commands the
@@ -6305,22 +6305,64 @@ impl Editor {
     ///
     /// Plugins load on a background thread, so a server autostarted while a
     /// file opens really can win that race. In the common case nothing is
-    /// running yet and this is a no-op.
+    /// running yet and this does nothing.
     fn handle_register_lsp_client_commands(&mut self, commands: Vec<String>) {
         if !crate::services::lsp::client_commands::register_all(commands) {
             return; // nothing new — every claim was already known
         }
 
-        let running = self
-            .lsp()
-            .map(|lsp| lsp.running_servers())
-            .unwrap_or_default();
-        for language in running {
-            tracing::info!(
-                "Restarting LSP for '{}' so it re-handshakes with the newly claimed client commands",
-                language
-            );
-            self.handle_restart_lsp_for_language(language);
+        // Every window has its own LSP manager, and the claim is
+        // process-wide, so a window left out here keeps stale capabilities
+        // for the rest of the session (the claim is already recorded, so a
+        // later call returns early and would not come back to it).
+        let window_ids: Vec<_> = self.windows.keys().copied().collect();
+        let mut restarted: Vec<String> = Vec::new();
+        for window_id in window_ids {
+            let Some(window) = self.windows.get(&window_id) else {
+                continue;
+            };
+            if window.lsp.has_universal_server() {
+                // A scope that accepts every language cannot be addressed by
+                // language, so it cannot be re-handshaked here. Say so rather
+                // than quietly leaving it stale.
+                tracing::warn!(
+                    "A universal-scope LSP server is running; it keeps the client \
+                     capabilities it started with until it is restarted"
+                );
+            }
+            for language in window.lsp.languages_with_running_servers() {
+                // Resolve the root from a file of *this* language: the
+                // active buffer may well belong to another one, and the root
+                // is walked up from whatever path we hand over.
+                let file_path = self.windows.get(&window_id).and_then(|w| {
+                    w.buffers.iter().find_map(|(buffer_id, state)| {
+                        (state.language == language)
+                            .then(|| w.buffer_metadata.get(buffer_id))
+                            .flatten()
+                            .and_then(|meta| meta.file_path().cloned())
+                    })
+                });
+
+                tracing::info!(
+                    "Re-handshaking LSP for '{}' after a client-command claim",
+                    language
+                );
+                if let Some(window) = self.windows.get_mut(&window_id) {
+                    if window
+                        .lsp
+                        .respawn_for_client_capability_change(&language, file_path.as_deref())
+                    {
+                        restarted.push(language);
+                    }
+                }
+            }
+        }
+
+        // The fresh servers know nothing about the open documents yet.
+        restarted.sort();
+        restarted.dedup();
+        for language in restarted {
+            self.reopen_buffers_for_language(&language);
         }
     }
 

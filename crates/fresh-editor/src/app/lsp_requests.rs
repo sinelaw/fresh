@@ -3849,6 +3849,27 @@ impl Editor {
     ) -> Result<(), String> {
         // Passed through as JSON rather than parsed: the shape is defined by
         // whichever server produced it (cf. the `lsp_server_request` hook).
+        // A name can be claimed while nothing is listening — the plugin that
+        // claimed it failed to load, or was unloaded. Nothing downstream can
+        // tell us that (hooks are fire-and-forget), and the server will not
+        // run it either, so the press would do nothing at all. Check here so
+        // it is reported instead.
+        // `has_subscribers` rather than `has_hook_handlers`: both answer from
+        // the same `event_handlers` registry, but the latter blocks on a
+        // round-trip to the plugin thread — which may itself be mid-hook —
+        // and this runs on a click.
+        if !self
+            .plugin_manager
+            .read()
+            .unwrap()
+            .has_subscribers("lsp_execute_command")
+        {
+            return Err(format!(
+                "'{}' is claimed by a plugin, but no plugin is listening for it",
+                command.command
+            ));
+        }
+
         let arguments = match command.arguments.as_ref() {
             Some(arguments) => Some(
                 serde_json::to_string(arguments)

@@ -394,7 +394,16 @@ editor.on("lsp_execute_command", async (data) => {
     return;
   }
 
-  const task = runnableToTask(runnable);
+  let task: RunnableTask;
+  try {
+    // Flattening reads `cargoArgs`/`args` off the payload; a runnable with
+    // the right `kind` but missing those throws here, not above.
+    task = runnableToTask(runnable);
+  } catch (e) {
+    editor.setStatus(`Rust LSP: could not read runnable for '${data.title}': ${String(e)}`);
+    return;
+  }
+
   try {
     await editor.createTerminal({
       cwd: task.cwd,

@@ -389,6 +389,13 @@ fn test_rust_analyzer_runnable_is_translated_to_an_argv() -> anyhow::Result<()> 
             .with_config(lsp_config(&script_path, &log_file)),
     )?;
 
+    // Plugins load on a background thread. Wait for the claim before opening
+    // the file: a claim that lands later routes this lens to the server
+    // instead of the plugin, and also restarts the LSP mid-test.
+    harness.wait_until(|_| {
+        fresh::services::lsp::client_commands::is_registered("rust-analyzer.runSingle")
+    })?;
+
     let project_dir = harness.project_dir().unwrap();
     open_with_lens(&mut harness, &project_dir)?;
     click_lens(&mut harness)?;

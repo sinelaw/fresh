@@ -18,6 +18,13 @@
 //!    than sending `workspace/executeCommand` to a server that never
 //!    advertised it.
 //!
+//! **Claims only accumulate.** There is no unregister: a plugin that is
+//! unloaded leaves its names claimed, so the core keeps routing them to a
+//! hook rather than to the server. That is reported rather than silent —
+//! `execute_code_lens_command` checks for a live handler first — but it is
+//! not undone. Reloading a plugin is fine (it re-claims the same names).
+//! Per-plugin ownership would be needed to do better.
+//!
 //! **Why this is process-global rather than editor state.** Both readers
 //! need it from places that cannot reach the `Editor`: the handshake runs
 //! on the LSP task, with no editor handle by construction. Plugin
