@@ -165,7 +165,7 @@ spec = {
             # line, the line shortens to a dot, the dot decays. Takes the
             # end of the clip rather than adding to it, so the final hold
             # is what is left of beat 4 in front of it.
-            "shutdown": 1.1, "off_glow": 1.5},
+            "shutdown": 0.55, "off_glow": 1.5},
     "views": {"list": view},
     # No beat carries a `head` or a `sub`, so the caption bar is never drawn
     # and the viewport takes its full height. The words that do appear are
@@ -176,7 +176,7 @@ spec = {
     # centred, in the same place both times so the second reads as the first
     # swapping over.
     "timing": {"intro": 0, "zoom": 0, "hold": 0.8, "pan": 0.15,
-               "push": 0.9, "wipe": 0.70, "outro": 0.40},
+               "push": 0.9, "wipe": 0.70, "outro": 0.25},
     "annotations": [
       # 1 — the flat list, briefly, so there is a before to measure against.
       {"shot": "before", "view": "list", "rows": [4, 30], "cols": DOCK,
@@ -203,7 +203,7 @@ spec = {
 
       # 4 — hold what it made.
       {"shot": "after", "view": "list", "rows": [4, last_row], "cols": DOCK,
-       "band": False, "hold": 0.9}
+       "band": False, "hold": 0.5}
     ]
   },
   "encode": {"crf": 18, "preset": "slow"}

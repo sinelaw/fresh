@@ -234,7 +234,7 @@
       "shift": 3,
       "vignette": 0.45,
       "curve": 0.11,
-      "shutdown": 1.1,
+      "shutdown": 0.55,
       "off_glow": 1.5
     },
     "views": {
@@ -256,7 +256,7 @@
       "pan": 0.15,
       "push": 0.9,
       "wipe": 0.7,
-      "outro": 0.4
+      "outro": 0.25
     },
     "annotations": [
       {
@@ -357,7 +357,7 @@
           41
         ],
         "band": false,
-        "hold": 0.9
+        "hold": 0.5
       }
     ]
   },
