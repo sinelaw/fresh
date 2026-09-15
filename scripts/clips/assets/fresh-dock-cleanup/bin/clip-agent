@@ -1,0 +1,299 @@
+#!/usr/bin/env python3
+"""The coding agent the dock-cleanup clip films.
+
+It is scripted, not a language model: the words are fixed so the take is
+repeatable. Everything it *does* is real. Launched by `runAgent` into a real
+Fresh pane, it inherits `FRESH_CMD_TOKEN`, `FRESH_SESSION` and `FRESH_BIN`
+from the editor, and every dock change below is a real call into the real
+orchestrator API, piped to `fresh --cmd script run -` exactly as an agent
+working in a Fresh pane would make it.
+
+Two things about the dock API are load-bearing here and cost time if
+rediscovered:
+
+  * Layout mutations are queued. A read issued in the same script sees
+    pre-mutation state, so each mutation is its own script run and the
+    result is read back in the next one.
+  * A workspace discovered on disk but never opened has a *negative*
+    placeholder `windowId`. Rows are addressed by the durable
+    `workspaceId` throughout, never by window id, so the row kind never
+    has to be special-cased.
+
+`--timeline` prints the schedule as JSON instead of running, so the capture
+spec can be generated against the same numbers the agent will actually keep.
+"""
+from __future__ import annotations
+import json, os, subprocess, sys, time
+
+CLIP_HOME = os.environ.get("CLIP_HOME") or os.path.expanduser("~/.cache/fresh-dock-clip")
+FRESH = os.environ.get("FRESH_BIN") or "fresh"
+ROWS = json.load(open(os.path.join(CLIP_HOME, "rows.json")))
+
+# Wrapped by hand rather than by the terminal: as one 100-column line the
+# sentence needs a camera wide enough to swallow the whole editor, and at that
+# scale nobody can read it. Two lines fit a frame that is still legible.
+PROMPT_LINES = ["organize my workspaces into folders, and rename",
+                "them to match the actual work being done inside them"]
+PROMPT = " ".join(PROMPT_LINES)
+
+# Pacing. The dock is static between mutations, so a shot only has to land
+# inside a plateau — which is why the annotated moves get a wide one and the
+# rest can run fast without the capture having to chase them.
+TYPE_CPS      = 22.0   # characters a second, a human cadence
+THINK         = 1.8
+LEAD_IN       = 1.0    # after the prompt lands, before the first folder
+# Pacing is env-overridable because two cuts of this take want different
+# cadences from the same run. The long clip annotates the first three moves
+# and the first three renames, so those get a wide plateau and the rest go
+# fast. A clip whose whole subject is the arranging wants one shot per move
+# instead: CLIP_SLOW_MOVES=0 CLIP_MOVE_PLATEAU=0.6 makes every move its own
+# evenly-paced beat. Unset, the defaults are what the long clip filmed.
+def _envf(name, default):
+    return float(os.environ.get(name) or default)
+
+
+def _envi(name, default):
+    return int(os.environ.get(name) or default)
+
+
+SLOW_PLATEAU   = _envf("CLIP_SLOW_PLATEAU", 1.9)   # the annotated steps
+MOVE_PLATEAU   = _envf("CLIP_MOVE_PLATEAU", 0.75)  # once the pattern is legible
+RENAME_PLATEAU = _envf("CLIP_RENAME_PLATEAU", 0.75)
+N_SLOW_MOVES   = _envi("CLIP_SLOW_MOVES", 3)
+N_SLOW_RENAME  = _envi("CLIP_SLOW_RENAMES", 3)
+# The two phase boundaries are states worth filming — folders made but
+# nothing filed yet, everything filed but nothing renamed yet — and each
+# would otherwise last microseconds.
+FOLDER_PAUSE  = 1.7
+PHASE_PAUSE   = 1.7
+
+DIM, BOLD, CYAN, GREEN, GREY, RESET = (
+    "\033[2m", "\033[1m", "\033[36m", "\033[32m", "\033[90m", "\033[0m")
+
+
+def script(src: str):
+    """Run one TypeScript statement against the live editor and return its JSON."""
+    r = subprocess.run([FRESH, "--cmd", "script", "run", "-"],
+                       input=src, capture_output=True, text=True)
+    if r.returncode != 0:
+        raise RuntimeError((r.stderr or r.stdout).strip()[:400])
+    out = (r.stdout or "").strip()
+    return json.loads(out) if out else None
+
+
+ORCH = 'const o = editor.getPluginApi("orchestrator");'
+
+
+def rows_by_name():
+    """Durable ids, read back after the queue has drained."""
+    ws = script(ORCH + " return o.listWorkspaces().map(w => "
+                       "({name: w.name, id: w.workspaceId, kind: w.kind}));")
+    out = {}
+    for w in ws or []:
+        out.setdefault(w["name"], []).append(w)
+    return out
+
+
+
+class Gate:
+    """Advance when the camera has taken its shot, not when a clock says so.
+
+    Pacing the agent and aiming the capture off two separate clocks cannot be
+    made to work: they are anchored to each other by one constant -- how long
+    `Return` takes to become a running agent -- and every error in it shifts
+    the whole sequence. Measured at 1.2s the shots came back a plateau late;
+    corrected to 2.3s the moves lined up and the phase boundary still did not.
+    There is no value that fixes it, because the error is not constant.
+
+    So let the camera lead. `shot()` writes its raw dump into the shots
+    directory at the instant it grabs, and only encodes at the end of the
+    take -- so a new `.xwd` appearing there *is* the shutter, visible to any
+    process that can read the directory. The agent does one mutation, waits
+    for the shutter that records it, and only then does the next. The
+    capture's sleeps are then free to drift as much as they like: nothing
+    moves on screen until a shot has been taken.
+
+    The timeout is not a fallback for slowness, it is for a camera that has
+    gone away -- a crashed take should let the agent finish rather than hang
+    a terminal forever.
+    """
+
+    def __init__(self, shots_dir, timeout=25.0):
+        self.dir = shots_dir
+        self.timeout = timeout
+        self.seen = self._count()
+
+    def _count(self):
+        try:
+            return sum(1 for f in os.listdir(self.dir) if f.endswith(".xwd"))
+        except OSError:
+            return self.seen if hasattr(self, "seen") else 0
+
+    def wait(self, label=""):
+        deadline = time.monotonic() + self.timeout
+        while time.monotonic() < deadline:
+            n = self._count()
+            if n > self.seen:
+                self.seen = n
+                return True
+            time.sleep(0.02)
+        return False
+
+
+class Clock:
+    """Pace to an absolute schedule, not to a sum of sleeps.
+
+    Every mutation is a `fresh --cmd script run` — a process spawn and a
+    round trip to the editor, tens to hundreds of milliseconds of it. Sleeping
+    a fixed plateau *after* each one makes the agent finish later than the
+    timeline it published, and the capture, which is only counting sleeps,
+    then photographs the wrong states. Holding a deadline instead means the
+    published schedule is the schedule kept, as long as the work fits inside
+    its plateau — and `--timeline --verify` says whether it did.
+    """
+
+    def __init__(self, log_path):
+        self.t0 = time.monotonic()
+        self.deadline = 0.0
+        self.log = open(log_path, "w", buffering=1)
+
+    def step(self, label, plateau):
+        self.deadline += plateau
+        now = time.monotonic() - self.t0
+        slack = self.deadline - now
+        # Wall clock too, because the only way to find out what a shot
+        # actually photographed is to compare it against the file's mtime:
+        # the capture and the agent share no other clock. `wall` is when this
+        # state went up on screen -- the mutation is already done by the time
+        # step() is called -- and it stays up until the next step's `wall`.
+        self.log.write(json.dumps({"label": label, "at": round(now, 3),
+                                   "target": round(self.deadline, 3),
+                                   "slack": round(slack, 3),
+                                   "wall": round(time.time(), 3)}) + "\n")
+        if slack > 0:
+            time.sleep(slack)
+
+
+def emit(text="", nl=True):
+    sys.stdout.write(text + ("\n" if nl else ""))
+    sys.stdout.flush()
+
+
+def type_out(text, cps=TYPE_CPS):
+    delay = 1.0 / cps
+    for ch in text:
+        sys.stdout.write(ch); sys.stdout.flush(); time.sleep(delay)
+    sys.stdout.write("\n"); sys.stdout.flush()
+
+
+def timeline():
+    """The schedule, as the capture needs to see it."""
+    moves = len(ROWS["rows"])
+    renames = sum(1 for r in ROWS["rows"] if r.get("rename"))
+    steps = [{"label": "prompt", "seconds": round(len(PROMPT) / TYPE_CPS + THINK + LEAD_IN, 2)}]
+    steps.append({"label": "folders", "seconds": FOLDER_PAUSE})
+    for i in range(moves):
+        steps.append({"label": f"move{i}",
+                      "seconds": SLOW_PLATEAU if i < N_SLOW_MOVES else MOVE_PLATEAU})
+    steps.append({"label": "filed", "seconds": PHASE_PAUSE})
+    for i in range(renames):
+        steps.append({"label": f"rename{i}",
+                      "seconds": SLOW_PLATEAU if i < N_SLOW_RENAME else RENAME_PLATEAU})
+    steps.append({"label": "done", "seconds": 2.0})
+    return {"steps": steps, "total": round(sum(s["seconds"] for s in steps), 2),
+            "moves": moves, "renames": renames,
+            "n_slow_moves": N_SLOW_MOVES, "n_slow_renames": N_SLOW_RENAME}
+
+
+def main():
+    if "--timeline" in sys.argv:
+        print(json.dumps(timeline(), indent=2)); return
+
+    # ── the user asks ────────────────────────────────────────────────────
+    emit()
+    emit(f"{GREEN}●{RESET} {BOLD}fresh-agent{RESET} {GREY}· dock{RESET}")
+    emit()
+    emit(f"{CYAN}>{RESET} ", nl=False)
+    type_out(PROMPT_LINES[0])
+    for cont in PROMPT_LINES[1:]:
+        emit("  ", nl=False)
+        type_out(cont)
+    emit()
+    emit(f"{DIM}  thinking…{RESET}")
+    time.sleep(THINK)
+    emit(f"{DIM}  reading dock: {len(ROWS['rows'])} workspaces, 0 folders{RESET}")
+    time.sleep(LEAD_IN)
+    clock = Clock(os.path.join(CLIP_HOME, "agent-timing.log"))
+    shots_dir = os.environ.get("CLIP_SHOTS_DIR") or ""
+    gate = Gate(shots_dir) if os.path.isdir(shots_dir) else None
+
+    def step(label, plateau):
+        """Hold this state until it has been photographed, or for `plateau`."""
+        if gate is not None:
+            clock.log.write(json.dumps({"label": label, "gate": True}) + "\n")
+            gate.wait(label)
+        else:
+            clock.step(label, plateau)
+
+    # ── phase A: folders, then file every row ────────────────────────────
+    emit()
+    emit(f"{BOLD}  filing{RESET}")
+    folder_ids = {}
+    for name in ROWS["folders"]:
+        fid = script(ORCH + f' return o.createFolder({json.dumps(name)});')
+        folder_ids[name] = fid
+    emit(f"{GREY}  · {len(folder_ids)} folders{RESET}")
+    step("folders", FOLDER_PAUSE)
+
+    known = rows_by_name()
+    used = {}
+    filed = 0
+    for i, row in enumerate(ROWS["rows"]):
+        # Three rows share the name `project_root`; take them in order.
+        k = used.get(row["name"], 0); used[row["name"]] = k + 1
+        cand = known.get(row["name"], [])
+        if k >= len(cand):
+            continue
+        wid = cand[k]["id"]
+        fid = folder_ids[row["folder"]]
+        script(ORCH + f' return o.moveWorkspace({json.dumps(wid)}, {json.dumps(fid)});')
+        filed += 1
+        if i < N_SLOW_MOVES:
+            emit(f"{GREY}  · {row['name']:<14} → {row['folder']}{RESET}")
+        step(f"move{i}", SLOW_PLATEAU if i < N_SLOW_MOVES else MOVE_PLATEAU)
+    emit(f"{GREY}  · {filed} filed{RESET}")
+    if gate is None:
+        clock.step("filed", PHASE_PAUSE)
+
+    # ── phase B: rename what survives ────────────────────────────────────
+    emit()
+    emit(f"{BOLD}  renaming{RESET}")
+    used = {}
+    renamed = 0
+    targets = [r for r in ROWS["rows"] if r.get("rename")]
+    for i, row in enumerate(targets):
+        k = used.get(row["name"], 0); used[row["name"]] = k + 1
+        cand = known.get(row["name"], [])
+        if k >= len(cand):
+            continue
+        wid = cand[k]["id"]
+        script(ORCH + f' return o.renameWorkspace({json.dumps(wid)}, {json.dumps(row["rename"])});')
+        renamed += 1
+        if i < N_SLOW_RENAME:
+            emit(f"{GREY}  · {row['name']:<14} → {row['rename']}{RESET}")
+        # Renames are never gated: the clip wipes `after` onto the last move
+        # rather than photographing each one, so there is no shutter to wait
+        # for between them.
+        clock.step(f"rename{i}", SLOW_PLATEAU if i < N_SLOW_RENAME else RENAME_PLATEAU)
+    emit(f"{GREY}  · {renamed} renamed{RESET}")
+
+    emit()
+    emit(f"{GREEN}●{RESET} {filed} filed into {len(folder_ids)} folders, {renamed} renamed.")
+    step("done", 2.0)
+    # Stay alive: the pane is on screen for the rest of the take.
+    while True:
+        time.sleep(30)
+
+
+if __name__ == "__main__":
+    main()

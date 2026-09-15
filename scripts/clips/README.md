@@ -33,6 +33,10 @@ specific to filming *this* program.
 | `fresh-review-syntax.json` | comparison | source highlighted inside a Review Diff stream |
 | `fresh-ui-anatomy.json` | explode | the retained UI tree, one element at a time |
 | `fresh-welcome-scroll.json` | solo, stepped | the Welcome screen, scrolled from the wordmark to the theme card, then restyled live |
+| `fresh-dock-cleanup.json` | solo, stepped | 25 unreadable orchestrator rows, filed into folders and renamed by an agent |
+| `fresh-dock-cleanup-short.json` | solo, stepped | the same, cut to 14s for a feed |
+| `fresh-dock-cleanup-short-vertical.json` | solo, stepped | the 14s cut at 9:16 |
+| `fresh-dock-cleanup-focus.json` | solo, stepped | the dock alone: 25 rows filed one at a time, then renamed |
 
 `assets/<clip>/fresh/config.json` is a config directory a spec copies in, so a
 capture gets a deliberate theme and a known set of enabled plugins instead of
@@ -142,3 +146,124 @@ session Restricted — which blocks the `spawnProcess` calls the welcome screen'
 finder and git cards are made of, and puts a red pill in the status bar besides.
 A demo repo of prose and a couple of scripts has no marker in it, opens Trusted,
 and films with its cards alive.
+
+## Staging a dock, not a file
+
+`fresh-dock-cleanup` is the one clip here that films the *orchestrator*
+rather than a buffer, and it needed three things the others did not.
+
+**Scripting the editor from outside is refused, by design.** `fresh --cmd
+script run` and `fresh --cmd init reload` both answer "no capability token:
+script evaluation is not authorized". The token is minted per terminal and
+injected into the PTY (`FRESH_CMD_TOKEN`), so the only two ways in are
+`init.ts`, which runs at startup with the full API, and a process the editor
+itself spawned. This clip uses both: `assets/fresh-dock-cleanup/fresh/init.ts`
+stages the 25 workspaces, and the agent that cleans them up is launched with
+`runAgent` into a real pane, where it inherits a real token and drives the
+dock with `fresh --cmd script run -` like any agent would.
+
+**Pace the agent to a deadline, not to a sum of sleeps.** Every mutation is a
+process spawn and a round trip; sleeping a fixed pause *after* each one makes
+the agent finish a dozen seconds later than the schedule the capture is
+counting against, and the shots then photograph the wrong states. `clip-agent
+--timeline` publishes the schedule and `gen-spec.py` generates the capture's
+sleeps from it, so the two cannot drift.
+
+**The dock's compact row shows the name and nothing else.** `sessionNodeEntry`
+renders the state glyph, the label and the on-disk/pending tags — branch and
+the git summary belong to card view, and 25 rows of cards do not fit. The
+fixture's branches and uncommitted work are real (`git-report.json` records
+what the probe saw), the compact dock simply does not draw them.
+
+### The short cuts
+
+`fresh-dock-cleanup-short.json` and its `-vertical` twin are the same take as
+the long clip — same capture block, copied from it by `gen-spec-short.py`
+rather than restated, so the two cuts cannot drift apart when the fixture
+changes. Only `render` differs. Regenerate both with:
+
+```sh
+scripts/clips/assets/fresh-dock-cleanup/gen-spec.py
+scripts/clips/assets/fresh-dock-cleanup/gen-spec-short.py
+scripts/clips/assets/fresh-dock-cleanup/gen-spec-short.py --vertical
+```
+
+The short cut is not the long one with beats deleted. It is three ideas — the
+mess, the ask, the result — and the rename is promoted from three annotated
+beats to a single `swipe`, which is the only moment where an old name and its
+replacement occupy the same pixel. No beat carries a `head` or a `sub`, so the
+caption bar is not drawn at all and the viewport takes its height; every word
+is a note, in the frame, on the picture.
+
+**Prefer the vertical one.** The dock is a 41-column, 34-row rect — 0.54:1,
+within a hair of 9:16. A square frame can only fit that by height, so it
+leaves the surplus width to the editor pane beside it and the dock lands at
+about 40% of the frame. Vertical fills edge to edge at roughly twice the type
+size, for the same 14 seconds and the same beats.
+
+### The focused cut
+
+`fresh-dock-cleanup-focus.json` films the dock and nothing else — no agent
+pane, no typed prompt, no before/after, no captions. It needs its own take:
+the long clip photographs only three individual moves before jumping to
+all-25-filed, which is fine when each move is annotated and useless when the
+arranging *is* the subject. This take photographs all twenty-five.
+
+**The agent follows the camera.** Pacing the two off separate clocks does not
+work. They are anchored by one constant — how long `Return` takes to become a
+running agent — and every error in it shifts the whole sequence: at 1.2s every
+shot came back a step late, at 2.3s the middle lined up and the ends did not.
+There is no value that fixes it, because the error is not constant.
+
+So `tui-clip` leads. `shot` writes its raw `.xwd` into `out/<name>/shots` at
+the instant it grabs and only encodes at the end of the take, so a new file
+appearing there is the shutter. `record.sh` passes that directory to the agent
+as `CLIP_SHOTS_DIR`, and the agent makes one dock change, waits for the shot
+that records it, and only then makes the next. The spec's sleeps are then free
+to drift — nothing moves on screen until a shot has been taken — and they only
+have to be longer than one mutation (0.18s typical, 0.32s worst measured).
+
+Square, framed on the top of the list. A 41-column rect over 18 rows is very
+near 1:1, so it fills a square frame at about 58px a row; the whole list needs
+35 rows and only fits by height, at 42% of the frame's width, which is the
+opposite of zoomed in. The rest of the list carries on below the frame, and
+the swipe only cascades the rows the frame can actually show — pacing it to
+sixteen would spend a second wiping rows nobody can see.
+
+The two words on screen are `tag`s rather than notes, and the phases are
+separated by a `wipe`. A note would have been wrong here twice over: it draws
+a leader back to its rect, which has nothing to point at when the words name
+the whole beat, and it lands wherever the rect puts it rather than where the
+frame has room. The tags sit centre-right, wrapped, stroked so they read over
+the list, and they ride the wipe edge — clipped to their own sides of it — so
+"organize into folders" is replaced by "rename" in place as the screen under
+it changes. They are set in the theme's green on a dark fill: a stroke alone
+is enough over a picture, but this picture is itself text, and the rows keep
+showing between the letters until something opaque goes behind them.
+
+`render.crt` puts a tube over the whole thing — a curved raster, scanlines,
+phosphor bloom, channel fringing, corner falloff. The curve is the part that
+does the work: the other four are corrections applied to a flat rectangle,
+which is what a screenshot already is, so without it the pass reads as a
+filter over a picture rather than a picture on a tube. The clip ends by
+powering the tube off — `crt.shutdown` — instead of holding the finished dock
+and fading: the raster squeezes into an over-bright line, the line shortens to
+a dot, the dot decays. That takes the end of the clip rather than adding to
+it, so the last beat's hold is what plays in front of it.
+
+Stage one stops at the tenth move rather than running all twenty-five.
+The camera is on the top of the list, so once the rows being filed drop out
+of the frame the remaining shots are identical pictures — the dock is still
+working, just not where anyone is looking. `gen-spec-focus.py` measures where
+that happens rather than taking a guess: the first ten moves change the
+visible rows by 15-19 mean absolute difference and everything after by under
+seven, most of it by exactly zero. What is left over is carried by the wipe
+into the next beat, which replaces the whole screen anyway, so nothing jumps.
+
+`verify-shots.py` checks a take photographed the states it was aimed at:
+`folders` before any row is filed, one more filed row per `mv<i>`, and exactly
+sixteen rewritten rows between the last move and `after`. Rows are compared by
+how much of each one moved rather than exactly — two screens of the same dock
+differ by a caret phase or a scrollbar segment without a word of text
+differing, and on a good take the rewritten rows score 11.5–20.1 mean absolute
+difference against 0.95–5.7 for those.

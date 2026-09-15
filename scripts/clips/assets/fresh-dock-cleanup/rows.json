@@ -1,0 +1,301 @@
+{
+  "_comment": "The staged dock, as one table. make-tree.sh builds the disk from it; init.ts opens a workspace per row from the same file, so the two can never drift.",
+  "folders": [
+    "fresh",
+    "home-auto",
+    "rockies",
+    "third-party",
+    "tools",
+    "personal",
+    "junk"
+  ],
+  "repos": [
+    {
+      "project": "fresh",
+      "branch": "main",
+      "commits": 6,
+      "dirty": 3
+    },
+    {
+      "project": "home-auto",
+      "branch": "main",
+      "commits": 4,
+      "dirty": 2
+    },
+    {
+      "project": "rockies",
+      "branch": "main",
+      "commits": 5,
+      "dirty": 0
+    },
+    {
+      "project": "ratatui",
+      "branch": "main",
+      "commits": 3,
+      "dirty": 4
+    },
+    {
+      "project": "omarchy-pkgs",
+      "branch": "main",
+      "commits": 2,
+      "dirty": 0
+    },
+    {
+      "project": "cargo-depflame",
+      "branch": "main",
+      "commits": 3,
+      "dirty": 1
+    },
+    {
+      "project": "telemetry",
+      "branch": "main",
+      "commits": 4,
+      "dirty": 2
+    }
+  ],
+  "plain": [
+    "home",
+    "notes",
+    "scratch"
+  ],
+  "junkdirs": [
+    "project_root-a/project_root",
+    "project_root-b/project_root",
+    "project_root-c/project_root",
+    "tmp",
+    "t",
+    "build",
+    "wt",
+    "session-2",
+    "session-5"
+  ],
+  "rows": [
+    {
+      "name": "project_root",
+      "from": "junk/project_root-a/project_root",
+      "worktree": false,
+      "dirty": 0,
+      "working": false,
+      "folder": "junk"
+    },
+    {
+      "name": "fresh-31",
+      "from": "projects/fresh",
+      "worktree": true,
+      "newBranch": "folding-tests",
+      "dirty": 4,
+      "working": true,
+      "folder": "fresh",
+      "rename": "Folding test harness"
+    },
+    {
+      "name": "session-2",
+      "from": "junk/session-2",
+      "worktree": false,
+      "dirty": 0,
+      "working": false,
+      "folder": "junk"
+    },
+    {
+      "name": "fresh-22",
+      "from": "projects/fresh",
+      "worktree": true,
+      "newBranch": "status-bar",
+      "dirty": 2,
+      "working": false,
+      "folder": "fresh",
+      "rename": "Status bar plugin"
+    },
+    {
+      "name": "tmp",
+      "from": "junk/tmp",
+      "worktree": false,
+      "dirty": 0,
+      "working": false,
+      "folder": "junk"
+    },
+    {
+      "name": "home-auto-7",
+      "from": "projects/home-auto",
+      "worktree": true,
+      "newBranch": "thermostat",
+      "dirty": 3,
+      "working": false,
+      "folder": "home-auto",
+      "rename": "Thermostat scheduler"
+    },
+    {
+      "name": "project_root",
+      "from": "junk/project_root-b/project_root",
+      "worktree": false,
+      "dirty": 0,
+      "working": false,
+      "folder": "junk"
+    },
+    {
+      "name": "rockies-12",
+      "from": "projects/rockies",
+      "worktree": true,
+      "newBranch": "particles",
+      "dirty": 5,
+      "working": false,
+      "folder": "rockies",
+      "rename": "Particle collision tuning"
+    },
+    {
+      "name": "t",
+      "from": "junk/t",
+      "worktree": false,
+      "dirty": 0,
+      "working": false,
+      "folder": "junk"
+    },
+    {
+      "name": "fresh-44",
+      "from": "projects/fresh",
+      "worktree": true,
+      "newBranch": "rebase-sweep",
+      "dirty": 7,
+      "working": true,
+      "folder": "fresh",
+      "rename": "PR rebase sweep"
+    },
+    {
+      "name": "notes",
+      "from": "notes",
+      "worktree": false,
+      "dirty": 0,
+      "working": false,
+      "folder": "personal",
+      "rename": "Boot image automation"
+    },
+    {
+      "name": "build",
+      "from": "junk/build",
+      "worktree": false,
+      "dirty": 0,
+      "working": false,
+      "folder": "junk"
+    },
+    {
+      "name": "ratatui-3",
+      "from": "projects/ratatui",
+      "worktree": true,
+      "newBranch": "widget-port",
+      "dirty": 2,
+      "working": false,
+      "folder": "third-party",
+      "rename": "Widget layout port"
+    },
+    {
+      "name": "fresh-37",
+      "from": "projects/fresh",
+      "worktree": true,
+      "newBranch": "syntax-cache",
+      "dirty": 1,
+      "working": false,
+      "folder": "fresh",
+      "rename": "Syntax highlight cache"
+    },
+    {
+      "name": "wt",
+      "from": "junk/wt",
+      "worktree": false,
+      "dirty": 0,
+      "working": false,
+      "folder": "junk"
+    },
+    {
+      "name": "home-auto-9",
+      "from": "projects/home-auto",
+      "worktree": true,
+      "newBranch": "sensor-panel",
+      "dirty": 1,
+      "working": true,
+      "folder": "home-auto",
+      "rename": "Sensor panel layout"
+    },
+    {
+      "name": "project_root",
+      "from": "junk/project_root-c/project_root",
+      "worktree": false,
+      "dirty": 0,
+      "working": false,
+      "folder": "junk"
+    },
+    {
+      "name": "telemetry",
+      "from": "projects/telemetry",
+      "worktree": false,
+      "dirty": 2,
+      "working": false,
+      "folder": "tools",
+      "rename": "Retention metrics"
+    },
+    {
+      "name": "scratch-1",
+      "from": "scratch",
+      "worktree": false,
+      "dirty": 0,
+      "working": false,
+      "folder": "personal",
+      "rename": "Abandoned scratch"
+    },
+    {
+      "name": "fresh-46",
+      "from": "projects/fresh",
+      "worktree": true,
+      "newBranch": "utf8-width",
+      "dirty": 0,
+      "working": false,
+      "folder": "fresh",
+      "rename": "UTF-8 width fixes"
+    },
+    {
+      "name": "omarchy-2",
+      "from": "projects/omarchy-pkgs",
+      "worktree": true,
+      "newBranch": "dup",
+      "dirty": 0,
+      "working": false,
+      "folder": "third-party",
+      "rename": "Empty duplicate"
+    },
+    {
+      "name": "session-5",
+      "from": "junk/session-5",
+      "worktree": false,
+      "dirty": 0,
+      "working": false,
+      "folder": "junk"
+    },
+    {
+      "name": "cargo-depflame",
+      "from": "projects/cargo-depflame",
+      "worktree": false,
+      "dirty": 1,
+      "working": false,
+      "folder": "tools",
+      "rename": "Self-profiling pass"
+    },
+    {
+      "name": "rockies-15",
+      "from": "projects/rockies",
+      "worktree": true,
+      "newBranch": "idle",
+      "dirty": 0,
+      "working": false,
+      "folder": "rockies",
+      "rename": "Idle worktree"
+    },
+    {
+      "name": "home",
+      "from": "home",
+      "worktree": false,
+      "dirty": 0,
+      "working": false,
+      "folder": "personal",
+      "rename": "Music library scripts"
+    }
+  ]
+}

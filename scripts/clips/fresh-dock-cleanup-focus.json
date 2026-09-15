@@ -1,0 +1,375 @@
+{
+  "name": "fresh-dock-cleanup-focus",
+  "capture": {
+    "geometry": "150x50",
+    "font": "JetBrains Mono 21",
+    "screen": "2600x2000x24",
+    "display": ":99",
+    "settle": 58,
+    "term": "xfce4-terminal",
+    "key_settle": 0.2,
+    "type_settle": 0.5,
+    "copy_dirs": {
+      "~/.cache/fresh-dock-clip/config/fresh": "{scratch}/config/fresh"
+    },
+    "env": {
+      "XDG_CONFIG_HOME": "{scratch}/config",
+      "XDG_DATA_HOME": "{scratch}/data-{pane}",
+      "XDG_STATE_HOME": "{scratch}/state-{pane}",
+      "XDG_CACHE_HOME": "{scratch}/cache-{pane}",
+      "XDG_RUNTIME_DIR": "{scratch}/run-{pane}",
+      "CLIP_HOME": "~/.cache/fresh-dock-clip",
+      "CLIP_SLOW_MOVES": "0",
+      "CLIP_MOVE_PLATEAU": "1.3",
+      "CLIP_SLOW_RENAMES": "0",
+      "CLIP_RENAME_PLATEAU": "0.35",
+      "CLIP_SHOTS_DIR": "$CLIP_SHOTS_DIR"
+    },
+    "keys": [
+      {
+        "shot": "before"
+      },
+      {
+        "key": "ctrl+p"
+      },
+      {
+        "sleep": 0.8
+      },
+      {
+        "type": "Clip: Run Agent"
+      },
+      {
+        "sleep": 0.8
+      },
+      {
+        "key": "Return"
+      },
+      {
+        "sleep": 14.0
+      },
+      {
+        "shot": "folders"
+      },
+      {
+        "sleep": 0.9
+      },
+      {
+        "shot": "mv00"
+      },
+      {
+        "sleep": 0.9
+      },
+      {
+        "shot": "mv01"
+      },
+      {
+        "sleep": 0.9
+      },
+      {
+        "shot": "mv02"
+      },
+      {
+        "sleep": 0.9
+      },
+      {
+        "shot": "mv03"
+      },
+      {
+        "sleep": 0.9
+      },
+      {
+        "shot": "mv04"
+      },
+      {
+        "sleep": 0.9
+      },
+      {
+        "shot": "mv05"
+      },
+      {
+        "sleep": 0.9
+      },
+      {
+        "shot": "mv06"
+      },
+      {
+        "sleep": 0.9
+      },
+      {
+        "shot": "mv07"
+      },
+      {
+        "sleep": 0.9
+      },
+      {
+        "shot": "mv08"
+      },
+      {
+        "sleep": 0.9
+      },
+      {
+        "shot": "mv09"
+      },
+      {
+        "sleep": 0.9
+      },
+      {
+        "shot": "mv10"
+      },
+      {
+        "sleep": 0.9
+      },
+      {
+        "shot": "mv11"
+      },
+      {
+        "sleep": 0.9
+      },
+      {
+        "shot": "mv12"
+      },
+      {
+        "sleep": 0.9
+      },
+      {
+        "shot": "mv13"
+      },
+      {
+        "sleep": 0.9
+      },
+      {
+        "shot": "mv14"
+      },
+      {
+        "sleep": 0.9
+      },
+      {
+        "shot": "mv15"
+      },
+      {
+        "sleep": 0.9
+      },
+      {
+        "shot": "mv16"
+      },
+      {
+        "sleep": 0.9
+      },
+      {
+        "shot": "mv17"
+      },
+      {
+        "sleep": 0.9
+      },
+      {
+        "shot": "mv18"
+      },
+      {
+        "sleep": 0.9
+      },
+      {
+        "shot": "mv19"
+      },
+      {
+        "sleep": 0.9
+      },
+      {
+        "shot": "mv20"
+      },
+      {
+        "sleep": 0.9
+      },
+      {
+        "shot": "mv21"
+      },
+      {
+        "sleep": 0.9
+      },
+      {
+        "shot": "mv22"
+      },
+      {
+        "sleep": 0.9
+      },
+      {
+        "shot": "mv23"
+      },
+      {
+        "sleep": 0.9
+      },
+      {
+        "shot": "mv24"
+      },
+      {
+        "sleep": 8.6
+      },
+      {
+        "shot": "after"
+      }
+    ],
+    "panes": {
+      "solo": {
+        "argv": [
+          "$FRESH_BIN",
+          "--no-upgrade-check",
+          "--no-restore"
+        ]
+      }
+    }
+  },
+  "render": {
+    "size": [
+      1080,
+      1080
+    ],
+    "fps": 60,
+    "rows": 50,
+    "cols": 150,
+    "title": "fresh \u2014 orchestrator dock",
+    "note_size": 58,
+    "crt": {
+      "scanlines": 0.34,
+      "gap": 4,
+      "bloom": 0.55,
+      "shift": 3,
+      "vignette": 0.45,
+      "curve": 0.11,
+      "shutdown": 0.55,
+      "off_glow": 1.5
+    },
+    "views": {
+      "list": {
+        "rows": [
+          3,
+          21
+        ],
+        "cols": [
+          0,
+          41
+        ]
+      }
+    },
+    "timing": {
+      "intro": 0,
+      "zoom": 0,
+      "hold": 0.8,
+      "pan": 0.15,
+      "push": 0.9,
+      "wipe": 0.7,
+      "outro": 0.25
+    },
+    "annotations": [
+      {
+        "shot": "before",
+        "view": "list",
+        "rows": [
+          4,
+          30
+        ],
+        "cols": [
+          0,
+          41
+        ],
+        "band": false,
+        "hold": 1.4,
+        "tag": {
+          "text": "too many sessions? \ud83d\ude30",
+          "at": "center-right",
+          "width": 0.4,
+          "color": "after",
+          "bg": true
+        }
+      },
+      {
+        "shots": [
+          "folders",
+          "mv00",
+          "mv01",
+          "mv02",
+          "mv03",
+          "mv04",
+          "mv05",
+          "mv06",
+          "mv07",
+          "mv08",
+          "mv09"
+        ],
+        "crossfade": 0,
+        "view": "list",
+        "rows": [
+          4,
+          8
+        ],
+        "cols": [
+          2,
+          17
+        ],
+        "band": false,
+        "hold": 1.9,
+        "tag": {
+          "text": "organize into folders",
+          "at": "center-right",
+          "width": 0.4,
+          "color": "after",
+          "bg": true
+        }
+      },
+      {
+        "shot": "mv24",
+        "view": "list",
+        "rows": [
+          4,
+          8
+        ],
+        "cols": [
+          2,
+          17
+        ],
+        "band": false,
+        "hold": 1.5,
+        "transition": "wipe",
+        "swipe": {
+          "to": "after",
+          "rows": [
+            5,
+            6,
+            7,
+            8,
+            9,
+            11,
+            12
+          ],
+          "at": 0.35,
+          "row": 0.2,
+          "stagger": 0.1,
+          "edge": 3
+        },
+        "tag": {
+          "text": "rename",
+          "at": "center-right",
+          "width": 0.4,
+          "color": "after",
+          "bg": true
+        }
+      },
+      {
+        "shot": "after",
+        "view": "list",
+        "rows": [
+          4,
+          20
+        ],
+        "cols": [
+          0,
+          41
+        ],
+        "band": false,
+        "hold": 0.5
+      }
+    ]
+  },
+  "encode": {
+    "crf": 18,
+    "preset": "slow"
+  }
+}
