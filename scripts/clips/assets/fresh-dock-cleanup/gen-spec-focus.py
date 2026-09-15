@@ -179,8 +179,13 @@ spec = {
                "push": 0.9, "wipe": 0.70, "outro": 0.25},
     "annotations": [
       # 1 — the flat list, briefly, so there is a before to measure against.
+      # The hook. Its extra 0.4s is taken off the rename beat rather than
+      # added to the clip: that beat's cascade is over well before its hold
+      # is, so the time comes out of a still screen either way.
       {"shot": "before", "view": "list", "rows": [4, 30], "cols": DOCK,
-       "band": False, "hold": 1.0},
+       "band": False, "hold": 1.4,
+       "tag": {"text": "too many sessions? \U0001F630", "at": "center-right",
+               "width": 0.40, "color": "after", "bg": True}},
 
       # 2 — folders appear, then all 25 rows file themselves, one per still.
       # Only as far as the frame can see it happen. What is left over is
@@ -194,7 +199,7 @@ spec = {
 
       # 3 — the names change in place, top to bottom, stepping over junk.
       {"shot": f"mv{N_MOVES - 1:02d}", "view": "list", "rows": [4, 8], "cols": NOTE_AT,
-       "band": False, "hold": 1.9,
+       "band": False, "hold": 1.5,
        "transition": "wipe",
        "swipe": {"to": "after", "rows": swipe_rows,
                  "at": 0.35, "row": 0.20, "stagger": 0.10, "edge": 3},

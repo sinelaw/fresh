@@ -271,7 +271,14 @@
           41
         ],
         "band": false,
-        "hold": 1.0
+        "hold": 1.4,
+        "tag": {
+          "text": "too many sessions? \ud83d\ude30",
+          "at": "center-right",
+          "width": 0.4,
+          "color": "after",
+          "bg": true
+        }
       },
       {
         "shots": [
@@ -319,7 +326,7 @@
           17
         ],
         "band": false,
-        "hold": 1.9,
+        "hold": 1.5,
         "transition": "wipe",
         "swipe": {
           "to": "after",
