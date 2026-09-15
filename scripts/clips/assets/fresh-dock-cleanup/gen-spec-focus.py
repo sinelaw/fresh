@@ -77,6 +77,12 @@ DOCK = [0, 41]
 # stepping over them is the whole argument, drawn rather than captioned.
 RENAMED = [5, 6, 7, 8, 9, 11, 12, 24, 25, 26, 28, 29, 31, 32, 34, 35]
 
+# What the two words hang off. A note is dealt sideways from its rect's
+# corner, so a rect spanning the dock's full width lands the plate at the
+# right-hand edge and half of it falls outside the frame. Anchoring the note
+# to the middle of the list instead leaves it room to sit in.
+NOTE_AT = [2, 17]
+
 view = {"rows": [3, 38], "cols": DOCK}         # the whole after-list
 last_row = 36
 swipe_rows = RENAMED
@@ -95,10 +101,15 @@ spec = {
     "fps": 60,
     "rows": 50, "cols": 150,
     "title": "fresh — orchestrator dock",
+    # Big enough to read as a label on the picture rather than a caption.
+    "note_size": 58,
     "views": {"list": view},
-    # Not one beat carries a head, a sub or a note: the caption bar is never
-    # drawn, the viewport takes its height, and nothing sits on top of the
-    # thing the clip is about.
+    # No beat carries a `head` or a `sub`, so the caption bar is never drawn
+    # and the viewport takes its full height. The two words that do appear are
+    # notes: they sit in the frame, on the picture, at the same place in both
+    # transitions so the second reads as the first one swapping over. Anchored
+    # high in the list and dealt below, which puts them in the upper third --
+    # a word along the bottom edge is read last or not at all.
     "timing": {"intro": 0, "zoom": 0, "hold": 1.0, "pan": 0.15, "outro": 0.6},
     "annotations": [
       # 1 — the flat list, briefly, so there is a before to measure against.
@@ -107,18 +118,20 @@ spec = {
 
       # 2 — folders appear, then all 25 rows file themselves, one per still.
       {"shots": ["folders"] + [f"mv{i:02d}" for i in range(N_MOVES)],
-       "crossfade": 0, "view": "list", "rows": [4, last_row], "cols": DOCK,
-       "band": False, "hold": 6.0},
+       "crossfade": 0, "view": "list", "rows": [4, 8], "cols": NOTE_AT,
+       "band": False, "hold": 3.8,
+       "note": "organize", "note_at": "below-right"},
 
       # 3 — the names change in place, top to bottom, stepping over junk.
-      {"shot": f"mv{N_MOVES - 1:02d}", "view": "list", "rows": [4, last_row], "cols": DOCK,
-       "band": False, "hold": 3.2,
+      {"shot": f"mv{N_MOVES - 1:02d}", "view": "list", "rows": [4, 8], "cols": NOTE_AT,
+       "band": False, "hold": 3.0,
        "swipe": {"to": "after", "rows": swipe_rows,
-                 "at": 0.40, "row": 0.22, "stagger": 0.11, "edge": 3}},
+                 "at": 0.35, "row": 0.20, "stagger": 0.10, "edge": 3},
+       "note": "rename", "note_at": "below-right"},
 
       # 4 — hold what it made.
       {"shot": "after", "view": "list", "rows": [4, last_row], "cols": DOCK,
-       "band": False, "hold": 1.6}
+       "band": False, "hold": 1.8}
     ]
   },
   "encode": {"crf": 18, "preset": "slow"}

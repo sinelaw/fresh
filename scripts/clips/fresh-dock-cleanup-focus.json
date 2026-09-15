@@ -226,6 +226,7 @@
     "rows": 50,
     "cols": 150,
     "title": "fresh \u2014 orchestrator dock",
+    "note_size": 58,
     "views": {
       "list": {
         "rows": [
@@ -293,28 +294,30 @@
         "view": "list",
         "rows": [
           4,
-          36
+          8
         ],
         "cols": [
-          0,
-          41
+          2,
+          17
         ],
         "band": false,
-        "hold": 6.0
+        "hold": 3.8,
+        "note": "organize",
+        "note_at": "below-right"
       },
       {
         "shot": "mv24",
         "view": "list",
         "rows": [
           4,
-          36
+          8
         ],
         "cols": [
-          0,
-          41
+          2,
+          17
         ],
         "band": false,
-        "hold": 3.2,
+        "hold": 3.0,
         "swipe": {
           "to": "after",
           "rows": [
@@ -335,11 +338,13 @@
             34,
             35
           ],
-          "at": 0.4,
-          "row": 0.22,
-          "stagger": 0.11,
+          "at": 0.35,
+          "row": 0.2,
+          "stagger": 0.1,
           "edge": 3
-        }
+        },
+        "note": "rename",
+        "note_at": "below-right"
       },
       {
         "shot": "after",
@@ -353,7 +358,7 @@
           41
         ],
         "band": false,
-        "hold": 1.6
+        "hold": 1.8
       }
     ]
   },
