@@ -377,6 +377,7 @@ impl VirtualTextManager {
                 style,
                 fg_theme_key,
                 bg_theme_key,
+                pad_to_column: None,
                 position: vtext_position,
                 priority,
                 string_id: None,

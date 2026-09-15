@@ -5304,6 +5304,29 @@ pub enum PluginCommand {
         scheme: String,
     },
 
+    /// Claim an LSP *client command* (e.g. `rust-analyzer.runSingle`).
+    ///
+    /// LSP lets a server hand the client a `Command` it does not execute
+    /// itself: anything absent from the server's `executeCommandProvider`
+    /// list is the client's to interpret. What such a command *means* is
+    /// outside the protocol, so the core refuses to guess — a plugin claims
+    /// the name, and the core then routes it to the `lsp_execute_command`
+    /// hook instead of sending `workspace/executeCommand` back to the
+    /// server (which would reject a command it never advertised).
+    ///
+    /// Claimed names are also advertised to servers during `initialize`
+    /// under `experimental.commands.commands`, which is how rust-analyzer
+    /// decides whether to emit its runnable CodeLens entries at all. LSP
+    /// fixes client capabilities at `initialize` and offers no way to amend
+    /// them, so a claim that lands after a server handshook takes effect
+    /// only once that server restarts — which the core does for you. Claim
+    /// a plugin's whole set in one call so that costs at most one restart.
+    RegisterLspClientCommands {
+        /// The fully-qualified command names to claim
+        /// (e.g. `rust-analyzer.runSingle`).
+        commands: Vec<String>,
+    },
+
     /// Mark the buffer backing `path` read-only. Resolved by path (not
     /// buffer id) so it is race-free when issued right after `openFile`:
     /// both are FIFO commands, so the buffer exists by the time this runs,

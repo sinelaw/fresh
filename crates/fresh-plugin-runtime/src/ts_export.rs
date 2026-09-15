@@ -781,6 +781,24 @@ interface HookEventMap {
     missing_servers: string[];
     user_dismissed: boolean;
   };
+  /**
+   * An LSP `Command` whose name this plugin claimed via
+   * `registerLspClientCommands` is being run (a CodeLens click, the
+   * CodeLens chooser, ...). The core sends nothing to the server for a
+   * claimed name, so executing it — and reporting success or failure to
+   * the user — belongs entirely to the plugin.
+   *
+   * `arguments` is the command's `arguments` array as a JSON string. Its
+   * shape is defined by whichever server produced it rather than by LSP,
+   * so it is passed through untouched (cf. `lsp_server_request.params`).
+   */
+  lsp_execute_command: {
+    command: string;
+    arguments: string | null;
+    buffer_id: number;
+    language: string;
+    title: string;
+  };
 
   // ── UI events ────────────────────────────────────────────────────────────
   action_popup_result: { popup_id: string; action_id: string };

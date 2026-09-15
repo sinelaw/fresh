@@ -372,8 +372,15 @@ impl LspClientState {
     }
 }
 
-/// Create common LSP client capabilities with workDoneProgress support
-fn create_client_capabilities() -> ClientCapabilities {
+/// Create common LSP client capabilities with workDoneProgress support.
+///
+/// `client_commands` are the LSP client commands plugins have claimed (see
+/// [`super::client_commands`]). They are advertised under
+/// `experimental.commands.commands`: a server may use the list to decide
+/// what to send — rust-analyzer suppresses its runnable CodeLens entries
+/// unless the client declares the commands those lenses carry. Passed in
+/// rather than read from the registry so this stays a pure function.
+fn create_client_capabilities(client_commands: &[String]) -> ClientCapabilities {
     use lsp_types::{
         CodeActionClientCapabilities, CodeActionKindLiteralSupport, CodeActionLiteralSupport,
         CodeLensClientCapabilities, CodeLensWorkspaceClientCapabilities,
@@ -644,16 +651,16 @@ fn create_client_capabilities() -> ClientCapabilities {
         general: Some(GeneralClientCapabilities {
             ..Default::default()
         }),
-        // rust-analyzer suppresses runnable CodeLens entries unless the client
-        // declares the extension commands carried by those lenses. Fresh
-        // exposes CodeLens commands through its chooser, so advertise the
-        // runnable command Fresh can execute in its integrated terminal.
+        // Which client commands we can run is not the core's to decide: a
+        // plugin claims each name (`registerLspClientCommands`) and handles
+        // it via the `lsp_execute_command` hook. We only relay the claims,
+        // because some servers gate what they send on them — rust-analyzer
+        // suppresses runnable CodeLens entries unless the commands those
+        // lenses carry are declared here.
         experimental: Some(serde_json::json!({
             "serverStatusNotification": true,
             "commands": {
-                "commands": [
-                    "rust-analyzer.runSingle"
-                ]
+                "commands": client_commands,
             }
         })),
         ..Default::default()
@@ -1475,7 +1482,7 @@ impl LspState {
         #[allow(deprecated)]
         let params = InitializeParams {
             process_id: Some(std::process::id()),
-            capabilities: create_client_capabilities(),
+            capabilities: create_client_capabilities(&super::client_commands::snapshot()),
             workspace_folders,
             initialization_options,
             // Set the deprecated root_uri field for compatibility with LSP servers
@@ -5816,7 +5823,7 @@ mod tests {
     /// initialize capabilities must advertise it.
     #[test]
     fn client_capabilities_advertise_completion_resolve_additional_text_edits() {
-        let caps = create_client_capabilities();
+        let caps = create_client_capabilities(&[]);
         let completion_item = caps
             .text_document
             .as_ref()
@@ -5852,7 +5859,7 @@ mod tests {
     /// literally into the buffer.
     #[test]
     fn client_capabilities_advertise_completion_label_details() {
-        let caps = create_client_capabilities();
+        let caps = create_client_capabilities(&[]);
         let completion_item = caps
             .text_document
             .as_ref()
@@ -5995,7 +6002,7 @@ mod tests {
     /// (sinelaw/fresh#1915).
     #[test]
     fn code_action_capability_advertises_literal_support() {
-        let caps = create_client_capabilities();
+        let caps = create_client_capabilities(&[]);
         let code_action = caps
             .text_document
             .as_ref()
@@ -6031,7 +6038,7 @@ mod tests {
         // client advertised `dynamicRegistration` for that capability
         // (sinelaw/fresh#2195 §1). Spot-check the ones most commonly registered
         // dynamically.
-        let caps = create_client_capabilities();
+        let caps = create_client_capabilities(&[]);
         let td = caps
             .text_document
             .as_ref()
@@ -6074,30 +6081,55 @@ mod tests {
         );
     }
 
-    #[test]
-    fn advertises_rust_analyzer_code_lens_commands() {
-        let caps = create_client_capabilities();
-        let commands = caps
-            .experimental
+    fn advertised_client_commands(caps: &ClientCapabilities) -> Vec<String> {
+        caps.experimental
             .as_ref()
             .and_then(|value| value.get("commands"))
             .and_then(|value| value.get("commands"))
             .and_then(serde_json::Value::as_array)
-            .expect("experimental.commands.commands must be advertised");
+            .expect("experimental.commands.commands must be advertised")
+            .iter()
+            .map(|value| value.as_str().unwrap_or_default().to_string())
+            .collect()
+    }
 
-        assert!(commands
-            .iter()
-            .any(|value| value == "rust-analyzer.runSingle"));
-        assert!(!commands
-            .iter()
-            .any(|value| value == "rust-analyzer.debugSingle"));
+    #[test]
+    fn advertises_exactly_the_claimed_client_commands() {
+        // The core claims nothing on its own: a server that gates what it
+        // sends on this list (rust-analyzer's runnable CodeLens) must see
+        // only what plugins actually registered, so an unclaimed command is
+        // never advertised as runnable.
+        let claimed = vec![
+            "rust-analyzer.runSingle".to_string(),
+            "some-other-server.doThing".to_string(),
+        ];
+        let caps = create_client_capabilities(&claimed);
+
+        assert_eq!(advertised_client_commands(&caps), claimed);
+    }
+
+    #[test]
+    fn advertises_no_client_commands_when_none_are_claimed() {
+        // The key must still be present and well-formed when empty: a server
+        // reading it should see "supports nothing", not a missing field it
+        // might interpret as an old client that supports everything.
+        let caps = create_client_capabilities(&[]);
+
+        assert!(advertised_client_commands(&caps).is_empty());
+        assert_eq!(
+            caps.experimental
+                .as_ref()
+                .and_then(|value| value.get("serverStatusNotification")),
+            Some(&serde_json::Value::Bool(true)),
+            "the other experimental capabilities must survive"
+        );
     }
 
     #[test]
     fn advertises_lsp_workspace_refresh_support() {
         // A server only sends `workspace/inlayHint/refresh` (and the semantic
         // tokens/codeLens equivalents) when the client advertised refresh support.
-        let caps = create_client_capabilities();
+        let caps = create_client_capabilities(&[]);
         let workspace = caps.workspace.as_ref().expect("workspace caps must be set");
 
         assert_eq!(

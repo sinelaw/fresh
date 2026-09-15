@@ -732,6 +732,7 @@ mod tests {
             line_end_byte: start + n,
             is_plugin_virtual: false,
             end_exclusive: None,
+            virtual_text_namespace: None,
         }
     }
 
