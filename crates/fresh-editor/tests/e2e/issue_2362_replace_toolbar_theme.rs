@@ -40,9 +40,20 @@ fn open_replace(harness: &mut EditorTestHarness) {
         .send_key(KeyCode::Char('r'), KeyModifiers::CONTROL)
         .unwrap();
     harness.render().unwrap();
-    // The toolbar should now be on screen with Case Sensitive checked
-    // (its default state).
+    // The toolbar should now be on screen with Case Sensitive unchecked
+    // (its default state since search is case-insensitive by default).
     harness.assert_screen_contains("Case Sensitive");
+}
+
+/// Check the Case Sensitive box with Alt+C (bound to
+/// `toggle_search_case_sensitive` in the `searchPrompt` context). Both tests
+/// need a *checked* cell: that is the one the active styling paints.
+fn check_case_sensitive(harness: &mut EditorTestHarness) {
+    harness
+        .send_key(KeyCode::Char('c'), KeyModifiers::ALT)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("[x] Case Sensitive");
 }
 
 #[test]
@@ -63,9 +74,13 @@ fn test_dracula_checked_option_is_visible() {
 
     open_replace(&mut harness);
 
-    // Case Sensitive is checked by default, so its label is drawn with the
-    // "active" style. Locate the label and inspect a cell within it.
-    harness.assert_screen_contains("[x] Case Sensitive");
+    // Search is case-insensitive by default, so Case Sensitive is unchecked
+    // unless the user toggles it ON. Lock in the default state.
+    harness.assert_screen_contains("[ ] Case Sensitive");
+
+    // Check it, so there is a checked cell to contrast-check: that is the
+    // styling the Dracula regression is about. Then inspect a cell in the label.
+    check_case_sensitive(&mut harness);
     let (label_col, label_row) = harness
         .find_text_on_screen("Case Sensitive")
         .expect("Case Sensitive label should be on the toolbar");
@@ -111,6 +126,10 @@ fn test_theme_inspector_reports_the_toolbars_theme_keys() {
     harness.render().unwrap();
 
     open_replace(&mut harness);
+
+    // The keys under the pointer depend on the cell's state, so check the box
+    // first — an unchecked toggle rests on the row's `menu_dropdown_*` ground.
+    check_case_sensitive(&mut harness);
 
     let (label_col, label_row) = harness
         .find_text_on_screen("Case Sensitive")
