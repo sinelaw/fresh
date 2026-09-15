@@ -468,12 +468,6 @@ interface NewSessionForm {
   // `machineOptions()`.
   machineId: string | null;
   machinePick: number;
-  // `Add machine…` is armed by moving the Machine control onto it and
-  // fires on Enter — never on the move itself, which the dropdown reports
-  // for every ←/→ step (and wraps), so a stray keystroke can't throw the
-  // form away. Esc / Tab put the control back on `machinePickBefore`.
-  machineAddArmed: boolean;
-  machinePickBefore: number;
   // `Remember this machine` (§5.2): save a hand-typed host or cluster to the
   // registry on submit, under `rememberAs` (blank = a name from the target).
   remember: boolean;
@@ -10197,7 +10191,7 @@ function targetRow(): WidgetSpec {
 interface MachineOption {
   key: string;
   label: string;
-  kind: "local" | "machine" | "sshhost" | "other" | "k8s" | "devcontainer" | "add";
+  kind: "local" | "machine" | "sshhost" | "other" | "k8s" | "devcontainer";
   machine?: Machine;
   hostIndex?: number;
 }
@@ -10211,7 +10205,15 @@ function machineOptions(): MachineOption[] {
   out.push({ key: "other", label: editor.t("form.ssh_other_host"), kind: "other" });
   out.push({ key: "k8s", label: editor.t("form.k8s_manual"), kind: "k8s" });
   out.push({ key: "devcontainer", label: editor.t("backend.devcontainer"), kind: "devcontainer" });
-  out.push({ key: "add", label: editor.t("machine.add"), kind: "add" });
+  // **No "Add machine…" here.** Picking it only *armed* a choice that a
+  // further, unadvertised Enter completed: clicking it — the obvious gesture —
+  // left the field reading "Add machine…", revealed nothing, and silently
+  // reverted to Local on Tab. Two things already do its job better and are
+  // right next to it: the `~/.ssh/config` hosts above, which need no
+  // registration at all, and `Other host…` for one typed by hand. Registering
+  // a machine keeps its own home in the dock's `⋯` → Machines and the
+  // `Orchestrator: Machines` command; a control that needs a secret keystroke
+  // beside two that do not only teaches distrust.
   return out;
 }
 
@@ -10231,40 +10233,11 @@ function machineOptionNote(o: MachineOption): string {
   }
 }
 
-// Enter on an armed `Add machine…`: leave for the dialog, which comes back
-// to a fresh form with the new machine chosen. `true` when it fired.
-function commitMachineAdd(): boolean {
-  if (!form || !form.machineAddArmed) return false;
-  form.machineAddArmed = false;
-  cancelForm();
-  openMachineDialog(null, "form");
-  return true;
-}
-
-// Esc / Tab away from an armed `Add machine…`: back to the previous pick.
-function revertMachineAdd(): void {
-  if (!form || !form.machineAddArmed) return;
-  form.machineAddArmed = false;
-  applyMachinePick(form.machinePickBefore);
-  // The dropdown's selection is host-owned after first render, so a
-  // re-render alone leaves it showing `Add machine…`: push the pick back.
-  formPanel?.setDropdown("machine", form.machinePick);
-  rebuildFormFocusCycle();
-  renderForm();
-}
-
 function applyMachinePick(index: number): void {
   if (!form) return;
   const opts = machineOptions();
   const o = opts[index];
   if (!o) return;
-  if (o.kind === "add") {
-    if (!form.machineAddArmed) form.machinePickBefore = form.machinePick;
-    form.machinePick = index;
-    form.machineAddArmed = true;
-    return;
-  }
-  form.machineAddArmed = false;
   form.machinePick = index;
   form.machineId = null;
   switch (o.kind) {
@@ -11279,8 +11252,6 @@ function openForm(options?: { fromPicker?: boolean; target?: RunAgentTarget }): 
     sshPick: 0,
     machineId: null,
     machinePick: 0,
-    machineAddArmed: false,
-    machinePickBefore: 0,
     remember: false,
     rememberAs: { value: "", cursor: 0 },
     sshPath: { value: "", cursor: 0 },
@@ -11972,7 +11943,13 @@ function buildSshSpec(o: SshSpecInputs): CaptureResult {
   if (!host) return { ok: false, error: editor.t("err.ssh_host_required") };
   const agentArgv = remoteAgentArgv(o.cmd, o);
   const target = user ? `${user}@${host}` : host;
-  const label = o.name || `ssh:${target}`;
+  // **The workspace name first, the machine after it.** A local row reads
+  // `demo-1 · bash — …`; a remote one read `ssh:testbox` and then, beside it,
+  // the machine again — naming the machine twice and the workspace never, so
+  // two sessions on one host were indistinguishable. The name is what tells
+  // them apart, exactly as it does locally; the machine stays because it is
+  // the thing a local row does not have.
+  const label = o.name ? `${o.name} · ssh:${target}` : `ssh:${target}`;
   const spec: RemoteAgentSpec = {
     transport: {
       kind: "ssh",
@@ -12891,6 +12868,7 @@ async function runRemoteCreate(id: number): Promise<void> {
         const probe = await editor.spawnHostProcess("ssh", [...argv, "true"]);
         if (!orchestratorSessions.get(id)?.pending) return;
         if (probe.exit_code !== 0 && isHostKeyFailure(lastNonEmptyLine(probe.stderr))) {
+          setPendingMessage(id, editor.t("dock.pending_awaiting_hostkey"));
           const trusted = await offerHostKeyTrust(argv, spec.facet.detail);
           if (!orchestratorSessions.get(id)?.pending) return;
           if (!trusted) {
@@ -12911,6 +12889,14 @@ async function runRemoteCreate(id: number): Promise<void> {
       // run the same create again; declining is an outcome, not a crash, so
       // the row says what happened and Retry asks once more.
       if (!made.ok && isHostKeyFailure(made.error)) {
+        // **Say that it is waiting, not that it is working.** The modal below
+        // blocks until the user answers, and for as long as it does there is
+        // no ssh process, no worktree and no `known_hosts` — so a row still
+        // reading "Adding worktree…" describes work that is not happening,
+        // and a user who looks at the dock rather than the modal sees a
+        // create wedged mid-step. This is the state the study recorded as
+        // "permanently in progress".
+        setPendingMessage(id, editor.t("dock.pending_awaiting_hostkey"));
         const trusted = await offerHostKeyTrust(
           spec.remoteWorktree.ssh,
           spec.facet.detail,
@@ -13090,10 +13076,7 @@ async function submitForm(visit: boolean): Promise<void> {
     claimAutoSessionName(captured.spec.remoteWorktree.name);
   }
   const picked = machineOptions()[form.machinePick];
-  editor.setGlobalState(
-    "orchestrator.last_machine",
-    picked && picked.kind !== "add" ? picked.key : "",
-  );
+  editor.setGlobalState("orchestrator.last_machine", picked ? picked.key : "");
   await startPendingWorkspace(captured.spec, { visit });
 }
 
@@ -14566,7 +14549,6 @@ registerHandler("orchestrator_form_key_tab", () => {
   // fires `completion_accept` (no `focus` event to snap back from).
   // With no popup, the host always advances and fires an authoritative
   // `focus` event, so the optimistic advance just avoids a frame lag.
-  revertMachineAdd();
   if (!completionVisibleForFocused()) {
     advanceFormFocus(1);
   }
@@ -14594,9 +14576,6 @@ registerHandler("orchestrator_form_key_enter", () => {
   // smart-key dispatch, which opens the pop-over and — when it is already
   // open — commits the highlighted option.
   if (formDropdownFocused()) {
-    // An armed `Add machine…` commits on Enter whether the list is open
-    // (Enter closes it) or the control was moved with ←/→ while closed.
-    if (formFocusedKey() === "machine" && commitMachineAdd()) return;
     dispatchFormKey("Enter");
     return;
   }
@@ -14613,7 +14592,6 @@ registerHandler(
     // (The convention is that S-Tab is the "go back" gesture;
     // overloading it to accept-then-go-back is more confusing
     // than useful.)
-    revertMachineAdd();
     closeCompletion();
     advanceFormFocus(-1);
     dispatchFormKey("Shift+Tab");
@@ -14634,11 +14612,6 @@ registerHandler("orchestrator_form_key_escape", () => {
   // falls through to `cancelForm` below.
   if (openFormDropdown !== null && formFocusedKey() === openFormDropdown) {
     dispatchFormKey("Escape");
-    return;
-  }
-  // An armed `Add machine…` is a choice not yet made: Esc unmakes it.
-  if (form?.machineAddArmed) {
-    revertMachineAdd();
     return;
   }
   if (form) cancelForm();

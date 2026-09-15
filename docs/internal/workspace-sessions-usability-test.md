@@ -792,3 +792,270 @@ and passes with it.
 shim fixtures do not model; it was verified by hand instead, end to end, several
 times (accept, cancel, and retry-after-cancel). A fixture that can present a
 genuine unknown host key would be the right next piece of work.
+
+---
+
+# Round 2 (cold comparative study) — findings and outcomes
+
+**Branch:** `claude/orchestrator-ux-round-2`, from `d9a99a1`.
+**Source:** `docs/internal/workspace-sessions-comparative-study-cold.md` on
+`claude/herdr-0.9-cold-comparative-study`, which compared this dock against
+`herdr` 0.9.0 under a cold first-use protocol.
+
+Everything below was re-tested by driving the real TUI in tmux at 200x50 against
+the study's own fixture — `sshd` on `127.0.0.1:2222`, pubkey only, reached
+through a `testbox` alias whose `IdentityFile` **and** `UserKnownHostsFile` are
+both at non-default paths, with `known_hosts` deleted and the editor's state
+directories removed before each run. Screens were captured whole, never as a row
+range: two of the study's own conclusions turn out to be artefacts of partial or
+colour-stripped captures, so that discipline is load-bearing.
+
+## Scoreboard
+
+| # | Sev | Finding | Outcome |
+|---|---|---|---|
+| 1 | 4 | Unknown host key is a dead end | **Does not reproduce** — fixed on `d9a99a1` |
+| 2 | 3 | Failed remote create presents as permanently in progress | **Partly reproduces** — fixed the real half |
+| 3 | 3 | Work does not survive the editor closing | **Reproduces** — not fixed, see below |
+| 4 | 3 | `+ New` is a form and names no target | Reproduces — not fixed, see below |
+| 5 | 2 | Dead "Add machine…" entry | **Reproduces** — fixed |
+| 6 | 2 | Dock loses focus on selection, disabling `F2` | **Reproduces** — not fixed, see below |
+| 7 | 2 | Dock truncates the error; wording reads cut off | **Fixed** (wording); truncation already mitigated |
+| 8a | 1 | Remote rows name the machine twice, the workspace never | **Reproduces** — fixed |
+| 8b | 1 | Stale `terminals/` directory after delete | **Reproduces** — fixed |
+| 8c | 1 | Two worktree path conventions | Reproduces — deliberately not changed, see below |
+| 8d | 1 | Placeholder indistinguishable from a real value | **Does not reproduce** |
+
+## 1 — unknown host key (severity 4): does not reproduce
+
+The study ran against `da558dd`. The error it quotes — `host key not trusted —
+nothing was connected to` — is a string added in `cf4712d`, i.e. it is the
+message shown when the user **declines** the trust prompt. So round 2 met the
+prompt and did not record it.
+
+Driven cold, with no `known_hosts` at either path, the create shows:
+
+```
+┌ Unknown host key ─────────────────────────────────────────────────────────┐
+│  This computer has never connected to testbox before.                     │
+│                                                                           │
+│    Connects to  127.0.0.1 port 2222                                       │
+│    Host key    256 SHA256:f+LXdQJ+hFNpW6p6s+sqwA1+sYrDPGywfulu054qAjY (ED25519)
+│                                                                           │
+│  Trusting records the key in /root/sshtest/etc/known_hosts, and this host  │
+│  connects without asking again.                                           │
+│  Continue only if this fingerprint is the one you expect.                 │
+│                                                                           │
+│▸ [ Cancel ]  Esc    [ Trust and connect ]                                 │
+└───────────────────────────────────────────────────────────────────────────┘
+```
+
+Host, key type and SHA256 fingerprint are all present, and the path named is the
+fixture's **non-default** `UserKnownHostsFile`. Accepting produced a genuinely
+remote session:
+
+```
+SSH_CONNECTION=[127.0.0.1 55074 127.0.0.1 2222]
+# REMOTE-DEMO-REPO
+/root/.fresh/worktrees/demo/demo-1
+```
+
+with a live `sshd: root@pts/2`. Afterwards the key is in
+`/root/sshtest/etc/known_hosts` and `~/.ssh/known_hosts` **was never created** —
+`~/.ssh/` still contains only `config`.
+
+The study's two sub-claims fail with it: `Retry` does **not** re-run the same
+command and fail identically — it re-opens the trust prompt; and nothing
+requires the saved-machine dialog's SSH-options field.
+
+## 2 — "permanently in progress" (severity 3): the real half, fixed
+
+The terminal-failure half does not reproduce. After declining, the row changes to
+the error state within a couple of seconds and stays there, and the dock's
+failure panel shows the reason wrapped in full with `[ Retry ] [ Dismiss ]`.
+
+What *does* reproduce is the state the study was actually looking at. While the
+trust prompt waits for an answer, the row read `Adding wor…` — and for as long
+as it waits there is, correctly, no `ssh` process, no worktree and no
+`known_hosts`. Every observation in the study's item 2 is consistent with that:
+they were polling the world from outside while a modal sat waiting for input.
+The label was describing work that was not happening.
+
+Fixed: the row now says `Waiting for you to confirm the host key…` for exactly
+as long as the prompt is up, so the dock and the modal agree.
+
+The other half of that item — "clicking other workspace rows did not switch
+workspaces" — is the modal being modal. That is correct behaviour; it only read
+as a freeze because the row claimed background work was under way.
+
+## 5 — "Add machine…" (severity 2): fixed
+
+Reproduces exactly: clicking it sets the field to the literal string "Add
+machine…", reveals nothing, and reverts to `Local` on Tab. It is not quite dead —
+it *arms*, and a further **Enter** opens the Add Machine dialog — but nothing
+says so, and the obvious mouse gesture leaves a control that lies and then
+silently undoes itself.
+
+Removed from the Machine dropdown, along with the arming machinery it needed
+(`machineAddArmed` / `commitMachineAdd` / `revertMachineAdd`). Two things next to
+it already do the job better: the `~/.ssh/config` hosts above it, which need no
+registration at all, and `Other host…` for one typed by hand. Registering a
+machine keeps its own home in the dock's `⋯` → Machines and the
+`Orchestrator: Machines` command.
+
+## 7 — error wording (severity 2): fixed
+
+`host key not trusted — nothing was connected to` did read as though cut off
+mid-clause. It is now `host key not confirmed — nothing was connected`.
+
+The truncation half was already mitigated on `d9a99a1`: the row still elides to
+the dock width, but selecting it opens a panel directly beneath carrying the full
+reason, wrapped, with the two recovery actions — not "only in the status bar".
+
+## 8a, 8b: fixed
+
+* Remote rows carried `ssh:testbox  testbox` — the machine twice, the workspace
+  name never — so two sessions on one host were indistinguishable. A named
+  workspace now renders `alpha · ssh:testbox`, mirroring the local `demo-1 · …`.
+* Deleting a workspace left `terminals/<encoded-root>/` behind, one dead
+  directory per delete. `DeleteWorkspace` now removes it alongside the workspace
+  record; both are keyed by the same root and die together.
+
+## 8d — placeholder styling: does not reproduce
+
+`Identity file: [~/.ssh/id_ed25519]` **is** styled distinctly — italic, grey
+(`ESC[3m ESC[38;5;241m`) against white for a real value. The study read a
+plain-text capture, which strips SGR. Same class of error as the two the study
+itself records against its participant.
+
+## What is not fixed, and why
+
+### 6 — dock focus on selection (severity 2)
+
+Reproduces: after clicking a live row, focus is in its terminal and bare `F2`
+does nothing.
+
+But the premise that `F2` is "the dock's only route to Rename / Archive / Delete"
+is wrong. Two routes work, both verified:
+
+* **right-click on the row** opens the menu directly, focus or no;
+* **`Alt+O` then `F2`** — `Alt+O` is the dock's focus toggle, which the dock
+  advertises by underlining the `O` in its own title.
+
+The obvious fix — keep dock focus on selection — is precluded:
+`click_on_focused_dock_row_dives_focus_into_session` is an explicit regression
+test asserting the opposite, and its comment records that live-switch-without-dive
+*was* the earlier bug. Reverting it to satisfy this finding would trade one
+regression for another.
+
+I tried the task's other option, hanging the row's actions off the always-visible
+`⋯` button, and **reverted it**, because I could not open that menu from a real
+mouse click in tmux at any column — and neither could the study, whose own
+`fresh-04-dock-overflow-menu.txt` capture shows the menu absent after clicking
+it. An in-process e2e test (`dock_dropdown_mouse::open_dock_menu`) clicks the
+same glyph and passes, so the two disagree. **That gap is a finding in its own
+right** and wants its own investigation; building this fix on top of it would
+have been shipping something I could not demonstrate.
+
+What is genuinely missing is discoverability: neither working route is advertised
+at the moment of need. That is a smaller change than either option in the brief,
+and it should be made once the `⋯` question is settled.
+
+### 3 — persistence across editor exit (severity 3)
+
+Reproduces exactly. A probe writing a timestamp every second froze at `19:42:18`,
+the second of `Ctrl+Q`, and had not advanced 20 s later; no process survived.
+
+Not attempted. The brief anticipates this: running orchestrator sessions under
+the existing daemon is not a setting but a change of process ownership. Today the
+work is a child of the editor; `attachRemoteAgent`, the terminal manager, window
+lifecycle and restart recovery all assume that. Putting a daemon in between means
+deciding what happens when the daemon and the editor disagree about a session's
+existence, how restart recovery reattaches rather than respawns, and what the
+dock shows for a session whose daemon is gone — the study's own §6.2 shows the
+reference product does not survive that either. It is the right thing to do and
+it is the largest item here; it should not be guessed at inside a round of UX
+fixes.
+
+### 4 — `+ New` is a form (severity 3)
+
+Reproduces: 2 clicks and a six-field modal, versus 1 click for the reference
+product. The button is also context-free where the reference product's names its
+target machine.
+
+Not attempted, for the reason the brief allows: it changes the primary flow's
+default. "Create immediately with the dock's defaults" needs an answer to what
+the defaults *are* when the dock's selection is a remote workspace (create there,
+or locally?), what happens when the current project is not a git repository, and
+where the worktree/branch decisions go when nothing asked for them. The label
+half (`[ + New · testbox ]`) is small and safe on its own, but shipping it
+without the behaviour it is meant to describe would leave the button naming a
+target that a dialog then asks about again.
+
+### 8c — two worktree path conventions
+
+Reproduces: local worktrees land in `~/.local/share/fresh/orchestrator/<slug>/<name>`,
+remote ones in `~/.fresh/worktrees/<repo>/<name>`.
+
+Deliberately unchanged. They differ because the machines differ: the local path is
+inside the editor's own XDG data directory, and the remote host has no fresh
+installation and therefore no such directory — `~/.fresh/worktrees/` exists
+precisely because the remote side has no data dir to nest under. Unifying means
+either inventing an XDG-shaped path on a machine with no fresh install, or moving
+every existing local worktree, which are recorded in git's own worktree metadata
+and in session records. Neither is a cleanup. Worth revisiting as an explicit
+migration, not as part of this round.
+
+## Investigated before touching: what the `fresh/fresh-sessions` push does
+
+The study could not determine what creates the branch, and the delete dialog on
+`d9a99a1` states it is "pushed to origin" — a claim never exercised, because the
+fixture had no `origin`. I added one (a bare repo on disk) and ran the path.
+
+**What happens.** Creating a workspace pushes nothing. **Deleting** one (and
+archiving, and unarchiving — any lifecycle action that mutates the archive
+manifest) creates a worktree at `<data dir>/orchestrator/.sync-workspace` on a
+branch `fresh/fresh-sessions` inside the user's repository, commits `sessions.json`
+as "Update sessions" **under the user's own git identity**, and pushes that branch
+to `origin`. Confirmed: after one delete, `origin` grew
+`refs/heads/fresh/fresh-sessions`.
+
+**What it sends:**
+
+```json
+{
+  "version": 1,
+  "machine_id": "unknown",
+  "updated_at": "2026-09-15T19:17:23.401Z",
+  "active": [
+    { "label": "demo", "branch": "demo", "base_ref": "origin/master",
+      "created_at": "2026-09-15T19:16:13.397Z" }
+  ],
+  "archived": []
+}
+```
+
+**How it fails.** Pointed at an unreachable `origin`, the delete still reports
+`deleted 1 workspace(s)` and nothing on screen mentions the push at all. The
+failure is silent; the branch and worktree remain locally.
+
+**Judgement: it should not push by default.** Not changed here, as instructed —
+proposed instead:
+
+1. A local delete is not a network operation. Nothing in the flow suggests one,
+   and the user is given no chance to decline before their remote is written to.
+2. The branch lands in a **shared** namespace. On a team repository
+   `fresh/fresh-sessions` appears for every collaborator and can trip CI, branch
+   protection and webhooks — none of which the deleting user intended.
+3. The commit is authored with the user's identity, so it reads as their work.
+4. Failure is silent in both directions: offline users get no signal, and users
+   who *do* have push rights get a branch they never asked for.
+5. Cross-machine recovery is a real feature, but it is opt-in by nature — it only
+   helps someone who works on two machines, and it should be their choice to
+   sync a session list to a remote.
+
+Proposed: keep the local branch and worktree (that is what makes recovery
+possible at all, and it is now disclosed in the archive/delete confirmations),
+and make the **push** opt-in — a setting, or a prompt on first use naming the
+remote and the branch. Until then the confirmation's "pushed to origin" line is
+at least honest about what is happening.
