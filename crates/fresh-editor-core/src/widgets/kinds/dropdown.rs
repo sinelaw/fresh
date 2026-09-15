@@ -46,15 +46,17 @@ impl WidgetImpl for Dropdown {
                 _ => Pass,
             };
         }
-        // Open: Up/Down move the (live) selection and Home/End jump it,
-        // Enter/Space commit-and-close, Esc puts back the selection the
-        // list opened on and closes.
+        // Open: Up/Down (and Left/Right, which do the same thing closed, and
+        // which the form's own footer advertises as "change option" without
+        // qualifying it by whether the list is up) move the (live) selection,
+        // Home/End jump it, Enter/Space commit-and-close, Esc puts back the
+        // selection the list opened on and closes.
         match key.code() {
-            KeyCode::Up => {
+            KeyCode::Up | KeyCode::Left => {
                 cycle_selection(spec, widget_key, panel, -1, fx);
                 Consumed
             }
-            KeyCode::Down => {
+            KeyCode::Down | KeyCode::Right => {
                 cycle_selection(spec, widget_key, panel, 1, fx);
                 Consumed
             }

@@ -144,16 +144,22 @@ fn open_delete_confirmation(height: u16) -> (tempfile::TempDir, EditorTestHarnes
 
 /// A destructive confirmation is useless if the user can't see how to answer
 /// it. On a short terminal the centered panel must grow to fit its content
-/// instead of clipping the tail: both the warning and the Cancel / Confirm
-/// pair have to be on screen.
+/// instead of clipping the tail: both the consequence list and the Cancel /
+/// Confirm pair have to be on screen.
+///
+/// The anchor is a consequence line rather than the "uncommitted changes"
+/// warning because this session is the project row — in-place, no worktree —
+/// and deleting it removes no files, so the pane no longer carries a warning
+/// that would not be true of it. The buttons are what prove nothing is
+/// clipped: they render after everything else.
 #[test]
 fn dock_delete_confirmation_shows_its_buttons_on_a_short_terminal() {
     let (_tmp, h) = open_delete_confirmation(SHORT_HEIGHT);
 
     let screen = h.screen_to_string();
     assert!(
-        screen.contains("Uncommitted changes will be lost"),
-        "the delete warning was clipped off the confirmation.\nScreen:\n{screen}"
+        screen.contains("drop the workspace record"),
+        "the consequence list was clipped off the confirmation.\nScreen:\n{screen}"
     );
     assert!(
         screen.contains("[ Cancel ]"),
