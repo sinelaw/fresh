@@ -793,6 +793,17 @@ through a PATH shim (`tests/fixtures/fake-ssh-alias-only`) that answers for the
 alias and refuses the resolved target; it hangs in `wait_until` without the fix
 and passes with it.
 
+That "hangs without the fix" property is exactly what made it fail on Windows
+CI, and the gate was missed when the test was written. The shim is a `#!/bin/sh`
+script standing in for `ssh` on `$PATH`; Windows cannot execute it, so the probe
+never answers and the wait runs until the harness kills it at 180s — the same
+symptom as a genuine regression, on a platform where the test can never be
+meaningful. Every other shim-driven test here already carries
+`#![cfg(all(target_os = "linux", feature = "plugins"))]`
+(`orchestrator_pending_ssh.rs`, the `dormant_ssh` reproducers); this one lives in
+a file whose other tests are Windows-safe path-completion coverage, so the gate
+is on the function.
+
 **Not covered by tests:** the host-key trust dialog itself. It needs a real
 `ssh`, `ssh-keyscan` and `ssh-keygen` plus an unknown host key, which the existing
 shim fixtures do not model; it was verified by hand instead, end to end, several

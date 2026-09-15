@@ -2204,6 +2204,15 @@ fn an_unreachable_host_is_not_reported_as_a_missing_repository() {
 /// The shim makes the difference observable without a network: it answers the
 /// probe for `aliasbox` and refuses `deploy@10.0.0.9`. The remote branch name
 /// can only reach the screen through an ssh call that was given the alias.
+///
+/// Linux-only, like every other shim-driven test here
+/// (`orchestrator_pending_ssh.rs` and the `dormant_ssh` reproducers all carry
+/// the same gate): the fixture is a `#!/bin/sh` script standing in for `ssh`
+/// on `$PATH`, which Windows cannot execute — so the probe never answers and
+/// the wait for the remote branch name runs until the harness kills it. The
+/// rest of this file is path-completion coverage that does run on Windows,
+/// hence the gate on the function rather than the module.
+#[cfg(target_os = "linux")]
 #[test]
 fn a_config_alias_is_handed_to_ssh_as_the_alias() {
     let (_temp, workspace) = set_up_workspace();
