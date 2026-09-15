@@ -1,0 +1,50 @@
+ machines                │   1      +
+                         │[noam@chunky ~]$ echo REMOTE_SESSION_MARKER_B
+ ▾ Local                 │REMOTE_SESSION_MARKER_B
+   · local-proj          │[noam@chunky ~]$ while true; do date -u +%H:%M:%S >> /home/noam/study/probe_herdr.txt; sleep 1; done
+     main                │
+   · local-proj          │
+     main                │
+   · local-proj          │
+     main                │
+ ▾ testbox              ●│
+   · ~                   │
+   · ~                   │
+   · ~                   │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+ new · testbox       menu│
+─────────────────────────│
+ agents           grouped│
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                        «│

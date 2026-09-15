@@ -1,0 +1,50 @@
+ machines                │   1      +
+                         │[noam@chunky worktree-silver-cloud-8e4f]$
+ ▾ Local                 │
+   · local-proj          │
+     main                │
+     └─ · s┌─────────────────────────────┐
+   · local-│Rename                       │
+     main  │Close                        │
+ ▾ testbox │Delete worktree checkout...  │
+   · ~     └─────────────────────────────┘
+   · ~                   │
+   · ~                   │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+ new · Local         menu│
+─────────────────────────│
+ agents           grouped│
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                        «│

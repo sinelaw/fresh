@@ -1,0 +1,50 @@
+ machines                │   1      +
+                         │[noam@chunky local-proj]$ D^C
+ ▾ Local                 │[noam@chunky local-proj]$
+   · local-proj          │
+     main                │
+     └─ · silver-cloud…  │
+   · local-proj          │
+     main                │
+ ▾ testbox              ●│
+   · ~                   │
+   · ~                   │
+   · ~                   │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+ new · Local         menu│
+─────────────────────────│
+ agents           grouped│
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                        «│

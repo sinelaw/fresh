@@ -1,0 +1,50 @@
+ spaces                  │   1      +
+                         │[noam@chunky local-proj]$
+ · local-proj            │
+   main                  │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+        ┌───────────────┐│
+        │ settings      ││
+        │ keybinds      ││
+        │ reload config ││
+        │ detach        ││
+        └───────────────┘│
+ new                 menu│
+─────────────────────────│
+ agents           grouped│
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                        «│

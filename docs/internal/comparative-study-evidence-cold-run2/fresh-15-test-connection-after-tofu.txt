@@ -1,0 +1,50 @@
+Orchestrator                          ×│ File   Edit   View   Selection   Go   LSP   Help
+[ + New ]                   / search  ⋯│ [No Name] ×   Welcome ×   +                                                                                                                                 □×
+───────────────────────────────────────│  1 │
+  · local-proj · ssh — noam@chunky:/ho…│~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                              ┌ Machines ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[×]┐
+                              │Local             this computer                             1 workspaces                                                                  │
+                              │testbox      ssh  noam@127.0.0.1:2222           ✓ ok        ~/.ssh/config                                                                 │
+                              │                                                                                                                                          │
+                              │  [ + Add machine… ]                                                                                                                      │
+                              │                                                                                                                                          │
+                              │  [ New workspace here ]  ⏎    [ Edit ]  ▸ [ Test connection ]    [ Remove ]    [ Close ]  Esc                                            │
+                              └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                                       │ bash — noam@chunky:/home/noam/study/repos/local-proj ×   +                                                                                                  □×
+                                       │[noam@chunky local-proj]$ ssh testbox echo REMOTE_OK
+                                       │The authenticity of host '[127.0.0.1]:2222 ([127.0.0.1]:2222)' can't be established.
+                                       │ED25519 key fingerprint is: SHA256:yilIxq3ROom5tMCctLuBDqRNzVNRBbbI0whRMLVi1sg
+                                       │This key is not known by any other names.
+                                       │Are you sure you want to continue connecting (yes/no/[fingerprint])? yes
+                                       │Warning: Permanently added '[127.0.0.1]:2222' (ED25519) to the list of known hosts.
+                                       │REMOTE_OK
+                                       │[noam@chunky local-proj]$
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │ Trusted  Local  Ln 1, Col 1                                                                                                   LF  ASCII  Text  Palette: Ctrl+P

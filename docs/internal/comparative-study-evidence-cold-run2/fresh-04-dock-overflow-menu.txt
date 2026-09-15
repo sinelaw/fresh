@@ -1,0 +1,50 @@
+Orchestrator                          ×│ File   Edit   View   Selection   Go   LSP   Help
+[ + New ]                   / search  ⋯│ [No Name] ×   Welcome ×   +
+───────────────────────────────────────│  1 │
+  · local-proj                         │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+           ↑↓ switch  →← fold          │
+          Enter edit  F2 menu          │ 1:1                                                                                                                           LF  UTF-8  Text  Palette: Ctrl+P

@@ -1,0 +1,50 @@
+Orchestrator                          ×│ File   Edit   View   Selection   Go   LSP   Help
+[ + New ]                   / search  ⋯│ [No Name] ×   Welcome ×   +
+───────────────────────────────────────│  1 │
+  · local-proj                         │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+                                       ││  Add Cursor Above                Ctrl+Alt+↑    Add a cursor on the line above                                                                         builtin
+                                       ││  Add Cursor Below                Ctrl+Alt+↓    Add a cursor on the line below                                                                         builtin
+                                       ││  Add Cursor at Next Match        Ctrl+D        Add a cursor at the next occurrence of the selection                                                   builtin
+                                       ││  Add Cursors to Line Ends        Alt+Shift+I   Place a cursor at the end of every line covered by the selection                                       builtin
+                                       ││  Add Ruler                                     Add a vertical ruler line at a specific column position                                                builtin
+                                       ││  Calibrate Keyboard                            Run the keyboard calibration wizard for terminal issues                                                builtin
+                                       ││  Cancel Mark                                   Cancel selection anchor (soft exit mark mode)                                                          builtin
+                                       ││  Clangd: Open Project Config                   Open the nearest .clangd file                                                                   clangd_support
+                                       ││  Clangd: Project Setup                         Analyze C/C++ clangd readiness (compile_commands.json, .clangd)                                 clangd_support
+                                       ││  Clangd: Switch Source/Header                  Jump to header/source pair using clangd                                                         clangd_support
+                                       │└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+                                       │  file  |  >command  |  :line  |  #buffer
+                                       │>

@@ -1,0 +1,25 @@
+=== fresh PRE-teardown state ===
+-- git worktrees in remote-proj:
+/home/noam/study/repos/remote-proj                   4540a4b [main]
+/home/noam/.fresh/worktrees/remote-proj/local-proj-1 4540a4b [local-proj-1]
+/home/noam/.fresh/worktrees/remote-proj/remote-two   4540a4b [remote-two]
+-- branches in remote-proj:
+  bugfix/beta   feature/alpha + local-proj-1 * main + remote-two 
+-- git worktrees in local-proj:
+/home/noam/study/repos/local-proj                                                                b3e4b94 [main]
+/home/noam/study/home/.local/share/fresh/orchestrator/home_noam_study_repos_local-proj/local-two b3e4b94 [local-two]
+-- branches in local-proj:
+  bugfix/beta   feature/alpha + local-two * main 
+-- ~/.fresh (remote worktree root):
+/home/noam/.fresh
+/home/noam/.fresh/windows.json
+/home/noam/.fresh/worktrees
+/home/noam/.fresh/worktrees/remote-proj
+/home/noam/.fresh/worktrees/remote-proj/local-proj-1
+/home/noam/.fresh/worktrees/remote-proj/remote-two
+-- fresh data dir orchestrator:
+/home/noam/study/home/.local/share/fresh/orchestrator
+/home/noam/study/home/.local/share/fresh/orchestrator/home_noam_study_repos_local-proj
+/home/noam/study/home/.local/share/fresh/orchestrator/state
+/home/noam/study/home/.local/share/fresh/orchestrator/home_noam_study_repos_local-proj/local-two
+/home/noam/study/home/.local/share/fresh/orchestrator/state/orchestrator.json

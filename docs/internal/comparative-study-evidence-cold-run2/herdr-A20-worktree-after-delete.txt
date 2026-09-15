@@ -1,0 +1,6 @@
+after delete:
+/home/noam/study/repos/local-proj 7d8f698 [main]
+  bugfix/beta
+  feature/alpha
+* main
+  worktree/silver-cloud-8e4f

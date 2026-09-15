@@ -1,0 +1,50 @@
+ machines                │   1      +
+                         │[noam@chunky ~]$ echo MARK SSH=[$SSH_CONNECTION] HOST=$(hostname) PWD=$PWD
+ ▾ Local                 │bash: hostname: command not found
+   · local-proj          │MARK SSH=[127.0.0.1 51082 127.0.0.1 2222] HOST= PWD=/home/noam
+     main                │[noam@chunky ~]$ echo REMOTE_SESSION_MARKER_A
+   · local-proj          │REMOTE_SESSION_MARKER_A
+     main                │[noam@chunky ~]$
+   · local-proj          │
+     main                │
+ ▾ testbox              ●│
+   · ~                   │
+   · ~                   │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+ new · testbox       menu│
+─────────────────────────│
+ agents           grouped│
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                        «│
