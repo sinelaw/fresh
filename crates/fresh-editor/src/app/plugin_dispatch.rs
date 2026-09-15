@@ -2521,6 +2521,12 @@ impl Editor {
     /// byte offset of its terminating newline (or `buffer_len` for the
     /// last line without a trailing newline). Uses the piece-tree line index;
     /// it never materializes or scans the whole buffer.
+    ///
+    /// A buffer with no line index — a large file in byte-offset mode, before
+    /// a line scan — therefore answers `None` for every line. That is the
+    /// point: the scan this replaced loaded the whole file to answer, which
+    /// is what byte-offset mode exists to avoid. `getLineStartPosition` says
+    /// so, and a caller that needs a line on such a buffer asks for the scan.
     fn handle_get_line_position(
         &mut self,
         buffer_id: crate::model::event::BufferId,

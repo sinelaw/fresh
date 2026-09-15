@@ -1842,6 +1842,12 @@ impl JsEditorApi {
     /// Get the byte offset of the start of a line (0-indexed line number).
     /// `bufferId` defaults to the active buffer when omitted.
     /// Returns null if the line number is out of range.
+    ///
+    /// Also null when the buffer has no line index yet — a large file opened
+    /// in byte-offset mode, until a line scan runs. The editor answers from
+    /// the piece tree's line index and will not materialize the file to build
+    /// one, so a caller that needs a line on such a buffer has to ask for the
+    /// scan (`Action::ScanLineIndex`) rather than expect an answer here.
     #[plugin_api(
         async_promise,
         js_name = "getLineStartPosition",
@@ -1869,6 +1875,12 @@ impl JsEditorApi {
     /// `bufferId` defaults to the active buffer when omitted. Returns the
     /// position after the last character of the line (before newline), or null
     /// if the line number is out of range.
+    ///
+    /// Also null when the buffer has no line index yet — a large file opened
+    /// in byte-offset mode, until a line scan runs. The editor answers from
+    /// the piece tree's line index and will not materialize the file to build
+    /// one, so a caller that needs a line on such a buffer has to ask for the
+    /// scan (`Action::ScanLineIndex`) rather than expect an answer here.
     #[plugin_api(
         async_promise,
         js_name = "getLineEndPosition",

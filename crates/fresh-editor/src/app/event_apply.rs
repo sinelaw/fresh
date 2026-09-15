@@ -839,6 +839,7 @@ impl Editor {
                         cursor_id: *cursor_id,
                         old_position: *old_position,
                         new_position: *new_position,
+                        is_primary: self.active_cursors().primary_id() == *cursor_id,
                         line,
                         text_properties: text_props,
                     },

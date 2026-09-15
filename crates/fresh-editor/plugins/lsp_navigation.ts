@@ -454,6 +454,10 @@ function parseSymbols(result: unknown): SymbolItem[] {
 
 const breadcrumbSymbols = new Map<number, SymbolItem[]>();
 const breadcrumbRefreshGeneration = new Map<number, number>();
+// How many event-driven retries a buffer whose fetch failed still has. User
+// actions — an edit, a revert, switching to the tab — are never rationed.
+const MAX_TRAIL_RETRIES = 3;
+const breadcrumbRetries = new Map<number, number>();
 
 /**
  * The symbol kinds that name a scope — what a breadcrumb trail is for. A
@@ -567,8 +571,10 @@ editor.on("buffer_activated", (data) => {
 });
 
 editor.on("cursor_moved", (data) => {
-  // `line` is 1-indexed here; LSP symbol ranges are 0-indexed.
-  if (data.cursor_id === 0) publishBreadcrumbs(data.buffer_id, data.line - 1);
+  // The trail follows *the* caret, which is the primary one — not cursor 0.
+  // Adding a cursor makes the new one primary, so its id is whatever was
+  // handed out last. `line` is 1-indexed here; LSP ranges are 0-indexed.
+  if (data.is_primary) publishBreadcrumbs(data.buffer_id, data.line - 1);
 });
 
 editor.on("after_insert", (data) => scheduleBreadcrumbRefresh(data.buffer_id));
@@ -577,30 +583,48 @@ editor.on("after_file_revert", (data) => scheduleBreadcrumbRefresh(data.buffer_i
 editor.on("buffer_closed", (data) => {
   breadcrumbSymbols.delete(data.buffer_id);
   breadcrumbRefreshGeneration.delete(data.buffer_id);
+  breadcrumbRetries.delete(data.buffer_id);
 });
 
 /**
- * Fill in trails that never loaded.
+ * Retry a trail whose fetch failed, at most `MAX_TRAIL_RETRIES` times.
  *
- * A failed fetch leaves no cache entry, so `breadcrumbSymbols.has` is the
- * test for "this one never came back" — and it bounds the retrying: a buffer
- * whose symbols did load, even to an empty list, is never asked again.
+ * A failed fetch deliberately leaves no cache entry, so "never came back" and
+ * "has no server at all" look identical from here — a plain text buffer asks
+ * a server that does not exist, is refused, and stays missing forever. The
+ * budget is what separates them: a trail that can be fetched needs a retry or
+ * two, and one that never can stops asking.
  */
-function retryMissingTrails(language?: string): void {
-  for (const info of editor.listBuffers()) {
-    if (language !== undefined && info.language !== language) continue;
-    if (breadcrumbSymbols.has(info.id)) continue;
-    scheduleBreadcrumbRefresh(info.id);
-  }
+function retryTrail(bufferId: number): void {
+  if (breadcrumbSymbols.has(bufferId)) return;
+  const spent = breadcrumbRetries.get(bufferId) ?? 0;
+  if (spent >= MAX_TRAIL_RETRIES) return;
+  breadcrumbRetries.set(bufferId, spent + 1);
+  scheduleBreadcrumbRefresh(bufferId);
 }
 
-// The server was not up when we asked; now it is.
-editor.on("lsp_ready", (data) => retryMissingTrails(data.language));
+// The server was not up when we asked; now it is. Only its own language's
+// buffers are worth re-asking, and the server is already running, so this
+// starts nothing.
+editor.on("lsp_ready", (data) => {
+  for (const info of editor.listBuffers()) {
+    if (info.language === data.language) retryTrail(info.id);
+  }
+});
 
-// And the other way a fetch fails: the server was up but the request did not
-// come back. There is no event for that, so take the next sign of life —
-// diagnostics — as the cue to try again.
-editor.on("diagnostics_updated", () => retryMissingTrails());
+// The other way a fetch fails: the server was up and the request still did
+// not come back. No event covers that, so take the next sign of life.
+//
+// Scoped to the buffer the diagnostics are *for*: a push from one language's
+// server is no reason to ask another language's server for anything, and
+// `sendLspRequest` spawns one to find out.
+editor.on("diagnostics_updated", (data) => {
+  for (const info of editor.listBuffers()) {
+    if (info.path && editor.pathToFileUri(info.path) === data.uri) {
+      retryTrail(info.id);
+    }
+  }
+});
 
 editor.on("ready", () => {
   const bufferId = editor.getActiveBufferId();

@@ -3200,6 +3200,12 @@ interface EditorAPI {
 	* Get the byte offset of the start of a line (0-indexed line number).
 	* `bufferId` defaults to the active buffer when omitted.
 	* Returns null if the line number is out of range.
+	* 
+	* Also null when the buffer has no line index yet — a large file opened
+	* in byte-offset mode, until a line scan runs. The editor answers from
+	* the piece tree's line index and will not materialize the file to build
+	* one, so a caller that needs a line on such a buffer has to ask for the
+	* scan (`Action::ScanLineIndex`) rather than expect an answer here.
 	*/
 	getLineStartPosition(line: number, bufferId?: number): Promise<number | null>;
 	/**
@@ -3207,6 +3213,12 @@ interface EditorAPI {
 	* `bufferId` defaults to the active buffer when omitted. Returns the
 	* position after the last character of the line (before newline), or null
 	* if the line number is out of range.
+	* 
+	* Also null when the buffer has no line index yet — a large file opened
+	* in byte-offset mode, until a line scan runs. The editor answers from
+	* the piece tree's line index and will not materialize the file to build
+	* one, so a caller that needs a line on such a buffer has to ask for the
+	* scan (`Action::ScanLineIndex`) rather than expect an answer here.
 	*/
 	getLineEndPosition(line: number, bufferId?: number): Promise<number | null>;
 	/**
@@ -5587,6 +5599,12 @@ interface HookEventMap {
 		cursor_id: number;
 		old_position: number;
 		new_position: number;
+		/**
+		* Whether this is the buffer's primary cursor. Follow *the* caret with
+		* this, never by comparing `cursor_id` to 0: adding a cursor makes the
+		* new one primary, so the primary's id is whatever was handed out last.
+		*/
+		is_primary: boolean;
 		/** 1-indexed, unlike `getCursorLine()` and LSP line numbers. */
 		line: number;
 		text_properties: Record<string, unknown>[];

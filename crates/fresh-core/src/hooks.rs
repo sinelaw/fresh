@@ -100,6 +100,12 @@ pub enum HookArgs {
         cursor_id: CursorId,
         old_position: usize,
         new_position: usize,
+        /// Whether this is the buffer's primary cursor.
+        ///
+        /// A plugin that follows "the" caret wants only this one, and cannot
+        /// work it out from `cursor_id`: adding a cursor makes the new one
+        /// primary, so the primary's id is whatever was handed out last.
+        is_primary: bool,
         /// Line number at new position (1-indexed)
         line: usize,
         /// Text properties at the new cursor position

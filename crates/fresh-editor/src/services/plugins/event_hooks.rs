@@ -82,6 +82,7 @@ impl EventHooks for Event {
                 old_position: *old_position,
                 new_position: *new_position,
                 // Placeholders - will be filled by caller with buffer access
+                is_primary: false,
                 line: 0,
                 text_properties: Vec::new(),
             }),
@@ -123,12 +124,17 @@ pub fn apply_event_with_hooks(
     if let Some(mut after_args) = event.after_hook(buffer_id) {
         // Fill in line number and text properties for CursorMoved events
         if let HookArgs::CursorMoved {
+            cursor_id,
             new_position,
+            ref mut is_primary,
             ref mut line,
             ref mut text_properties,
             ..
         } = after_args
         {
+            // Only the caller has the cursor set, so "is this the primary"
+            // is filled in here alongside the line number.
+            *is_primary = cursors.primary_id() == cursor_id;
             // Compute 1-indexed line number from byte position
             // get_line_number returns 0-indexed, so add 1
             *line = state.buffer.get_line_number(new_position) + 1;
@@ -215,6 +221,68 @@ mod tests {
         // Overlay events don't trigger hooks (they're visual only)
         assert!(event.before_hook(buffer_id).is_none());
         assert!(event.after_hook(buffer_id).is_none());
+    }
+
+    /// **`cursor_id` does not say which cursor is the primary one.**
+    ///
+    /// `Cursors::add` makes each new cursor primary, so the primary's id is
+    /// whatever was handed out last — a plugin following *the* caret by
+    /// comparing against `0` follows the wrong one the moment a second
+    /// cursor exists. The hook carries the answer instead.
+    #[test]
+    fn cursor_moved_says_which_cursor_is_primary() {
+        use crate::model::cursor::{Cursor, Cursors};
+        use crate::state::EditorState;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::RwLock;
+
+        let mut state = EditorState::new(
+            80,
+            24,
+            crate::config::LARGE_FILE_THRESHOLD_BYTES as usize,
+            test_fs(),
+        );
+        let mut cursors = Cursors::new();
+        let first = cursors.primary_id();
+        // A second cursor takes the primary slot with it.
+        let second = cursors.add(Cursor::new(0));
+        assert_ne!(first, second);
+        assert_eq!(cursors.primary_id(), second);
+
+        let moved = |cursors: &mut Cursors, state: &mut EditorState, id| {
+            let seen = std::sync::Arc::new(AtomicBool::new(false));
+            let flag = seen.clone();
+            let registry = RwLock::new(HookRegistry::new());
+            registry.write().unwrap().add_hook(
+                "cursor_moved",
+                Box::new(move |args| {
+                    if let HookArgs::CursorMoved { is_primary, .. } = args {
+                        flag.store(*is_primary, Ordering::SeqCst);
+                    }
+                    true
+                }),
+            );
+            let event = Event::MoveCursor {
+                cursor_id: id,
+                old_position: 0,
+                new_position: 0,
+                old_anchor: None,
+                new_anchor: None,
+                old_sticky_column: None,
+                new_sticky_column: None,
+            };
+            apply_event_with_hooks(state, cursors, &event, BufferId(0), &registry);
+            seen.load(Ordering::SeqCst)
+        };
+
+        assert!(
+            moved(&mut cursors, &mut state, second),
+            "the cursor added last is the primary one"
+        );
+        assert!(
+            !moved(&mut cursors, &mut state, first),
+            "cursor 0 is not the primary one once another exists"
+        );
     }
 
     #[test]
