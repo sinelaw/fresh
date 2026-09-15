@@ -228,11 +228,12 @@
     "title": "fresh \u2014 orchestrator dock",
     "note_size": 58,
     "crt": {
-      "scanlines": 0.14,
-      "gap": 3,
-      "bloom": 0.28,
-      "shift": 2,
-      "vignette": 0.26
+      "scanlines": 0.34,
+      "gap": 4,
+      "bloom": 0.55,
+      "shift": 3,
+      "vignette": 0.45,
+      "curve": 0.11
     },
     "views": {
       "list": {
@@ -282,22 +283,7 @@
           "mv06",
           "mv07",
           "mv08",
-          "mv09",
-          "mv10",
-          "mv11",
-          "mv12",
-          "mv13",
-          "mv14",
-          "mv15",
-          "mv16",
-          "mv17",
-          "mv18",
-          "mv19",
-          "mv20",
-          "mv21",
-          "mv22",
-          "mv23",
-          "mv24"
+          "mv09"
         ],
         "crossfade": 0,
         "view": "list",
@@ -310,7 +296,7 @@
           17
         ],
         "band": false,
-        "hold": 3.8,
+        "hold": 2.2,
         "tag": {
           "text": "organize into folders",
           "at": "center-right",

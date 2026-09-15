@@ -241,9 +241,20 @@ it changes. They are set in the theme's green on a dark fill: a stroke alone
 is enough over a picture, but this picture is itself text, and the rows keep
 showing between the letters until something opaque goes behind them.
 
-`render.crt` puts a tube over the whole thing — scanlines, phosphor bloom,
-channel fringing, corner falloff. Light on purpose: a deep scanline comb is
-the first thing the encoder turns to mush.
+`render.crt` puts a tube over the whole thing — a curved raster, scanlines,
+phosphor bloom, channel fringing, corner falloff. The curve is the part that
+does the work: the other four are corrections applied to a flat rectangle,
+which is what a screenshot already is, so without it the pass reads as a
+filter over a picture rather than a picture on a tube.
+
+Stage one stops at the tenth move rather than running all twenty-five.
+The camera is on the top of the list, so once the rows being filed drop out
+of the frame the remaining shots are identical pictures — the dock is still
+working, just not where anyone is looking. `gen-spec-focus.py` measures where
+that happens rather than taking a guess: the first ten moves change the
+visible rows by 15-19 mean absolute difference and everything after by under
+seven, most of it by exactly zero. What is left over is carried by the wipe
+into the next beat, which replaces the whole screen anyway, so nothing jumps.
 
 `verify-shots.py` checks a take photographed the states it was aimed at:
 `folders` before any row is filed, one more filed row per `mv<i>`, and exactly

@@ -23,7 +23,7 @@ A square frame fits the same rect by height and lands at 42% of frame width,
 which is the opposite of zoomed in; `--square` therefore frames the top of
 the list only.
 """
-import json, os
+import json, os, glob
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.normpath(os.path.join(HERE, "..", "..",
@@ -90,6 +90,51 @@ NOTE_AT = [2, 17]
 # of zoomed in; the rest of the list carries on below the frame.
 view = {"rows": [3, 21], "cols": DOCK}
 last_row = 20
+
+
+def visible_moves(shots_dir, floor=8.0):
+    """how many move shots still change anything the frame can see.
+
+    The camera is on the top of the list, so once the rows being filed have
+    dropped out of the frame the remaining shots are identical pictures: the
+    dock is still working, but not where anyone is looking. Measured on a
+    take, the first ten moves change the visible rows by 15-19 mean absolute
+    difference and everything after them by under 7, most of it by exactly
+    zero -- so the cut is not a judgement call, it is where the numbers fall
+    off.
+
+    Returns None when there is no take to measure, in which case the spec
+    keeps every move and the clip is merely longer than it needs to be.
+    """
+    try:
+        from PIL import Image, ImageChops, ImageStat
+    except ImportError:
+        return None
+    if not glob.glob(os.path.join(shots_dir, "solo-mv*.png")):
+        return None
+    r0, r1 = view["rows"]
+    box = (0, int(r0 * 38.04), int(DOCK[1] * 17.01), int(r1 * 38.04))
+
+    def frame(name):
+        return Image.open(os.path.join(shots_dir, f"solo-{name}.png")) \
+                    .convert("RGB").crop(box)
+
+    prev, last = frame("folders"), 0
+    for i in range(N_MOVES):
+        try:
+            cur = frame(f"mv{i:02d}")
+        except OSError:
+            break
+        if sum(ImageStat.Stat(ImageChops.difference(prev, cur)).mean) / 3.0 >= floor:
+            last = i
+        prev = cur
+    return last
+
+
+SHOTS_DIR = os.environ.get("CLIP_SHOTS_DIR") or os.path.expanduser(
+    "~/repos/tui-clips/out/fresh-dock-cleanup-focus/shots")
+LAST_MOVE = visible_moves(SHOTS_DIR)
+SHOWN = N_MOVES - 1 if LAST_MOVE is None else LAST_MOVE
 # Only the rows the frame can actually show: the cascade should pace itself
 # to what is on screen, not spend a second wiping rows nobody can see.
 swipe_rows = [r for r in RENAMED if r <= last_row]
@@ -113,8 +158,8 @@ spec = {
     # The phosphor pass, over every finished frame. Light: a deep scanline
     # comb is the first thing the encoder turns to mush, and the clip has to
     # survive being scaled down a feed.
-    "crt": {"scanlines": 0.14, "gap": 3, "bloom": 0.28, "shift": 2,
-            "vignette": 0.26},
+    "crt": {"scanlines": 0.34, "gap": 4, "bloom": 0.55, "shift": 3,
+            "vignette": 0.45, "curve": 0.11},
     "views": {"list": view},
     # No beat carries a `head` or a `sub`, so the caption bar is never drawn
     # and the viewport takes its full height. The words that do appear are
@@ -132,9 +177,12 @@ spec = {
        "band": False, "hold": 1.0},
 
       # 2 — folders appear, then all 25 rows file themselves, one per still.
-      {"shots": ["folders"] + [f"mv{i:02d}" for i in range(N_MOVES)],
+      # Only as far as the frame can see it happen. What is left over is
+      # carried by the wipe into the next beat, which replaces the whole
+      # screen anyway -- so nothing jumps, it is just no longer dwelt on.
+      {"shots": ["folders"] + [f"mv{i:02d}" for i in range(SHOWN + 1)],
        "crossfade": 0, "view": "list", "rows": [4, 8], "cols": NOTE_AT,
-       "band": False, "hold": 3.8,
+       "band": False, "hold": 2.2,
        "tag": {"text": "organize into folders", "at": "center-right",
                "width": 0.40, "color": "after", "bg": True}},
 
@@ -159,6 +207,8 @@ t_ = spec["render"]["timing"]
 a = spec["render"]["annotations"]
 holds = sum(x.get("hold", t_["hold"]) for x in a)
 print("wrote", OUT)
-print("~%.1fs  (%d beats, %d shots; capture sequence ~%.0fs)"
+print("~%.1fs  (%d beats, %d shots captured, %d of %d moves shown; "
+      "capture sequence ~%.0fs)"
       % (holds + t_["pan"] * (len(a) - 1) + t_["outro"], len(a),
-         N_MOVES + 2, LEAD_IN + N_MOVES * STEP + RENAMES))
+         N_MOVES + 2, SHOWN + 1, N_MOVES,
+         LEAD_IN + N_MOVES * STEP + RENAMES))
