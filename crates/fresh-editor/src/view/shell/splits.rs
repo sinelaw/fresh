@@ -328,14 +328,12 @@ mod tests {
                             assert_eq!(
                             (
                                 got.tabs_rect,
-                                got.breadcrumbs_rect,
                                 got.content_rect,
                                 got.scrollbar_rect,
                                 got.horizontal_scrollbar_rect
                             ),
                             (
                                 want.tabs_rect,
-                                want.breadcrumbs_rect,
                                 want.content_rect,
                                 want.scrollbar_rect,
                                 want.horizontal_scrollbar_rect
@@ -2166,9 +2164,6 @@ fn drop_zone_node(zone: crate::app::types::TabDropZone) -> Node<UiMsg> {
 pub fn content_key(id: LeafId) -> Key {
     Key::Pair("pane_content".into(), id.0 .0 as u64)
 }
-pub fn breadcrumbs_key(id: LeafId) -> Key {
-    Key::Pair("pane_breadcrumbs".into(), id.0 .0 as u64)
-}
 
 /// The pane a content key names, if `k` is one.
 pub fn pane_of_content_key(k: &Key) -> Option<LeafId> {
@@ -2266,9 +2261,10 @@ pub fn pane_interior<M: 'static>(id: LeafId, c: PaneChrome, s: PaneSlots<M>) -> 
             .key(tabs_key(id))
             .h(cells(c.tabs))
             .children([s.tabs.flex(1), s.controls]),
-        s.breadcrumbs
-            .key(breadcrumbs_key(id))
-            .h(cells(c.breadcrumbs)),
+        // Unkeyed, unlike its siblings: nothing reads this band's rectangle
+        // back. The crumbs inside it carry their own keys, and a press is
+        // answered by the crumb, not by the band.
+        s.breadcrumbs.h(cells(c.breadcrumbs)),
         row().flex(1).children([
             // The content names itself (`content_key`): a leaf's context
             // is a keyed node *above* it on the chain (`content_leaf`), and
