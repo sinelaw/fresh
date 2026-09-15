@@ -105,12 +105,15 @@ spec = {
     "note_size": 58,
     "views": {"list": view},
     # No beat carries a `head` or a `sub`, so the caption bar is never drawn
-    # and the viewport takes its full height. The two words that do appear are
-    # notes: they sit in the frame, on the picture, at the same place in both
-    # transitions so the second reads as the first one swapping over. Anchored
-    # high in the list and dealt below, which puts them in the upper third --
-    # a word along the bottom edge is read last or not at all.
-    "timing": {"intro": 0, "zoom": 0, "hold": 1.0, "pan": 0.15, "outro": 0.6},
+    # and the viewport takes its full height. The words that do appear are
+    # tags, not notes: a note is anchored to a rect and draws a leader back to
+    # it, which is right when the words single out one row and wrong when they
+    # name the whole beat -- there the leader has nothing to point at and just
+    # crosses the picture. These sit against the right edge, vertically
+    # centred, in the same place both times so the second reads as the first
+    # swapping over.
+    "timing": {"intro": 0, "zoom": 0, "hold": 1.0, "pan": 0.15,
+               "push": 0.9, "wipe": 0.75, "outro": 0.6},
     "annotations": [
       # 1 — the flat list, briefly, so there is a before to measure against.
       {"shot": "before", "view": "list", "rows": [4, 30], "cols": DOCK,
@@ -120,14 +123,16 @@ spec = {
       {"shots": ["folders"] + [f"mv{i:02d}" for i in range(N_MOVES)],
        "crossfade": 0, "view": "list", "rows": [4, 8], "cols": NOTE_AT,
        "band": False, "hold": 3.8,
-       "note": "organize", "note_at": "below-right"},
+       "tag": {"text": "organize into folders", "at": "center-right",
+               "width": 0.34}},
 
       # 3 — the names change in place, top to bottom, stepping over junk.
       {"shot": f"mv{N_MOVES - 1:02d}", "view": "list", "rows": [4, 8], "cols": NOTE_AT,
        "band": False, "hold": 3.0,
+       "transition": "wipe",
        "swipe": {"to": "after", "rows": swipe_rows,
                  "at": 0.35, "row": 0.20, "stagger": 0.10, "edge": 3},
-       "note": "rename", "note_at": "below-right"},
+       "tag": {"text": "rename", "at": "center-right", "width": 0.34}},
 
       # 4 — hold what it made.
       {"shot": "after", "view": "list", "rows": [4, last_row], "cols": DOCK,

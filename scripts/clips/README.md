@@ -223,6 +223,15 @@ that records it, and only then makes the next. The spec's sleeps are then free
 to drift — nothing moves on screen until a shot has been taken — and they only
 have to be longer than one mutation (0.18s typical, 0.32s worst measured).
 
+The two words on screen are `tag`s rather than notes, and the phases are
+separated by a `wipe`. A note would have been wrong here twice over: it draws
+a leader back to its rect, which has nothing to point at when the words name
+the whole beat, and it lands wherever the rect puts it rather than where the
+frame has room. The tags sit centre-right, wrapped, stroked so they read over
+the list, and they ride the wipe edge — clipped to their own sides of it — so
+"organize into folders" is replaced by "rename" in place as the screen under
+it changes.
+
 `verify-shots.py` checks a take photographed the states it was aimed at:
 `folders` before any row is filed, one more filed row per `mv<i>`, and exactly
 sixteen rewritten rows between the last move and `after`. Rows are compared by

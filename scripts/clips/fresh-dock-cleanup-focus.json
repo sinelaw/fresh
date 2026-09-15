@@ -244,6 +244,8 @@
       "zoom": 0,
       "hold": 1.0,
       "pan": 0.15,
+      "push": 0.9,
+      "wipe": 0.75,
       "outro": 0.6
     },
     "annotations": [
@@ -302,8 +304,11 @@
         ],
         "band": false,
         "hold": 3.8,
-        "note": "organize",
-        "note_at": "below-right"
+        "tag": {
+          "text": "organize into folders",
+          "at": "center-right",
+          "width": 0.34
+        }
       },
       {
         "shot": "mv24",
@@ -318,6 +323,7 @@
         ],
         "band": false,
         "hold": 3.0,
+        "transition": "wipe",
         "swipe": {
           "to": "after",
           "rows": [
@@ -343,8 +349,11 @@
           "stagger": 0.1,
           "edge": 3
         },
-        "note": "rename",
-        "note_at": "below-right"
+        "tag": {
+          "text": "rename",
+          "at": "center-right",
+          "width": 0.34
+        }
       },
       {
         "shot": "after",
