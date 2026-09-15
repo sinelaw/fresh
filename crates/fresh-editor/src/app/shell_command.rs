@@ -37,7 +37,7 @@ impl Editor {
 
         // Execute the command
         let mut child = Command::new(&shell)
-            .args(["-c", command])
+            .args([command_flag_for_shell(&shell), command])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -262,7 +262,7 @@ impl Editor {
 
         let shell = detect_shell();
         let mut child = Command::new(&shell)
-            .args(["-c", command])
+            .args([command_flag_for_shell(&shell), command])
             .hide_window()
             .spawn()
             .map_err(|e| anyhow::anyhow!("Failed to spawn shell: {}", e))?;
@@ -318,6 +318,23 @@ fn detect_shell() -> String {
 
     // Last resort
     "sh".to_string()
+}
+
+/// The flag that makes `shell` run one command string and exit.
+///
+/// POSIX shells take `-c`; cmd.exe only understands `/c` — handing it `-c`
+/// drops it into interactive mode, whose banner then leaks into the captured
+/// output as if it were the command's (issue #3279).
+fn command_flag_for_shell(shell: &str) -> &'static str {
+    let name = std::path::Path::new(shell)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default();
+    if matches!(name.as_str(), "cmd" | "cmd.exe" | "command.com") {
+        "/c"
+    } else {
+        "-c"
+    }
 }
 
 /// Truncate a command string for display purposes.
