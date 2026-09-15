@@ -257,6 +257,13 @@ fn name_node(pane: LeafId, t: TabTarget, s: String, ink: String) -> Node<UiMsg> 
                             y,
                         }))
                     }
+                    // Middle-click closes the tab — the browser muscle
+                    // memory (issue #3284). Same fact the `×` button emits,
+                    // so dirty-buffer confirmation and friends are inherited.
+                    MouseButton::Middle => {
+                        e.stop();
+                        Some(UiMsg::Ui(UiFact::PaneTabClose { pane, target: t }))
+                    }
                     _ => None,
                 }
             }),
