@@ -306,6 +306,7 @@ each group, then the declines.
 | F7 auto-name collides | 2 | **Fixed** — verified interactively |
 | F8 undisclosed writes to the repo | 2 | **Fixed** — verified interactively |
 | F9 delete keeps the branch, undocumented | 2 | **Fixed** — verified interactively |
+| (follow-up) Delete had no worktree choice | — | **Fixed** — verified interactively |
 | F10 no warning on quit | 2 | **Declined for now** — out of this feature |
 | F11 Ctrl+P does nothing | 2 | **Not a defect** — it works (see below) |
 | F12 no keyboard route to the dock | 2 | **Mostly not a defect** — `Alt+O` is bound |
@@ -507,6 +508,11 @@ copy of the work — and the dialog's problem was that it enumerated everything
 missing item: "keep the branch — `git worktree remove` does not delete it". A
 checkbox would be a new control for a default that is already correct.
 
+(The dialog *did* subsequently gain a checkbox, but for the worktree rather than
+the branch — see below. The distinction is that removing the worktree is a
+destructive act the user may reasonably not want, whereas deleting the branch is
+not something Delete has ever offered to do.)
+
 **Bonus fix found on the way.** The form reserves a constant height so nothing
 moves when a section changes shape, but it measured that reservation from the
 live form — including three values that arrive from async probes. The
@@ -585,6 +591,57 @@ A host that cannot be reached does not block the delete: the row goes either
 way, and the status bar names the path still sitting on the far side rather than
 failing silently.
 
+## The Delete confirmation's worktree checkbox
+
+Delete always removed the worktree, and the dialog described that as a fact
+rather than a choice. Two things were wrong with it beyond the missing choice:
+
+- On an **in-place or shared-tree session** — the project row itself, say — the
+  pane still announced "run `git worktree remove`" and "keep the branch", and
+  warned that "uncommitted changes will be lost". None of it happens: that
+  delete drops the workspace record and touches no files at all.
+- There was no way to say "I'm done with this session but I want to keep the
+  files", which for a worktree holding real work is a reasonable thing to want.
+
+So the pane now asks, and only where the question means anything:
+
+```
+This will:                                    This will:
+  • stop all workspace processes                • stop all workspace processes
+  • run `git worktree remove`                   • leave the worktree and its files where they are
+  • keep the branch — … does not delete it      • drop the workspace record
+  • drop the workspace record                   • update fresh/fresh-sessions — …
+  • update fresh/fresh-sessions — …
+                                              [ ] Also remove the worktree and its files
+Uncommitted changes will be lost.
+                                              [ Cancel ]  [ Confirm Delete ]
+[v] Also remove the worktree and its files
+
+[ Cancel ]  [ Confirm Delete ]
+```
+
+Checked by default, because removing the worktree is what Delete has always
+done: this adds a way to keep the files, it does not quietly change what the
+button means. The consequence list is rebuilt from the checkbox, so the dialog
+never describes an action other than the one the buttons will take — and the
+"uncommitted changes will be lost" warning appears only when files are really
+going, since a warning that cries wolf is worse than none.
+
+The checkbox is absent entirely when there is no worktree to remove, which is
+the same test the removal itself uses: `ownsWorktree` for a local session, and
+the linked-worktree-under-`~/.fresh/worktrees/` pair for a remote one. Offering
+a switch wired to nothing would imply the delete does something it does not.
+
+The choice is passed into `deleteOne` as an argument rather than read from the
+dialog's state, so the plugin API's own delete keeps the long-standing behaviour
+and the checkbox cannot leak out of the dialog that asked for it.
+
+Verified by hand across all four combinations: local worktree and remote
+worktree, each with the box checked (worktree and its registration removed, the
+branch surviving) and unchecked (worktree, files and registration all intact,
+only the dock row gone); and a no-worktree session, which shows no checkbox and
+none of the worktree lines.
+
 ## Findings that are not defects
 
 The tester was a first-time user with no documentation, which is the point of the
@@ -642,7 +699,17 @@ and a clone standing in for the remote). No `known_hosts` was pre-seeded and no
 key was copied to a default path at any point.
 
 Automated: `cargo fmt`, `cargo clippy --all-targets` (clean), and the
-orchestrator / i18n / dropdown / settings / widget test selection. One new
+orchestrator / i18n / dropdown / settings / widget test selection.
+
+**Two tests in `e2e::keybinding_editor` are flaky under plain `cargo test`** and
+should not be mistaken for fallout from this branch:
+`test_unsaved_changes_confirm_dialog` and `test_confirm_dialog_discard` each
+failed on one run of a broad filter and passed on the next, with a *different*
+one of the pair failing each time; both pass in isolation. They belong to the
+keybinding editor, which nothing here touches. `cargo test` runs the whole suite
+in one process (see CONTRIBUTING on `autotests = false`), so order-dependent
+pairs surface there where `cargo nextest` — which gives each test its own
+process — would not. Noted rather than chased. One new
 regression test, `a_config_alias_is_handed_to_ssh_as_the_alias`, covers F2
 through a PATH shim (`tests/fixtures/fake-ssh-alias-only`) that answers for the
 alias and refuses the resolved target; it hangs in `wait_until` without the fix

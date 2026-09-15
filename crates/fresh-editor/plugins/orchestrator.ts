@@ -3543,6 +3543,18 @@ function buildPreviewEntries(
 // (the dir the editor was started in) and in-place sessions run inside
 // a real checkout, so Archive (which moves the worktree) doesn't apply
 // and Delete simply forgets the session without touching the directory.
+// Is there a worktree for Delete to remove at all?
+//
+// `ownsWorktree` answers it for a local session (and for a discovered on-disk
+// one); a remote session needs the separate test, because the host records no
+// separate project for it. The confirm dialog asks this to decide whether the
+// "also remove the worktree" choice is even meaningful — an in-place or
+// shared-tree session has nothing to remove, and offering the choice there
+// would imply it does.
+function hasRemovableWorktree(s: AgentSession): boolean {
+  return ownsWorktree(s) || looksLikeOurRemoteWorktree(s);
+}
+
 function ownsWorktree(s: AgentSession): boolean {
   // "Has an explicit project that's separate from this session's
   // root" means the session is a worktree of that project — Archive
@@ -3887,11 +3899,29 @@ function buildPreviewPane(s: AgentSession | undefined): WidgetSpec {
 // dialog that already enumerates what the action does, and a list that careful
 // reads as "and nothing else". The branch name is derived, not hard-coded: it
 // carries the same user segment the sync itself will use.
+// The Delete confirmation's "also remove the worktree" choice, for as long as
+// one confirmation is open. It lives here rather than on `pendingConfirm`
+// because the dock's context menu reaches the same pane through
+// `dockMenuState`, and a confirmation is modal — there is never a second one to
+// confuse it with. Both entry points reset it, so it never carries a previous
+// decision into a new dialog.
+let confirmRemoveWorktree = true;
+
+// Does this confirmation have a worktree to offer a choice about? True when
+// any target has one — a mixed bulk selection still gets the checkbox, and the
+// sessions without a worktree simply have nothing for it to do.
+function confirmTouchesWorktree(ids: number[]): boolean {
+  return ids.some((id) => {
+    const s = orchestratorSessions.get(id);
+    return !!s && hasRemovableWorktree(s);
+  });
+}
+
 function syncDisclosureLine(): string {
   return editor.t("confirm.sync_line", { branch: `${deriveSyncUser()}/fresh-sessions` });
 }
 
-function confirmActionLines(action: BulkAction): string[] {
+function confirmActionLines(action: BulkAction, worktree = true): string[] {
   switch (action) {
     case "stop":
       return [
@@ -3915,11 +3945,20 @@ function confirmActionLines(action: BulkAction): string[] {
       // makes an omission read as "this is all that happens" — and the branch
       // outliving the workspace then turns up later as an unexplained ref.
       // Keeping it is the right default; saying nothing about it is not.
+      // **The worktree lines are conditional, because they were not always
+      // true.** An in-place or shared-tree session has no worktree, and a
+      // dialog that still announced `git worktree remove` and a surviving
+      // branch described an action it was not about to take. Now the list says
+      // what will happen to *this* selection: the worktree removed, the
+      // worktree kept, or neither line at all.
       return [
         editor.t("confirm.delete_line1"),
-        editor.t("confirm.delete_line2"),
+        ...(worktree
+          ? confirmRemoveWorktree
+            ? [editor.t("confirm.delete_line2"), editor.t("confirm.delete_line4")]
+            : [editor.t("confirm.delete_keep_worktree")]
+          : []),
         editor.t("confirm.delete_line3"),
-        editor.t("confirm.delete_line4"),
         syncDisclosureLine(),
       ];
   }
@@ -4002,14 +4041,20 @@ function buildConfirmPane(
       ]),
     );
   }
+  const worktree = action === "delete" && confirmTouchesWorktree(existing);
   entries.push(
     styledRow([{ text: "" }]),
     styledRow([{ text: bulk ? editor.t("confirm.for_each") : editor.t("confirm.this_will") }]),
   );
-  for (const line of confirmActionLines(action)) {
+  for (const line of confirmActionLines(action, worktree)) {
     entries.push(styledRow([{ text: line }]));
   }
-  if (action === "delete") {
+  // **Only when files are actually going.** Delete removes nothing on disk for
+  // an in-place session, and nothing when the worktree is being kept, so in
+  // both of those the warning describes a loss that does not happen — and a
+  // warning that cries wolf is worse than none, because the one that matters
+  // stops being read.
+  if (action === "delete" && worktree && confirmRemoveWorktree) {
     entries.push(
       styledRow([{ text: "" }]),
       styledRow([
@@ -4026,6 +4071,19 @@ function buildConfirmPane(
       : editor.t("confirm.label_single", { cap }),
     child: col(
       { kind: "raw", entries },
+      // Only rendered when there is a worktree to remove: on an in-place or
+      // shared-tree session the control would be a switch wired to nothing.
+      // Checked by default, because removing it is what Delete has always
+      // done — this adds a way to keep the files, it does not quietly change
+      // what the button means.
+      ...(worktree
+        ? [
+          spacer(0),
+          toggle(confirmRemoveWorktree, editor.t("confirm.remove_worktree"), {
+            key: "confirm-worktree",
+          }),
+        ]
+        : []),
       spacer(0),
       // wrappingRow so the Cancel / Confirm pair reflows instead of the
       // Confirm button being clipped on a narrow confirmation pane. The
@@ -6182,6 +6240,7 @@ registerHandler("orchestrator_move", openMoveToFolderForCurrent);
 function dockMenuEnterConfirm(action: "archive" | "delete"): void {
   if (!dockMenuPanel || !dockMenuState) return;
   if (dockMenuState.target.kind !== "session") return;
+  confirmRemoveWorktree = true;
   dockMenuState = {
     target: dockMenuState.target,
     anchorCol: dockMenuState.anchorCol,
@@ -7000,7 +7059,14 @@ async function buildSyncSnapshot(repoRoot: string): Promise<unknown> {
 // can always be opened there again). Handles discovered on-disk
 // worktrees (no window to close). Does NOT trigger sync — the caller
 // batches it.
-async function deleteOne(id: number): Promise<LifecycleResult> {
+async function deleteOne(
+  id: number,
+  // Whether to remove the worktree as well as the workspace record. The
+  // confirm dialog offers this as a checkbox; every other caller (the plugin
+  // API, in particular) gets the long-standing behaviour by default, so the
+  // choice cannot leak out of the dialog that asked for it.
+  removeWorktree = true,
+): Promise<LifecycleResult> {
   const s = orchestratorSessions.get(id);
   if (!s) return { ok: false, err: editor.t("err.workspace_gone") };
   const removable = ownsWorktree(s);
@@ -7013,7 +7079,7 @@ async function deleteOne(id: number): Promise<LifecycleResult> {
   // removal has to happen before the teardown below, because that closes the
   // very window this spawn routes through.
   let remoteLeftBehind: string | null = null;
-  if (!s.discovered && id > 0 && looksLikeOurRemoteWorktree(s)) {
+  if (removeWorktree && !s.discovered && id > 0 && looksLikeOurRemoteWorktree(s)) {
     if (id !== editor.activeWindow()) editor.setActiveWindow(id);
     remoteLeftBehind = await removeRemoteWorktree(s);
     if (!orchestratorSessions.has(id)) return { ok: false, err: editor.t("err.workspace_gone") };
@@ -7044,19 +7110,24 @@ async function deleteOne(id: number): Promise<LifecycleResult> {
     const rr = await worktreeRepoRoot(s);
     if (!rr) return { ok: false, err: editor.t("err.not_git_repo") };
     repoRoot = rr;
-    // `--force` because the worktree may have unstaged changes the user
-    // explicitly chose to discard via the confirm step.
-    const removeRes = await spawnCollect(
-      "git",
-      ["-C", rr, "worktree", "remove", "--force", s.root],
-      rr,
-    );
-    if (removeRes.exit_code !== 0) {
-      return {
-        ok: false,
-        err: lastNonEmptyLine(removeRes.stderr) || editor.t("err.worktree_remove_failed"),
-        repoRoot,
-      };
+    // The repo root is resolved either way — the manifest entry below and the
+    // session-list sync both need it — but the removal itself is the part the
+    // user chose.
+    if (removeWorktree) {
+      // `--force` because the worktree may have unstaged changes the user
+      // explicitly chose to discard via the confirm step.
+      const removeRes = await spawnCollect(
+        "git",
+        ["-C", rr, "worktree", "remove", "--force", s.root],
+        rr,
+      );
+      if (removeRes.exit_code !== 0) {
+        return {
+          ok: false,
+          err: lastNonEmptyLine(removeRes.stderr) || editor.t("err.worktree_remove_failed"),
+          repoRoot,
+        };
+      }
     }
 
     // Drop the matching manifest entry too, in case the session was
@@ -7124,13 +7195,16 @@ async function runLifecycleBatch(
   action: "archive" | "delete",
   targets: number[],
   onProgress?: (doneIndex: number, id: number) => void,
+  removeWorktree = true,
 ): Promise<LifecycleBatchResult> {
   const touchedRepos = new Set<string>();
   let okCount = 0;
   let lastErr = "";
   for (let i = 0; i < targets.length; i++) {
     const id = targets[i];
-    const res = action === "archive" ? await archiveOne(id) : await deleteOne(id);
+    const res = action === "archive"
+      ? await archiveOne(id)
+      : await deleteOne(id, removeWorktree);
     if (res.ok) {
       okCount += 1;
       if (res.repoRoot) touchedRepos.add(res.repoRoot);
@@ -7189,6 +7263,9 @@ async function runConfirmedAction(
   }
   refreshOpenDialog();
 
+  // Read the checkbox once, here: the batch below runs across several awaits
+  // and the dialog it came from is already gone.
+  const removeWorktree = action === "delete" ? confirmRemoveWorktree : true;
   const { ok: okCount, lastErr } = await runLifecycleBatch(
     action,
     targets,
@@ -7197,6 +7274,7 @@ async function runConfirmedAction(
       if (openDialog?.bulkInFlight) openDialog.bulkInFlight.done = i + 1;
       refreshOpenDialog();
     },
+    removeWorktree,
   );
   if (openDialog) {
     openDialog.inFlight = null;
@@ -14519,6 +14597,7 @@ function enterConfirm(action: "stop" | "archive" | "delete"): void {
   // live window opens a replacement first (see `ensureReplacementWindow`
   // in `archiveOne` / `deleteOne`). So no eligibility refusal here — just
   // confirm and run.
+  confirmRemoveWorktree = true;
   openDialog.pendingConfirm = { action, ids: [id] };
   openPanel.update(buildOpenSpec());
   openPanel.setFocusKey("confirm-cancel");
@@ -14545,6 +14624,7 @@ function enterBulkConfirm(action: BulkAction): void {
   // All three actions confirm — even Stop, so a bulk Stop over a
   // large selection isn't a single mis-key away. The confirm panel
   // lists the targets and shows the eligible count.
+  confirmRemoveWorktree = true;
   openDialog.pendingConfirm = { action, ids: targets };
   openPanel.update(buildOpenSpec());
   openPanel.setFocusKey("confirm-cancel");
@@ -14646,6 +14726,18 @@ editor.on("widget_event", (e) => {
         openPanel.setFocusKey("sessions");
         refreshOpenDialog();
       }
+      return;
+    }
+    // The confirm pane's "also remove the worktree" checkbox. Handled before
+    // the `activate` narrowing below, because a toggle is its own event type.
+    if (e.event_type === "toggle" && e.widget_key === "confirm-worktree") {
+      const payload = (e.payload ?? {}) as Record<string, unknown>;
+      confirmRemoveWorktree = typeof payload.checked === "boolean"
+        ? payload.checked
+        : !confirmRemoveWorktree;
+      // The consequence list above the checkbox says what it will do, so it
+      // has to be rebuilt with it.
+      renderDockMenu();
       return;
     }
     if (e.event_type === "activate") {
@@ -15414,6 +15506,14 @@ editor.on("widget_event", (e) => {
     }
     if (e.event_type === "activate" && e.widget_key === "confirm-cancel") {
       openDialog.pendingConfirm = null;
+      openPanel.update(buildOpenSpec());
+      return;
+    }
+    if (e.event_type === "toggle" && e.widget_key === "confirm-worktree") {
+      const payload = (e.payload ?? {}) as Record<string, unknown>;
+      confirmRemoveWorktree = typeof payload.checked === "boolean"
+        ? payload.checked
+        : !confirmRemoveWorktree;
       openPanel.update(buildOpenSpec());
       return;
     }
