@@ -261,6 +261,29 @@ pub enum HookArgs {
         /// The locations where the symbol is implemented
         locations: Vec<LspLocation>,
     },
+    /// An LSP `Command` whose name a plugin claimed via
+    /// `registerLspClientCommands` is being run (from a CodeLens click, the
+    /// CodeLens chooser, …). The plugin executes it; the core does not send
+    /// `workspace/executeCommand` for a claimed name.
+    ///
+    /// `arguments` is the command's `arguments` array verbatim, as a JSON
+    /// string — its shape is defined by whichever server produced it, not by
+    /// LSP, so the core passes it through untouched (cf. `LspServerRequest`).
+    ///
+    /// Fired only when the name is registered, so a plugin that claims a
+    /// name owns it: errors and user feedback are the plugin's to report.
+    LspExecuteCommand {
+        /// The command name (e.g. `rust-analyzer.runSingle`).
+        command: String,
+        /// The command's `arguments` array as a JSON string, if it had one.
+        arguments: Option<String>,
+        /// The buffer whose CodeLens produced the command.
+        buffer_id: BufferId,
+        /// The language of that buffer (e.g. `rust`).
+        language: String,
+        /// Human-readable lens title, for messages the plugin surfaces.
+        title: String,
+    },
 
     /// An LSP navigation (go-to-definition, …) resolved to a non-`file://`
     /// URI whose scheme a plugin claimed via `registerLspUriScheme`. The

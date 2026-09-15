@@ -6461,6 +6461,21 @@ impl JsEditorApi {
             .is_ok()
     }
 
+    /// Claim an LSP client command (e.g. "rust-analyzer.runSingle") — a
+    /// `Command` the server hands back for the *client* to execute, whose
+    /// meaning LSP does not define. Claimed commands are advertised to
+    /// servers at `initialize` (`experimental.commands.commands`, which is
+    /// what makes rust-analyzer emit its runnable CodeLens entries), and
+    /// running one is routed to the `lsp_execute_command` hook instead of
+    /// `workspace/executeCommand`. Claim the whole set in one call: LSP
+    /// cannot amend capabilities after `initialize`, so a claim arriving
+    /// after a server started makes the core restart it to re-handshake.
+    pub fn register_lsp_client_commands(&self, commands: Vec<String>) -> bool {
+        self.command_sender
+            .send(PluginCommand::RegisterLspClientCommands { commands })
+            .is_ok()
+    }
+
     /// Mark the buffer backing `path` read-only. Race-free right after
     /// `openFile` because both are FIFO commands.
     pub fn mark_file_read_only(&self, path: String) -> bool {

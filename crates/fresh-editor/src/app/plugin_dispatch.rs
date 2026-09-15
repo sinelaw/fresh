@@ -1608,6 +1608,11 @@ impl Editor {
                 self.lsp_uri_schemes.insert(scheme);
             }
 
+            PluginCommand::RegisterLspClientCommands { commands } => {
+                tracing::debug!("Plugin registered LSP client commands: {:?}", commands);
+                self.handle_register_lsp_client_commands(commands);
+            }
+
             PluginCommand::MarkBufferReadOnly { path } => {
                 self.handle_mark_buffer_read_only(path);
             }
@@ -6286,6 +6291,37 @@ impl Editor {
                 Some(format!("LSP disabled for {}", language));
         }
         self.active_window_mut().warning_domains.lsp.clear();
+    }
+
+    /// Record a plugin's claim on LSP client commands, restarting any server
+    /// that already handshook without them.
+    ///
+    /// The restart is not optional bookkeeping: client capabilities are sent
+    /// once, in `initialize`, and LSP provides no way to amend them
+    /// afterwards. A server that started before the claim would therefore
+    /// never learn of it — and some servers gate what they send on exactly
+    /// this list (rust-analyzer emits no runnable CodeLens for commands the
+    /// client did not declare), so the feature would silently not appear.
+    ///
+    /// Plugins load on a background thread, so a server autostarted while a
+    /// file opens really can win that race. In the common case nothing is
+    /// running yet and this is a no-op.
+    fn handle_register_lsp_client_commands(&mut self, commands: Vec<String>) {
+        if !crate::services::lsp::client_commands::register_all(commands) {
+            return; // nothing new — every claim was already known
+        }
+
+        let running = self
+            .lsp()
+            .map(|lsp| lsp.running_servers())
+            .unwrap_or_default();
+        for language in running {
+            tracing::info!(
+                "Restarting LSP for '{}' so it re-handshakes with the newly claimed client commands",
+                language
+            );
+            self.handle_restart_lsp_for_language(language);
+        }
     }
 
     fn handle_restart_lsp_for_language(&mut self, language: String) {

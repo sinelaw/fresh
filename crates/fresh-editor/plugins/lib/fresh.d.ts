@@ -4769,6 +4769,18 @@ interface EditorAPI {
 	*/
 	registerLspUriScheme(scheme: string): boolean;
 	/**
+	* Claim an LSP client command (e.g. "rust-analyzer.runSingle") — a
+	* `Command` the server hands back for the *client* to execute, whose
+	* meaning LSP does not define. Claimed commands are advertised to
+	* servers at `initialize` (`experimental.commands.commands`, which is
+	* what makes rust-analyzer emit its runnable CodeLens entries), and
+	* running one is routed to the `lsp_execute_command` hook instead of
+	* `workspace/executeCommand`. Claim the whole set in one call: LSP
+	* cannot amend capabilities after `initialize`, so a claim arriving
+	* after a server started makes the core restart it to re-handshake.
+	*/
+	registerLspClientCommands(commands: string[]): boolean;
+	/**
 	* Mark the buffer backing `path` read-only. Race-free right after
 	* `openFile` because both are FIFO commands.
 	*/
@@ -5744,6 +5756,24 @@ interface HookEventMap {
 		has_error: boolean;
 		missing_servers: string[];
 		user_dismissed: boolean;
+	};
+	/**
+	* An LSP `Command` whose name this plugin claimed via
+	* `registerLspClientCommands` is being run (a CodeLens click, the
+	* CodeLens chooser, ...). The core sends nothing to the server for a
+	* claimed name, so executing it — and reporting success or failure to
+	* the user — belongs entirely to the plugin.
+	*
+	* `arguments` is the command's `arguments` array as a JSON string. Its
+	* shape is defined by whichever server produced it rather than by LSP,
+	* so it is passed through untouched (cf. `lsp_server_request.params`).
+	*/
+	lsp_execute_command: {
+		command: string;
+		arguments: string | null;
+		buffer_id: number;
+		language: string;
+		title: string;
 	};
 	// ── UI events ────────────────────────────────────────────────────────────
 	action_popup_result: {

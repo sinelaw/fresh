@@ -12,10 +12,7 @@
 
 use anyhow::Result as AnyhowResult;
 use fresh_i18n::t;
-use serde::Deserialize;
-use std::collections::BTreeMap;
 use std::io;
-use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use crate::app::window::LspCompletionCandidate;
@@ -102,100 +99,6 @@ fn lsp_range_overlaps(
 
 const SEMANTIC_TOKENS_RANGE_DEBOUNCE_MS: u64 = 50;
 const SEMANTIC_TOKENS_RANGE_PADDING_LINES: usize = 10;
-
-const RUST_ANALYZER_RUN_SINGLE: &str = "rust-analyzer.runSingle";
-const RUST_ANALYZER_DEBUG_SINGLE: &str = "rust-analyzer.debugSingle";
-
-#[derive(Debug, Deserialize)]
-struct RustAnalyzerRunnable {
-    label: String,
-    #[serde(flatten)]
-    kind: RustAnalyzerRunnableKind,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(tag = "kind", content = "args", rename_all = "lowercase")]
-enum RustAnalyzerRunnableKind {
-    Cargo(RustAnalyzerCargoArgs),
-    Shell(RustAnalyzerShellArgs),
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct RustAnalyzerCargoArgs {
-    #[serde(default)]
-    environment: BTreeMap<String, String>,
-    cwd: PathBuf,
-    override_cargo: Option<String>,
-    workspace_root: Option<PathBuf>,
-    cargo_args: Vec<String>,
-    executable_args: Vec<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct RustAnalyzerShellArgs {
-    #[serde(default)]
-    environment: BTreeMap<String, String>,
-    cwd: PathBuf,
-    program: String,
-    args: Vec<String>,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-struct CodeLensTask {
-    label: String,
-    cwd: PathBuf,
-    command: Vec<String>,
-    environment: Vec<(String, String)>,
-}
-
-fn rust_analyzer_code_lens_task(command: &lsp_types::Command) -> Result<CodeLensTask, String> {
-    let runnable_value = command
-        .arguments
-        .as_ref()
-        .and_then(|arguments| arguments.first())
-        .ok_or_else(|| "rust-analyzer runnable command has no arguments".to_string())?;
-    let runnable: RustAnalyzerRunnable = serde_json::from_value(runnable_value.clone())
-        .map_err(|error| format!("invalid rust-analyzer runnable: {error}"))?;
-
-    match runnable.kind {
-        RustAnalyzerRunnableKind::Cargo(args) => {
-            let mut cargo = args
-                .override_cargo
-                .as_deref()
-                .unwrap_or("cargo")
-                .split_whitespace()
-                .map(str::to_string)
-                .collect::<Vec<_>>();
-            if cargo.is_empty() {
-                cargo.push("cargo".to_string());
-            }
-            cargo.extend(args.cargo_args);
-            if !args.executable_args.is_empty() {
-                cargo.push("--".to_string());
-                cargo.extend(args.executable_args);
-            }
-            Ok(CodeLensTask {
-                label: runnable.label,
-                cwd: args.workspace_root.unwrap_or(args.cwd),
-                command: cargo,
-                environment: args.environment.into_iter().collect(),
-            })
-        }
-        RustAnalyzerRunnableKind::Shell(args) => {
-            let mut command = Vec::with_capacity(args.args.len() + 1);
-            command.push(args.program);
-            command.extend(args.args);
-            Ok(CodeLensTask {
-                label: runnable.label,
-                cwd: args.cwd,
-                command,
-                environment: args.environment.into_iter().collect(),
-            })
-        }
-    }
-}
 
 fn code_lens_command_at_column(
     state: &crate::state::EditorState,
@@ -3896,21 +3799,33 @@ impl Editor {
             command.command
         );
         let title = command.title.clone();
-        let result = match command.command.as_str() {
-            RUST_ANALYZER_RUN_SINGLE => self.execute_rust_analyzer_runnable(&command),
-            RUST_ANALYZER_DEBUG_SINGLE => Err(
-                "Fresh does not currently provide a debugger for rust-analyzer CodeLens"
-                    .to_string(),
-            ),
-            _ => {
-                let command_id = command.command.clone();
-                let arguments = command.arguments.clone();
-                self.with_lsp_for_buffer(buffer_id, LspFeature::CodeLens, |handle, _, _| {
-                    handle.execute_command(command_id, arguments)
-                })
-                .unwrap_or_else(|| Err("no CodeLens-capable LSP server".to_string()))
+
+        // A `Command` the server did not advertise in `executeCommandProvider`
+        // is the client's to interpret, and LSP says nothing about what any
+        // such command means — its `arguments` are that server's own
+        // extension. So the core interprets none of them: a plugin claims the
+        // name (`registerLspClientCommands`) and receives it here. Sending a
+        // claimed name to the server instead would just be rejected, since the
+        // server never offered to run it.
+        if crate::services::lsp::client_commands::is_registered(&command.command) {
+            // The plugin owns the outcome *and* the reporting of it: the hook
+            // is fire-and-forget, so a success message here would be claiming
+            // something the core never observes. Only a failure to hand the
+            // command over is ours to report.
+            if let Err(error) = self.dispatch_client_lsp_command(buffer_id, &command) {
+                tracing::warn!("Failed to dispatch code lens '{}': {}", title, error);
+                self.set_status_message(t!("lsp.code_lens_failed", title = &title).to_string());
             }
-        };
+            return;
+        }
+
+        let command_id = command.command.clone();
+        let arguments = command.arguments.clone();
+        let result = self
+            .with_lsp_for_buffer(buffer_id, LspFeature::CodeLens, |handle, _, _| {
+                handle.execute_command(command_id, arguments)
+            })
+            .unwrap_or_else(|| Err("no CodeLens-capable LSP server".to_string()));
 
         if result.is_ok() {
             self.set_status_message(t!("lsp.code_lens_executed", title = &title).to_string());
@@ -3922,35 +3837,45 @@ impl Editor {
         }
     }
 
-    fn execute_rust_analyzer_runnable(
+    /// Hand a plugin-claimed LSP command to its plugin.
+    ///
+    /// Hooks are fire-and-forget, so this reports only that the command was
+    /// dispatched; whether the work succeeded — and telling the user when it
+    /// did not — belongs to the plugin that claimed the name.
+    fn dispatch_client_lsp_command(
         &mut self,
+        buffer_id: BufferId,
         command: &lsp_types::Command,
     ) -> Result<(), String> {
-        let task = rust_analyzer_code_lens_task(command)?;
-        let previous_buffer = self.active_buffer();
-        let (_, buffer_id, _) = self.active_window_mut().create_plugin_terminal(
-            crate::app::terminal::PluginTerminalSpec {
-                cwd: Some(task.cwd),
-                direction: None,
-                ratio: None,
-                focus: true,
-                persistent: false,
-                command: Some(task.command),
-                environment: task.environment,
-                title: Some(task.label),
-                env: std::collections::HashMap::new(),
-            },
-        )?;
+        // Passed through as JSON rather than parsed: the shape is defined by
+        // whichever server produced it (cf. the `lsp_server_request` hook).
+        let arguments = match command.arguments.as_ref() {
+            Some(arguments) => Some(
+                serde_json::to_string(arguments)
+                    .map_err(|error| format!("could not serialize command arguments: {error}"))?,
+            ),
+            None => None,
+        };
+        let language = self
+            .buffers()
+            .get(&buffer_id)
+            .map(|state| state.language.clone())
+            .unwrap_or_default();
 
-        if previous_buffer != buffer_id {
-            #[cfg(feature = "plugins")]
-            self.update_plugin_state_snapshot();
-            #[cfg(feature = "plugins")]
-            self.plugin_manager.read().unwrap().run_hook(
-                "buffer_activated",
-                crate::services::plugins::hooks::HookArgs::BufferActivated { buffer_id },
-            );
-        }
+        tracing::info!(
+            "Dispatching client LSP command '{}' to its plugin",
+            command.command
+        );
+        self.plugin_manager.read().unwrap().run_hook(
+            "lsp_execute_command",
+            crate::services::plugins::hooks::HookArgs::LspExecuteCommand {
+                command: command.command.clone(),
+                arguments,
+                buffer_id,
+                language,
+                title: command.title.clone(),
+            },
+        );
         Ok(())
     }
 
@@ -4416,11 +4341,7 @@ mod tests {
     fn test_fs() -> Arc<dyn crate::model::filesystem::FileSystem + Send + Sync> {
         Arc::new(StdFileSystem)
     }
-    use super::{
-        code_lens_command_at_column, lsp_range_contains, lsp_range_overlaps,
-        rust_analyzer_code_lens_task, CodeLensTask, Editor, RUST_ANALYZER_RUN_SINGLE,
-    };
-    use std::path::PathBuf;
+    use super::{code_lens_command_at_column, lsp_range_contains, lsp_range_overlaps, Editor};
 
     fn range(sl: u32, sc: u32, el: u32, ec: u32) -> lsp_types::Range {
         lsp_types::Range {
@@ -4743,67 +4664,6 @@ mod tests {
                 .query_lines_in_range(&state.marker_list, 0, state.buffer.len());
         assert_eq!(lines[0].1.text, "    Run");
         assert_eq!(lines[0].1.text_overlays[0].start, 4);
-    }
-
-    #[test]
-    fn rust_analyzer_run_single_builds_terminal_task() {
-        let command = Command {
-            title: "Run".to_string(),
-            command: RUST_ANALYZER_RUN_SINGLE.to_string(),
-            arguments: Some(vec![serde_json::json!({
-                "label": "run bin fresh-demo",
-                "kind": "cargo",
-                "args": {
-                    "environment": { "RUST_BACKTRACE": "1" },
-                    "cwd": "/workspace/crate",
-                    "workspaceRoot": "/workspace",
-                    "overrideCargo": "cargo +nightly",
-                    "cargoArgs": ["run", "--bin", "fresh-demo"],
-                    "executableArgs": ["--verbose"]
-                }
-            })]),
-        };
-
-        let task = rust_analyzer_code_lens_task(&command).unwrap();
-        assert_eq!(
-            task,
-            CodeLensTask {
-                label: "run bin fresh-demo".to_string(),
-                cwd: PathBuf::from("/workspace"),
-                command: vec![
-                    "cargo".to_string(),
-                    "+nightly".to_string(),
-                    "run".to_string(),
-                    "--bin".to_string(),
-                    "fresh-demo".to_string(),
-                    "--".to_string(),
-                    "--verbose".to_string(),
-                ],
-                environment: vec![("RUST_BACKTRACE".to_string(), "1".to_string())],
-            }
-        );
-    }
-
-    #[test]
-    fn rust_analyzer_shell_runnable_builds_terminal_task() {
-        let command = Command {
-            title: "Run".to_string(),
-            command: RUST_ANALYZER_RUN_SINGLE.to_string(),
-            arguments: Some(vec![serde_json::json!({
-                "label": "run shell task",
-                "kind": "shell",
-                "args": {
-                    "environment": {},
-                    "cwd": "/workspace",
-                    "program": "./script",
-                    "args": ["one", "two"]
-                }
-            })]),
-        };
-
-        let task = rust_analyzer_code_lens_task(&command).unwrap();
-        assert_eq!(task.command, ["./script", "one", "two"]);
-        assert_eq!(task.cwd, PathBuf::from("/workspace"));
     }
 
     #[test]
