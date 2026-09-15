@@ -8170,6 +8170,18 @@ function sessionNameBaseFor(repoRoot: string): string {
   return slug.length > 0 ? slug : "session";
 }
 
+// Advance the persisted counter past `name` when it is one of this project's
+// `<base>-N` auto-names. Idempotent and monotonic: a name the user typed, or
+// one from another project, leaves the counter alone, and a re-submit of the
+// same name cannot walk it backwards.
+function claimAutoSessionName(name: string): void {
+  const m = /-(\d+)$/.exec(name);
+  if (!m) return;
+  const n = parseInt(m[1], 10);
+  const cur = (editor.getGlobalState("orchestrator.session_counter") as number | undefined) ?? 0;
+  if (n > cur) editor.setGlobalState("orchestrator.session_counter", n);
+}
+
 async function nextAutoSessionName(
   repoRoot: string,
   options?: { persist?: boolean },
@@ -12703,6 +12715,18 @@ async function submitForm(visit: boolean): Promise<void> {
   // now, and whatever ran is what the next form opens on — by option key,
   // since most options (an ssh-config host, Kubernetes) have no machine id.
   rememberMachineFromForm(form);
+  // Claim a remote workspace's auto-generated name so the *next* dialog does
+  // not propose it again. A local create derives its own name at create time
+  // and advances the counter there (`runLocalCreate`, which also pins the
+  // result back into the spec so a retry targets the same worktree); a remote
+  // create baked the name in at capture, so nothing downstream advances
+  // anything. That left an ssh workspace holding `<project>-2` with the
+  // counter still at 1, and the following dialog offered `<project>-2` again.
+  // The branch scan that backs the counter up cannot cover it either — a
+  // worktree cut on another machine leaves no ref in this repository.
+  if (captured.spec.backend === "ssh" && captured.spec.remoteWorktree) {
+    claimAutoSessionName(captured.spec.remoteWorktree.name);
+  }
   const picked = machineOptions()[form.machinePick];
   editor.setGlobalState(
     "orchestrator.last_machine",
