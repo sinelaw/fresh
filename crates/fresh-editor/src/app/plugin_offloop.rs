@@ -29,19 +29,22 @@ use crate::services::runtime::LiveRuntime;
 
 /// Capability handle for plugin work that must not run on the editor thread.
 ///
-/// Holds exactly the authority a handler needs — a filesystem, a runtime to
-/// run on, and the return path to the main loop. Notably absent: anything
-/// that can read or mutate editor state.
+/// Holds exactly the authority a handler needs — a filesystem and the return
+/// path to the main loop. Notably absent: anything that can read or mutate
+/// editor state, and — deliberately — the runtime.
+///
+/// The capability is moved *into* the spawned task, and an owning
+/// [`LiveRuntime`] in here would therefore keep the runtime up for as long as
+/// the task runs. Nothing cancels off-loop work at teardown (there is no
+/// `Drop for Editor`, and nobody trips `grep_project_cancel`), so the editor's
+/// runtime being dropped is the only thing that stops an in-flight
+/// `grepProject`: keep it here and a project-wide grep would carry on against
+/// a filesystem and an `async_bridge` nobody is reading, one request timeout
+/// per file, holding the old runtime's threads alive across an editor rebuild.
+/// The runtime is passed to the entry points below instead, which is all that
+/// is needed to prove it is alive at the moment of spawning.
 pub(crate) struct OffLoop {
     pub filesystem: Arc<dyn FileSystem + Send + Sync>,
-    /// An owning reference, so the runtime cannot be shut down while a
-    /// handler still has work to put on it. This used to be a bare `Handle`
-    /// precisely because it travels into the spawned task, so the last
-    /// reference can be dropped on a runtime worker whenever a task outlives
-    /// the editor's own — which is exactly what quitting does — and dropping
-    /// the last `Arc<Runtime>` from inside the runtime panics. `LiveRuntime`
-    /// makes that drop safe from anywhere, so the ownership can come back.
-    pub runtime: LiveRuntime,
     pub sender: std::sync::mpsc::Sender<AsyncMessage>,
 }
 
@@ -92,8 +95,7 @@ pub(crate) struct GrepProjectRequest {
 /// Concurrency is capped so a plugin looping on `grepProject` cannot saturate
 /// the runtime, and every stage re-checks `cancel` so a superseded request
 /// stops doing work instead of running to completion.
-pub(crate) fn grep_project(cap: OffLoop, req: GrepProjectRequest) {
-    let runtime = cap.runtime.clone();
+pub(crate) fn grep_project(runtime: &LiveRuntime, cap: OffLoop, req: GrepProjectRequest) {
     runtime.spawn(async move {
         let GrepProjectRequest {
             pattern,
@@ -318,10 +320,9 @@ pub(crate) struct BaselineLoadRequest {
 /// Load a baseline's reference content (filesystem read or `git show` on
 /// the window's authority), install it in the shared store, and settle the
 /// plugin's promise. Runs on the tokio runtime.
-pub(crate) fn load_diff_baseline(cap: OffLoop, req: BaselineLoadRequest) {
+pub(crate) fn load_diff_baseline(runtime: &LiveRuntime, cap: OffLoop, req: BaselineLoadRequest) {
     use crate::app::diff_baselines::{BaselineContent, BaselineSpec};
 
-    let runtime = cap.runtime.clone();
     runtime.spawn(async move {
         let text: Result<String, String> = match &req.spec {
             // Saved baselines never load content; the editor thread
@@ -458,9 +459,9 @@ mod tests {
         let runtime = LiveRuntime::multi_thread("offloop-test", 2).unwrap();
         let (tx, rx) = std::sync::mpsc::channel();
         grep_project(
+            &runtime,
             OffLoop {
                 filesystem: Arc::new(StdFileSystem),
-                runtime: runtime.clone(),
                 sender: tx,
             },
             GrepProjectRequest {
@@ -496,17 +497,18 @@ mod tests {
         );
     }
 
-    /// A baseline load settles even after the editor has let go of the
-    /// runtime, which is what quitting under load looks like: the editor
-    /// releases its reference while the load is still in flight, leaving the
-    /// task's own [`OffLoop`] the only thing holding the runtime up. Then the
-    /// final drop lands on a worker thread, and dropping a runtime from
-    /// inside one ordinarily panics with "Cannot drop a runtime in a context
-    /// where blocking is not allowed" — [`LiveRuntime`] is what makes it safe,
-    /// and why the capability can own the runtime rather than borrow a bare
-    /// `Handle` and hope the editor outlives it.
+    /// A baseline load settles, and the work it spawned holds no owning
+    /// reference to the runtime it spawned onto.
+    ///
+    /// That second half is the load-bearing one: off-loop work is never
+    /// cancelled explicitly — there is no `Drop for Editor` and nothing trips
+    /// `grep_project_cancel` at teardown — so the editor's runtime being
+    /// dropped is the only thing that stops an in-flight `grepProject`. A
+    /// capability that owned its runtime would keep that grep running against
+    /// an `async_bridge` nobody is reading, and keep the old runtime's threads
+    /// alive across an editor rebuild.
     #[test]
-    fn baseline_load_settles_after_the_editor_drops_the_runtime() {
+    fn baseline_load_settles_and_leaves_the_runtime_unowned() {
         use crate::app::diff_baselines::{BaselineEntry, BaselineSpec, BaselineStore};
         use crate::services::env_provider::EnvProvider;
         use crate::services::remote::LocalProcessSpawner;
@@ -530,9 +532,9 @@ mod tests {
         );
 
         load_diff_baseline(
+            &runtime,
             OffLoop {
                 filesystem: Arc::new(StdFileSystem),
-                runtime: runtime.clone(),
                 sender: tx,
             },
             BaselineLoadRequest {
@@ -548,10 +550,13 @@ mod tests {
             },
         );
 
-        // The editor is gone: the in-flight task's own clone is the only
-        // thing keeping the runtime up now, and its drop — on a worker thread,
-        // once the load settles — is the one that shuts the runtime down.
-        drop(runtime);
+        assert_eq!(
+            runtime.live_clones(),
+            1,
+            "off-loop work must not hold an owning reference to the runtime: a \
+             task outliving the editor's own reference would keep the runtime \
+             up and keep working into a bridge nobody is reading"
+        );
 
         let result = match rx.recv().expect("the load must settle exactly once") {
             AsyncMessage::Plugin(PluginAsyncMessage::OffLoopSettled { result, .. }) => result,

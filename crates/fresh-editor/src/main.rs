@@ -2,9 +2,6 @@
 // from Explorer / a Start-Menu shortcut does not flash a console window.
 // The TUI build (no `gui` feature) keeps the default "console" subsystem.
 #![cfg_attr(all(windows, feature = "gui"), windows_subsystem = "windows")]
-// Same runtime-ownership rule as the library (see `clippy.toml`): a bare
-// `tokio::runtime::Handle` keeps nothing alive, so hold a `LiveRuntime`.
-#![deny(clippy::disallowed_types, clippy::disallowed_methods)]
 #[cfg(all(windows, feature = "gui"))]
 use windows_sys::Win32::System::Console::{AttachConsole, ATTACH_PARENT_PROCESS};
 

@@ -30,6 +30,15 @@ default-members = [
     "crates/fresh-i18n",
 ]
 
+# A bare `tokio::runtime::Handle` keeps nothing alive, so a runtime can be shut
+# down underneath one (#3299). Denied workspace-wide, and inherited by every
+# member via `[lints] workspace = true`, so the rule reaches integration-test
+# crates too — which a crate-root `#![deny]` cannot. See `clippy.toml` for what
+# to hold instead and for the few places a borrowed `Handle` is still right.
+[workspace.lints.clippy]
+disallowed_types = "deny"
+disallowed_methods = "deny"
+
 [workspace.package]
 version = "0.5.1"
 authors = ["Noam Lewis"]

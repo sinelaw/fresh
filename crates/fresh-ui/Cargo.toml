@@ -29,3 +29,6 @@ proptest = "1.9"
 # The interactive example's terminal backend. A dev-dependency, so it is
 # compiled for examples and tests and never for the library.
 crossterm.workspace = true
+
+[lints]
+workspace = true

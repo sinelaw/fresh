@@ -129,6 +129,16 @@ impl LiveRuntime {
         self.0.get().enter()
     }
 
+    /// How many clones of this `LiveRuntime` exist, this one included.
+    ///
+    /// Test-only, and only meaningful to a test that controls every clone:
+    /// it is what lets `plugin_offloop` assert that off-loop work does not
+    /// hold an owning reference to the editor's runtime.
+    #[cfg(test)]
+    pub(crate) fn live_clones(&self) -> usize {
+        Arc::strong_count(&self.0)
+    }
+
     /// A borrowed `Handle`, for the APIs that insist on one.
     ///
     /// The `Handle` keeps nothing alive, so only hand one to something whose
@@ -160,10 +170,11 @@ mod tests {
 
     #[test]
     fn dropping_the_last_clone_from_inside_a_task_does_not_panic() {
-        // The case `plugin_offloop` used to avoid by holding a bare `Handle`:
-        // a task outlives the editor's own reference, so the *final* drop
-        // lands on a worker thread. A plain `Arc<Runtime>` panics there with
-        // "Cannot drop a runtime in a context where blocking is not allowed".
+        // The contract that lets a `LiveRuntime` be held from anywhere: a
+        // task outlives every other reference, so the *final* drop lands on a
+        // worker thread. A plain `Arc<Runtime>` panics there with "Cannot drop
+        // a runtime in a context where blocking is not allowed", which is why
+        // callers used to have to make do with a bare `Handle`.
         let rt = LiveRuntime::multi_thread("test-live-drop", 1).expect("build runtime");
         let (started_tx, started_rx) = std::sync::mpsc::channel();
         let (go_tx, go_rx) = std::sync::mpsc::channel::<()>();

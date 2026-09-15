@@ -1,8 +1,4 @@
 #![deny(clippy::let_underscore_must_use)]
-// A bare `tokio::runtime::Handle` keeps nothing alive, so a runtime can be
-// shut down under one; see `clippy.toml` for what to hold instead and for the
-// few places a borrowed `Handle` is still the right parameter.
-#![deny(clippy::disallowed_types, clippy::disallowed_methods)]
 
 // Editor library - exposes all core modules for testing
 

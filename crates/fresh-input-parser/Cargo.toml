@@ -20,3 +20,6 @@ tracing.workspace = true
 
 [dev-dependencies]
 proptest = "1.9"
+
+[lints]
+workspace = true

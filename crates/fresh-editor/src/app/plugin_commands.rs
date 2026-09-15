@@ -3141,9 +3141,9 @@ impl Editor {
         callback_id: JsCallbackId,
         is_registration: bool,
     ) {
-        // An owning clone — see `OffLoop::runtime`: the capability rides into
-        // the spawned task, so the runtime has to stay up for as long as the
-        // task does, and `LiveRuntime` is safe to drop from the worker.
+        // Held here, not inside the capability — see `OffLoop`: the capability
+        // rides into the spawned task, and an owning runtime in there would
+        // keep the work running after the editor has gone.
         let Some(runtime) = self.tokio_runtime.clone() else {
             self.plugin_manager
                 .read()
@@ -3159,9 +3159,9 @@ impl Editor {
             return;
         };
         super::plugin_offloop::load_diff_baseline(
+            &runtime,
             super::plugin_offloop::OffLoop {
                 filesystem: self.authority().filesystem.clone(),
-                runtime,
                 sender,
             },
             super::plugin_offloop::BaselineLoadRequest {
@@ -3461,9 +3461,9 @@ impl Editor {
             clean_buffers.insert(path, *bid);
         }
 
-        // An owning clone — see `OffLoop::runtime`: the capability rides into
-        // the spawned task, so the runtime has to stay up for as long as the
-        // task does, and `LiveRuntime` is safe to drop from the worker.
+        // Held here, not inside the capability — see `OffLoop`: the capability
+        // rides into the spawned task, and an owning runtime in there would
+        // keep the work running after the editor has gone.
         let Some(runtime) = self.tokio_runtime.clone() else {
             self.plugin_manager
                 .read()
@@ -3495,9 +3495,9 @@ impl Editor {
             .insert(plugin_name, Arc::clone(&cancel));
 
         super::plugin_offloop::grep_project(
+            &runtime,
             super::plugin_offloop::OffLoop {
                 filesystem: self.authority().filesystem.clone(),
-                runtime,
                 sender,
             },
             super::plugin_offloop::GrepProjectRequest {
