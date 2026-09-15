@@ -157,7 +157,7 @@ pub struct WindowResources {
     /// Tokio runtime for async I/O tasks (LSP, file watchers, git, etc.).
     /// Single runtime shared across all windows via `Arc`. `None` means
     /// the editor was constructed without async support (rare).
-    pub tokio_runtime: Option<Arc<tokio::runtime::Runtime>>,
+    pub tokio_runtime: Option<crate::services::runtime::LiveRuntime>,
 
     /// Async-message bridge (Sender + Arc'd Receiver). Windows clone this
     /// to publish messages back to the editor's main loop. The Receiver

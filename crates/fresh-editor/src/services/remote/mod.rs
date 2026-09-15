@@ -11,6 +11,7 @@ mod spawner;
 mod transport;
 
 pub use channel::AgentChannel;
+pub use channel::ChannelError;
 /// Test-only global: microseconds to sleep per chunk in the consumer loop.
 /// Defaults to 0 (no delay). Set non-zero from tests to simulate slow consumers.
 #[doc(hidden)]

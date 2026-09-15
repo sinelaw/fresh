@@ -1267,7 +1267,7 @@ pub(crate) fn build_window_lsp(
     // No runtime means async features are disabled (matches the
     // historical base-window path when the tokio runtime fails to build).
     if let Some(runtime) = resources.tokio_runtime.as_ref() {
-        lsp.set_runtime(runtime.handle().clone(), bridge.clone());
+        lsp.set_runtime(runtime.clone(), bridge.clone());
     }
 
     // Wire the LSP backend from the window's authority at construction:

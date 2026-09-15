@@ -8,7 +8,7 @@
 
 use fresh::services::remote::{
     spawn_local_agent_transport, spawn_reconnect_task_with, AgentChannel, AgentResponse,
-    ReconnectConfig,
+    ChannelError, ReconnectConfig,
 };
 use std::sync::Arc;
 use std::time::Duration;
@@ -589,4 +589,142 @@ fn test_request_blocking_within_runtime_does_not_panic() {
         result.is_err(),
         "disconnected channel should return an error, not panic"
     );
+}
+
+/// Build a channel over an in-memory duplex transport whose read/write tasks
+/// ride on `transport_rt`, and hand back the far end of the pipe so a test can
+/// observe what the channel actually sent.
+///
+/// Deliberately not a child process: the test needs to know *exactly* when a
+/// request has reached the far end, and reading it off the pipe is the only
+/// way to know that without sleeping.
+fn duplex_channel_on(
+    transport_rt: &tokio::runtime::Runtime,
+) -> (Arc<AgentChannel>, tokio::io::DuplexStream) {
+    let (client, server) = tokio::io::duplex(64 * 1024);
+    let (reader, writer) = tokio::io::split(client);
+    // `from_transport` spawns the read/write tasks, so it must run inside the
+    // runtime that is meant to own them.
+    let channel = transport_rt.block_on(async {
+        AgentChannel::from_transport(BufReader::new(reader), writer, 64)
+    });
+    (Arc::new(channel), server)
+}
+
+/// A runtime for the test's own side of the pipe, so observing the transport
+/// never depends on the runtime under test.
+fn observer_rt() -> tokio::runtime::Runtime {
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+}
+
+/// Test: a blocking request issued after the runtime the channel's transport
+/// tasks ride on has been shut down fails promptly, and says the channel is
+/// closed.
+///
+/// A contract test, not the repro: it already held before #3299 was fixed,
+/// because the submit fails on the write half before any timer is polled.
+/// What it pins is that the settled post-teardown state stays a prompt
+/// `ChannelClosed` — every call after the first one takes this path — rather
+/// than a hang or a panic. `test_transport_runtime_shutdown_mid_request_
+/// errors_not_panics` below is the one that reproduces the panic.
+#[test]
+fn test_blocking_request_after_transport_runtime_shutdown_errors_not_panics() {
+    let transport_rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    let (channel, _server) = duplex_channel_on(&transport_rt);
+
+    // A should-succeed timeout: this assertion is about *not panicking*, and a
+    // short deadline would let a regression pass as a plain timeout instead.
+    arm_happy_path(&channel);
+
+    // The session goes away: keepalive dropped, runtime with it.
+    drop(transport_rt);
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        channel.request_blocking("stat", serde_json::json!({ "path": "/tmp" }))
+    }));
+
+    match result {
+        Err(_) => panic!(
+            "request_blocking panicked after the transport runtime was shut down \
+             — blocking calls must not be driven on a runtime that can be torn \
+             down under them"
+        ),
+        Ok(Ok(_)) => panic!("request unexpectedly succeeded with no transport tasks left"),
+        Ok(Err(e)) => assert!(
+            matches!(e, ChannelError::ChannelClosed),
+            "expected the channel to report itself closed, got {e}"
+        ),
+    }
+}
+
+/// Test: the transport runtime being shut down *while a blocking request is in
+/// flight* must fail that request, not panic on the calling thread.
+///
+/// The repro for #3299, and the reported sequence: the git-index resolver was
+/// parked in a remote `metadata` call on a background thread when the SSH
+/// workspace was deleted from the Orchestrator dock, and polling the
+/// request's timeout `Sleep` on the runtime the keepalive had just dropped
+/// panicked with "A Tokio 1.x context was found, but it is being shutdown.".
+/// Waiting for the far end to see the request is what makes the teardown
+/// genuinely mid-flight; without that the submit just fails and the timer is
+/// never reached.
+#[test]
+fn test_transport_runtime_shutdown_mid_request_errors_not_panics() {
+    let transport_rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    let (channel, mut server) = duplex_channel_on(&transport_rt);
+
+    // Nothing ever answers on `server`, so the request parks on its result
+    // until the teardown below reaches it. The deadline is only a backstop
+    // against hanging CI: the assertion below insists the request failed
+    // *because the carrier went away*, not because it ran out of time.
+    arm_intentional_timeout(&channel);
+
+    let requester = {
+        let channel = Arc::clone(&channel);
+        std::thread::spawn(move || {
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                channel.request_blocking("stat", serde_json::json!({ "path": "/tmp" }))
+            }))
+        })
+    };
+
+    // Wait — indefinitely — until the request has actually crossed the
+    // transport. Only then is the call parked on its result.
+    let mut line = String::new();
+    observer_rt()
+        .block_on(async { BufReader::new(&mut server).read_line(&mut line).await })
+        .expect("read the request off the far end of the transport");
+    assert!(
+        line.contains("stat"),
+        "expected the stat request on the wire, got {line:?}"
+    );
+
+    // Pull the runtime out from under the in-flight request.
+    drop(transport_rt);
+
+    match requester.join().expect("requester thread") {
+        Err(_) => panic!(
+            "request_blocking panicked when the transport runtime was shut down \
+             mid-request — the in-flight call must fail, not take the thread down"
+        ),
+        Ok(Ok(_)) => panic!("request unexpectedly succeeded after its transport was torn down"),
+        // The read task going away with its runtime must fail the request it
+        // was holding, rather than leave the caller parked until the deadline
+        // — `Timeout` here would mean nothing released the pending entry.
+        Ok(Err(e)) => assert!(
+            matches!(e, ChannelError::ChannelClosed | ChannelError::Remote(_)),
+            "expected the in-flight request to fail with the carrier, got {e}"
+        ),
+    }
 }
