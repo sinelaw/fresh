@@ -304,7 +304,7 @@ each group, then the declines.
 | F5 checkbox/caption/behaviour disagree | 3 | **Fixed** — verified interactively |
 | F6 "leave empty to use provided branch" | 3 | **Fixed** — verified interactively |
 | F7 auto-name collides | 2 | **Fixed** — verified interactively |
-| F8 undisclosed writes to the repo | 2 | **Not fixed** — could not reproduce |
+| F8 undisclosed writes to the repo | 2 | **Fixed** — verified interactively |
 | F9 delete keeps the branch, undocumented | 2 | **Fixed** — verified interactively |
 | F10 no warning on quit | 2 | **Declined for now** — out of this feature |
 | F11 Ctrl+P does nothing | 2 | **Not a defect** — it works (see below) |
@@ -470,6 +470,30 @@ one and not the other.
 
 ## The rest
 
+**F8 — fixed, and the report was right.** The worktree and branch belong to
+cross-machine session recovery: every lifecycle action that mutates the archive
+manifest pushes the session list to `refs/heads/<user>/fresh-sessions`, which is
+maintained through a worktree of its own at
+`<data dir>/orchestrator/.sync-workspace` so it does not disturb the user's
+`git worktree` set. It fires on archive, delete and unarchive — not on create,
+which is why it does not show up if you only look after making a workspace.
+
+The report asked for a one-line disclosure. It goes in the archive and delete
+confirmations, for the same reason F9's line does: those dialogs already
+enumerate what the action does, and a list that careful reads as "and nothing
+else". Writing a branch into the user's repository and pushing it to origin is a
+larger omission than the surviving branch was. The branch name in the line is
+derived, not hard-coded, so it names the ref the user will actually find:
+
+```
+This will:
+  • stop all workspace processes
+  • run `git worktree remove`
+  • drop the workspace record
+  • keep the branch — `git worktree remove` does not delete it
+  • update fresh/fresh-sessions — Fresh's own session list, pushed to origin
+```
+
 **F7 — fixed.** The counter advanced only inside `runLocalCreate`; a remote
 create bakes its name in at capture and never goes through there, and the branch
 scan that backs the counter up cannot see a worktree cut on another machine. A
@@ -512,18 +536,35 @@ previews above, and the reservation itself was made honest (see the bonus fix), 
 the symptom is smaller. A real fix — reserving less by making the sections
 genuinely uniform — is a layout redesign, not a patch.
 
-**F8 (undisclosed `.sync-workspace` worktree and `fresh/fresh-sessions` branch) —
-not fixed, could not reproduce.** Creating local and remote workspaces and then
-running `git worktree list` and `git branch -a` in the project showed only the
-workspaces the user asked for. Either the entry comes from a path this session
-did not exercise, or from a build with different features. The finding should not
-be closed on that evidence — disclosing an undocumented write is right if it
-happens — but a fix would be speculative without a reproduction.
+**F8 was first written up here as "could not reproduce". That was wrong**, and
+the mistake is worth recording because of how it happened: the first pass checked
+`git worktree list` after *creating* workspaces, and the sync fires on
+**archive and delete**. A later manual pass deleted a workspace and
+`.sync-workspace` with `fresh/fresh-sessions` appeared immediately, exactly as
+the report describes, branch name and all. See below — it is fixed.
 
 **F15, F16, F18 — not fixed.** Severity 1, and each is a genuine (if cosmetic)
 improvement. F18's dropdown bleed-through and the box-in-box confirm border are
 host-renderer issues rather than orchestrator ones; both are visible in the
 screenshots above and should be filed against the widget layer.
+
+## Found while re-testing, not in the original 18
+
+**Deleting a *remote* workspace leaves its worktree on the host.** The confirm
+dialog says it will "run `git worktree remove`", and for a local workspace it
+does — verified: the worktree goes, the directory goes, the branch stays exactly
+as the dialog now says. For an SSH workspace the row disappears from the dock but
+the remote worktree stays registered and on disk:
+
+```
+/root/.fresh/worktrees/acme-widgets-remote/auth-spike   454bd3f [feature]   ← still there
+```
+
+So on a remote workspace the dialog promises something that does not happen, and
+each delete leaves a directory behind on the host. Not fixed here: it is outside
+the findings this branch is answering, and changing what a destructive action
+does on a remote machine deserves its own design pass (what to do when the host
+is unreachable at delete time, in particular). Filed here so it is not lost.
 
 ## Findings that are not defects
 

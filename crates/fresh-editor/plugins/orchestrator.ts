@@ -3876,6 +3876,21 @@ function buildPreviewPane(s: AgentSession | undefined): WidgetSpec {
 // The per-action bullet lines shown in the confirmation panel.
 // `delete` adds a separate red "uncommitted changes" line in the
 // caller because it needs distinct styling.
+// Archiving and deleting both push the session list to
+// `refs/heads/<user>/fresh-sessions`, which Fresh maintains through a worktree
+// of its own at `<data dir>/orchestrator/.sync-workspace`. Neither the branch
+// nor the worktree was mentioned anywhere, so a user who ran `git worktree
+// list` in their own project found a ref they never made — and might
+// reasonably delete it, or report it as corruption.
+//
+// It is disclosed here rather than in a first-run notice because this is the
+// dialog that already enumerates what the action does, and a list that careful
+// reads as "and nothing else". The branch name is derived, not hard-coded: it
+// carries the same user segment the sync itself will use.
+function syncDisclosureLine(): string {
+  return editor.t("confirm.sync_line", { branch: `${deriveSyncUser()}/fresh-sessions` });
+}
+
 function confirmActionLines(action: BulkAction): string[] {
   switch (action) {
     case "stop":
@@ -3890,6 +3905,7 @@ function confirmActionLines(action: BulkAction): string[] {
         editor.t("confirm.archive_line1"),
         editor.t("confirm.archive_line2"),
         editor.t("confirm.archive_line3"),
+        syncDisclosureLine(),
         "",
         editor.t("confirm.archive_note"),
       ];
@@ -3904,6 +3920,7 @@ function confirmActionLines(action: BulkAction): string[] {
         editor.t("confirm.delete_line2"),
         editor.t("confirm.delete_line3"),
         editor.t("confirm.delete_line4"),
+        syncDisclosureLine(),
       ];
   }
 }
