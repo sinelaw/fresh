@@ -1394,6 +1394,21 @@ function workspaceCustomName(s: AgentSession): string | undefined {
   return customNameFor(s.stableId, s.root);
 }
 
+// The workspace's own name, without the terminal-title suffix a dock row
+// carries.
+//
+// `label` is built for a wide row: with no manual rename and a live terminal it
+// is `<workspace> · <terminal title>`, and a shell's title is routinely its
+// whole `user@host: /long/path`. Beside a row that is useful context; as the
+// only line of a dialog heading it is actively harmful, because the heading
+// truncates and what gets cut is the end — leaving
+// `Delete workspace demo-3 · bash — root@vm: ~/.local/share/…/dem`, which
+// answers everything except the one question the heading exists for: *which
+// workspace*. A manual rename is the user's own name for it and is kept as is.
+function sessionShortName(s: AgentSession): string {
+  return workspaceCustomName(s) || s.hostLabel || editor.pathBasename(s.root) || "";
+}
+
 // Compute the display name for a session from the three sources above.
 function workspaceDisplayName(s: AgentSession): string {
   const manual = workspaceCustomName(s);
@@ -4055,7 +4070,7 @@ function buildConfirmPane(
       const ss = orchestratorSessions.get(id)!;
       entries.push(
         styledRow([
-          { text: `  ${ss.label}` },
+          { text: `  ${sessionShortName(ss)}` },
           { text: diskNote(id), style: { fg: "ui.menu_disabled_fg", italic: true } },
         ]),
       );
@@ -4075,7 +4090,13 @@ function buildConfirmPane(
     const ss = id !== undefined ? orchestratorSessions.get(id) : undefined;
     entries.push(
       styledRow([
-        { text: editor.t("confirm.single_header", { cap, name: ss?.label ?? "" }), style: { bold: true } },
+        {
+          text: editor.t("confirm.single_header", {
+            cap,
+            name: ss ? sessionShortName(ss) : "",
+          }),
+          style: { bold: true },
+        },
       ]),
     );
   }
@@ -4198,7 +4219,7 @@ function buildBulkPane(): WidgetSpec {
   // skip so the count discrepancy explains itself.
   const items: TextPropertyEntry[] = sel.map((id) => {
     const ss = orchestratorSessions.get(id)!;
-    const rowParts: StyledSegment[] = [{ text: `  ${ss.label}` }];
+    const rowParts: StyledSegment[] = [{ text: `  ${sessionShortName(ss)}` }];
     if (!ss.discovered && !ownsWorktree(ss)) {
       rowParts.push({
         text: editor.t("confirm.row_in_place"),
