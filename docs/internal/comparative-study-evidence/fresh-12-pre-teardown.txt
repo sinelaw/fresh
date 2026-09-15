@@ -1,0 +1,13 @@
+### PRE-TEARDOWN STATE ###
+--- git worktree list (in user's repo /root/fixtures/acme-widgets) ---
+/root/fixtures/acme-widgets                                                      859a873 [main]
+/root/.local/share/fresh/orchestrator/root_fixtures_acme-widgets/acme-widgets-1  859a873 [acme-widgets-1]
+--- git branches ---
++ acme-widgets-1
+  feature/gearbox
+* main
+  release/0.1
+--- remote-side ~/.fresh ---
+ls: cannot access '/root/.fresh': No such file or directory
+--- sshd sessions ---
+4

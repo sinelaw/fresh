@@ -1,0 +1,50 @@
+ ctrl+s ⏎         │root@vm:~/fixtures/acme-widgets# echo "I am SECOND tty=$(tty)"
+1 · acme-local    │I am SECOND tty=/dev/pts/2
+2▸· acme-second   │root@vm:~/fixtures/acme-widgets# █
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+         «        │

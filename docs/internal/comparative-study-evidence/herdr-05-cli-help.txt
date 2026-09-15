@@ -1,0 +1,17 @@
+herdr — terminal workspace manager for AI coding agents
+
+Usage: herdr [options]
+       herdr update
+
+Commands:
+  update              Download and install the latest version
+
+Options:
+  --no-session        Don't restore or save sessions
+  --default-config    Print default configuration and exit
+  --version, -V       Print version and exit
+  --help, -h          Show this help
+
+Config: ~/.config/herdr/config.toml
+Logs:   ~/.config/herdr/herdr.log
+Home:   https://herdr.dev

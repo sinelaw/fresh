@@ -1,0 +1,50 @@
+ CLOSE?           │root@vm:~/fixtures/acme-widgets# █
+1 · acme-local    │
+2▸· acme-second   │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │                                                                    ┌──────────────────────────────────────────┐
+                  │                                                                    │ Close workspace?                         │
+                  │                                                                    │ acme-second — 1 pane                     │
+                  │                                                                    │ y/enter confirm    any key cancel        │
+                  │                                                                    └──────────────────────────────────────────┘
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+         «        │

@@ -1,0 +1,33 @@
+{
+  "version": 1,
+  "workspaces": [
+    {
+      "name": "acme-local",
+      "layout": {
+        "Pane": 1
+      },
+      "panes": {
+        "1": {
+          "cwd": "/root/fixtures/acme-widgets"
+        }
+      },
+      "zoomed": false,
+      "focused": 1
+    },
+    {
+      "name": "acme-second",
+      "layout": {
+        "Pane": 2
+      },
+      "panes": {
+        "2": {
+          "cwd": "/root/fixtures/acme-widgets"
+        }
+      },
+      "zoomed": false,
+      "focused": 2
+    }
+  ],
+  "active": 1,
+  "selected": 1
+}

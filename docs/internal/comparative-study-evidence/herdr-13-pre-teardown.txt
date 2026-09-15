@@ -1,0 +1,8 @@
+### herdr PRE-TEARDOWN STATE ###
+--- git worktree list ---
+/root/fixtures/acme-widgets  47197dd [main]
+--- git branches ---
+  feature/gearbox
+* main
+  release/0.1
+--- untracked files created by herdr in the repo? ---

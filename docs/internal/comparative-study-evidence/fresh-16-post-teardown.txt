@@ -1,0 +1,15 @@
+--- git worktree list ---
+/root/fixtures/acme-widgets                            859a873 [main]
+/root/.local/share/fresh/orchestrator/.sync-workspace  6b1a55e [fresh/fresh-sessions]
+--- git branches (did acme-widgets-1 survive?) ---
+  acme-widgets-1
+  feature/gearbox
++ fresh/fresh-sessions
+* main
+  release/0.1
+--- worktree dir on disk ---
+total 8
+drwxr-xr-x 2 root root 4096 Sep 15 16:14 .
+drwxr-xr-x 5 root root 4096 Sep 15 16:14 ..
+--- sshd sessions ---
+4

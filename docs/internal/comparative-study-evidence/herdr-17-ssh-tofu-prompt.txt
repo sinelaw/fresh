@@ -1,0 +1,50 @@
+ ctrl+s ⏎        │root@vm:~/fixtures/acme-widgets# ssh testbox
+1▸· acme-local   │The authenticity of host '[127.0.0.1]:2222 ([127.0.0.1]:2222)' can't be established.
+                 │ED25519 key fingerprint is SHA256:neVTlyuLdLK4/Xl1ZGhoH9TqQK1wqH5Fc7OiLY23hr4.
+                 │This key is not known by any other names.
+                 │Are you sure you want to continue connecting (yes/no/[fingerprint])? █
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+        «        │

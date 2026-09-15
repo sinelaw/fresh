@@ -1,0 +1,50 @@
+ ctrl+s ⏎         │root@vm:~/fixtures/acme-widgets#
+1▸· acme-local    │Display all 1569 possibilities? (y or n)
+2 · acme-second   │root@vm:~/fixtures/acme-widgets# ^C
+                  │root@vm:~/fixtures/acme-widgets# █
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+                  │
+         «        │

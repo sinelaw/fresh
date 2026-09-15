@@ -1,0 +1,50 @@
+Orchestrator                          ×│ File   Edit   View   Selection   Go   LSP   Help
+[ + New ]                   / search  ⋯│ bash — root@vm: ~/.local/share/fresh/orchestrator/root_fixtures_acme-widgets/acme-widgets-1 ×   +
+───────────────────────────────────────│root@vm:~/.local/share/fresh/orchestrator/root_fixtures_acme-widgets/acme-widgets-1#
+  · acme-widgets                       │
+  * acme-widgets-1 · bash — root@vm: ~…│
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │ Trusted  Local  Ln 1, Col 1                                                                                                   LF  UTF-8  Text  Palette: Ctrl+P

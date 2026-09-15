@@ -1,0 +1,50 @@
+Orchestrator                          ×│ File   Edit   View   Selection   Go   LSP   Help
+[ + New ]                   / search  ⋯│ ssh — root@vm: ~ ×   +
+───────────────────────────────────────│root@vm:~# echo "I am ROW5 tty=$(tty)"
+  · ⇅ ssh:testbox · ssh — root@vm: ~  …│I am ROW5 tty=/dev/pts/4
+  · ⇅ ssh:testbox · ssh — root@vm: ~  …│root@vm:~#
+  · acme-widgets-1                     │
+  · acme-widgets                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │          ┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+                                       │          │╭─ Confirm Delete ──────────────────╮                                                             │
+                                       │          ││ Delete workspace acme-widgets-1?  │                                                             │
+                                       │          ││                                   │                                                             │
+                                       │          ││ This will:                        │                                                             │
+                                       │          ││   • stop all workspace processes  │                                                             │
+                                       │          ││   • run `git worktree remove`     │                                                             │
+                                       │          ││   • drop the workspace record     │                                                             │
+                                       │          ││                                   │                                                             │
+                                       │          ││ Uncommitted changes will be lost. │                                                             │
+                                       │          ││                                   │                                                             │
+                                       │          ││ [ Cancel ]  [ Confirm Delete ]    │                                                             │
+                                       │          │╰───────────────────────────────────╯                                                             │
+                                       │          └──────────────────────────────────────────────────────────────────────────────────────────────────┘
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │ Trusted  testbox  Ln 1, Col 1                                                                                                 LF  UTF-8  Text  Palette: Ctrl+P

@@ -1,0 +1,7 @@
+2026-09-15T16:16:27.158401Z  INFO herdr starting, pid=15034
+2026-09-15T16:17:02.715592Z  INFO workspace created workspace=acme-local root_pane=1
+2026-09-15T16:17:02.716670Z  INFO child spawned pane=1 pid=15071
+2026-09-15T16:18:20.347905Z  INFO workspace created workspace=acme-second root_pane=2
+2026-09-15T16:18:20.349372Z  INFO child spawned pane=2 pid=15185
+2026-09-15T16:19:01.739713Z  INFO session saved workspaces=2
+2026-09-15T16:19:01.840178Z  INFO herdr exiting

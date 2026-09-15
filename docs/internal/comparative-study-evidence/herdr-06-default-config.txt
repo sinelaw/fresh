@@ -1,0 +1,23 @@
+# herdr configuration
+# Place this file at ~/.config/herdr/config.toml
+
+[keys]
+# Prefix key to enter navigate mode (e.g. "ctrl+s", "ctrl+a", "ctrl+b")
+# prefix = "ctrl+s"
+
+# Pane controls (in navigate mode)
+# split_vertical = "v"
+# split_horizontal = "-"
+# close_pane = "x"
+# fullscreen = "f"
+
+[ui]
+# Sidebar width (auto-scaled based on workspace names, this sets the default)
+# sidebar_width = 26
+
+# Ask for confirmation before closing a workspace
+# confirm_close = true
+
+# Accent color for highlights, borders, and navigation UI.
+# Accepts: hex (#89b4fa), named colors (cyan, blue, magenta), or rgb(r,g,b)
+# accent = "cyan"

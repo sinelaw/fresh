@@ -1,0 +1,50 @@
+ ctrl+s ⏎        │root@vm:~/fixtures/acme-widgets# ssh testbox
+1▸· acme-local   │The authenticity of host '[127.0.0.1]:2222 ([127.0.0.1]:2222)' can't be established.
+                 │ED25519 key fingerprint is SHA256:neVTlyuLdLK4/Xl1ZGhoH9TqQK1wqH5Fc7OiLY23hr4.
+                 │This key is not known by any other names.
+                 │Are you sure you want to continue connecting (yes/no/[fingerprint])? yes
+                 │Warning: Permanently added '[127.0.0.1]:2222' (ED25519) to the list of known hosts.
+                 │Last login: Tue Sep 15 16:13:22 2026 from 127.0.0.1
+                 │root@vm:~# echo "REMOTE? SSH_CONNECTION=[$SSH_CONNECTION]"
+                 │REMOTE? SSH_CONNECTION=[127.0.0.1 54438 127.0.0.1 2222]
+                 │root@vm:~# █
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+        «        │

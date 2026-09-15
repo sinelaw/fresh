@@ -1,0 +1,50 @@
+ NAVIGATE        │root@vm:~/fixtures/acme-widgets#
+1▸· acme-local   │Display all 1569 possibilities? (y or n)
+                 │root@vm:~/fixtures/acme-widgets# ^C
+                 │root@vm:~/fixtures/acme-widgets# █
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │
+                 │ n new  N rename  d close  v split│  - split─  ⇥ pane  f full  r resize  b sidebar  q quit
+        «        │ NAVIGATE  acme-local  esc back  ↑↓ select  ⏎ open

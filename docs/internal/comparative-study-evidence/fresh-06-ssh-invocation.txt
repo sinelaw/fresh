@@ -1,0 +1,16 @@
+# fresh: how the remote session is actually established (ps -ef, captured live)
+
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+
+# => fresh delegates to the SYSTEM ssh binary with the host ALIAS 'testbox'.
+# => therefore HostName/Port/User/IdentityFile/UserKnownHostsFile from ~/.ssh/config are all honored by construction.
+# => StrictHostKeyChecking=accept-new = SILENT trust-on-first-use (no fingerprint shown, no prompt).
+
+# Proof the shell is remote:
+SSH_CONNECTION=[127.0.0.1 41992 127.0.0.1 2222]
+TTY=/dev/pts/3
+
+# known_hosts written at the CONFIGURED non-default path, not the default one:
+/root/sshtest/etc/known_hosts  -> SHA256:neVTlyuLdLK4/Xl1ZGhoH9TqQK1wqH5Fc7OiLY23hr4 (matches fixture host key)
+/root/.ssh/known_hosts         -> still absent

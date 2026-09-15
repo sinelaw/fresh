@@ -1,0 +1,31 @@
+                         ┌ ORCHESTRATOR :: New Workspace ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────[×]┐
+                         │        Launch in: [New workspace     ▼]                                                                                                            │
+                         │▸         Machine: [testbox      ▼]                                                                                                                 │
+                         │                   ↳ root@127.0.0.1:2222                                                                                                            │
+                         │                                                                                                                                                    │
+                         │                                                                                                                                                    │
+                         │                                                                                                                                                    │
+                         │                                                                                                                                                    │
+                         │                                                                                                                                                    │
+                         │     Project Path: [                                                                                                                               ]│
+                         │                   ↳ /srv/project  (blank = remote home)                                                                                            │
+                         │   Workspace Name: [acme-widgets-1                                                                                                                 ]│
+                         │            Agent: [terminal ▼]                                                                                                                     │
+                         │                                                                                                                                                    │
+                         │                                                                                                                                                    │
+                         │                                                                                                                                                    │
+                         │                                                                                                                                                    │
+                         │                                                                                                                                                    │
+                         │                                                                                                                                                    │
+                         │                   [v] Create a git worktree                                                                                                        │
+                         │                   ↳ Not checked — the host decides when you create                                                                                 │
+                         │                                                                                                                                                    │
+                         │                                                                                                                                                    │
+                         │                                                                                                                                                    │
+                         │                                                                                                                                                    │
+                         │                                                                                                                                                    │
+                         │                                                                                                                                                    │
+                         │                                                                                                                                                    │
+                         │                                                                             [ Create Workspace ]  ^⏎    [ Create in Background ]    [ Cancel ]  Esc│
+                         │                                              Tab next / accept  ←→ change option  ↑↓ suggest / history                                             │
+                         └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘

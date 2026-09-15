@@ -1,0 +1,16 @@
+### fresh teardown leftovers (Task 7) ###
+Deleted workspace: acme-widgets-1 (local, had worktree + branch)
+
+REMOVED cleanly:
+  - dock row
+  - worktree dir /root/.local/share/fresh/orchestrator/root_fixtures_acme-widgets/acme-widgets-1
+  - the git worktree registration
+  - the session's processes
+
+LEFT BEHIND, not mentioned by the confirm dialog:
+  - branch 'acme-widgets-1'            (still in git branch)
+  - worktree '.sync-workspace'         (/root/.local/share/fresh/orchestrator/.sync-workspace)
+  - branch 'fresh/fresh-sessions'      (undisclosed; created by fresh in the USER'S repo)
+
+Note: .sync-workspace and fresh/fresh-sessions were ABSENT before the delete and
+      PRESENT after it -- they are created lazily on the sync path, silently.

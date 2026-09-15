@@ -1,0 +1,15 @@
+fresh: commit 2fd7bcdeff2aa6d27ad935dfe2d9a547e52ee65a (2fd7bcd)
+fresh: base commit under test = da558dd (this branch adds only docs)
+rustc: rustc 1.95.0 (59807616e 2026-04-14)
+cargo: cargo 1.95.0 (f2d3ce0bd 2026-03-21)
+tmux: tmux 3.4
+ssh: OpenSSH_9.6p1 Ubuntu-3ubuntu13.19, OpenSSL 3.0.13 30 Jan 2024
+os: Ubuntu 24.04.4 LTS kernel 6.18.44-fc-v33
+date: 2026-09-15T16:07:28Z
+herdr: 0.1.0 (cargo install herdr --version 0.1.0, release build)
+herdr crate published: 2026-03-27T18:20:41Z (crates.io index)
+herdr deps observed from index: ratatui 0.30, portable-pty 0.9, vt100 0.16, tui-term 0.3, crossterm 0.29, tokio 1
+herdr CLI surface: --no-session --default-config --version --help | command: update
+herdr SSH support: NONE (0 occurrences of 'ssh' in binary strings; no config key; no CLI flag)
+fresh: 0.5.1, debug build of commit da558dd (branch head 2fd7bcd adds only docs)
+fresh SSH: delegates to system ssh (17 hits for StrictHostKeyChecking/known_hosts/ssh_config)

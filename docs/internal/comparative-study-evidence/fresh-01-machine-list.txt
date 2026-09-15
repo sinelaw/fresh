@@ -1,0 +1,9 @@
+                         ┌ ORCHESTRATOR :: New Workspace ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────[×]┐
+                         │        Launch in: [New workspace     ▼]                                                                                                            │
+                         │▸         Machine: [Local        ▲]                                                                                                                 │
+                         │                   ┌──────────────┐                                                                                                                 │
+                         │                   │ Local        │                                                                                                                 │
+                         │                   │ testbox      │                                                                                                                 │
+                         │                   │ Other host…  │                                                                                                                 │
+                         │                   │ Kubernetes…  │                                                                                                                 │
+                         │                   │ Devcontainer │                                                                                                                 │

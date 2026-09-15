@@ -1,0 +1,50 @@
+Orchestrator                          ×│ File   Edit   View   Selection   Go   LSP   Help
+[ + New ]                   / search  ⋯│ ssh — root@vm: ~ ×   +
+───────────────────────────────────────│root@vm:~#
+  · acme-widgets                       │
+  · acme-widgets-1 · bash — root@vm: ~…│
+  · ⇅ ssh:testbox  testbox             │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │ Trusted  testbox  Ln 1, Col 1                                                                                                 LF  UTF-8  Text  Palette: Ctrl+P

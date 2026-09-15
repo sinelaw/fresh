@@ -1,0 +1,29 @@
+--- git worktree list ---
+/root/fixtures/acme-widgets  47197dd [main]
+--- git branches ---
+  feature/gearbox
+* main
+  release/0.1
+--- repo dirty? ---
+(empty = clean)
+--- session.json now ---
+{
+  "version": 1,
+  "workspaces": [
+    {
+      "name": "acme-local",
+      "layout": {
+        "Pane": 1
+      },
+      "panes": {
+        "1": {
+          "cwd": "/root/fixtures/acme-widgets"
+        }
+      },
+      "zoomed": false,
+      "focused": 1
+    },
+    {
+      "name": "acme-second",
+      "layout": {
+        "Pane": 2
