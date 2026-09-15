@@ -12148,7 +12148,12 @@ function captureCreateSpec(f: NewSessionForm): CaptureResult {
     return buildSshSpec({
       ...agentOptions,
       host: other ? f.sshHost.value.trim() : f.sshHosts[f.sshPick].alias,
-      name: sessionName,
+      // The auto-generated name counts as a name. Leaving the field blank is
+      // the common case, and passing "" here left the row with no workspace
+      // name at all — the very thing the label change is for — while the
+      // worktree it created was named all along (the plan below uses the same
+      // fallback).
+      name: sessionName || f.defaultSessionName,
       cmd,
       remotePath: f.sshPath.value.trim(),
       identity: other ? f.sshIdentity.value.trim() : "",
