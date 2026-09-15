@@ -378,9 +378,11 @@ fn test_rust_analyzer_runnable_is_translated_to_an_argv() -> anyhow::Result<()> 
     });
     let script_path = create_runnable_lsp_script(dir.path(), &runnable);
 
+    // Wider than the other tests here: the wait below reads a command name
+    // out of the palette, and the palette ellipsises its columns to fit.
     let mut harness = EditorTestHarness::create(
-        80,
-        24,
+        120,
+        30,
         HarnessOptions::new()
             .with_project_root()
             // The real embedded `rust-lsp.ts` is what claims the command and
@@ -389,12 +391,24 @@ fn test_rust_analyzer_runnable_is_translated_to_an_argv() -> anyhow::Result<()> 
             .with_config(lsp_config(&script_path, &log_file)),
     )?;
 
-    // Plugins load on a background thread. Wait for the claim before opening
-    // the file: a claim that lands later routes this lens to the server
-    // instead of the plugin, and also restarts the LSP mid-test.
-    harness.wait_until(|_| {
-        fresh::services::lsp::client_commands::is_registered("rust-analyzer.runSingle")
-    })?;
+    // Plugins load on a background thread. Wait for *this* harness's
+    // `rust-lsp.ts` to have run before opening the file: a claim that lands
+    // later routes the lens to the server instead of the plugin, and also
+    // restarts the LSP mid-test.
+    //
+    // Waiting on the claim itself would not do it — the registry is global to
+    // the process, so another test's claim satisfies it while this editor's
+    // plugin has not run and has no `lsp_execute_command` handler. Wait on
+    // something this editor rendered instead: a command only `rust-lsp.ts`
+    // contributes, which it registers before the claim.
+    harness.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)?;
+    harness.render()?;
+    // Filter on "Rust LSP", match on "Configure Mode": the two are disjoint,
+    // so the typed text on the prompt line cannot satisfy the wait on its own.
+    harness.type_text("Rust LSP")?;
+    harness.wait_until(|h| h.screen_to_string().contains("Configure Mode"))?;
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE)?;
+    harness.render()?;
 
     let project_dir = harness.project_dir().unwrap();
     open_with_lens(&mut harness, &project_dir)?;
