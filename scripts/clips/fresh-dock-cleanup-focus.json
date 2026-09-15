@@ -233,7 +233,8 @@
       "bloom": 0.55,
       "shift": 3,
       "vignette": 0.45,
-      "curve": 0.11
+      "curve": 0.11,
+      "shutdown": 1.5
     },
     "views": {
       "list": {
@@ -355,7 +356,7 @@
           41
         ],
         "band": false,
-        "hold": 1.8
+        "hold": 1.9
       }
     ]
   },

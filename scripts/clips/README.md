@@ -245,7 +245,11 @@ showing between the letters until something opaque goes behind them.
 phosphor bloom, channel fringing, corner falloff. The curve is the part that
 does the work: the other four are corrections applied to a flat rectangle,
 which is what a screenshot already is, so without it the pass reads as a
-filter over a picture rather than a picture on a tube.
+filter over a picture rather than a picture on a tube. The clip ends by
+powering the tube off — `crt.shutdown` — instead of holding the finished dock
+and fading: the raster squeezes into an over-bright line, the line shortens to
+a dot, the dot decays. That takes the end of the clip rather than adding to
+it, so the last beat's hold is what plays in front of it.
 
 Stage one stops at the tenth move rather than running all twenty-five.
 The camera is on the top of the list, so once the rows being filed drop out

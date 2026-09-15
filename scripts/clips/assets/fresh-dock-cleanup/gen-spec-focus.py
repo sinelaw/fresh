@@ -159,7 +159,13 @@ spec = {
     # comb is the first thing the encoder turns to mush, and the clip has to
     # survive being scaled down a feed.
     "crt": {"scanlines": 0.34, "gap": 4, "bloom": 0.55, "shift": 3,
-            "vignette": 0.45, "curve": 0.11},
+            "vignette": 0.45, "curve": 0.11,
+            # The last beat used to hold the finished dock and then fade.
+            # It powers the tube off instead: the raster collapses to a
+            # line, the line shortens to a dot, the dot decays. Takes the
+            # end of the clip rather than adding to it, so the final hold
+            # is what is left of beat 4 in front of it.
+            "shutdown": 1.5},
     "views": {"list": view},
     # No beat carries a `head` or a `sub`, so the caption bar is never drawn
     # and the viewport takes its full height. The words that do appear are
@@ -197,7 +203,7 @@ spec = {
 
       # 4 — hold what it made.
       {"shot": "after", "view": "list", "rows": [4, last_row], "cols": DOCK,
-       "band": False, "hold": 1.8}
+       "band": False, "hold": 1.9}
     ]
   },
   "encode": {"crf": 18, "preset": "slow"}
