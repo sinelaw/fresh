@@ -10,6 +10,47 @@ run against both products.
 
 ---
 
+> ## ⚠️ CORRECTION — the herdr half of this study is VOID (wrong version)
+>
+> **This study tested `herdr 0.1.0`, which is not current herdr.** It was installed from
+> crates.io, where `0.1.0` is the only version ever published and the channel has been
+> abandoned. The project's real release channel
+> (`curl -fsSL https://herdr.dev/install.sh | sh`) was at **v0.9.0** on the date of this
+> study — **28 tagged releases later**.
+>
+> **Every conclusion below about herdr is therefore about an obsolete build and must not be
+> read as a statement about herdr.** In particular, §1.3, §5.1 and §10 claim herdr "has no
+> SSH or remote capability" and "is not a valid baseline". That is true of `0.1.0` and
+> **false of herdr 0.9.0**, whose CLI includes `herdr --remote <ssh-target>`,
+> `herdr machine <subcommand>` for managing saved SSH machines, `herdr session attach`, and a
+> persistent background server. Its 0.9.0 release notes describe exactly the flow this study
+> set out to benchmark: *"Manage Local and saved SSH machines from one Herdr window ... Add
+> and manage connections with `herdr machine`; a disconnected machine does not interrupt the
+> others."* The original brief's `herdr --remote` claim was correct; this study's rejection
+> of it was an artifact of the wrong version.
+>
+> **The `fresh` half of this study stands and is unaffected.** Those findings were produced
+> by direct observation of fresh and verified independently of herdr — including the two that
+> matter most: that prior findings F1 and F2 do **not** reproduce (fresh delegates to the
+> system `ssh` with the host alias, so the whole `~/.ssh/config` is honored), and that fresh
+> instead fails **open**, silently recording an unverified host key under
+> `StrictHostKeyChecking=accept-new`. The prioritized adoption list in §9 is likewise derived
+> from observed fresh behaviour and remains valid, except where it cites herdr as the
+> comparator for persistence (§4.4, §7.2) — herdr 0.9's server model must be re-measured
+> before those comparisons mean anything.
+>
+> **Superseded by:** `workspace-sessions-comparative-study-herdr-0.9.md`, which re-runs the
+> same seven-task script against herdr 0.9.0.
+>
+> *Root cause, for the record: the brief pinned `herdr = "0.1.0"` and `cargo install`
+> succeeded, so the fallback to a release binary was never triggered and the crates.io index
+> was treated as authoritative for "latest". A project's own release channel should have been
+> checked before declaring a baseline unavailable.*
+
+---
+
+---
+
 ## 1. Headline results
 
 Three findings dominate this study, and two of them contradict the premises the study
