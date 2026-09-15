@@ -1732,6 +1732,25 @@ function dockFailureRowCount(cols: number): number {
   return 2 + msgRows;
 }
 
+// The backend target (host / ns·pod) as a trailing row segment — unless the
+// label already carries it.
+//
+// A remote row's label is `<name> · ssh:<target>`, so appending the bare target
+// after it prints the machine twice: exactly the duplication the cold study
+// reported, and only half-fixed when the name was added to the label. On a
+// narrow dock the repeat is not merely redundant, it is destructive: the row is
+// one line, and the duplicate pushes the pending status — the one part that
+// changes while a workspace is being created — off the end, leaving a row that
+// says what the session is but never what it is doing.
+function remoteDetailSegs(s: AgentSession): Entry[] {
+  const detail = s.remote?.detail;
+  if (!detail || s.label.includes(detail)) return [];
+  return [{
+    text: "  " + detail,
+    style: { fg: remoteStateFg(s.remote!.state), italic: true },
+  }];
+}
+
 // One tree row for a session leaf: state glyph, optional remote facet,
 // and the name (highlighted when it's the active window). A single
 // line — the tree owns indentation and the disclosure column, so the
@@ -1754,13 +1773,9 @@ function sessionNodeEntry(id: number, activeId: number): TextPropertyEntry {
     style: { fg: isActive ? "ui.help_key_fg" : undefined, bold: true },
   });
   // A remote session surfaces its backend target (host / ns·pod), coloured
-  // by the connection state — the same detail the pill shows on the right.
-  if (s.remote) {
-    segs.push({
-      text: "  " + s.remote.detail,
-      style: { fg: remoteStateFg(s.remote.state), italic: true },
-    });
-  }
+  // by the connection state — the same detail the pill shows on the right,
+  // and skipped when the label already names it (see `remoteDetailSegs`).
+  segs.push(...remoteDetailSegs(s));
   // A discovered on-disk worktree keeps its "· on-disk" tag — the "this
   // row isn't an open session yet" indicator the pill also shows.
   if (s.discovered) {
@@ -1861,13 +1876,8 @@ function sessionCardPrimary(id: number, activeId: number): TextPropertyEntry {
   });
   // A remote session surfaces its backend target (host / ns·pod) coloured
   // by the connection state — pill parity (the pill shows it at the right
-  // end of line 1).
-  if (s.remote) {
-    segs.push({
-      text: "  " + s.remote.detail,
-      style: { fg: remoteStateFg(s.remote.state), italic: true },
-    });
-  }
+  // end of line 1), and skipped when the label already names it.
+  segs.push(...remoteDetailSegs(s));
   // Right group. A being-created placeholder has no git summary; it gets
   // the one-key affordance instead ("↵ Retry"), so the row below is free
   // for the whole status message.
@@ -3387,13 +3397,9 @@ function renderPillSpec(
     { text: PROJECT_ICON + " ", style: { fg: "ui.menu_disabled_fg" } },
     { text: proj, style: { fg: "ui.menu_disabled_fg", italic: true } },
   ];
-  // For a remote session, surface the backend target (host / ns·pod) on the right.
-  if (s.remote) {
-    projEntries.push({
-      text: "  " + s.remote.detail,
-      style: { fg: remoteStateFg(s.remote.state), italic: true },
-    });
-  }
+  // For a remote session, surface the backend target (host / ns·pod) on the
+  // right — unless the label already names it.
+  projEntries.push(...remoteDetailSegs(s));
   const git = gitLineParts(s);
 
   // Compact: one un-boxed line — glyph + (facet) + name on the left, the
@@ -11949,13 +11955,21 @@ function buildSshSpec(o: SshSpecInputs): CaptureResult {
   if (!host) return { ok: false, error: editor.t("err.ssh_host_required") };
   const agentArgv = remoteAgentArgv(o.cmd, o);
   const target = user ? `${user}@${host}` : host;
-  // **The workspace name first, the machine after it.** A local row reads
-  // `demo-1 · bash — …`; a remote one read `ssh:testbox` and then, beside it,
-  // the machine again — naming the machine twice and the workspace never, so
-  // two sessions on one host were indistinguishable. The name is what tells
-  // them apart, exactly as it does locally; the machine stays because it is
-  // the thing a local row does not have.
-  const label = o.name ? `${o.name} · ssh:${target}` : `ssh:${target}`;
+  // **The workspace name, not the machine twice.** A remote row renders the
+  // label and then the backend target beside it, so a blank name read
+  // `ssh:testbox  testbox` — naming the machine twice and the workspace never,
+  // leaving two sessions on one host indistinguishable. The fix is upstream of
+  // here: the form now hands over its generated default when the field is left
+  // empty, so `o.name` is populated and the label is the workspace name, with
+  // the machine appearing exactly once, in the row's target segment.
+  //
+  // The label deliberately does *not* also carry the target. Spelling it
+  // `<name> · ssh:<target>` reads well in isolation but puts the machine back
+  // in twice, and the dock is one narrow line: the extra width pushed the
+  // pending status off the end, so a workspace being created showed its name
+  // and host but never what it was doing. `remoteDetailSegs` guards the
+  // duplication; keeping the label short is what leaves room for the status.
+  const label = o.name || `ssh:${target}`;
   const spec: RemoteAgentSpec = {
     transport: {
       kind: "ssh",

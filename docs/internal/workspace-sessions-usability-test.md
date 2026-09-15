@@ -921,8 +921,30 @@ reason, wrapped, with the two recovery actions — not "only in the status bar".
 ## 8a, 8b: fixed
 
 * Remote rows carried `ssh:testbox  testbox` — the machine twice, the workspace
-  name never — so two sessions on one host were indistinguishable. A named
-  workspace now renders `alpha · ssh:testbox`, mirroring the local `demo-1 · …`.
+  name never — so two sessions on one host were indistinguishable. The row now
+  renders `⇅ alpha  testbox`: the workspace name, then the machine once, with
+  the `⇅` facet already saying ssh.
+
+  The first attempt at this spelled the label `alpha · ssh:testbox`, and CI
+  caught what manual testing did not. The dock row is a single line about 39
+  columns wide, and it renders the backend target *beside* the label — so the
+  longer label put the machine back in twice and pushed the pending status
+  (`Connecting…`) off the end. `ssh_submit_is_non_blocking_and_shows_connecting_row`
+  waits for that word, and waited the full 180s: a workspace being created
+  showed its name and its host but never what it was doing, which is a worse
+  version of the "permanently in progress" defect this round set out to fix.
+
+  Two changes. `remoteDetailSegs` drops the target segment when the label
+  already contains it, so the duplication cannot come back by another route.
+  And the label is the workspace name again: the part of the fix that actually
+  answered the study is upstream, in the form handing over its generated
+  default when the name field is left blank, so `o.name` is populated and there
+  is a name to show. Spelling the target into the label as well was over-reach.
+
+  The test asserted the literal old label `ssh:dead-host`. That string only
+  existed *because* of the defect — it was the whole label when no name was
+  given. The assertion now checks the facet glyph, the host and the status on
+  one row, which is what the test is actually about.
 * Deleting a workspace left `terminals/<encoded-root>/` behind, one dead
   directory per delete. `DeleteWorkspace` now removes it alongside the workspace
   record; both are keyed by the same root and die together.
