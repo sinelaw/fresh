@@ -24,7 +24,6 @@ pub use crate::primitives::text_edit;
 
 // Runtime-only modules (depend on state, services, input, etc.)
 #[cfg(feature = "runtime")]
-pub mod breadcrumbs;
 #[cfg(feature = "runtime")]
 pub mod expanded_menus_cache;
 #[cfg(feature = "runtime")]

@@ -288,12 +288,12 @@ pub enum UiFact {
 
     /// A left press on one of a pane's symbol breadcrumbs.
     ///
-    /// This fact identifies the pane and cell so the editor can resolve the
-    /// item from the row's current geometry and the renderer's layout rules.
+    /// The crumb's own node answered the press, so this names the byte the
+    /// caret goes to. There is no cell here and nothing to resolve: which
+    /// crumb was hit is what the tree already decided by placing it.
     PaneBreadcrumbPress {
         pane: LeafId,
-        x: u16,
-        y: u16,
+        position: usize,
     },
 
     /// A left press on a pane's content, and which press of a run it is: one

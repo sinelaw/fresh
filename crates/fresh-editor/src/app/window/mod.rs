@@ -2784,6 +2784,7 @@ impl Window {
             groups: self.pane_groups(),
             interiors: Default::default(),
             strips: Default::default(),
+            breadcrumbs: Default::default(),
             hover: None,
             drop_zone: None,
             hosts: Default::default(),
@@ -2865,6 +2866,27 @@ impl Window {
     /// holds the group. `hover` is the tab under the pointer, by target,
     /// pane and whether it is the close button — the frame's, or none for a
     /// grid nothing points at.
+    /// Each pane's breadcrumb trail, by the pane: the window keeps them per
+    /// buffer, and a pane describes the one its buffer has.
+    ///
+    /// Only panes whose chrome carries the row are listed — `pane_chrome`
+    /// already dropped the row for a buffer with no trail, and a trail
+    /// described into a row that is not there would be laid out at zero
+    /// height and never seen.
+    pub(crate) fn pane_breadcrumbs(
+        &self,
+        chrome: &HashMap<LeafId, crate::view::shell::splits::PaneChrome>,
+    ) -> HashMap<LeafId, Vec<fresh_core::api::BreadcrumbItem>> {
+        self.panes_with_buffers()
+            .into_iter()
+            .filter(|(leaf, _)| chrome.get(leaf).is_some_and(|c| c.breadcrumbs))
+            .filter_map(|(leaf, buffer)| {
+                let items = self.breadcrumbs.get(&buffer)?;
+                (!items.is_empty()).then(|| (leaf, items.clone()))
+            })
+            .collect()
+    }
+
     pub(crate) fn pane_strips(
         &self,
         chrome: &HashMap<LeafId, crate::view::shell::splits::PaneChrome>,

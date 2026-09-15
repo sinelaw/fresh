@@ -25,22 +25,12 @@ use fresh_i18n::t;
 use super::Editor;
 
 impl Editor {
-    /// Navigate to the symbol whose rendered breadcrumb label was pressed.
-    pub(crate) fn handle_click_breadcrumb(&mut self, pane: LeafId, col: u16, row: u16) {
-        let Some(area) = self.pane_part_rect(crate::view::shell::splits::breadcrumbs_key(pane))
-        else {
-            return;
-        };
-        let target = {
-            let window = self.active_window();
-            window.pane_buffer(pane).and_then(|buffer_id| {
-                let items = window.breadcrumbs.get(&buffer_id)?;
-                let position =
-                    crate::view::ui::breadcrumbs::breadcrumb_position_at(area, items, col, row)?;
-                Some((buffer_id, position))
-            })
-        };
-        let Some((buffer_id, position)) = target else {
+    /// Navigate to the symbol whose breadcrumb was pressed.
+    ///
+    /// The crumb's node answered the press, so `position` is already the byte
+    /// to go to: nothing here resolves a cell against the row's geometry.
+    pub(crate) fn handle_click_breadcrumb(&mut self, pane: LeafId, position: usize) {
+        let Some(buffer_id) = self.active_window().pane_buffer(pane) else {
             return;
         };
         self.focus_split(pane, buffer_id);

@@ -658,6 +658,7 @@ mod tests {
                     controls,
                     groups: Default::default(),
                     interiors: Default::default(),
+                    breadcrumbs: Default::default(),
                     strips,
                     hover: None,
                     drop_zone: None,
