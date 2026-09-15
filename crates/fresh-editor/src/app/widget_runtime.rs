@@ -3440,6 +3440,13 @@ mod tests {
     /// and died: the Orchestrator's New-Workspace form (a centred modal
     /// over the dock) left the workspace it had just created unable to
     /// type, so a file opened in it never took the keyboard.
+    ///
+    /// Gated on `plugins`: it mounts and unmounts the modal through the
+    /// plugin command path (`handle_plugin_command`), which only exists
+    /// when the plugin runtime is compiled in — and the mount is the half
+    /// that blurs the dock, so driving it any other way would be modelling
+    /// the thing under test rather than running it.
+    #[cfg(feature = "plugins")]
     #[test]
     fn a_modal_that_blurred_the_dock_leaves_the_keyboard_with_the_editor() {
         use crate::input::keybindings::KeyContext;
