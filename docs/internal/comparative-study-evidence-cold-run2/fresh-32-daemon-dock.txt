@@ -1,0 +1,50 @@
+ File   Edit   View   Selection   Go   LSP   Help
+ [No Name]* ×   +
+│ 1 │ rchestrator: Toggle Dock                                                                                                                                                                         ▌
+  2 │
+~
+~
+~
+~
+~
+~
+~
+~
+~
+~
+~
+~
+~
+~
+~
+~
+~
+~
+~
+~
+~
+~
+~
+~
+~
+~
+~
+~
+~
+~
+~
+~
+~
+~
+~
+~
+~
+~
+~
+~
+~
+~
+~
+~
+~
+ Restricted  Local  Ln 2, Col 1    Workspace restricted — repo-controlled execution is blocked                                                                         LF  UTF-8  Text  Palette: Ctrl+P

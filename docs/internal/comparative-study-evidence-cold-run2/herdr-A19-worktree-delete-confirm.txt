@@ -1,0 +1,50 @@
+ machines                │   1      +
+                         │[noam@chunky worktree-silver-cloud-8e4f]$
+ ▾ Local                 │
+   · local-proj          │
+     main                │
+     └─ · silver-cloud…  │
+   · local-proj          │
+     main                │
+ ▾ testbox              ●│
+   · ~                   │
+   · ~                   │
+   · ~                   │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │                                      ┌──────────────────────────────────────────────────────────────────────┐
+                         │                                      │ delete worktree checkout?                                            │
+                         │                                      │ This removes the checkout folder:                                    │
+                         │                                      │ /home/noam/.herdr/worktrees/local-proj/worktree-silver-cloud-8e4f    │
+ new · Local         menu│                                      │ The branch is not deleted. The Herdr workspace will close.           │
+─────────────────────────│                                      │                                                                      │
+ agents           grouped│                                      │                                                                      │
+                         │                                      │                                                                      │
+                         │                                      │                        ↵ remove        esc cancel                    │
+                         │                                      └──────────────────────────────────────────────────────────────────────┘
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                        «│

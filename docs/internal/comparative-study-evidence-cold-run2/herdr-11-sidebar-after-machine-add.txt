@@ -1,0 +1,50 @@
+ machines                │   1      +
+                         │[noam@chunky local-proj]$
+ ▾ Local                 │
+   · local-proj          │
+     main                │
+   · local-proj          │
+     main                │
+   · local-proj          │
+     main                │
+ ▾ testbox              ●│
+   · local-proj          │
+     main                │
+   · local-proj          │
+     main                │
+   · local-proj          │
+     main                │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+ new · Local         menu│
+─────────────────────────│
+ agents           grouped│
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                        «│

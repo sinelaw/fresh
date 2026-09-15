@@ -1,0 +1,50 @@
+ spaces                  │   1      +
+                         │[noam@chunky local-proj]$
+ · local-proj            │
+   main                  │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │                                    ┌──────────────────────────────────────────────────────────────────────────┐
+                         │                                    │ settings                                                                 │
+                         │                                    │ theme   indicators   sound   toasts   integrations                       │
+                         │                                    │──────────────────────────────────────────────────────────────────────────│
+                         │                                    │                                                                          │
+                         │                                    │agent integrations                                                        │
+                         │                                    │let agents report state directly instead of relying only on process detect│
+                         │                                    │                                                                          │
+                         │                                    │ – pi         not found                                                   │
+                         │                                    │ – omp        not found                                                   │
+                         │                                    │ + claude     available                                                   │
+                         │                                    │ + codex      available                                                   │
+                         │                                    │ – copilot    not found                                                   │
+                         │                                    │ – devin      not found                                                   │
+                         │                                    │ – droid      not found                                                   │
+ new                 menu│                                    │ – kimi       not found                                                   │
+─────────────────────────│                                    │ + opencode   available                                                   │
+ agents           grouped│                                    │ – kilo       not found                                                   │
+                         │                                    │ – hermes     not found                                                   │
+                         │                                    │ – qodercli   not found                                                   │
+                         │                                    │ – qwen       not found                                                   │
+                         │                                    │ – cursor     not found                                                   │
+                         │                                    │ – mastracode not found                                                   │
+                         │                                    │ – antigravitynot found                                                   │
+                         │                                    │ + grok       available                                                   │
+                         │                                    │                                                                          │
+                         │                                    │                                                                          │
+                         │                                    │                                                                          │
+                         │                                    │ ↑↓ select  tab section                                                   │
+                         │                                    │                          ↵ install   esc close                           │
+                         │                                    └──────────────────────────────────────────────────────────────────────────┘
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                        «│

@@ -1,0 +1,16 @@
+fresh persistence evidence (same protocol as herdr)
+probe: while true; do date -u +%H:%M:%S >> probe_fresh.txt; sleep 1; done  (run in REMOTE workspace remote-two)
+last line before client kill: 17:48:59
+client killed at:             17:48:59
+last line after 25s:          17:48:59   -> FROZEN, WORK DID NOT SURVIVE
+total probe lines: 11 (stopped growing at quit)
+surviving fresh processes after quit: NONE
+surviving sshd sessions after quit:   0
+
+on relaunch:
+  session RECORDS restored: yes (local-proj, remote-two, local-two, ssh:testbox)
+  the 3 failed 'Host key verification failed' entries were cleaned up on restart
+  reopening remote-two reconnects ('Connected: remote-two') to the correct remote worktree path
+  BUT: terminal scrollback is empty, and the background probe is still dead
+
+CONTRAST herdr: probe advanced 17:23:35 -> 17:24:01 across the same kill; work kept running.

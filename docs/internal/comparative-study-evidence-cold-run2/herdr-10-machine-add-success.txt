@@ -1,0 +1,10 @@
+export PATH=/home/noam/.local/bin:$PATH; export HOME=/home/noam/study/home
+[noam@chunky local-proj]$ export PATH=/home/noam/.local/bin:$PATH; export HOME=/home/noam/study/home
+[noam@chunky local-proj]$ herdr machine add testbox --label testbox
+The authenticity of host '[127.0.0.1]:2222 ([127.0.0.1]:2222)' can't be established.
+ED25519 key fingerprint is: SHA256:yilIxq3ROom5tMCctLuBDqRNzVNRBbbI0whRMLVi1sg
+This key is not known by any other names.
+Are you sure you want to continue connecting (yes/no/[fingerprint])? yes
+Saved SSH machine 6f0089d7e64deca0cadadae83175ae26. Remote server is ready.
+Open Herdr clients connect automatically.
+[noam@chunky local-proj]$

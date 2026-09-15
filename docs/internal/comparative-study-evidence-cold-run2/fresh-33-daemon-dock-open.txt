@@ -1,0 +1,50 @@
+Orchestrator                          ×│ File   Edit   View   Selection   Go   LSP   Help
+[ + New ]                   / search  ⋯│ [No Name]* ×   +
+───────────────────────────────────────││ 1 │ rchestrator: Toggle Doc                                                                                                                                  ▌
+  · fresh                              │~
+  · ⇅ remote-two  testbox              │~
+  · local-two                          │~
+  · local-proj                         │~
+  · ⇅ ssh:testbox  testbox             │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+           ↑↓ switch  →← fold          │~
+          Enter edit  F2 menu          │ Restricted  Local  Ln 2, Col 24   Workspace restricted — repo-controlled execution is blocked                                 LF  UTF-8  Text  Palette: Ctrl+P

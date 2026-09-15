@@ -1,0 +1,22 @@
+=== fresh teardown: LOCAL workspace (local-two) deleted ===
+-- local-proj worktrees:
+/home/noam/study/repos/local-proj                                     b3e4b94 [main]
+/home/noam/study/home/.local/share/fresh/orchestrator/.sync-workspace b38e785 [noam/fresh-sessions]
+-- local-proj branches:
+  bugfix/beta   feature/alpha   local-two * main + noam/fresh-sessions 
+-- fresh data orchestrator dir:
+/home/noam/study/home/.local/share/fresh/orchestrator
+/home/noam/study/home/.local/share/fresh/orchestrator/home_noam_study_repos_local-proj
+/home/noam/study/home/.local/share/fresh/orchestrator/state
+/home/noam/study/home/.local/share/fresh/orchestrator/.sync-workspace
+/home/noam/study/home/.local/share/fresh/orchestrator/state/orchestrator.json
+/home/noam/study/home/.local/share/fresh/orchestrator/.sync-workspace/sessions.json
+/home/noam/study/home/.local/share/fresh/orchestrator/.sync-workspace/.git
+
+=== compare: REMOTE workspace (remote-two) deleted earlier ===
+-- remote-proj worktrees:
+/home/noam/study/repos/remote-proj                   4540a4b [main]
+/home/noam/.fresh/worktrees/remote-proj/local-proj-1 4540a4b [local-proj-1]
+/home/noam/.fresh/worktrees/remote-proj/remote-two   4540a4b [remote-two]
+-- remote-proj branches:
+  bugfix/beta   feature/alpha + local-proj-1 * main + remote-two 

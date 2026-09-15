@@ -1,0 +1,50 @@
+Orchestrator                          ×│ File   Edit   View   Selection   Go   LSP   Help
+[ + New ]                   / search  ⋯│ bash — noam@chunky:~/.local/share/fresh/orchestrator/home_noam_study_repos_local-proj/local-two ×   +
+───────────────────────────────────────│[noam@chunky local-two]$
+  · local-proj · bash — noam@chunky:/h…│
+  ! ⇅ ssh:testbox  testbox  Host key v…│
+  ! ⇅ ssh:testbox  testbox  Host key v…│
+  ! ⇅ ssh:testbox  testbox  Host key v…│
+  · ⇅ ssh:testbox · ssh — noam@chunky:…│
+  · local-two · bash — noam@chunky:~/.…│
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │ Trusted  Local  Ln 1, Col 1                                                                                                   LF  UTF-8  Text  Palette: Ctrl+P

@@ -1,0 +1,50 @@
+ machines                │   1      +
+                         │[noam@chunky local-proj]$ D^C
+ ▾ Local                 │[noam@chunky local-proj]$
+   · local-proj          │
+     main                │
+   · local-proj          │
+     main                │
+ ▾ testbox              ●│
+   · ~                   │
+   · ~                   │
+   · ~                   │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │                                              ┌──────────────────────────────────────────────────────┐
+                         │                                              │new tab                                               │
+                         │                                              │                                                      │
+ new · Local         menu│                                              │ v                                                    │
+─────────────────────────│                                              │           ↵ save    ^c clear    esc cancel           │
+ agents           grouped│                                              │                                                      │
+                         │                                              └──────────────────────────────────────────────────────┘
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                        «│

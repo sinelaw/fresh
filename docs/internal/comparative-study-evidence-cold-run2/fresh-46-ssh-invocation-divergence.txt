@@ -1,0 +1,33 @@
+DECISIVE EVIDENCE — fresh runs two different ssh invocations for the same machine.
+Captured by polling `ps -eo pid,args` while driving the Orchestrator dock.
+
+1) "Test connection" button (Machines dialog)  -> reports "✓ ok"
+   ssh -o BatchMode=yes -o ConnectTimeout=8 -- testbox uname -sr; git --version 2>/dev/null; nproc 2>/dev/null
+                                                  ^^^^^^^
+   Passes the ssh ALIAS. OpenSSH matches `Host testbox` in ~/.ssh/config and therefore honours
+   IdentityFile and UserKnownHostsFile from that block. Connection succeeds.
+
+2) "Create Workspace" (same machine)           -> reports "Host key verification failed."
+   ssh -o BatchMode=yes -o ConnectTimeout=20 -p 2222 -- noam@127.0.0.1 cd '/home/noam/study/repos/remote-proj' || exit 1; REPO=$(git rev-parse --show-toplevel) ...
+                                                       ^^^^^^^^^^^^^^^^
+   Passes the PRE-RESOLVED user@host with -p. OpenSSH matches the host argument against Host
+   patterns, and "127.0.0.1" does not match "testbox", so the entire `Host testbox` block is
+   skipped: IdentityFile and UserKnownHostsFile fall back to defaults. Fails before auth, at
+   host-key verification.
+
+CONSEQUENCE
+  - Every per-Host directive in ~/.ssh/config is silently discarded on the path that matters:
+    IdentityFile, UserKnownHostsFile, ProxyJump/ProxyCommand, Port-specific keys, Match blocks,
+    IdentitiesOnly, etc.
+  - "Test connection" is actively misleading: it exercises a code path with different config
+    fidelity from the one used to open a workspace, so it reports ✓ for a machine on which
+    workspace creation cannot succeed.
+
+PROOF THAT NOTHING ELSE WAS WRONG
+  Adding a `Host 127.0.0.1` block carrying the same IdentityFile/UserKnownHostsFile made the
+  RESOLVED form connectable, and workspace creation then succeeded immediately
+  (see fresh-19-remote-workspace-success.txt; SSH_CONNECTION confirmed, remote README read).
+  So fresh's remote workspace machinery is sound — only the alias pre-resolution is broken.
+
+herdr, for comparison, always passes the alias:
+   ssh -o BatchMode=yes -o NumberOfPasswordPrompts=0 -o StrictHostKeyChecking=yes ... testbox

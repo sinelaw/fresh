@@ -1,0 +1,50 @@
+ spaces                  │   1      +
+                         │[noam@chunky local-proj]$
+ · local-proj            │
+   main                  │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │                                          ┌──────────────────────────────────────────────────────────────┐
+                         │                                          │  herdr                                                       │
+                         │                                          │  terminal workspace manager for coding agents                │
+                         │                                          │                                                              │
+                         │                                          │  this is a mouse-first terminal.                             │
+                         │                                          │  click the sidebar to switch workspaces, drag pane           │
+                         │                                          │  borders to resize, right-click for context menus.           │
+ new                 menu│                                          │                                                              │
+─────────────────────────│                                          │  ctrl+b enters prefix mode · ? shows keybinds and settings   │
+ agents           grouped│                                          │  next: install optional agent integrations for more reliable │
+                         │                                          │                                                              │
+                         │                                          │                                                              │
+                         │                                          │                                                              │
+                         │                                          │                                                              │
+                         │                                          │ ↵ continue                                                   │
+                         │                                          └──────────────────────────────────────────────────────────────┘
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                        «│

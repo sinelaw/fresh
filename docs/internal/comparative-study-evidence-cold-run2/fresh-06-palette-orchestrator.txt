@@ -1,0 +1,50 @@
+Orchestrator                          ×│ File   Edit   View   Selection   Go   LSP   Help
+[ + New ]                   / search  ⋯│ [No Name] ×   Welcome ×   +
+───────────────────────────────────────│  1 │
+  · local-proj                         │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │~
+                                       │┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+                                       ││  Orchestrator: Explain State                    Say why the selected workspace shows its state badge (rule, evidence, timing)                    orchestrator
+                                       ││  Orchestrator: Jump Back                        Return to the workspace the last jump left                                                       orchestrator
+                                       ││  Orchestrator: Jump to Attention                Switch to the workspace that needs you (or finished unseen work); with nothing pending, jum…     orchestrator
+                                       ││  Orchestrator: Kill Selected                    Close the workspace highlighted in the open Orchestrator prompt                                  orchestrator
+                                       ││  Orchestrator: Machines                         Register and manage the machines workspaces run on                                               orchestrator
+                                       ││  Orchestrator: Move to Folder…                  File the current workspace under a dock folder                                                   orchestrator
+                                       ││  Orchestrator: New Workspace                    Spawn a new editor workspace in a worktree                                                       orchestrator
+                                       ││  Orchestrator: Open                             Show all editor workspaces in a floating selector                                                orchestrator
+                                       ││  Orchestrator: Toggle Dock                      Show/hide the persistent left workspace dock (↑↓ switches windows live)                          orchestrator
+                                       ││  Toggle Orchestrator Dock Focus   Alt+O         Move keyboard focus to or from the orchestrator workspace dock (opens it if hidden)                   builtin
+                                       │└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+                                       │  file  |  >command  |  :line  |  #buffer
+                                       │>orchestrator

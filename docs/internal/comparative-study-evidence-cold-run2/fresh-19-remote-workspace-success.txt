@@ -1,0 +1,50 @@
+Orchestrator                          ×│ File   Edit   View   Selection   Go   LSP   Help
+[ + New ]                   / search  ⋯│ ssh — noam@chunky:~/.fresh/worktrees/remote-proj/local-proj-1 ×   +
+───────────────────────────────────────│[noam@chunky local-proj-1]$
+  · local-proj · bash — noam@chunky:/h…│
+  ! ⇅ ssh:testbox  testbox  Host key v…│
+  ! ⇅ ssh:testbox  testbox  Host key v…│
+  ! ⇅ ssh:testbox  testbox  Host key v…│
+  · ⇅ ssh:testbox  testbox             │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │ Trusted  testbox  Ln 1, Col 1                                                                                                 LF  UTF-8  Text  Palette: Ctrl+P

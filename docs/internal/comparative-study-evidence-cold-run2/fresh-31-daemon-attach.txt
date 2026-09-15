@@ -1,0 +1,50 @@
+ File   Edit   View   Selection   Go   LSP   Help
+ [No Name] ×   +
+  1 │
+~
+~
+~
+~
+~
+~
+~
+~
+~                                                                 ┌──────────────────────────────────────────────────────────────────┐
+~                                                                 │ ⚠  SECURITY WARNING                                              │
+~                                                                 │──────────────────────────────────────────────────────────────────│
+~                                                                 │ This project folder can execute arbitrary code:                  │
+~                                                                 │ Path: /home/noam/repos/fresh                                     │
+~                                                                 │ Detected: .envrc, Cargo.toml, package.json                       │
+~                                                                 │                                                                  │
+~                                                                 │ How would you like to proceed?                                   │
+~                                                                 │                                                                  │
+~                                                                 │ ( ) Trust folder & Allow Tooling (T)                             │
+~                                                                 │      Runs everything: language servers, build scripts, tasks, env│
+~                                                                 │      activation.                                                 │
+~                                                                 │                                                                  │
+~                                                                 │ (*) Keep Restricted (Default) (K)                                │
+~                                                                 │      Runs system tools found on your PATH (git, ripgrep, the     │
+~                                                                 │      system python). Blocks: executables & scripts located inside│
+~                                                                 │      this project (e.g. ./gradlew, .venv/bin/python,             │
+~                                                                 │      node_modules/.bin/*), env activation (.env/.envrc/mise), and│
+~                                                                 │      language servers.                                           │
+~                                                                 │                                                                  │
+~                                                                 │ ( ) Block All Execution (B)                                      │
+~                                                                 │      Nothing runs — no system tools, language servers, scripts,  │
+~                                                                 │      or tasks.                                                   │
+~                                                                 │                                                                  │
+~                                                                 │──────────────────────────────────────────────────────────────────│
+~                                                                 │              [ OK ]                     [ Quit (Ctrl+Q) ]        │
+~                                                                 └──────────────────────────────────────────────────────────────────┘
+~
+~
+~
+~
+~
+~
+~
+~
+~
+~
+~
+ Restricted  Local  Ln 1, Col 1                                                                                                                                        LF  UTF-8  Text  Palette: Ctrl+P

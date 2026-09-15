@@ -1,0 +1,23 @@
+=== herdr teardown observation (Task 7) ===
+-- local server workspaces:
+2 ['w1', 'w2']
+-- herdr processes still running:
+/home/noam/.local/bin/herdr server 
+/home/noam/.local/bin/herdr server 
+-- git worktrees in local-proj:
+/home/noam/study/repos/local-proj 7d8f698 [main]
+-- git branches:
+  bugfix/beta  feature/alpha* main
+-- state files under ~/.config/herdr:
+<cfg>
+<cfg>/sessions
+<cfg>/herdr-client.log
+<cfg>/herdr-client.sock
+<cfg>/herdr.sock
+<cfg>/herdr-server.log
+<cfg>/session.json
+<cfg>/.plugins.lock
+<cfg>/config.toml
+<cfg>/sessions/remotebox
+-- leftover ssh sessions:
+6

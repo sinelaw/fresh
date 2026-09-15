@@ -1,0 +1,14 @@
+=== fresh POST-teardown (deleted workspace remote-two) ===
+-- remote-proj worktrees:
+/home/noam/study/repos/remote-proj                   4540a4b [main]
+/home/noam/.fresh/worktrees/remote-proj/local-proj-1 4540a4b [local-proj-1]
+/home/noam/.fresh/worktrees/remote-proj/remote-two   4540a4b [remote-two]
+-- remote-proj branches:
+  bugfix/beta   feature/alpha + local-proj-1 * main + remote-two 
+-- ~/.fresh/worktrees:
+/home/noam/.fresh/worktrees
+/home/noam/.fresh/worktrees/remote-proj
+/home/noam/.fresh/worktrees/remote-proj/local-proj-1
+/home/noam/.fresh/worktrees/remote-proj/remote-two
+-- probe still running?
+172 -> 172

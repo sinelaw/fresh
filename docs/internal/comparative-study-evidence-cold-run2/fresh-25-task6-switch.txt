@@ -1,0 +1,50 @@
+Orchestrator                          ×│ File   Edit   View   Selection   Go   LSP   Help
+[ + New ]                   / search  ⋯│ ssh — noam@chunky:~/.fresh/worktrees/remote-proj/remote-two ×   +
+───────────────────────────────────────│[noam@chunky remote-two]$
+  · local-proj · bash — noam@chunky:/h…│
+  ! ⇅ ssh:testbox  testbox  Host key v…│
+  ! ⇅ ssh:testbox  testbox  Host key v…│
+  ! ⇅ ssh:testbox  testbox  Host key v…│
+  · ⇅ ssh:testbox · ssh — noam@chunky:…│
+  · local-two · bash — noam@chunky:~/.…│
+  · ⇅ remote-two  testbox┌ ORCHESTRATOR :: New Workspace ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────[×]┐
+                         │        Launch in: [New workspace     ▼]                                                                                                            │
+                         │          Machine: [testbox      ▼]                                                                                                                 │
+                         │                   ↳ noam@127.0.0.1:2222                                                                                                            │
+                         │                                                                                                                                                    │
+                         │                                                                                                                                                    │
+                         │                                                                                                                                                    │
+                         │                                                                                                                                                    │
+                         │                                                                                                                                                    │
+                         │▸    Project Path: [ARKER_REMOTE_TWO; pwd                                                                                                          ]│
+                         │                   ↳ /srv/project  (blank = remote home)                                                                                            │
+                         │   Workspace Name: [local-proj-1                                                                                                                   ]│
+                         │            Agent: [terminal ▼]                                                                                                                     │
+                         │                                                                                                                                                    │
+                         │                                                                                                                                                    │
+                         │                                                                                                                                                    │
+                         │                                                                                                                                                    │
+                         │                                                                                                                                                    │
+                         │                                                                                                                                                    │
+                         │                   [ ] Create a git worktree                                                                                                        │
+                         │                   ↳ Not a git repository on that host                                                                                              │
+                         │                                                                                                                                                    │
+                         │                                                                                                                                                    │
+                         │                                                                                                                                                    │
+                         │                                                                                                                                                    │
+                         │                                                                                                                                                    │
+                         │                                                                                                                                                    │
+                         │                                                                                                                                                    │
+                         │                                                                             [ Create Workspace ]  ^⏎    [ Create in Background ]    [ Cancel ]  Esc│
+                         │                                              Tab next / accept  ←→ change option  ↑↓ suggest / history                                             │
+                         └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │
+                                       │ Trusted  testbox  Ln 1, Col 1                                                                                                 LF  UTF-8  Text  Palette: Ctrl+P

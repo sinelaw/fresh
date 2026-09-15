@@ -1,0 +1,7 @@
+herdr persistence evidence
+last line before client kill: 17:23:35
+client killed at: 17:23:36
+line after 25s detached: 17:24:01  -> WORK CONTINUED
+probe lines at reattach: 66 -> 74 8s later -> STILL RUNNING
+scrollback restored: REMOTE_SESSION_MARKER_B and the probe command line both present
+no welcome dialog on reattach; testbox shows connected marker

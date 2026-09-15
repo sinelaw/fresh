@@ -1,0 +1,20 @@
+fresh persistence — CORRECTED, two configurations
+
+A) DEFAULT foreground launch (plain `fresh`, no daemon):
+   probe before kill 17:48:59 ; after 25s 17:48:59  -> FROZEN, work did NOT survive
+   no fresh process survived; 0 sshd sessions
+   on relaunch: session RECORDS restored, reopening reconnects to the right remote worktree,
+   but scrollback is empty and the background work is dead
+
+B) DAEMON mode (fresh --cmd daemon new studyd ; fresh -a studyd):
+   probe before client kill 17:53:04 ; after 25s 17:53:29 -> KEPT GROWING, work SURVIVED
+   surviving processes: `fresh --server --session-name studyd`, `fresh --server`; 4 sshd sessions
+   on reattach (fresh -a studyd): exact terminal restored including the running probe command line;
+   probe still advancing (66 -> 72 lines)
+
+=> fresh reaches FULL PARITY with herdr on persistence, but ONLY in daemon mode.
+   herdr's persistent server is the DEFAULT and requires no knowledge from the user.
+   fresh's default launch is non-persistent, and the Orchestrator dock gives no hint
+   that daemon mode exists or that it is needed for work to survive.
+
+herdr for comparison: probe 17:23:35 -> 17:24:01 across the same kill, with zero setup.

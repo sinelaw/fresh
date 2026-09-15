@@ -1,0 +1,50 @@
+ machines                │   1      +
+                         │[noam@chunky local-proj]$ D^C
+ ▾ Local                 │[noam@chunky local-proj]$
+   · local-proj          │
+     main                │
+   · local-proj          │
+     main                │
+ ▾ testbox              ●│
+   · ~                   │
+   · ~                   │
+   · ~                   │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │                                        ┌──────────────────────────────────────────────────────────────────┐
+                         │                                        │new worktree                                                      │
+                         │                                        │                                                                  │
+                         │                                        │ branch                                                           │
+                         │                                        │ worktree/silver-cloud-8e4f                                       │
+ new · Local         menu│                                        │                                                                  │
+─────────────────────────│                                        │ checkout                                                         │
+ agents           grouped│                                        │ /home/noam/.herdr/worktrees/local-proj/worktree-silver-cloud-8e4f│
+                         │                                        │                                                                  │
+                         │                                        │                                                                  │
+                         │                                        │                 ↵ create and open     esc cancel                 │
+                         │                                        └──────────────────────────────────────────────────────────────────┘
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                        «│
