@@ -360,7 +360,7 @@ pub(super) struct EditorParts {
     pub(super) color_capability: crate::view::color_support::ColorCapability,
 
     // Async / IO
-    pub(super) tokio_runtime: Option<Arc<tokio::runtime::Runtime>>,
+    pub(super) tokio_runtime: Option<crate::services::runtime::LiveRuntime>,
     pub(super) async_bridge: AsyncBridge,
     pub(super) local_filesystem: Arc<dyn FileSystem + Send + Sync>,
 
@@ -1099,13 +1099,14 @@ impl Editor {
 
         t.phase("buffer_state");
         // Create Tokio runtime for async I/O (LSP, file watching, git, etc.)
-        let tokio_runtime = tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(2) // Small pool for I/O tasks
-            .thread_name("editor-async")
-            .enable_all()
-            .build()
-            .ok()
-            .map(Arc::new);
+        // Owned, not a bare `Handle`: everything that puts work on this
+        // runtime holds a clone, so the runtime cannot go away underneath it
+        // (see `services::runtime::LiveRuntime`).
+        let tokio_runtime = crate::services::runtime::LiveRuntime::multi_thread(
+            "editor-async",
+            2, // Small pool for I/O tasks
+        )
+        .ok();
         t.phase("tokio_runtime");
 
         // Create editor-global async bridge for editor-scoped async
@@ -1166,7 +1167,7 @@ impl Editor {
         quick_open_registry.register(Box::new(FileProvider::new(
             Arc::clone(&filesystem),
             Arc::clone(&process_spawner),
-            tokio_runtime.as_ref().map(|rt| rt.handle().clone()),
+            tokio_runtime.clone(),
             Some(async_bridge.sender()),
         )));
         quick_open_registry.register(Box::new(CommandProvider::new(

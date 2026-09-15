@@ -569,7 +569,12 @@ impl AgentChannel {
         F: std::future::Future<Output = T> + Send,
         T: Send,
     {
-        if tokio::runtime::Handle::try_current().is_ok() {
+        // Naming `Handle` only to ask whether this thread is inside a
+        // runtime at all — a question about the caller, not a runtime we
+        // intend to put work on, so there is nothing here to keep alive.
+        #[allow(clippy::disallowed_types)]
+        let inside_a_runtime = tokio::runtime::Handle::try_current().is_ok();
+        if inside_a_runtime {
             std::thread::scope(|scope| {
                 scope
                     .spawn(|| Self::block_on_private_runtime(fut))

@@ -677,7 +677,7 @@ pub struct Editor {
     mode_registry: ModeRegistry,
 
     /// Tokio runtime for async I/O tasks
-    tokio_runtime: Option<Arc<tokio::runtime::Runtime>>,
+    tokio_runtime: Option<crate::services::runtime::LiveRuntime>,
 
     /// Bridge for async messages from tokio tasks to main loop
     async_bridge: Option<AsyncBridge>,

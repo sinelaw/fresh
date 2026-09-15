@@ -2193,14 +2193,10 @@ impl crate::app::window::Window {
             "expand_file_explorer_to_path: taking file_explorer for async expand to {:?}",
             target_path
         );
-        let runtime_handle = self
-            .resources
-            .tokio_runtime
-            .as_ref()
-            .map(|r| r.handle().clone());
+        let runtime = self.resources.tokio_runtime.clone();
         let sender = self.resources.async_bridge.as_ref().map(|b| b.sender());
         let window_id = self.id;
-        if let (Some(runtime), Some(sender)) = (runtime_handle, sender) {
+        if let (Some(runtime), Some(sender)) = (runtime, sender) {
             // Mark sync as in progress so render knows to keep the layout
             self.file_explorer_sync_in_progress = true;
 

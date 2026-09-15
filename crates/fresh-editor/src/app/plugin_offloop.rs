@@ -25,6 +25,7 @@ use fresh_core::BufferId;
 use crate::model::buffer::HybridSearchPlan;
 use crate::model::filesystem::{FileSearchCursor, FileSearchOptions, FileSystem};
 use crate::services::async_bridge::AsyncMessage;
+use crate::services::runtime::LiveRuntime;
 
 /// Capability handle for plugin work that must not run on the editor thread.
 ///
@@ -33,14 +34,14 @@ use crate::services::async_bridge::AsyncMessage;
 /// that can read or mutate editor state.
 pub(crate) struct OffLoop {
     pub filesystem: Arc<dyn FileSystem + Send + Sync>,
-    /// A *borrow* of the runtime, never an owning `Arc<Runtime>`. The handle
-    /// travels into the spawned task, so an owning reference here would be
-    /// dropped on a runtime worker whenever a task outlived the editor's own
-    /// reference — which is exactly what quitting does. Dropping the last
-    /// `Arc<Runtime>` from inside the runtime panics ("Cannot drop a runtime
-    /// in a context where blocking is not allowed"), so ownership stays with
-    /// the editor and this side only ever holds a handle.
-    pub handle: tokio::runtime::Handle,
+    /// An owning reference, so the runtime cannot be shut down while a
+    /// handler still has work to put on it. This used to be a bare `Handle`
+    /// precisely because it travels into the spawned task, so the last
+    /// reference can be dropped on a runtime worker whenever a task outlives
+    /// the editor's own — which is exactly what quitting does — and dropping
+    /// the last `Arc<Runtime>` from inside the runtime panics. `LiveRuntime`
+    /// makes that drop safe from anywhere, so the ownership can come back.
+    pub runtime: LiveRuntime,
     pub sender: std::sync::mpsc::Sender<AsyncMessage>,
 }
 
@@ -92,8 +93,8 @@ pub(crate) struct GrepProjectRequest {
 /// the runtime, and every stage re-checks `cancel` so a superseded request
 /// stops doing work instead of running to completion.
 pub(crate) fn grep_project(cap: OffLoop, req: GrepProjectRequest) {
-    let handle = cap.handle.clone();
-    handle.spawn(async move {
+    let runtime = cap.runtime.clone();
+    runtime.spawn(async move {
         let GrepProjectRequest {
             pattern,
             opts,
@@ -320,8 +321,8 @@ pub(crate) struct BaselineLoadRequest {
 pub(crate) fn load_diff_baseline(cap: OffLoop, req: BaselineLoadRequest) {
     use crate::app::diff_baselines::{BaselineContent, BaselineSpec};
 
-    let handle = cap.handle.clone();
-    handle.spawn(async move {
+    let runtime = cap.runtime.clone();
+    runtime.spawn(async move {
         let text: Result<String, String> = match &req.spec {
             // Saved baselines never load content; the editor thread
             // resolves them synchronously and never sends them here.
@@ -454,12 +455,12 @@ mod tests {
     }
 
     fn run_grep(root: PathBuf, cancel: Arc<AtomicBool>) -> Result<String, String> {
-        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let runtime = LiveRuntime::multi_thread("offloop-test", 2).unwrap();
         let (tx, rx) = std::sync::mpsc::channel();
         grep_project(
             OffLoop {
                 filesystem: Arc::new(StdFileSystem),
-                handle: runtime.handle().clone(),
+                runtime: runtime.clone(),
                 sender: tx,
             },
             GrepProjectRequest {
@@ -495,15 +496,17 @@ mod tests {
         );
     }
 
-    /// A baseline load runs on a runtime the capability only *borrows*: the
-    /// editor keeps ownership, so the task settling on a worker thread (which
-    /// is what quitting under load looks like — the editor releases its
-    /// reference while the load is still in flight) never drops the runtime
-    /// itself. Dropping a runtime from inside one panics with "Cannot drop a
-    /// runtime in a context where blocking is not allowed", which is why
-    /// [`OffLoop`] holds a `Handle` and not an `Arc<Runtime>`.
+    /// A baseline load settles even after the editor has let go of the
+    /// runtime, which is what quitting under load looks like: the editor
+    /// releases its reference while the load is still in flight, leaving the
+    /// task's own [`OffLoop`] the only thing holding the runtime up. Then the
+    /// final drop lands on a worker thread, and dropping a runtime from
+    /// inside one ordinarily panics with "Cannot drop a runtime in a context
+    /// where blocking is not allowed" — [`LiveRuntime`] is what makes it safe,
+    /// and why the capability can own the runtime rather than borrow a bare
+    /// `Handle` and hope the editor outlives it.
     #[test]
-    fn baseline_load_settles_on_a_borrowed_runtime_handle() {
+    fn baseline_load_settles_after_the_editor_drops_the_runtime() {
         use crate::app::diff_baselines::{BaselineEntry, BaselineSpec, BaselineStore};
         use crate::services::env_provider::EnvProvider;
         use crate::services::remote::LocalProcessSpawner;
@@ -513,9 +516,7 @@ mod tests {
         let path = dir.path().join("baseline.txt");
         std::fs::write(&path, "reference\n").unwrap();
 
-        // The editor owns the runtime; the capability only borrows a handle.
-        // Held as an `Arc` here so the count below can prove that.
-        let runtime = Arc::new(tokio::runtime::Runtime::new().unwrap());
+        let runtime = LiveRuntime::multi_thread("offloop-test", 2).unwrap();
         let (tx, rx) = std::sync::mpsc::channel();
         let store = BaselineStore::default();
         store.inner.lock().unwrap().entries.insert(
@@ -531,7 +532,7 @@ mod tests {
         load_diff_baseline(
             OffLoop {
                 filesystem: Arc::new(StdFileSystem),
-                handle: runtime.handle().clone(),
+                runtime: runtime.clone(),
                 sender: tx,
             },
             BaselineLoadRequest {
@@ -547,13 +548,10 @@ mod tests {
             },
         );
 
-        assert_eq!(
-            Arc::strong_count(&runtime),
-            1,
-            "off-loop work must not hold an owning reference to the runtime: \
-             a task outliving the editor's own reference would drop the runtime \
-             on a worker thread, which panics"
-        );
+        // The editor is gone: the in-flight task's own clone is the only
+        // thing keeping the runtime up now, and its drop — on a worker thread,
+        // once the load settles — is the one that shuts the runtime down.
+        drop(runtime);
 
         let result = match rx.recv().expect("the load must settle exactly once") {
             AsyncMessage::Plugin(PluginAsyncMessage::OffLoopSettled { result, .. }) => result,
@@ -575,10 +573,6 @@ mod tests {
             "the loaded content should be installed in the store"
         );
         drop(inner);
-
-        // The editor owns the runtime, so shutting it down happens here, on a
-        // thread where blocking is allowed.
-        drop(runtime);
     }
 
     /// A superseded grep stopped partway, so the matches it happened to collect

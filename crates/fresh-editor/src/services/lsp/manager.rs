@@ -392,7 +392,7 @@ pub struct LspManager {
     per_language_root_uris: HashMap<String, Uri>,
 
     /// Tokio runtime reference
-    runtime: Option<tokio::runtime::Handle>,
+    runtime: Option<crate::services::runtime::LiveRuntime>,
 
     /// Async bridge for communication
     async_bridge: Option<AsyncBridge>,
@@ -794,7 +794,11 @@ impl LspManager {
     /// Set the Tokio runtime and async bridge
     ///
     /// Must be called before spawning any servers
-    pub fn set_runtime(&mut self, runtime: tokio::runtime::Handle, async_bridge: AsyncBridge) {
+    pub fn set_runtime(
+        &mut self,
+        runtime: crate::services::runtime::LiveRuntime,
+        async_bridge: AsyncBridge,
+    ) {
         self.runtime = Some(runtime);
         self.async_bridge = Some(async_bridge);
     }
@@ -1993,11 +1997,11 @@ mod tests {
 
     #[test]
     fn test_lsp_manager_force_spawn_no_config() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
+        let rt = crate::services::runtime::LiveRuntime::multi_thread("lsp-test", 1).unwrap();
         let mut manager = LspManager::new(fresh_core::WindowId(1), None);
         let async_bridge = AsyncBridge::new();
 
-        manager.set_runtime(rt.handle().clone(), async_bridge);
+        manager.set_runtime(rt.clone(), async_bridge);
 
         // force_spawn should return None for unconfigured language
         let result = manager.force_spawn("rust", None);
@@ -2006,11 +2010,11 @@ mod tests {
 
     #[test]
     fn test_lsp_manager_force_spawn_disabled_language() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
+        let rt = crate::services::runtime::LiveRuntime::multi_thread("lsp-test", 1).unwrap();
         let mut manager = LspManager::new(fresh_core::WindowId(1), None);
         let async_bridge = AsyncBridge::new();
 
-        manager.set_runtime(rt.handle().clone(), async_bridge);
+        manager.set_runtime(rt.clone(), async_bridge);
 
         // Add disabled config (command is optional when disabled)
         manager.set_language_config(
@@ -2043,10 +2047,10 @@ mod tests {
     // every file open.
     #[test]
     fn test_lsp_manager_try_spawn_returns_disabled_when_all_configs_disabled() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
+        let rt = crate::services::runtime::LiveRuntime::multi_thread("lsp-test", 1).unwrap();
         let mut manager = LspManager::new(fresh_core::WindowId(1), None);
         let async_bridge = AsyncBridge::new();
-        manager.set_runtime(rt.handle().clone(), async_bridge);
+        manager.set_runtime(rt.clone(), async_bridge);
 
         manager.set_language_config(
             "rust".to_string(),
@@ -2075,10 +2079,10 @@ mod tests {
     // `Disabled` (callers stay silent), not `Failed`.
     #[test]
     fn test_lsp_manager_try_spawn_returns_disabled_when_globally_disabled() {
-        let rt = tokio::runtime::Runtime::new().unwrap();
+        let rt = crate::services::runtime::LiveRuntime::multi_thread("lsp-test", 1).unwrap();
         let mut manager = LspManager::new(fresh_core::WindowId(1), None);
         let async_bridge = AsyncBridge::new();
-        manager.set_runtime(rt.handle().clone(), async_bridge);
+        manager.set_runtime(rt.clone(), async_bridge);
 
         manager.set_language_config(
             "rust".to_string(),
