@@ -34,9 +34,15 @@ impl DisplayWidth for String {
 /// Calculate the visual column (display width) at a given byte offset within a string.
 ///
 /// Returns the sum of display widths of all characters before the given byte offset.
+/// If `byte_offset` falls inside a multi-byte character, it is floored to that
+/// character's start boundary rather than panicking on an invalid slice.
 #[inline]
 pub fn visual_column_at_byte(s: &str, byte_offset: usize) -> usize {
-    s[..byte_offset.min(s.len())].chars().map(char_width).sum()
+    let mut end = byte_offset.min(s.len());
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    s[..end].chars().map(char_width).sum()
 }
 
 /// Convert a visual column to a byte offset within a string.
@@ -113,6 +119,18 @@ mod tests {
         assert_eq!(str_width("Hello"), 5);
         assert_eq!(str_width(""), 0);
         assert_eq!(str_width(" "), 1);
+    }
+
+    #[test]
+    fn test_visual_column_at_byte_floors_to_char_boundary() {
+        // "信" occupies bytes 0..3, "息" 3..6, "x" 6..7.
+        let s = "信息x";
+        assert_eq!(visual_column_at_byte(s, 1), 0); // inside 信 -> floor to 0
+        assert_eq!(visual_column_at_byte(s, 3), 2); // boundary after 信
+        assert_eq!(visual_column_at_byte(s, 5), 2); // inside 息 -> floor to 3
+        assert_eq!(visual_column_at_byte(s, 6), 4); // boundary after 息
+        assert_eq!(visual_column_at_byte(s, 7), 5); // after x
+        assert_eq!(visual_column_at_byte(s, 999), 5); // past the end
     }
 
     #[test]
