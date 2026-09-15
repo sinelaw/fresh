@@ -441,7 +441,8 @@ type LineTarget = {
 };
 type BreadcrumbItem = {
 	label: string;
-	position: number;
+	line: number;
+	character: number;
 };
 type PaneDescription = {
 	/**
@@ -3118,8 +3119,9 @@ interface EditorAPI {
 	*/
 	setStatusBarValue(bufferId: number, tokenName: string, value: string): boolean;
 	/**
-	* Replace the breadcrumb trail shown above a buffer. Each item carries
-	* the byte position used when the user clicks it.
+	* Replace the breadcrumb trail shown above a buffer. Each item names an
+	* LSP position — a 0-indexed line and a UTF-16 character offset — which
+	* the editor resolves when the item is clicked.
 	*/
 	setBreadcrumbs(bufferId: number, items: BreadcrumbItem[]): boolean;
 	/**
@@ -5719,6 +5721,11 @@ interface HookEventMap {
 		row: number;
 	};
 	// ── LSP ──────────────────────────────────────────────────────────────────
+	/** A language server finished `initialize` and will answer requests now. */
+	lsp_ready: {
+		language: string;
+		server_name: string;
+	};
 	diagnostics_updated: {
 		uri: string;
 		count: number;

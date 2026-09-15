@@ -1616,8 +1616,9 @@ impl JsEditorApi {
             .is_ok()
     }
 
-    /// Replace the breadcrumb trail shown above a buffer. Each item carries
-    /// the byte position used when the user clicks it.
+    /// Replace the breadcrumb trail shown above a buffer. Each item names an
+    /// LSP position — a 0-indexed line and a UTF-16 character offset — which
+    /// the editor resolves when the item is clicked.
     #[plugin_api(js_name = "setBreadcrumbs", ts_return = "boolean")]
     pub fn set_breadcrumbs(
         &self,

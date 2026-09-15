@@ -1435,6 +1435,10 @@ fn live_interior(id: LeafId, c: PaneChrome, s: &Rc<Splits>) -> Node<UiMsg> {
             breadcrumbs: super::breadcrumbs::surface(
                 id,
                 s.breadcrumbs.get(&id).map(|v| v.as_slice()).unwrap_or(&[]),
+                match s.hover {
+                    Some(HoverTarget::Breadcrumb(pane, index)) if pane == id => Some(index),
+                    _ => None,
+                },
             ),
             content,
             vscroll: scrollbar(id, Axis::Vertical, &handle, &s.hover),

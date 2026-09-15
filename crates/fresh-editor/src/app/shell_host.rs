@@ -2653,9 +2653,12 @@ impl Editor {
                 self.scroll_pane_tab_strip(pane, delta);
             }
             UiFact::PaneTabsPan { pane, delta } => self.scroll_pane_tab_strip(pane, delta),
-            UiFact::PaneBreadcrumbPress { pane, position } => {
-                self.handle_click_breadcrumb(pane, position)
-            }
+            UiFact::PaneBreadcrumbPress {
+                pane,
+                line,
+                character,
+                label,
+            } => self.handle_click_breadcrumb(pane, line, character, &label),
             UiFact::PaneContentPress {
                 pane,
                 byte,

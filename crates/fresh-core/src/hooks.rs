@@ -112,6 +112,20 @@ pub enum HookArgs {
     /// Buffer was deactivated
     BufferDeactivated { buffer_id: BufferId },
 
+    /// A language server finished its `initialize` handshake and is ready to
+    /// answer requests.
+    ///
+    /// A plugin that asked before this — because the buffer opened first —
+    /// got an error, and had no way to know when to try again. This is that
+    /// signal, fired where the editor already re-requests semantic tokens
+    /// and inlay hints for the same reason.
+    LspReady {
+        /// The language whose server came up
+        language: String,
+        /// The server's configured name
+        server_name: String,
+    },
+
     /// LSP diagnostics were updated for a file
     DiagnosticsUpdated {
         /// The URI of the file that was updated

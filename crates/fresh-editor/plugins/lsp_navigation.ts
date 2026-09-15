@@ -11,6 +11,11 @@ interface SymbolItem {
   endLine: number;
   // Precise position of the symbol *name* (LSP selectionRange). This is
   // where the cursor jumps to and what gets the overlay highlight.
+  //
+  // `nameCharacter` is a UTF-16 offset, as LSP reports it, until
+  // `attachLineText` rewrites it to a byte column for the finder. Only the
+  // finder's symbols go through that, and only the untouched ones are fit to
+  // hand to `setBreadcrumbs`, which expects LSP coordinates.
   nameLine: number;
   nameCharacter: number;
   // Byte offset of the start of `nameLine`, resolved once up front. We
@@ -127,10 +132,14 @@ function navigateToSymbol(
   }
 }
 
+/**
+ * The server's symbols, as reported. No line is read here: the LSP line and
+ * character are enough for the breadcrumb trail, which is the caller that
+ * wants every symbol in the document.
+ */
 async function fetchSymbols(
   filePath: string,
   language: string,
-  bufferId: number,
 ): Promise<SymbolItem[]> {
   const uri = editor.pathToFileUri(filePath);
   const result = await editor.sendLspRequest(
@@ -141,20 +150,23 @@ async function fetchSymbols(
     },
   );
 
-  const symbols = parseSymbols(result);
-
-  await attachLineText(symbols, bufferId);
-
-  return symbols;
+  return parseSymbols(result);
 }
 
+/**
+ * The same, with each symbol's source line attached — what the finder needs
+ * to render a snippet and to jump precisely. Only the finder asks for this,
+ * and only for a list the user opened.
+ */
 async function loadSymbols(
   filePath: string,
   language: string,
   bufferId: number,
 ): Promise<SymbolItem[]> {
   try {
-    return await fetchSymbols(filePath, language, bufferId);
+    const symbols = await fetchSymbols(filePath, language);
+    await attachLineText(symbols, bufferId);
+    return symbols;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     editor.setStatus(`LSP symbols failed: ${msg}`);
@@ -166,6 +178,9 @@ async function loadSymbols(
  * Fill in each symbol's source line and explicit-buffer byte offset. Read each
  * distinct declaration line once; never snapshot or scan the full buffer.
  * Passing `bufferId` to the line-position APIs avoids active-buffer races.
+ *
+ * This rewrites `nameCharacter` from a UTF-16 offset to a byte column, so a
+ * symbol that has been through here is no longer in LSP coordinates.
  */
 async function attachLineText(symbols: SymbolItem[], bufferId: number): Promise<void> {
   if (symbols.length === 0) return;
@@ -440,9 +455,43 @@ function parseSymbols(result: unknown): SymbolItem[] {
 const breadcrumbSymbols = new Map<number, SymbolItem[]>();
 const breadcrumbRefreshGeneration = new Map<number, number>();
 
+/**
+ * The symbol kinds that name a scope — what a breadcrumb trail is for. A
+ * class, a function or a module is somewhere you can *be*; a variable is
+ * something you are next to.
+ *
+ * Without this, servers that report locals put them in the trail: pylsp
+ * turns a comprehension into `Store > total_value > s > n`. Set
+ * `editor.breadcrumb_all_symbols` to see everything the server reports.
+ */
+const SCOPE_KINDS = new Set([
+  2, // module
+  3, // namespace
+  4, // package
+  5, // class
+  6, // method
+  9, // constructor
+  10, // enum
+  11, // interface
+  12, // function
+  23, // struct
+]);
+
+function showsEveryKind(): boolean {
+  const cfg = editor.getConfig() as
+    | { editor?: { breadcrumb_all_symbols?: boolean } }
+    | null;
+  return cfg?.editor?.breadcrumb_all_symbols === true;
+}
+
 function breadcrumbTrail(symbols: SymbolItem[], cursorLine: number): SymbolItem[] {
+  // Read the setting once, not once per symbol.
+  const everyKind = showsEveryKind();
   const containing = symbols.filter(
-    (sym) => sym.startLine <= cursorLine && cursorLine <= sym.endLine && sym.lineStartByte >= 0,
+    (sym) =>
+      sym.startLine <= cursorLine &&
+      cursorLine <= sym.endLine &&
+      (everyKind || SCOPE_KINDS.has(sym.kind)),
   );
   containing.sort((a, b) => {
     const spanA = a.endLine - a.startLine;
@@ -466,7 +515,8 @@ function publishBreadcrumbs(bufferId: number, cursorLine: number): void {
   const symbols = breadcrumbSymbols.get(bufferId) ?? [];
   const items = breadcrumbTrail(symbols, cursorLine).map((sym) => ({
     label: sym.name,
-    position: sym.lineStartByte + sym.nameCharacter,
+    line: sym.nameLine,
+    character: sym.nameCharacter,
   }));
   editor.setBreadcrumbs(bufferId, items);
 }
@@ -485,7 +535,7 @@ async function refreshBreadcrumbs(bufferId: number): Promise<void> {
 
   let symbols: SymbolItem[];
   try {
-    symbols = await fetchSymbols(filePath, language, bufferId);
+    symbols = await fetchSymbols(filePath, language);
   } catch {
     // Leave the cache unset rather than recording "no symbols" — the server
     // may simply not be up yet, and a later refresh can still fill it in.
@@ -529,14 +579,28 @@ editor.on("buffer_closed", (data) => {
   breadcrumbRefreshGeneration.delete(data.buffer_id);
 });
 
-editor.on("diagnostics_updated", () => {
-  // There is no lsp-ready event to wait on; a diagnostics push is the first
-  // sign a server is answering. Retry the buffer if its symbols never loaded.
-  const bufferId = editor.getActiveBufferId();
-  if (bufferId !== null && !breadcrumbSymbols.has(bufferId)) {
-    scheduleBreadcrumbRefresh(bufferId);
+/**
+ * Fill in trails that never loaded.
+ *
+ * A failed fetch leaves no cache entry, so `breadcrumbSymbols.has` is the
+ * test for "this one never came back" — and it bounds the retrying: a buffer
+ * whose symbols did load, even to an empty list, is never asked again.
+ */
+function retryMissingTrails(language?: string): void {
+  for (const info of editor.listBuffers()) {
+    if (language !== undefined && info.language !== language) continue;
+    if (breadcrumbSymbols.has(info.id)) continue;
+    scheduleBreadcrumbRefresh(info.id);
   }
-});
+}
+
+// The server was not up when we asked; now it is.
+editor.on("lsp_ready", (data) => retryMissingTrails(data.language));
+
+// And the other way a fetch fails: the server was up but the request did not
+// come back. There is no event for that, so take the next sign of life —
+// diagnostics — as the cue to try again.
+editor.on("diagnostics_updated", () => retryMissingTrails());
 
 editor.on("ready", () => {
   const bufferId = editor.getActiveBufferId();

@@ -1287,6 +1287,15 @@ pub struct EditorConfig {
     #[schemars(extend("x-section" = "Display"))]
     pub show_breadcrumbs: bool,
 
+    /// Whether the breadcrumb trail shows every symbol the language server
+    /// reports, rather than only those that name a scope — a class, a
+    /// function, a module. Servers that report locals otherwise put them in
+    /// the trail, so a comprehension reads as `Store > total > s > n`.
+    /// Default: false
+    #[serde(default)]
+    #[schemars(extend("x-section" = "Display"))]
+    pub breadcrumb_all_symbols: bool,
+
     /// Whether the status bar is visible by default.
     /// The status bar shows file info, cursor position, and editor status at the bottom of the screen.
     /// Can be toggled at runtime via command palette or keybinding.
@@ -2085,6 +2094,7 @@ impl Default for EditorConfig {
             menu_bar_mnemonics: true,
             show_tab_bar: true,
             show_breadcrumbs: true,
+            breadcrumb_all_symbols: false,
             show_status_bar: true,
             status_bar: StatusBarConfig::default(),
             show_prompt_line: false,

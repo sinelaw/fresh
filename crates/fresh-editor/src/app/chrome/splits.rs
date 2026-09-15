@@ -27,10 +27,24 @@ use super::Editor;
 impl Editor {
     /// Navigate to the symbol whose breadcrumb was pressed.
     ///
-    /// The crumb's node answered the press, so `position` is already the byte
-    /// to go to: nothing here resolves a cell against the row's geometry.
-    pub(crate) fn handle_click_breadcrumb(&mut self, pane: LeafId, position: usize) {
+    /// The crumb's node answered the press, so nothing here resolves a cell
+    /// against the row's geometry. What it does resolve is the symbol's LSP
+    /// position against the buffer's line index — the plugin forwards what
+    /// its server said, and the editor is the side that already knows where
+    /// a line begins.
+    pub(crate) fn handle_click_breadcrumb(
+        &mut self,
+        pane: LeafId,
+        line: u32,
+        character: u32,
+        label: &str,
+    ) {
         let Some(buffer_id) = self.active_window().pane_buffer(pane) else {
+            return;
+        };
+        let Some(position) = self.active_window().buffers.get(&buffer_id).map(|state| {
+            breadcrumb_target(&state.buffer, line as usize, character as usize, label)
+        }) else {
             return;
         };
         self.focus_split(pane, buffer_id);
@@ -1476,5 +1490,93 @@ impl Editor {
         }
 
         Ok(())
+    }
+}
+
+/// The byte a crumb jumps to.
+///
+/// A hierarchical `DocumentSymbol` reports its `selectionRange` — the name
+/// itself — so the LSP position is already the target. A flat
+/// `SymbolInformation` reports the start of the whole declaration, which is
+/// the `def`/`class` keyword or the indentation before it, so look for the
+/// label on the line and prefer where it actually sits. Falling back to the
+/// reported position is right for a label the line does not contain, which a
+/// server is free to produce (a synthesised or qualified name).
+fn breadcrumb_target(
+    buffer: &crate::model::buffer::Buffer,
+    line: usize,
+    character: usize,
+    label: &str,
+) -> usize {
+    let reported = buffer.lsp_position_to_byte(line, character);
+    if label.is_empty() {
+        return reported;
+    }
+    let Some(bytes) = buffer.get_line(line) else {
+        return reported;
+    };
+    let text = String::from_utf8_lossy(&bytes);
+    let Some(start) = buffer.line_start_offset(line) else {
+        return reported;
+    };
+    // Search from the reported column first, so a label that also appears
+    // earlier on the line (`self.items` under a symbol named `items`) does
+    // not pull the caret backwards.
+    let from = reported.saturating_sub(start).min(text.len());
+    let found = text
+        .get(from..)
+        .and_then(|tail| tail.find(label).map(|i| from + i))
+        .or_else(|| text.find(label));
+    match found {
+        Some(column) => start + column,
+        None => reported,
+    }
+}
+
+#[cfg(test)]
+mod breadcrumb_target_tests {
+    use super::breadcrumb_target;
+    use crate::model::buffer::Buffer;
+
+    const SRC: &str = "class InventoryStore:\n    def restock(self, sku):\n        return sku\n";
+
+    /// A hierarchical `DocumentSymbol` already points at the name, so the
+    /// reported position is the answer and the search changes nothing.
+    #[test]
+    fn a_selection_range_is_taken_as_given() {
+        let buffer = Buffer::from_str_test(SRC);
+        // "InventoryStore" begins at column 6 of line 0.
+        assert_eq!(breadcrumb_target(&buffer, 0, 6, "InventoryStore"), 6);
+    }
+
+    /// A flat `SymbolInformation` points at the start of the declaration, so
+    /// the caret would land on the indentation without the search.
+    #[test]
+    fn a_declaration_start_is_refined_to_the_name() {
+        let buffer = Buffer::from_str_test(SRC);
+        let line_start = SRC.find("    def").expect("line 1");
+        let name = SRC.find("restock").expect("the name");
+        // Column 0 of line 1 is the indentation, not the symbol.
+        assert_eq!(breadcrumb_target(&buffer, 1, 0, "restock"), name);
+        assert_ne!(name, line_start);
+    }
+
+    /// A label the line does not carry leaves the reported position alone
+    /// rather than guessing.
+    #[test]
+    fn an_absent_label_keeps_the_reported_position() {
+        let buffer = Buffer::from_str_test(SRC);
+        let reported = breadcrumb_target(&buffer, 1, 4, "NotOnThisLine");
+        assert_eq!(reported, buffer.lsp_position_to_byte(1, 4));
+    }
+
+    /// Columns are UTF-16 offsets, so a line with wide characters before the
+    /// name still resolves to the name's byte.
+    #[test]
+    fn utf16_columns_resolve_to_the_right_byte() {
+        let src = "# 日本語\nclass Store:\n";
+        let buffer = Buffer::from_str_test(src);
+        let name = src.find("Store").expect("the name");
+        assert_eq!(breadcrumb_target(&buffer, 1, 6, "Store"), name);
     }
 }

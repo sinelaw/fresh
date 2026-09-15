@@ -1,6 +1,6 @@
 //! A pane's symbol breadcrumb row, as nodes.
 //!
-//! Each crumb is its own node carrying its own byte offset, so a press is
+//! Each crumb is its own node carrying its own LSP position, so a press is
 //! answered by the node under the pointer rather than by re-deriving the row's
 //! layout against a recorded rectangle. The trail is laid out once, by the
 //! tree, and that layout is what both the paint and the press read.
@@ -18,6 +18,7 @@ use fresh_ui::{
 };
 
 use crate::app::shell_host::shell_theme::{attrs, pair};
+use crate::app::types::HoverTarget;
 use crate::model::event::LeafId;
 use crate::primitives::display_width::str_width;
 
@@ -29,27 +30,37 @@ const SEP: &str = " > ";
 const CUT: &str = "… > ";
 
 /// The row's ground: the ancestors and the space between them.
-///
-/// The keys are the ones the painter reached for directly — the row has no
-/// colours of its own in the theme, and giving it some is a theme change, not
-/// this one.
 fn ground() -> String {
-    pair("editor.line_number_fg", "ui.tab_separator_bg")
+    pair("ui.breadcrumb_fg", "ui.breadcrumb_bg")
 }
 
 /// The innermost crumb — where the caret actually is.
-fn current() -> String {
-    attrs("ui.tab_inactive_fg", "ui.tab_separator_bg", &["bold"])
+fn current(hovered: bool) -> String {
+    attrs("ui.breadcrumb_current_fg", bg(hovered), &["bold"])
+}
+
+/// An ancestor crumb, which is a link: it lights under the pointer.
+fn ancestor(hovered: bool) -> String {
+    pair("ui.breadcrumb_fg", bg(hovered))
+}
+
+fn bg(hovered: bool) -> &'static str {
+    match hovered {
+        true => "ui.breadcrumb_hover_bg",
+        false => "ui.breadcrumb_bg",
+    }
 }
 
 /// A pane's breadcrumb row.
 ///
 /// Laid out through a reader because which crumbs fit is a function of the
 /// width the row is given, and only the layout knows it.
-pub fn surface(pane: LeafId, items: &[BreadcrumbItem]) -> Node<UiMsg> {
+pub fn surface(pane: LeafId, items: &[BreadcrumbItem], hover: Option<usize>) -> Node<UiMsg> {
     let items: Rc<[BreadcrumbItem]> = Rc::from(items.to_vec());
-    layout_reader(move |info: LayoutInfo| lay_out(pane, &items, info.constraints.max_w as usize))
-        .h(Sizing::Cells(1))
+    layout_reader(move |info: LayoutInfo| {
+        lay_out(pane, &items, hover, info.constraints.max_w as usize)
+    })
+    .h(Sizing::Cells(1))
 }
 
 /// The first crumb that still lets the whole trail fit, dropping from the
@@ -71,7 +82,12 @@ fn first_visible(items: &[BreadcrumbItem], available: usize) -> usize {
     first
 }
 
-fn lay_out(pane: LeafId, items: &[BreadcrumbItem], total_w: usize) -> Node<UiMsg> {
+fn lay_out(
+    pane: LeafId,
+    items: &[BreadcrumbItem],
+    hover: Option<usize>,
+    total_w: usize,
+) -> Node<UiMsg> {
     // One column of ground either side, as the painted row had.
     let available = total_w.saturating_sub(1);
     if items.is_empty() || available == 0 {
@@ -108,7 +124,8 @@ fn lay_out(pane: LeafId, items: &[BreadcrumbItem], total_w: usize) -> Node<UiMsg
         }
         let index = first + nth;
         let innermost = index + 1 == items.len();
-        cells.push(crumb(pane, index, item, innermost).w(Sizing::Cells(width as u16)));
+        let hovered = hover == Some(index);
+        cells.push(crumb(pane, index, item, innermost, hovered).w(Sizing::Cells(width as u16)));
         remaining -= width;
     }
 
@@ -126,13 +143,20 @@ fn gap(n: u16) -> Node<UiMsg> {
 
 /// One crumb: the label, and the press that jumps to it.
 ///
-/// The offset travels in the node, so the fact the editor receives names a
+/// The position travels in the node, so the fact the editor receives names a
 /// symbol rather than a cell — there is nothing left to hit-test.
-fn crumb(pane: LeafId, index: usize, item: &BreadcrumbItem, innermost: bool) -> Node<UiMsg> {
-    let position = item.position as usize;
+fn crumb(
+    pane: LeafId,
+    index: usize,
+    item: &BreadcrumbItem,
+    innermost: bool,
+    hovered: bool,
+) -> Node<UiMsg> {
+    let (line, character) = (item.line, item.character);
+    let label = item.label.clone();
     let ink = match innermost {
-        true => current(),
-        false => ground(),
+        true => current(hovered),
+        false => ancestor(hovered),
     };
     gesture(
         text(item.label.replace(['\n', '\r'], " "))
@@ -140,6 +164,8 @@ fn crumb(pane: LeafId, index: usize, item: &BreadcrumbItem, innermost: bool) -> 
             .theme(ink),
     )
     .key(crumb_key(pane, index))
+    .on_enter(hover_fact(Some(HoverTarget::Breadcrumb(pane, index))))
+    .on_leave(hover_fact(None))
     .on(
         GestureKind::Press,
         Rc::new(move |e: &Event| {
@@ -147,15 +173,24 @@ fn crumb(pane: LeafId, index: usize, item: &BreadcrumbItem, innermost: bool) -> 
                 return None;
             }
             e.stop();
-            Some(UiMsg::Ui(UiFact::PaneBreadcrumbPress { pane, position }))
+            Some(UiMsg::Ui(UiFact::PaneBreadcrumbPress {
+                pane,
+                line,
+                character,
+                label: label.clone(),
+            }))
         }),
     )
 }
 
+fn hover_fact(t: Option<HoverTarget>) -> fresh_ui::Handler<UiMsg> {
+    Rc::new(move |_: &Event| Some(UiMsg::Ui(UiFact::Hover(t.clone()))))
+}
+
 /// A crumb names itself by its depth in the trail — unique by construction,
 /// and unchanged by elision, which decides *which* crumbs are placed but not
-/// how they are numbered. Two symbols can share a byte offset; none can share
-/// a depth.
+/// how they are numbered. Two symbols can share a position; none can share a
+/// depth.
 pub fn crumb_key(pane: LeafId, index: usize) -> Key {
     Key::from(format!("pane:{}:crumb:{}", pane.0 .0, index))
 }
@@ -170,7 +205,8 @@ mod tests {
             .enumerate()
             .map(|(i, l)| BreadcrumbItem {
                 label: (*l).into(),
-                position: i as u64 * 10,
+                line: i as u32,
+                character: 0,
             })
             .collect()
     }
@@ -199,7 +235,7 @@ mod tests {
         let pane = LeafId(fresh_core::SplitId(0));
         let it = items(&["Outer", "inner"]);
         let mut ui: Ui<UiMsg> = Ui::new();
-        ui.frame(surface(pane, &it), Size::new(40, 1));
+        ui.frame(surface(pane, &it, None), Size::new(40, 1));
 
         let rect = |i: usize| {
             let e = ui
@@ -224,13 +260,59 @@ mod tests {
         let pane = LeafId(fresh_core::SplitId(0));
         let it = items(&["AVeryLongModuleName", "Klass", "method"]);
         let mut ui: Ui<UiMsg> = Ui::new();
-        ui.frame(surface(pane, &it), Size::new(20, 1));
+        ui.frame(surface(pane, &it, None), Size::new(20, 1));
 
         assert!(ui.find_by_key(&crumb_key(pane, 0)).is_none());
         assert!(
             ui.find_by_key(&crumb_key(pane, it.len() - 1)).is_some(),
             "the innermost crumb is always placed"
         );
+    }
+
+    /// The pointer lights the crumb it is on, and only that crumb's cells.
+    ///
+    /// Painted rather than inspected: the hover has to survive the fold to be
+    /// worth anything, and the columns say which crumb it landed on.
+    #[test]
+    fn hover_lights_only_the_crumb_under_the_pointer() {
+        use crate::view::shell::fold::{fold_native, Band};
+        use fresh_ui::{Size, ThemeKey, Ui};
+        use ratatui::buffer::Buffer;
+        use ratatui::layout::Rect;
+        use ratatui::style::{Color, Style};
+
+        // Only the hover background is given a colour, so a lit cell is
+        // unambiguous.
+        fn ink(k: &ThemeKey) -> Style {
+            match k.0.as_deref() {
+                Some(name) if name.contains("breadcrumb_hover_bg") => {
+                    Style::default().bg(Color::Red)
+                }
+                _ => Style::default(),
+            }
+        }
+
+        let pane = LeafId(fresh_core::SplitId(0));
+        let it = items(&["Outer", "inner"]);
+        let lit = |hover: Option<usize>| {
+            let mut ui: Ui<UiMsg> = Ui::new();
+            let spec = ui
+                .frame(surface(pane, &it, hover), Size::new(40, 1))
+                .clone();
+            let mut buf = Buffer::empty(Rect::new(0, 0, 40, 1));
+            fold_native(&spec, &mut buf, &ink, Band::Background);
+            (0..40)
+                .filter(|x| buf[(*x, 0)].style().bg == Some(Color::Red))
+                .collect::<Vec<u16>>()
+        };
+
+        assert!(
+            lit(None).is_empty(),
+            "nothing lights when nothing is hovered"
+        );
+        // "Outer" sits at column 1 and is five wide; " > " then "inner".
+        assert_eq!(lit(Some(0)), vec![1, 2, 3, 4, 5], "the outer crumb");
+        assert_eq!(lit(Some(1)), vec![9, 10, 11, 12, 13], "the inner crumb");
     }
 
     #[test]

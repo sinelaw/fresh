@@ -757,6 +757,8 @@ interface HookEventMap {
   mouse_scroll: { buffer_id: number; delta: number; col: number; row: number };
 
   // ── LSP ──────────────────────────────────────────────────────────────────
+  /** A language server finished `initialize` and will answer requests now. */
+  lsp_ready: { language: string; server_name: string };
   diagnostics_updated: { uri: string; count: number };
   lsp_references: {
     symbol: string;

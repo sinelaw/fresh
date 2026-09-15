@@ -591,3 +591,70 @@ fn test_lsp_symbol_breadcrumbs_recover_from_failed_fetch() -> anyhow::Result<()>
 
     Ok(())
 }
+
+/// Reports a local variable nested inside a method, as pylsp does for
+/// comprehension bindings.
+const NOISY_LSP_SCRIPT: &str = r#"#!/bin/bash
+read_message() {
+    local content_length=0
+    while IFS=: read -r key value; do
+        key=$(echo "$key" | tr -d '\r\n')
+        value=$(echo "$value" | tr -d '\r\n ')
+        if [ "$key" = "Content-Length" ]; then
+            content_length=$value
+        fi
+        if [ -z "$key" ]; then
+            break
+        fi
+    done
+    if [ $content_length -gt 0 ]; then
+        dd bs=1 count=$content_length 2>/dev/null
+    fi
+}
+send_message() {
+    local message="$1"
+    local length=${#message}
+    echo -en "Content-Length: $length\r\n\r\n$message"
+}
+while true; do
+    msg=$(read_message)
+    if [ -z "$msg" ]; then
+        break
+    fi
+    method=$(echo "$msg" | grep -o '"method":"[^"]*"' | cut -d'"' -f4)
+    msg_id=$(echo "$msg" | grep -o '"id":[0-9]*' | cut -d':' -f2)
+    case "$method" in
+        "initialize")
+            send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"capabilities":{"documentSymbolProvider":true,"textDocumentSync":1}}}'
+            ;;
+        "initialized") ;;
+        "textDocument/didOpen"|"textDocument/didChange"|"textDocument/didSave") ;;
+        "textDocument/documentSymbol")
+            send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":[{"name":"MyClass","kind":5,"range":{"start":{"line":0,"character":0},"end":{"line":8,"character":1}},"selectionRange":{"start":{"line":0,"character":6},"end":{"line":0,"character":13}},"children":[{"name":"myMethod","kind":6,"range":{"start":{"line":5,"character":2},"end":{"line":7,"character":3}},"selectionRange":{"start":{"line":5,"character":2},"end":{"line":5,"character":10}},"children":[{"name":"localVar","kind":13,"range":{"start":{"line":6,"character":4},"end":{"line":6,"character":13}},"selectionRange":{"start":{"line":6,"character":11},"end":{"line":6,"character":19}}}]}]}]}'
+            ;;
+        "shutdown")
+            send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":null}'
+            break
+            ;;
+    esac
+done
+"#;
+
+/// A breadcrumb trail names the scopes you are inside, so a local the server
+/// happens to report is not one of them.
+#[test]
+#[cfg_attr(windows, ignore)]
+fn test_lsp_symbol_breadcrumbs_skip_non_scope_symbols() -> anyhow::Result<()> {
+    let (mut harness, _temp_dir) = setup_lsp_test_with_script(NOISY_LSP_SCRIPT)?;
+
+    // Line 7 is inside myMethod, and inside the local the server reports there.
+    harness.send_key_repeat(KeyCode::Down, KeyModifiers::NONE, 6)?;
+    harness.wait_until(|h| {
+        nested_breadcrumb_row(h).is_some_and(|row| breadcrumb_row(h, row).contains("myMethod"))
+    })?;
+
+    let row = nested_breadcrumb_row(&harness).expect("nested breadcrumb row");
+    assert_eq!(breadcrumb_row(&harness, row), "MyClass > myMethod");
+
+    Ok(())
+}

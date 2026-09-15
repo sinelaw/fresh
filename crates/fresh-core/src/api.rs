@@ -166,14 +166,20 @@ pub struct VirtualBufferResult {
 }
 
 /// One entry in the breadcrumb trail displayed above an editor buffer.
-/// `position` is the byte offset to jump to when the entry is clicked.
+///
+/// `line` and `character` are LSP coordinates — a 0-indexed line and a
+/// UTF-16 character offset within it — so a plugin forwards what its server
+/// said instead of resolving a byte offset of its own. Resolving one costs a
+/// plugin a read per symbol; the editor already has the line index.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export, rename_all = "camelCase")]
 pub struct BreadcrumbItem {
     pub label: String,
     #[ts(type = "number")]
-    pub position: u64,
+    pub line: u32,
+    #[ts(type = "number")]
+    pub character: u32,
 }
 
 #[cfg(feature = "plugins")]

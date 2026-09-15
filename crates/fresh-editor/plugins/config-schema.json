@@ -55,6 +55,7 @@
         "menu_bar_mnemonics": true,
         "show_tab_bar": true,
         "show_breadcrumbs": true,
+        "breadcrumb_all_symbols": false,
         "show_status_bar": true,
         "status_bar": {
           "left": [
@@ -522,6 +523,12 @@
           "description": "Whether LSP/plugin-provided symbol breadcrumbs are shown below each\nsplit's tab bar. The row is only reserved when a trail is available.\nDefault: true",
           "type": "boolean",
           "default": true,
+          "x-section": "Display"
+        },
+        "breadcrumb_all_symbols": {
+          "description": "Whether the breadcrumb trail shows every symbol the language server\nreports, rather than only those that name a scope — a class, a\nfunction, a module. Servers that report locals otherwise put them in\nthe trail, so a comprehension reads as `Store > total > s > n`.\nDefault: false",
+          "type": "boolean",
+          "default": false,
           "x-section": "Display"
         },
         "show_status_bar": {
