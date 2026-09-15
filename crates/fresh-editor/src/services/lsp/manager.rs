@@ -1516,6 +1516,11 @@ impl LspManager {
         results
     }
 
+    /// Check if a language server has a pending restart
+    pub fn has_pending_restart(&self, language: &str) -> bool {
+        self.pending_restarts.contains_key(language)
+    }
+
     /// Clear cooldown for a language and allow manual restart
     pub fn clear_cooldown(&mut self, language: &str) {
         self.restart_cooldown.remove(language);
