@@ -645,8 +645,11 @@ impl<M: 'static> Ui<M> {
     /// the scope's `autofocus` mark is where it was when this scope last
     /// settled — nothing happens; focus is inside the scope and **the mark
     /// moved** — focus follows it ([`Self::follow_moved_mark`]); a scope has
-    /// just opened and focus moves into it, remembering where it was; the
-    /// scope has closed and focus goes back.
+    /// just opened and focus moves into it, remembering where it was **and
+    /// what was confining it there**; the scope has closed and focus goes
+    /// back — unless that confinement is gone, in which case the memory
+    /// names a surface that has given the keyboard up and focus lands on the
+    /// mark like any other entry.
     ///
     /// The second case is what lets a description *say* where focus is while
     /// the tree's own ring is free to move it. A host that keeps the focused
@@ -665,12 +668,39 @@ impl<M: 'static> Ui<M> {
         let modal = self.topmost_modal();
 
         if modal.is_some() {
-            // Entering a scope: remember where focus was so it can come back.
+            // Entering a scope: remember where focus was so it can come back,
+            // and what was confining it there — the restore is only good for
+            // as long as that confinement is (see below).
             if let Some(f) = self.focus.filter(|f| self.arena.get(*f).is_some()) {
                 self.focus_restore = Some(f);
+                self.focus_restore_scope = self.settled_scope;
             }
         } else if let Some(prev) = self.focus_restore.take() {
-            if self.arena.get(prev).is_some() {
+            // **A restore into a surface that has since given the keyboard
+            // up is void.** Focus was inside that surface because a layer
+            // confined it there, not because the description left it there,
+            // so once the layer is gone the memory names a place focus may
+            // no longer rest — the same fact `follow_moved_mark`'s
+            // `released` states for a confinement that ends while focus is
+            // still inside it, which that path cannot see here because the
+            // scope being restored *from* overwrote it.
+            //
+            // The editor's case: a centred modal blurs the dock as it
+            // mounts, so the dock's keyboard layer is already gone by the
+            // time the modal closes. Restoring into it left every key
+            // resolving in the dock's context and dying — the Orchestrator's
+            // New-Workspace form did exactly that, and the workspace it
+            // created could not be typed into.
+            //
+            // A restore taken from the unconfined base (nothing was
+            // confining focus when the scope opened) is unconditional, as it
+            // always was: that is the ring's own position, which no mark
+            // overrides.
+            let released = self
+                .focus_restore_scope
+                .take()
+                .is_some_and(|s| self.confinement() != Some(s));
+            if !released && self.arena.get(prev).is_some() {
                 let mut out = Vec::new();
                 self.focus_element(prev, SelectionOnFocus::Preserve, &mut out);
                 self.pending_messages.extend(out);

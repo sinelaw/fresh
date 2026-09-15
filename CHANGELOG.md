@@ -8,6 +8,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 
 ### Bug Fixes
 
+* **A workspace created from the Orchestrator dock takes the keyboard** - the New Workspace form blurs the dock on its way in, and closing it handed focus straight back to the blurred dock; every key in the workspace it had just created then resolved in the dock's context and died, so a file opened there (Open File, quick-open) showed up without the cursor and typing did nothing
 * **Vi mode's visual `0` and `^` include the character `v` started on**, as Vim's do (#2447)
 * **Vi mode: `Y`, `[count]J` and `G`** - `Y` had no binding at all (Vim's `Y` is `yy`); `J` ignored its count, so `3J` joined two lines instead of three, and `.` would not repeat it; `G` landed on the phantom line after a trailing newline, where `x` and `dd` had nothing to act on (#2447)
 * **Vi mode's `x` and `X` no longer join lines** - `x` on an empty line, or at the end of a line, deleted the line break and pulled the next line up; `X` in column 1 did the same backwards. Vim confines both to the current line, and so does Fresh now (#2447)
