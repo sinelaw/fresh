@@ -2097,9 +2097,41 @@ impl Editor {
         None
     }
 
-    /// Remove every registry entry and per-buffer value belonging to a plugin.
+    /// Whether publishing `items` for `buffer_id` would change what is drawn.
+    ///
+    /// Mirrors `handle_set_breadcrumbs`, including which pane it writes to, so
+    /// a publish that would store exactly what is already there does not also
+    /// cost a frame. The plugin republishes on every caret move.
+    pub fn breadcrumbs_would_change(
+        &self,
+        buffer_id: BufferId,
+        items: &[fresh_core::api::BreadcrumbItem],
+    ) -> bool {
+        for window in self.windows.values() {
+            if !window.buffers.contains_key(&buffer_id) {
+                continue;
+            }
+            if items.is_empty() {
+                return window
+                    .breadcrumbs
+                    .values()
+                    .any(|(described, _)| *described == buffer_id);
+            }
+            let leaf = window.effective_active_split();
+            if window.pane_buffer(leaf) != Some(buffer_id) {
+                return false;
+            }
+            return window
+                .breadcrumbs
+                .get(&leaf)
+                .is_none_or(|(described, cur)| *described != buffer_id || cur.as_slice() != items);
+        }
+        false
+    }
+
+    /// Remove every status-bar and breadcrumb contribution belonging to a plugin.
     /// Called when a plugin is unloaded.
-    fn remove_plugin_status_bar_elements(&mut self, plugin_name: &str) {
+    fn remove_plugin_ui_contributions(&mut self, plugin_name: &str) {
         let prefix = format!("{}:", plugin_name);
         self.status_bar_token_registry
             .lock()
@@ -2108,6 +2140,15 @@ impl Editor {
         for window in self.windows.values_mut() {
             for values in window.status_bar_values.values_mut() {
                 values.retain(|k, _| !k.starts_with(&prefix));
+            }
+            let owned: Vec<_> = window
+                .breadcrumb_owners
+                .iter()
+                .filter_map(|(leaf, owner)| (owner == plugin_name).then_some(*leaf))
+                .collect();
+            for leaf in owned {
+                window.breadcrumb_owners.remove(&leaf);
+                window.breadcrumbs.remove(&leaf);
             }
         }
     }

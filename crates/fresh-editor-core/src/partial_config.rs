@@ -216,6 +216,8 @@ pub struct PartialEditorConfig {
     pub screensaver_idle_minutes: Option<u32>,
     pub menu_bar_mnemonics: Option<bool>,
     pub show_tab_bar: Option<bool>,
+    pub show_breadcrumbs: Option<bool>,
+    pub breadcrumb_all_symbols: Option<bool>,
     pub show_status_bar: Option<bool>,
     pub status_bar: Option<crate::config::StatusBarConfig>,
     pub show_prompt_line: Option<bool>,
@@ -342,6 +344,9 @@ impl Merge for PartialEditorConfig {
         self.menu_bar_mnemonics
             .merge_from(&other.menu_bar_mnemonics);
         self.show_tab_bar.merge_from(&other.show_tab_bar);
+        self.show_breadcrumbs.merge_from(&other.show_breadcrumbs);
+        self.breadcrumb_all_symbols
+            .merge_from(&other.breadcrumb_all_symbols);
         self.show_status_bar.merge_from(&other.show_status_bar);
         if other.status_bar.is_some() {
             self.status_bar = other.status_bar.clone();
@@ -712,6 +717,8 @@ impl From<&crate::config::EditorConfig> for PartialEditorConfig {
             screensaver_idle_minutes: Some(cfg.screensaver_idle_minutes),
             menu_bar_mnemonics: Some(cfg.menu_bar_mnemonics),
             show_tab_bar: Some(cfg.show_tab_bar),
+            show_breadcrumbs: Some(cfg.show_breadcrumbs),
+            breadcrumb_all_symbols: Some(cfg.breadcrumb_all_symbols),
             show_status_bar: Some(cfg.show_status_bar),
             status_bar: Some(cfg.status_bar.clone()),
             show_prompt_line: Some(cfg.show_prompt_line),
@@ -890,6 +897,10 @@ impl PartialEditorConfig {
                 .menu_bar_mnemonics
                 .unwrap_or(defaults.menu_bar_mnemonics),
             show_tab_bar: self.show_tab_bar.unwrap_or(defaults.show_tab_bar),
+            show_breadcrumbs: self.show_breadcrumbs.unwrap_or(defaults.show_breadcrumbs),
+            breadcrumb_all_symbols: self
+                .breadcrumb_all_symbols
+                .unwrap_or(defaults.breadcrumb_all_symbols),
             show_status_bar: self.show_status_bar.unwrap_or(defaults.show_status_bar),
             status_bar: self
                 .status_bar

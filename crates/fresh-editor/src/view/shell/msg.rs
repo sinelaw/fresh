@@ -286,6 +286,19 @@ pub enum UiFact {
         delta: i32,
     },
 
+    /// A left press on one of a pane's symbol breadcrumbs.
+    ///
+    /// The crumb's own node answered the press, so which crumb was hit is
+    /// what the tree already decided by placing it — there is no cell here.
+    /// What is left is the symbol's LSP position, and its label, which the
+    /// editor turns into a caret against the buffer's line index.
+    PaneBreadcrumbPress {
+        pane: LeafId,
+        line: u32,
+        character: u32,
+        label: String,
+    },
+
     /// A left press on a pane's content, and which press of a run it is: one
     /// places the caret, two selects the word, three the line — or toggles a
     /// fold, when the cell is a folded line's gutter indicator.

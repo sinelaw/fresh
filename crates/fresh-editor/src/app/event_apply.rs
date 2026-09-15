@@ -721,6 +721,24 @@ impl Editor {
         Some(bulk_edit)
     }
 
+    /// Raise `cursor_moved` for a caret that moved without going through
+    /// the applier. `set_buffer_cursor_in_splits` writes the view state
+    /// directly, so plugins that follow the caret never hear about it and
+    /// keep showing where it used to be.
+    pub(crate) fn notify_cursor_moved(&mut self, old_position: usize, new_position: usize) {
+        let event = Event::MoveCursor {
+            cursor_id: self.active_cursors().primary_id(),
+            old_position,
+            new_position,
+            old_anchor: None,
+            new_anchor: None,
+            old_sticky_column: None,
+            new_sticky_column: None,
+        };
+        let line_info = self.active_window().calculate_event_line_info(&event);
+        self.trigger_plugin_hooks_for_event(&event, line_info);
+    }
+
     /// Trigger plugin hooks for an event (if any)
     /// line_info contains pre-calculated line numbers from BEFORE buffer modification
     fn trigger_plugin_hooks_for_event(&mut self, event: &Event, line_info: EventLineInfo) {
@@ -821,6 +839,7 @@ impl Editor {
                         cursor_id: *cursor_id,
                         old_position: *old_position,
                         new_position: *new_position,
+                        is_primary: self.active_cursors().primary_id() == *cursor_id,
                         line,
                         text_properties: text_props,
                     },

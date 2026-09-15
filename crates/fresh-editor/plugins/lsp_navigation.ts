@@ -11,6 +11,11 @@ interface SymbolItem {
   endLine: number;
   // Precise position of the symbol *name* (LSP selectionRange). This is
   // where the cursor jumps to and what gets the overlay highlight.
+  //
+  // `nameCharacter` is a UTF-16 offset, as LSP reports it, until
+  // `attachLineText` rewrites it to a byte column for the finder. Only the
+  // finder's symbols go through that, and only the untouched ones are fit to
+  // hand to `setBreadcrumbs`, which expects LSP coordinates.
   nameLine: number;
   nameCharacter: number;
   // Byte offset of the start of `nameLine`, resolved once up front. We
@@ -123,25 +128,52 @@ function navigateToSymbol(
 
   clearOverlay(bufferId);
   if (mode === "preview") {
-    editor.addOverlay(bufferId, OVERLAY_NS, pos, pos + sym.name.length, MATCH_STYLE);
+    // The overlay is placed in bytes, so the name is measured in bytes too —
+    // `.length` is UTF-16 units and ends the highlight inside a wide glyph.
+    editor.addOverlay(
+      bufferId,
+      OVERLAY_NS,
+      pos,
+      pos + editor.utf8ByteLength(sym.name),
+      MATCH_STYLE,
+    );
   }
 }
 
-async function loadSymbols(filePath: string, language: string): Promise<SymbolItem[]> {
+/**
+ * The server's symbols, as reported. No line is read here: the LSP line and
+ * character are enough for the breadcrumb trail, which is the caller that
+ * wants every symbol in the document.
+ */
+async function fetchSymbols(
+  filePath: string,
+  language: string,
+): Promise<SymbolItem[]> {
+  const uri = editor.pathToFileUri(filePath);
+  const result = await editor.sendLspRequest(
+    language,
+    "textDocument/documentSymbol",
+    {
+      textDocument: { uri },
+    },
+  );
+
+  return parseSymbols(result);
+}
+
+/**
+ * The same, with each symbol's source line attached — what the finder needs
+ * to render a snippet and to jump precisely. Only the finder asks for this,
+ * and only for a list the user opened.
+ */
+async function loadSymbols(
+  filePath: string,
+  language: string,
+  bufferId: number,
+): Promise<SymbolItem[]> {
   try {
-    const uri = editor.pathToFileUri(filePath);
-    const result = await editor.sendLspRequest(
-      language,
-      "textDocument/documentSymbol",
-      {
-        textDocument: { uri },
-      },
-    );
-
-    const symbols = parseSymbols(result);
-
-    await attachLineText(symbols);
-
+    const symbols = await fetchSymbols(filePath, language);
+    await attachLineText(symbols, bufferId);
     return symbols;
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -151,35 +183,52 @@ async function loadSymbols(filePath: string, language: string): Promise<SymbolIt
 }
 
 /**
- * Fill in each symbol's source line so the finder can show a snippet with
- * the matching word highlighted. Reads the single line each symbol name
- * lives on (start..end byte range), in parallel.
+ * Fill in each symbol's source line and explicit-buffer byte offset. Read each
+ * distinct declaration line once; never snapshot or scan the full buffer.
+ * Passing `bufferId` to the line-position APIs avoids active-buffer races.
+ *
+ * This rewrites `nameCharacter` from a UTF-16 offset to a byte column, so a
+ * symbol that has been through here is no longer in LSP coordinates.
  */
-async function attachLineText(symbols: SymbolItem[]): Promise<void> {
-  if (symbols.length === 0 || cachedBufferId === null) return;
-  const bufferId = cachedBufferId;
+async function attachLineText(symbols: SymbolItem[], bufferId: number): Promise<void> {
+  if (symbols.length === 0) return;
 
-  await Promise.all(
-    symbols.map(async (sym) => {
-      const start = await editor.getLineStartPosition(sym.nameLine);
-      const end = await editor.getLineEndPosition(sym.nameLine);
-      if (start === null || end === null || end < start) {
-        sym.lineText = "";
-        return;
-      }
-      sym.lineStartByte = start;
-      const text = await editor.getBufferText(bufferId, start, end);
-      sym.lineText = text.replace(/\r$/, "");
+  const lines = new Map<number, { start: number; text: string }>();
+  const uniqueLines = Array.from(new Set(symbols.map((sym) => sym.nameLine)));
+  await Promise.all(uniqueLines.map(async (line) => {
+    const [start, end] = await Promise.all([
+      editor.getLineStartPosition(line, bufferId),
+      editor.getLineEndPosition(line, bufferId),
+    ]);
+    if (start === null || end === null || end < start) return;
+    const text = await editor.getBufferText(bufferId, start, end);
+    lines.set(line, { start, text: text.replace(/\r$/, "") });
+  }));
 
-      // Refine the name column. LSP `SymbolInformation` reports the start
-      // of the whole declaration (e.g. the `def`/indentation), not the
-      // name — so locate the name on the line, searching from the
-      // reported column, to land the cursor and overlay exactly on it.
-      let idx = sym.lineText.indexOf(sym.name, sym.nameCharacter);
-      if (idx < 0) idx = sym.lineText.indexOf(sym.name);
-      if (idx >= 0) sym.nameCharacter = idx;
-    }),
-  );
+  for (const sym of symbols) {
+    const line = lines.get(sym.nameLine);
+    if (!line) {
+      sym.lineText = "";
+      continue;
+    }
+    sym.lineStartByte = line.start;
+    sym.lineText = line.text;
+
+    // Refine the name column. LSP `SymbolInformation` reports the start
+    // of the whole declaration (e.g. the `def`/indentation), not the
+    // name — so locate the name on the line, searching from the
+    // reported column, to land the cursor and overlay exactly on it.
+    //
+    // `nameCharacter` leaves this loop as a byte column either way: the name's
+    // own when it is on the line, the reported column converted when it is
+    // not. Leaving a UTF-16 column behind made `lineStartByte + nameCharacter`
+    // add a byte offset to a UTF-16 one, which lands off the name on any line
+    // with a wide character before it.
+    let idx = sym.lineText.indexOf(sym.name, sym.nameCharacter);
+    if (idx < 0) idx = sym.lineText.indexOf(sym.name);
+    if (idx < 0) idx = Math.min(sym.nameCharacter, sym.lineText.length);
+    sym.nameCharacter = editor.utf8ByteLength(sym.lineText.slice(0, idx));
+  }
 }
 
 /**
@@ -317,7 +366,7 @@ async function openSymbolsListHandler(): Promise<void> {
   clearOverlay(cachedBufferId);
 
   // Pre-load symbols to determine matching index for preselection
-  const symbols = await loadSymbols(cachedFilePath, cachedLanguage);
+  const symbols = await loadSymbols(cachedFilePath, cachedLanguage, cachedBufferId);
   const matchIdx = findMatchingSymbolIndex(symbols, cachedCursorLine);
   preloadedSymbols = symbols;
 
@@ -341,8 +390,8 @@ function parseSymbols(result: unknown): SymbolItem[] {
 
   if (!result) return symbols;
 
-  if (Array.isArray(result)) {
-    for (const item of result) {
+  function append(items: unknown[]): void {
+    for (const item of items) {
       if (typeof item !== "object" || item === null) continue;
 
       const raw = item as Record<string, unknown>;
@@ -402,13 +451,225 @@ function parseSymbols(result: unknown): SymbolItem[] {
         lineStartByte: -1,
         lineText: "",
       });
+
+      // DocumentSymbol responses are hierarchical. Keep every descendant so
+      // both the finder and the breadcrumb trail can expose nested context.
+      if (Array.isArray(raw.children)) append(raw.children);
     }
   }
+
+  if (Array.isArray(result)) append(result);
 
   symbols.sort((a, b) => a.startLine - b.startLine);
 
   return symbols;
 }
+
+const breadcrumbSymbols = new Map<number, SymbolItem[]>();
+const breadcrumbRefreshGeneration = new Map<number, number>();
+// How many event-driven retries a buffer whose fetch failed still has. User
+// actions — an edit, a revert, switching to the tab — are never rationed.
+const MAX_TRAIL_RETRIES = 3;
+const breadcrumbRetries = new Map<number, number>();
+
+/**
+ * The symbol kinds that are *not* a scope — what a breadcrumb trail leaves
+ * out. A class, a function or a module is somewhere you can *be*; a variable
+ * is something you are next to.
+ *
+ * Without this, servers that report locals put them in the trail: pylsp
+ * turns a comprehension into `Store > total_value > s > n`. Set
+ * `editor.breadcrumb_all_symbols` to see everything the server reports.
+ *
+ * Named by what it drops rather than by what it keeps, because the kinds a
+ * server uses for a scope vary: rust-analyzer reports an `impl` block as
+ * `Object`, so an allow-list of the obvious scopes silently costs every Rust
+ * method the type it belongs to.
+ */
+const NON_SCOPE_KINDS = new Set([
+  1, // file
+  7, // property
+  8, // field
+  13, // variable
+  14, // constant
+  15, // string
+  16, // number
+  17, // boolean
+  18, // array
+  20, // key
+  21, // null
+  22, // enum member
+  24, // event
+  25, // operator
+  26, // type parameter
+]);
+
+// `getConfig` walks the whole merged config into a fresh JS object graph, so
+// the flag is read once and kept until the config changes. The trail is
+// recomputed on every caret move; the setting is not going to have changed.
+let everyKind: boolean | null = null;
+
+function showsEveryKind(): boolean {
+  if (everyKind === null) {
+    const cfg = editor.getConfig() as
+      | { editor?: { breadcrumb_all_symbols?: boolean } }
+      | null;
+    everyKind = cfg?.editor?.breadcrumb_all_symbols === true;
+  }
+  return everyKind;
+}
+
+function breadcrumbTrail(symbols: SymbolItem[], cursorLine: number): SymbolItem[] {
+  // Read the setting once, not once per symbol.
+  const showsAll = showsEveryKind();
+  const containing = symbols.filter(
+    (sym) =>
+      sym.startLine <= cursorLine &&
+      cursorLine <= sym.endLine &&
+      (showsAll || !NON_SCOPE_KINDS.has(sym.kind)),
+  );
+  containing.sort((a, b) => {
+    const spanA = a.endLine - a.startLine;
+    const spanB = b.endLine - b.startLine;
+    return spanB - spanA || a.startLine - b.startLine || a.nameCharacter - b.nameCharacter;
+  });
+
+  const trail: SymbolItem[] = [];
+  for (const sym of containing) {
+    const parent = trail[trail.length - 1];
+    if (!parent || (parent.startLine <= sym.startLine && sym.endLine <= parent.endLine)) {
+      if (!parent || parent.name !== sym.name || parent.startLine !== sym.startLine || parent.endLine !== sym.endLine) {
+        trail.push(sym);
+      }
+    }
+  }
+  return trail;
+}
+
+function publishBreadcrumbs(bufferId: number, cursorLine: number): void {
+  const symbols = breadcrumbSymbols.get(bufferId) ?? [];
+  const items = breadcrumbTrail(symbols, cursorLine).map((sym) => ({
+    label: sym.name,
+    line: sym.nameLine,
+    character: sym.nameCharacter,
+  }));
+  editor.setBreadcrumbs(bufferId, items);
+}
+
+async function refreshBreadcrumbs(bufferId: number): Promise<void> {
+  const generation = (breadcrumbRefreshGeneration.get(bufferId) ?? 0) + 1;
+  breadcrumbRefreshGeneration.set(bufferId, generation);
+  const info = editor.getBufferInfo(bufferId);
+  const language = info?.language;
+  const filePath = editor.getBufferPath(bufferId);
+  if (!language || !filePath) {
+    breadcrumbSymbols.delete(bufferId);
+    editor.setBreadcrumbs(bufferId, []);
+    return;
+  }
+
+  let symbols: SymbolItem[];
+  try {
+    symbols = await fetchSymbols(filePath, language);
+  } catch {
+    // Leave the cache unset rather than recording "no symbols" — the server
+    // may simply not be up yet, and a later refresh can still fill it in.
+    return;
+  }
+  if (breadcrumbRefreshGeneration.get(bufferId) !== generation) return;
+  breadcrumbSymbols.set(bufferId, symbols);
+  if (editor.getActiveBufferId() === bufferId) {
+    publishBreadcrumbs(bufferId, editor.getCursorLine());
+  }
+}
+
+function scheduleBreadcrumbRefresh(bufferId: number): void {
+  const generation = (breadcrumbRefreshGeneration.get(bufferId) ?? 0) + 1;
+  breadcrumbRefreshGeneration.set(bufferId, generation);
+  void (async () => {
+    await editor.delay(250);
+    if (breadcrumbRefreshGeneration.get(bufferId) !== generation) return;
+    // refreshBreadcrumbs owns the next generation number.
+    await refreshBreadcrumbs(bufferId);
+  })();
+}
+
+editor.on("buffer_activated", (data) => {
+  const cached = breadcrumbSymbols.get(data.buffer_id);
+  if (cached) publishBreadcrumbs(data.buffer_id, editor.getCursorLine());
+  else editor.setBreadcrumbs(data.buffer_id, []);
+  scheduleBreadcrumbRefresh(data.buffer_id);
+});
+
+editor.on("cursor_moved", (data) => {
+  // The trail follows *the* caret, which is the primary one — not cursor 0.
+  // Adding a cursor makes the new one primary, so its id is whatever was
+  // handed out last. `line` is 1-indexed here; LSP ranges are 0-indexed.
+  if (data.is_primary) publishBreadcrumbs(data.buffer_id, data.line - 1);
+});
+
+editor.on("config_changed", () => {
+  // Drop the cached flag and redraw with it, so toggling the setting shows.
+  everyKind = null;
+  const bufferId = editor.getActiveBufferId();
+  if (breadcrumbSymbols.has(bufferId)) {
+    publishBreadcrumbs(bufferId, editor.getCursorLine());
+  }
+});
+
+editor.on("after_insert", (data) => scheduleBreadcrumbRefresh(data.buffer_id));
+editor.on("after_delete", (data) => scheduleBreadcrumbRefresh(data.buffer_id));
+editor.on("after_file_revert", (data) => scheduleBreadcrumbRefresh(data.buffer_id));
+editor.on("buffer_closed", (data) => {
+  breadcrumbSymbols.delete(data.buffer_id);
+  breadcrumbRefreshGeneration.delete(data.buffer_id);
+  breadcrumbRetries.delete(data.buffer_id);
+});
+
+/**
+ * Retry a trail whose fetch failed, at most `MAX_TRAIL_RETRIES` times.
+ *
+ * A failed fetch deliberately leaves no cache entry, so "never came back" and
+ * "has no server at all" look identical from here — a plain text buffer asks
+ * a server that does not exist, is refused, and stays missing forever. The
+ * budget is what separates them: a trail that can be fetched needs a retry or
+ * two, and one that never can stops asking.
+ */
+function retryTrail(bufferId: number): void {
+  if (breadcrumbSymbols.has(bufferId)) return;
+  const spent = breadcrumbRetries.get(bufferId) ?? 0;
+  if (spent >= MAX_TRAIL_RETRIES) return;
+  breadcrumbRetries.set(bufferId, spent + 1);
+  scheduleBreadcrumbRefresh(bufferId);
+}
+
+// The server was not up when we asked; now it is. Only its own language's
+// buffers are worth re-asking, and the server is already running, so this
+// starts nothing.
+editor.on("lsp_ready", (data) => {
+  for (const info of editor.listBuffers()) {
+    if (info.language === data.language) retryTrail(info.id);
+  }
+});
+
+// The other way a fetch fails: the server was up and the request still did
+// not come back. No event covers that, so take the next sign of life.
+//
+// Scoped to the buffer the diagnostics are *for*: a push from one language's
+// server is no reason to ask another language's server for anything, and
+// `sendLspRequest` spawns one to find out.
+editor.on("diagnostics_updated", (data) => {
+  for (const info of editor.listBuffers()) {
+    if (info.path && editor.pathToFileUri(info.path) === data.uri) {
+      retryTrail(info.id);
+    }
+  }
+});
+
+editor.on("ready", () => {
+  const bufferId = editor.getActiveBufferId();
+  if (bufferId !== null) scheduleBreadcrumbRefresh(bufferId);
+});
 
 editor.registerCommand(
   "%cmd.goto_lsp_symbol",

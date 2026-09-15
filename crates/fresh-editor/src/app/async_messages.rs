@@ -1668,6 +1668,11 @@ impl Editor {
                 self.current_status_bar_value(fresh_core::BufferId(*buffer_id as usize), key)
                     != Some(value.as_str())
             }
+            Pc::SetBreadcrumbs {
+                buffer_id, items, ..
+            } => {
+                self.breadcrumbs_would_change(fresh_core::BufferId(*buffer_id as usize), items)
+            }
             _ => true,
         });
 
