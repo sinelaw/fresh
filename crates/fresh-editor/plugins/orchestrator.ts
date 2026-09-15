@@ -3905,12 +3905,13 @@ function buildPreviewPane(s: AgentSession | undefined): WidgetSpec {
 // The per-action bullet lines shown in the confirmation panel.
 // `delete` adds a separate red "uncommitted changes" line in the
 // caller because it needs distinct styling.
-// Archiving and deleting both push the session list to
+// Archiving and deleting both record the session list on a local branch
 // `refs/heads/<user>/fresh-sessions`, which Fresh maintains through a worktree
 // of its own at `<data dir>/orchestrator/.sync-workspace`. Neither the branch
 // nor the worktree was mentioned anywhere, so a user who ran `git worktree
 // list` in their own project found a ref they never made — and might
-// reasonably delete it, or report it as corruption.
+// reasonably delete it, or report it as corruption. The line says "local"
+// because that is now the whole truth: nothing is sent to `origin`.
 //
 // It is disclosed here rather than in a first-run notice because this is the
 // dialog that already enumerates what the action does, and a list that careful
@@ -4475,8 +4476,8 @@ function buildOpenSpec(): WidgetSpec {
 }
 
 // Tiny status glyph rendered at the trailing edge of the
-// footer. `↻` while a push is in flight, `⤒` when the last
-// push failed (with the error in the tooltip — for now, just a
+// footer. `↻` while a snapshot is being written, `⤒` when the last
+// one failed (with the error in the tooltip — for now, just a
 // status-bar setStatus on focus), and an empty entry otherwise
 // so the layout stays put.
 function syncIndicator(): WidgetSpec {
@@ -6893,16 +6894,26 @@ async function archiveOne(id: number): Promise<LifecycleResult> {
 // Cross-machine recovery (Phase 6)
 //
 // Every lifecycle action that mutates the local archive manifest also
-// fires an asynchronous push to `refs/heads/<user>/fresh-sessions` on
-// origin so the same sessions can be recovered on another machine.
-// The push runs in the background and never blocks the user-visible
-// action; failures get surfaced through `syncStatus` (and a small ⤒
-// glyph in the dialog footer when the error is fresh).
+// records the session list on a local branch `<user>/fresh-sessions`, so a
+// future recovery feature has a snapshot to read. It runs in the background
+// and never blocks the user-visible action; failures get surfaced through
+// `syncStatus` (and a small ⤒ glyph in the dialog footer when the error is
+// fresh).
 //
 // The branch is orphan-style: a single root file `sessions.json` and
 // commits with the sessions snapshot. We maintain it through a
 // dedicated worktree at `<XDG>/orchestrator/.sync-workspace` so we don't
 // disturb the user's normal `git worktree` set.
+//
+// **It does not push.** It used to: every archive and every delete pushed the
+// branch to `origin`, under the user's own git identity, with no way to
+// decline and no message when it failed. Deleting a local workspace is not a
+// network operation and nothing in the flow suggested one; on a shared
+// repository the branch then appeared for every collaborator, where it can
+// trip CI, branch protection and webhooks nobody asked for. Nothing reads the
+// branch back yet either, so the push had no consumer to justify the surprise.
+// Syncing a session list to a remote is worth doing, but as something the user
+// opts into and can see fail — not as a silent side effect of deleting a row.
 // ---------------------------------------------------------------------
 
 type SyncStatus = "idle" | "syncing" | "error";
@@ -6937,7 +6948,7 @@ function syncWorkspacePath(): string {
   return editor.pathJoin(editor.getDataDir(), "orchestrator", ".sync-workspace");
 }
 
-// Fire-and-forget sync. Never blocks the caller; updates
+// Fire-and-forget snapshot. Never blocks the caller; updates
 // `syncStatus`/`syncError` and refreshes the dialog (if open)
 // so the footer indicator can reflect the result.
 function triggerSyncAsync(repoRoot: string): void {
@@ -7062,14 +7073,9 @@ async function syncSessions(repoRoot: string): Promise<SyncResult> {
     }
   }
 
-  const pushRes = await spawnCollect(
-    "git",
-    ["-C", wt, "push", "origin", branch],
-    wt,
-  );
-  if (pushRes.exit_code !== 0) {
-    return { ok: false, err: lastNonEmptyLine(pushRes.stderr) };
-  }
+  // Deliberately stops here: the snapshot is committed to the local
+  // branch and nothing is sent to `origin`. See the block comment above
+  // `triggerSyncAsync` for why the push was removed.
   return { ok: true };
 }
 

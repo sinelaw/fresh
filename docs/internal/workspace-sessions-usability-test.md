@@ -473,7 +473,7 @@ one and not the other.
 
 **F8 — fixed, and the report was right.** The worktree and branch belong to
 cross-machine session recovery: every lifecycle action that mutates the archive
-manifest pushes the session list to `refs/heads/<user>/fresh-sessions`, which is
+manifest records the session list on `refs/heads/<user>/fresh-sessions`, which is
 maintained through a worktree of its own at
 `<data dir>/orchestrator/.sync-workspace` so it does not disturb the user's
 `git worktree` set. It fires on archive, delete and unarchive — not on create,
@@ -482,8 +482,9 @@ which is why it does not show up if you only look after making a workspace.
 The report asked for a one-line disclosure. It goes in the archive and delete
 confirmations, for the same reason F9's line does: those dialogs already
 enumerate what the action does, and a list that careful reads as "and nothing
-else". Writing a branch into the user's repository and pushing it to origin is a
-larger omission than the surviving branch was. The branch name in the line is
+else". Writing a branch into the user's repository is a
+larger omission than the surviving branch was. (At the time it was also pushed
+to origin; that part is gone now.) The branch name in the line is
 derived, not hard-coded, so it names the ref the user will actually find:
 
 ```
@@ -492,8 +493,13 @@ This will:
   • run `git worktree remove`
   • drop the workspace record
   • keep the branch — `git worktree remove` does not delete it
-  • update fresh/fresh-sessions — Fresh's own session list, pushed to origin
+  • update fresh/fresh-sessions — Fresh's own session list, kept on this machine
 ```
+
+The line said "pushed to origin" when this was first written, because that is
+what happened. The push has since been removed — see "Investigated before
+touching: what the `fresh/fresh-sessions` push does" below — so the line now
+says where the list stays instead.
 
 **F7 — fixed.** The counter advanced only inside `runLocalCreate`; a remote
 create bakes its name in at capture and never goes through there, and the branch
@@ -1039,8 +1045,9 @@ to `origin`. Confirmed: after one delete, `origin` grew
 `deleted 1 workspace(s)` and nothing on screen mentions the push at all. The
 failure is silent; the branch and worktree remain locally.
 
-**Judgement: it should not push by default.** Not changed here, as instructed —
-proposed instead:
+**Judgement: it should not push by default.** Proposed first, as instructed;
+the proposal was accepted and the push is now **removed** (see "Resolution"
+below). The reasoning:
 
 1. A local delete is not a network operation. Nothing in the flow suggests one,
    and the user is given no chance to decline before their remote is written to.
@@ -1053,9 +1060,46 @@ proposed instead:
 5. Cross-machine recovery is a real feature, but it is opt-in by nature — it only
    helps someone who works on two machines, and it should be their choice to
    sync a session list to a remote.
+6. Nothing reads the branch back. Grepping the plugin for a fetch or a read of
+   `refs/heads/<user>/fresh-sessions` finds none: cross-machine recovery is
+   documented as "designed but deferred" (`orchestrator-sessions.md:406`). So
+   the push had no consumer at all — it was a write-only side effect.
 
 Proposed: keep the local branch and worktree (that is what makes recovery
 possible at all, and it is now disclosed in the archive/delete confirmations),
 and make the **push** opt-in — a setting, or a prompt on first use naming the
-remote and the branch. Until then the confirmation's "pushed to origin" line is
-at least honest about what is happening.
+remote and the branch.
+
+### Resolution
+
+The push is removed. `syncSessions` still creates the `.sync-workspace`
+worktree, still commits `sessions.json` to the local `<user>/fresh-sessions`
+branch — so the snapshot a future recovery feature needs is still being kept —
+and simply stops there. No setting was added: "don't write to a shared remote
+when someone deletes a local row" is the correct default, not a preference, and
+a setting for it would be one more thing to explain for a feature that has no
+reader yet. When cross-machine recovery is actually built, the push belongs
+with it, as something the user turns on and can watch fail.
+
+The confirmation line changed with it, in all 15 locales:
+
+```diff
+-  • update fresh/fresh-sessions — Fresh's own session list, pushed to origin
++  • update fresh/fresh-sessions — Fresh's own session list, kept on this machine
+```
+
+Covered by `deleting_a_workspace_does_not_push_anything_to_origin`
+(`orchestrator_attach_worktree.rs`), which adds a real bare `origin` to the
+fixture — the thing the original study lacked — deletes two workspaces, waits
+for the sync to finish, and asserts `origin` still has no refs.
+
+The waiting is the fiddly part, and the first version of the test got it wrong:
+it waited only for the local snapshot branch, which is committed *during* the
+sync, and then checked `origin` — winning a race against the push that used to
+follow. That version passed against the pushing code, which is to say it proved
+nothing. The condition is now "the branch exists **and** the footer's `↻` is
+gone", and `↻` shows for exactly as long as the sync is in flight, so it can
+only become true after the push would have run. Verified both ways: with the
+push put back the test fails with
+`refs there are now: ["refs/heads/fresh/fresh-sessions"]`, and passes with it
+removed.

@@ -1221,3 +1221,165 @@ fn deleting_worktree_session_from_dock_does_not_resurrect_it() {
         harness.screen_to_string()
     );
 }
+
+/// Like `set_up_repo_with_two_worktrees`, but the repo also has an `origin`: a
+/// bare repository on disk, empty, with nothing pushed to it yet. That
+/// emptiness is the whole assertion surface — anything Fresh sends to `origin`
+/// shows up there as a ref, and the study's fixture never had a remote, which
+/// is exactly why the push went unnoticed for so long.
+///
+/// Two worktrees rather than one because the bulk action bar — the delete path
+/// this test drives — appears at two or more checked rows.
+/// Returns (guard, repo, wt1, wt2, origin).
+fn set_up_repo_with_two_worktrees_and_origin(
+) -> (tempfile::TempDir, PathBuf, PathBuf, PathBuf, PathBuf) {
+    let (temp, repo, wt1, wt2) = set_up_repo_with_two_worktrees();
+    let origin = repo.parent().unwrap().join("origin.git");
+    git(&repo, &["init", "--bare", "-q", origin.to_str().unwrap()]);
+    git(
+        &repo,
+        &["remote", "add", "origin", origin.to_str().unwrap()],
+    );
+    (temp, repo, wt1, wt2, origin)
+}
+
+/// Every ref in a repository, as `refs/...` strings.
+fn refs_in(repo: &Path) -> Vec<String> {
+    let out = Command::new("git")
+        .args([
+            "-C",
+            repo.to_str().unwrap(),
+            "for-each-ref",
+            "--format=%(refname)",
+        ])
+        .output()
+        .expect("git for-each-ref");
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+/// Deleting workspaces records the session list on a **local**
+/// `<user>/fresh-sessions` branch and sends nothing to `origin`.
+///
+/// Fresh used to push that branch on every archive and every delete, under the
+/// user's own git identity, with no way to decline and no message when it
+/// failed — so a local delete quietly wrote to a shared remote. The local
+/// branch is still written (a future cross-machine recovery feature needs a
+/// snapshot to read); only the push is gone.
+///
+/// Waiting for that local branch is what makes this test non-vacuous: it is
+/// proof the sync actually ran before `origin` is inspected. Without it, an
+/// assertion that `origin` is empty would pass simply by getting there first.
+#[test]
+fn deleting_a_workspace_does_not_push_anything_to_origin() {
+    let (temp, repo, wt1, wt2, origin) = set_up_repo_with_two_worktrees_and_origin();
+    // Keep `.sync-workspace` inside the temp tree rather than in the real user
+    // data dir: the sync worktree gets registered in this repo, and the repo
+    // goes away with the test.
+    let (dir_context, _data_pin) = crate::common::global_state::isolated_dir_context(temp.path());
+    let mut config = fresh::config::Config::default();
+    config.editor.line_wrap = false;
+    let mut harness =
+        EditorTestHarness::with_shared_dir_context(160, 50, config, repo.clone(), dir_context)
+            .unwrap();
+    harness.tick_and_render().unwrap();
+    wait_for_command(&mut harness, "Orchestrator: Open");
+
+    assert!(
+        refs_in(&origin).is_empty(),
+        "fixture precondition: origin starts with no refs, got {:?}",
+        refs_in(&origin)
+    );
+
+    open_orchestrator_dialog(&mut harness);
+    ensure_worktrees_shown(&mut harness);
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("feature-x") && s.contains("feature-y") && s.contains("· on-disk")
+        })
+        .unwrap();
+
+    // Check both discovered rows, then Archive → Tab → Delete (2) → Enter.
+    navigate_to_discovered_row(&mut harness);
+    harness
+        .send_key(KeyCode::Char(' '), KeyModifiers::NONE)
+        .unwrap();
+    harness.tick_and_render().unwrap();
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Char(' '), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Delete (2)"))
+        .unwrap();
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Confirm Delete"))
+        .unwrap_or_else(|_| {
+            panic!(
+                "Delete (2) should open the bulk Confirm Delete panel.\nScreen:\n{}",
+                harness.screen_to_string()
+            )
+        });
+
+    // The confirmation must not promise a push either.
+    let confirm_screen = harness.screen_to_string();
+    assert!(
+        !confirm_screen.contains("pushed to origin"),
+        "the delete confirmation still claims the session list is pushed to \
+         origin.\nScreen:\n{confirm_screen}"
+    );
+
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    harness
+        .wait_until(|_| !wt1.exists() && !wt2.exists())
+        .unwrap_or_else(|_| {
+            panic!(
+                "delete should `git worktree remove` both worktrees.\n\
+                 wt1.exists()={} wt2.exists()={}\nScreen:\n{}",
+                wt1.exists(),
+                wt2.exists(),
+                harness.screen_to_string()
+            )
+        });
+
+    // Wait for the sync to finish — all of it, not just the part that leaves a
+    // trace. The snapshot commit lands *during* the sync, so waiting for the
+    // local branch alone puts the `origin` check in a race with the push that
+    // used to follow it; that race is why an earlier version of this test
+    // passed against the pushing code. The footer's `↻` is shown for exactly
+    // as long as the sync is in flight, so "the branch exists AND `↻` is gone"
+    // is true only once the whole sync, push included, has run.
+    harness
+        .wait_until(|h| {
+            refs_in(&repo)
+                .iter()
+                .any(|r| r.ends_with("/fresh-sessions"))
+                && !h.screen_to_string().contains('↻')
+        })
+        .unwrap_or_else(|_| {
+            panic!(
+                "expected a local `<user>/fresh-sessions` branch and a settled \
+                 sync after the delete; without both, this test cannot tell \
+                 \"did not push\" from \"did not get there yet\". Local refs: {:?}",
+                refs_in(&repo)
+            );
+        });
+
+    assert!(
+        refs_in(&origin).is_empty(),
+        "deleting a workspace pushed to origin; refs there are now: {:?}",
+        refs_in(&origin)
+    );
+}
