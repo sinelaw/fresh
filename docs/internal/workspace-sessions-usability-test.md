@@ -548,23 +548,42 @@ improvement. F18's dropdown bleed-through and the box-in-box confirm border are
 host-renderer issues rather than orchestrator ones; both are visible in the
 screenshots above and should be filed against the widget layer.
 
-## Found while re-testing, not in the original 18
+## Found while re-testing, not in the original 18 — fixed
 
-**Deleting a *remote* workspace leaves its worktree on the host.** The confirm
+**Deleting a *remote* workspace left its worktree on the host.** The confirm
 dialog says it will "run `git worktree remove`", and for a local workspace it
-does — verified: the worktree goes, the directory goes, the branch stays exactly
-as the dialog now says. For an SSH workspace the row disappears from the dock but
-the remote worktree stays registered and on disk:
+does. For an SSH workspace the row disappeared from the dock but the remote
+worktree stayed registered and on disk, so the dialog promised something that
+never happened and every delete leaked a directory onto the host.
 
-```
-/root/.fresh/worktrees/acme-widgets-remote/auth-spike   454bd3f [feature]   ← still there
-```
+The cause is the same `ownsWorktree` signal the rest of the lifecycle leans on:
+it answers `projectPath !== root`, and the host records no separate project for
+a remote session, so `removable` was false and nothing ran.
 
-So on a remote workspace the dialog promises something that does not happen, and
-each delete leaves a directory behind on the host. Not fixed here: it is outside
-the findings this branch is answering, and changing what a destructive action
-does on a remote machine deserves its own design pass (what to do when the host
-is unreachable at delete time, in particular). Filed here so it is not lost.
+The fix turns on one property of the plugin API that makes it small:
+`spawnProcess` routes through the **active** authority. Doing the removal while
+the session's own window is still in front therefore runs `git` on the far side
+with no ssh argv to rebuild — the plugin never sees a live session's transport
+(`WindowInfo.remote` carries a display identity, not an identity file), and
+reconstructing one would be guessing. It is the exact inverse of
+`createRemoteWorktree`, which also ran on the far side. `git -C <worktree>
+worktree remove <worktree>` lets the worktree remove itself through its own
+common dir, so the repository root — which this side does not know — is never
+needed either.
+
+**What keeps it safe.** A remote session may equally be the user's *actual
+project directory*, opened with the worktree toggle off; removing that would
+destroy their work. Two independent facts must both hold before anything is
+removed: the path is under Fresh's own `~/.fresh/worktrees/`, and git itself
+says it is a *linked* worktree (`--git-dir` differs from `--git-common-dir`)
+rather than a main checkout. Verified both ways — a workspace created with the
+toggle on is removed from the host; one created with the toggle off, pointed at
+a real project, is left completely intact (files, history and worktree
+registration all present after the delete).
+
+A host that cannot be reached does not block the delete: the row goes either
+way, and the status bar names the path still sitting on the far side rather than
+failing silently.
 
 ## Findings that are not defects
 

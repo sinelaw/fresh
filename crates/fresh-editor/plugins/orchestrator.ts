@@ -7005,6 +7005,20 @@ async function deleteOne(id: number): Promise<LifecycleResult> {
   if (!s) return { ok: false, err: editor.t("err.workspace_gone") };
   const removable = ownsWorktree(s);
 
+  // **The remote worktree goes first, while its own window is still here.**
+  // The confirm dialog promises `git worktree remove`, and for a remote
+  // workspace nothing used to run it: `ownsWorktree` answers on
+  // `projectPath !== root`, which the host does not record for a remote
+  // session, so every delete left a directory behind on the far side. The
+  // removal has to happen before the teardown below, because that closes the
+  // very window this spawn routes through.
+  let remoteLeftBehind: string | null = null;
+  if (!s.discovered && id > 0 && looksLikeOurRemoteWorktree(s)) {
+    if (id !== editor.activeWindow()) editor.setActiveWindow(id);
+    remoteLeftBehind = await removeRemoteWorktree(s);
+    if (!orchestratorSessions.has(id)) return { ok: false, err: editor.t("err.workspace_gone") };
+  }
+
   if (!s.discovered && id > 0) {
     // The editor must keep at least one window. If this is the only live
     // one, open a replacement in its project first (so a removable
@@ -7072,6 +7086,16 @@ async function deleteOne(id: number): Promise<LifecycleResult> {
   // directory, so its `workspaces/<root>.json` must be dropped explicitly
   // or the row reappears after a restart.
   editor.deleteWorkspace(s.root);
+  // A host that could not be reached does not block the delete — the row goes
+  // either way — but it is said out loud, with the path, so the user knows
+  // what is still sitting on the far side.
+  if (remoteLeftBehind) {
+    editor.setStatus(
+      editor.t("status.prefix", {
+        msg: editor.t("err.remote_worktree_kept", { path: s.root, error: remoteLeftBehind }),
+      }),
+    );
+  }
   return { ok: true, repoRoot };
 }
 
@@ -8846,6 +8870,70 @@ function handleHostKeyEvent(e: WidgetEvt): void {
   if (e.event_type !== "activate") return;
   if (e.widget_key === "hostkey-trust") settleHostKey(true, true);
   else if (e.widget_key === "hostkey-cancel") settleHostKey(false, true);
+}
+
+// The directory every remote worktree the orchestrator makes lives under, as
+// `createRemoteWorktree` writes it (`$HOME/.fresh/worktrees/<repo>/<name>`).
+// The `$HOME` prefix is the remote's, so only the tail is matched.
+const REMOTE_WORKTREE_MARKER = "/.fresh/worktrees/";
+
+// Is this session a worktree *we* cut on a remote host — as opposed to a
+// remote directory the user pointed a session at with the worktree toggle off?
+//
+// The distinction is the whole safety of the teardown below: the first is ours
+// to remove, the second is the user's actual project and must never be touched.
+// A local session answers this with `projectPath !== root`, which a remote one
+// cannot — the host records no separate project for it — so the two facts that
+// *are* checkable at delete time stand in, and both must hold: the path is
+// under Fresh's own `~/.fresh/worktrees/`, and git says it is a *linked*
+// worktree rather than a main checkout. Neither alone is enough; together they
+// match only what `createRemoteWorktree` made.
+function looksLikeOurRemoteWorktree(s: AgentSession): boolean {
+  return s.remote?.kind === "ssh" && s.root.includes(REMOTE_WORKTREE_MARKER);
+}
+
+// Remove a remote worktree over the session's **own** connection.
+//
+// **This runs while the session's window is still active, and that is the
+// point.** `spawnProcess` routes through the active authority, so with the
+// remote window in front the `git` below executes on the far side with no ssh
+// argv to rebuild — the plugin never sees a live session's transport
+// (`WindowInfo.remote` carries a display identity, not an identity file), and
+// reconstructing one would be guessing. It is the exact inverse of
+// `createRemoteWorktree`, which also ran on the far side.
+//
+// `git -C <worktree> worktree remove <worktree>` is deliberate: a worktree can
+// remove itself through its own common dir, so the repository root — which
+// this side does not know — is never needed.
+//
+// Answers `null` on success, or the reason it could not, which the caller
+// reports *without* failing the delete: a host that is down must not leave the
+// user unable to drop the row.
+async function removeRemoteWorktree(s: AgentSession): Promise<string | null> {
+  const linked = await spawnCollect(
+    "git",
+    ["-C", s.root, "rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir"],
+    s.root,
+  );
+  const lines = (linked.stdout || "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  if (linked.exit_code !== 0 || lines.length < 2) {
+    return lastNonEmptyLine(linked.stderr) || editor.t("err.remote_worktree_remove_failed");
+  }
+  // A main checkout has `--git-dir` === `--git-common-dir`; only a linked
+  // worktree has its own. Refusing here is what keeps a user's project safe if
+  // the path check above ever matched something it should not.
+  if (lines[0] === lines[1]) return editor.t("err.remote_not_linked_worktree");
+  const rm = await spawnCollect(
+    "git",
+    // `--force` for the same reason the local path uses it: the confirm step
+    // is where the user chose to discard whatever is uncommitted.
+    ["-C", s.root, "worktree", "remove", "--force", s.root],
+    s.root,
+  );
+  if (rm.exit_code !== 0) {
+    return lastNonEmptyLine(rm.stderr) || editor.t("err.remote_worktree_remove_failed");
+  }
+  return null;
 }
 
 // Why an ssh test failed, said beside the field that caused it.
