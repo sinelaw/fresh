@@ -460,25 +460,35 @@ const MAX_TRAIL_RETRIES = 3;
 const breadcrumbRetries = new Map<number, number>();
 
 /**
- * The symbol kinds that name a scope — what a breadcrumb trail is for. A
- * class, a function or a module is somewhere you can *be*; a variable is
- * something you are next to.
+ * The symbol kinds that are *not* a scope — what a breadcrumb trail leaves
+ * out. A class, a function or a module is somewhere you can *be*; a variable
+ * is something you are next to.
  *
  * Without this, servers that report locals put them in the trail: pylsp
  * turns a comprehension into `Store > total_value > s > n`. Set
  * `editor.breadcrumb_all_symbols` to see everything the server reports.
+ *
+ * Named by what it drops rather than by what it keeps, because the kinds a
+ * server uses for a scope vary: rust-analyzer reports an `impl` block as
+ * `Object`, so an allow-list of the obvious scopes silently costs every Rust
+ * method the type it belongs to.
  */
-const SCOPE_KINDS = new Set([
-  2, // module
-  3, // namespace
-  4, // package
-  5, // class
-  6, // method
-  9, // constructor
-  10, // enum
-  11, // interface
-  12, // function
-  23, // struct
+const NON_SCOPE_KINDS = new Set([
+  1, // file
+  7, // property
+  8, // field
+  13, // variable
+  14, // constant
+  15, // string
+  16, // number
+  17, // boolean
+  18, // array
+  20, // key
+  21, // null
+  22, // enum member
+  24, // event
+  25, // operator
+  26, // type parameter
 ]);
 
 function showsEveryKind(): boolean {
@@ -495,7 +505,7 @@ function breadcrumbTrail(symbols: SymbolItem[], cursorLine: number): SymbolItem[
     (sym) =>
       sym.startLine <= cursorLine &&
       cursorLine <= sym.endLine &&
-      (everyKind || SCOPE_KINDS.has(sym.kind)),
+      (everyKind || !NON_SCOPE_KINDS.has(sym.kind)),
   );
   containing.sort((a, b) => {
     const spanA = a.endLine - a.startLine;

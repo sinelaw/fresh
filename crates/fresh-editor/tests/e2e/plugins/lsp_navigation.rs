@@ -630,7 +630,7 @@ while true; do
         "initialized") ;;
         "textDocument/didOpen"|"textDocument/didChange"|"textDocument/didSave") ;;
         "textDocument/documentSymbol")
-            send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":[{"name":"MyClass","kind":5,"range":{"start":{"line":0,"character":0},"end":{"line":8,"character":1}},"selectionRange":{"start":{"line":0,"character":6},"end":{"line":0,"character":13}},"children":[{"name":"myMethod","kind":6,"range":{"start":{"line":5,"character":2},"end":{"line":7,"character":3}},"selectionRange":{"start":{"line":5,"character":2},"end":{"line":5,"character":10}},"children":[{"name":"localVar","kind":13,"range":{"start":{"line":6,"character":4},"end":{"line":6,"character":13}},"selectionRange":{"start":{"line":6,"character":11},"end":{"line":6,"character":19}}}]}]}]}'
+            send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":[{"name":"MyClass","kind":5,"range":{"start":{"line":0,"character":0},"end":{"line":8,"character":1}},"selectionRange":{"start":{"line":0,"character":6},"end":{"line":0,"character":13}},"children":[{"name":"impl MyClass","kind":19,"range":{"start":{"line":3,"character":0},"end":{"line":8,"character":1}},"selectionRange":{"start":{"line":3,"character":5},"end":{"line":3,"character":12}},"children":[{"name":"myMethod","kind":6,"range":{"start":{"line":5,"character":2},"end":{"line":7,"character":3}},"selectionRange":{"start":{"line":5,"character":2},"end":{"line":5,"character":10}},"children":[{"name":"localVar","kind":13,"range":{"start":{"line":6,"character":4},"end":{"line":6,"character":13}},"selectionRange":{"start":{"line":6,"character":11},"end":{"line":6,"character":19}}}]}]}]}]}'
             ;;
         "shutdown")
             send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":null}'
@@ -641,7 +641,8 @@ done
 "#;
 
 /// A breadcrumb trail names the scopes you are inside, so a local the server
-/// happens to report is not one of them.
+/// happens to report is not one of them — while a scope reported under a kind
+/// we did not think to list, as rust-analyzer does for an `impl` block, is.
 #[test]
 #[cfg_attr(windows, ignore)]
 fn test_lsp_symbol_breadcrumbs_skip_non_scope_symbols() -> anyhow::Result<()> {
@@ -654,7 +655,10 @@ fn test_lsp_symbol_breadcrumbs_skip_non_scope_symbols() -> anyhow::Result<()> {
     })?;
 
     let row = nested_breadcrumb_row(&harness).expect("nested breadcrumb row");
-    assert_eq!(breadcrumb_row(&harness, row), "MyClass > myMethod");
+    assert_eq!(
+        breadcrumb_row(&harness, row),
+        "MyClass > impl MyClass > myMethod"
+    );
 
     Ok(())
 }
