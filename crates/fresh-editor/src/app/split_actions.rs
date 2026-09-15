@@ -299,6 +299,7 @@ impl Editor {
 
     /// Common split switching logic
     fn switch_split(&mut self, next: bool) {
+        let focused_before = self.active_window().effective_active_split();
         // `next_split`/`prev_split` auto-unmaximize so the newly-active
         // split is visible (issue #1961). Detect that here so terminal
         // PTYs can be resized to match the restored layout.
@@ -343,6 +344,7 @@ impl Editor {
         let tabs_width = self.active_window().split_tabs_width(split_id);
         self.active_window_mut()
             .ensure_active_tab_visible(split_id, buffer, tabs_width);
+        self.notify_pane_focus_change(focused_before);
 
         let buffer_id = self.active_buffer();
 

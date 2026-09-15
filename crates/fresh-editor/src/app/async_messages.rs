@@ -1671,8 +1671,7 @@ impl Editor {
             Pc::SetBreadcrumbs {
                 buffer_id, items, ..
             } => {
-                self.current_breadcrumbs(fresh_core::BufferId(*buffer_id as usize))
-                    != items.as_slice()
+                self.breadcrumbs_would_change(fresh_core::BufferId(*buffer_id as usize), items)
             }
             _ => true,
         });

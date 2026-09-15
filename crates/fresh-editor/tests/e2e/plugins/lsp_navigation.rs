@@ -662,3 +662,42 @@ fn test_lsp_symbol_breadcrumbs_skip_non_scope_symbols() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+/// Two panes on one buffer have two carets, so they have two trails. Keyed by
+/// buffer, the second pane drew the first one's path, and a click there jumped
+/// that caret to a symbol it never pointed at.
+#[test]
+#[cfg_attr(windows, ignore)]
+fn test_lsp_symbol_breadcrumbs_are_per_pane() -> anyhow::Result<()> {
+    use fresh::input::keybindings::Action;
+
+    let (mut harness, _temp_dir) = setup_lsp_test()?;
+
+    // Into myMethod's body, so the trail is two crumbs deep.
+    harness.send_key_repeat(KeyCode::Down, KeyModifiers::NONE, 6)?;
+    harness.wait_until(|h| trails_on_screen(h) == 1)?;
+
+    // A vertical split puts the panes side by side, so both panes' rows share
+    // screen lines — the trail is counted, not located.
+    harness
+        .editor_mut()
+        .dispatch_action_for_tests(Action::SplitVertical);
+    harness.render()?;
+    assert_eq!(
+        trails_on_screen(&harness),
+        1,
+        "the new pane has its own caret and no trail of its own yet, so it \
+         must not be drawing the focused pane's"
+    );
+
+    Ok(())
+}
+
+/// How many panes are drawing the two-crumb trail. `>` never appears in the
+/// fixture's text, so every occurrence is a breadcrumb row.
+fn trails_on_screen(harness: &EditorTestHarness) -> usize {
+    harness
+        .screen_to_string()
+        .matches("MyClass > myMethod")
+        .count()
+}

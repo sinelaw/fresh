@@ -2305,20 +2305,36 @@ impl Editor {
     ) {
         let id = fresh_core::BufferId(buffer_id as usize);
         for window in self.windows.values_mut() {
-            if window.buffers.contains_key(&id) {
-                if items.is_empty() {
-                    if window.breadcrumb_owners.get(&id) == Some(&plugin_name) {
-                        window.breadcrumbs.remove(&id);
-                        window.breadcrumb_owners.remove(&id);
-                    }
-                } else {
-                    if window.breadcrumbs.get(&id) != Some(&items) {
-                        window.breadcrumbs.insert(id, items);
-                    }
-                    window.breadcrumb_owners.insert(id, plugin_name);
+            if !window.buffers.contains_key(&id) {
+                continue;
+            }
+            if items.is_empty() {
+                // "This buffer has no trail" holds for every pane showing it.
+                let owned: Vec<_> = window
+                    .breadcrumbs
+                    .iter()
+                    .filter(|(leaf, (described, _))| {
+                        *described == id && window.breadcrumb_owners.get(leaf) == Some(&plugin_name)
+                    })
+                    .map(|(leaf, _)| *leaf)
+                    .collect();
+                for leaf in owned {
+                    window.breadcrumbs.remove(&leaf);
+                    window.breadcrumb_owners.remove(&leaf);
                 }
                 return;
             }
+            // A trail names the scopes around one caret — the focused pane's,
+            // which is the caret the plugin read. When the focused pane is
+            // showing something else there is no way to tell which pane the
+            // trail is for, so it is dropped rather than guessed at.
+            let leaf = window.effective_active_split();
+            if window.pane_buffer(leaf) != Some(id) {
+                return;
+            }
+            window.breadcrumbs.insert(leaf, (id, items));
+            window.breadcrumb_owners.insert(leaf, plugin_name);
+            return;
         }
         tracing::debug!("Skipped breadcrumbs for stale buffer {:?}", id);
     }

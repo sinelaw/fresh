@@ -1046,12 +1046,19 @@ pub struct Window {
     /// values plugins have pushed for individual buffers.
     pub status_bar_values: HashMap<BufferId, HashMap<String, String>>,
 
-    /// Per-buffer breadcrumb trails supplied by plugins. Entries carry their
-    /// navigation byte offset as well as the text rendered above the buffer.
-    pub breadcrumbs: HashMap<BufferId, Vec<fresh_core::api::BreadcrumbItem>>,
-    /// Plugin that last supplied each breadcrumb trail, used to clean up
-    /// chrome when that plugin is unloaded.
-    pub breadcrumb_owners: HashMap<BufferId, String>,
+    /// Each pane's breadcrumb trail as supplied by a plugin, tagged with the
+    /// buffer it describes.
+    ///
+    /// Keyed by *pane*, not by buffer. Two panes can show one buffer and each
+    /// has its own caret, while a trail names the scopes around one caret;
+    /// keyed by buffer, the second pane showed the first one's trail, and
+    /// clicking a crumb there jumped to a symbol that pane never pointed at.
+    /// The buffer travels with the trail so a pane that has since switched
+    /// buffers shows nothing rather than the previous one's path.
+    pub breadcrumbs: HashMap<LeafId, (BufferId, Vec<fresh_core::api::BreadcrumbItem>)>,
+    /// Plugin that last supplied each pane's breadcrumb trail, used to clean
+    /// up chrome when that plugin is unloaded.
+    pub breadcrumb_owners: HashMap<LeafId, String>,
 
     /// Mouse drag/selection/scrollbar state for this window. Drag
     /// targets reference per-window LeafIds and BufferIds.
@@ -2881,8 +2888,8 @@ impl Window {
             .into_iter()
             .filter(|(leaf, _)| chrome.get(leaf).is_some_and(|c| c.breadcrumbs))
             .filter_map(|(leaf, buffer)| {
-                let items = self.breadcrumbs.get(&buffer)?;
-                (!items.is_empty()).then(|| (leaf, items.clone()))
+                let (described, items) = self.breadcrumbs.get(&leaf)?;
+                (*described == buffer && !items.is_empty()).then(|| (leaf, items.clone()))
             })
             .collect()
     }
@@ -3404,8 +3411,8 @@ impl Window {
             let mut chrome = PaneChrome::resolve(window, kind);
             chrome.breadcrumbs &= self
                 .breadcrumbs
-                .get(&buffer)
-                .is_some_and(|items| !items.is_empty());
+                .get(&leaf)
+                .is_some_and(|(described, items)| *described == buffer && !items.is_empty());
             (leaf, chrome)
         };
         for (leaf, buffer) in mgr.visible_leaves() {
