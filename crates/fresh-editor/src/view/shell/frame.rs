@@ -537,14 +537,16 @@ pub fn frame_tree(f: Frame) -> Node<UiMsg> {
                     None => row(),
                 },
             )
-            // `Auto` when shown, so a confirmation prompt that wraps on a
-            // narrow terminal takes the rows it needs (issue #3214); zero
-            // when hidden, keeping the reserved-but-empty rectangle callers
-            // anchor to.
-            .h(if f.prompt_line {
-                Sizing::Auto
-            } else {
-                Sizing::Cells(0)
+            // One row whenever the prompt row is shown, even with nothing in
+            // it yet, because the file browser and the suggestions list sit
+            // on top of it. The exception is a confirmation prompt too wide
+            // for the row: it wraps onto up to `MAX_WRAPPED_ROWS` rows and
+            // the body gives them up (issue #3214). Anything placed above the
+            // row follows its top edge, so they never claim the same rows.
+            .h(match (&f.prompt_row, f.prompt_line) {
+                (_, false) => Sizing::Cells(0),
+                (Some(p), true) if p.wraps => Sizing::Auto,
+                (_, true) => Sizing::Cells(1),
             }),
         ]),
     ]);
@@ -1028,6 +1030,75 @@ mod tests {
     fn a_windows_scope_is_named_after_its_id() {
         assert_eq!(window_scope(7), "window:7");
         assert_ne!(window_scope(1), window_scope(10));
+    }
+
+    /// The prompt row's rectangle in a `width` by `height` frame.
+    fn prompt_rect(f: Frame, width: u16, height: u16) -> fresh_ui::Rect {
+        let mut ui: Ui<UiMsg> = Ui::new();
+        ui.frame(frame_tree(f), Size::new(width, height));
+        ui.rect_of(
+            ui.find_by_key(&region_key(HostRegion::PromptLine))
+                .expect("the prompt row"),
+        )
+    }
+
+    fn shown(message: &str, wraps: bool) -> Frame {
+        Frame {
+            prompt_line: true,
+            prompt_row: Some(super::super::prompt_line::PromptRow {
+                message: message.into(),
+                wraps,
+                ..Default::default()
+            }),
+            ..Frame::default()
+        }
+    }
+
+    const QUIT_EN: &str = "1 buffer has unsaved changes. (s)ave and quit, \
+                           (d)iscard and quit, (q)uit (recoverable), (C)ancel? ";
+
+    /// A prompt row that's shown with nothing in it still keeps its one row.
+    /// The file browser and the suggestions list are placed on top of it, so
+    /// a row that shrank to nothing would leave them with no prompt under
+    /// them.
+    #[test]
+    fn a_shown_prompt_row_with_nothing_in_it_keeps_one_row() {
+        let frame = Frame {
+            prompt_line: true,
+            ..Frame::default()
+        };
+        assert_eq!(prompt_rect(frame, 80, 24).h, 1);
+    }
+
+    /// A normal prompt is one row however long its label is.
+    #[test]
+    fn an_input_prompt_is_one_row_even_on_a_narrow_terminal() {
+        assert_eq!(
+            prompt_rect(shown("Replace with (regex): ", false), 20, 24).h,
+            1
+        );
+        assert_eq!(prompt_rect(shown(QUIT_EN, false), 30, 24).h, 1);
+    }
+
+    /// A confirmation prompt that doesn't fit takes the rows it needs from
+    /// the body, and never more than three.
+    #[test]
+    fn a_long_confirmation_takes_up_to_three_rows_from_the_body() {
+        assert_eq!(
+            prompt_rect(shown("Discard changes? (y/n) ", true), 80, 24).h,
+            1
+        );
+        assert_eq!(prompt_rect(shown(QUIT_EN, true), 80, 24).h, 2);
+        let capped = prompt_rect(shown(QUIT_EN, true), 20, 24);
+        assert_eq!(
+            capped.h as usize,
+            super::super::prompt_line::MAX_WRAPPED_ROWS
+        );
+        assert_eq!(
+            capped.bottom(),
+            24,
+            "the prompt still sits at the bottom of the frame"
+        );
     }
 
     /// **This is `layer_rank` now**, and the order below is the whole of it

@@ -208,6 +208,34 @@ impl PromptType {
                 | PromptType::QueryReplace { .. }
         )
     }
+
+    /// Whether this prompt's message spells out the answers it takes, like
+    /// "(s)ave, (d)iscard, (C)ancel?".
+    ///
+    /// The user has to read the whole message to know which key to press, so
+    /// the prompt row wraps it onto a few rows on a narrow terminal instead of
+    /// cutting off the end (issue #3214). Every other prompt keeps its single
+    /// row, where a long query scrolls sideways.
+    pub fn is_confirmation(&self) -> bool {
+        matches!(
+            self,
+            PromptType::QueryReplaceConfirm
+                | PromptType::GotoLineScanConfirm
+                | PromptType::ConfirmRevert
+                | PromptType::ConfirmSaveConflict
+                | PromptType::ConfirmSudoSave { .. }
+                | PromptType::ConfirmOverwriteFile { .. }
+                | PromptType::ConfirmCreateDirectory { .. }
+                | PromptType::ConfirmCloseBuffer { .. }
+                | PromptType::ConfirmQuitWithModified
+                | PromptType::ConfirmQuit
+                | PromptType::ConfirmDeleteFile { .. }
+                | PromptType::ConfirmPasteConflict { .. }
+                | PromptType::ConfirmMultiDelete { .. }
+                | PromptType::ConfirmMultiPasteConflict { .. }
+                | PromptType::ConfirmLargeFileEncoding { .. }
+        )
+    }
 }
 
 /// Prompt state for the minibuffer
@@ -1039,6 +1067,22 @@ impl Prompt {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The prompts that list their answers in the message are the ones that
+    /// wrap. Search and file prompts are not on the list: their query is what
+    /// grows, and it scrolls on one row.
+    #[test]
+    fn only_prompts_that_list_their_answers_are_confirmations() {
+        assert!(PromptType::ConfirmQuitWithModified.is_confirmation());
+        assert!(PromptType::ConfirmQuit.is_confirmation());
+        assert!(PromptType::ConfirmRevert.is_confirmation());
+        assert!(PromptType::QueryReplaceConfirm.is_confirmation());
+
+        assert!(!PromptType::Search.is_confirmation());
+        assert!(!PromptType::Replace { search: "x".into() }.is_confirmation());
+        assert!(!PromptType::SaveFileAs.is_confirmation());
+        assert!(!PromptType::QuickOpen.is_confirmation());
+    }
 
     #[test]
     fn test_delete_word_forward_basic() {

@@ -846,6 +846,7 @@ mod tests {
                 cursor: 3,
                 selection: None,
                 dir: None,
+                wraps: false,
             },
             status: "Searching…".into(),
             count: Some((1, 9)),
