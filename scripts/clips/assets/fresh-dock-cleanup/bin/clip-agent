@@ -42,10 +42,25 @@ PROMPT = " ".join(PROMPT_LINES)
 TYPE_CPS      = 22.0   # characters a second, a human cadence
 THINK         = 1.8
 LEAD_IN       = 1.0    # after the prompt lands, before the first folder
-SLOW_PLATEAU  = 1.9    # the annotated moves/renames
-FAST_PLATEAU  = 0.75   # once the pattern is legible
-N_SLOW_MOVES  = 3
-N_SLOW_RENAME = 3
+# Pacing is env-overridable because two cuts of this take want different
+# cadences from the same run. The long clip annotates the first three moves
+# and the first three renames, so those get a wide plateau and the rest go
+# fast. A clip whose whole subject is the arranging wants one shot per move
+# instead: CLIP_SLOW_MOVES=0 CLIP_MOVE_PLATEAU=0.6 makes every move its own
+# evenly-paced beat. Unset, the defaults are what the long clip filmed.
+def _envf(name, default):
+    return float(os.environ.get(name) or default)
+
+
+def _envi(name, default):
+    return int(os.environ.get(name) or default)
+
+
+SLOW_PLATEAU   = _envf("CLIP_SLOW_PLATEAU", 1.9)   # the annotated steps
+MOVE_PLATEAU   = _envf("CLIP_MOVE_PLATEAU", 0.75)  # once the pattern is legible
+RENAME_PLATEAU = _envf("CLIP_RENAME_PLATEAU", 0.75)
+N_SLOW_MOVES   = _envi("CLIP_SLOW_MOVES", 3)
+N_SLOW_RENAME  = _envi("CLIP_SLOW_RENAMES", 3)
 # The two phase boundaries are states worth filming — folders made but
 # nothing filed yet, everything filed but nothing renamed yet — and each
 # would otherwise last microseconds.
@@ -79,6 +94,52 @@ def rows_by_name():
     return out
 
 
+
+class Gate:
+    """Advance when the camera has taken its shot, not when a clock says so.
+
+    Pacing the agent and aiming the capture off two separate clocks cannot be
+    made to work: they are anchored to each other by one constant -- how long
+    `Return` takes to become a running agent -- and every error in it shifts
+    the whole sequence. Measured at 1.2s the shots came back a plateau late;
+    corrected to 2.3s the moves lined up and the phase boundary still did not.
+    There is no value that fixes it, because the error is not constant.
+
+    So let the camera lead. `shot()` writes its raw dump into the shots
+    directory at the instant it grabs, and only encodes at the end of the
+    take -- so a new `.xwd` appearing there *is* the shutter, visible to any
+    process that can read the directory. The agent does one mutation, waits
+    for the shutter that records it, and only then does the next. The
+    capture's sleeps are then free to drift as much as they like: nothing
+    moves on screen until a shot has been taken.
+
+    The timeout is not a fallback for slowness, it is for a camera that has
+    gone away -- a crashed take should let the agent finish rather than hang
+    a terminal forever.
+    """
+
+    def __init__(self, shots_dir, timeout=25.0):
+        self.dir = shots_dir
+        self.timeout = timeout
+        self.seen = self._count()
+
+    def _count(self):
+        try:
+            return sum(1 for f in os.listdir(self.dir) if f.endswith(".xwd"))
+        except OSError:
+            return self.seen if hasattr(self, "seen") else 0
+
+    def wait(self, label=""):
+        deadline = time.monotonic() + self.timeout
+        while time.monotonic() < deadline:
+            n = self._count()
+            if n > self.seen:
+                self.seen = n
+                return True
+            time.sleep(0.02)
+        return False
+
+
 class Clock:
     """Pace to an absolute schedule, not to a sum of sleeps.
 
@@ -100,9 +161,15 @@ class Clock:
         self.deadline += plateau
         now = time.monotonic() - self.t0
         slack = self.deadline - now
+        # Wall clock too, because the only way to find out what a shot
+        # actually photographed is to compare it against the file's mtime:
+        # the capture and the agent share no other clock. `wall` is when this
+        # state went up on screen -- the mutation is already done by the time
+        # step() is called -- and it stays up until the next step's `wall`.
         self.log.write(json.dumps({"label": label, "at": round(now, 3),
                                    "target": round(self.deadline, 3),
-                                   "slack": round(slack, 3)}) + "\n")
+                                   "slack": round(slack, 3),
+                                   "wall": round(time.time(), 3)}) + "\n")
         if slack > 0:
             time.sleep(slack)
 
@@ -127,11 +194,11 @@ def timeline():
     steps.append({"label": "folders", "seconds": FOLDER_PAUSE})
     for i in range(moves):
         steps.append({"label": f"move{i}",
-                      "seconds": SLOW_PLATEAU if i < N_SLOW_MOVES else FAST_PLATEAU})
+                      "seconds": SLOW_PLATEAU if i < N_SLOW_MOVES else MOVE_PLATEAU})
     steps.append({"label": "filed", "seconds": PHASE_PAUSE})
     for i in range(renames):
         steps.append({"label": f"rename{i}",
-                      "seconds": SLOW_PLATEAU if i < N_SLOW_RENAME else FAST_PLATEAU})
+                      "seconds": SLOW_PLATEAU if i < N_SLOW_RENAME else RENAME_PLATEAU})
     steps.append({"label": "done", "seconds": 2.0})
     return {"steps": steps, "total": round(sum(s["seconds"] for s in steps), 2),
             "moves": moves, "renames": renames,
@@ -157,6 +224,16 @@ def main():
     emit(f"{DIM}  reading dock: {len(ROWS['rows'])} workspaces, 0 folders{RESET}")
     time.sleep(LEAD_IN)
     clock = Clock(os.path.join(CLIP_HOME, "agent-timing.log"))
+    shots_dir = os.environ.get("CLIP_SHOTS_DIR") or ""
+    gate = Gate(shots_dir) if os.path.isdir(shots_dir) else None
+
+    def step(label, plateau):
+        """Hold this state until it has been photographed, or for `plateau`."""
+        if gate is not None:
+            clock.log.write(json.dumps({"label": label, "gate": True}) + "\n")
+            gate.wait(label)
+        else:
+            clock.step(label, plateau)
 
     # ── phase A: folders, then file every row ────────────────────────────
     emit()
@@ -166,7 +243,7 @@ def main():
         fid = script(ORCH + f' return o.createFolder({json.dumps(name)});')
         folder_ids[name] = fid
     emit(f"{GREY}  · {len(folder_ids)} folders{RESET}")
-    clock.step("folders", FOLDER_PAUSE)
+    step("folders", FOLDER_PAUSE)
 
     known = rows_by_name()
     used = {}
@@ -183,9 +260,10 @@ def main():
         filed += 1
         if i < N_SLOW_MOVES:
             emit(f"{GREY}  · {row['name']:<14} → {row['folder']}{RESET}")
-        clock.step(f"move{i}", SLOW_PLATEAU if i < N_SLOW_MOVES else FAST_PLATEAU)
+        step(f"move{i}", SLOW_PLATEAU if i < N_SLOW_MOVES else MOVE_PLATEAU)
     emit(f"{GREY}  · {filed} filed{RESET}")
-    clock.step("filed", PHASE_PAUSE)
+    if gate is None:
+        clock.step("filed", PHASE_PAUSE)
 
     # ── phase B: rename what survives ────────────────────────────────────
     emit()
@@ -203,12 +281,15 @@ def main():
         renamed += 1
         if i < N_SLOW_RENAME:
             emit(f"{GREY}  · {row['name']:<14} → {row['rename']}{RESET}")
-        clock.step(f"rename{i}", SLOW_PLATEAU if i < N_SLOW_RENAME else FAST_PLATEAU)
+        # Renames are never gated: the clip wipes `after` onto the last move
+        # rather than photographing each one, so there is no shutter to wait
+        # for between them.
+        clock.step(f"rename{i}", SLOW_PLATEAU if i < N_SLOW_RENAME else RENAME_PLATEAU)
     emit(f"{GREY}  · {renamed} renamed{RESET}")
 
     emit()
     emit(f"{GREEN}●{RESET} {filed} filed into {len(folder_ids)} folders, {renamed} renamed.")
-    clock.step("done", 2.0)
+    step("done", 2.0)
     # Stay alive: the pane is on screen for the rest of the take.
     while True:
         time.sleep(30)

@@ -36,6 +36,7 @@ specific to filming *this* program.
 | `fresh-dock-cleanup.json` | solo, stepped | 25 unreadable orchestrator rows, filed into folders and renamed by an agent |
 | `fresh-dock-cleanup-short.json` | solo, stepped | the same, cut to 14s for a feed |
 | `fresh-dock-cleanup-short-vertical.json` | solo, stepped | the 14s cut at 9:16 |
+| `fresh-dock-cleanup-focus.json` | solo, stepped | the dock alone: 25 rows filed one at a time, then renamed |
 
 `assets/<clip>/fresh/config.json` is a config directory a spec copies in, so a
 capture gets a deliberate theme and a known set of enabled plugins instead of
@@ -199,3 +200,33 @@ within a hair of 9:16. A square frame can only fit that by height, so it
 leaves the surplus width to the editor pane beside it and the dock lands at
 about 40% of the frame. Vertical fills edge to edge at roughly twice the type
 size, for the same 14 seconds and the same beats.
+
+### The focused cut
+
+`fresh-dock-cleanup-focus.json` films the dock and nothing else — no agent
+pane, no typed prompt, no before/after, no captions. It needs its own take:
+the long clip photographs only three individual moves before jumping to
+all-25-filed, which is fine when each move is annotated and useless when the
+arranging *is* the subject. This take photographs all twenty-five.
+
+**The agent follows the camera.** Pacing the two off separate clocks does not
+work. They are anchored by one constant — how long `Return` takes to become a
+running agent — and every error in it shifts the whole sequence: at 1.2s every
+shot came back a step late, at 2.3s the middle lined up and the ends did not.
+There is no value that fixes it, because the error is not constant.
+
+So `tui-clip` leads. `shot` writes its raw `.xwd` into `out/<name>/shots` at
+the instant it grabs and only encodes at the end of the take, so a new file
+appearing there is the shutter. `record.sh` passes that directory to the agent
+as `CLIP_SHOTS_DIR`, and the agent makes one dock change, waits for the shot
+that records it, and only then makes the next. The spec's sleeps are then free
+to drift — nothing moves on screen until a shot has been taken — and they only
+have to be longer than one mutation (0.18s typical, 0.32s worst measured).
+
+`verify-shots.py` checks a take photographed the states it was aimed at:
+`folders` before any row is filed, one more filed row per `mv<i>`, and exactly
+sixteen rewritten rows between the last move and `after`. Rows are compared by
+how much of each one moved rather than exactly — two screens of the same dock
+differ by a caret phase or a scrollbar segment without a word of text
+differing, and on a good take the rewritten rows score 11.5–20.1 mean absolute
+difference against 0.95–5.7 for those.

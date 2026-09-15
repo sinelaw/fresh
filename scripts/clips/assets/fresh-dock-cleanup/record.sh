@@ -11,7 +11,7 @@ set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CLIP_HOME="${CLIP_HOME:-$HOME/.cache/fresh-dock-clip}"
 TUI_CLIPS="${TUI_CLIPS:-$HOME/repos/tui-clips}"
-SPEC="$HERE/../../fresh-dock-cleanup.json"
+SPEC="${CLIP_SPEC:-$HERE/../../fresh-dock-cleanup.json}"
 
 : "${FRESH_BIN:?set FRESH_BIN to the fresh binary the clip should drive}"
 
@@ -32,6 +32,11 @@ rm -rf "$CLIP_HOME/config/fresh"; mv "$CLIP_HOME/config/fresh.tmp" "$CLIP_HOME/c
 cp "$HERE/rows.json" "$CLIP_HOME/rows.json"
 cp -r "$HERE/bin" "$CLIP_HOME/bin"
 chmod +x "$CLIP_HOME"/bin/*
+
+# The agent waits on the camera's raw dumps, which tui-clips writes into
+# out/<name>/shots as it grabs. Hand it that path; the spec passes it through.
+SPEC_NAME="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["name"])' "$SPEC")"
+export CLIP_SHOTS_DIR="$TUI_CLIPS/out/$SPEC_NAME/shots"
 
 echo "staged $CLIP_HOME; recording $(basename "$SPEC")"
 exec "$TUI_CLIPS/bin/tui-clip" "$SPEC" "$@"
