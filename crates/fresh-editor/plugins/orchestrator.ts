@@ -1666,6 +1666,55 @@ function pendingHintText(p: PendingCreate): string {
     : editor.t("dock.pending_dismiss_hint");
 }
 
+// The workspace the dock's highlighted node stands for, when it is a session
+// row at all (a folder header is not).
+function dockSelectedSession(): AgentSession | null {
+  const key = openDialog?.dockSelKey;
+  if (!key || !key.startsWith(SESSION_NODE_PREFIX)) return null;
+  return orchestratorSessions.get(Number(key.slice(SESSION_NODE_PREFIX.length))) ?? null;
+}
+
+// The failure panel: the full reason a create failed, plus the two things
+// that can be done about it, directly under the tree.
+//
+// A dock row is one line, so the reason — the *only* description of a
+// blocking failure — was cut to whatever the splitter left over
+// (`Host key v…`), and Retry / Dismiss existed solely inside a right-click
+// menu that nothing advertised. Both are the same mistake: a failed row was
+// a dead end at exactly the moment the user needed a way out. So the row
+// keeps its one-line summary and the panel carries what does not fit —
+// wrapped, never elided — with the actions rendered as buttons where the
+// user is already looking. It occupies rows only while a failed or paused
+// row is selected; a dock with nothing wrong is as tall as it was.
+function dockFailureRows(): WidgetSpec[] {
+  const s = dockSelectedSession();
+  const p = s?.pending;
+  if (!s || !p || !pendingActionable(p)) return [];
+  const rows: WidgetSpec[] = [
+    divider({ style: { fg: "ui.menu_disabled_fg" } }),
+    label(p.message, { style: { fg: pendingMsgFg(p) }, wrap: true }),
+  ];
+  const actions: WidgetSpec[] = [
+    button(editor.t("dock.ctx_retry"), { intent: "primary", key: "pending-retry" }),
+    spacer(1),
+    button(editor.t("dock.ctx_dismiss"), { intent: "danger", key: "pending-dismiss" }),
+  ];
+  rows.push(wrappingRow(...actions));
+  return rows;
+}
+
+// Screen rows `dockFailureRows` takes, for the tree's height budget. The
+// reason wraps, so it is however many lines the dock's content width needs.
+function dockFailureRowCount(cols: number): number {
+  const s = dockSelectedSession();
+  const p = s?.pending;
+  if (!s || !p || !pendingActionable(p)) return 0;
+  const w = Math.max(8, cols);
+  const msgRows = Math.max(1, Math.ceil(editor.stringWidth(p.message) / w));
+  // divider + reason + button row.
+  return 2 + msgRows;
+}
+
 // One tree row for a session leaf: state glyph, optional remote facet,
 // and the name (highlighted when it's the active window). A single
 // line — the tree owns indentation and the disclosure column, so the
@@ -4407,6 +4456,18 @@ function refreshOpenDialog(): void {
 // editor actually switched to instead of stranding the highlight on the
 // previously-active row. No-op when the active window isn't in the
 // (filtered) list.
+// Move the dock's highlight onto one session's row. A no-op when the dock
+// isn't showing, or when the row isn't in the tree (filtered out, or inside a
+// collapsed folder) — the highlight is a pointer into the rendered list.
+function selectDockRow(id: number): void {
+  if (!openDialog || !openPanel || !dockMode) return;
+  const key = sessionNodeKey(id);
+  const idx = openDialog.dockKeys.indexOf(key);
+  if (idx < 0) return;
+  openDialog.dockSelKey = key;
+  openPanel.setSelectedIndex("sessions", idx);
+}
+
 function syncDockSelectionToActive(): void {
   if (!openDialog || !openPanel || !dockMode) return;
   const activeKey = sessionNodeKey(editor.activeWindow());
@@ -5223,14 +5284,18 @@ function buildDockSpec(): WidgetSpec {
   // something to say — a dock with nothing pending stays as tall as before.
   const att = attentionCounts(orchestratorSessions.keys());
   const attentionRow: WidgetSpec[] = att.blocked > 0 || att.done > 0 ? [dockAttentionRow(att)] : [];
+  // The failure panel sits between the tree and the hints, so it comes out of
+  // the same budget the tree is sized against.
+  const failureRows = dockFailureRows();
+  const failureRowCount = dockFailureRowCount(dockCols);
   // Top chrome: the title bar, the action row, the search row while it is
   // open, the attention line when there is one, and the divider.
-  const chromeRows = 3 + searchRow.length + attentionRow.length + bottomRows;
+  const chromeRows = 3 + searchRow.length + attentionRow.length + bottomRows + failureRowCount;
   const listRows = Math.max(MIN_LIST_ROWS, innerH - chromeRows);
   openDialog.listVisibleRows = listRows;
   // Rows of chrome above the tree (everything in chromeRows except the
   // bottom hint row) — where the first tree row lands on screen.
-  openDialog.dockTreeTop = chromeRows - bottomRows;
+  openDialog.dockTreeTop = chromeRows - bottomRows - failureRowCount;
 
   const expandedSeed = dockTreeExpandedKeys(dockTree);
 
@@ -5242,7 +5307,7 @@ function buildDockSpec(): WidgetSpec {
   // non-interactive rows so `bottom` always lands on the dock's last
   // rows. Zero when the tree fills or overflows its budget.
   const treeRows = Math.min(listRows, dockTreeContentRows(dockTree, expandedSeed));
-  const padRows = bottomRows > 0 ? Math.max(0, listRows - treeRows) : 0;
+  const padRows = bottomRows + failureRowCount > 0 ? Math.max(0, listRows - treeRows) : 0;
   const bottomPad: WidgetSpec[] = padRows > 0
     ? [raw(Array.from({ length: padRows }, () => ({ text: "" })))]
     : [];
@@ -5300,6 +5365,7 @@ function buildDockSpec(): WidgetSpec {
       key: "sessions",
     }),
     ...bottomPad,
+    ...failureRows,
     ...bottom,
   );
 }
@@ -11938,6 +12004,11 @@ function failPending(id: number, reason: string): void {
   if (s.remote) s.remote.state = "error";
   editor.setStatus(editor.t("status.prefix", { msg: s.pending.message }));
   savePendingSpecs();
+  // Highlight the row that just failed, so the failure panel — the full
+  // reason and its Retry / Dismiss — is on screen at the moment it is needed
+  // rather than after the user has gone looking for it. The dock highlight is
+  // not the active window, so this moves nothing the user is working in.
+  selectDockRow(id);
   if (openPanel) refreshOpenDialog();
   // The row stays for the user to retry or dismiss, but a caller waiting on
   // this create is done — it gets the reason rather than hanging.
@@ -14975,6 +15046,18 @@ editor.on("widget_event", (e) => {
       }
       closeOpenDialog();
       openForm({ fromPicker: true });
+      return;
+    }
+    // The failure panel's two buttons — the same actions the right-click
+    // menu offers, on the row the panel is describing.
+    if (e.event_type === "activate" && e.widget_key === "pending-retry") {
+      const s = dockSelectedSession();
+      if (s) retryPending(s.id);
+      return;
+    }
+    if (e.event_type === "activate" && e.widget_key === "pending-dismiss") {
+      const s = dockSelectedSession();
+      if (s) dismissPending(s.id);
       return;
     }
     if (e.event_type === "activate" && e.widget_key === "dock-close") {
