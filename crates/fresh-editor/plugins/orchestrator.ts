@@ -3894,10 +3894,16 @@ function confirmActionLines(action: BulkAction): string[] {
         editor.t("confirm.archive_note"),
       ];
     case "delete":
+      // The fourth line is the one the dialog used to leave out. Everything
+      // else about this confirmation is exhaustive, which is exactly what
+      // makes an omission read as "this is all that happens" — and the branch
+      // outliving the workspace then turns up later as an unexplained ref.
+      // Keeping it is the right default; saying nothing about it is not.
       return [
         editor.t("confirm.delete_line1"),
         editor.t("confirm.delete_line2"),
         editor.t("confirm.delete_line3"),
+        editor.t("confirm.delete_line4"),
       ];
   }
 }
