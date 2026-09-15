@@ -2188,3 +2188,55 @@ fn an_unreachable_host_is_not_reported_as_a_missing_repository() {
          repository. Screen:\n{screen}",
     );
 }
+
+/// **A `~/.ssh/config` alias reaches ssh as the alias.**
+///
+/// The Machine control lists the hosts the file names, which is an implicit
+/// promise that the user's entry for one of them works. It did not: the form
+/// resolved the alias itself to `user@hostname:port` and handed ssh *that*,
+/// and a resolved destination matches no `Host` block — so every directive
+/// beyond the three this plugin's own parser reads (`HostName`, `User`,
+/// `Port`) silently stopped applying. `IdentityFile` was the one that hurt:
+/// a host picked from the list connected with the wrong key and failed
+/// `Permission denied (publickey)`, with nothing on screen to say which half
+/// of the config was live.
+///
+/// The shim makes the difference observable without a network: it answers the
+/// probe for `aliasbox` and refuses `deploy@10.0.0.9`. The remote branch name
+/// can only reach the screen through an ssh call that was given the alias.
+#[test]
+fn a_config_alias_is_handed_to_ssh_as_the_alias() {
+    let (_temp, workspace) = set_up_workspace();
+    let data_home = tempfile::tempdir().unwrap();
+    let _ssh = crate::common::dormant_ssh::alias_only_ssh_on_path();
+
+    let mut harness = form_with_planted_ssh_config(
+        workspace,
+        &data_home,
+        "Host aliasbox\n  HostName 10.0.0.9\n  User deploy\n  Port 2222\n\
+         \n  IdentityFile /keys/aliasbox\n",
+    );
+    step_to_first_planted_host(&mut harness);
+    harness.tick_and_render().unwrap();
+
+    // The remote probe only runs once there is a path to ask about; Tab walks
+    // from Machine to Remote path, which is the next control for an SSH host.
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.tick_and_render().unwrap();
+    for ch in "/srv/aliasrepo".chars() {
+        harness
+            .send_key(KeyCode::Char(ch), KeyModifiers::NONE)
+            .unwrap();
+    }
+
+    harness
+        .wait_until(|h| h.screen_to_string().contains("remote-main-branch"))
+        .unwrap_or_else(|_| {
+            panic!(
+                "the branch the host reported must reach the form, which it can \
+                 only do through an ssh call given the alias `aliasbox` rather \
+                 than the resolved `deploy@10.0.0.9`. Screen:\n{}",
+                harness.screen_to_string()
+            )
+        });
+}

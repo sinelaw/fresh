@@ -8378,21 +8378,32 @@ function shQuote(s: string): string {
 // that wants a password fails instead of hanging on a prompt no dialog can
 // answer, and a connect timeout so an unreachable one does not wedge the
 // form.
+//
+// **A picked `~/.ssh/config` alias goes to ssh as the alias.** Resolving it
+// here to `user@host:port` — which this used to do — hands ssh a destination
+// that matches no `Host` block, so every directive in the user's own entry
+// except the three this file parses (`HostName`, `User`, `Port`) silently
+// stops applying: `IdentityFile`, `IdentitiesOnly`, `UserKnownHostsFile`,
+// `StrictHostKeyChecking`, `ProxyJump`, `ProxyCommand`. The picker reads the
+// config only to *list* aliases and to show what one resolves to; ssh stays
+// the thing that interprets it. This is the same alias `captureCreateSpec`
+// hands the attach, so the probe, the worktree and the session all reach the
+// host by the same route and cannot disagree about how.
 function formSshArgv(f: NewSessionForm, connectTimeout: number): string[] | null {
   const m = f.machineId ? machineById(f.machineId) : null;
   if (m && m.kind !== "ssh") return null;
-  const target = m
-    ? m.target
-    : formSshOther(f)
-    ? f.sshHost.value.trim()
-    : sshResolvedTarget(f.sshHosts[f.sshPick]);
+  const base = ["-o", "BatchMode=yes", "-o", `ConnectTimeout=${connectTimeout}`];
+  if (!m && !formSshOther(f)) {
+    const alias = f.sshHosts[f.sshPick]?.alias ?? "";
+    return alias ? [...base, "--", alias] : null;
+  }
+  const target = m ? m.target : f.sshHost.value.trim();
   const { dest, port } = parseSshTarget(target);
   if (!dest) return null;
-  const identity = m ? m.identity.trim() : formSshOther(f) ? f.sshIdentity.value.trim() : "";
-  const options = m ? m.options.trim() : formSshOther(f) ? f.sshOptions.value.trim() : "";
+  const identity = m ? m.identity.trim() : f.sshIdentity.value.trim();
+  const options = m ? m.options.trim() : f.sshOptions.value.trim();
   return [
-    "-o", "BatchMode=yes",
-    "-o", `ConnectTimeout=${connectTimeout}`,
+    ...base,
     ...(port ? ["-p", port] : []),
     ...(identity ? ["-i", expandHome(identity)] : []),
     ...(options ? options.split(/\s+/) : []),
@@ -8498,6 +8509,242 @@ async function createRemoteWorktree(
     return { ok: false, error: err };
   }
   return { ok: true, root };
+}
+
+// === Host-key trust (trust on first use) ====================================
+//
+// ssh refuses a host key it has never seen, and every ssh call the
+// orchestrator makes runs under `BatchMode=yes` — a carrier with piped stdio
+// and a probe behind a dialog both have nowhere to put an interactive prompt.
+// So a host the user has never connected to fails with a bare
+// `Host key verification failed.` and no way forward inside the editor: the
+// remedy is a shell, which is exactly what a workspace dialog exists to save
+// the user. Every other ssh client answers this with a yes/no prompt showing
+// the key's fingerprint. This is that prompt.
+//
+// **Accepting re-runs ssh rather than writing `known_hosts` here.** Which file
+// the line belongs in is the user's config to decide (`UserKnownHostsFile`,
+// possibly several, possibly hashed by `HashKnownHosts`), and reimplementing
+// that lookup would be a second answer to a question ssh already answers.
+// `StrictHostKeyChecking=accept-new` on one throwaway connection makes ssh
+// record it, in the right file, in the right form.
+
+// A scan is a direct TCP dial; it should not outlive the form's own probe.
+const HOSTKEY_SCAN_TIMEOUT_S = 6;
+
+// True when `err` is ssh refusing to continue because it does not trust the
+// host key. Deliberately the one error the trust flow triggers on: a broad
+// `Err(_)` retry would re-run creates that failed for reasons a fingerprint
+// dialog cannot fix.
+function isHostKeyFailure(err: string): boolean {
+  return /host key verification failed/i.test(err);
+}
+
+// What ssh itself resolves for a destination (`ssh -G`), lowercased keyword →
+// value. Read instead of re-parsing `~/.ssh/config` because the file's real
+// grammar — `Match`, `Include`, canonicalisation, system-wide defaults, the
+// first-value-wins rule across all of them — is ssh's to interpret; the
+// plugin's own parser reads only enough to list aliases.
+async function sshEffectiveConfig(argv: string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const r = await editor.spawnHostProcess("ssh", ["-G", ...argv]);
+  if (r.exit_code !== 0) return out;
+  for (const line of (r.stdout || "").split(/\r?\n/)) {
+    const i = line.indexOf(" ");
+    if (i <= 0) continue;
+    const key = line.slice(0, i).toLowerCase();
+    if (!out.has(key)) out.set(key, line.slice(i + 1).trim());
+  }
+  return out;
+}
+
+// The fingerprints of the keys a host presents, as `ssh-keygen -l` renders
+// them (`256 SHA256:… (ED25519)`).
+//
+// Empty is a legitimate answer, not a failure: `ssh-keyscan` dials the address
+// directly, so a host reached through `ProxyJump` / `ProxyCommand` has no
+// fingerprint to show from here. The dialog says so rather than inventing one.
+async function scanHostKeyFingerprints(host: string, port: string): Promise<string[]> {
+  if (!host) return [];
+  const scan = await editor.spawnHostProcess("ssh-keyscan", [
+    "-T", String(HOSTKEY_SCAN_TIMEOUT_S),
+    ...(port ? ["-p", port] : []),
+    "--", host,
+  ]);
+  const keys = (scan.stdout || "")
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => l && !l.startsWith("#"));
+  if (keys.length === 0) return [];
+  // `ssh-keygen -l` reads a *file*, and `spawnHostProcess` execs rather than
+  // running a shell, so there is no pipe to hand it — the scan goes through a
+  // scratch file, removed on both paths.
+  const tmp = editor.pathJoin(
+    editor.getTempDir(),
+    `fresh-hostkey-${Date.now().toString(36)}-${Math.floor(Math.random() * 1e6).toString(36)}`,
+  );
+  if (!editor.writeFile(editor.localPath(tmp), `${keys.join("\n")}\n`)) return [];
+  const fp = await editor.spawnHostProcess("ssh-keygen", ["-l", "-f", tmp]);
+  editor.removePath(editor.localPath(tmp));
+  if (fp.exit_code !== 0) return [];
+  return (fp.stdout || "")
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .map(trimFingerprintComment);
+}
+
+// `ssh-keygen -l` prints `<bits> <fingerprint> <comment> (<TYPE>)`, and for a
+// scanned key the comment is the address — which the dialog already states on
+// its own line. Drop it so the line the user has to *compare* is the
+// fingerprint and nothing else. Anything that does not match the shape is
+// left exactly as ssh-keygen wrote it.
+function trimFingerprintComment(line: string): string {
+  const m = /^(\S+\s+\S+)\s+.*\s(\([^()]*\))$/.exec(line);
+  return m ? `${m[1]} ${m[2]}` : line;
+}
+
+// Everything the trust dialog states about the host being trusted.
+interface HostKeyOffer {
+  // The destination as the user named it (an alias, or `user@host`).
+  target: string;
+  // Where ssh will actually connect, from `ssh -G`.
+  where: string;
+  // `ssh-keygen -l` lines; empty when the key could not be read from here.
+  fingerprints: string[];
+  // The `known_hosts` the accept will write to, for the consequence line.
+  knownHosts: string;
+}
+
+// Gather what the dialog needs to show. Two cheap host processes, run only on
+// the failure path — nothing here happens on a host that is already trusted.
+async function hostKeyOffer(argv: string[], target: string): Promise<HostKeyOffer> {
+  const cfg = await sshEffectiveConfig(argv);
+  const host = cfg.get("hostname") ?? "";
+  const port = cfg.get("port") ?? "";
+  // `UserKnownHostsFile` may name several files; ssh writes the first.
+  const knownHosts = (cfg.get("userknownhostsfile") ?? "").split(/\s+/)[0] ?? "";
+  return {
+    target,
+    where: host ? (port && port !== "22" ? `${host} port ${port}` : host) : target,
+    fingerprints: await scanHostKeyFingerprints(host, port),
+    knownHosts,
+  };
+}
+
+// Put the fingerprint in front of the user and, if they accept, make ssh
+// record the key. Resolves `true` once the host is trusted.
+async function offerHostKeyTrust(argv: string[], target: string): Promise<boolean> {
+  const offer = await hostKeyOffer(argv, target);
+  if (!(await askHostKeyTrust(offer))) return false;
+  // The exit status is not the answer: host-key verification happens before
+  // authentication, so a host that records its key and *then* rejects our
+  // credentials has still been trusted — and the caller's real command is
+  // about to report that authentication failure in its own words.
+  await editor.spawnHostProcess("ssh", [
+    "-o", "StrictHostKeyChecking=accept-new",
+    ...argv,
+    "true",
+  ]);
+  return true;
+}
+
+// The dialog itself: a centered, dimmed modal over whatever asked for it.
+// Cancel sits first — the safe option in the first position, as the delete
+// confirmation does — and Esc / click-outside is Cancel too.
+const HOSTKEY_MODE = "orchestrator-hostkey";
+let hostKeyPanel: FloatingWidgetPanel | null = null;
+let hostKeyState: { offer: HostKeyOffer; settle: (trust: boolean) => void } | null = null;
+
+function buildHostKeySpec(offer: HostKeyOffer): WidgetSpec {
+  const dim = { fg: "ui.menu_disabled_fg" };
+  const parts: WidgetSpec[] = [
+    label(editor.t("hostkey.headline", { host: offer.target }), { wrap: true }),
+    spacer(0),
+    label([
+      { text: `  ${editor.t("hostkey.field_where")}  `, style: dim },
+      { text: offer.where, style: { bold: true } },
+    ]),
+  ];
+  if (offer.fingerprints.length > 0) {
+    for (const fp of offer.fingerprints) {
+      parts.push(label([
+        { text: `  ${editor.t("hostkey.field_key")}    `, style: dim },
+        { text: fp, style: { bold: true } },
+      ], { elide: "tail" }));
+    }
+  } else {
+    parts.push(label(`  ${editor.t("hostkey.no_fingerprint")}`, {
+      style: { ...dim, italic: true },
+      wrap: true,
+    }));
+  }
+  parts.push(
+    spacer(0),
+    label(
+      offer.knownHosts
+        ? editor.t("hostkey.records_in", { file: offer.knownHosts })
+        : editor.t("hostkey.records"),
+      { style: dim, wrap: true },
+    ),
+    label(editor.t("hostkey.warning"), {
+      style: { fg: "ui.status_error_indicator_fg" },
+      wrap: true,
+    }),
+    spacer(0),
+    wrappingRow(
+      withAccel(button(editor.t("hostkey.btn_cancel"), { key: "hostkey-cancel" }), "Esc"),
+      spacer(2),
+      button(editor.t("hostkey.btn_trust"), { intent: "primary", key: "hostkey-trust" }),
+    ),
+  );
+  return col(...parts);
+}
+
+// Resolve the pending ask exactly once and tear the panel down. `unmount`
+// is skipped when the host already did it (an Esc / click-outside `cancel`).
+function settleHostKey(trust: boolean, unmount: boolean): void {
+  const st = hostKeyState;
+  if (unmount && hostKeyPanel) hostKeyPanel.unmount();
+  hostKeyPanel = null;
+  hostKeyState = null;
+  editor.setEditorMode(null);
+  restoreDockAfterDialog();
+  if (st) st.settle(trust);
+}
+
+function askHostKeyTrust(offer: HostKeyOffer): Promise<boolean> {
+  // A second ask while one is open would strand the first promise; remote
+  // creates are serialised (`pumpRemoteQueue`), so this is belt-and-braces.
+  if (hostKeyState) settleHostKey(false, true);
+  return new Promise<boolean>((resolve) => {
+    yieldDockToDialog();
+    hostKeyState = { offer, settle: resolve };
+    hostKeyPanel = new FloatingWidgetPanel();
+    hostKeyPanel.mount(buildHostKeySpec(offer), {
+      widthPct: 64,
+      heightPct: 40,
+      focusMarker: true,
+      title: editor.t("hostkey.title"),
+      closable: true,
+    });
+    editor.floatingPanelControl(hostKeyPanel.id(), "fullscreen", 1);
+    editor.setEditorMode(HOSTKEY_MODE);
+    // The safe option holds the keyboard, so Enter never trusts by reflex.
+    hostKeyPanel.setFocusKey("hostkey-cancel");
+  });
+}
+
+editor.defineMode(HOSTKEY_MODE, [], true, true);
+
+function handleHostKeyEvent(e: WidgetEvt): void {
+  if (e.event_type === "cancel") {
+    settleHostKey(false, false);
+    return;
+  }
+  if (e.event_type !== "activate") return;
+  if (e.widget_key === "hostkey-trust") settleHostKey(true, true);
+  else if (e.widget_key === "hostkey-cancel") settleHostKey(false, true);
 }
 
 // Why an ssh test failed, said beside the field that caused it.
@@ -9989,7 +10236,17 @@ function remoteWorktreeFields(f: NewSessionForm): WidgetSpec[] {
     // the remote's own `git rev-parse` is what decides — refusing here would
     // be this side guessing on the strength of one failed connection.
     out.push(formToggle(f.createWorktree, editor.t("form.create_worktree_short"), "worktree"));
-    out.push(fieldNote(editor.t("form.remote_unreachable"), { fg: "diff.removed_fg", italic: true }));
+    // "Could not ask" has two causes that send the user to different places:
+    // a host that did not answer, and one that answered with a key we have
+    // never seen. The second is not an error the user has to go and fix —
+    // Create will ask them to confirm the fingerprint — so it must not read
+    // like one.
+    out.push(fieldNote(
+      isHostKeyFailure(f.remoteProbeError)
+        ? editor.t("form.remote_untrusted")
+        : editor.t("form.remote_unreachable"),
+      { fg: "diff.removed_fg", italic: true },
+    ));
     return out;
   }
   if (f.remoteIsGit === false) {
@@ -12144,8 +12401,28 @@ async function runRemoteCreate(id: number): Promise<void> {
     if (spec.backend === "ssh" && spec.remoteWorktree) {
       s.pending.message = editor.t("dock.pending_adding_worktree");
       if (openPanel) refreshOpenDialog();
-      const made = await createRemoteWorktree(spec.remoteWorktree);
+      let made = await createRemoteWorktree(spec.remoteWorktree);
       if (!orchestratorSessions.get(id)?.pending) return;
+      // An untrusted host key is the one failure the user can clear from
+      // right here, and the first ssh call of the create is where it shows
+      // up. Ask for the fingerprint the way every other ssh client does and
+      // run the same create again; declining is an outcome, not a crash, so
+      // the row says what happened and Retry asks once more.
+      if (!made.ok && isHostKeyFailure(made.error)) {
+        const trusted = await offerHostKeyTrust(
+          spec.remoteWorktree.ssh,
+          spec.facet.detail,
+        );
+        if (!orchestratorSessions.get(id)?.pending) return;
+        if (!trusted) {
+          failPending(id, editor.t("hostkey.declined"));
+          return;
+        }
+        s.pending.message = editor.t("dock.pending_adding_worktree");
+        if (openPanel) refreshOpenDialog();
+        made = await createRemoteWorktree(spec.remoteWorktree);
+        if (!orchestratorSessions.get(id)?.pending) return;
+      }
       if (!made.ok) {
         failPending(id, made.error);
         return;
@@ -13997,6 +14274,10 @@ editor.on("widget_event", (e) => {
   }
   if (explainPanel && e.panel_id === explainPanel.id()) {
     handleExplainEvent(e);
+    return;
+  }
+  if (hostKeyPanel && hostKeyState && e.panel_id === hostKeyPanel.id()) {
+    handleHostKeyEvent(e);
     return;
   }
   // ---------------------------------------------------------------------

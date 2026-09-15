@@ -55,6 +55,17 @@ pub fn hanging_fake_ssh_on_path() -> PathPin {
 /// shim reads; set them through [`PathPin::set_env`] so they are unset again
 /// with the shim. Leaving them behind pointed a later test's shim at a gate
 /// file inside a temp directory that had already been deleted.
+/// Like [`fake_ssh_on_path`], but the shim answers **only for the
+/// `~/.ssh/config` alias** (`tests/fixtures/fake-ssh-alias-only`) and refuses
+/// a destination the caller resolved itself. Makes "whose job is it to read
+/// `~/.ssh/config`" observable on screen with no network: ssh's, because the
+/// directives the plugin does not parse only apply when ssh is handed the
+/// alias.
+#[must_use = "the shim leaves $PATH as soon as the guard is dropped"]
+pub fn alias_only_ssh_on_path() -> PathPin {
+    pin_shim_dir("tests/fixtures/fake-ssh-alias-only")
+}
+
 #[must_use = "the shim leaves $PATH as soon as the guard is dropped"]
 pub fn slow_fake_ssh_on_path() -> PathPin {
     pin_shim_dir("tests/fixtures/fake-ssh-slow")
