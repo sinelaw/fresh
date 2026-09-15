@@ -279,3 +279,317 @@ printf 'Host testbox\n  HostName 127.0.0.1\n  Port 2222\n  User root\n  Identity
 
 # Then: launch fresh in a git repo, click [ + New ], set Machine = testbox, Create.
 ```
+
+---
+
+# Follow-up: what was changed, and what was not
+
+**Date:** 2026-09-15 · **Branch:** `claude/workspace-sessions-ux-fixes`
+(branched from the commit that added this report).
+
+The 18 findings were not treated as 18 defects. Reproducing each one against
+`target/debug/fresh` first — the same tmux-driven method the test used — showed
+that several share a single cause, and that four of them describe behaviour that
+works. What follows is grouped by cause, with the design decision recorded for
+each group, then the declines.
+
+## Scoreboard
+
+| Finding | Sev | Outcome |
+| --- | --- | --- |
+| F1 host-key trust-on-first-use | 4 | **Fixed** — verified interactively |
+| F2 partial `~/.ssh/config` | 4 | **Fixed** — verified interactively + regression test |
+| F3 truncated error text | 3 | **Fixed** — verified interactively |
+| F4 recovery hidden behind right-click | 3 | **Fixed** — verified interactively |
+| F5 checkbox/caption/behaviour disagree | 3 | **Fixed** — verified interactively |
+| F6 "leave empty to use provided branch" | 3 | **Fixed** — verified interactively |
+| F7 auto-name collides | 2 | **Fixed** — verified interactively |
+| F8 undisclosed writes to the repo | 2 | **Not fixed** — could not reproduce |
+| F9 delete keeps the branch, undocumented | 2 | **Fixed** — verified interactively |
+| F10 no warning on quit | 2 | **Declined for now** — out of this feature |
+| F11 Ctrl+P does nothing | 2 | **Not a defect** — it works (see below) |
+| F12 no keyboard route to the dock | 2 | **Mostly not a defect** — `Alt+O` is bound |
+| F13 `▼` inert, Esc dead, `←→` wrong | 2 | **One third fixed**, two thirds not defects |
+| F14 modal is mostly empty space | 2 | **Not fixed** — reservation made *more* honest |
+| F15 labels inconsistent and over-long | 1 | **Not fixed** |
+| F16 status glyphs have no legend | 1 | **Not fixed** |
+| F17 worktree paths unpreviewed | 1 | **Fixed** — verified interactively |
+| F18 assorted polish | 1 | **Not fixed** |
+
+## Group A — reaching another machine (F1 + F2)
+
+**One cause, two symptoms.** `formSshArgv` resolved a `~/.ssh/config` alias
+itself into `user@hostname:port` and handed ssh *that*. A resolved destination
+matches no `Host` block, so every directive beyond the three the plugin's own
+parser reads (`HostName`, `User`, `Port`) silently stopped applying —
+`IdentityFile`, `IdentitiesOnly`, `UserKnownHostsFile`, `StrictHostKeyChecking`,
+`ProxyJump`, `ProxyCommand`. That is F2 exactly, including the tester's
+`Permission denied (publickey)` on the very next attempt. And because no
+`StrictHostKeyChecking` was set while `BatchMode=yes` was, an unknown host key
+came back as a bare `Host key verification failed.` — F1.
+
+Worth recording: `formSshArgv` was the *only* caller in the file doing this.
+`machineForHost` and `captureCreateSpec` already passed the alias, and
+`machineForHost` even carries a comment saying why ("ssh resolves user, port and
+identity from the entry, so the alias is the whole target"). This was an
+outlier, not a design.
+
+**F2 — the decision.** The report offered two options: honour more directives
+ourselves, or delegate to the system `ssh`. Delegating won, and not narrowly:
+
+- We already shell out to `ssh` for every connection, so a second interpreter of
+  the same file is a second source of truth that can disagree with the one
+  actually connecting. The tester's whole complaint is that the two halves
+  disagreed.
+- The list in the recommendation (`IdentityFile`, `IdentitiesOnly`,
+  `UserKnownHostsFile`, `StrictHostKeyChecking`, `ProxyJump`) is not closed.
+  `Match`, `Include`, `CanonicalizeHostname`, `ProxyCommand`, `%h`/`%p` tokens
+  and the system-wide `/etc/ssh/ssh_config` are all part of the same grammar.
+  Any line we stop at recreates the "which half is live?" problem at a new
+  boundary.
+- Delegating is a *smaller* change than parsing more: the plugin's parser
+  shrinks in responsibility to what it is good at — listing aliases for the
+  picker and rendering the `↳ root@127.0.0.1:2222` hint — and stops deciding
+  how to connect.
+
+Where the plugin genuinely needs resolved facts (the address to scan for a
+fingerprint, which `known_hosts` an accept will write to), it asks `ssh -G`
+rather than re-reading the file.
+
+**F1 — the decision.** Two designs were weighed. The cheap one is to add
+`StrictHostKeyChecking=accept-new` to the plugin's ssh calls, matching what the
+Rust agent carrier already does; it is one line and the task succeeds with zero
+clicks. It was rejected because it silently trusts, and the thing being trusted
+is the identity of a machine the user is about to run commands on. The report is
+right that a fingerprint confirmation is what every other ssh client does.
+
+So the create catches that one error — narrowly, per the repo's own rule about
+recovery paths — and asks:
+
+```
+┌ Unknown host key ──────────────────────────────────────────────┐
+│ This computer has never connected to testbox before.           │
+│                                                                │
+│   Connects to  127.0.0.1 port 2222                             │
+│   Host key     256 SHA256:F2Rk9zYU2ip4…i1SeoE (ED25519)        │
+│                                                                │
+│ Trusting records the key in /root/sshtest/etc/known_hosts, and │
+│ this host connects without asking again.                       │
+│ Continue only if this fingerprint is the one you expect.       │
+│                                                                │
+│ [ Cancel ] Esc    [ Trust and connect ]                        │
+└────────────────────────────────────────────────────────────────┘
+```
+
+Cancel sits first and holds the keyboard, so Enter never trusts by reflex —
+copying the delete dialog the report singled out as exemplary.
+
+Accepting re-runs ssh with `StrictHostKeyChecking=accept-new` rather than
+appending to `known_hosts` here. Which file the line belongs in is the user's
+config to decide, and it may be hashed; reimplementing that lookup would be a
+second answer to a question ssh already answers. The dialog above is proof it
+works: `/root/sshtest/etc/known_hosts` is the *non-default* path from the
+fixture's config, and that is where the key landed.
+
+**Deliberately not changed:** the Rust agent carrier keeps its blind
+`accept-new`. It is also reached by `fresh ssh://host/path` from the command
+line, where there is no dialog and no one to ask, and narrowing it there would
+turn working invocations into failures for a problem this report did not raise.
+In the orchestrator flow it is now moot — the gate runs first, so the host is
+either trusted or explicitly refused before the carrier connects. Worth revisiting
+separately.
+
+**Where the probe was lying too.** The form's own note rendered a host-key
+failure as "Host unreachable — the worktree is still attempted on create", which
+sends the user to check the network. It now says the key is not trusted yet and
+that Create will ask. Likewise `machine.hint_hostkey` no longer tells the user to
+"connect once from a shell" — that was the out-of-band workaround this removes.
+
+**Acceptance bar, met.** With the report's fixture — a host never connected to,
+a non-default `IdentityFile`, a non-default `UserKnownHostsFile`, no pre-seeded
+`known_hosts`, no key copied to `~/.ssh/id_ed25519` — a workspace session is
+created after one confirmation click, without leaving the application. Checked
+afterwards: the key is in the config's `known_hosts`, `~/.ssh/` still contains
+only `config`, and the remote worktree exists.
+
+## Group B — a failed row was a dead end (F3 + F4)
+
+Both findings are the same mistake: at the one moment a user needs a way out,
+the product offered neither the information nor the action. The reason was cut
+to the dock width (`Host key v…`) and the only remedy lived in an
+undiscoverable right-click menu.
+
+Fixing them separately would have meant a tooltip *and* a `⋯` button. Instead
+the row keeps its one-line summary and a panel under the tree carries what does
+not fit — the full reason, wrapped, never elided — with the two actions as
+buttons:
+
+```
+────────────────────────────────
+ host key not trusted — nothing was
+ connected to
+ [ Retry ] [ Dismiss ]
+```
+
+`failPending` moves the dock's highlight onto the row it just failed, so the
+panel is on screen *when the failure happens* rather than after the user has
+gone looking for it. The highlight is not the active window, so nothing the user
+is working in moves. The panel occupies rows only while a failed or paused row is
+selected — a dock with nothing wrong is exactly as tall as before.
+
+## Group C — controls that misdescribed themselves (F5 + F6 + F17)
+
+**F5 is a wording bug, not a logic bug.** The glyph said `[v]`, the caption said
+"Not checked", and the behaviour created a worktree. Two of those three agree:
+the caption's "checked" meant the *repository probe*, not the control. So the
+fix is one word, not a redesign — the note now says "Repository not verified".
+No behaviour changed, because none was wrong.
+
+**F6 is a real lie**, and the interesting question was how to stop telling it.
+With both branch fields blank the create runs
+`git worktree add … -b <workspace name> <default branch>`, so "leave empty to
+use provided branch" is the opposite of the truth. Restating the rule accurately
+was rejected: it has three arms, two of which depend on fields above it, and a
+sentence about behaviour drifts from behaviour. The form names the outcome
+instead, live as the fields are typed:
+
+```
+New branch name: [                    ]
+                 ↳ blank: new branch acme-widgets-1, cut from HEAD
+                 ↳ made at /root/.local/share/fresh/orchestrator/…/acme-widgets-1
+```
+
+Type `fix/login` and the first line becomes `new branch fix/login, cut from
+HEAD`; type `main` into Checkout branch and it becomes `cut from main`. Verified
+against reality afterwards: `git branch` showed `fix/login` and `git worktree
+list` showed the previewed directory.
+
+The second line is F17 for free — the same moment, the same question ("what is
+about to happen to my repository?"), so it would have been artificial to answer
+one and not the other.
+
+## The rest
+
+**F7 — fixed.** The counter advanced only inside `runLocalCreate`; a remote
+create bakes its name in at capture and never goes through there, and the branch
+scan that backs the counter up cannot see a worktree cut on another machine. A
+remote create now claims its name at submit. Verified: local, then remote, then
+reopening gives `-1`, `-2`, `-3` with no repeat and no skip.
+
+**F9 — fixed with a line, not a checkbox.** The report suggested an "also delete
+branch" checkbox. Keeping the branch is the right default — it may hold the only
+copy of the work — and the dialog's problem was that it enumerated everything
+*except* this, which reads as "and nothing else". So the enumeration got its
+missing item: "keep the branch — `git worktree remove` does not delete it". A
+checkbox would be a new control for a default that is already correct.
+
+**Bonus fix found on the way.** The form reserves a constant height so nothing
+moves when a section changes shape, but it measured that reservation from the
+live form — including three values that arrive from async probes. The
+reservation therefore grew when the probes landed and the dialog re-centred a
+second after opening. It was invisible only because the rows in question
+happened to be the same number either way; the branch preview made it visible and
+an existing test caught it. The probe now pins every input the height depends on.
+
+## Declined, with reasons
+
+**F10 (quitting kills a live remote session with no warning) — declined for
+now.** The finding is fair and the inconsistency with F9 is real. It is declined
+on scope, not merit: the quit path is core editor lifecycle, shared by every
+window and buffer, and a confirmation there is a decision about the editor's quit
+semantics rather than about workspace sessions. Doing it properly means deciding
+what counts as "work in progress" for every session kind, which is a larger
+design than this report's remit. Worth its own issue.
+
+**F14 (the modal is mostly empty space) — not fixed, and partly by design.** The
+blank bands are deliberate: the form reserves each section at its tallest shape so
+that changing Machine or the agent never moves the rows below. That reservation
+is the reason the tester's other complaint in the same finding ("fields jump
+position") is *not* what happens for most changes. Making the dialog tight would
+trade a stable layout for a compact one, which is the wrong way round for a form
+people fill in repeatedly. Two of the reserved rows are now filled with the
+previews above, and the reservation itself was made honest (see the bonus fix), so
+the symptom is smaller. A real fix — reserving less by making the sections
+genuinely uniform — is a layout redesign, not a patch.
+
+**F8 (undisclosed `.sync-workspace` worktree and `fresh/fresh-sessions` branch) —
+not fixed, could not reproduce.** Creating local and remote workspaces and then
+running `git worktree list` and `git branch -a` in the project showed only the
+workspaces the user asked for. Either the entry comes from a path this session
+did not exercise, or from a build with different features. The finding should not
+be closed on that evidence — disclosing an undocumented write is right if it
+happens — but a fix would be speculative without a reproduction.
+
+**F15, F16, F18 — not fixed.** Severity 1, and each is a genuine (if cosmetic)
+improvement. F18's dropdown bleed-through and the box-in-box confirm border are
+host-renderer issues rather than orchestrator ones; both are visible in the
+screenshots above and should be filed against the widget layer.
+
+## Findings that are not defects
+
+The tester was a first-time user with no documentation, which is the point of the
+method — but it also means a thing that looks broken may only be unfamiliar. Four
+claims did not survive re-testing.
+
+**F11 — "the one advertised global shortcut did not work". It works.** The
+status bar reads `Palette: Ctrl+P`, and Ctrl+P opens the palette. It renders
+**at the bottom of the screen**, under a `file | >command | :line | #buffer`
+scope row — so a reader looking at the top of the terminal sees nothing happen.
+Confirmed with the editor focused *and* with the dock focused, and confirmed that
+tmux really delivers `0x10` (`cat -v` shows `^P`). No change made. If anything is
+worth doing here it is making the palette's arrival more visible, which is a
+different finding from the one filed.
+
+The second half of F11 — that when a workspace terminal holds focus, nothing
+distinguishes a keystroke going to the app from one going to the remote shell —
+is a fair observation and is **not** addressed here.
+
+**F12 — "no keyboard route to the Orchestrator dock". `Alt+O` is bound** in
+`keymaps/default.json` (`toggle_dock_focus`, in five contexts), and it works:
+pressed with the dock hidden it opens *and* focuses it. The dock's title even
+underlines the `O` in "Orchestrator" as the mnemonic, derived from that binding.
+The palette also carries `Orchestrator: Toggle Dock`, `Orchestrator: Open` and
+`Orchestrator: New…`. The claim that "the View menu shows no shortcuts at all" is
+also wrong — it shows `Ctrl+B` for File Explorer.
+
+What *is* true, and is the whole of the real finding: the `Orchestrator Dock` row
+sits directly beneath `File Explorer  Ctrl+B` and shows no accelerator of its own,
+so a reader concludes there isn't one. The cause is that menu accelerators are
+looked up by the row's action (`orchestrator_dock_toggle`, unbound) while the key
+is on a different action (`toggle_dock_focus`). Fixing it properly means letting a
+plugin declare a row's accelerator, which is a new field on the public
+`AddMenuItemOptions` plus schema and `.d.ts` regeneration — a public API change for
+a label. **Declined at that price**, and recorded here so the next person does not
+have to rediscover the cause.
+
+**F13 — two of its three parts are not defects.** Clicking the `▼` opens the
+list (verified at the exact display column; note the focus marker `▸` appears on
+the row when the control takes focus, which is a plausible source of a one-column
+mis-click). `Esc` with the list open closes the list and leaves the form open.
+
+The third part is real and is **fixed**: the footer promises `←→ change option`
+without qualification, but the dropdown answered Left/Right only while its list
+was closed. Left/Right now do the same thing open as closed, rather than the
+footer growing a special case for a state it should not have to know about.
+
+## Verification
+
+Everything marked "verified interactively" was driven through the real binary in
+tmux with SGR mouse events and `capture-pane`, against the report's own fixture
+(user-space `sshd` on `127.0.0.1:2222`, ed25519, pubkey-only; a `testbox` alias
+with non-default `IdentityFile` and `UserKnownHostsFile`; a two-commit git repo
+and a clone standing in for the remote). No `known_hosts` was pre-seeded and no
+key was copied to a default path at any point.
+
+Automated: `cargo fmt`, `cargo clippy --all-targets` (clean), and the
+orchestrator / i18n / dropdown / settings / widget test selection. One new
+regression test, `a_config_alias_is_handed_to_ssh_as_the_alias`, covers F2
+through a PATH shim (`tests/fixtures/fake-ssh-alias-only`) that answers for the
+alias and refuses the resolved target; it hangs in `wait_until` without the fix
+and passes with it.
+
+**Not covered by tests:** the host-key trust dialog itself. It needs a real
+`ssh`, `ssh-keyscan` and `ssh-keygen` plus an unknown host key, which the existing
+shim fixtures do not model; it was verified by hand instead, end to end, several
+times (accept, cancel, and retry-after-cancel). A fixture that can present a
+genuine unknown host key would be the right next piece of work.
