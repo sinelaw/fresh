@@ -734,7 +734,7 @@ mod tests {
 
     /// A press on a name names the tab and takes the pointer; a press on its
     /// `×` names the tab to close; a right press on either names the tab to
-    /// open a menu for.
+    /// open a menu for; a middle press on a name closes it.
     #[test]
     fn the_tabs_answer_their_own_presses() {
         let mut ui = laid_out(strip_of(2, 0), PaneControls::default(), 80);
@@ -788,6 +788,16 @@ mod tests {
                 target: buf(1),
                 x: at.x as u16,
                 y: at.y as u16
+            }]
+        );
+        // A middle press on the name emits the same close fact the `×` does
+        // (issue #3284).
+        let got = facts(ui.dispatch(Input::press(at, MouseButton::Middle, Mods::NONE)));
+        assert_eq!(
+            got,
+            vec![UiFact::PaneTabClose {
+                pane: pane(),
+                target: buf(1)
             }]
         );
         let plus = rect(&ui, new_tab_key(pane()));
