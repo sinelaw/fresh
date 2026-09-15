@@ -1,0 +1,50 @@
+ machines                │   1      +
+                         │root@vm:~/work/demo# echo MARK; echo "SSH_CONNECTION=[$SSH_CONNECTION]"; hostname; echo "PPID-tree:"; ps -o pid,ppid,cmd -p $$ ; cat /proc/$PPID/cmdline | tr "\0" " "; echo
+ ▾ Local                 │MARK
+   · demo                │SSH_CONNECTION=[]
+     main                │vm
+   · demo                │PPID-tree:
+     main                │  PID  PPID CMD
+   · demo                │ 7180  7169 /bin/bash
+     main                │/root/.local/bin/herdr server
+   · demo                │root@vm:~/work/demo# echo "I-AM-WORKSPACE-A"
+     main                │I-AM-WORKSPACE-A
+ ▾ testbox              ●│root@vm:~/work/demo# echo "I-AM-WORKSPACE-B"
+   · demo                │I-AM-WORKSPACE-B
+     main                │root@vm:~/work/demo#
+   · demo                │root@vm:~/work/demo# echo TAG-W1
+     main                │TAG-W1
+   · demo                │root@vm:~/work/demo# while true; do date -u +%H:%M:%S >> /root/probe.txt; sleep 1; done
+     main                │
+   · demo                │
+     main                │                                        ┌──────────────────────────────────────────────────────────────────┐
+                         │                                        │new worktree                                                      │
+                         │                                        │                                                                  │
+                         │                                        │ branch                                                           │
+                         │                                        │ worktree/calm-river-af81                                         │
+ new · Local         menu│                                        │                                                                  │
+─────────────────────────│                                        │ checkout                                                         │
+ agents           grouped│                                        │ /root/.herdr/worktrees/demo/worktree-calm-river-af81             │
+                         │                                        │                                                                  │
+                         │                                        │                                                                  │
+                         │                                        │                 ↵ create and open     esc cancel                 │
+                         │                                        └──────────────────────────────────────────────────────────────────┘
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                        «│

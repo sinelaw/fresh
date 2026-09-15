@@ -1,0 +1,50 @@
+ machines                │   1      +
+                         │root@vm:~/.herdr/worktrees/demo/worktree-calm-river-af81#
+ ▾ Local                 │
+   · demo                │
+     main                │
+   · demo                │
+     main                │
+     └─ · calm-river-a…  │
+ ▾ testbox              ●│
+   · demo                │
+     main                │
+   · demo                │
+     main                │
+     └─ · calm-river-a…  │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │                                      ┌──────────────────────────────────────────────────────────────────────┐
+                         │                                      │ delete worktree checkout?                                            │
+                         │                                      │ This removes the checkout folder:                                    │
+                         │                                      │ /root/.herdr/worktrees/demo/worktree-calm-river-af81                 │
+ new · Local         menu│                                      │ The branch is not deleted. The Herdr workspace will close.           │
+─────────────────────────│                                      │                                                                      │
+ agents           grouped│                                      │                                                                      │
+                         │                                      │                                                                      │
+                         │                                      │                        ↵ remove        esc cancel                    │
+                         │                                      └──────────────────────────────────────────────────────────────────────┘
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                        «│

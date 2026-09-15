@@ -1,0 +1,1201 @@
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o BatchMode=yes -o ConnectTimeout=20 -p 2222 -- root@127.0.0.1 cd '/root/remote-work/demo' || exit 1; REPO=$(git rev-parse --show-toplevel) || exit 1; ROOT="$HOME"/.fresh/worktrees/"$(basename "$REPO")"/'demo-2'; if [ ! -d "$ROOT" ]; then mkdir -p "$(dirname "$ROOT")" && git -C "$REPO" worktree add "$ROOT" >&2 || exit 1; fi; printf "%s\n" "$ROOT"
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes -o StrictHostKeyChecking=accept-new testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new -o StrictHostKeyChecking=accept-new testbox exec sh -c 'd='\''/root/.fresh/worktrees/demo/demo-2'\''; [ -d "$d" ] || d=$(dirname "$d"); cd "$d" 2>/dev/null; exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'
+ssh -o StrictHostKeyChecking=accept-new -o BatchMode=yes testbox python3 -u -c "import sys;exec(sys.stdin.buffer.read(19602).decode())"
+ssh -t -o StrictHostKeyChecking=accept-new testbox exec sh -c 'exec ${SHELL:-/bin/sh} -l'

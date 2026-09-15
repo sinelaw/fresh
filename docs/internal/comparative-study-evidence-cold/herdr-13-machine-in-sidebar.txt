@@ -1,0 +1,50 @@
+ machines                │   1      +
+                         │root@vm:~/work/demo#
+ ▾ Local                 │
+   · demo                │
+     main                │
+   · demo                │
+     main                │
+   · demo                │
+     main                │
+ ▾ testbox              ●│
+   · demo                │
+     main                │
+   · demo                │
+     main                │
+   · demo                │
+     main                │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+ new · Local         menu│
+─────────────────────────│
+ agents           grouped│
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                        «│

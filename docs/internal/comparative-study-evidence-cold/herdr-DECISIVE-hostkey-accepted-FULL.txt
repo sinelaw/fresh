@@ -1,0 +1,50 @@
+The authenticity of host '[127.0.0.1]:2222 ([127.0.0.1]:2222)' can't be established.
+ED25519 key fingerprint is SHA256:yaB1mVJw9sLw3CbEmT4gp78EPRjbsE/83Ay58RTbIqY.
+This key is not known by any other names.
+Are you sure you want to continue connecting (yes/no/[fingerprint])? yes
+Saved SSH machine ba3e2e926ec49ced79b233743add8f26. Remote server is ready.
+Open Herdr clients connect automatically.
+root@vm:~/work/demo#
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
