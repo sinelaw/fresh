@@ -165,7 +165,7 @@ spec = {
             # line, the line shortens to a dot, the dot decays. Takes the
             # end of the clip rather than adding to it, so the final hold
             # is what is left of beat 4 in front of it.
-            "shutdown": 1.5},
+            "shutdown": 1.1, "off_glow": 1.5},
     "views": {"list": view},
     # No beat carries a `head` or a `sub`, so the caption bar is never drawn
     # and the viewport takes its full height. The words that do appear are
@@ -175,8 +175,8 @@ spec = {
     # crosses the picture. These sit against the right edge, vertically
     # centred, in the same place both times so the second reads as the first
     # swapping over.
-    "timing": {"intro": 0, "zoom": 0, "hold": 1.0, "pan": 0.15,
-               "push": 0.9, "wipe": 0.75, "outro": 0.6},
+    "timing": {"intro": 0, "zoom": 0, "hold": 0.8, "pan": 0.15,
+               "push": 0.9, "wipe": 0.70, "outro": 0.40},
     "annotations": [
       # 1 — the flat list, briefly, so there is a before to measure against.
       {"shot": "before", "view": "list", "rows": [4, 30], "cols": DOCK,
@@ -188,13 +188,13 @@ spec = {
       # screen anyway -- so nothing jumps, it is just no longer dwelt on.
       {"shots": ["folders"] + [f"mv{i:02d}" for i in range(SHOWN + 1)],
        "crossfade": 0, "view": "list", "rows": [4, 8], "cols": NOTE_AT,
-       "band": False, "hold": 2.2,
+       "band": False, "hold": 1.9,
        "tag": {"text": "organize into folders", "at": "center-right",
                "width": 0.40, "color": "after", "bg": True}},
 
       # 3 — the names change in place, top to bottom, stepping over junk.
       {"shot": f"mv{N_MOVES - 1:02d}", "view": "list", "rows": [4, 8], "cols": NOTE_AT,
-       "band": False, "hold": 3.0,
+       "band": False, "hold": 1.9,
        "transition": "wipe",
        "swipe": {"to": "after", "rows": swipe_rows,
                  "at": 0.35, "row": 0.20, "stagger": 0.10, "edge": 3},
@@ -203,7 +203,7 @@ spec = {
 
       # 4 — hold what it made.
       {"shot": "after", "view": "list", "rows": [4, last_row], "cols": DOCK,
-       "band": False, "hold": 1.9}
+       "band": False, "hold": 0.9}
     ]
   },
   "encode": {"crf": 18, "preset": "slow"}
@@ -213,8 +213,10 @@ t_ = spec["render"]["timing"]
 a = spec["render"]["annotations"]
 holds = sum(x.get("hold", t_["hold"]) for x in a)
 print("wrote", OUT)
-print("~%.1fs  (%d beats, %d shots captured, %d of %d moves shown; "
-      "capture sequence ~%.0fs)"
-      % (holds + t_["pan"] * (len(a) - 1) + t_["outro"], len(a),
-         N_MOVES + 2, SHOWN + 1, N_MOVES,
-         LEAD_IN + N_MOVES * STEP + RENAMES))
+travel = sum(t_.get("wipe", t_["push"]) if x.get("transition") == "wipe"
+             else t_["push"] if x.get("transition") == "push" else t_["pan"]
+             for x in a[1:])
+total = holds + travel + t_["outro"]
+off = float(spec["render"]["crt"].get("shutdown", 0))
+print("~%.2fs  (%d beats, %d of %d moves shown; the tube starts dying at "
+      "%.2fs)" % (total, len(a), SHOWN + 1, N_MOVES, total - off))

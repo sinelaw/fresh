@@ -234,7 +234,8 @@
       "shift": 3,
       "vignette": 0.45,
       "curve": 0.11,
-      "shutdown": 1.5
+      "shutdown": 1.1,
+      "off_glow": 1.5
     },
     "views": {
       "list": {
@@ -251,11 +252,11 @@
     "timing": {
       "intro": 0,
       "zoom": 0,
-      "hold": 1.0,
+      "hold": 0.8,
       "pan": 0.15,
       "push": 0.9,
-      "wipe": 0.75,
-      "outro": 0.6
+      "wipe": 0.7,
+      "outro": 0.4
     },
     "annotations": [
       {
@@ -297,7 +298,7 @@
           17
         ],
         "band": false,
-        "hold": 2.2,
+        "hold": 1.9,
         "tag": {
           "text": "organize into folders",
           "at": "center-right",
@@ -318,7 +319,7 @@
           17
         ],
         "band": false,
-        "hold": 3.0,
+        "hold": 1.9,
         "transition": "wipe",
         "swipe": {
           "to": "after",
@@ -356,7 +357,7 @@
           41
         ],
         "band": false,
-        "hold": 1.9
+        "hold": 0.9
       }
     ]
   },
