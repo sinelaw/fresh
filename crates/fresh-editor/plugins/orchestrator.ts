@@ -10740,26 +10740,45 @@ function connectionRowsMax(f: NewSessionForm): number {
 // the switch was flipped. The reservation is a constant of the form, not of
 // whichever shape happens to be showing.
 function tailRowsMax(f: NewSessionForm): number {
+  // **Every input the tail's height depends on is pinned, not read.** Three
+  // of them arrive from async probes — is the path a repository, what is its
+  // default branch, what is the workspace called — and each one decides
+  // whether a row exists. Measured from the live values, the reservation is
+  // whatever those probes had answered by that frame, so it *grew* when they
+  // landed and the whole dialog re-centred under the user a second after it
+  // opened. Pinned, the reservation is the form's final height from the first
+  // frame. Only row counts are being measured here, so what the pinned values
+  // say never reaches the screen — `NONBLANK` stands for "this note exists".
+  const NONBLANK = "x";
+  const tallest = {
+    ...f,
+    target: "new" as const,
+    machineId: null,
+    createWorktree: true,
+    // The branch preview names a branch and a fork point, and the worktree
+    // path preview names a directory; all three need a workspace name.
+    defaultSessionName: f.defaultSessionName || NONBLANK,
+    // A default branch detected as HEAD carries a note the others do not.
+    defaultBranch: f.defaultBranch || NONBLANK,
+    defaultBranchIsHeadFallback: true,
+  };
   return Math.max(
     6,
-    rowsOf(
-      { ...f, target: "new", backend: "local", machineId: null, createWorktree: true },
-      modeTailFields,
-    ),
+    // The tallest local shape: a repository, so the worktree group is open
+    // rather than the two dim rows a non-git path gets.
+    rowsOf({ ...tallest, backend: "local", projectPathIsGit: true }, modeTailFields),
     // The tallest remote shape: a typed host (so `Remember this machine`
     // shows) over a repository (so the worktree group is at full height).
     rowsOf(
       {
-        ...f,
-        target: "new",
+        ...tallest,
         backend: "ssh",
-        machineId: null,
         sshPick: f.sshHosts.length,
         remember: true,
         remoteProbing: false,
         remoteProbeError: "",
         remoteIsGit: true,
-        createWorktree: true,
+        remoteRepoRoot: f.remoteRepoRoot || NONBLANK,
       },
       modeTailFields,
     ),
