@@ -625,11 +625,10 @@ async function lineStartTarget(origin: number): Promise<number | null> {
 }
 
 async function lineEndTarget(origin: number): Promise<number | null> {
-  const line = editor.getPrimaryCursor()?.line ?? null;
-  if (line === null) {
-    return null;
-  }
-  const end = await editor.getLineEndPosition(line);
+  // Asked by byte rather than by line number: a large file in byte-offset
+  // mode has no line index, and there `line` is null and `$`/`D`/`d$` did
+  // nothing at all.
+  const end = await editor.getLineEndForPosition(origin);
   return end === null ? null : Math.max(end, origin);
 }
 
@@ -1743,10 +1742,12 @@ async function vi_first_non_blank() : Promise<void> {
 registerHandler("vi_first_non_blank", vi_first_non_blank);
 
 async function moveToFirstNonBlank() : Promise<void> {
-  // Get line start position directly (avoids stale snapshot from executeAction)
-  const line = editor.getPrimaryCursor()?.line ?? 0;
+  // Get line start position directly (avoids stale snapshot from executeAction),
+  // and by byte, so it still answers on a buffer with no line index.
+  const cursor = editor.getPrimaryCursor();
   const bufferId = editor.getActiveBufferId();
-  const lineStart = await editor.getLineStartPosition(line);
+  const lineStart =
+    cursor === null ? null : await editor.getLineStartForPosition(cursor.position);
   if (lineStart === null) {
     editor.executeAction("move_line_start");
     return;

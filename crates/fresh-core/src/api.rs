@@ -5188,6 +5188,33 @@ pub enum PluginCommand {
         request_id: u64,
     },
 
+    /// Byte offset of the start of the line *containing* a byte offset (async).
+    ///
+    /// Answers from a bounded scan around the position rather than from the
+    /// line index, so it works on a buffer that has none — a large file in
+    /// byte-offset mode. `None` only when no line start lies within the
+    /// search window, i.e. inside a single enormous line.
+    GetLineStartForPosition {
+        /// Buffer ID (0 for active buffer)
+        buffer_id: BufferId,
+        /// Byte offset somewhere on the line
+        position: u64,
+        /// Request ID for async response
+        request_id: u64,
+    },
+
+    /// Byte offset of the end of the line *containing* a byte offset (async),
+    /// before its newline. The counterpart to [`Self::GetLineStartForPosition`]
+    /// and bounded the same way.
+    GetLineEndForPosition {
+        /// Buffer ID (0 for active buffer)
+        buffer_id: BufferId,
+        /// Byte offset somewhere on the line
+        position: u64,
+        /// Request ID for async response
+        request_id: u64,
+    },
+
     /// Get the total number of lines in a buffer (async)
     GetBufferLineCount {
         /// Buffer ID (0 for active buffer)

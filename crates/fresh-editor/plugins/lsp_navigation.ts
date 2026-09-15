@@ -128,7 +128,15 @@ function navigateToSymbol(
 
   clearOverlay(bufferId);
   if (mode === "preview") {
-    editor.addOverlay(bufferId, OVERLAY_NS, pos, pos + sym.name.length, MATCH_STYLE);
+    // The overlay is placed in bytes, so the name is measured in bytes too —
+    // `.length` is UTF-16 units and ends the highlight inside a wide glyph.
+    editor.addOverlay(
+      bufferId,
+      OVERLAY_NS,
+      pos,
+      pos + editor.utf8ByteLength(sym.name),
+      MATCH_STYLE,
+    );
   }
 }
 
@@ -210,11 +218,16 @@ async function attachLineText(symbols: SymbolItem[], bufferId: number): Promise<
     // of the whole declaration (e.g. the `def`/indentation), not the
     // name — so locate the name on the line, searching from the
     // reported column, to land the cursor and overlay exactly on it.
+    //
+    // `nameCharacter` leaves this loop as a byte column either way: the name's
+    // own when it is on the line, the reported column converted when it is
+    // not. Leaving a UTF-16 column behind made `lineStartByte + nameCharacter`
+    // add a byte offset to a UTF-16 one, which lands off the name on any line
+    // with a wide character before it.
     let idx = sym.lineText.indexOf(sym.name, sym.nameCharacter);
     if (idx < 0) idx = sym.lineText.indexOf(sym.name);
-    if (idx >= 0) {
-      sym.nameCharacter = editor.utf8ByteLength(sym.lineText.slice(0, idx));
-    }
+    if (idx < 0) idx = Math.min(sym.nameCharacter, sym.lineText.length);
+    sym.nameCharacter = editor.utf8ByteLength(sym.lineText.slice(0, idx));
   }
 }
 
@@ -491,21 +504,29 @@ const NON_SCOPE_KINDS = new Set([
   26, // type parameter
 ]);
 
+// `getConfig` walks the whole merged config into a fresh JS object graph, so
+// the flag is read once and kept until the config changes. The trail is
+// recomputed on every caret move; the setting is not going to have changed.
+let everyKind: boolean | null = null;
+
 function showsEveryKind(): boolean {
-  const cfg = editor.getConfig() as
-    | { editor?: { breadcrumb_all_symbols?: boolean } }
-    | null;
-  return cfg?.editor?.breadcrumb_all_symbols === true;
+  if (everyKind === null) {
+    const cfg = editor.getConfig() as
+      | { editor?: { breadcrumb_all_symbols?: boolean } }
+      | null;
+    everyKind = cfg?.editor?.breadcrumb_all_symbols === true;
+  }
+  return everyKind;
 }
 
 function breadcrumbTrail(symbols: SymbolItem[], cursorLine: number): SymbolItem[] {
   // Read the setting once, not once per symbol.
-  const everyKind = showsEveryKind();
+  const showsAll = showsEveryKind();
   const containing = symbols.filter(
     (sym) =>
       sym.startLine <= cursorLine &&
       cursorLine <= sym.endLine &&
-      (everyKind || !NON_SCOPE_KINDS.has(sym.kind)),
+      (showsAll || !NON_SCOPE_KINDS.has(sym.kind)),
   );
   containing.sort((a, b) => {
     const spanA = a.endLine - a.startLine;
@@ -585,6 +606,15 @@ editor.on("cursor_moved", (data) => {
   // Adding a cursor makes the new one primary, so its id is whatever was
   // handed out last. `line` is 1-indexed here; LSP ranges are 0-indexed.
   if (data.is_primary) publishBreadcrumbs(data.buffer_id, data.line - 1);
+});
+
+editor.on("config_changed", () => {
+  // Drop the cached flag and redraw with it, so toggling the setting shows.
+  everyKind = null;
+  const bufferId = editor.getActiveBufferId();
+  if (breadcrumbSymbols.has(bufferId)) {
+    publishBreadcrumbs(bufferId, editor.getCursorLine());
+  }
 });
 
 editor.on("after_insert", (data) => scheduleBreadcrumbRefresh(data.buffer_id));

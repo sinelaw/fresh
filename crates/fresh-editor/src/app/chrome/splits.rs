@@ -48,6 +48,18 @@ impl Editor {
             return;
         };
         self.focus_split(pane, buffer_id);
+        // A crumb places the caret, so it ends multi-cursor editing the way
+        // every other caret-placing click does (`handle_editor_click`). Without
+        // it the secondaries stay where they were, off-screen, and the next
+        // keystroke edits at all of them (#3125). The survivor is the lowest
+        // id, as `Esc` keeps it.
+        if let Some(view_state) = self
+            .active_window_mut()
+            .split_view_states_mut()
+            .and_then(|states| states.get_mut(&pane))
+        {
+            view_state.cursors.remove_secondary();
+        }
         let old_position = self.active_cursors().primary().position;
         self.active_window_mut()
             .set_buffer_cursor_in_splits(buffer_id, position, &[pane]);
@@ -1570,13 +1582,21 @@ mod breadcrumb_target_tests {
         assert_eq!(reported, buffer.lsp_position_to_byte(1, 4));
     }
 
-    /// Columns are UTF-16 offsets, so a line with wide characters before the
+    /// Columns are UTF-16 offsets, so a line with wide characters *before* the
     /// name still resolves to the name's byte.
+    ///
+    /// The wide characters have to sit on the line being resolved, and the
+    /// label has to be empty: `lsp_position_to_byte` only ever converts within
+    /// the target line, and a label search would find the name whatever the
+    /// column arithmetic did. Both are what makes this able to fail.
     #[test]
     fn utf16_columns_resolve_to_the_right_byte() {
-        let src = "# 日本語\nclass Store:\n";
+        let src = "# header\nclass 日本語Store:\n";
         let buffer = Buffer::from_str_test(src);
         let name = src.find("Store").expect("the name");
-        assert_eq!(breadcrumb_target(&buffer, 1, 6, "Store"), name);
+        // "class " is 6 UTF-16 units, 日本語 is 3 more; in bytes it is 6 + 9.
+        assert_eq!(breadcrumb_target(&buffer, 1, 9, ""), name);
+        // And the label search lands on the same byte from the same column.
+        assert_eq!(breadcrumb_target(&buffer, 1, 9, "Store"), name);
     }
 }

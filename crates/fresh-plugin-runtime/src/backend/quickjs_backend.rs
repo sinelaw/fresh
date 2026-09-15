@@ -1871,6 +1871,64 @@ impl JsEditorApi {
         id
     }
 
+    /// Byte offset of the start of the line *containing* `position`.
+    /// `bufferId` defaults to the active buffer when omitted.
+    ///
+    /// Unlike `getLineStartPosition` this needs no line index, so it answers
+    /// on a large file opened in byte-offset mode. Prefer it wherever a byte
+    /// offset is already in hand. Null only when no line start lies within the
+    /// search window either side of `position` — a single enormous line.
+    #[plugin_api(
+        async_promise,
+        js_name = "getLineStartForPosition",
+        ts_raw = "getLineStartForPosition(position: number, bufferId?: number): Promise<number | null>"
+    )]
+    #[qjs(rename = "_getLineStartForPositionStart")]
+    pub fn get_line_start_for_position_start(
+        &self,
+        _ctx: rquickjs::Ctx<'_>,
+        position: u64,
+        buffer_id: rquickjs::function::Opt<u32>,
+    ) -> u64 {
+        let id = self.alloc_request_id();
+        let _ = self
+            .command_sender
+            .send(PluginCommand::GetLineStartForPosition {
+                buffer_id: BufferId(buffer_id.0.unwrap_or(0) as usize),
+                position,
+                request_id: id,
+            });
+        id
+    }
+
+    /// Byte offset of the end of the line *containing* `position`, before its
+    /// newline. `bufferId` defaults to the active buffer when omitted.
+    ///
+    /// The counterpart to `getLineStartForPosition`, and needs no line index
+    /// either.
+    #[plugin_api(
+        async_promise,
+        js_name = "getLineEndForPosition",
+        ts_raw = "getLineEndForPosition(position: number, bufferId?: number): Promise<number | null>"
+    )]
+    #[qjs(rename = "_getLineEndForPositionStart")]
+    pub fn get_line_end_for_position_start(
+        &self,
+        _ctx: rquickjs::Ctx<'_>,
+        position: u64,
+        buffer_id: rquickjs::function::Opt<u32>,
+    ) -> u64 {
+        let id = self.alloc_request_id();
+        let _ = self
+            .command_sender
+            .send(PluginCommand::GetLineEndForPosition {
+                buffer_id: BufferId(buffer_id.0.unwrap_or(0) as usize),
+                position,
+                request_id: id,
+            });
+        id
+    }
+
     /// Get the byte offset of the end of a line (0-indexed line number).
     /// `bufferId` defaults to the active buffer when omitted. Returns the
     /// position after the last character of the line (before newline), or null

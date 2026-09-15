@@ -3209,6 +3209,24 @@ interface EditorAPI {
 	*/
 	getLineStartPosition(line: number, bufferId?: number): Promise<number | null>;
 	/**
+	* Byte offset of the start of the line *containing* `position`.
+	* `bufferId` defaults to the active buffer when omitted.
+	* 
+	* Unlike `getLineStartPosition` this needs no line index, so it answers
+	* on a large file opened in byte-offset mode. Prefer it wherever a byte
+	* offset is already in hand. Null only when no line start lies within the
+	* search window either side of `position` — a single enormous line.
+	*/
+	getLineStartForPosition(position: number, bufferId?: number): Promise<number | null>;
+	/**
+	* Byte offset of the end of the line *containing* `position`, before its
+	* newline. `bufferId` defaults to the active buffer when omitted.
+	* 
+	* The counterpart to `getLineStartForPosition`, and needs no line index
+	* either.
+	*/
+	getLineEndForPosition(position: number, bufferId?: number): Promise<number | null>;
+	/**
 	* Get the byte offset of the end of a line (0-indexed line number).
 	* `bufferId` defaults to the active buffer when omitted. Returns the
 	* position after the last character of the line (before newline), or null

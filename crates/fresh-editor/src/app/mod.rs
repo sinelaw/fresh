@@ -2097,6 +2097,21 @@ impl Editor {
         None
     }
 
+    /// The breadcrumb trail a buffer is currently showing, or an empty slice
+    /// when it has none. Window selection matches `handle_set_breadcrumbs`,
+    /// so a publish that would write nothing compares equal here.
+    pub fn current_breadcrumbs(&self, buffer_id: BufferId) -> &[fresh_core::api::BreadcrumbItem] {
+        for window in self.windows.values() {
+            if window.buffers.contains_key(&buffer_id) {
+                return window
+                    .breadcrumbs
+                    .get(&buffer_id)
+                    .map_or(&[], |items| items.as_slice());
+            }
+        }
+        &[]
+    }
+
     /// Remove every status-bar and breadcrumb contribution belonging to a plugin.
     /// Called when a plugin is unloaded.
     fn remove_plugin_ui_contributions(&mut self, plugin_name: &str) {
