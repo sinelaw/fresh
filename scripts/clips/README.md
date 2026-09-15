@@ -223,6 +223,13 @@ that records it, and only then makes the next. The spec's sleeps are then free
 to drift — nothing moves on screen until a shot has been taken — and they only
 have to be longer than one mutation (0.18s typical, 0.32s worst measured).
 
+Square, framed on the top of the list. A 41-column rect over 18 rows is very
+near 1:1, so it fills a square frame at about 58px a row; the whole list needs
+35 rows and only fits by height, at 42% of the frame's width, which is the
+opposite of zoomed in. The rest of the list carries on below the frame, and
+the swipe only cascades the rows the frame can actually show — pacing it to
+sixteen would spend a second wiping rows nobody can see.
+
 The two words on screen are `tag`s rather than notes, and the phases are
 separated by a `wipe`. A note would have been wrong here twice over: it draws
 a leader back to its rect, which has nothing to point at when the words name
@@ -230,7 +237,13 @@ the whole beat, and it lands wherever the rect puts it rather than where the
 frame has room. The tags sit centre-right, wrapped, stroked so they read over
 the list, and they ride the wipe edge — clipped to their own sides of it — so
 "organize into folders" is replaced by "rename" in place as the screen under
-it changes.
+it changes. They are set in the theme's green on a dark fill: a stroke alone
+is enough over a picture, but this picture is itself text, and the rows keep
+showing between the letters until something opaque goes behind them.
+
+`render.crt` puts a tube over the whole thing — scanlines, phosphor bloom,
+channel fringing, corner falloff. Light on purpose: a deep scanline comb is
+the first thing the encoder turns to mush.
 
 `verify-shots.py` checks a take photographed the states it was aimed at:
 `folders` before any row is filed, one more filed row per `mv<i>`, and exactly

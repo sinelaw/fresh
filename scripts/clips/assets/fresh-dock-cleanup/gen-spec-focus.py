@@ -83,9 +83,16 @@ RENAMED = [5, 6, 7, 8, 9, 11, 12, 24, 25, 26, 28, 29, 31, 32, 34, 35]
 # to the middle of the list instead leaves it room to sit in.
 NOTE_AT = [2, 17]
 
-view = {"rows": [3, 38], "cols": DOCK}         # the whole after-list
-last_row = 36
-swipe_rows = RENAMED
+# Square, framed on the top of the list. A 41-column rect over 18 rows is
+# 697x685 capture pixels -- near enough 1:1 that it fills a square frame with
+# no letterboxing, at about 58px a row. The whole list needs 35 rows and only
+# fits a square frame by height, at 42% of its width, which is the opposite
+# of zoomed in; the rest of the list carries on below the frame.
+view = {"rows": [3, 21], "cols": DOCK}
+last_row = 20
+# Only the rows the frame can actually show: the cascade should pace itself
+# to what is on screen, not spend a second wiping rows nobody can see.
+swipe_rows = [r for r in RENAMED if r <= last_row]
 
 base = json.load(open(os.path.normpath(
     os.path.join(HERE, "..", "..", "fresh-dock-cleanup.json"))))
@@ -97,12 +104,17 @@ spec = {
   "name": "fresh-dock-cleanup-focus",
   "capture": cap,
   "render": {
-    "size": [1080, 1920],
+    "size": [1080, 1080],
     "fps": 60,
     "rows": 50, "cols": 150,
     "title": "fresh — orchestrator dock",
     # Big enough to read as a label on the picture rather than a caption.
     "note_size": 58,
+    # The phosphor pass, over every finished frame. Light: a deep scanline
+    # comb is the first thing the encoder turns to mush, and the clip has to
+    # survive being scaled down a feed.
+    "crt": {"scanlines": 0.14, "gap": 3, "bloom": 0.28, "shift": 2,
+            "vignette": 0.26},
     "views": {"list": view},
     # No beat carries a `head` or a `sub`, so the caption bar is never drawn
     # and the viewport takes its full height. The words that do appear are
@@ -124,7 +136,7 @@ spec = {
        "crossfade": 0, "view": "list", "rows": [4, 8], "cols": NOTE_AT,
        "band": False, "hold": 3.8,
        "tag": {"text": "organize into folders", "at": "center-right",
-               "width": 0.34}},
+               "width": 0.40, "color": "after", "bg": True}},
 
       # 3 — the names change in place, top to bottom, stepping over junk.
       {"shot": f"mv{N_MOVES - 1:02d}", "view": "list", "rows": [4, 8], "cols": NOTE_AT,
@@ -132,7 +144,8 @@ spec = {
        "transition": "wipe",
        "swipe": {"to": "after", "rows": swipe_rows,
                  "at": 0.35, "row": 0.20, "stagger": 0.10, "edge": 3},
-       "tag": {"text": "rename", "at": "center-right", "width": 0.34}},
+       "tag": {"text": "rename", "at": "center-right",
+               "width": 0.40, "color": "after", "bg": True}},
 
       # 4 — hold what it made.
       {"shot": "after", "view": "list", "rows": [4, last_row], "cols": DOCK,

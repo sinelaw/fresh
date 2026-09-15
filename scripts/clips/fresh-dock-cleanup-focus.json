@@ -220,18 +220,25 @@
   "render": {
     "size": [
       1080,
-      1920
+      1080
     ],
     "fps": 60,
     "rows": 50,
     "cols": 150,
     "title": "fresh \u2014 orchestrator dock",
     "note_size": 58,
+    "crt": {
+      "scanlines": 0.14,
+      "gap": 3,
+      "bloom": 0.28,
+      "shift": 2,
+      "vignette": 0.26
+    },
     "views": {
       "list": {
         "rows": [
           3,
-          38
+          21
         ],
         "cols": [
           0,
@@ -307,7 +314,9 @@
         "tag": {
           "text": "organize into folders",
           "at": "center-right",
-          "width": 0.34
+          "width": 0.4,
+          "color": "after",
+          "bg": true
         }
       },
       {
@@ -333,16 +342,7 @@
             8,
             9,
             11,
-            12,
-            24,
-            25,
-            26,
-            28,
-            29,
-            31,
-            32,
-            34,
-            35
+            12
           ],
           "at": 0.35,
           "row": 0.2,
@@ -352,7 +352,9 @@
         "tag": {
           "text": "rename",
           "at": "center-right",
-          "width": 0.34
+          "width": 0.4,
+          "color": "after",
+          "bg": true
         }
       },
       {
@@ -360,7 +362,7 @@
         "view": "list",
         "rows": [
           4,
-          36
+          20
         ],
         "cols": [
           0,
