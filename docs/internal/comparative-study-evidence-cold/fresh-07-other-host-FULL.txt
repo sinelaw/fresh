@@ -1,0 +1,50 @@
+Orchestrator                          ×│ File   Edit   View   Selection   Go   LSP   Help
+[ + New ]                   / search  ⋯│ [No Name] ×   Welcome ×   + 
+───────────────────────────────────────│                                                                                            [✓] Show this screen on startup                                    
+  · demo                               │                                                                                                                                                               
+                                       │                                                           ███████╗██████╗ ███████╗███████╗██╗  ██╗                                                            
+                                       │                                                           ██╔════╝██╔══██╗██╔════╝██╔════╝██║  ██║                                                            
+                                       │                                                           █████╗  ██████╔╝█████╗  ███████╗███████║                                                            
+                                       │                                                           ██╔══╝  ██╔══██╗██╔══╝  ╚════██║██╔══██║                                                            
+                                       │                                                           ██║     ██║  ██║███████╗███████║██║  ██║                                                            
+                         ┌ ORCHESTRATOR :: New Workspace ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────[×]┐                        
+                         │        Launch in: [New workspace     ▼]                                                                                                            │                        
+                         │▸         Machine: [Other host…  ▼]                                                                                                                 │                        
+                         │                                                                                                                                                    │                        
+                         │           Target: [                                                                                                                               ]│                        
+                         │                   ↳ user@host:port · or paste ssh://host/path                                                                                      │                        
+                         │    Identity file: [~/.ssh/id_ed25519                                                                                                              ]│                        
+                         │      SSH options: [-J jump-host  ·  -o ProxyCommand=…                                                                                             ]│                        
+                         │                   ↳ passed to every ssh call                                                                                                       │                        
+                         │     Project Path: [                                                                                                                               ]│                        
+                         │                   ↳ /srv/project  (blank = remote home)                                                                                            │                        
+                         │   Workspace Name: [demo-1                                                                                                                         ]│                        
+                         │            Agent: [terminal ▼]                                                                                                                     │                        
+                         │                                                                                                                                                    │                        
+                         │                                                                                                                                                    │                        
+                         │                                                                                                                                                    │                        
+                         │                                                                                                                                                    │                        
+                         │                                                                                                                                                    │                        
+                         │                                                                                                                                                    │                        
+                         │                   [v] Create a git worktree                                                                                                        │                        
+                         │                   ↳ Not checked — the host decides when you create                                                                                 │                        
+                         │                                                                                                                                                    │                        
+                         │                   [ ] Remember this machine                                                                                                        │                        
+                         │                                                                                                                                                    │                        
+                         │                                                                                                                                                    │                        
+                         │                                                                                                                                                    │                        
+                         │                                                                                                                                                    │                        
+                         │                                                                                                                                                    │                        
+                         │                                                                             [ Create Workspace ]  ^⏎    [ Create in Background ]    [ Cancel ]  Esc│                        
+                         │                                              Tab next / accept  ←→ change option  ↑↓ suggest / history                                             │                        
+                         └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘                        
+                                       │                                                                                                                                                               
+                                       │                                                                                                                                                               
+                                       │                                     It works the way you expect: Ctrl+S saves, Ctrl+Z undoes, Ctrl+F finds, Ctrl+C copies                                     
+                                       │                                                                      and Ctrl+V pastes.                                                                       
+                                       │                                                       The mouse works too: click, drag, scroll, select.                                                       
+                                       │                                                                 F1 opens help · Ctrl+Q quits                                                                  
+                                       │                                                                                                                                                               
+                                       │                                                                                                                                                               
+                                       │                                                                     ▼ scroll for the rest                                                                     
+                                       │ Trusted  Local  Ln 1, Col 1                                                                                             [RO]  LF  UTF-8  Text  Palette: Ctrl+P

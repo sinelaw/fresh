@@ -1,0 +1,50 @@
+ machines                │   1      + 
+                         │root@vm:~/work/demo# echo TAG-W2
+ ▾ Local                 │TAG-W2
+   · demo                │root@vm:~/work/demo#
+     main                │
+   · demo                │
+     main                │
+ ▾ testbox              ●│
+   · demo                │
+     main                │
+   · demo                │
+     main                │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+ new · Local         menu│
+─────────────────────────│
+ agents           grouped│
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                        «│

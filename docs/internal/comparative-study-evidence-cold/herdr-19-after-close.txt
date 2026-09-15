@@ -1,0 +1,50 @@
+ machines                │   1      +
+                         │root@vm:~/.herdr/worktrees/demo/worktree-calm-river-af81#
+ ▾ Local                 │
+   · demo                │
+     main                │
+   · demo                │
+     main                │
+     └─ · calm-river-a…  │
+   · demo                │
+     main                │
+   · demo                │
+     main                │
+ ▾ testbox              ●│
+   · demo                │
+     main                │
+   · demo                │
+     main                │
+     └─ · calm-river-a…  │
+   · demo                │
+     main                │
+   · demo                │
+     main                │
+                         │                                          ┌──────────────────────────────────────────────────────────────┐
+                         │                                          │ Close workspace?                                             │
+ new · Local         menu│                                          │ worktree-calm-river-af81 — 1 pane                            │
+─────────────────────────│                                          │                                                              │
+ agents           grouped│                                          │                   ↵ confirm     esc cancel                   │
+                         │                                          └──────────────────────────────────────────────────────────────┘
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                        «│

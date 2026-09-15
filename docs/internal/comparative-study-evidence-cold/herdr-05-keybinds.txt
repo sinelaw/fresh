@@ -1,0 +1,50 @@
+ spaces                  │   1      +
+                         │root@vm:~/work/demo#
+ · demo                  │
+   main                  │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │                                    ┌──────────────────────────────────────────────────────────────────────────┐
+                         │                                    │keybinds                                                       esc close  │
+                         │                                    │ / press / to filter by command or shortcut                               │
+                         │                                    │                                                                          │
+                         │                                    │ global                                                                  ▐│
+                         │                                    │ ctrl+b                       prefix mode                                ▐│
+                         │                                    │ prefix+?                     keybinds                                   ▐│
+                         │                                    │ prefix+s                     settings                                   ▐│
+                         │                                    │ prefix+q                     detach                                     ▐│
+                         │                                    │ prefix+shift+r               reload config                              ▐│
+ new                 menu│                                    │ prefix+o                     open notification target                   ▐│
+─────────────────────────│                                    │                                                                         ▐│
+ agents           grouped│                                    │ navigation                                                              ▐│
+                         │                                    │ esc                          back                                       ▐│
+                         │                                    │ up / down                    workspace list                             ▐│
+                         │                                    │ h / j / k / l / left / right move focus                                 ▐│
+                         │                                    │ tab / shift+tab              cycle pane                                 ▐│
+                         │                                    │ enter                        open workspace                             ▐│
+                         │                                    │ 1..9                         switch workspace                           ▐│
+                         │                                    │                                                                          │
+                         │                                    │ search / · scroll j/k/↑↓/pgup/pgdn · close esc/enter                     │
+                         │                                    └──────────────────────────────────────────────────────────────────────────┘
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                        «│

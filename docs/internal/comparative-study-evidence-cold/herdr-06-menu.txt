@@ -1,0 +1,50 @@
+ spaces                  │   1      +
+                         │root@vm:~/work/demo#
+ · demo                  │
+   main                  │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+        ┌───────────────┐│
+        │ settings      ││
+        │ keybinds      ││
+        │ reload config ││
+        │ detach        ││
+        └───────────────┘│
+ new                 menu│
+─────────────────────────│
+ agents           grouped│
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                         │
+                        «│
