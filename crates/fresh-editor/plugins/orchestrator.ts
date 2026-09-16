@@ -1000,7 +1000,7 @@ let lastDockProjectFilter: string | null = null;
 editor.defineConfigBoolean("autoOpenDock", {
   default: true,
   description:
-    "Open the workspace dock automatically when Fresh starts. The dock opens unfocused, so typing still goes to the editor. Off keeps it hidden until Orchestrator: Toggle Dock.",
+    "Open the workspace dock when Fresh starts (a bare `fresh` always opens it).",
 });
 editor.defineConfigEnum("defaultView", {
   values: ["compact", "card"] as const,
@@ -15632,14 +15632,11 @@ editor.on("window_closed", () => {
 editor.on("ready", () => {
   void loadDetectionRules();
   recoverPendingWorkspaces();
-  // Auto-open the dock when the user asked for it in Settings (Plugin:
-  // orchestrator → autoOpenDock). Runs after the recovery pass, which
-  // may already have shown the dock for a restored placeholder —
-  // `showDockUnfocused` is a no-op on an open panel, so the two can't
-  // fight. Like the pending-workspace case, the dock comes up *blurred*:
-  // it's a switcher, not something to type into, so the keyboard stays
-  // with whatever the editor restored.
-  if (dockSettings().autoOpenDock !== false) showDockUnfocused();
+  // Blurred, so the keyboard stays with the editor. An orchestrator-mode
+  // launch always opens it — a bare `fresh` is a request for the switcher.
+  if (editor.orchestratorMode() || dockSettings().autoOpenDock !== false) {
+    showDockUnfocused();
+  }
 });
 
 // Grace window after a session becomes active during which terminal

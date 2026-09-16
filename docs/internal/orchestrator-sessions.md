@@ -372,8 +372,10 @@ What the mode is, end to end:
   path already synthesizes for the blank-workspace settings. An untitled buffer
   answers "you have nothing open, here is somewhere to type", which is the
   wrong question when the dock is showing your workspaces.
-- **The dock opens**, via the Orchestrator plugin's own `autoOpenDock`
-  (default on) on the `ready` hook.
+- **The dock opens** on the `ready` hook, regardless of the plugin's own
+  `autoOpenDock` setting — the mode overrides it, since a bare `fresh` is a
+  request for the switcher. The plugin reads the launch mode (not the config
+  preference, which stays on for `fresh FILE`) via `editor.orchestratorMode()`.
 - **First run** — no workspaces at all — boots a clean base window at the cwd
   and lands on the welcome screen. Nothing special-cases the welcome screen to
   get there: it opens itself as a background tab as always, and a background

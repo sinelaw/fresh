@@ -1623,6 +1623,10 @@ pub struct EditorStateSnapshot {
     /// after the restart that activation triggers.
     #[serde(default)]
     pub env_active: bool,
+    /// Launched by a bare `fresh` in Orchestrator mode. The launch, not the
+    /// `orchestrator_mode` preference, which stays on for `fresh FILE`.
+    #[serde(default)]
+    pub orchestrator_mode: bool,
     /// The environment core detected in the workspace, as a JSON string
     /// (`{"name","kind","snippet"}`) or empty when none is detected. The
     /// env-manager plugin reads this via `editor.detectedEnv()` instead of
@@ -1800,6 +1804,7 @@ impl EditorStateSnapshot {
             authority_label: String::new(),
             workspace_trust_level: String::new(),
             env_active: false,
+            orchestrator_mode: false,
             detected_env: String::new(),
             diagnostics: Arc::new(HashMap::new()),
             folding_ranges: Arc::new(HashMap::new()),

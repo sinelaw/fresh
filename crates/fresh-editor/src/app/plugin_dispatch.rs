@@ -252,6 +252,7 @@ impl Editor {
             .as_str()
             .to_string();
         snapshot.env_active = self.authority().env_provider.is_active();
+        snapshot.orchestrator_mode = self.orchestrator_mode();
 
         // Core is the *only* place that detects which environment a workspace
         // has. The env-manager plugin reads this resolved result via
