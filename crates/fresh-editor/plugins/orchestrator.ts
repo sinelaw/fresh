@@ -1551,7 +1551,7 @@ interface DockTree {
 // sessions at top level. When a search is active, folders with no
 // matching descendant are dropped so results aren't buried under empty
 // folders.
-function buildDockTree(filtered: number[], activeId: number): DockTree {
+function buildDockTree(filtered: number[]): DockTree {
   const nodes: TreeNode[] = [];
   const keys: string[] = [];
   const model: DockNode[] = [];
@@ -1593,7 +1593,7 @@ function buildDockTree(filtered: number[], activeId: number): DockTree {
   // single-row line either way.
   const card = dockMode && dockView === "card";
   const emitSession = (id: number, depth: number): void => {
-    const primary = card ? sessionCardPrimary(id, activeId) : sessionNodeEntry(id, activeId);
+    const primary = card ? sessionCardPrimary(id) : sessionNodeEntry(id);
     nodes.push(
       treeNode(primary, {
         depth,
@@ -1766,68 +1766,15 @@ function remoteDetailSegs(s: AgentSession): Entry[] {
   }];
 }
 
-/** The name segment of a session row, and the one place that says
- *  "this is the workspace you are actually in".
- *
- *  It used to say it with a foreground tint alone, which left the dock
- *  with exactly one background — the tree's highlight on the row the
- *  *cursor* is on. So the list showed where you were pointing and never
- *  where you were. The two coincide when the dock opens (the cursor
- *  defaults to the active row), which is why it reads as correct until
- *  you move: arrow onto a folder, or onto another workspace, and nothing
- *  on screen carries a background for the session whose buffers are in
- *  front of you.
- *
- *  So the active session gets a band of its own. `ui.menu_hover_bg` is
- *  the theme's designated "block behind the row singled out of a list":
- *  being visible against the editor background is the whole job it is
- *  given, so every theme supplies something that reads. `editor.bg`-
- *  adjacent keys do not — `ui.popup_bg` equals `editor.bg` exactly on
- *  the stock dark theme and draws nothing at all, and `current_line_bg`
- *  is deliberately at the edge of perceptible. It is also not the
- *  colour the tree paints its own selection in, so "where I am" and
- *  "where the cursor is" stay two distinguishable things.
- *
- *  `cursorAlreadyBands` says the cursor highlight is itself painting a
- *  background across this row, in which case the band is left off: a
- *  second, darker block inside the selection's reads as a hole rather
- *  than as emphasis. That is true of the compact density and false of
- *  the card one, where the cursor is drawn as a coloured *border* and
- *  the row keeps the editor's own background — which is why a card
- *  dock had no background anywhere, on the active session least of all.
- */
-function sessionNameEntry(label: string, isActive: boolean, cursorAlreadyBands: boolean): Entry {
-  if (!isActive) return { text: label, style: { bold: true } };
-  return {
-    text: label,
-    style: {
-      fg: "ui.help_key_fg",
-      bold: true,
-      ...(cursorAlreadyBands ? {} : { bg: "ui.menu_hover_bg" }),
-    },
-  };
-}
-
-/** The row the dock cursor will be on once this paint resolves.
- *
- *  Mirrors `buildDockSpec`'s own default — `dockSelKey` when it names a
- *  row, else the active session — so the band decision and the selection
- *  cannot disagree on the first paint, when `dockSelKey` is still null.
- */
-function effectiveDockSelKey(activeId: number): string {
-  return openDialog?.dockSelKey ?? sessionNodeKey(activeId);
-}
-
 // One tree row for a session leaf: state glyph, optional remote facet,
 // and the name (highlighted when it's the active window). A single
 // line — the tree owns indentation and the disclosure column, so the
 // rich two-line PR pill of the modal picker is traded for a compact,
 // nestable row here. The branch is deliberately dropped in this density
 // (it's the "compact" trade — card view carries it on its second line).
-function sessionNodeEntry(id: number, activeId: number): TextPropertyEntry {
+function sessionNodeEntry(id: number): TextPropertyEntry {
   const s = orchestratorSessions.get(id);
   if (!s) return styledRow([{ text: editor.t("pill.unknown") }]);
-  const isActive = id === activeId;
   const segs: Entry[] = [stateGlyphEntry(s)];
   if (s.remote) {
     segs.push({
@@ -1835,9 +1782,12 @@ function sessionNodeEntry(id: number, activeId: number): TextPropertyEntry {
       style: { fg: remoteStateFg(s.remote.state), bold: true },
     });
   }
-  segs.push(
-    sessionNameEntry(s.label, isActive, effectiveDockSelKey(activeId) === sessionNodeKey(id)),
-  );
+  // No "active" styling here, deliberately. The dock has exactly one
+  // highlight — the tree's — and `buildDockSpec` keeps it on the active
+  // session whenever the dock is blurred, so the highlight *is* the
+  // answer to "which workspace am I in". A second marker on the name
+  // could only ever agree with it or contradict it.
+  segs.push({ text: s.label, style: { bold: true } });
   // A remote session surfaces its backend target (host / ns·pod), coloured
   // by the connection state — the same detail the pill shows on the right,
   // and skipped when the label already names it (see `remoteDetailSegs`).
@@ -1925,10 +1875,9 @@ function cardInnerColsEstimate(): number {
 // session — its backend target, with the git summary flush right.
 // Distinct from the compact `sessionNodeEntry`, which trails the git
 // summary on the single line it has.
-function sessionCardPrimary(id: number, activeId: number): TextPropertyEntry {
+function sessionCardPrimary(id: number): TextPropertyEntry {
   const s = orchestratorSessions.get(id);
   if (!s) return styledRow([{ text: editor.t("pill.unknown") }]);
-  const isActive = id === activeId;
   const segs: Entry[] = [stateGlyphEntry(s)];
   if (s.remote) {
     segs.push({
@@ -1936,9 +1885,8 @@ function sessionCardPrimary(id: number, activeId: number): TextPropertyEntry {
       style: { fg: remoteStateFg(s.remote.state), bold: true },
     });
   }
-  // `false`: a card's cursor is its border, not a background, so there is
-  // nothing for the band to collide with and every active card gets one.
-  segs.push(sessionNameEntry(s.label, isActive, false));
+  // See `sessionNodeEntry`: the tree's highlight is the only one.
+  segs.push({ text: s.label, style: { bold: true } });
   // A remote session surfaces its backend target (host / ns·pod) coloured
   // by the connection state — pill parity (the pill shows it at the right
   // end of line 1), and skipped when the label already names it.
@@ -5354,15 +5302,34 @@ function buildDockSpec(): WidgetSpec {
   if (!openDialog) return col();
   const filtered = openDialog.filteredIds;
   const activeId = editor.activeWindow();
-  const dockTree = buildDockTree(filtered, activeId);
+  const dockTree = buildDockTree(filtered);
   // Mirror the emitted node model so selection / activation / context
   // can resolve `dockSelKey` back to a folder or session.
   openDialog.dockNodes = dockTree.model;
   openDialog.dockKeys = dockTree.keys;
+  // The dock has one highlight, and what it means depends on whether the
+  // dock has the keyboard:
+  //
+  //   * Blurred — the dock is a passive mirror of the editor, so the
+  //     highlight is pinned to the active session every paint. There is no
+  //     cursor to preserve: nothing here is taking keys, and a highlight
+  //     left on a row you are not in is a lie about where you are. This is
+  //     a *re-assertion*, not a fallback — a stale key from before the dock
+  //     lost focus would otherwise survive and strand the highlight.
+  //   * Focused — the highlight is the cursor, and moving it live-switches
+  //     the active session, so the two converge by themselves. It is left
+  //     alone here so a deliberate move isn't undone mid-debounce.
+  //
+  // Either way one row is highlighted and it is the one whose buffers are
+  // on screen (or about to be), which is why no row needs an "active"
+  // marker of its own.
+  const activeKey = sessionNodeKey(activeId);
+  if (dockBlurred && dockTree.keys.includes(activeKey)) {
+    openDialog.dockSelKey = activeKey;
+  }
   // Keep the highlighted node key pointing at something real: default to
   // the active session's node, else the first node.
   if (!openDialog.dockSelKey || !dockTree.keys.includes(openDialog.dockSelKey)) {
-    const activeKey = sessionNodeKey(activeId);
     openDialog.dockSelKey = dockTree.keys.includes(activeKey)
       ? activeKey
       : (dockTree.keys[0] ?? null);
