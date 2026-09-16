@@ -15,13 +15,11 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 
 * **Orchestrator dock polish** - the welcome screen and dock could fail to appear in a daemon session, a context menu could close itself too fast, and a workspace just created from the dock could end up not taking keyboard input (#3306, #3275)
 * **SSH workspaces** - creating one didn't always honor your `~/.ssh/config`, and hung with a plain error on an unrecognized host key instead of asking to trust it; deleting one could occasionally crash the app (#3301, #3299, #3300)
-* **Highlighted lines** (code tour, diff view) no longer hide the cursor or inlay hints at the end of the line
+* **Highlighted lines** (diff view, code tour) no longer hide inlay hints at the end of the line; cursor visibility there is still an open issue for code tour (#3314)
 * **`editor.scroll_offset` fixed** for files under 5000 lines with line wrap off (#3248)
 * **Markdown code block borders** no longer break while you type inside them (#3247)
 * **LSP now finds the right project folder on Windows** (#3067, reported by @Bearmancer; fixed by @56steve)
-* **Multi-byte keybindings load correctly**, e.g. German `Ctrl+ü` (#3036, by @georglauterbach)
-* **Fixed a couple of dead keybindings**: a panel's Shift+Tab, and Review Diff's fold shortcuts (#3253)
-* **Fixed a rare keybinding mismatch** for certain Unicode letters (#3302)
+* **Keybinding fixes** - multi-byte bindings like German `Ctrl+ü` now load from config (#3036, by @georglauterbach); a panel's Shift+Tab and Review Diff's fold shortcuts now fire (#3253); a rare case with certain Unicode letters no longer got a phantom Shift (#3302)
 * **Vi mode: many Vim-parity fixes** - `Y`, `J`, `G`, `x`/`X`, visual mode, text objects, dot-repeat, and more, checked against real Vim (#2447)
 * **Fixed stale LSP diagnostics after vi-mode edits**, and Save All sending the wrong file's content to language servers (#3258)
 
