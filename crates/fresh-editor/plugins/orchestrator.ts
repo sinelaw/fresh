@@ -6443,6 +6443,44 @@ function scheduleDockSwitch(fromEdge: "top" | "bottom" | null): void {
   })();
 }
 
+/** What activating a dock row *means* — the one place that decides it.
+ *
+ *  This used to be an inline predicate, written out three times (click,
+ *  Enter, and the tree's own activate), each with its own comment restating
+ *  the rule. When the rule changed — a workspace being built now owns a
+ *  window and a page, so it is entered like any other rather than retried
+ *  from the row — every copy had to change, and a copy left behind is a row
+ *  that highlights and then does nothing. That is not a rule anyone can keep
+ *  in three places; it is one answer, so it is computed once here and the
+ *  callers switch on it.
+ *
+ *  The union is the point: adding a row kind makes every caller fail to
+ *  compile until it says what activating that kind does, rather than falling
+ *  through whichever inline `if` happened not to match.
+ *
+ *  It leans on the id's sign, which is the deeper problem and not this
+ *  function's to fix: live windows own the positive id space, synthetic rows
+ *  (discovered worktrees, and any placeholder that never got a window) the
+ *  negative. "Does this row own a window" being the sign of an integer is
+ *  what let the three call sites disagree in the first place.
+ */
+type RowActivation =
+  | { kind: "enter"; windowId: number }
+  | { kind: "attach"; session: AgentSession }
+  | { kind: "inert" };
+
+function rowActivation(sess: AgentSession | undefined): RowActivation {
+  if (!sess) return { kind: "inert" };
+  // A discovered on-disk worktree has no window yet: opening it means
+  // attaching a session to it first.
+  if (sess.discovered) return { kind: "attach", session: sess };
+  if (sess.id > 0) return { kind: "enter", windowId: sess.id };
+  // A placeholder that owns no window: nothing to enter, and the caller must
+  // not blur to the editor — that would drop focus onto whatever buffer sits
+  // behind the phantom row.
+  return { kind: "inert" };
+}
+
 // A click on a dock row is a deliberate "open this session" gesture, so
 // it both switches the active window *and* hands keyboard focus to the
 // editor — exactly like pressing Enter (`dock_activate`). This differs
@@ -6456,19 +6494,12 @@ function diveDockSelectionFromClick(fromEdge: "top" | "bottom" | null): void {
   dockSwitchToken++;
   const id = dockSelectedSessionId();
   if (typeof id !== "number") return;
-  const sess = orchestratorSessions.get(id);
-  // On a workspace whose build has failed or is paused, a click/Enter is
-  // "try again" rather than "go there" — the retry is the only thing that
-  // moves it forward, and the row already shows why. A still-creating one
-  // (and any windowless remote placeholder) just keeps showing its progress;
-  // one that owns a window falls through and is entered like any workspace.
-  if (sess?.pending && (pendingActionable(sess.pending) || id <= 0)) {
-    if (pendingActionable(sess.pending)) retryPending(id);
-    return;
-  }
-  // A discovered (on-disk) worktree has no live window — attach a fresh
-  // session and dive in (attachToWorktree hands focus to the editor).
-  if (sess?.discovered) {
+  const act = rowActivation(orchestratorSessions.get(id));
+  if (act.kind === "inert") return;
+  if (act.kind === "attach") {
+    // A discovered (on-disk) worktree has no live window — attach a fresh
+    // session and dive in (attachToWorktree hands focus to the editor).
+    const sess = act.session;
     void attachToWorktree({
       root: sess.root,
       projectPath: sess.projectPath ?? sess.root,
@@ -6479,9 +6510,9 @@ function diveDockSelectionFromClick(fromEdge: "top" | "bottom" | null): void {
     });
     return;
   }
-  if (id > 0 && id !== editor.activeWindow()) {
-    if (fromEdge) editor.setActiveWindowAnimated(id, fromEdge);
-    else editor.setActiveWindow(id);
+  if (act.windowId !== editor.activeWindow()) {
+    if (fromEdge) editor.setActiveWindowAnimated(act.windowId, fromEdge);
+    else editor.setActiveWindow(act.windowId);
   }
   // Hand keyboard focus to the activated window (mirror `dock_activate`).
   // Picking a row is not "leaving the dock", so the search filter that
@@ -14313,23 +14344,16 @@ function dockActivate(): void {
   }
   const id = dockSelectedSessionId();
   const sel = typeof id === "number" ? orchestratorSessions.get(id) : undefined;
-  // Enter on a workspace whose build failed or is paused: retry it —
-  // that is the only move that gets it anywhere. A windowless
-  // placeholder (a remote create) has nothing to dive into either, and
-  // must never blur to the editor: that would drop focus onto whatever
-  // buffer sits behind the phantom row. One that owns a window falls
-  // through and is entered like any workspace.
-  if (sel && sel.pending && (pendingActionable(sel.pending) || (id as number) <= 0)) {
-    if (pendingActionable(sel.pending)) retryPending(id as number);
-    return;
-  }
-  if (sel && sel.discovered) {
+  const act = rowActivation(sel);
+  if (act.kind === "inert") return;
+  if (act.kind === "attach") {
+    const w = act.session;
     void attachToWorktree({
-      root: sel.root,
-      projectPath: sel.projectPath ?? sel.root,
-      label: sel.label,
-      branch: sel.branch,
-      discoveredId: sel.id,
+      root: w.root,
+      projectPath: w.projectPath ?? w.root,
+      label: w.label,
+      branch: w.branch,
+      discoveredId: w.id,
       dive: true,
     });
     return;
@@ -14340,8 +14364,8 @@ function dockActivate(): void {
   // now. For a dormant remote this lands in its "Connecting…" shell (the
   // #2570 dive path); for a live/local row it's the switch arrow-nav would
   // otherwise have made before the debounce landed.
-  if (typeof id === "number" && id > 0 && id !== editor.activeWindow()) {
-    editor.setActiveWindow(id);
+  if (act.windowId !== editor.activeWindow()) {
+    editor.setActiveWindow(act.windowId);
   }
   // Same as the row click: the filter that surfaced this row is kept
   // across the dive (see `dockDiveBlur`).
@@ -15460,10 +15484,14 @@ editor.on("widget_event", (e) => {
       (e.widget_key === "sessions" || e.widget_key === "visit")
     ) {
       const id = openDialog.filteredIds[openDialog.selectedIndex];
-      const sel = typeof id === "number" ? orchestratorSessions.get(id) : undefined;
-      if (sel && sel.discovered) {
+      const act = rowActivation(
+        typeof id === "number" ? orchestratorSessions.get(id) : undefined,
+      );
+      if (act.kind === "inert") return;
+      if (act.kind === "attach") {
         // Discovered worktree: there's no window to switch to —
         // open one by attaching a fresh session to the worktree.
+        const sel = act.session;
         closeOpenDialog();
         void attachToWorktree({
           root: sel.root,
@@ -15474,15 +15502,8 @@ editor.on("widget_event", (e) => {
         });
         return;
       }
-      if (sel && sel.pending && (pendingActionable(sel.pending) || (id as number) <= 0)) {
-        // A failed/paused build retries; a windowless placeholder (remote
-        // create) has no window to open. A still-creating workspace that
-        // owns one opens like any other.
-        if (pendingActionable(sel.pending)) retryPending(id as number);
-        return;
-      }
-      if (typeof id === "number" && id > 0 && id !== editor.activeWindow()) {
-        editor.setActiveWindow(id);
+      if (act.windowId !== editor.activeWindow()) {
+        editor.setActiveWindow(act.windowId);
       }
       if (dockMode && openPanel) {
         // Dock stays visible; Enter just hands keyboard focus to the
