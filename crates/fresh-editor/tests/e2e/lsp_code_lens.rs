@@ -131,9 +131,16 @@ fn screen_cell_of(screen: &str, needle: &str) -> Option<(u16, u16)> {
     })
 }
 
+/// The lens is reachable from the code-actions popup, which is the one list
+/// of everything the LSP offers for the cursor's position — there is no
+/// separate code-lens chooser.
+///
+/// This server advertises no `codeActionProvider`, so the popup here holds
+/// only the lens: that is the case that would silently offer nothing if the
+/// lens rows were added to a popup that is only built from a server response.
 #[test]
 #[cfg_attr(windows, ignore = "uses a Bash fake LSP server")]
-fn test_code_lens_renders_and_executes_command() -> anyhow::Result<()> {
+fn test_code_lens_renders_and_runs_from_the_code_actions_popup() -> anyhow::Result<()> {
     let temp_dir = tempfile::tempdir()?;
     let (mut harness, log_file) = open_with_code_lens_server(temp_dir.path(), "fn main() {}\n")?;
 
@@ -144,10 +151,20 @@ fn test_code_lens_renders_and_executes_command() -> anyhow::Result<()> {
     );
 
     harness.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)?;
-    harness.type_text("Execute Code Lens")?;
+    harness.type_text("Code Actions")?;
+    harness.wait_for_screen_contains("Code Actions")?;
     harness.send_key(KeyCode::Enter, KeyModifiers::NONE)?;
     harness.render()?;
-    harness.wait_for_screen_contains("Code Lenses")?;
+
+    // The popup is the code-actions one, and the lens is in it, tagged so it
+    // reads as a lens rather than an edit.
+    harness.wait_for_screen_contains("code lens")?;
+    let screen = harness.screen_to_string();
+    assert!(
+        screen.contains("Run Test"),
+        "the lens must be offered in the code actions popup:\n{screen}"
+    );
+
     harness.send_key(KeyCode::Enter, KeyModifiers::NONE)?;
     harness.render()?;
 

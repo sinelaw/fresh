@@ -2111,6 +2111,11 @@ impl Editor {
             self.active_window_mut()
                 .pending_code_actions_requests
                 .extend(sent_ids);
+        } else if !self.code_lens_commands_for_cursor().is_empty() {
+            // No server offers code actions for this buffer, so no response is
+            // coming to build the popup from — but the line may still carry
+            // lenses, and this command is now the way to reach them.
+            self.show_code_actions_popup();
         }
 
         Ok(())
@@ -2142,7 +2147,7 @@ impl Editor {
             .unwrap_or_default();
 
         if actions.is_empty() {
-            // Only show "no code actions" if all responses are in and we have nothing
+            // Only decide once all responses are in and nothing has accumulated.
             if self
                 .active_window()
                 .pending_code_actions_requests
@@ -2153,7 +2158,13 @@ impl Editor {
                     .as_ref()
                     .is_none_or(|a| a.is_empty())
             {
-                self.set_status_message(t!("lsp.no_code_actions").to_string());
+                // A line can still have code lenses even when no server offers
+                // an action for it, and the lens is the only way to run them.
+                if self.code_lens_commands_for_cursor().is_empty() {
+                    self.set_status_message(t!("lsp.no_code_actions").to_string());
+                } else {
+                    self.show_code_actions_popup();
+                }
             }
             return;
         }
@@ -2174,51 +2185,101 @@ impl Editor {
             }
         }
 
-        // Build list items from all accumulated code actions
+        self.show_code_actions_popup();
+    }
+
+    /// The code lenses attached to the cursor's line.
+    pub(crate) fn code_lens_commands_for_cursor(&self) -> Vec<lsp_types::Command> {
+        let buffer_id = self.active_buffer();
+        let cursor_position = self.active_cursors().primary().position;
+        let line = self
+            .buffers()
+            .get(&buffer_id)
+            .map(|state| state.buffer.position_to_lsp_position(cursor_position).0 as u32)
+            .unwrap_or(0);
+
+        self.active_window()
+            .code_lenses
+            .get(&buffer_id)
+            .into_iter()
+            .flatten()
+            .filter(|lens| lens.range.start.line <= line && line <= lens.range.end.line)
+            .filter_map(|lens| lens.command.clone())
+            .collect()
+    }
+
+    /// Show (or refresh) the one popup that offers everything the LSP has for
+    /// the cursor's position: code actions, then the code lenses on that line.
+    ///
+    /// One popup rather than one per feature. A lens is a position-specific
+    /// thing to *do*, which is what a user opens this list to find — a
+    /// separate chooser for each kind would make them remember which command
+    /// surfaces which, and the code-actions list is where they already look.
+    ///
+    /// Rows carry their source in `data` (`action:<i>` / `lens:<i>`) because
+    /// the two execute differently: an action may need `codeAction/resolve`
+    /// and carries a workspace edit, while a lens command may be claimed by a
+    /// plugin and must not be sent to the server. Confirm routes on that tag.
+    pub(crate) fn show_code_actions_popup(&mut self) {
         use crate::view::popup::{Popup, PopupListItem, PopupPosition};
         use ratatui::style::Style;
 
-        let items: Vec<PopupListItem> = {
-            let all_actions = self.active_window().pending_code_actions.as_ref().unwrap();
-            let multiple_servers = {
-                let mut names = std::collections::HashSet::new();
-                for (name, _) in all_actions {
-                    names.insert(name.as_str());
-                }
-                names.len() > 1
-            };
-            all_actions
+        let mut items: Vec<PopupListItem> = Vec::new();
+
+        if let Some(all_actions) = self.active_window().pending_code_actions.as_ref() {
+            let multiple_servers = all_actions
                 .iter()
-                .enumerate()
-                .map(|(i, (srv_name, action))| {
-                    let title = match action {
-                        lsp_types::CodeActionOrCommand::Command(cmd) => &cmd.title,
-                        lsp_types::CodeActionOrCommand::CodeAction(ca) => &ca.title,
-                    };
-                    let kind = match action {
-                        lsp_types::CodeActionOrCommand::CodeAction(ca) => {
-                            ca.kind.as_ref().map(|k| k.as_str().to_string())
-                        }
-                        _ => None,
-                    };
-                    let detail = if multiple_servers && !srv_name.is_empty() {
-                        match kind {
-                            Some(k) => Some(format!("[{}] {}", srv_name, k)),
-                            None => Some(format!("[{}]", srv_name)),
-                        }
-                    } else {
-                        kind
-                    };
-                    PopupListItem {
-                        text: format!("{}. {}", i + 1, title),
-                        detail,
-                        icon: None,
-                        data: Some(i.to_string()),
-                        disabled: false,
+                .map(|(name, _)| name.as_str())
+                .collect::<std::collections::HashSet<_>>()
+                .len()
+                > 1;
+            for (i, (srv_name, action)) in all_actions.iter().enumerate() {
+                let title = match action {
+                    lsp_types::CodeActionOrCommand::Command(cmd) => &cmd.title,
+                    lsp_types::CodeActionOrCommand::CodeAction(ca) => &ca.title,
+                };
+                let kind = match action {
+                    lsp_types::CodeActionOrCommand::CodeAction(ca) => {
+                        ca.kind.as_ref().map(|k| k.as_str().to_string())
                     }
-                })
-                .collect()
-        };
+                    _ => None,
+                };
+                let detail = if multiple_servers && !srv_name.is_empty() {
+                    match kind {
+                        Some(k) => Some(format!("[{}] {}", srv_name, k)),
+                        None => Some(format!("[{}]", srv_name)),
+                    }
+                } else {
+                    kind
+                };
+                items.push(PopupListItem {
+                    text: format!("{}. {}", items.len() + 1, title),
+                    detail,
+                    icon: None,
+                    data: Some(format!("action:{i}")),
+                    disabled: false,
+                });
+            }
+        }
+
+        let lens_commands = self.code_lens_commands_for_cursor();
+        for (i, command) in lens_commands.iter().enumerate() {
+            items.push(PopupListItem {
+                text: format!("{}. {}", items.len() + 1, command.title),
+                // Labelled so a lens is not mistaken for a quickfix that
+                // edits the buffer — running one has an outside effect.
+                detail: Some(t!("lsp.code_lens_detail").to_string()),
+                icon: None,
+                data: Some(format!("lens:{i}")),
+                disabled: false,
+            });
+        }
+        let action_count = items.len() - lens_commands.len();
+        self.active_window_mut().pending_code_lens_commands = Some(lens_commands);
+
+        if items.is_empty() {
+            return;
+        }
 
         let mut popup = Popup::list(items, &self.theme.read().unwrap());
         popup.kind = crate::view::popup::PopupKind::Action;
@@ -2228,9 +2289,10 @@ impl Editor {
         popup.max_height = 15;
         popup.border_style = Style::default().fg(self.theme.read().unwrap().popup_border_fg);
         popup.background_style = Style::default().bg(self.theme.read().unwrap().popup_bg);
-        // Confirm reads the selected row's `data` as an index into
-        // `self.active_window_mut().pending_code_actions` — the heavy lsp_types payload
-        // stays on the Editor to keep the view crate LSP-free.
+        // Confirm reads the selected row's `data` tag as an index into
+        // `pending_code_actions` or `pending_code_lens_commands` — the heavy
+        // lsp_types payloads stay on the Editor to keep the view crate
+        // LSP-free.
         popup.resolver = crate::view::popup::PopupResolver::CodeAction;
         // Code actions are an explicit user invocation (`lsp_code_actions`
         // command); the user expects to choose immediately, so the popup
@@ -2241,11 +2303,6 @@ impl Editor {
 
         // Show the popup, replacing any existing action popup to avoid stacking
         let __buffer_id = self.active_buffer();
-        let action_count = self
-            .active_window()
-            .pending_code_actions
-            .as_ref()
-            .map_or(0, |v| v.len());
         if let Some(state) = self
             .windows
             .get_mut(&self.active_window)
@@ -2254,7 +2311,14 @@ impl Editor {
             .get_mut(&__buffer_id)
         {
             state.popups.show_or_replace(popup);
-            tracing::info!("Showing code actions popup with {} actions", action_count);
+            tracing::info!(
+                "Showing code actions popup with {} actions and {} code lenses",
+                action_count,
+                self.active_window()
+                    .pending_code_lens_commands
+                    .as_ref()
+                    .map_or(0, |c| c.len())
+            );
         }
     }
 
@@ -3669,56 +3733,6 @@ impl Editor {
                 .pending_code_lens_requests
                 .insert(request_id, super::CodeLensRequest { buffer_id, version });
         }
-    }
-
-    /// Show executable code lenses attached to the current source line.
-    pub(crate) fn show_code_lenses(&mut self) {
-        let buffer_id = self.active_buffer();
-        let cursor_position = self.active_cursors().primary().position;
-        let line = self
-            .buffers()
-            .get(&buffer_id)
-            .map(|state| state.buffer.position_to_lsp_position(cursor_position).0 as u32)
-            .unwrap_or(0);
-
-        let commands: Vec<lsp_types::Command> = self
-            .active_window()
-            .code_lenses
-            .get(&buffer_id)
-            .into_iter()
-            .flatten()
-            .filter(|lens| lens.range.start.line <= line && line <= lens.range.end.line)
-            .filter_map(|lens| lens.command.clone())
-            .collect();
-
-        if commands.is_empty() {
-            self.set_status_message(t!("lsp.no_code_lenses").to_string());
-            return;
-        }
-
-        use crate::view::popup::{Popup, PopupKind, PopupListItem, PopupPosition, PopupResolver};
-        let items = commands
-            .iter()
-            .enumerate()
-            .map(|(index, command)| PopupListItem {
-                text: command.title.clone(),
-                detail: None,
-                icon: None,
-                data: Some(index.to_string()),
-                disabled: false,
-            })
-            .collect();
-        self.active_window_mut().pending_code_lens_commands = Some(commands);
-
-        let mut popup = Popup::list(items, &self.theme.read().unwrap());
-        popup.kind = PopupKind::Action;
-        popup.title = Some(t!("lsp.popup_code_lenses").to_string());
-        popup.position = PopupPosition::BelowCursor;
-        popup.width = 60;
-        popup.max_height = 15;
-        popup.resolver = PopupResolver::CodeLens;
-        popup.focused = true;
-        self.active_state_mut().popups.show_or_replace(popup);
     }
 
     pub(crate) fn code_lens_command_at_screen_position(
