@@ -1658,7 +1658,7 @@ function folderNodeEntry(
 // Message colour: red once the create has failed, amber while it is still
 // creating or is paused (interrupted, awaiting resume).
 function pendingMsgFg(p: PendingCreate): string {
-  return p.phase === "error" ? "ui.status_error_indicator_fg" : "diagnostic.warning_fg";
+  return p.phase === "error" ? "diagnostic.error_fg" : "diagnostic.warning_fg";
 }
 
 // `error` and `paused` are actionable — Enter retries / resumes them — while
@@ -2942,7 +2942,7 @@ function remoteStateFg(state: "starting" | "running" | "stopped" | "error"): str
     case "starting":
       return "diagnostic.warning_fg";
     case "error":
-      return "ui.status_error_indicator_fg";
+      return "diagnostic.error_fg";
     case "stopped":
       return "ui.menu_disabled_fg";
   }
@@ -4113,7 +4113,7 @@ function buildConfirmPane(
       styledRow([
         {
           text: editor.t("confirm.uncommitted_lost"),
-          style: { fg: "ui.status_error_indicator_fg", bold: true },
+          style: { fg: "diagnostic.error_fg", bold: true },
         },
       ]),
     );
@@ -4317,11 +4317,11 @@ function buildOpenSpec(): WidgetSpec {
           styledRow([
             {
               text: editor.t("list.warn_prefix"),
-              style: { fg: "ui.status_error_indicator_fg", bold: true },
+              style: { fg: "diagnostic.error_fg", bold: true },
             },
             {
               text: openDialog.lastError,
-              style: { fg: "ui.status_error_indicator_fg" },
+              style: { fg: "diagnostic.error_fg" },
             },
           ]),
         ],
@@ -8850,7 +8850,7 @@ function buildHostKeySpec(offer: HostKeyOffer): WidgetSpec {
       { style: dim, wrap: true },
     ),
     label(editor.t("hostkey.warning"), {
-      style: { fg: "ui.status_error_indicator_fg" },
+      style: { fg: "diagnostic.error_fg" },
       wrap: true,
     }),
     spacer(0),
@@ -9325,7 +9325,7 @@ function buildMachineDialogSpec(): WidgetSpec {
   if (d.error) {
     children.push(label(`✗ ${d.error}`, {
       labelWidth: FORM_LABEL_W,
-      style: { fg: "ui.status_error_indicator_fg", bold: true },
+      style: { fg: "diagnostic.error_fg", bold: true },
     }));
   } else if (d.test.state === "running") {
     children.push(label(`… ${editor.t("machine.testing")}`, { labelWidth: FORM_LABEL_W, style: NOTE_STYLE }));
@@ -9337,7 +9337,7 @@ function buildMachineDialogSpec(): WidgetSpec {
   } else if (d.test.state === "fail") {
     children.push(label(`✗ ${d.test.summary}`, {
       labelWidth: FORM_LABEL_W,
-      style: { fg: "ui.status_error_indicator_fg", bold: true },
+      style: { fg: "diagnostic.error_fg", bold: true },
     }));
     if (d.test.detail) {
       children.push(label(`  ${d.test.detail}`, { labelWidth: FORM_LABEL_W, style: NOTE_STYLE }));
@@ -9625,7 +9625,7 @@ function machinesRowEntry(r: MachinesRow): TextPropertyEntry {
     ? { text: pad("—", 12), style: dim }
     : m.lastTest.ok
     ? { text: pad(editor.t("machine.test_ok"), 12), style: { fg: "ui.help_key_fg" } }
-    : { text: pad(`✗ ${agoText(m.lastTest.at)}`, 12), style: { fg: "ui.status_error_indicator_fg" } };
+    : { text: pad(`✗ ${agoText(m.lastTest.at)}`, 12), style: { fg: "diagnostic.error_fg" } };
   const n = machineWorkspaceCount(m);
   const tail = r.host
     ? editor.t("machine.from_ssh_config")

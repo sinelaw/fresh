@@ -624,15 +624,16 @@ fn opening_a_file_leaves_a_welcome_page_the_reader_was_looking_at() {
 /// the top row, and the reader was left with two "you are here" markers
 /// pointing at different things.
 ///
-/// The first Tab stop is the startup switch on the page's own first
-/// row, where the caret already is, so it is the *second* Tab — onto the
-/// first door card — that has a move to make.
+/// The first two Tab stops are the orchestrator switch and the startup
+/// switch, which share the page's own first row — where the caret already
+/// is — so it is the *third* Tab, onto the first door card, that has a
+/// move to make.
 #[test]
 fn tab_brings_the_caret_to_the_control_it_focused() {
     let (mut harness, _tmp) = harness_with_welcome();
     open_welcome(&mut harness);
 
-    for _ in 0..2 {
+    for _ in 0..3 {
         harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     }
     harness.wait_for_async_quiescence(4).unwrap();
@@ -663,8 +664,11 @@ fn moving_the_caret_onto_prose_disarms_the_focused_control() {
     let (mut harness, _tmp) = harness_with_welcome();
     open_welcome(&mut harness);
 
-    // Tab once: the startup switch takes focus.
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    // Twice: past the orchestrator switch, onto the startup switch — the
+    // control this test then proves was *not* fired.
+    for _ in 0..2 {
+        harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    }
     harness.wait_for_async_quiescence(4).unwrap();
 
     // Click the tagline — prose, carrying no control of any kind.
@@ -777,8 +781,9 @@ fn tab_between_two_cards_on_one_row_carries_the_caret_across_it() {
     let (mut harness, _tmp) = harness_with_welcome();
     open_welcome(&mut harness);
 
-    // Two Tabs: past the startup switch, onto the first door.
-    for _ in 0..2 {
+    // Three Tabs: past the two switches on the first row, onto the first
+    // door.
+    for _ in 0..3 {
         harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     }
     harness.wait_for_async_quiescence(4).unwrap();
@@ -855,8 +860,9 @@ fn a_caret_seated_by_tab_keeps_its_column_on_the_next_arrow_key() {
     let (mut harness, _tmp) = harness_with_welcome();
     open_welcome(&mut harness);
 
-    // Three Tabs: the startup switch, then the first and second doors.
-    for _ in 0..3 {
+    // Four Tabs: the two first-row switches, then the first and second
+    // doors.
+    for _ in 0..4 {
         harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     }
     harness.wait_for_async_quiescence(4).unwrap();
@@ -1249,11 +1255,12 @@ fn the_code_sample_box_holds_its_whole_listing() {
 }
 
 /// **Focus follows the reader onto a control, not merely onto its row.**
-/// The startup switch is alone on the page's first row and right-aligned
-/// on it, so every column left of it is empty — and every one of them used
-/// to resolve to the switch, because the rule was "nearest control on the
-/// row, no distance cap". A reader walking down the page's left margin lit
-/// it up and armed Enter on it from forty columns away.
+/// The startup switch is right-aligned on the page's first row, with a
+/// wide empty gap between it and the orchestrator switch at the row's
+/// left — and every column of that gap used to resolve to one of them,
+/// because the rule was "nearest control on the row, no distance cap". A
+/// reader walking down the page's left margin lit the switch up and armed
+/// Enter on it from forty columns away.
 #[test]
 fn a_control_takes_focus_only_where_it_is() {
     let (mut harness, _tmp) = harness_with_welcome();
