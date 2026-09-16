@@ -9,7 +9,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 ### Features
 
 * **Orchestrator mode** - a bare `fresh`, with no file or flags, reopens the workspace you were last in, dock and all, running as a background daemon. On by default, toggle it in Settings (#3306)
-* **New CLI commands** to list and control Orchestrator workspaces and agents from a script, without reading the dock
+* **New CLI commands** - `workspace list`, and `agent list` / `get` / `explain` / `wait` / `start`, for scripting Orchestrator workspaces and agents without reading the dock
 
 ### Bug Fixes
 
