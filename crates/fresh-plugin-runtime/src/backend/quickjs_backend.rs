@@ -1616,8 +1616,9 @@ impl JsEditorApi {
             .is_ok()
     }
 
-    /// Replace the breadcrumb trail shown above a buffer. Each item carries
-    /// the byte position used when the user clicks it.
+    /// Replace the breadcrumb trail shown above a buffer. Each item names an
+    /// LSP position — a 0-indexed line and a UTF-16 character offset — which
+    /// the editor resolves when the item is clicked.
     #[plugin_api(js_name = "setBreadcrumbs", ts_return = "boolean")]
     pub fn set_breadcrumbs(
         &self,
@@ -1841,6 +1842,12 @@ impl JsEditorApi {
     /// Get the byte offset of the start of a line (0-indexed line number).
     /// `bufferId` defaults to the active buffer when omitted.
     /// Returns null if the line number is out of range.
+    ///
+    /// Also null when the buffer has no line index yet — a large file opened
+    /// in byte-offset mode, until a line scan runs. The editor answers from
+    /// the piece tree's line index and will not materialize the file to build
+    /// one, so a caller that needs a line on such a buffer has to ask for the
+    /// scan (`Action::ScanLineIndex`) rather than expect an answer here.
     #[plugin_api(
         async_promise,
         js_name = "getLineStartPosition",
@@ -1864,10 +1871,86 @@ impl JsEditorApi {
         id
     }
 
+    /// Withdraw a buffer's breadcrumb trail, so its panes draw no row.
+    ///
+    /// `setBreadcrumbs(id, [])` is a different statement: the trail is empty
+    /// because the caret is between symbols, and the row stays to say so.
+    #[plugin_api(js_name = "clearBreadcrumbs")]
+    pub fn clear_breadcrumbs(&self, buffer_id: u64) {
+        let _ = self.command_sender.send(PluginCommand::ClearBreadcrumbs {
+            plugin_name: self.plugin_name.clone(),
+            buffer_id,
+        });
+    }
+
+    /// Byte offset of the start of the line *containing* `position`.
+    /// `bufferId` defaults to the active buffer when omitted.
+    ///
+    /// Unlike `getLineStartPosition` this needs no line index, so it answers
+    /// on a large file opened in byte-offset mode. Prefer it wherever a byte
+    /// offset is already in hand. Null only when no line start lies within the
+    /// search window either side of `position` — a single enormous line.
+    #[plugin_api(
+        async_promise,
+        js_name = "getLineStartForPosition",
+        ts_raw = "getLineStartForPosition(position: number, bufferId?: number): Promise<number | null>"
+    )]
+    #[qjs(rename = "_getLineStartForPositionStart")]
+    pub fn get_line_start_for_position_start(
+        &self,
+        _ctx: rquickjs::Ctx<'_>,
+        position: u64,
+        buffer_id: rquickjs::function::Opt<u32>,
+    ) -> u64 {
+        let id = self.alloc_request_id();
+        let _ = self
+            .command_sender
+            .send(PluginCommand::GetLineStartForPosition {
+                buffer_id: BufferId(buffer_id.0.unwrap_or(0) as usize),
+                position,
+                request_id: id,
+            });
+        id
+    }
+
+    /// Byte offset of the end of the line *containing* `position`, before its
+    /// newline. `bufferId` defaults to the active buffer when omitted.
+    ///
+    /// The counterpart to `getLineStartForPosition`, and needs no line index
+    /// either.
+    #[plugin_api(
+        async_promise,
+        js_name = "getLineEndForPosition",
+        ts_raw = "getLineEndForPosition(position: number, bufferId?: number): Promise<number | null>"
+    )]
+    #[qjs(rename = "_getLineEndForPositionStart")]
+    pub fn get_line_end_for_position_start(
+        &self,
+        _ctx: rquickjs::Ctx<'_>,
+        position: u64,
+        buffer_id: rquickjs::function::Opt<u32>,
+    ) -> u64 {
+        let id = self.alloc_request_id();
+        let _ = self
+            .command_sender
+            .send(PluginCommand::GetLineEndForPosition {
+                buffer_id: BufferId(buffer_id.0.unwrap_or(0) as usize),
+                position,
+                request_id: id,
+            });
+        id
+    }
+
     /// Get the byte offset of the end of a line (0-indexed line number).
     /// `bufferId` defaults to the active buffer when omitted. Returns the
     /// position after the last character of the line (before newline), or null
     /// if the line number is out of range.
+    ///
+    /// Also null when the buffer has no line index yet — a large file opened
+    /// in byte-offset mode, until a line scan runs. The editor answers from
+    /// the piece tree's line index and will not materialize the file to build
+    /// one, so a caller that needs a line on such a buffer has to ask for the
+    /// scan (`Action::ScanLineIndex`) rather than expect an answer here.
     #[plugin_api(
         async_promise,
         js_name = "getLineEndPosition",

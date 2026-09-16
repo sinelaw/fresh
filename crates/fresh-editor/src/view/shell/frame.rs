@@ -954,6 +954,7 @@ mod tests {
                 groups: Default::default(),
                 interiors: Default::default(),
                 strips: Default::default(),
+                breadcrumbs: Default::default(),
                 hover: None,
                 drop_zone: None,
                 hosts: Default::default(),

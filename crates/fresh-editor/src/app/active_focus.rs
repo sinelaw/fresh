@@ -70,6 +70,7 @@ impl Editor {
     /// Focus a split and its buffer, handling all side effects including
     /// terminal mode. Window-side body in [`Window::focus_split`].
     pub(super) fn focus_split(&mut self, split_id: LeafId, buffer_id: BufferId) {
+        let before = self.active_window().effective_active_split();
         match self.active_window_mut().focus_split(split_id, buffer_id) {
             FocusSplitOutcome::Handled => {
                 // Window body synced the flag; finish any restored-terminal
@@ -80,6 +81,22 @@ impl Editor {
                 self.set_active_buffer(target);
             }
         }
+        self.notify_pane_focus_change(before);
+    }
+
+    /// Tell plugins the caret they are describing is a different pane's now.
+    ///
+    /// Chrome that describes the caret — the breadcrumb trail — belongs to the
+    /// pane whose caret it describes, so a pane that takes focus needs its
+    /// own. `buffer_activated` covers a focus change that also changes buffer;
+    /// two panes showing one buffer raise nothing at all, which left the pane
+    /// taking focus with no trail until its caret moved.
+    pub(crate) fn notify_pane_focus_change(&mut self, before: LeafId) {
+        if self.active_window().effective_active_split() == before {
+            return;
+        }
+        let position = self.active_cursors().primary().position;
+        self.notify_cursor_moved(position, position);
     }
 
     /// Restore `terminal_mode`/`key_context` after a focus change that bypassed

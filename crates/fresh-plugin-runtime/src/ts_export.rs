@@ -652,6 +652,13 @@ interface HookEventMap {
     cursor_id: number;
     old_position: number;
     new_position: number;
+    /**
+     * Whether this is the buffer's primary cursor. Follow *the* caret with
+     * this, never by comparing `cursor_id` to 0: adding a cursor makes the
+     * new one primary, so the primary's id is whatever was handed out last.
+     */
+    is_primary: boolean;
+    /** 1-indexed, unlike `getCursorLine()` and LSP line numbers. */
     line: number;
     text_properties: Record<string, unknown>[];
   };
@@ -756,6 +763,8 @@ interface HookEventMap {
   mouse_scroll: { buffer_id: number; delta: number; col: number; row: number };
 
   // ── LSP ──────────────────────────────────────────────────────────────────
+  /** A language server finished `initialize` and will answer requests now. */
+  lsp_ready: { language: string; server_name: string };
   diagnostics_updated: { uri: string; count: number };
   lsp_references: {
     symbol: string;

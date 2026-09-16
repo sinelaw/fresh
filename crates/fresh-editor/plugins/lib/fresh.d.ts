@@ -441,7 +441,8 @@ type LineTarget = {
 };
 type BreadcrumbItem = {
 	label: string;
-	position: number;
+	line: number;
+	character: number;
 };
 type PaneDescription = {
 	/**
@@ -3118,8 +3119,9 @@ interface EditorAPI {
 	*/
 	setStatusBarValue(bufferId: number, tokenName: string, value: string): boolean;
 	/**
-	* Replace the breadcrumb trail shown above a buffer. Each item carries
-	* the byte position used when the user clicks it.
+	* Replace the breadcrumb trail shown above a buffer. Each item names an
+	* LSP position — a 0-indexed line and a UTF-16 character offset — which
+	* the editor resolves when the item is clicked.
 	*/
 	setBreadcrumbs(bufferId: number, items: BreadcrumbItem[]): boolean;
 	/**
@@ -3198,13 +3200,50 @@ interface EditorAPI {
 	* Get the byte offset of the start of a line (0-indexed line number).
 	* `bufferId` defaults to the active buffer when omitted.
 	* Returns null if the line number is out of range.
+	* 
+	* Also null when the buffer has no line index yet — a large file opened
+	* in byte-offset mode, until a line scan runs. The editor answers from
+	* the piece tree's line index and will not materialize the file to build
+	* one, so a caller that needs a line on such a buffer has to ask for the
+	* scan (`Action::ScanLineIndex`) rather than expect an answer here.
 	*/
 	getLineStartPosition(line: number, bufferId?: number): Promise<number | null>;
+	/**
+	* Withdraw a buffer's breadcrumb trail, so its panes draw no row.
+	* 
+	* `setBreadcrumbs(id, [])` is a different statement: the trail is empty
+	* because the caret is between symbols, and the row stays to say so.
+	*/
+	clearBreadcrumbs(bufferId: number): void;
+	/**
+	* Byte offset of the start of the line *containing* `position`.
+	* `bufferId` defaults to the active buffer when omitted.
+	* 
+	* Unlike `getLineStartPosition` this needs no line index, so it answers
+	* on a large file opened in byte-offset mode. Prefer it wherever a byte
+	* offset is already in hand. Null only when no line start lies within the
+	* search window either side of `position` — a single enormous line.
+	*/
+	getLineStartForPosition(position: number, bufferId?: number): Promise<number | null>;
+	/**
+	* Byte offset of the end of the line *containing* `position`, before its
+	* newline. `bufferId` defaults to the active buffer when omitted.
+	* 
+	* The counterpart to `getLineStartForPosition`, and needs no line index
+	* either.
+	*/
+	getLineEndForPosition(position: number, bufferId?: number): Promise<number | null>;
 	/**
 	* Get the byte offset of the end of a line (0-indexed line number).
 	* `bufferId` defaults to the active buffer when omitted. Returns the
 	* position after the last character of the line (before newline), or null
 	* if the line number is out of range.
+	* 
+	* Also null when the buffer has no line index yet — a large file opened
+	* in byte-offset mode, until a line scan runs. The editor answers from
+	* the piece tree's line index and will not materialize the file to build
+	* one, so a caller that needs a line on such a buffer has to ask for the
+	* scan (`Action::ScanLineIndex`) rather than expect an answer here.
 	*/
 	getLineEndPosition(line: number, bufferId?: number): Promise<number | null>;
 	/**
@@ -5585,6 +5624,13 @@ interface HookEventMap {
 		cursor_id: number;
 		old_position: number;
 		new_position: number;
+		/**
+		* Whether this is the buffer's primary cursor. Follow *the* caret with
+		* this, never by comparing `cursor_id` to 0: adding a cursor makes the
+		* new one primary, so the primary's id is whatever was handed out last.
+		*/
+		is_primary: boolean;
+		/** 1-indexed, unlike `getCursorLine()` and LSP line numbers. */
 		line: number;
 		text_properties: Record<string, unknown>[];
 	};
@@ -5718,6 +5764,11 @@ interface HookEventMap {
 		row: number;
 	};
 	// ── LSP ──────────────────────────────────────────────────────────────────
+	/** A language server finished `initialize` and will answer requests now. */
+	lsp_ready: {
+		language: string;
+		server_name: string;
+	};
 	diagnostics_updated: {
 		uri: string;
 		count: number;

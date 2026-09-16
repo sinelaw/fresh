@@ -709,6 +709,16 @@ impl Editor {
         // didn't advertise the capability are skipped.
         self.request_inlay_hints_for_language(&language);
         self.pull_diagnostics_for_language(&language);
+        // Plugins wait on the same thing the catch-ups above do: a request
+        // made before the handshake finished failed, and nothing told them
+        // when to try again.
+        self.plugin_manager.read().unwrap().run_hook(
+            "lsp_ready",
+            crate::services::plugins::hooks::HookArgs::LspReady {
+                language,
+                server_name,
+            },
+        );
     }
 
     /// Handle a request that expired without an answer.

@@ -166,14 +166,20 @@ pub struct VirtualBufferResult {
 }
 
 /// One entry in the breadcrumb trail displayed above an editor buffer.
-/// `position` is the byte offset to jump to when the entry is clicked.
+///
+/// `line` and `character` are LSP coordinates — a 0-indexed line and a
+/// UTF-16 character offset within it — so a plugin forwards what its server
+/// said instead of resolving a byte offset of its own. Resolving one costs a
+/// plugin a read per symbol; the editor already has the line index.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
 #[serde(rename_all = "camelCase")]
 #[ts(export, rename_all = "camelCase")]
 pub struct BreadcrumbItem {
     pub label: String,
     #[ts(type = "number")]
-    pub position: u64,
+    pub line: u32,
+    #[ts(type = "number")]
+    pub character: u32,
 }
 
 #[cfg(feature = "plugins")]
@@ -5178,6 +5184,46 @@ pub enum PluginCommand {
         buffer_id: BufferId,
         /// Line number (0-indexed)
         line: u32,
+        /// Request ID for async response
+        request_id: u64,
+    },
+
+    /// Withdraw a buffer's breadcrumb trail entirely, so its panes draw no
+    /// row at all.
+    ///
+    /// Distinct from `SetBreadcrumbs` with no items, which is a trail the
+    /// caret is simply outside of — the row stays and draws its root. This one
+    /// says the plugin has nothing to say about the buffer.
+    ClearBreadcrumbs {
+        /// Plugin that owned the trail
+        plugin_name: String,
+        /// Buffer to withdraw
+        buffer_id: u64,
+    },
+
+    /// Byte offset of the start of the line *containing* a byte offset (async).
+    ///
+    /// Answers from a bounded scan around the position rather than from the
+    /// line index, so it works on a buffer that has none — a large file in
+    /// byte-offset mode. `None` only when no line start lies within the
+    /// search window, i.e. inside a single enormous line.
+    GetLineStartForPosition {
+        /// Buffer ID (0 for active buffer)
+        buffer_id: BufferId,
+        /// Byte offset somewhere on the line
+        position: u64,
+        /// Request ID for async response
+        request_id: u64,
+    },
+
+    /// Byte offset of the end of the line *containing* a byte offset (async),
+    /// before its newline. The counterpart to [`Self::GetLineStartForPosition`]
+    /// and bounded the same way.
+    GetLineEndForPosition {
+        /// Buffer ID (0 for active buffer)
+        buffer_id: BufferId,
+        /// Byte offset somewhere on the line
+        position: u64,
         /// Request ID for async response
         request_id: u64,
     },

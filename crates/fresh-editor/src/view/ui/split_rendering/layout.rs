@@ -35,7 +35,6 @@ pub(crate) struct ComposeLayout {
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) struct SplitLayout {
     pub tabs_rect: Rect,
-    pub breadcrumbs_rect: Rect,
     pub content_rect: Rect,
     pub scrollbar_rect: Rect,
     pub horizontal_scrollbar_rect: Rect,
@@ -65,7 +64,7 @@ pub(super) struct ViewPreferences {
 /// hangs off these rectangles can become nodes against the same description.
 pub(crate) fn split_layout(id: LeafId, split_area: Rect, chrome: PaneChrome) -> SplitLayout {
     use crate::view::shell::splits::{
-        breadcrumbs_key, content_key, hscroll_key, pane_interior, tabs_key, vscroll_key, PaneSlots,
+        content_key, hscroll_key, pane_interior, tabs_key, vscroll_key, PaneSlots,
     };
     let mut ui: fresh_ui::Ui<()> = fresh_ui::Ui::new();
     ui.frame(
@@ -86,7 +85,6 @@ pub(crate) fn split_layout(id: LeafId, split_area: Rect, chrome: PaneChrome) -> 
     };
     SplitLayout {
         tabs_rect: at(tabs_key(id)),
-        breadcrumbs_rect: at(breadcrumbs_key(id)),
         content_rect: at(content_key(id)),
         scrollbar_rect: at(vscroll_key(id)),
         horizontal_scrollbar_rect: at(hscroll_key(id)),
@@ -114,12 +112,6 @@ pub(crate) fn reference_split_layout(
     };
 
     let tabs_rect = Rect::new(split_area.x, split_area.y, split_area.width, tabs_height);
-    let breadcrumbs_rect = Rect::new(
-        split_area.x,
-        split_area.y + tabs_height,
-        split_area.width,
-        breadcrumbs_height,
-    );
     let content_rect = Rect::new(
         split_area.x,
         split_area.y + top_height,
@@ -147,7 +139,6 @@ pub(crate) fn reference_split_layout(
 
     SplitLayout {
         tabs_rect,
-        breadcrumbs_rect,
         content_rect,
         scrollbar_rect,
         horizontal_scrollbar_rect,

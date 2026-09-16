@@ -16,6 +16,9 @@ pub enum HoverTarget {
     MenuDropdownItem(usize, usize),
     /// Hovering over a submenu item (depth, item_index) - depth 1+ for nested submenus
     SubmenuItem(usize, usize),
+    /// Hovering over a symbol breadcrumb: the pane's row, and the crumb's
+    /// depth in the trail — which is how the row's description names it.
+    Breadcrumb(LeafId, usize),
     /// Hovering over the file explorer border (for resize)
     FileExplorerBorder,
     /// Hovering over the orchestrator dock's right border (for resize)

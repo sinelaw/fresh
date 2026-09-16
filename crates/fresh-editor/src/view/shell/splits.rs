@@ -328,14 +328,12 @@ mod tests {
                             assert_eq!(
                             (
                                 got.tabs_rect,
-                                got.breadcrumbs_rect,
                                 got.content_rect,
                                 got.scrollbar_rect,
                                 got.horizontal_scrollbar_rect
                             ),
                             (
                                 want.tabs_rect,
-                                want.breadcrumbs_rect,
                                 want.content_rect,
                                 want.scrollbar_rect,
                                 want.horizontal_scrollbar_rect
@@ -383,6 +381,7 @@ mod tests {
             groups: [(host, group.clone())].into_iter().collect(),
             interiors: Default::default(),
             strips: Default::default(),
+            breadcrumbs: Default::default(),
             hover: None,
             drop_zone: None,
             hosts: Default::default(),
@@ -438,6 +437,7 @@ mod tests {
                     groups: Default::default(),
                     interiors: Default::default(),
                     strips: Default::default(),
+                    breadcrumbs: Default::default(),
                     hover: None,
                     drop_zone: None,
                     hosts: Default::default(),
@@ -469,6 +469,7 @@ mod tests {
             groups: Default::default(),
             interiors: Default::default(),
             strips: Default::default(),
+            breadcrumbs: Default::default(),
             hover: None,
             drop_zone: None,
             hosts: Default::default(),
@@ -512,6 +513,7 @@ mod tests {
             groups: [(host_leaf, group)].into_iter().collect(),
             interiors: Default::default(),
             strips: Default::default(),
+            breadcrumbs: Default::default(),
             hover: None,
             drop_zone: None,
             hosts: Default::default(),
@@ -566,6 +568,7 @@ mod tests {
                     groups: Default::default(),
                     interiors: Default::default(),
                     strips: Default::default(),
+                    breadcrumbs: Default::default(),
                     hover: None,
                     drop_zone: None,
                     hosts: Default::default(),
@@ -645,6 +648,7 @@ mod tests {
             groups: Default::default(),
             interiors: Default::default(),
             strips: Default::default(),
+            breadcrumbs: Default::default(),
             hover: None,
             drop_zone: zone,
             hosts: Default::default(),
@@ -740,6 +744,7 @@ mod tests {
             ]
             .into_iter()
             .collect(),
+            breadcrumbs: Default::default(),
             hover: None,
             drop_zone: None,
             hosts: Default::default(),
@@ -824,6 +829,7 @@ mod tests {
             groups: Default::default(),
             interiors: Default::default(),
             strips: Default::default(),
+            breadcrumbs: Default::default(),
             hover: None,
             drop_zone: None,
             hosts: Default::default(),
@@ -1102,6 +1108,11 @@ pub struct Splits {
     /// it is scrolled. A pane with a strip row and no entry here lays out an
     /// empty strip. See `shell::tabs`.
     pub strips: std::collections::HashMap<LeafId, super::tabs::Strip>,
+    /// Each pane's symbol breadcrumb trail, by the pane showing it. Resolved
+    /// from the window's per-buffer map, because a crumb is described where
+    /// it is shown. A pane with a breadcrumb row and no entry here lays out
+    /// an empty one. See `shell::breadcrumbs`.
+    pub breadcrumbs: std::collections::HashMap<LeafId, Vec<fresh_core::api::BreadcrumbItem>>,
     /// The shell's hover, for the strip's cluster: `□` and `×` read it to
     /// light up, as every other described button does.
     pub hover: Option<HoverTarget>,
@@ -1421,31 +1432,18 @@ fn live_interior(id: LeafId, c: PaneChrome, s: &Rc<Splits>) -> Node<UiMsg> {
             // reader — it needs to know whether the tabs overflow to show
             // its `>`, and only the strip's layout knows.
             controls: row().w(Sizing::Cells(0)),
-            breadcrumbs: breadcrumb_surface(id),
+            breadcrumbs: super::breadcrumbs::surface(
+                id,
+                s.breadcrumbs.get(&id).map(|v| v.as_slice()).unwrap_or(&[]),
+                match s.hover {
+                    Some(HoverTarget::Breadcrumb(pane, index)) if pane == id => Some(index),
+                    _ => None,
+                },
+            ),
             content,
             vscroll: scrollbar(id, Axis::Vertical, &handle, &s.hover),
             hscroll: scrollbar(id, Axis::Horizontal, &handle, &s.hover),
         },
-    )
-}
-
-/// A pane's symbol breadcrumb row.
-///
-/// The row reports the pressed cell; the editor resolves it against the same
-/// breadcrumb layout used by the cell painter. Blank space is intentionally
-/// inert, but must not fall through and place a text caret.
-fn breadcrumb_surface(id: LeafId) -> Node<UiMsg> {
-    gesture(row()).on(
-        GestureKind::Press,
-        Rc::new(move |e: &Event| {
-            if e.button != MouseButton::Left {
-                return None;
-            }
-            let x = e.pos.x.max(0) as u16;
-            let y = e.pos.y.max(0) as u16;
-            e.stop();
-            Some(UiMsg::Ui(UiFact::PaneBreadcrumbPress { pane: id, x, y }))
-        }),
     )
 }
 
@@ -2170,9 +2168,6 @@ fn drop_zone_node(zone: crate::app::types::TabDropZone) -> Node<UiMsg> {
 pub fn content_key(id: LeafId) -> Key {
     Key::Pair("pane_content".into(), id.0 .0 as u64)
 }
-pub fn breadcrumbs_key(id: LeafId) -> Key {
-    Key::Pair("pane_breadcrumbs".into(), id.0 .0 as u64)
-}
 
 /// The pane a content key names, if `k` is one.
 pub fn pane_of_content_key(k: &Key) -> Option<LeafId> {
@@ -2270,9 +2265,10 @@ pub fn pane_interior<M: 'static>(id: LeafId, c: PaneChrome, s: PaneSlots<M>) -> 
             .key(tabs_key(id))
             .h(cells(c.tabs))
             .children([s.tabs.flex(1), s.controls]),
-        s.breadcrumbs
-            .key(breadcrumbs_key(id))
-            .h(cells(c.breadcrumbs)),
+        // Unkeyed, unlike its siblings: nothing reads this band's rectangle
+        // back. The crumbs inside it carry their own keys, and a press is
+        // answered by the crumb, not by the band.
+        s.breadcrumbs.h(cells(c.breadcrumbs)),
         row().flex(1).children([
             // The content names itself (`content_key`): a leaf's context
             // is a keyed node *above* it on the chain (`content_leaf`), and
