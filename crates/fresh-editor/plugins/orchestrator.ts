@@ -1766,6 +1766,58 @@ function remoteDetailSegs(s: AgentSession): Entry[] {
   }];
 }
 
+/** The name segment of a session row, and the one place that says
+ *  "this is the workspace you are actually in".
+ *
+ *  It used to say it with a foreground tint alone, which left the dock
+ *  with exactly one background — the tree's highlight on the row the
+ *  *cursor* is on. So the list showed where you were pointing and never
+ *  where you were. The two coincide when the dock opens (the cursor
+ *  defaults to the active row), which is why it reads as correct until
+ *  you move: arrow onto a folder, or onto another workspace, and nothing
+ *  on screen carries a background for the session whose buffers are in
+ *  front of you.
+ *
+ *  So the active session gets a band of its own. `ui.menu_hover_bg` is
+ *  the theme's designated "block behind the row singled out of a list":
+ *  being visible against the editor background is the whole job it is
+ *  given, so every theme supplies something that reads. `editor.bg`-
+ *  adjacent keys do not — `ui.popup_bg` equals `editor.bg` exactly on
+ *  the stock dark theme and draws nothing at all, and `current_line_bg`
+ *  is deliberately at the edge of perceptible. It is also not the
+ *  colour the tree paints its own selection in, so "where I am" and
+ *  "where the cursor is" stay two distinguishable things.
+ *
+ *  `cursorAlreadyBands` says the cursor highlight is itself painting a
+ *  background across this row, in which case the band is left off: a
+ *  second, darker block inside the selection's reads as a hole rather
+ *  than as emphasis. That is true of the compact density and false of
+ *  the card one, where the cursor is drawn as a coloured *border* and
+ *  the row keeps the editor's own background — which is why a card
+ *  dock had no background anywhere, on the active session least of all.
+ */
+function sessionNameEntry(label: string, isActive: boolean, cursorAlreadyBands: boolean): Entry {
+  if (!isActive) return { text: label, style: { bold: true } };
+  return {
+    text: label,
+    style: {
+      fg: "ui.help_key_fg",
+      bold: true,
+      ...(cursorAlreadyBands ? {} : { bg: "ui.menu_hover_bg" }),
+    },
+  };
+}
+
+/** The row the dock cursor will be on once this paint resolves.
+ *
+ *  Mirrors `buildDockSpec`'s own default — `dockSelKey` when it names a
+ *  row, else the active session — so the band decision and the selection
+ *  cannot disagree on the first paint, when `dockSelKey` is still null.
+ */
+function effectiveDockSelKey(activeId: number): string {
+  return openDialog?.dockSelKey ?? sessionNodeKey(activeId);
+}
+
 // One tree row for a session leaf: state glyph, optional remote facet,
 // and the name (highlighted when it's the active window). A single
 // line — the tree owns indentation and the disclosure column, so the
@@ -1783,10 +1835,9 @@ function sessionNodeEntry(id: number, activeId: number): TextPropertyEntry {
       style: { fg: remoteStateFg(s.remote.state), bold: true },
     });
   }
-  segs.push({
-    text: s.label,
-    style: { fg: isActive ? "ui.help_key_fg" : undefined, bold: true },
-  });
+  segs.push(
+    sessionNameEntry(s.label, isActive, effectiveDockSelKey(activeId) === sessionNodeKey(id)),
+  );
   // A remote session surfaces its backend target (host / ns·pod), coloured
   // by the connection state — the same detail the pill shows on the right,
   // and skipped when the label already names it (see `remoteDetailSegs`).
@@ -1885,10 +1936,9 @@ function sessionCardPrimary(id: number, activeId: number): TextPropertyEntry {
       style: { fg: remoteStateFg(s.remote.state), bold: true },
     });
   }
-  segs.push({
-    text: s.label,
-    style: { fg: isActive ? "ui.help_key_fg" : undefined, bold: true },
-  });
+  // `false`: a card's cursor is its border, not a background, so there is
+  // nothing for the band to collide with and every active card gets one.
+  segs.push(sessionNameEntry(s.label, isActive, false));
   // A remote session surfaces its backend target (host / ns·pod) coloured
   // by the connection state — pill parity (the pill shows it at the right
   // end of line 1), and skipped when the label already names it.
