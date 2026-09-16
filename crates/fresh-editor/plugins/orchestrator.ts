@@ -397,14 +397,6 @@ function discoveredIdFor(path: string): number {
   return id;
 }
 
-// Pending (being-created) placeholder rows take ids from a range well
-// below the discovered-worktree ids (which count down from `-2`), so the
-// two synthetic id spaces can never collide in `orchestratorSessions`.
-let nextPendingId = -1_000_000;
-function allocPendingId(): number {
-  return nextPendingId--;
-}
-
 // Only one remote attach may be in flight at a time. The host's
 // `cancelRemoteAgent()` cancels *every* in-flight connect, so
 // backgrounding two concurrent remote creates would let cancelling one
@@ -12090,9 +12082,10 @@ function pendingCreatingMessage(spec: CreateSpec): string {
 // filing it into a folder, switching to it and closing it all work on the
 // window, not on a stub that only offers "dismiss".
 //
-// A REMOTE workspace still gets a synthetic placeholder row: its window is
-// born by the connect itself (`attachRemoteAgent`), so there is nothing here
-// to adopt.
+// A REMOTE workspace gets the same treatment. Its window used to be born by
+// the connect itself (`attachRemoteAgent`), which meant there was nothing to
+// land in while it ran and nothing to report on when it failed; the connect
+// now adopts this placeholder instead (`adopt_window`).
 async function startPendingWorkspace(
   spec: CreateSpec,
   opts?: { restored?: boolean; visit?: boolean; label?: string },
@@ -12129,9 +12122,30 @@ async function startPendingWorkspace(
     stableId = born.stableId || undefined;
     root = spec.projectPath;
   } else {
-    id = allocPendingId();
-    // Synthetic root — a placeholder owns no real directory yet, and a
-    // unique key keeps it in its own stable dock-order slot.
+    // A remote workspace gets the same placeholder window a local one does,
+    // and for the same two reasons: the user lands in the workspace they
+    // asked for straight away instead of being left on the previous one, and
+    // a connect that never arrives has a page of its own to say so on.
+    //
+    // It used to get a synthetic row and no window, because the window was
+    // born by the connect itself — so pressing Create against an unreachable
+    // machine looked like nothing had happened, and the eventual error could
+    // only be reported as a line at the bottom of the dock.
+    //
+    // The window is anchored at a *local* directory because the workspace's
+    // own root is on a machine we have not reached yet; the connect re-roots
+    // it onto the remote path when the session adopts it (`adopt_window`).
+    // The row keeps a synthetic root of its own so it cannot collide with a
+    // real workspace at the anchor.
+    const anchor = editor.getCwd();
+    const born = await editor.createPreparingWindow({
+      root: anchor,
+      label,
+      message,
+      activate: visit,
+    });
+    id = born.windowId;
+    stableId = born.stableId || undefined;
     root = `pending:${id}`;
   }
   orchestratorSessions.set(id, {
@@ -12821,6 +12835,11 @@ async function runRemoteCreate(id: number): Promise<void> {
       if (spec.spec.transport.kind === "ssh") spec.spec.transport.remote_path = made.root;
       savePendingSpecs();
     }
+    // Grow the placeholder the user has been sitting in since they pressed
+    // Create into the live session, rather than minting a second window
+    // beside it. Keeps its window id, its durable workspace id and its dock
+    // slot across the connect — the same adoption the local path does.
+    if (id > 0) spec.spec.adopt_window = id;
     await editor.attachRemoteAgent(spec.spec);
     // Success: the born-attached window is live and already tracked (the
     // hook adopted the facet). Drop the placeholder.

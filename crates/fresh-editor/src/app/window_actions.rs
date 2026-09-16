@@ -1517,6 +1517,7 @@ impl crate::app::Editor {
         label: String,
         command: Option<Vec<String>>,
         spec: crate::services::authority::SessionAuthoritySpec,
+        adopt: Option<WindowId>,
     ) -> Result<WindowId, String> {
         match self.create_window_with_terminal(
             root.clone(),
@@ -1528,9 +1529,12 @@ impl crate::app::Editor {
             None,
             None,
             false,
-            // Remote sessions are born attached to their connected backend
-            // rather than growing out of a local placeholder.
-            None,
+            // A remote session is born attached to its connected backend, but
+            // it can still grow out of the placeholder the user has been
+            // sitting in since they asked for it — the same adoption the local
+            // path uses, which is what keeps the window id, the durable
+            // workspace id and the dock slot across the connect.
+            adopt,
         ) {
             Ok((window_id, _terminal, _buffer)) => {
                 self.session_keepalives.insert(window_id, keepalive);

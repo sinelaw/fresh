@@ -100,6 +100,7 @@ pub fn dead_ssh_spec(remote_path: &Path) -> SessionAuthoritySpec {
         window: true,
         label: Some("ssh-dead".to_string()),
         command: None,
+        adopt_window: None,
     })
 }
 

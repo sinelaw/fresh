@@ -1455,6 +1455,7 @@ mod tests {
             window: true,
             label: Some("ssh-session".into()),
             command: None,
+            adopt_window: None,
         });
         std::fs::write(
             ws_dir.join("ssh.json"),

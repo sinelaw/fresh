@@ -5057,6 +5057,8 @@ impl Editor {
         // is set the main loop spawns a born-attached new window instead of
         // restarting the whole editor.
         let window_mode = spec.window;
+        // The placeholder the Orchestrator already put the user in, if any.
+        let window_adopt = spec.adopt_window.map(fresh_core::WindowId);
         let window_label = spec.label.clone();
         let window_command = spec.command.clone();
         // A remote session gets its **own** fresh trust + env handles — never
@@ -5090,6 +5092,7 @@ impl Editor {
                 crate::services::async_bridge::RemoteAttachMode::Window {
                     label: window_label.clone().unwrap_or_else(|| label.to_string()),
                     command: window_command.clone(),
+                    adopt: window_adopt,
                 }
             } else {
                 crate::services::async_bridge::RemoteAttachMode::Restart
