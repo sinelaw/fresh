@@ -8,13 +8,24 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 
 ### Features
 
-* **Orchestrator mode** - typing a bare `fresh`, with no files and no flags, now reopens the workspace you were last in, whichever directory you typed it in, with the workspace dock already on screen. The editor runs as a background daemon, so a second bare `fresh` anywhere reattaches to it rather than starting a second editor, and closing the terminal leaves your session running. There is no untitled buffer in the way: a first run lands on the welcome screen, and an empty workspace stays empty. Named files and flags are unaffected - `fresh FILE` is the editor it always was. On by default; the switch is **Orchestrator Mode** in Settings, or the checkbox at the top of the welcome screen
+* **Orchestrator mode** - typing a bare `fresh`, with no files and no flags, now reopens the workspace you were last in, whichever directory you typed it in, with the workspace dock already on screen. The editor runs as a background daemon, so a second bare `fresh` anywhere reattaches to it rather than starting a second editor, and closing the terminal leaves your session running. There is no untitled buffer in the way: a first run lands on the welcome screen, and an empty workspace stays empty. Named files and flags are unaffected - `fresh FILE` is the editor it always was. On by default; the switch is **Orchestrator Mode** in Settings, or the checkbox at the top of the welcome screen (#3306)
+* **Creating an Orchestrator workspace on a remote SSH machine actually works** - the dock resolved a `~/.ssh/config` host alias itself and ignored the rest of that `Host` block (key, known-hosts, proxy settings); it now lets `ssh` read its own config, and prompts to trust an unknown host key with its fingerprint instead of dead-ending. Archiving or deleting a workspace no longer pushes a hidden branch to your repository's `origin`, and saved machines survive two windows editing them at once (#3301)
+* **New `fresh workspace list` / `agent list|get|explain|wait|start` CLI verbs** - script against Orchestrator workspaces and agents without reading the dock, including an `explain` for why an agent shows the state it does
 
 ### Bug Fixes
 
-* **A daemon never told its plugins that startup had finished** - `plugins_loaded` and `ready` fire only on the directly-launched path, so in any `fresh -a` session the Orchestrator dock never opened itself and the welcome screen never appeared, while the same plugins worked normally in a directly-launched editor
-* **The Orchestrator dock's `⋯` menu stays open** - a menu, a dropdown or any panel float raised by a *click* was dismissed again the moment the mouse button came back up, so it flashed and vanished unless you clicked fast enough to beat the redraw. Focus landings the tree queues while the panel redraws are now dropped once a later one has replaced them, instead of being replayed over the menu that opened in between
-* **A workspace created from the Orchestrator dock takes the keyboard** - the New Workspace form blurs the dock on its way in, and closing it handed focus straight back to the blurred dock; every key in the workspace it had just created then resolved in the dock's context and died, so a file opened there (Open File, quick-open) showed up without the cursor and typing did nothing
+* **A daemon never told its plugins that startup had finished** - `plugins_loaded` and `ready` fire only on the directly-launched path, so in any `fresh -a` session the Orchestrator dock never opened itself and the welcome screen never appeared, while the same plugins worked normally in a directly-launched editor (#3306)
+* **The Orchestrator dock's `⋯` menu stays open** - a menu, a dropdown or any panel float raised by a *click* was dismissed again the moment the mouse button came back up, so it flashed and vanished unless you clicked fast enough to beat the redraw. Focus landings the tree queues while the panel redraws are now dropped once a later one has replaced them, instead of being replayed over the menu that opened in between (#3306)
+* **Deleting an SSH-backed workspace no longer panics a background thread**, dropping git-index resolution and corrupting the screen with a stack trace (#3299, #3300)
+* **A workspace created from the Orchestrator dock takes the keyboard** - the New Workspace form blurs the dock on its way in, and closing it handed focus straight back to the blurred dock; every key in the workspace it had just created then resolved in the dock's context and died, so a file opened there (Open File, quick-open) showed up without the cursor and typing did nothing (#3275)
+* **The cursor stays visible past the end of a highlighted line** - a code tour's step band, a diff row and any other full-width highlight painted their trailing cells in a single colour, and the terminal's block cursor inverts the cell it sits on, so it inverted to itself
+* **Inlay hints inside a highlighted range wear the highlight** instead of punching a hole in the band with the plain editor background
+* **`editor.scroll_offset` had no effect on files under 5000 lines with wrap off** - the cursor rode all the way to the window's edge before the view scrolled, instead of stopping short of it (#3248)
+* **A markdown code block's frame held its shape while typing** - the closing rail no longer lags a column behind the text, Enter no longer leaves sideless rows, and the caret on a blank row no longer sits under the line above (#3247)
+* **LSP resolves the right workspace root on Windows** - `root_uri` dropped the drive letter (`file:///Users/...` instead of `file:///C:/Users/...`), breaking every root-dependent LSP operation (#3067, reported by @Bearmancer; #3096, fixed by @56steve)
+* **Multi-byte keybindings load from config**, e.g. a German `Ctrl+ü` binding - the key-name length check silently dropped them (#3036, contributed by @georglauterbach)
+* **A panel's `Shift+Tab` binding, and Review Diff's `za`/`zr` fold chord, now fire** - both were dead whenever a widget sidebar held the keyboard (#3253)
+* **A key with no lowercase form (e.g. some mathematical/enclosed Unicode letters) no longer gets a phantom Shift** added when a keybinding round-trips through config (#3302)
 * **Vi mode's visual `0` and `^` include the character `v` started on**, as Vim's do (#2447)
 * **Vi mode: `Y`, `[count]J` and `G`** - `Y` had no binding at all (Vim's `Y` is `yy`); `J` ignored its count, so `3J` joined two lines instead of three, and `.` would not repeat it; `G` landed on the phantom line after a trailing newline, where `x` and `dd` had nothing to act on (#2447)
 * **Vi mode's `x` and `X` no longer join lines** - `x` on an empty line, or at the end of a line, deleted the line break and pulled the next line up; `X` in column 1 did the same backwards. Vim confines both to the current line, and so does Fresh now (#2447)
@@ -38,6 +49,10 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 * **Stale LSP diagnostics after a vi-mode line delete** - `dd` (and any other plugin-driven edit) left the language server analysing the deleted text, so its warnings survived the edit and the save, and hover stopped working on the file (#3258, reported and fixed by @thedadams)
 * **Save All handed each language server the focused buffer's text** under every other saved file's name (#3258)
 
+### Internals
+
+* Reduced allocation churn on hot editing and rendering paths (backward line-start search, the UI reconcile journal, explorer decoration lookups), and updated a TLS dependency to close a handshake-validation gap (RUSTSEC-2026-0285)
+
 ## 0.5.1
 
 For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
@@ -49,8 +64,6 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 * **Startup crash on an empty buffer with unsaved changes** - hit crash-recovery restores where the deletion itself was the unsaved change, panicking on every launch (#3236, reported by @CC-Hsu)
 * **A closed Welcome tab's panel no longer keeps trying to repaint itself** on every resize
 * **Git gutter survives an external revert** of the open file instead of going stale until the buffer is reopened
-* **The cursor stays visible past the end of a highlighted line** - a code tour's step band, a diff row and any other full-width highlight painted their trailing cells in a single colour, and the terminal's block cursor inverts the cell it sits on, so it inverted to itself
-* **Inlay hints inside a highlighted range wear the highlight** instead of punching a hole in the band with the plain editor background
 
 ## 0.5.0
 
