@@ -817,7 +817,9 @@ pub struct Placeholder {
     /// What it is doing — connecting, building, or why it could not.
     pub state: String,
     pub hint: String,
-    /// What to do about it, when there is something; empty otherwise.
+    /// Label for the page's retry button, when the state is one the user can
+    /// do something about; empty means no button. The *explanation* lives in
+    /// `hint` — this is the thing you press.
     pub retry: String,
     /// The window's active pane, whose content this page stands in for: the
     /// page is the base's focus holder and hands its keys to the editor as
@@ -839,16 +841,59 @@ fn placeholder_page(p: &Placeholder) -> Node<UiMsg> {
             false => text(s).theme(theme),
         }
     };
+    // The state line is the one that carries an error, and an error is a
+    // sentence, not a label: `SSH could not connect to <host>. Check that the
+    // host is reachable, the user is right…` ran off the pane and took the
+    // actionable half of itself with it. Wrapped, and held to a measure —
+    // centred prose at full terminal width is unreadable for the opposite
+    // reason.
+    let state = match p.state.is_empty() {
+        true => row().h(Sizing::Cells(1)),
+        false => text(&p.state)
+            .theme(plain.clone())
+            .wrap()
+            .w(Sizing::Cells(PLACEHOLDER_MEASURE)),
+    };
+    // Buttons, not a sentence telling you where to find some. This page is
+    // what the user is looking at when a workspace fails, so the things to do
+    // about it are here: they used to live at the bottom of the dock, which
+    // meant reading the error in one place and acting on it in another.
+    let action = |label: &str, key: fresh_ui::Key, msg: super::msg::UiFact| -> Node<UiMsg> {
+        fresh_ui::gesture(
+            text(format!("  [ {label} ]  "))
+                .theme(attrs("ui.help_key_fg", "editor.bg", &["bold"]))
+                .h(Sizing::Cells(1)),
+        )
+        .key(key)
+        .on_click(move |_| UiMsg::Ui(msg.clone()))
+    };
+    let retry: Node<UiMsg> = match p.retry.is_empty() {
+        true => row().h(Sizing::Cells(1)),
+        false => row().align(Align::Center).children([
+            action(
+                &p.retry,
+                placeholder_retry_key(),
+                super::msg::UiFact::PlaceholderRetry,
+            ),
+            action(
+                "Dismiss",
+                placeholder_dismiss_key(),
+                super::msg::UiFact::PlaceholderDismiss,
+            ),
+        ]),
+    };
     let page = col().theme(plain.clone()).align(Align::Center).children([
         row().flex(1),
         line(&p.detail, attrs("editor.fg", "editor.bg", &["bold"])),
         row().h(Sizing::Cells(1)),
-        line(&p.state, plain),
+        state,
         row().h(Sizing::Cells(1)),
         line(&p.hint, dim.clone()),
-        line(&p.retry, dim),
+        row().h(Sizing::Cells(1)),
+        retry,
         row().flex(1),
     ]);
+    let has_retry = !p.retry.is_empty();
     match p.pane {
         Some(pane) => fresh_ui::focusable(page)
             .key(super::splits::content_key(pane))
@@ -856,10 +901,37 @@ fn placeholder_page(p: &Placeholder) -> Node<UiMsg> {
             .autofocus()
             .on_key(move |e: &fresh_ui::Event| {
                 e.stop();
+                // Enter is the page's own key while it offers a retry: the
+                // page holds focus in the pane's stead, so without this the
+                // one control on screen could only be reached with a mouse.
+                let enter = matches!(
+                    e.key,
+                    Some(fresh_ui::KeyPress {
+                        code: fresh_ui::KeyCode::Enter,
+                        ..
+                    })
+                );
+                if has_retry && enter {
+                    return Some(UiMsg::Ui(super::msg::UiFact::PlaceholderRetry));
+                }
                 Some(UiMsg::Ui(super::msg::UiFact::PaneKey { pane }))
             }),
         None => page,
     }
+}
+
+/// Width the placeholder page sets its prose to. Wide enough for an ssh
+/// error's first clause, narrow enough that centred text still scans.
+const PLACEHOLDER_MEASURE: u16 = 72;
+
+/// Display-list key for the placeholder page's retry button.
+pub fn placeholder_retry_key() -> fresh_ui::Key {
+    fresh_ui::Key::Str("placeholder.retry".into())
+}
+
+/// Display-list key for the placeholder page's dismiss button.
+pub fn placeholder_dismiss_key() -> fresh_ui::Key {
+    fresh_ui::Key::Str("placeholder.dismiss".into())
 }
 
 /// A region with nothing in it — a hidden row, an empty column — as a named

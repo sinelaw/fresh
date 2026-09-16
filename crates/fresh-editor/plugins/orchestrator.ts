@@ -1675,70 +1675,6 @@ function dockSelectedSession(): AgentSession | null {
   return orchestratorSessions.get(Number(key.slice(SESSION_NODE_PREFIX.length))) ?? null;
 }
 
-// The failure panel: the full reason a create failed, plus the two things
-// that can be done about it, directly under the tree.
-//
-// A dock row is one line, so the reason — the *only* description of a
-// blocking failure — was cut to whatever the splitter left over
-// (`Host key v…`), and Retry / Dismiss existed solely inside a right-click
-// menu that nothing advertised. Both are the same mistake: a failed row was
-// a dead end at exactly the moment the user needed a way out. So the row
-// keeps its one-line summary and the panel carries what does not fit —
-// wrapped, never elided — with the actions rendered as buttons where the
-// user is already looking. It occupies rows only while a failed or paused
-// row is selected; a dock with nothing wrong is as tall as it was.
-function dockFailureRows(): WidgetSpec[] {
-  const s = dockSelectedSession();
-  const p = s?.pending;
-  if (!s || !p || !pendingActionable(p)) return [];
-  const rows: WidgetSpec[] = [
-    divider({ style: { fg: "ui.menu_disabled_fg" } }),
-    label(p.message, { style: { fg: pendingMsgFg(p) }, wrap: true }),
-  ];
-  const actions: WidgetSpec[] = [
-    button(editor.t("dock.ctx_retry"), { intent: "primary", key: "pending-retry" }),
-    spacer(1),
-    button(editor.t("dock.ctx_dismiss"), { intent: "danger", key: "pending-dismiss" }),
-  ];
-  rows.push(wrappingRow(...actions));
-  return rows;
-}
-
-// Screen rows `dockFailureRows` takes, for the tree's height budget. The
-// reason wraps, so it is however many lines the dock's content width needs.
-function dockFailureRowCount(cols: number): number {
-  const s = dockSelectedSession();
-  const p = s?.pending;
-  if (!s || !p || !pendingActionable(p)) return 0;
-  // **Counted the way the host wraps, not by dividing.** A `wrap: true` label
-  // is word-wrapped with a hanging indent, so `ceil(width / cols)` — which
-  // assumes every column is usable and words may be split — under-counts a
-  // real message ("Permission denied (publickey,gssapi-keyex,…)") and the
-  // dock's last row gets clipped off: exactly the failure this panel exists
-  // to prevent. Greedy word packing here matches the renderer's own rule.
-  const w = Math.max(8, cols);
-  let msgRows = 1;
-  let used = 0;
-  for (const word of p.message.split(/\s+/).filter(Boolean)) {
-    const ww = editor.stringWidth(word);
-    if (used === 0) {
-      used = ww;
-    } else if (used + 1 + ww <= w) {
-      used += 1 + ww;
-    } else {
-      msgRows += 1;
-      used = ww;
-    }
-    // A single word longer than the line wraps again on its own.
-    while (used > w) {
-      msgRows += 1;
-      used -= w;
-    }
-  }
-  // divider + reason + button row.
-  return 2 + msgRows;
-}
-
 // The backend target (host / ns·pod) as a trailing row segment — unless the
 // label already carries it.
 //
@@ -5402,10 +5338,13 @@ function buildDockSpec(): WidgetSpec {
   // something to say — a dock with nothing pending stays as tall as before.
   const att = attentionCounts(orchestratorSessions.keys());
   const attentionRow: WidgetSpec[] = att.blocked > 0 || att.done > 0 ? [dockAttentionRow(att)] : [];
-  // The failure panel sits between the tree and the hints, so it comes out of
-  // the same budget the tree is sized against.
-  const failureRows = dockFailureRows();
-  const failureRowCount = dockFailureRowCount(dockCols);
+  // A failed workspace is reported on its own page — the one the user is
+  // looking at, since creating it takes them there — not a second time here.
+  // The row keeps its one-line summary, which is the list's job: *which*
+  // workspace is unhappy. What it says and what to do about it belong
+  // together, on the page, and having them in both places meant reading the
+  // same error twice and two sets of Retry / Dismiss buttons.
+  const failureRowCount = 0;
   // Top chrome: the title bar, the action row, the search row while it is
   // open, the attention line when there is one, and the divider.
   const chromeRows = 3 + searchRow.length + attentionRow.length + bottomRows + failureRowCount;
@@ -5483,7 +5422,6 @@ function buildDockSpec(): WidgetSpec {
       key: "sessions",
     }),
     ...bottomPad,
-    ...failureRows,
     ...bottom,
   );
 }
@@ -15414,18 +15352,6 @@ editor.on("widget_event", (e) => {
       openForm({ fromPicker: true });
       return;
     }
-    // The failure panel's two buttons — the same actions the right-click
-    // menu offers, on the row the panel is describing.
-    if (e.event_type === "activate" && e.widget_key === "pending-retry") {
-      const s = dockSelectedSession();
-      if (s) retryPending(s.id);
-      return;
-    }
-    if (e.event_type === "activate" && e.widget_key === "pending-dismiss") {
-      const s = dockSelectedSession();
-      if (s) dismissPending(s.id);
-      return;
-    }
     if (e.event_type === "activate" && e.widget_key === "dock-close") {
       if (dockMode) closeOpenDialog();
       return;
@@ -15649,6 +15575,22 @@ editor.on("window_created", () => {
   // host actions creating windows just need the picker to
   // refresh.
   refreshOpenDialog();
+});
+
+// The placeholder page's own buttons. A workspace that is still being built
+// *is* a window now — the user is taken into it when they ask for it — so the
+// page is where its failure is reported and where the two things to do about
+// it live. The host owns the page (it is drawn in the pane's stead, not by a
+// widget panel), so it asks us: the recipe, the worktree it may have added
+// and the persisted spec are all ours.
+editor.on("workspace_retry_requested", (e: { window_id: number }) => {
+  const s = orchestratorSessions.get(e.window_id);
+  if (s?.pending) retryPending(e.window_id);
+});
+
+editor.on("workspace_dismiss_requested", (e: { window_id: number }) => {
+  const s = orchestratorSessions.get(e.window_id);
+  if (s?.pending) dismissPending(e.window_id);
 });
 
 editor.on("window_closed", () => {

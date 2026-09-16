@@ -4755,7 +4755,7 @@ impl Editor {
             } else {
                 (
                     "The workspace could not be loaded without its connection.",
-                    "Select it again in the dock (or use the status-bar indicator) to reconnect.",
+                    "Reconnect",
                 )
             };
             return Some(Placeholder {
@@ -4772,11 +4772,12 @@ impl Editor {
         } else {
             prep.label.clone()
         };
+        // `retry` is the button's label now, not an instruction pointing at
+        // the dock: this page is where the user is when it fails, so the
+        // thing to do about it is here. Nothing to press while it is still
+        // working.
         let (hint, retry) = if prep.failed {
-            (
-                "This workspace has not been created yet.",
-                "Select it again in the dock to retry, or delete it from the row menu.",
-            )
+            ("This workspace has not been created yet.", "Retry")
         } else {
             (
                 "The workspace will open as soon as it has been created.",
