@@ -1119,6 +1119,21 @@ impl Editor {
                         root
                     );
                 }
+                // The terminal state for that root dies with it. It is keyed
+                // by the same path (`terminals/<encoded-root>/`) and holds
+                // scrollback for terminals that no longer exist, so leaving it
+                // accumulates one dead directory per deleted workspace — the
+                // user finds them later with no way to tell which are live.
+                // Best-effort for the same reason as the record above.
+                let terminals = self.dir_context().terminal_dir_for(&root);
+                if terminals.is_dir() {
+                    if let Err(e) = std::fs::remove_dir_all(&terminals) {
+                        tracing::warn!(
+                            "DeleteWorkspace: could not remove terminal state {:?}: {e}",
+                            terminals
+                        );
+                    }
+                }
             }
             PluginCommand::PrewarmWindow { id } => {
                 self.prewarm_window(id);
