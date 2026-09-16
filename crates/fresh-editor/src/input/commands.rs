@@ -1214,13 +1214,6 @@ static COMMAND_DEFS: &[CommandDef] = &[
         custom_contexts: &[],
     },
     CommandDef {
-        name_key: "cmd.code_lens",
-        desc_key: "cmd.code_lens_desc",
-        action: || Action::LspCodeLens,
-        contexts: &[Normal],
-        custom_contexts: &[],
-    },
-    CommandDef {
         name_key: "cmd.start_restart_lsp",
         desc_key: "cmd.start_restart_lsp_desc",
         action: || Action::LspRestart,
@@ -1461,6 +1454,13 @@ static COMMAND_DEFS: &[CommandDef] = &[
         name_key: "cmd.toggle_inlay_hints",
         desc_key: "cmd.toggle_inlay_hints_desc",
         action: || Action::ToggleInlayHints,
+        contexts: &[Normal, FileExplorer, Terminal],
+        custom_contexts: &[],
+    },
+    CommandDef {
+        name_key: "cmd.toggle_code_lens",
+        desc_key: "cmd.toggle_code_lens_desc",
+        action: || Action::ToggleCodeLens,
         contexts: &[Normal, FileExplorer, Terminal],
         custom_contexts: &[],
     },

@@ -84,6 +84,7 @@ setting_keys! {
     EDITOR_HIGHLIGHT_CURRENT_LINE: bool = "/editor/highlight_current_line";
     EDITOR_HIGHLIGHT_OCCURRENCES: bool = "/editor/highlight_occurrences";
     EDITOR_ENABLE_INLAY_HINTS: bool = "/editor/enable_inlay_hints";
+    EDITOR_ENABLE_CODE_LENS: bool = "/editor/enable_code_lens";
     EDITOR_MOUSE_HOVER_ENABLED: bool = "/editor/mouse_hover_enabled";
     EDITOR_SHOW_MENU_BAR: bool = "/editor/show_menu_bar";
     EDITOR_SHOW_TAB_BAR: bool = "/editor/show_tab_bar";

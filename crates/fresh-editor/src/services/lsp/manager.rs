@@ -1679,6 +1679,88 @@ impl LspManager {
         }
     }
 
+    /// The languages of servers currently running, universal scopes excluded.
+    ///
+    /// Unlike [`Self::running_servers`], which reports a display label and
+    /// answers `"universal"` for a scope that accepts everything, every string
+    /// here is a real language that can be passed back into the manager.
+    pub fn languages_with_running_servers(&self) -> Vec<String> {
+        let mut languages: Vec<String> = self
+            .handles
+            .iter()
+            .filter(|sh| !sh.handle.scope().is_universal())
+            .flat_map(|sh| sh.handle.scope().languages().to_vec())
+            .collect();
+        languages.sort();
+        languages.dedup();
+        languages
+    }
+
+    /// Whether any running server has a scope that accepts every language.
+    ///
+    /// Such a server cannot be addressed by language, so the capability
+    /// re-handshake below cannot reach it; callers report that rather than
+    /// pretending it was refreshed.
+    pub fn has_universal_server(&self) -> bool {
+        self.handles
+            .iter()
+            .any(|sh| sh.handle.scope().is_universal())
+    }
+
+    /// Re-run `initialize` for the servers already running for `language`, so
+    /// they see the client capabilities as they stand now (a plugin claimed an
+    /// LSP client command after they started, and LSP has no way to amend
+    /// capabilities after the handshake).
+    ///
+    /// Deliberately NOT [`Self::manual_restart`]. That one is a *user* action
+    /// and marks the language manually-allowed, which puts `force_spawn` into
+    /// the mode that starts every configured server for it — including ones
+    /// the user turned off with `enabled: false` or `auto_start: false`. This
+    /// runs on its own, so it must only put back what was already running:
+    /// it leaves `allowed_languages` and `disabled_languages` untouched, and
+    /// does nothing at all when no server for `language` is up.
+    ///
+    /// Returns whether a server was actually restarted.
+    pub fn respawn_for_client_capability_change(
+        &mut self,
+        language: &str,
+        file_path: Option<&Path>,
+    ) -> bool {
+        let mut had_handle = false;
+        let mut i = 0;
+        while i < self.handles.len() {
+            if !self.handles[i].handle.scope().is_universal()
+                && self.handles[i].handle.scope().accepts(language)
+            {
+                let sh = self.handles.remove(i);
+                fire_and_forget(sh.handle.shutdown());
+                had_handle = true;
+            } else {
+                i += 1;
+            }
+        }
+        if !had_handle {
+            return false;
+        }
+
+        if self.force_spawn(language, file_path).is_some() {
+            tracing::info!(
+                "Re-initialized LSP for {} with the current client capabilities",
+                language
+            );
+            true
+        } else {
+            // The old handle is already gone, so say so loudly: the user is
+            // left without a server for this language until something else
+            // spawns one.
+            tracing::error!(
+                "Could not re-initialize LSP for {} after a client-command claim; it is now stopped",
+                language
+            );
+            false
+        }
+    }
+
     /// Restart a single server by name for a specific language.
     ///
     /// Shuts down just that server and re-spawns it from config.

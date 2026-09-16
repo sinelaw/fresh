@@ -12,10 +12,7 @@
 
 use anyhow::Result as AnyhowResult;
 use fresh_i18n::t;
-use serde::Deserialize;
-use std::collections::BTreeMap;
 use std::io;
-use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use crate::app::window::LspCompletionCandidate;
@@ -102,100 +99,6 @@ fn lsp_range_overlaps(
 
 const SEMANTIC_TOKENS_RANGE_DEBOUNCE_MS: u64 = 50;
 const SEMANTIC_TOKENS_RANGE_PADDING_LINES: usize = 10;
-
-const RUST_ANALYZER_RUN_SINGLE: &str = "rust-analyzer.runSingle";
-const RUST_ANALYZER_DEBUG_SINGLE: &str = "rust-analyzer.debugSingle";
-
-#[derive(Debug, Deserialize)]
-struct RustAnalyzerRunnable {
-    label: String,
-    #[serde(flatten)]
-    kind: RustAnalyzerRunnableKind,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(tag = "kind", content = "args", rename_all = "lowercase")]
-enum RustAnalyzerRunnableKind {
-    Cargo(RustAnalyzerCargoArgs),
-    Shell(RustAnalyzerShellArgs),
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct RustAnalyzerCargoArgs {
-    #[serde(default)]
-    environment: BTreeMap<String, String>,
-    cwd: PathBuf,
-    override_cargo: Option<String>,
-    workspace_root: Option<PathBuf>,
-    cargo_args: Vec<String>,
-    executable_args: Vec<String>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct RustAnalyzerShellArgs {
-    #[serde(default)]
-    environment: BTreeMap<String, String>,
-    cwd: PathBuf,
-    program: String,
-    args: Vec<String>,
-}
-
-#[derive(Debug, PartialEq, Eq)]
-struct CodeLensTask {
-    label: String,
-    cwd: PathBuf,
-    command: Vec<String>,
-    environment: Vec<(String, String)>,
-}
-
-fn rust_analyzer_code_lens_task(command: &lsp_types::Command) -> Result<CodeLensTask, String> {
-    let runnable_value = command
-        .arguments
-        .as_ref()
-        .and_then(|arguments| arguments.first())
-        .ok_or_else(|| "rust-analyzer runnable command has no arguments".to_string())?;
-    let runnable: RustAnalyzerRunnable = serde_json::from_value(runnable_value.clone())
-        .map_err(|error| format!("invalid rust-analyzer runnable: {error}"))?;
-
-    match runnable.kind {
-        RustAnalyzerRunnableKind::Cargo(args) => {
-            let mut cargo = args
-                .override_cargo
-                .as_deref()
-                .unwrap_or("cargo")
-                .split_whitespace()
-                .map(str::to_string)
-                .collect::<Vec<_>>();
-            if cargo.is_empty() {
-                cargo.push("cargo".to_string());
-            }
-            cargo.extend(args.cargo_args);
-            if !args.executable_args.is_empty() {
-                cargo.push("--".to_string());
-                cargo.extend(args.executable_args);
-            }
-            Ok(CodeLensTask {
-                label: runnable.label,
-                cwd: args.workspace_root.unwrap_or(args.cwd),
-                command: cargo,
-                environment: args.environment.into_iter().collect(),
-            })
-        }
-        RustAnalyzerRunnableKind::Shell(args) => {
-            let mut command = Vec::with_capacity(args.args.len() + 1);
-            command.push(args.program);
-            command.extend(args.args);
-            Ok(CodeLensTask {
-                label: runnable.label,
-                cwd: args.cwd,
-                command,
-                environment: args.environment.into_iter().collect(),
-            })
-        }
-    }
-}
 
 fn code_lens_command_at_column(
     state: &crate::state::EditorState,
@@ -2208,6 +2111,11 @@ impl Editor {
             self.active_window_mut()
                 .pending_code_actions_requests
                 .extend(sent_ids);
+        } else if !self.code_lens_commands_for_cursor().is_empty() {
+            // No server offers code actions for this buffer, so no response is
+            // coming to build the popup from — but the line may still carry
+            // lenses, and this command is now the way to reach them.
+            self.show_code_actions_popup();
         }
 
         Ok(())
@@ -2239,7 +2147,7 @@ impl Editor {
             .unwrap_or_default();
 
         if actions.is_empty() {
-            // Only show "no code actions" if all responses are in and we have nothing
+            // Only decide once all responses are in and nothing has accumulated.
             if self
                 .active_window()
                 .pending_code_actions_requests
@@ -2250,7 +2158,13 @@ impl Editor {
                     .as_ref()
                     .is_none_or(|a| a.is_empty())
             {
-                self.set_status_message(t!("lsp.no_code_actions").to_string());
+                // A line can still have code lenses even when no server offers
+                // an action for it, and the lens is the only way to run them.
+                if self.code_lens_commands_for_cursor().is_empty() {
+                    self.set_status_message(t!("lsp.no_code_actions").to_string());
+                } else {
+                    self.show_code_actions_popup();
+                }
             }
             return;
         }
@@ -2271,51 +2185,101 @@ impl Editor {
             }
         }
 
-        // Build list items from all accumulated code actions
+        self.show_code_actions_popup();
+    }
+
+    /// The code lenses attached to the cursor's line.
+    pub(crate) fn code_lens_commands_for_cursor(&self) -> Vec<lsp_types::Command> {
+        let buffer_id = self.active_buffer();
+        let cursor_position = self.active_cursors().primary().position;
+        let line = self
+            .buffers()
+            .get(&buffer_id)
+            .map(|state| state.buffer.position_to_lsp_position(cursor_position).0 as u32)
+            .unwrap_or(0);
+
+        self.active_window()
+            .code_lenses
+            .get(&buffer_id)
+            .into_iter()
+            .flatten()
+            .filter(|lens| lens.range.start.line <= line && line <= lens.range.end.line)
+            .filter_map(|lens| lens.command.clone())
+            .collect()
+    }
+
+    /// Show (or refresh) the one popup that offers everything the LSP has for
+    /// the cursor's position: code actions, then the code lenses on that line.
+    ///
+    /// One popup rather than one per feature. A lens is a position-specific
+    /// thing to *do*, which is what a user opens this list to find — a
+    /// separate chooser for each kind would make them remember which command
+    /// surfaces which, and the code-actions list is where they already look.
+    ///
+    /// Rows carry their source in `data` (`action:<i>` / `lens:<i>`) because
+    /// the two execute differently: an action may need `codeAction/resolve`
+    /// and carries a workspace edit, while a lens command may be claimed by a
+    /// plugin and must not be sent to the server. Confirm routes on that tag.
+    pub(crate) fn show_code_actions_popup(&mut self) {
         use crate::view::popup::{Popup, PopupListItem, PopupPosition};
         use ratatui::style::Style;
 
-        let items: Vec<PopupListItem> = {
-            let all_actions = self.active_window().pending_code_actions.as_ref().unwrap();
-            let multiple_servers = {
-                let mut names = std::collections::HashSet::new();
-                for (name, _) in all_actions {
-                    names.insert(name.as_str());
-                }
-                names.len() > 1
-            };
-            all_actions
+        let mut items: Vec<PopupListItem> = Vec::new();
+
+        if let Some(all_actions) = self.active_window().pending_code_actions.as_ref() {
+            let multiple_servers = all_actions
                 .iter()
-                .enumerate()
-                .map(|(i, (srv_name, action))| {
-                    let title = match action {
-                        lsp_types::CodeActionOrCommand::Command(cmd) => &cmd.title,
-                        lsp_types::CodeActionOrCommand::CodeAction(ca) => &ca.title,
-                    };
-                    let kind = match action {
-                        lsp_types::CodeActionOrCommand::CodeAction(ca) => {
-                            ca.kind.as_ref().map(|k| k.as_str().to_string())
-                        }
-                        _ => None,
-                    };
-                    let detail = if multiple_servers && !srv_name.is_empty() {
-                        match kind {
-                            Some(k) => Some(format!("[{}] {}", srv_name, k)),
-                            None => Some(format!("[{}]", srv_name)),
-                        }
-                    } else {
-                        kind
-                    };
-                    PopupListItem {
-                        text: format!("{}. {}", i + 1, title),
-                        detail,
-                        icon: None,
-                        data: Some(i.to_string()),
-                        disabled: false,
+                .map(|(name, _)| name.as_str())
+                .collect::<std::collections::HashSet<_>>()
+                .len()
+                > 1;
+            for (i, (srv_name, action)) in all_actions.iter().enumerate() {
+                let title = match action {
+                    lsp_types::CodeActionOrCommand::Command(cmd) => &cmd.title,
+                    lsp_types::CodeActionOrCommand::CodeAction(ca) => &ca.title,
+                };
+                let kind = match action {
+                    lsp_types::CodeActionOrCommand::CodeAction(ca) => {
+                        ca.kind.as_ref().map(|k| k.as_str().to_string())
                     }
-                })
-                .collect()
-        };
+                    _ => None,
+                };
+                let detail = if multiple_servers && !srv_name.is_empty() {
+                    match kind {
+                        Some(k) => Some(format!("[{}] {}", srv_name, k)),
+                        None => Some(format!("[{}]", srv_name)),
+                    }
+                } else {
+                    kind
+                };
+                items.push(PopupListItem {
+                    text: format!("{}. {}", items.len() + 1, title),
+                    detail,
+                    icon: None,
+                    data: Some(format!("action:{i}")),
+                    disabled: false,
+                });
+            }
+        }
+
+        let lens_commands = self.code_lens_commands_for_cursor();
+        for (i, command) in lens_commands.iter().enumerate() {
+            items.push(PopupListItem {
+                text: format!("{}. {}", items.len() + 1, command.title),
+                // Labelled so a lens is not mistaken for a quickfix that
+                // edits the buffer — running one has an outside effect.
+                detail: Some(t!("lsp.code_lens_detail").to_string()),
+                icon: None,
+                data: Some(format!("lens:{i}")),
+                disabled: false,
+            });
+        }
+        let action_count = items.len() - lens_commands.len();
+        self.active_window_mut().pending_code_lens_commands = Some(lens_commands);
+
+        if items.is_empty() {
+            return;
+        }
 
         let mut popup = Popup::list(items, &self.theme.read().unwrap());
         popup.kind = crate::view::popup::PopupKind::Action;
@@ -2325,9 +2289,10 @@ impl Editor {
         popup.max_height = 15;
         popup.border_style = Style::default().fg(self.theme.read().unwrap().popup_border_fg);
         popup.background_style = Style::default().bg(self.theme.read().unwrap().popup_bg);
-        // Confirm reads the selected row's `data` as an index into
-        // `self.active_window_mut().pending_code_actions` — the heavy lsp_types payload
-        // stays on the Editor to keep the view crate LSP-free.
+        // Confirm reads the selected row's `data` tag as an index into
+        // `pending_code_actions` or `pending_code_lens_commands` — the heavy
+        // lsp_types payloads stay on the Editor to keep the view crate
+        // LSP-free.
         popup.resolver = crate::view::popup::PopupResolver::CodeAction;
         // Code actions are an explicit user invocation (`lsp_code_actions`
         // command); the user expects to choose immediately, so the popup
@@ -2338,11 +2303,6 @@ impl Editor {
 
         // Show the popup, replacing any existing action popup to avoid stacking
         let __buffer_id = self.active_buffer();
-        let action_count = self
-            .active_window()
-            .pending_code_actions
-            .as_ref()
-            .map_or(0, |v| v.len());
         if let Some(state) = self
             .windows
             .get_mut(&self.active_window)
@@ -2351,7 +2311,14 @@ impl Editor {
             .get_mut(&__buffer_id)
         {
             state.popups.show_or_replace(popup);
-            tracing::info!("Showing code actions popup with {} actions", action_count);
+            tracing::info!(
+                "Showing code actions popup with {} actions and {} code lenses",
+                action_count,
+                self.active_window()
+                    .pending_code_lens_commands
+                    .as_ref()
+                    .map_or(0, |c| c.len())
+            );
         }
     }
 
@@ -3768,56 +3735,6 @@ impl Editor {
         }
     }
 
-    /// Show executable code lenses attached to the current source line.
-    pub(crate) fn show_code_lenses(&mut self) {
-        let buffer_id = self.active_buffer();
-        let cursor_position = self.active_cursors().primary().position;
-        let line = self
-            .buffers()
-            .get(&buffer_id)
-            .map(|state| state.buffer.position_to_lsp_position(cursor_position).0 as u32)
-            .unwrap_or(0);
-
-        let commands: Vec<lsp_types::Command> = self
-            .active_window()
-            .code_lenses
-            .get(&buffer_id)
-            .into_iter()
-            .flatten()
-            .filter(|lens| lens.range.start.line <= line && line <= lens.range.end.line)
-            .filter_map(|lens| lens.command.clone())
-            .collect();
-
-        if commands.is_empty() {
-            self.set_status_message(t!("lsp.no_code_lenses").to_string());
-            return;
-        }
-
-        use crate::view::popup::{Popup, PopupKind, PopupListItem, PopupPosition, PopupResolver};
-        let items = commands
-            .iter()
-            .enumerate()
-            .map(|(index, command)| PopupListItem {
-                text: command.title.clone(),
-                detail: None,
-                icon: None,
-                data: Some(index.to_string()),
-                disabled: false,
-            })
-            .collect();
-        self.active_window_mut().pending_code_lens_commands = Some(commands);
-
-        let mut popup = Popup::list(items, &self.theme.read().unwrap());
-        popup.kind = PopupKind::Action;
-        popup.title = Some(t!("lsp.popup_code_lenses").to_string());
-        popup.position = PopupPosition::BelowCursor;
-        popup.width = 60;
-        popup.max_height = 15;
-        popup.resolver = PopupResolver::CodeLens;
-        popup.focused = true;
-        self.active_state_mut().popups.show_or_replace(popup);
-    }
-
     pub(crate) fn code_lens_command_at_screen_position(
         &self,
         col: u16,
@@ -3826,7 +3743,9 @@ impl Editor {
         buffer_id: BufferId,
         content_rect: ratatui::layout::Rect,
     ) -> Option<lsp_types::Command> {
-        let mappings = self.active_layout().view_line_mappings.get(&split_id)?;
+        // The rows the pane's last text pass drew, as its leaf keeps them.
+        let pane_view = self.active_window().pane_view(split_id)?;
+        let mappings = &pane_view.rows;
         let visual_row = row.saturating_sub(content_rect.y) as usize;
         let mapping = mappings.get(visual_row)?;
         if mapping.virtual_text_namespace.as_deref() != Some("lsp-code-lens") {
@@ -3849,7 +3768,7 @@ impl Editor {
             row,
             content_rect,
             gutter_width,
-            &Some(mappings.clone()),
+            Some(mappings.as_slice()),
             fallback,
             false,
             compose_width,
@@ -3894,21 +3813,33 @@ impl Editor {
             command.command
         );
         let title = command.title.clone();
-        let result = match command.command.as_str() {
-            RUST_ANALYZER_RUN_SINGLE => self.execute_rust_analyzer_runnable(&command),
-            RUST_ANALYZER_DEBUG_SINGLE => Err(
-                "Fresh does not currently provide a debugger for rust-analyzer CodeLens"
-                    .to_string(),
-            ),
-            _ => {
-                let command_id = command.command.clone();
-                let arguments = command.arguments.clone();
-                self.with_lsp_for_buffer(buffer_id, LspFeature::CodeLens, |handle, _, _| {
-                    handle.execute_command(command_id, arguments)
-                })
-                .unwrap_or_else(|| Err("no CodeLens-capable LSP server".to_string()))
+
+        // A `Command` the server did not advertise in `executeCommandProvider`
+        // is the client's to interpret, and LSP says nothing about what any
+        // such command means — its `arguments` are that server's own
+        // extension. So the core interprets none of them: a plugin claims the
+        // name (`registerLspClientCommands`) and receives it here. Sending a
+        // claimed name to the server instead would just be rejected, since the
+        // server never offered to run it.
+        if crate::services::lsp::client_commands::is_registered(&command.command) {
+            // The plugin owns the outcome *and* the reporting of it: the hook
+            // is fire-and-forget, so a success message here would be claiming
+            // something the core never observes. Only a failure to hand the
+            // command over is ours to report.
+            if let Err(error) = self.dispatch_client_lsp_command(buffer_id, &command) {
+                tracing::warn!("Failed to dispatch code lens '{}': {}", title, error);
+                self.set_status_message(t!("lsp.code_lens_failed", title = &title).to_string());
             }
-        };
+            return;
+        }
+
+        let command_id = command.command.clone();
+        let arguments = command.arguments.clone();
+        let result = self
+            .with_lsp_for_buffer(buffer_id, LspFeature::CodeLens, |handle, _, _| {
+                handle.execute_command(command_id, arguments)
+            })
+            .unwrap_or_else(|| Err("no CodeLens-capable LSP server".to_string()));
 
         if result.is_ok() {
             self.set_status_message(t!("lsp.code_lens_executed", title = &title).to_string());
@@ -3920,35 +3851,66 @@ impl Editor {
         }
     }
 
-    fn execute_rust_analyzer_runnable(
+    /// Hand a plugin-claimed LSP command to its plugin.
+    ///
+    /// Hooks are fire-and-forget, so this reports only that the command was
+    /// dispatched; whether the work succeeded — and telling the user when it
+    /// did not — belongs to the plugin that claimed the name.
+    fn dispatch_client_lsp_command(
         &mut self,
+        buffer_id: BufferId,
         command: &lsp_types::Command,
     ) -> Result<(), String> {
-        let task = rust_analyzer_code_lens_task(command)?;
-        let previous_buffer = self.active_buffer();
-        let (_, buffer_id, _) = self.active_window_mut().create_plugin_terminal(
-            crate::app::terminal::PluginTerminalSpec {
-                cwd: Some(task.cwd),
-                direction: None,
-                ratio: None,
-                focus: true,
-                persistent: false,
-                command: Some(task.command),
-                environment: task.environment,
-                title: Some(task.label),
-                env: std::collections::HashMap::new(),
-            },
-        )?;
-
-        if previous_buffer != buffer_id {
-            #[cfg(feature = "plugins")]
-            self.update_plugin_state_snapshot();
-            #[cfg(feature = "plugins")]
-            self.plugin_manager.read().unwrap().run_hook(
-                "buffer_activated",
-                crate::services::plugins::hooks::HookArgs::BufferActivated { buffer_id },
-            );
+        // Passed through as JSON rather than parsed: the shape is defined by
+        // whichever server produced it (cf. the `lsp_server_request` hook).
+        // A name can be claimed while nothing is listening — the plugin that
+        // claimed it failed to load, or was unloaded. Nothing downstream can
+        // tell us that (hooks are fire-and-forget), and the server will not
+        // run it either, so the press would do nothing at all. Check here so
+        // it is reported instead.
+        // `has_subscribers` rather than `has_hook_handlers`: both answer from
+        // the same `event_handlers` registry, but the latter blocks on a
+        // round-trip to the plugin thread — which may itself be mid-hook —
+        // and this runs on a click.
+        if !self
+            .plugin_manager
+            .read()
+            .unwrap()
+            .has_subscribers("lsp_execute_command")
+        {
+            return Err(format!(
+                "'{}' is claimed by a plugin, but no plugin is listening for it",
+                command.command
+            ));
         }
+
+        let arguments = match command.arguments.as_ref() {
+            Some(arguments) => Some(
+                serde_json::to_string(arguments)
+                    .map_err(|error| format!("could not serialize command arguments: {error}"))?,
+            ),
+            None => None,
+        };
+        let language = self
+            .buffers()
+            .get(&buffer_id)
+            .map(|state| state.language.clone())
+            .unwrap_or_default();
+
+        tracing::info!(
+            "Dispatching client LSP command '{}' to its plugin",
+            command.command
+        );
+        self.plugin_manager.read().unwrap().run_hook(
+            "lsp_execute_command",
+            crate::services::plugins::hooks::HookArgs::LspExecuteCommand {
+                command: command.command.clone(),
+                arguments,
+                buffer_id,
+                language,
+                title: command.title.clone(),
+            },
+        );
         Ok(())
     }
 
@@ -4414,11 +4376,7 @@ mod tests {
     fn test_fs() -> Arc<dyn crate::model::filesystem::FileSystem + Send + Sync> {
         Arc::new(StdFileSystem)
     }
-    use super::{
-        code_lens_command_at_column, lsp_range_contains, lsp_range_overlaps,
-        rust_analyzer_code_lens_task, CodeLensTask, Editor, RUST_ANALYZER_RUN_SINGLE,
-    };
-    use std::path::PathBuf;
+    use super::{code_lens_command_at_column, lsp_range_contains, lsp_range_overlaps, Editor};
 
     fn range(sl: u32, sc: u32, el: u32, ec: u32) -> lsp_types::Range {
         lsp_types::Range {
@@ -4741,67 +4699,6 @@ mod tests {
                 .query_lines_in_range(&state.marker_list, 0, state.buffer.len());
         assert_eq!(lines[0].1.text, "    Run");
         assert_eq!(lines[0].1.text_overlays[0].start, 4);
-    }
-
-    #[test]
-    fn rust_analyzer_run_single_builds_terminal_task() {
-        let command = Command {
-            title: "Run".to_string(),
-            command: RUST_ANALYZER_RUN_SINGLE.to_string(),
-            arguments: Some(vec![serde_json::json!({
-                "label": "run bin fresh-demo",
-                "kind": "cargo",
-                "args": {
-                    "environment": { "RUST_BACKTRACE": "1" },
-                    "cwd": "/workspace/crate",
-                    "workspaceRoot": "/workspace",
-                    "overrideCargo": "cargo +nightly",
-                    "cargoArgs": ["run", "--bin", "fresh-demo"],
-                    "executableArgs": ["--verbose"]
-                }
-            })]),
-        };
-
-        let task = rust_analyzer_code_lens_task(&command).unwrap();
-        assert_eq!(
-            task,
-            CodeLensTask {
-                label: "run bin fresh-demo".to_string(),
-                cwd: PathBuf::from("/workspace"),
-                command: vec![
-                    "cargo".to_string(),
-                    "+nightly".to_string(),
-                    "run".to_string(),
-                    "--bin".to_string(),
-                    "fresh-demo".to_string(),
-                    "--".to_string(),
-                    "--verbose".to_string(),
-                ],
-                environment: vec![("RUST_BACKTRACE".to_string(), "1".to_string())],
-            }
-        );
-    }
-
-    #[test]
-    fn rust_analyzer_shell_runnable_builds_terminal_task() {
-        let command = Command {
-            title: "Run".to_string(),
-            command: RUST_ANALYZER_RUN_SINGLE.to_string(),
-            arguments: Some(vec![serde_json::json!({
-                "label": "run shell task",
-                "kind": "shell",
-                "args": {
-                    "environment": {},
-                    "cwd": "/workspace",
-                    "program": "./script",
-                    "args": ["one", "two"]
-                }
-            })]),
-        };
-
-        let task = rust_analyzer_code_lens_task(&command).unwrap();
-        assert_eq!(task.command, ["./script", "one", "two"]);
-        assert_eq!(task.cwd, PathBuf::from("/workspace"));
     }
 
     #[test]

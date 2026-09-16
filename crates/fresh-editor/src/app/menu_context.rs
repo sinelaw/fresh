@@ -78,6 +78,7 @@ impl Editor {
             .load(std::sync::atomic::Ordering::Relaxed);
         let mouse_hover = self.config.editor.mouse_hover_enabled;
         let inlay_hints = self.config.editor.enable_inlay_hints;
+        let code_lens = self.config.editor.enable_code_lens;
         // One shared answer to "what can this buffer be asked to do", also used
         // by the command palette so the two surfaces can't drift.
         let caps = self.buffer_capabilities();
@@ -153,6 +154,7 @@ impl Editor {
             .set(context_keys::MOUSE_CAPTURE, mouse_capture)
             .set(context_keys::MOUSE_HOVER, mouse_hover)
             .set(context_keys::INLAY_HINTS, inlay_hints)
+            .set(context_keys::CODE_LENS, code_lens)
             .set(context_keys::LSP_AVAILABLE, lsp_available)
             .set(context_keys::FILE_EXPLORER_SHOW_HIDDEN, show_hidden)
             .set(context_keys::FILE_EXPLORER_SHOW_GITIGNORED, show_gitignored)

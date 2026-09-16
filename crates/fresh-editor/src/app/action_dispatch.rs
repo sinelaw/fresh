@@ -902,9 +902,6 @@ impl Editor {
             Action::LspCodeActions => {
                 self.request_code_actions()?;
             }
-            Action::LspCodeLens => {
-                self.show_code_lenses();
-            }
             Action::LspRestart => {
                 self.handle_lsp_restart();
             }
@@ -916,6 +913,9 @@ impl Editor {
             }
             Action::ToggleInlayHints => {
                 self.toggle_inlay_hints();
+            }
+            Action::ToggleCodeLens => {
+                self.toggle_code_lens();
             }
             Action::DumpConfig => {
                 self.dump_config();

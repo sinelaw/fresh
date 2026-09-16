@@ -267,4 +267,155 @@ editor.on("action_popup_result", (data) => {
   }
 });
 
+
+// ─── rust-analyzer client commands (CodeLens runnables) ──────────────────
+//
+// rust-analyzer's "▶︎ Run"/"▶︎ Run Test" CodeLens entries carry commands the
+// *client* executes, not the server: `rust-analyzer.runSingle` is absent
+// from the server's `executeCommandProvider` list, so sending it back with
+// `workspace/executeCommand` would just be rejected. LSP does not define
+// what these mean — the payload is rust-analyzer's own `Runnable` type — so
+// the editor core deliberately interprets none of it. We claim the names
+// here and translate them ourselves.
+//
+// Claiming also *enables* the lenses: rust-analyzer omits runnable CodeLens
+// entirely unless the client advertises these commands at `initialize`
+// (which the core does from the registry this feeds).
+//
+// Ref: rust-analyzer's documented LSP extensions, "Client Commands".
+
+const RUN_SINGLE = "rust-analyzer.runSingle";
+
+/** rust-analyzer's `Runnable`: a cargo invocation or a bare program. */
+type Runnable = {
+  label: string;
+} & (
+  | {
+      kind: "cargo";
+      args: {
+        environment?: Record<string, string>;
+        cwd: string;
+        overrideCargo?: string | null;
+        workspaceRoot?: string | null;
+        cargoArgs: string[];
+        executableArgs: string[];
+      };
+    }
+  | {
+      kind: "shell";
+      args: {
+        environment?: Record<string, string>;
+        cwd: string;
+        program: string;
+        args: string[];
+      };
+    }
+);
+
+/** What we hand to `createTerminal`. */
+interface RunnableTask {
+  label: string;
+  cwd: string;
+  command: string[];
+  env: Record<string, string>;
+}
+
+/**
+ * Flatten a `Runnable` into an argv.
+ *
+ * The edge cases worth knowing: `overrideCargo` is a command line rather
+ * than a path so it may be several words, `--` separates only when there
+ * are executable args, and the cwd is the workspace root when one is given.
+ * Covered end-to-end by `e2e::plugins::lsp_client_commands`, which points
+ * `overrideCargo` at a recorder script and asserts the exact argv.
+ */
+function runnableToTask(runnable: Runnable): RunnableTask {
+  if (runnable.kind === "cargo") {
+    const a = runnable.args;
+    // `overrideCargo` is a command line, not a path: "cargo +nightly".
+    const cargo = (a.overrideCargo ?? "cargo").split(/\s+/).filter((w) => w.length > 0);
+    if (cargo.length === 0) {
+      cargo.push("cargo");
+    }
+    const command = [...cargo, ...a.cargoArgs];
+    if (a.executableArgs.length > 0) {
+      command.push("--", ...a.executableArgs);
+    }
+    return {
+      label: runnable.label,
+      // Run from the workspace root when rust-analyzer names one, so the
+      // invocation matches what it would run from the crate's workspace.
+      cwd: a.workspaceRoot ?? a.cwd,
+      command,
+      env: a.environment ?? {},
+    };
+  }
+
+  const a = runnable.args;
+  return {
+    label: runnable.label,
+    cwd: a.cwd,
+    command: [a.program, ...a.args],
+    env: a.environment ?? {},
+  };
+}
+
+// One call for the whole set: a claim that arrives after a server started
+// costs a restart (LSP capabilities are fixed at `initialize`), and claiming
+// them together keeps that to at most one.
+//
+// `rust-analyzer.debugSingle` is deliberately NOT claimed. Claiming is what
+// makes rust-analyzer emit a lens at all, so claiming it would put a
+// "⚙︎ Debug" lens on every runnable that could only ever answer "fresh has
+// no debugger" (#988). Add it here when there is something to hand it to.
+editor.registerLspClientCommands([RUN_SINGLE]);
+
+editor.on("lsp_execute_command", async (data) => {
+  if (data.command !== RUN_SINGLE) {
+    return; // claimed by some other plugin
+  }
+
+  let runnable: Runnable;
+  try {
+    const args: unknown = JSON.parse(data.arguments ?? "[]");
+    if (!Array.isArray(args) || args.length === 0) {
+      throw new Error("no arguments");
+    }
+    // Read the discriminant off an untyped view: narrowing `Runnable`
+    // itself would leave `never` in the failure branch, where the actual
+    // value is exactly what we want to report.
+    const kind: unknown = (args[0] as { kind?: unknown })?.kind;
+    if (kind !== "cargo" && kind !== "shell") {
+      throw new Error(`unsupported runnable kind '${String(kind)}'`);
+    }
+    runnable = args[0] as Runnable;
+  } catch (e) {
+    editor.setStatus(`Rust LSP: could not read runnable for '${data.title}': ${String(e)}`);
+    return;
+  }
+
+  let task: RunnableTask;
+  try {
+    // Flattening reads `cargoArgs`/`args` off the payload; a runnable with
+    // the right `kind` but missing those throws here, not above.
+    task = runnableToTask(runnable);
+  } catch (e) {
+    editor.setStatus(`Rust LSP: could not read runnable for '${data.title}': ${String(e)}`);
+    return;
+  }
+
+  try {
+    await editor.createTerminal({
+      cwd: task.cwd,
+      command: task.command,
+      title: task.label,
+      env: task.env,
+      focus: true,
+      persistent: false,
+    });
+  } catch (e) {
+    editor.setStatus(`Rust LSP: could not run '${task.label}': ${String(e)}`);
+  }
+});
+
 editor.debug("rust-lsp: Plugin loaded");

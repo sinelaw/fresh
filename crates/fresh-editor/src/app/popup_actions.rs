@@ -78,33 +78,32 @@ impl Editor {
             }
 
             Some(PopupResolver::CodeAction) => {
-                let selected_index = self
+                // Rows are tagged with where they came from: the two sources
+                // execute differently (an action may need `codeAction/resolve`,
+                // a lens command may belong to a plugin), so the tag decides.
+                let selected = self
                     .active_state()
                     .popups
                     .top()
                     .and_then(|p| p.selected_item())
-                    .and_then(|item| item.data.as_ref())
-                    .and_then(|data| data.parse::<usize>().ok());
+                    .and_then(|item| item.data.clone());
                 self.hide_popup();
-                if let Some(index) = selected_index {
-                    self.execute_code_action(index);
+                if let Some(tag) = selected {
+                    match tag.split_once(':') {
+                        Some(("action", index)) => {
+                            if let Ok(index) = index.parse::<usize>() {
+                                self.execute_code_action(index);
+                            }
+                        }
+                        Some(("lens", index)) => {
+                            if let Ok(index) = index.parse::<usize>() {
+                                self.execute_code_lens(index);
+                            }
+                        }
+                        _ => tracing::warn!("Unrecognized code action row: {tag}"),
+                    }
                 }
                 self.active_window_mut().pending_code_actions = None;
-                PopupConfirmResult::EarlyReturn
-            }
-
-            Some(PopupResolver::CodeLens) => {
-                let selected_index = self
-                    .active_state()
-                    .popups
-                    .top()
-                    .and_then(|p| p.selected_item())
-                    .and_then(|item| item.data.as_ref())
-                    .and_then(|data| data.parse::<usize>().ok());
-                self.hide_popup();
-                if let Some(index) = selected_index {
-                    self.execute_code_lens(index);
-                }
                 self.active_window_mut().pending_code_lens_commands = None;
                 PopupConfirmResult::EarlyReturn
             }
@@ -412,10 +411,6 @@ impl Editor {
 
             Some(PopupResolver::CodeAction) => {
                 self.active_window_mut().pending_code_actions = None;
-                self.hide_popup();
-            }
-
-            Some(PopupResolver::CodeLens) => {
                 self.active_window_mut().pending_code_lens_commands = None;
                 self.hide_popup();
             }

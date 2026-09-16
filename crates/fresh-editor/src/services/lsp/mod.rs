@@ -115,6 +115,7 @@
 //!   (e.g., pull diagnostics only if `diagnosticProvider` is advertised)
 
 pub mod async_handler;
+pub mod client_commands;
 pub mod diagnostics;
 pub mod manager;
 pub mod semantic_tokens;
