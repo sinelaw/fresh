@@ -8232,68 +8232,135 @@ interface Machine {
 
 type Field = { value: string; cursor: number };
 
-function machinesFile(): string {
-  return editor.pathJoin(editor.getDataDir(), "orchestrator", "machines.json");
+// Machines live one JSON file per machine under
+// `<data dir>/orchestrator/machines/<id>.json`, not in a single registry file.
+//
+// **Why a directory.** This is editor-wide state, so every concurrent `fresh`
+// writes it, and a single file made each of those writes a whole-registry
+// rewrite built from a snapshot the process had read earlier. Two sessions
+// adding different machines lost one of them; worse, a connection test
+// finishing in one session rewrote every machine from a list that could be
+// minutes old. With a file per machine a write touches only the machine it is
+// about, so those two sessions no longer collide at all. It also bounds the
+// damage of a bad write to one machine rather than the registry, and makes
+// delete an `unlink` instead of a rewrite-everything-minus-one.
+//
+// It is the shape the rest of the editor already uses, for the same reason —
+// see `DirectoryContext::project_state_dir`: "Using a directory per project —
+// rather than one shared file — keeps concurrent `fresh` processes on
+// different projects from contending over a single file."
+function machinesDir(): string {
+  return editor.pathJoin(editor.getDataDir(), "orchestrator", "machines");
+}
+
+// An id is a path segment, so it has to be one that cannot escape the
+// directory or collide with the temp files `writeMachineFile` makes.
+// `newMachineId` only ever produces `m-<base36>-<base36>`; this is the guard
+// that keeps a hand-edited or future id from being load-bearing on the
+// filesystem.
+function isSafeMachineId(id: string): boolean {
+  return /^[A-Za-z0-9._-]{1,64}$/.test(id) && !id.startsWith(".");
+}
+
+function machineFile(id: string): string {
+  return editor.pathJoin(machinesDir(), `${id}.json`);
 }
 
 let machinesCache: Machine[] | null = null;
 
-// Every saved machine, by name. A missing or corrupt file is an empty
-// registry, never a crash: the dialog that writes it repairs it.
+// Forget the in-memory copy so the next read comes off disk.
+//
+// The cache exists because `loadMachines` is called from render paths. It is
+// dropped at the two moments another session's change could matter to this
+// one: opening the Machines dialog, and opening the New Workspace form. That
+// is deliberately not live-watching — a machine added elsewhere while one of
+// those is already on screen still will not appear until it is reopened — but
+// neither is ever opened showing a list this session cached earlier.
+function invalidateMachines(): void {
+  machinesCache = null;
+}
+
+function parseMachine(raw: string): Machine | null {
+  try {
+    const x = JSON.parse(raw) as Partial<Machine>;
+    if (typeof x.id !== "string" || typeof x.name !== "string") return null;
+    if (x.kind !== "ssh" && x.kind !== "kubernetes") return null;
+    return {
+      id: x.id,
+      name: x.name,
+      kind: x.kind,
+      target: x.target ?? "",
+      identity: x.identity ?? "",
+      options: x.options ?? "",
+      context: x.context ?? "",
+      namespace: x.namespace ?? "",
+      pod: x.pod ?? "",
+      path: x.path ?? "",
+      lastTest: x.lastTest ?? null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+// Every saved machine, by name. A file that will not parse is skipped rather
+// than fatal, and now costs only itself: the single-file version had to throw
+// the whole registry away to stay usable.
 function loadMachines(): Machine[] {
   if (machinesCache) return machinesCache;
   const out: Machine[] = [];
-  const raw = editor.readFile(editor.localPath(machinesFile()));
-  if (raw) {
-    try {
-      const parsed = JSON.parse(raw) as { machines?: unknown[] };
-      for (const item of parsed.machines ?? []) {
-        const x = item as Partial<Machine>;
-        if (typeof x.id !== "string" || typeof x.name !== "string") continue;
-        if (x.kind !== "ssh" && x.kind !== "kubernetes") continue;
-        out.push({
-          id: x.id,
-          name: x.name,
-          kind: x.kind,
-          target: x.target ?? "",
-          identity: x.identity ?? "",
-          options: x.options ?? "",
-          context: x.context ?? "",
-          namespace: x.namespace ?? "",
-          pod: x.pod ?? "",
-          path: x.path ?? "",
-          lastTest: x.lastTest ?? null,
-        });
-      }
-    } catch {
-      // Unreadable JSON: start over rather than refuse every dialog.
-    }
+  for (const e of editor.readDir(editor.localPath(machinesDir()))) {
+    if (!e.is_file || !e.name.endsWith(".json") || e.name.startsWith(".")) continue;
+    const raw = editor.readFile(editor.localPath(editor.pathJoin(machinesDir(), e.name)));
+    if (!raw) continue;
+    const m = parseMachine(raw);
+    // The filename is the id, so a file whose contents disagree is not one
+    // this code wrote; ignore it rather than serve two identities.
+    if (m && isSafeMachineId(m.id) && `${m.id}.json` === e.name) out.push(m);
   }
   out.sort((a, b) => a.name.localeCompare(b.name));
   machinesCache = out;
   return out;
 }
 
-function saveMachines(list: Machine[]): boolean {
-  list.sort((a, b) => a.name.localeCompare(b.name));
-  machinesCache = list;
-  editor.createDir(editor.localPath(editor.pathJoin(editor.getDataDir(), "orchestrator")));
-  return editor.writeFile(
-    editor.localPath(machinesFile()),
-    JSON.stringify({ version: 1, machines: list }, null, 2),
-  );
+// Write one machine, atomically.
+//
+// `writeFile` truncates and writes in place, so a crash or a full disk mid-write
+// leaves a half-file. Writing a temp first and renaming over the target makes
+// the replacement a single `rename(2)`: a reader sees either the old machine or
+// the new one, never a partial one. The temp sits in the same directory so the
+// rename cannot fall into the bridge's cross-device copy-then-remove path,
+// which would not be atomic.
+function writeMachineFile(m: Machine): boolean {
+  if (!isSafeMachineId(m.id)) return false;
+  if (!editor.createDir(editor.localPath(machinesDir()))) return false;
+  const tmp = editor.pathJoin(machinesDir(), `.${m.id}.${Date.now().toString(36)}.tmp`);
+  if (!editor.writeFile(editor.localPath(tmp), JSON.stringify(m, null, 2))) return false;
+  if (!editor.renamePath(editor.localPath(tmp), editor.localPath(machineFile(m.id)))) {
+    // Leaving the temp behind is litter `loadMachines` skips but a user would
+    // still find.
+    editor.removePath(editor.localPath(tmp));
+    return false;
+  }
+  return true;
 }
 
 function machineById(id: string): Machine | null {
   return loadMachines().find((m) => m.id === id) ?? null;
 }
 
+// Add or replace one machine. Unlike the registry-rewriting version this
+// replaced, it neither reads nor rewrites anybody else's machine, so a
+// concurrent session editing a different one cannot be clobbered.
 function upsertMachine(m: Machine): void {
-  saveMachines([...loadMachines().filter((x) => x.id !== m.id), m]);
+  writeMachineFile(m);
+  invalidateMachines();
 }
 
 function removeMachine(id: string): void {
-  saveMachines(loadMachines().filter((x) => x.id !== id));
+  if (!isSafeMachineId(id)) return;
+  editor.removePath(editor.localPath(machineFile(id)));
+  invalidateMachines();
 }
 
 function newMachineId(): string {
@@ -9076,6 +9143,9 @@ function machineForHost(h: SshConfigHost): Machine {
 }
 
 function openMachinesDialog(): void {
+  // Another `fresh` may have added, edited or removed a machine since this
+  // session last read them. Re-read before the list goes on screen.
+  invalidateMachines();
   yieldDockToDialog();
   const idx = machinesState?.index ?? 0;
   machinesState = { index: Math.min(idx, machinesRows().length - 1), focus: "machines" };
@@ -10534,6 +10604,10 @@ function renderForm(): void {
 }
 
 function openForm(options?: { fromPicker?: boolean; target?: RunAgentTarget }): void {
+  // Same reason as `openMachinesDialog`: the Machine picker is built from the
+  // saved machines, so re-read them rather than offer this session's cached
+  // list — a machine added in another window is otherwise unreachable here.
+  invalidateMachines();
   const lastCmd =
     (editor.getGlobalState("orchestrator.last_cmd") as string | undefined) ?? "";
   form = {
