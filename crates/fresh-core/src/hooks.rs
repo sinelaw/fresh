@@ -142,22 +142,6 @@ pub enum HookArgs {
     /// restored, and the active buffer exists. Design §3.3 (phase 3).
     Ready {},
 
-    /// The retry button on a workspace's placeholder page was pressed.
-    ///
-    /// Fired only when the editor cannot act on it alone: a session whose
-    /// backend the editor owns (a dormant remote) reconnects without asking
-    /// anyone. What is left is a workspace some plugin is *building* — the
-    /// Orchestrator's create, which owns the recipe, the worktree and the
-    /// retry — so the page's button ends up here rather than telling the
-    /// user to go and find the dock.
-    WorkspaceRetryRequested { window_id: u64 },
-
-    /// The dismiss button on a workspace's placeholder page was pressed: the
-    /// user is giving up on a workspace that never finished being built. The
-    /// plugin that is building it owns the teardown — a worktree it added, a
-    /// create spec it persisted — and the window itself.
-    WorkspaceDismissRequested { window_id: u64 },
-
     /// The editor's active authority changed (e.g. local → container,
     /// container → local). Fires after the new authority is in place
     /// and the plugin state snapshot has been refreshed, so handlers

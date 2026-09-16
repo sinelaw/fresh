@@ -3403,8 +3403,6 @@ impl Editor {
                     self.hand_key_to_editor(ev);
                 }
             }
-            UiFact::PlaceholderRetry => self.retry_placeholder_workspace(),
-            UiFact::PlaceholderDismiss => self.dismiss_placeholder_workspace(),
             UiFact::PanelKey(slot) => {
                 use crate::view::shell::widgets::Slot;
                 let Some(ev) = self.shell_key_event else {

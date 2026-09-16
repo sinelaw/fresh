@@ -6973,6 +6973,15 @@ pub struct PreparingWindowResult {
     /// The new workspace's durable identity (`ws-…`), stable across restarts.
     #[serde(default)]
     pub stable_id: String,
+    /// The placeholder's seed buffer. Mount a widget panel here
+    /// (`mountWidgetPanel`) to describe the page yourself: the plugin
+    /// building the workspace knows what it is waiting on, what failed and
+    /// what the user can do about it, so the page is its to write. The
+    /// editor's own page — name, state, one line of explanation — is only
+    /// the fallback for a window nothing has described.
+    #[serde(default)]
+    #[ts(type = "number")]
+    pub buffer_id: u64,
 }
 
 /// Result of `createWindowWithTerminal` — the ids of the new

@@ -1172,6 +1172,15 @@ type PreparingWindowResult = {
 	* The new workspace's durable identity (`ws-…`), stable across restarts.
 	*/
 	stableId: string;
+	/**
+	* The placeholder's seed buffer. Mount a widget panel here
+	* (`mountWidgetPanel`) to describe the page yourself: the plugin
+	* building the workspace knows what it is waiting on, what failed and
+	* what the user can do about it, so the page is its to write. The
+	* editor's own page — name, state, one line of explanation — is only
+	* the fallback for a window nothing has described.
+	*/
+	bufferId: number;
 };
 type CreateTerminalOptions = {
 	/**
@@ -5844,24 +5853,6 @@ interface HookEventMap {
 	};
 	window_closed: {
 		id: number;
-	};
-	/**
-	* The retry button on a workspace's placeholder page was pressed — the
-	* page a workspace shows while it is being built, or after the build
-	* failed. Fired only when the editor cannot act alone: it reconnects a
-	* dormant remote by itself, so what reaches a plugin is a workspace that
-	* plugin is building and whose recipe only it knows.
-	*/
-	workspace_retry_requested: {
-		window_id: number;
-	};
-	/**
-	* The dismiss button on that page: the user is giving up on a workspace
-	* that never finished being built. The plugin owns the teardown — a
-	* worktree it added, a spec it persisted — and the window.
-	*/
-	workspace_dismiss_requested: {
-		window_id: number;
 	};
 	active_window_changed: {
 		previous_id: number | null;

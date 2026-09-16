@@ -723,18 +723,6 @@ pub enum UiFact {
     PaneKey {
         pane: LeafId,
     },
-    /// The retry button on a workspace's placeholder page was pressed — by
-    /// click, or by Enter while the page holds the keyboard. The page is what
-    /// the user is looking at when a workspace fails to build or connect, so
-    /// the thing to do about it is on the page; the editor turns this into a
-    /// reconnect for a session whose backend it owns, and otherwise hands it
-    /// to the plugin that is building the workspace.
-    PlaceholderRetry,
-    /// The dismiss button on a workspace's placeholder page: give up on this
-    /// workspace rather than retry it. Handed to whichever plugin is building
-    /// it, which owns what "give up" has to undo (a half-made worktree, a
-    /// persisted create spec).
-    PlaceholderDismiss,
     /// A key reached the file explorer while it holds the keyboard: its
     /// header is the focus holder, and the key is the editor's to resolve in
     /// the explorer's context, which the chain names.

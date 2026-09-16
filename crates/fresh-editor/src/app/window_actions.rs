@@ -1722,6 +1722,12 @@ impl crate::app::Editor {
         window.seed_initial_layout();
         let seed_buffer = window.active_buffer();
         window.mark_buffer_read_only(seed_buffer, true);
+        // The page stands in for the workspace, so the buffer under it is
+        // bookkeeping — an untitled tab for a workspace that does not exist
+        // yet is one the user can neither use nor meaningfully close.
+        if let Some(meta) = window.buffer_metadata.get_mut(&seed_buffer) {
+            meta.hidden_from_tabs = true;
+        }
         self.windows.insert(id, window);
         self.preparing_windows.insert(
             id,

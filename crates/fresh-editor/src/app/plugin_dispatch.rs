@@ -4465,9 +4465,16 @@ impl Editor {
         self.relayout();
         #[cfg(feature = "plugins")]
         self.update_plugin_state_snapshot();
+        // The seed buffer, so the caller can describe the page itself.
+        let buffer_id = self
+            .windows
+            .get(&id)
+            .map(|w| w.active_buffer().0 as u64)
+            .unwrap_or_default();
         let api_result = fresh_core::api::PreparingWindowResult {
             window_id: id.0,
             stable_id,
+            buffer_id,
         };
         self.plugin_manager.read().unwrap().resolve_callback(
             callback_id,
@@ -5005,63 +5012,6 @@ impl Editor {
                 tracing::debug!("remote session {window_id}: reattach is plugin-driven (TODO)");
             }
         }
-    }
-
-    /// The retry button on the active window's placeholder page.
-    ///
-    /// Two kinds of stalled workspace reach this page, and only one of them
-    /// is the editor's to restart:
-    ///
-    ///   * a **dormant remote** — its backend spec is known and the editor
-    ///     owns the reconnect, so it just runs it; and
-    ///   * a **preparing** window — some plugin is building the workspace and
-    ///     owns the recipe (the worktree, the agent argv, the remote path), so
-    ///     the request goes to it. The page says "Retrying…" straight away
-    ///     rather than sitting on the old error while the plugin gets to it:
-    ///     a button that looks inert is a button people press twice.
-    pub(crate) fn retry_placeholder_workspace(&mut self) {
-        let id = self.active_window;
-        if self.dormant_remote.contains_key(&id)
-            || self
-                .windows
-                .get(&id)
-                .is_some_and(|w| w.remote_reconnect_error.is_some())
-        {
-            self.reconnect_dormant_session_if_needed(id);
-            return;
-        }
-        if let Some(prep) = self.preparing_windows.get_mut(&id) {
-            // Plain English, like the rest of this page's copy.
-            prep.message = "Retrying…".to_string();
-            prep.failed = false;
-        } else {
-            return;
-        }
-        #[cfg(feature = "plugins")]
-        self.plugin_manager.read().unwrap().run_hook(
-            "workspace_retry_requested",
-            crate::services::plugins::hooks::HookArgs::WorkspaceRetryRequested { window_id: id.0 },
-        );
-    }
-
-    /// The dismiss button on the active window's placeholder page.
-    ///
-    /// Always the plugin's: "give up on this workspace" has to undo whatever
-    /// the build got as far as doing — a worktree it added, a create spec it
-    /// persisted — and close the window. The editor knows none of that, so it
-    /// only says the word.
-    pub(crate) fn dismiss_placeholder_workspace(&mut self) {
-        let id = self.active_window;
-        if !self.preparing_windows.contains_key(&id) {
-            return;
-        }
-        #[cfg(feature = "plugins")]
-        self.plugin_manager.read().unwrap().run_hook(
-            "workspace_dismiss_requested",
-            crate::services::plugins::hooks::HookArgs::WorkspaceDismissRequested {
-                window_id: id.0,
-            },
-        );
     }
 
     fn handle_attach_remote_agent(&mut self, payload: serde_json::Value, request_id: u64) {

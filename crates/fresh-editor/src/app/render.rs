@@ -4722,6 +4722,22 @@ impl Editor {
     /// workspace isn't ready yet", and one look should mean one thing.
     fn placeholder_page(&self) -> Option<crate::view::shell::frame::Placeholder> {
         use crate::view::shell::frame::Placeholder;
+        // A plugin has described this page itself — it mounted a widget panel
+        // on the placeholder's seed buffer. Stand aside entirely: the panel
+        // renders through the ordinary pane path, with its own copy, its own
+        // controls and its own events, because the plugin building the
+        // workspace is the only thing that knows what it is waiting on and
+        // what the user can do about it. What is left here is the fallback
+        // for a window nothing has claimed — a dormant remote restored at
+        // boot, before any plugin has had a say.
+        let active_buffer = self.active_window().active_buffer();
+        if !self
+            .widget_registry
+            .panels_for_buffer(active_buffer)
+            .is_empty()
+        {
+            return None;
+        }
         let active_id = self.active_window;
         let window = self.windows.get(&active_id)?;
         let pane = window.buffers.splits().map(|(mgr, _)| {
