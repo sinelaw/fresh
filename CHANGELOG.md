@@ -8,35 +8,24 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 
 ### Features
 
-* **Orchestrator mode** - typing a bare `fresh`, with no files and no flags, now reopens the workspace you were last in, whichever directory you typed it in, with the workspace dock already on screen. The editor runs as a background daemon, so a second bare `fresh` anywhere reattaches to it rather than starting a second editor, and closing the terminal leaves your session running. There is no untitled buffer in the way: a first run lands on the welcome screen, and an empty workspace stays empty. Named files and flags are unaffected - `fresh FILE` is the editor it always was. On by default; the switch is **Orchestrator Mode** in Settings, or the checkbox at the top of the welcome screen
+* **Orchestrator mode** - a bare `fresh`, with no file or flags, reopens the workspace you were last in, dock and all, running as a background daemon. On by default, toggle it in Settings (#3306)
+* **New CLI commands** - `workspace list`, and `agent list` / `get` / `explain` / `wait` / `start`, for scripting Orchestrator workspaces and agents without reading the dock
 
 ### Bug Fixes
 
-* **A daemon never told its plugins that startup had finished** - `plugins_loaded` and `ready` fire only on the directly-launched path, so in any `fresh -a` session the Orchestrator dock never opened itself and the welcome screen never appeared, while the same plugins worked normally in a directly-launched editor
-* **The Orchestrator dock's `⋯` menu stays open** - a menu, a dropdown or any panel float raised by a *click* was dismissed again the moment the mouse button came back up, so it flashed and vanished unless you clicked fast enough to beat the redraw. Focus landings the tree queues while the panel redraws are now dropped once a later one has replaced them, instead of being replayed over the menu that opened in between
-* **A workspace created from the Orchestrator dock takes the keyboard** - the New Workspace form blurs the dock on its way in, and closing it handed focus straight back to the blurred dock; every key in the workspace it had just created then resolved in the dock's context and died, so a file opened there (Open File, quick-open) showed up without the cursor and typing did nothing
-* **Vi mode's visual `0` and `^` include the character `v` started on**, as Vim's do (#2447)
-* **Vi mode: `Y`, `[count]J` and `G`** - `Y` had no binding at all (Vim's `Y` is `yy`); `J` ignored its count, so `3J` joined two lines instead of three, and `.` would not repeat it; `G` landed on the phantom line after a trailing newline, where `x` and `dd` had nothing to act on (#2447)
-* **Vi mode's `x` and `X` no longer join lines** - `x` on an empty line, or at the end of a line, deleted the line break and pulled the next line up; `X` in column 1 did the same backwards. Vim confines both to the current line, and so does Fresh now (#2447)
-* **Vi mode's `Vj` selects two lines, not three** - visual-line `j` extended the selection a line past the caret, so `Vjd` deleted three lines (and left a stray empty one) and `Vj>` indented three. Checked against Vim 9.1 (#2447)
-* **Vi mode's visual `w` includes the character under the head**, as Vim's does - `vwd` removes one more character than `dw` (#2447)
-* **Vi mode's `.` after a change operator no longer pastes surrounding text** - `ci"foo<Esc>` then `.` on another line inserted the *first* line's text instead of what was typed (`b "a "Q" y`), because `c` entered insert mode before its queued delete had landed and the repeat captured from the pre-command cursor. The `o`/`a`/`A` half of this was fixed in #2443; this is the `c` half (#2447)
-* **Vi mode no longer carries a visual selection, a pending operator or insert mode across a buffer switch** - those are byte offsets into the buffer they were taken in, so the next operator resolved against a file no longer on screen; switching buffers now returns to normal mode, and a buffer left mid-selection has it collapsed on the way back in (#2447)
-* **Vi mode's `dj`/`dk`/`dG`/`dgg` take whole lines** - Vim treats those motions as line-wise, so an operator over one takes the lines, newline included; Fresh deleted the byte span between the two carets, cutting the tail off one line and the head off the next. `dk` on the first line and `dj` on the last now fail the whole operator, as Vim's do, instead of deleting the current line (#2447)
-* **Vi mode's visual-line mode selects upwards** - `Vk` selected no lines at all, so `Vkd` deleted nothing; the selection now grows in both directions from the anchor line, and `Vy` registers line-wise so `p` pastes it as lines (#2447)
-* **Vi mode's visual mode takes text objects and `J`** - `viw`, `vi"`, `va(` and friends had no bindings, so `viwd` deleted the wrong range; `VJ` did nothing (#2447)
-* **Vi mode's visual `b` and `$`** - `vb` selected too little to delete anything at all; `v$` stopped at the last character, where Vim's takes the line break with it (#2447)
-* **Vi mode's bracket text objects fall forward** when the caret is outside every pair, as Vim's do - `di(` from the start of `foo(bar)` empties the parentheses instead of doing nothing (#2447)
-* **Vi mode's `I` inserts before the first non-blank**, not in column 1 - column 1 is `gI` (#2447)
-* **Vi mode's `.` repeats `r`** instead of replaying whatever change came before it (#2447)
-* **Vi mode's `;` after `t` advances** instead of landing on the same column forever (#2447)
-* **Vi mode's `vh`, `vk`, `v` + text object and `vG`** - a visual selection moving backwards past its anchor shrank to nothing instead of growing the other way, so `vhd` and `vkd` deleted nothing; `vG` took the whole last line rather than stopping on its first non-blank (#2447)
-* **Vi mode's `5x` and `5r` on non-ASCII text no longer join lines** - the guard that keeps them on their own line measured bytes and compared them against a count of characters, so a line of multi-byte text read as longer than it is; `r` was not guarded at all (#2447)
-* **Vi mode's `[count]J` near the end of a file** - joining past the last line deleted the trailing newline and appended a space; visual `J` joined a single pair regardless of how many lines were selected (#2447)
-* **Vi mode's `d3G` and `d2gg` honour their counts** instead of deleting to the end (or start) of the file (#2447)
-* **Vi mode's `.` after a line-wise change** - `cj` leaves an empty line to type into, but the repeat closed the gap instead, so the text landed on the following line. A line-wise operator that cannot move (`dk` on the first line) also no longer overwrites what `.` is holding on its way to doing nothing (#2447)
-* **Stale LSP diagnostics after a vi-mode line delete** - `dd` (and any other plugin-driven edit) left the language server analysing the deleted text, so its warnings survived the edit and the save, and hover stopped working on the file (#3258, reported and fixed by @thedadams)
-* **Save All handed each language server the focused buffer's text** under every other saved file's name (#3258)
+* **Orchestrator dock polish** - the welcome screen and dock could fail to appear in a daemon session, a context menu could close itself too fast, and a workspace just created from the dock could end up not taking keyboard input (#3306, #3275)
+* **SSH workspaces** - creating one didn't always honor your `~/.ssh/config`, and hung with a plain error on an unrecognized host key instead of asking to trust it; deleting one could occasionally crash the app (#3301, #3299, #3300)
+* **Highlighted lines** (diff view, code tour) no longer hide inlay hints at the end of the line; cursor visibility there is still an open issue for code tour (#3314)
+* **`editor.scroll_offset` fixed** for files under 5000 lines with line wrap off (#3248)
+* **Markdown code block borders** no longer break while you type inside them (#3247)
+* **LSP now finds the right project folder on Windows** (#3067, reported by @Bearmancer; fixed by @56steve)
+* **Keybinding fixes** - multi-byte bindings like German `Ctrl+ü` now load from config (#3036, by @georglauterbach); a panel's Shift+Tab and Review Diff's fold shortcuts now fire (#3253); a rare case with certain Unicode letters no longer got a phantom Shift (#3302)
+* **Vi mode: many Vim-parity fixes** - `Y`, `J`, `G`, `x`/`X`, visual mode, text objects, dot-repeat, and more, checked against real Vim (#2447)
+* **Fixed stale LSP diagnostics after vi-mode edits**, and Save All sending the wrong file's content to language servers (#3258)
+
+### Internals
+
+* Minor performance and dependency updates, including a security fix for a TLS library (RUSTSEC-2026-0285)
 
 ## 0.5.1
 
@@ -49,8 +38,6 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 * **Startup crash on an empty buffer with unsaved changes** - hit crash-recovery restores where the deletion itself was the unsaved change, panicking on every launch (#3236, reported by @CC-Hsu)
 * **A closed Welcome tab's panel no longer keeps trying to repaint itself** on every resize
 * **Git gutter survives an external revert** of the open file instead of going stale until the buffer is reopened
-* **The cursor stays visible past the end of a highlighted line** - a code tour's step band, a diff row and any other full-width highlight painted their trailing cells in a single colour, and the terminal's block cursor inverts the cell it sits on, so it inverted to itself
-* **Inlay hints inside a highlighted range wear the highlight** instead of punching a hole in the band with the plain editor background
 
 ## 0.5.0
 
