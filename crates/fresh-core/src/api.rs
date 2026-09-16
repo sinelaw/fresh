@@ -3568,6 +3568,17 @@ pub enum PluginCommand {
         value: JsonValue,
     },
 
+    /// Write a single setting to the user's config file, the way the
+    /// Settings UI does — the same shape as [`Self::SetSetting`], but it
+    /// outlives the session. The host validates the path before writing;
+    /// see `Editor::handle_save_setting`.
+    SaveSetting {
+        plugin_name: String,
+        path: String,
+        #[ts(type = "unknown")]
+        value: JsonValue,
+    },
+
     /// Register one field of a plugin-defined config schema. Each field
     /// arrives independently (one per `defineConfigBoolean` / `Integer` /
     /// etc. call from the plugin's TypeScript). The host accumulates

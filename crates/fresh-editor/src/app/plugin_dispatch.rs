@@ -921,6 +921,9 @@ impl Editor {
             PluginCommand::SetSetting { path, value, .. } => {
                 self.handle_set_setting(path, value);
             }
+            PluginCommand::SaveSetting { path, value, .. } => {
+                self.handle_save_setting(path, value);
+            }
             PluginCommand::AddPluginConfigField {
                 plugin_name,
                 field_name,
@@ -3771,7 +3774,23 @@ impl Editor {
                 // `background` buffer is already in the tab bar by now:
                 // `create_virtual_buffer` adds it and seeds its view state,
                 // and only this line makes it the one on screen.
-                if !hidden_from_tabs && !background {
+                //
+                // "Behind whatever is already there" has nothing to stand
+                // behind when the pane holds a synthetic placeholder: that
+                // buffer is the editor's "I must own at least one buffer"
+                // bookkeeping, hidden from the tab bar and painted as a bare
+                // hint. A background tab parked behind it leaves the reader
+                // looking at the hint with their page one keystroke away and
+                // no sign of it — which is what Orchestrator mode's empty
+                // workspace would show the welcome screen doing on a first
+                // run. Taking the pane here displaces nothing, because there
+                // was nothing to displace.
+                let pane_is_empty = self
+                    .active_window()
+                    .buffer_metadata
+                    .get(&self.active_buffer_id())
+                    .is_some_and(|m| m.synthetic_placeholder);
+                if !hidden_from_tabs && (!background || pane_is_empty) {
                     self.set_active_buffer(buffer_id);
                     tracing::debug!("Switched to virtual buffer {:?}", buffer_id);
                 }

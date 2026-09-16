@@ -101,6 +101,20 @@ pub struct Workspace {
     /// Timestamp when workspace was saved (Unix epoch seconds)
     pub saved_at: u64,
 
+    /// When this workspace was last the foreground one, in Unix epoch
+    /// milliseconds. Stamped on activation — not on save — so it answers
+    /// "which workspace was I last working in", which `saved_at` cannot:
+    /// every materialized window is written at quit, so their save times
+    /// are all the same instant.
+    ///
+    /// Read at boot by Orchestrator mode, which reopens the highest one
+    /// regardless of the launch directory. `None` in files written before
+    /// this existed; such a workspace simply never wins the comparison,
+    /// which degrades to the launch-directory rule rather than to nothing.
+    /// Milliseconds because two switches inside one second are ordinary.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_focused_at: Option<u64>,
+
     /// Display label for this session (orchestrator). Defaults to the
     /// root basename when absent. Since windows.json was dropped, the
     /// per-dir workspace file is the sole session record, so the label
@@ -138,6 +152,19 @@ pub struct Workspace {
     /// duplicate).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stable_id: Option<String>,
+}
+
+/// Now, in Unix epoch milliseconds — the clock behind
+/// [`Workspace::last_focused_at`].
+///
+/// Milliseconds rather than the seconds `saved_at` uses: switching
+/// workspaces twice inside one second is an ordinary thing to do, and at
+/// second resolution the second switch would not outrank the first.
+pub fn now_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64
 }
 
 /// Mint a new durable workspace identity: creation-time nanoseconds plus a
@@ -1349,6 +1376,7 @@ impl Workspace {
                 .duration_since(UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs(),
+            last_focused_at: None,
             label: None,
             session_plugin_state: HashMap::new(),
             authority_spec: crate::services::authority::SessionAuthoritySpec::Local,

@@ -3244,6 +3244,40 @@ impl JsEditorApi {
             .is_ok())
     }
 
+    /// Persist a single core config setting to the user's config file.
+    ///
+    /// The durable counterpart to `setSetting`: `setSetting` patches the
+    /// running editor and is gone at exit, this writes `config.json` the way
+    /// the Settings UI does (same layer resolution, same comment-preserving
+    /// rewrite) *and* applies the value immediately, so a checkbox a plugin
+    /// draws can own a real setting.
+    ///
+    /// `path` is dot-separated (e.g. `"orchestrator_mode"`,
+    /// `"editor.tab_size"`). The host refuses a path that is not a real
+    /// config setting rather than writing a key that would be silently
+    /// dropped on the next load, and says so in the status bar.
+    ///
+    /// Returns `true` if the write was queued; it is applied asynchronously,
+    /// so a following `getConfig()` reflects it only after the editor
+    /// processes the command.
+    pub fn save_setting<'js>(
+        &self,
+        _ctx: rquickjs::Ctx<'js>,
+        path: String,
+        value: Value<'js>,
+    ) -> rquickjs::Result<bool> {
+        let json: serde_json::Value = rquickjs_serde::from_value(value)
+            .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))?;
+        Ok(self
+            .command_sender
+            .send(PluginCommand::SaveSetting {
+                plugin_name: self.plugin_name.clone(),
+                path,
+                value: json,
+            })
+            .is_ok())
+    }
+
     /// Reload theme registry from disk
     /// Call this after installing theme packages or saving new themes
     pub fn reload_themes(&self) {

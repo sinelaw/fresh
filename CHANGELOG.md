@@ -6,8 +6,13 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 
 > Most config options below can be changed in the **Settings UI** - run **Open Settings** from the command palette (`Ctrl+P`).
 
+### Features
+
+* **Orchestrator mode** - typing a bare `fresh`, with no files and no flags, now reopens the workspace you were last in, whichever directory you typed it in, with the workspace dock already on screen. The editor runs as a background daemon, so a second bare `fresh` anywhere reattaches to it rather than starting a second editor, and closing the terminal leaves your session running. There is no untitled buffer in the way: a first run lands on the welcome screen, and an empty workspace stays empty. Named files and flags are unaffected - `fresh FILE` is the editor it always was. On by default; the switch is **Orchestrator Mode** in Settings, or the checkbox at the top of the welcome screen
+
 ### Bug Fixes
 
+* **A daemon never told its plugins that startup had finished** - `plugins_loaded` and `ready` fire only on the directly-launched path, so in any `fresh -a` session the Orchestrator dock never opened itself and the welcome screen never appeared, while the same plugins worked normally in a directly-launched editor
 * **A workspace created from the Orchestrator dock takes the keyboard** - the New Workspace form blurs the dock on its way in, and closing it handed focus straight back to the blurred dock; every key in the workspace it had just created then resolved in the dock's context and died, so a file opened there (Open File, quick-open) showed up without the cursor and typing did nothing
 * **Vi mode's visual `0` and `^` include the character `v` started on**, as Vim's do (#2447)
 * **Vi mode: `Y`, `[count]J` and `G`** - `Y` had no binding at all (Vim's `Y` is `yy`); `J` ignored its count, so `3J` joined two lines instead of three, and `.` would not repeat it; `G` landed on the phantom line after a trailing newline, where `x` and `dd` had nothing to act on (#2447)
