@@ -471,35 +471,25 @@ one and not the other.
 
 ## The rest
 
-**F8 — fixed, and the report was right.** The worktree and branch belong to
-cross-machine session recovery: every lifecycle action that mutates the archive
-manifest records the session list on `refs/heads/<user>/fresh-sessions`, which is
-maintained through a worktree of its own at
-`<data dir>/orchestrator/.sync-workspace` so it does not disturb the user's
-`git worktree` set. It fires on archive, delete and unarchive — not on create,
-which is why it does not show up if you only look after making a workspace.
+**F8 — superseded: the branch is gone.** The report was right that a
+`fresh/fresh-sessions` branch and a `.sync-workspace` worktree appeared in the
+user's repository unannounced. They belonged to cross-machine session recovery:
+every lifecycle action that mutated the archive manifest recorded the session
+list on that branch, through a worktree of its own. It fired on archive, delete
+and unarchive — not on create, which is why it does not show up if you only
+look after making a workspace.
 
-The report asked for a one-line disclosure. It goes in the archive and delete
-confirmations, for the same reason F9's line does: those dialogs already
-enumerate what the action does, and a list that careful reads as "and nothing
-else". Writing a branch into the user's repository is a
-larger omission than the surviving branch was. (At the time it was also pushed
-to origin; that part is gone now.) The branch name in the line is
-derived, not hard-coded, so it names the ref the user will actually find:
+The first fix here was a one-line disclosure in the archive and delete
+confirmations, on the same reasoning as F9's line: those dialogs enumerate what
+the action does, and a list that careful reads as "and nothing else", so an
+omission reads as a promise. That was the right treatment for a mechanism worth
+keeping.
 
-```
-This will:
-  • stop all workspace processes
-  • run `git worktree remove`
-  • drop the workspace record
-  • keep the branch — `git worktree remove` does not delete it
-  • update fresh/fresh-sessions — Fresh's own session list, kept on this machine
-```
-
-The line said "pushed to origin" when this was first written, because that is
-what happened. The push has since been removed — see "Investigated before
-touching: what the `fresh/fresh-sessions` push does" below — so the line now
-says where the list stays instead.
+It was not worth keeping. The mechanism has since been removed outright — see
+"Investigated before touching" below for why the design rejects a central
+session list at all — and the disclosure line went with it. There is nothing
+left to disclose: archive and delete now touch the workspace's own worktree and
+the editor's own data dir, and nothing in the user's repository.
 
 **F7 — fixed.** The counter advanced only inside `runLocalCreate`; a remote
 create bakes its name in at capture and never goes through there, and the branch
@@ -616,8 +606,7 @@ This will:                                    This will:
   • stop all workspace processes                • stop all workspace processes
   • run `git worktree remove`                   • leave the worktree and its files where they are
   • keep the branch — … does not delete it      • drop the workspace record
-  • drop the workspace record                   • update fresh/fresh-sessions — …
-  • update fresh/fresh-sessions — …
+  • drop the workspace record
                                               [ ] Also remove the worktree and its files
 Uncommitted changes will be lost.
                                               [ Cancel ]  [ Confirm Delete ]
@@ -625,6 +614,10 @@ Uncommitted changes will be lost.
 
 [ Cancel ]  [ Confirm Delete ]
 ```
+
+(Both panes carried a fifth line, `• update fresh/fresh-sessions — …`, when this
+was written. That mechanism has since been removed entirely — see F8 — so the
+line is gone from both.)
 
 Checked by default, because removing the worktree is what Delete has always
 done: this adds a way to keep the files, it does not quietly change what the
@@ -1078,9 +1071,10 @@ to `origin`. Confirmed: after one delete, `origin` grew
 `deleted 1 workspace(s)` and nothing on screen mentions the push at all. The
 failure is silent; the branch and worktree remain locally.
 
-**Judgement: it should not push by default.** Proposed first, as instructed;
-the proposal was accepted and the push is now **removed** (see "Resolution"
-below). The reasoning:
+**Judgement: it should not push by default.** Proposed first, as instructed.
+The proposal was accepted — and then overtaken: the whole mechanism is now
+removed, not just the push (see "Resolution"). The reasoning against the push
+was:
 
 1. A local delete is not a network operation. Nothing in the flow suggests one,
    and the user is given no chance to decline before their remote is written to.
@@ -1105,34 +1099,58 @@ remote and the branch.
 
 ### Resolution
 
-The push is removed. `syncSessions` still creates the `.sync-workspace`
-worktree, still commits `sessions.json` to the local `<user>/fresh-sessions`
-branch — so the snapshot a future recovery feature needs is still being kept —
-and simply stops there. No setting was added: "don't write to a shared remote
-when someone deletes a local row" is the correct default, not a preference, and
-a setting for it would be one more thing to explain for a feature that has no
-reader yet. When cross-machine recovery is actually built, the push belongs
-with it, as something the user turns on and can watch fail.
+**The mechanism is gone, not just the push.** Stopping at the push was fixing
+the symptom that happened to be visible. The objection is one level up: this
+codebase deliberately has no central session list, and the sync branch
+reintroduced one — in the worst available location.
 
-The confirmation line changed with it, in all 15 locales:
+`orchestrator_persistence.rs` opens by stating the design:
 
-```diff
--  • update fresh/fresh-sessions — Fresh's own session list, pushed to origin
-+  • update fresh/fresh-sessions — Fresh's own session list, kept on this machine
-```
+> The session registry is the directory set. There is no central session-list
+> file. A session *is* a directory (one session per dir), and the registry is
+> the per-dir workspace cache.
 
-Covered by `deleting_a_workspace_does_not_push_anything_to_origin`
-(`orchestrator_attach_worktree.rs`), which adds a real bare `origin` to the
-fixture — the thing the original study lacked — deletes two workspaces, waits
-for the sync to finish, and asserts `origin` still has no refs.
+Discovery scans `<data>/workspaces/` at boot, garbage-collects entries whose
+directory is gone, and assigns ids by sorted canonical root. The same module
+documents a migration that folded an older central `orchestrator/windows.json`
+into the per-dir files and retired it to `windows.json.retired.bak` — so
+"central list → directory set" is a direction this code had already taken once.
+The sync branch walked it back, and put the list inside the user's working
+repository, which is precisely where the rest of the design keeps state *out
+of* (issue #1991: state lives under the platform data dir, never the working
+tree).
 
-The waiting is the fiddly part, and the first version of the test got it wrong:
-it waited only for the local snapshot branch, which is committed *during* the
-sync, and then checked `origin` — winning a race against the push that used to
-follow. That version passed against the pushing code, which is to say it proved
-nothing. The condition is now "the branch exists **and** the footer's `↻` is
-gone", and `↻` shows for exactly as long as the sync is in flight, so it can
-only become true after the push would have run. Verified both ways: with the
-push put back the test fails with
-`refs there are now: ["refs/heads/fresh/fresh-sessions"]`, and passes with it
-removed.
+Nothing read the snapshot back either — cross-machine recovery is still
+documented as designed-but-deferred (`orchestrator-sessions.md:406`) — so it
+was write-only: a branch and a worktree the user never made, serving no reader.
+
+Removed: `syncSessions`, `triggerSyncAsync`, `buildSyncSnapshot`,
+`deriveSyncUser`/`envEmailLocalPart`, `syncWorkspacePath`, the
+`SyncStatus`/`syncError` state and the `↻`/`⤒` footer indicator, both call
+sites, and `confirm.sync_line` in all 15 locales.
+
+The confirmation's disclosure line went with it. That line existed to admit to
+something the dialog was doing; with the mechanism gone there is nothing to
+admit to, and the list — which a careful reader takes as "and nothing else
+happens" — is true again without it.
+
+One thing is deliberately kept: `isInternalWorktreePath` still filters
+`.sync-workspace`. Nothing creates one now, but anyone who ran a build that had
+it still has one registered in their `git worktree list`, and without the
+filter that leftover would surface as a stray discovered session row on
+upgrade.
+
+Covered by `deleting_a_workspace_touches_neither_the_repo_nor_its_origin`
+(`orchestrator_attach_worktree.rs`), which gives the fixture a real bare
+`origin` — the thing the original study lacked — deletes two workspaces, and
+asserts the absence of all of it: no refs in `origin`, no new branch in the
+repository, no `.sync-workspace` worktree registered.
+
+**A note on the test that came before it.** The first version asserted the
+*surviving* half: it waited for the local snapshot branch as proof the sync had
+run, then checked `origin`. That raced the push and passed against the pushing
+code — it proved nothing, and was only caught by putting the push back and
+re-running rather than trusting a green result. Fixing it meant waiting for the
+branch *and* for the footer's in-flight indicator to clear. All of that
+scaffolding existed to time an operation that should not have been happening;
+asserting the absence of the whole mechanism needs none of it.
