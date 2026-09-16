@@ -8938,10 +8938,16 @@ log("STOPPED")
 
     // Clangd reports the diagnostic at line 5 (0-indexed), char 0 - the empty line
     // AFTER "int x". The ● gutter marker should appear on that line or the int x line.
-    // Content area starts at screen row 2 (after menu bar and tab bar).
-    // File line 4 (int x) = screen row 5, file line 5 (empty) = screen row 6.
-    let intx_row = 2 + 3; // file line 4 (1-indexed) → screen row 5
-    let diag_row = 2 + 4; // file line 5 (1-indexed, empty trailing line) → screen row 6
+    //
+    // The rows are found, not counted from the top: what sits above the buffer
+    // is pane chrome that changes — a breadcrumb row joined the tab bar — and a
+    // counted offset silently moves onto the wrong line when it does.
+    let intx_row = harness
+        .screen_to_string()
+        .lines()
+        .position(|line| line.contains("int x"))
+        .expect("the 'int x' line is on screen");
+    let diag_row = intx_row + 1;
     let intx_content = harness.get_screen_row(intx_row);
     let diag_content = harness.get_screen_row(diag_row);
 
