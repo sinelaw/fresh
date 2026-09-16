@@ -47,6 +47,15 @@ pub struct EditorServerConfig {
     pub plugins_enabled: bool,
     /// Whether to auto-load ~/.config/fresh/init.ts (requires `plugins_enabled`).
     pub init_enabled: bool,
+    /// Boot into Orchestrator mode: bring back the workspace that was last
+    /// focused rather than the one matching `working_dir`, and leave the
+    /// launch directory's empty buffer out of the way (see
+    /// `Config::orchestrator_mode`).
+    ///
+    /// Set from the `--orchestrator-mode` flag the bare-`fresh` client
+    /// forwards. The daemon cannot infer it: `working_dir` and the config
+    /// look identical whether the client was `fresh` or `fresh -a`.
+    pub orchestrator_mode: bool,
     /// Authority to install at boot.  `None` means `Authority::local()`,
     /// which is the standard daemon-mode default (principle 6 of
     /// `AUTHORITY_DESIGN.md`).  The CLI `ssh://` / `user@host:path`
@@ -844,6 +853,7 @@ impl EditorServer {
                 ),
             ),
             false,
+            self.config.orchestrator_mode,
         )
         .map_err(|e| io::Error::other(format!("Failed to create editor: {}", e)))?;
 
@@ -937,6 +947,26 @@ impl EditorServer {
                 None,
             );
         }
+
+        // The two startup lifecycle hooks, in the order the in-process path
+        // fires them (main.rs): `plugins_loaded` once the registry and
+        // init.ts are in, then `ready` once the workspace is restored and
+        // the startup files are open.
+        //
+        // The daemon used to fire neither, which is not a small difference:
+        // `ready` is where the Orchestrator opens its dock and the welcome
+        // screen opens itself, so both were simply absent from every
+        // `fresh -a` session while working in a directly-launched one. The
+        // plugins were loaded and their commands worked — only the "we have
+        // finished starting up" signal never came. Orchestrator mode is
+        // daemon-only, so it would have inherited exactly that.
+        //
+        // `queue_file_open` above only queues; draining it here keeps the
+        // in-process path's guarantee that a plugin branching on "is a real
+        // file open?" sees the startup files rather than racing them.
+        editor.fire_plugins_loaded_hook();
+        editor.process_pending_file_opens();
+        editor.fire_ready_hook();
 
         self.terminal = Some(terminal);
         self.editor = Some(editor);
@@ -1065,6 +1095,13 @@ impl EditorServer {
         if let Err(e) = editor.start_recovery_session() {
             tracing::warn!("Rebuild: failed to start recovery session: {}", e);
         }
+
+        // A rebuild is a new editor with a new plugin registry, so it starts
+        // up like any other — same hooks, same order as `initialize_editor`.
+        // The in-process path does this too: its restart loop runs the whole
+        // startup sequence per iteration.
+        editor.fire_plugins_loaded_hook();
+        editor.fire_ready_hook();
 
         self.terminal = Some(terminal);
         self.editor = Some(editor);
@@ -1720,6 +1757,7 @@ mod wave_dismiss_tests {
             dir_context: DirectoryContext::for_testing(&temp_dir),
             plugins_enabled: false,
             init_enabled: false,
+            orchestrator_mode: false,
             startup_authority: None,
             workspace_trust: Arc::new(
                 crate::services::workspace_trust::WorkspaceTrust::permissive(),

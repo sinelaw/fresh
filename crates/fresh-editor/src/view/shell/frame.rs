@@ -817,7 +817,10 @@ pub struct Placeholder {
     /// What it is doing — connecting, building, or why it could not.
     pub state: String,
     pub hint: String,
-    /// What to do about it, when there is something; empty otherwise.
+    /// What to do about it, when there is something; empty otherwise. Prose,
+    /// not a control: this is the editor's fallback page, drawn only for a
+    /// window no plugin has described. A plugin that mounts a panel on the
+    /// placeholder's buffer draws its own page, with its own buttons.
     pub retry: String,
     /// The window's active pane, whose content this page stands in for: the
     /// page is the base's focus holder and hands its keys to the editor as
@@ -839,11 +842,24 @@ fn placeholder_page(p: &Placeholder) -> Node<UiMsg> {
             false => text(s).theme(theme),
         }
     };
+    // The state line is the one that carries an error, and an error is a
+    // sentence, not a label: `SSH could not connect to <host>. Check that the
+    // host is reachable, the user is right…` ran off the pane and took the
+    // actionable half of itself with it. Wrapped, and held to a measure —
+    // centred prose at full terminal width is unreadable for the opposite
+    // reason.
+    let state = match p.state.is_empty() {
+        true => row().h(Sizing::Cells(1)),
+        false => text(&p.state)
+            .theme(plain.clone())
+            .wrap()
+            .w(Sizing::Cells(PLACEHOLDER_MEASURE)),
+    };
     let page = col().theme(plain.clone()).align(Align::Center).children([
         row().flex(1),
         line(&p.detail, attrs("editor.fg", "editor.bg", &["bold"])),
         row().h(Sizing::Cells(1)),
-        line(&p.state, plain),
+        state,
         row().h(Sizing::Cells(1)),
         line(&p.hint, dim.clone()),
         line(&p.retry, dim),
@@ -856,11 +872,18 @@ fn placeholder_page(p: &Placeholder) -> Node<UiMsg> {
             .autofocus()
             .on_key(move |e: &fresh_ui::Event| {
                 e.stop();
+                // Enter is the page's own key while it offers a retry: the
+                // page holds focus in the pane's stead, so without this the
+                // one control on screen could only be reached with a mouse.
                 Some(UiMsg::Ui(super::msg::UiFact::PaneKey { pane }))
             }),
         None => page,
     }
 }
+
+/// Width the placeholder page sets its prose to. Wide enough for an ssh
+/// error's first clause, narrow enough that centred text still scans.
+const PLACEHOLDER_MEASURE: u16 = 72;
 
 /// A region with nothing in it — a hidden row, an empty column — as a named
 /// node with no content, so its rectangle is still a layout query.

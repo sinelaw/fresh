@@ -40,6 +40,11 @@ pub enum RemoteAttachMode {
     Window {
         label: String,
         command: Option<Vec<String>>,
+        /// Grow this preparing window into the session rather than minting a
+        /// new one, so the user is already standing in the workspace when the
+        /// connect lands — and is already looking at the page that reports it
+        /// if the connect fails. `None` mints a window, as before.
+        adopt: Option<fresh_core::WindowId>,
     },
     /// Reconnect an **existing dormant** session: a remote session restored
     /// from disk (its backend spec known, but its live authority still the

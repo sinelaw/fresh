@@ -1623,6 +1623,10 @@ pub struct EditorStateSnapshot {
     /// after the restart that activation triggers.
     #[serde(default)]
     pub env_active: bool,
+    /// Launched by a bare `fresh` in Orchestrator mode. The launch, not the
+    /// `orchestrator_mode` preference, which stays on for `fresh FILE`.
+    #[serde(default)]
+    pub orchestrator_mode: bool,
     /// The environment core detected in the workspace, as a JSON string
     /// (`{"name","kind","snippet"}`) or empty when none is detected. The
     /// env-manager plugin reads this via `editor.detectedEnv()` instead of
@@ -1800,6 +1804,7 @@ impl EditorStateSnapshot {
             authority_label: String::new(),
             workspace_trust_level: String::new(),
             env_active: false,
+            orchestrator_mode: false,
             detected_env: String::new(),
             diagnostics: Arc::new(HashMap::new()),
             folding_ranges: Arc::new(HashMap::new()),
@@ -3562,6 +3567,17 @@ pub enum PluginCommand {
     /// Write a single setting to the runtime overlay for this session.
     /// `path` is dot-separated (e.g. "editor.tab_size"). Last write wins.
     SetSetting {
+        plugin_name: String,
+        path: String,
+        #[ts(type = "unknown")]
+        value: JsonValue,
+    },
+
+    /// Write a single setting to the user's config file, the way the
+    /// Settings UI does — the same shape as [`Self::SetSetting`], but it
+    /// outlives the session. The host validates the path before writing;
+    /// see `Editor::handle_save_setting`.
+    SaveSetting {
         plugin_name: String,
         path: String,
         #[ts(type = "unknown")]
@@ -6957,6 +6973,15 @@ pub struct PreparingWindowResult {
     /// The new workspace's durable identity (`ws-…`), stable across restarts.
     #[serde(default)]
     pub stable_id: String,
+    /// The placeholder's seed buffer. Mount a widget panel here
+    /// (`mountWidgetPanel`) to describe the page yourself: the plugin
+    /// building the workspace knows what it is waiting on, what failed and
+    /// what the user can do about it, so the page is its to write. The
+    /// editor's own page — name, state, one line of explanation — is only
+    /// the fallback for a window nothing has described.
+    #[serde(default)]
+    #[ts(type = "number")]
+    pub buffer_id: u64,
 }
 
 /// Result of `createWindowWithTerminal` — the ids of the new

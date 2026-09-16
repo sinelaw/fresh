@@ -409,6 +409,7 @@ fn switching_to_a_dormant_remote_session_starts_reconnect() -> anyhow::Result<()
             window: true,
             label: None,
             command: None,
+            adopt_window: None,
         }),
     );
 

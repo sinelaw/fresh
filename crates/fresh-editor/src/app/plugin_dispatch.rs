@@ -252,6 +252,7 @@ impl Editor {
             .as_str()
             .to_string();
         snapshot.env_active = self.authority().env_provider.is_active();
+        snapshot.orchestrator_mode = self.orchestrator_mode();
 
         // Core is the *only* place that detects which environment a workspace
         // has. The env-manager plugin reads this resolved result via
@@ -920,6 +921,9 @@ impl Editor {
             }
             PluginCommand::SetSetting { path, value, .. } => {
                 self.handle_set_setting(path, value);
+            }
+            PluginCommand::SaveSetting { path, value, .. } => {
+                self.handle_save_setting(path, value);
             }
             PluginCommand::AddPluginConfigField {
                 plugin_name,
@@ -3771,7 +3775,23 @@ impl Editor {
                 // `background` buffer is already in the tab bar by now:
                 // `create_virtual_buffer` adds it and seeds its view state,
                 // and only this line makes it the one on screen.
-                if !hidden_from_tabs && !background {
+                //
+                // "Behind whatever is already there" has nothing to stand
+                // behind when the pane holds a synthetic placeholder: that
+                // buffer is the editor's "I must own at least one buffer"
+                // bookkeeping, hidden from the tab bar and painted as a bare
+                // hint. A background tab parked behind it leaves the reader
+                // looking at the hint with their page one keystroke away and
+                // no sign of it — which is what Orchestrator mode's empty
+                // workspace would show the welcome screen doing on a first
+                // run. Taking the pane here displaces nothing, because there
+                // was nothing to displace.
+                let pane_is_empty = self
+                    .active_window()
+                    .buffer_metadata
+                    .get(&self.active_buffer_id())
+                    .is_some_and(|m| m.synthetic_placeholder);
+                if !hidden_from_tabs && (!background || pane_is_empty) {
                     self.set_active_buffer(buffer_id);
                     tracing::debug!("Switched to virtual buffer {:?}", buffer_id);
                 }
@@ -4445,9 +4465,16 @@ impl Editor {
         self.relayout();
         #[cfg(feature = "plugins")]
         self.update_plugin_state_snapshot();
+        // The seed buffer, so the caller can describe the page itself.
+        let buffer_id = self
+            .windows
+            .get(&id)
+            .map(|w| w.active_buffer().0 as u64)
+            .unwrap_or_default();
         let api_result = fresh_core::api::PreparingWindowResult {
             window_id: id.0,
             stable_id,
+            buffer_id,
         };
         self.plugin_manager.read().unwrap().resolve_callback(
             callback_id,
@@ -5037,6 +5064,8 @@ impl Editor {
         // is set the main loop spawns a born-attached new window instead of
         // restarting the whole editor.
         let window_mode = spec.window;
+        // The placeholder the Orchestrator already put the user in, if any.
+        let window_adopt = spec.adopt_window.map(fresh_core::WindowId);
         let window_label = spec.label.clone();
         let window_command = spec.command.clone();
         // A remote session gets its **own** fresh trust + env handles — never
@@ -5070,6 +5099,7 @@ impl Editor {
                 crate::services::async_bridge::RemoteAttachMode::Window {
                     label: window_label.clone().unwrap_or_else(|| label.to_string()),
                     command: window_command.clone(),
+                    adopt: window_adopt,
                 }
             } else {
                 crate::services::async_bridge::RemoteAttachMode::Restart

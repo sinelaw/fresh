@@ -603,6 +603,7 @@ mod integration_tests {
             dir_context,
             plugins_enabled: false,
             init_enabled: false,
+            orchestrator_mode: false,
             startup_authority: None,
             workspace_trust: std::sync::Arc::new(
                 crate::services::workspace_trust::WorkspaceTrust::permissive(),
@@ -780,6 +781,7 @@ mod integration_tests {
             dir_context,
             plugins_enabled: false,
             init_enabled: false,
+            orchestrator_mode: false,
             startup_authority: None,
             workspace_trust: std::sync::Arc::new(
                 crate::services::workspace_trust::WorkspaceTrust::permissive(),
@@ -964,6 +966,7 @@ mod integration_tests {
             dir_context,
             plugins_enabled: false,
             init_enabled: false,
+            orchestrator_mode: false,
             startup_authority: None,
             workspace_trust: std::sync::Arc::new(
                 crate::services::workspace_trust::WorkspaceTrust::permissive(),
@@ -1320,6 +1323,7 @@ mod integration_tests {
             dir_context,
             plugins_enabled: false,
             init_enabled: false,
+            orchestrator_mode: false,
             startup_authority: None,
             workspace_trust: std::sync::Arc::new(
                 crate::services::workspace_trust::WorkspaceTrust::permissive(),
@@ -1461,6 +1465,7 @@ mod integration_tests {
             dir_context,
             plugins_enabled: false,
             init_enabled: false,
+            orchestrator_mode: false,
             startup_authority: None,
             workspace_trust: std::sync::Arc::new(
                 crate::services::workspace_trust::WorkspaceTrust::permissive(),
@@ -1584,6 +1589,7 @@ mod integration_tests {
             dir_context,
             plugins_enabled: false,
             init_enabled: false,
+            orchestrator_mode: false,
             startup_authority: Some(startup_auth),
             workspace_trust: std::sync::Arc::new(
                 crate::services::workspace_trust::WorkspaceTrust::permissive(),
@@ -1740,6 +1746,7 @@ mod integration_tests {
             dir_context,
             plugins_enabled: false,
             init_enabled: false,
+            orchestrator_mode: false,
             startup_authority: None,
             workspace_trust: std::sync::Arc::new(
                 crate::services::workspace_trust::WorkspaceTrust::permissive(),

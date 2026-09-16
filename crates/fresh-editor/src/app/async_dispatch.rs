@@ -1564,7 +1564,11 @@ impl Editor {
                 self.active_window_mut().authority_spec = spec;
                 self.install_authority_with_keepalive(authority, keepalive, root);
             }
-            crate::services::async_bridge::RemoteAttachMode::Window { label, command } => {
+            crate::services::async_bridge::RemoteAttachMode::Window {
+                label,
+                command,
+                adopt,
+            } => {
                 tracing::info!(
                     "Remote attach connected ({}); opening born-attached window at {}",
                     authority.display_label,
@@ -1574,9 +1578,14 @@ impl Editor {
                 // exists. Resolve on success; on a window-creation
                 // failure reject so the plugin keeps its dialog
                 // open with the reason and no half-built window.
-                match self
-                    .create_remote_session_window(authority, keepalive, root, label, command, spec)
-                {
+                // Only adopt a window that is still there and still a
+                // placeholder: the user may have closed it while the connect
+                // ran, and growing a *live* window into this session would
+                // take somebody's workspace away from them.
+                let adopt = adopt.filter(|id| self.preparing_windows.contains_key(id));
+                match self.create_remote_session_window(
+                    authority, keepalive, root, label, command, spec, adopt,
+                ) {
                     Ok(_) => self.resolve_remote_attach(request_id),
                     Err(e) => self.reject_remote_attach(request_id, e),
                 }

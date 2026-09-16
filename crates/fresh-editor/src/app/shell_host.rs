@@ -1888,6 +1888,21 @@ impl Editor {
         }
     }
 
+    /// The widget the *tree* holds the keyboard on right now, as the panel's
+    /// own key — `None` when focus is outside any described widget, or when
+    /// there is no tree yet.
+    ///
+    /// Read by [`UiFact::WidgetFocus`] to tell a live landing from one a later
+    /// settle has already replaced; see the note there.
+    pub(super) fn tree_focused_widget_key(&self) -> Option<String> {
+        let ui = self.shell_ui.as_ref()?;
+        let id = ui.focused()?;
+        ui.key_of(id)
+            .as_ref()
+            .and_then(crate::view::shell::widgets::widget_key_of)
+            .map(str::to_string)
+    }
+
     /// Apply what the tree decided on its own since the last input: the
     /// facts `apply_autofocus` leaves in `Ui::pending_messages` when a frame
     /// settles focus.
@@ -2353,6 +2368,26 @@ impl Editor {
                     return;
                 };
                 if self.widget_registry.focus_key(&key) == Some(widget.as_str()) {
+                    return;
+                }
+                // **Only while it is still true.**
+                //
+                // This fact is a *gain* the tree fired at some past settle, and
+                // gains are queued (`Ui::pending_messages`) until the next
+                // input drains them — so a batch can carry two, and the first
+                // is a landing the second already superseded. The tree itself
+                // is the authority on where focus is *now*: a gain it no longer
+                // agrees with describes a frame that has been laid out over,
+                // and applying it walks the panel's focus backwards.
+                //
+                // The dock's `⋯` was that walk. Its press focused the button
+                // (click-to-focus), the menu opened and took the keyboard, and
+                // the two frames in between queued `dock-menu` and then
+                // `menu-pick`. Both landed on the release: `dock-menu` first,
+                // which the plugin reads as focus leaving its menu — so the
+                // menu closed on the release of the very click that opened it,
+                // and only a click fast enough to beat the frames left it up.
+                if self.tree_focused_widget_key().is_some_and(|k| k != widget) {
                     return;
                 }
                 // **Through the same door every other focus move uses.** This

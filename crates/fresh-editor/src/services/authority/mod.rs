@@ -431,6 +431,9 @@ impl Authority {
                     window: false,
                     label: None,
                     command: None,
+                    // A reconnect spec describes the backend, not a one-off
+                    // attach: there is no placeholder to grow into.
+                    adopt_window: None,
                 })
             }
             CommandWrap::Kube { target, base_env } => {
@@ -446,6 +449,9 @@ impl Authority {
                     window: false,
                     label: None,
                     command: None,
+                    // A reconnect spec describes the backend, not a one-off
+                    // attach: there is no placeholder to grow into.
+                    adopt_window: None,
                 })
             }
             CommandWrap::Direct | CommandWrap::Prefix(_) => SessionAuthoritySpec::Local,
@@ -890,6 +896,20 @@ pub struct RemoteAgentSpec {
     /// Optional agent argv for the new window's seed terminal (window mode).
     #[serde(default)]
     pub command: Option<Vec<String>>,
+    /// Grow this **preparing** window into the session instead of minting a
+    /// new one (window mode only). The Orchestrator opens a placeholder the
+    /// user lands in while the connect runs, so a remote workspace is
+    /// somewhere to *be* from the moment it is asked for — and so a connect
+    /// that fails has a page of its own to report on, rather than only a line
+    /// in the dock. Ignored when the window is gone by the time the connect
+    /// lands (the user closed it), which falls back to minting one.
+    ///
+    /// Never serialized: this is an instruction for *one* attach, not part of
+    /// the backend's identity, and a `WindowId` is a per-process handle that
+    /// would be meaningless — and possibly point at someone else's
+    /// workspace — by the time a persisted spec was read back.
+    #[serde(default, skip_serializing)]
+    pub adopt_window: Option<u64>,
 }
 
 /// Transport kind for [`RemoteAgentSpec`]. Tagged + additive so new

@@ -1022,6 +1022,17 @@ pub struct Editor {
     /// Event broadcaster for control events (observable by external systems)
     event_broadcaster: crate::model::control_event::EventBroadcaster,
 
+    /// This editor was launched by a bare `fresh` with
+    /// [`Config::orchestrator_mode`](crate::config::Config::orchestrator_mode)
+    /// on, so it is a workspace switcher first and a file editor second.
+    ///
+    /// Read through [`Editor::orchestrator_mode`]. Set once at
+    /// construction and never mutated: it describes how the process was
+    /// started, which cannot change while it runs — unlike the config field
+    /// of the same name, which is a preference the user can flip mid-session
+    /// and which only governs the *next* bare launch.
+    orchestrator_mode: bool,
+
     // bookmarks moved onto `Window` (Step 0f).
     /// Macro record/playback subsystem (owns `macros`, `recording`,
     /// `last_register`, and the `playing` guard flag).

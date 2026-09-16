@@ -135,6 +135,7 @@ impl Scenario {
                 window: true,
                 label: Some(label.to_string()),
                 command: None,
+                adopt_window: None,
             },
         );
         let filename = format!(

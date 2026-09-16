@@ -164,6 +164,7 @@ fn ssh_agent_spec() -> SessionAuthoritySpec {
         window: true,
         label: None,
         command: None,
+        adopt_window: None,
     })
 }
 

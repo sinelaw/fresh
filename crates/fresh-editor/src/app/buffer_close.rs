@@ -194,7 +194,10 @@ impl Editor {
         self.purge_buffer_state(id);
 
         if closing_active {
-            if created_empty_buffer && self.config.file_explorer.auto_open_on_last_buffer_close {
+            if created_empty_buffer
+                && self.fills_an_empty_workspace()
+                && self.config.file_explorer.auto_open_on_last_buffer_close
+            {
                 self.focus_file_explorer();
             }
             if let Some(group_leaf) = return_to_group {
@@ -431,10 +434,11 @@ impl Editor {
                 // placeholder: hidden from tabs *and* skipped during pane
                 // rendering, so the workspace genuinely looks blank.
                 let new_id = self.new_buffer();
-                if !self
-                    .config
-                    .editor
-                    .auto_create_empty_buffer_on_last_buffer_close
+                if !(self.fills_an_empty_workspace()
+                    && self
+                        .config
+                        .editor
+                        .auto_create_empty_buffer_on_last_buffer_close)
                 {
                     if let Some(meta) = self.active_window_mut().buffer_metadata.get_mut(&new_id) {
                         meta.hidden_from_tabs = true;

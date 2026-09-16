@@ -700,11 +700,11 @@ function hero(): WidgetSpec[] {
     ? "A terminal text editor and IDE. It opens instantly and grows into an IDE."
     : "A terminal text editor and IDE.";
   return [
-    // The off switch rides the top edge, right-aligned, clear of the
-    // mark: a control for "I don't want this screen" belongs where
-    // someone who doesn't want the screen looks first, and putting it
-    // above the wordmark keeps the mark the first thing *read*.
-    ...startupRow(),
+    // The two switches ride the top edge, above the mark: a control for
+    // "I don't want this screen" belongs where someone who doesn't want
+    // the screen looks first, and putting them above the wordmark keeps
+    // the mark the first thing *read*.
+    ...orchestratorRow(),
     blank(),
     ...art,
     ...air(2),
@@ -730,32 +730,70 @@ function chipsRow(): WidgetSpec {
   return centred(segs);
 }
 
-/** The startup switch, right-aligned on the page's top edge.
+/** The orchestrator switch: the page's first row, and the first thing
+ *  on it.
  *
- *  A bare button rather than a `toggle`: it draws the same `[✓]` box,
- *  but a button can say what it does under the pointer and a toggle
- *  cannot. */
-function startupRow(): WidgetSpec[] {
-  // The page's first row says so itself, rather than the outline naming
-  // `startupToggle` from a table: a table is a string that has to match a
-  // widget key defined somewhere else, and `scrollToWidget` on a key that
-  // no longer exists does nothing at all — a silent first row in the
-  // Contents section, which is exactly what building the outline as the
-  // page is built exists to rule out.
-  outline.push({ label: "Top of the page", key: "startupToggle", depth: 0 });
-  const on = showOnStartup();
-  const label = `${on ? "[✓]" : "[ ]"} Show this screen on startup`;
+ *  It sits above the mark, alone and left-aligned, because it is the one
+ *  control here that decides what `fresh` *is* on the next launch —
+ *  whether typing `fresh` reopens the workspace you were in or opens an
+ *  editor on the directory you happen to be standing in. Everything else
+ *  on this page teaches; this one thing acts, so it goes where the eye
+ *  lands first rather than into a settings dialog the reader does not
+ *  know exists yet.
+ *
+ *  Paired with, not merged into, the startup toggle on the right: they
+ *  read as one row of switches but mean different things — this one
+ *  governs the editor, that one governs this page. */
+function orchestratorRow(): WidgetSpec[] {
+  // The page's first row says so itself, rather than the outline naming a
+  // key from a table: a table is a string that has to match a widget key
+  // defined somewhere else, and `scrollToWidget` on a key that no longer
+  // exists does nothing at all — a silent first row in the Contents
+  // section, which is exactly what building the outline as the page is
+  // built exists to rule out.
+  outline.push({ label: "Top of the page", key: "orchestratorToggle", depth: 0 });
+  const on = orchestratorMode();
+  const label = `${on ? "[✓]" : "[ ]"} Open in the orchestrator`;
   return [
     row(
-      flexSpacer(),
       button(label, {
-        key: "startupToggle",
+        key: "orchestratorToggle",
         bare: true,
         style: LINK,
         hoverStyle: HOVER_LINK,
       }),
+      flexSpacer(),
+      startupToggle(),
     ),
+    centred([
+      {
+        text: on
+          ? "`fresh` reopens your last workspace, with the dock, in a background daemon."
+          : "`fresh` opens a plain editor here, in this terminal.",
+        style: { fg: C.muted, italic: true },
+      },
+    ]),
   ];
+}
+
+/** The startup switch, the right-hand half of the page's top row.
+ *
+ *  A bare button rather than a `toggle`: it draws the same `[✓]` box,
+ *  but a button can say what it does under the pointer and a toggle
+ *  cannot.
+ *
+ *  Returns the button alone. It used to own its whole row, and pairing it
+ *  with the orchestrator switch meant either nesting a full-width row
+ *  inside another or letting the two compete for the same edge. */
+function startupToggle(): WidgetSpec {
+  const on = showOnStartup();
+  const label = `${on ? "[✓]" : "[ ]"} Show this screen on startup`;
+  return button(label, {
+    key: "startupToggle",
+    bare: true,
+    style: LINK,
+    hoverStyle: HOVER_LINK,
+  });
 }
 
 // ── The three doors ──────────────────────────────────────────────────
@@ -2106,6 +2144,34 @@ editor.defineConfigBoolean("showOnStartup", {
   description: "Open the welcome screen when Fresh starts, as a tab behind whatever is already open.",
 });
 
+/** What this page last asked orchestrator mode to become, while the
+ *  editor is still catching up.
+ *
+ *  `saveSetting` is queued, not immediate, so the repaint that follows a
+ *  click still reads the old value out of the config snapshot — the box
+ *  would stay `[✓]` after being switched off and only right itself on
+ *  some later repaint. Holding the asked-for value here bridges exactly
+ *  that gap, and `orchestratorMode` drops it the moment the snapshot
+ *  agrees, so the config stays the authority rather than this variable. */
+let orchestratorPending: boolean | null = null;
+
+/** Orchestrator mode, read from the *core* config rather than this
+ *  plugin's own settings: it is one switch that governs the whole
+ *  launch — daemon, dock, which workspace comes back — and the welcome
+ *  page is one of several places that shows it, not its owner. On by
+ *  default, so an unset value reads as on. */
+function orchestratorMode(): boolean {
+  const cfg = (editor.getConfig() ?? {}) as { orchestrator_mode?: boolean };
+  const live = cfg.orchestrator_mode !== false;
+  if (orchestratorPending === null) return live;
+  if (orchestratorPending === live) {
+    // The write landed; the config is the authority again.
+    orchestratorPending = null;
+    return live;
+  }
+  return orchestratorPending;
+}
+
 /** The footer toggle writes plugin global state, which persists across
  *  restarts; the declared config field is the fallback, so the Settings
  *  UI still owns the setting for anyone who never touches the toggle.
@@ -2707,6 +2773,25 @@ function activateKey(k: string): void {
     case "act_ws_dock":
       editor.executeAction("toggle_dock_focus");
       return;
+    case "orchestratorToggle": {
+      // The one control on this page that writes a *core* setting, so it
+      // goes through `saveSetting`: the value has to outlive the session
+      // to mean anything — it decides what the next bare `fresh` does,
+      // and the next bare `fresh` is a different process.
+      const next = !orchestratorMode();
+      orchestratorPending = next;
+      editor.saveSetting("orchestrator_mode", next);
+      // Say what changed and, because the change lands on the *next*
+      // launch rather than this one, when it takes effect. A switch whose
+      // effect you cannot see is a switch you cannot tell you flipped.
+      editor.setStatus(
+        next
+          ? "Orchestrator mode on — `fresh` reopens your last workspace"
+          : "Orchestrator mode off — `fresh` opens an editor here",
+      );
+      render();
+      return;
+    }
     case "startupToggle": {
       // Say so. This is the one control on the page that changes a
       // persisted setting, it is reachable from the keyboard, and the

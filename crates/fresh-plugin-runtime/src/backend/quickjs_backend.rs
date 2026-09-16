@@ -2413,6 +2413,17 @@ impl JsEditorApi {
             .unwrap_or(false)
     }
 
+    /// Launched by a bare `fresh` in Orchestrator mode. Exposed to JS as
+    /// `editor.orchestratorMode()`. The launch, not the `orchestrator_mode`
+    /// preference, which stays on for `fresh FILE`. Plugins in the mode use
+    /// it to override their own settings.
+    pub fn orchestrator_mode(&self) -> bool {
+        self.state_snapshot
+            .read()
+            .map(|s| s.orchestrator_mode)
+            .unwrap_or(false)
+    }
+
     /// The environment core detected in the workspace, as a JSON string
     /// (`{name, kind, snippet}`) or empty when none. Exposed to JS as
     /// `editor.detectedEnv()`. Detection lives only in core; the env-manager
@@ -3237,6 +3248,40 @@ impl JsEditorApi {
         Ok(self
             .command_sender
             .send(PluginCommand::SetSetting {
+                plugin_name: self.plugin_name.clone(),
+                path,
+                value: json,
+            })
+            .is_ok())
+    }
+
+    /// Persist a single core config setting to the user's config file.
+    ///
+    /// The durable counterpart to `setSetting`: `setSetting` patches the
+    /// running editor and is gone at exit, this writes `config.json` the way
+    /// the Settings UI does (same layer resolution, same comment-preserving
+    /// rewrite) *and* applies the value immediately, so a checkbox a plugin
+    /// draws can own a real setting.
+    ///
+    /// `path` is dot-separated (e.g. `"orchestrator_mode"`,
+    /// `"editor.tab_size"`). The host refuses a path that is not a real
+    /// config setting rather than writing a key that would be silently
+    /// dropped on the next load, and says so in the status bar.
+    ///
+    /// Returns `true` if the write was queued; it is applied asynchronously,
+    /// so a following `getConfig()` reflects it only after the editor
+    /// processes the command.
+    pub fn save_setting<'js>(
+        &self,
+        _ctx: rquickjs::Ctx<'js>,
+        path: String,
+        value: Value<'js>,
+    ) -> rquickjs::Result<bool> {
+        let json: serde_json::Value = rquickjs_serde::from_value(value)
+            .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))?;
+        Ok(self
+            .command_sender
+            .send(PluginCommand::SaveSetting {
                 plugin_name: self.plugin_name.clone(),
                 path,
                 value: json,
