@@ -917,6 +917,9 @@ impl Editor {
             Action::ToggleInlayHints => {
                 self.toggle_inlay_hints();
             }
+            Action::ToggleCodeLens => {
+                self.toggle_code_lens();
+            }
             Action::DumpConfig => {
                 self.dump_config();
             }

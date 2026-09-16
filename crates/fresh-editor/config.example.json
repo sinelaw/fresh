@@ -1334,6 +1334,13 @@
             "checkbox": null
           },
           {
+            "label": "Toggle Code Lens",
+            "action": "toggle_code_lens",
+            "args": {},
+            "when": "lsp_available",
+            "checkbox": null
+          },
+          {
             "label": "Toggle Mouse Hover",
             "action": "toggle_mouse_hover",
             "args": {},

@@ -71,6 +71,7 @@ pub mod context_keys {
     pub const CAN_CUT: &str = "can_cut";
     pub const FORMATTER_AVAILABLE: &str = "formatter_available";
     pub const INLAY_HINTS: &str = "inlay_hints";
+    pub const CODE_LENS: &str = "code_lens";
     pub const SESSION_MODE: &str = "session_mode";
     pub const VERTICAL_SCROLLBAR: &str = "vertical_scrollbar";
     pub const HORIZONTAL_SCROLLBAR: &str = "horizontal_scrollbar";

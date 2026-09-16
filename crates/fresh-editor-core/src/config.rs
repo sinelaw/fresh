@@ -4024,6 +4024,13 @@ impl MenuConfig {
                         checkbox: Some(context_keys::INLAY_HINTS.to_string()),
                     },
                     MenuItem::Action {
+                        label: t!("menu.lsp.toggle_code_lens").to_string(),
+                        action: "toggle_code_lens".to_string(),
+                        args: HashMap::new(),
+                        when: Some(context_keys::LSP_AVAILABLE.to_string()),
+                        checkbox: Some(context_keys::CODE_LENS.to_string()),
+                    },
+                    MenuItem::Action {
                         label: t!("menu.lsp.toggle_mouse_hover").to_string(),
                         action: "toggle_mouse_hover".to_string(),
                         args: HashMap::new(),

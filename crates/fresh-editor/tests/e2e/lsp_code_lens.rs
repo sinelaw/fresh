@@ -194,3 +194,43 @@ fn test_clicking_rendered_code_lens_executes_command() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+/// "Toggle Code Lens" from the command palette hides the lenses and brings
+/// them back — the only way to turn the feature off without editing config.
+///
+/// Asserts on the rendered screen both ways round: hiding that leaves the
+/// lens drawn, or a re-enable that never re-requests, are both invisible to
+/// a test that only checks one direction.
+#[test]
+#[cfg_attr(windows, ignore = "uses a Bash fake LSP server")]
+fn test_toggle_code_lens_hides_and_restores_the_lenses() -> anyhow::Result<()> {
+    let temp_dir = tempfile::tempdir()?;
+    let (mut harness, _log_file) = open_with_code_lens_server(temp_dir.path(), "fn main() {}\n")?;
+
+    harness.wait_for_screen_contains("Run Test")?;
+    // The source stays put throughout; only the lens line comes and goes.
+    assert!(harness.screen_to_string().contains("fn main() {}"));
+
+    let toggle = |h: &mut EditorTestHarness| -> anyhow::Result<()> {
+        h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)?;
+        h.render()?;
+        h.type_text("Toggle Code Lens")?;
+        h.wait_for_screen_contains("Toggle Code Lens")?;
+        h.send_key(KeyCode::Enter, KeyModifiers::NONE)?;
+        h.render()?;
+        Ok(())
+    };
+
+    toggle(&mut harness)?;
+    harness.wait_until(|h| !h.screen_to_string().contains("Run Test"))?;
+    assert!(
+        harness.screen_to_string().contains("fn main() {}"),
+        "turning lenses off must not disturb the source:\n{}",
+        harness.screen_to_string()
+    );
+
+    toggle(&mut harness)?;
+    harness.wait_for_screen_contains("Run Test")?;
+
+    Ok(())
+}

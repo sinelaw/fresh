@@ -882,6 +882,47 @@ impl Editor {
         }
     }
 
+    /// Toggle code lens visibility.
+    pub fn toggle_code_lens(&mut self) {
+        let new_value = !self.config.editor.enable_code_lens;
+        self.config_mut().editor.enable_code_lens = new_value;
+        self.persist_config_change(config_keys::EDITOR_ENABLE_CODE_LENS, new_value);
+        // `request_code_lens_for_buffer` reads
+        // `resources.config.editor.enable_code_lens`; sync so the per-edit
+        // refresh sees the new value without waiting for a reload.
+        self.sync_windows_config();
+
+        if new_value {
+            let buffer_id = self.active_buffer();
+            self.request_code_lens_for_buffer(buffer_id);
+            self.set_status_message(t!("toggle.code_lens_enabled").to_string());
+            return;
+        }
+
+        // Drop the lenses we drew, in every window: the setting is global, so
+        // leaving a background window's lenses on screen would contradict it.
+        //
+        // By namespace rather than `virtual_texts.clear()`, which would take
+        // inlay hints, git blame and live-diff with it — everything else that
+        // renders as virtual text.
+        let namespace = crate::view::virtual_text::VirtualTextNamespace::from_string(
+            "lsp-code-lens".to_string(),
+        );
+        let window_ids: Vec<_> = self.windows.keys().copied().collect();
+        for window_id in window_ids {
+            let Some(window) = self.windows.get_mut(&window_id) else {
+                continue;
+            };
+            window.code_lenses.clear();
+            for (_, state) in &mut window.buffers {
+                state
+                    .virtual_texts
+                    .clear_namespace(&mut state.marker_list, &namespace);
+            }
+        }
+        self.set_status_message(t!("toggle.code_lens_disabled").to_string());
+    }
+
     /// Dump the current configuration to the user's config file
     pub fn dump_config(&mut self) {
         // Create the config directory if it doesn't exist

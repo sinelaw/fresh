@@ -335,6 +335,7 @@ pub enum Action {
     LspRestart,
     LspStop,
     ToggleInlayHints,
+    ToggleCodeLens,
     ToggleMouseHover,
 
     // View toggles

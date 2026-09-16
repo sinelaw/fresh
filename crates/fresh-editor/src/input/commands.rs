@@ -1464,6 +1464,13 @@ static COMMAND_DEFS: &[CommandDef] = &[
         contexts: &[Normal, FileExplorer, Terminal],
         custom_contexts: &[],
     },
+    CommandDef {
+        name_key: "cmd.toggle_code_lens",
+        desc_key: "cmd.toggle_code_lens_desc",
+        action: || Action::ToggleCodeLens,
+        contexts: &[Normal, FileExplorer, Terminal],
+        custom_contexts: &[],
+    },
     // Theme selection
     CommandDef {
         name_key: "cmd.select_theme",

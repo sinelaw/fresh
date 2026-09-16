@@ -3802,6 +3802,7 @@ pub fn action_to_events(
         | Action::LspStop
         | Action::LspToggleForBuffer
         | Action::ToggleInlayHints
+        | Action::ToggleCodeLens
         | Action::ToggleMouseHover
         | Action::ToggleLineNumbers
         | Action::ToggleLineNumbersCurrentBuffer
