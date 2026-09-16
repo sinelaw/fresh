@@ -3249,7 +3249,13 @@ fn run_open_files_command(
 
     // Start server if not running (like nvr does by default)
     let server_was_started = if !socket_paths.is_server_alive() {
-        let _pid = spawn_server_detached(session_name, ssh_url.as_deref(), locale, config)?;
+        let _pid = spawn_server_detached(&fresh::server::DaemonSpawn {
+            session_name,
+            ssh_url: ssh_url.as_deref(),
+            locale,
+            config,
+            ..Default::default()
+        })?;
 
         // Wait for server to be ready
         loop {
@@ -3288,7 +3294,7 @@ fn run_open_files_command(
         // the files have been queued.
         drop(conn);
         if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
-            return run_attach(session_name, &[], locale, config);
+            return run_attach(session_name, &[], locale, config, false);
         } else {
             eprintln!(
                 "Started a new daemon and opened {} file(s). Attach with: fresh -a{}",
@@ -5026,7 +5032,61 @@ fn run_attach_command(args: &Args) -> AnyhowResult<()> {
         &args.files,
         args.locale.as_deref(),
         args.config.as_deref(),
+        false,
     )
+}
+
+/// A bare `fresh` — no files, no flags, nothing — with
+/// `orchestrator_mode` left on.
+///
+/// The whole launch is "attach to the shared daemon, starting it if it isn't
+/// up". That is deliberately the *entire* behaviour when the daemon already
+/// runs: no files to open, no working directory to impose, nothing to
+/// reconfigure — this terminal simply becomes another view onto the editor
+/// that is already there, showing whatever workspace it was left in.
+///
+/// The daemon it starts is told `--orchestrator-mode` because it is a
+/// separate process: the shape of *this* command line is the only evidence
+/// that orchestrator mode was chosen, and it does not survive the spawn on
+/// its own (see [`fresh::server::DaemonSpawn`]).
+fn run_orchestrator_launch() -> AnyhowResult<()> {
+    run_attach(
+        Some(fresh::server::ORCHESTRATOR_DAEMON),
+        &[],
+        None,
+        None,
+        true,
+    )
+}
+
+/// Whether a bare `fresh` should launch into Orchestrator mode.
+///
+/// Two conditions, and both are about *this* invocation rather than about
+/// the editor:
+///
+///   * the command line is empty (`argv.len() == 1`) — a file or a flag,
+///     any flag, means "just this, here", and is left alone; and
+///   * stdin is a terminal — `fresh` under `$GIT_EDITOR`, in a pipe, or as
+///     a subprocess is not someone sitting down to work.
+///
+/// Only then is the config consulted, which is why this loads it rather than
+/// taking the one `initialize_app` builds: on this path we hand off to the
+/// daemon and never build an editor here at all, and on every other path
+/// this function has already answered `false` without reading anything. A
+/// config that cannot be read is not an error — it means the ordinary
+/// launch, which will report the problem properly.
+fn wants_orchestrator_launch() -> bool {
+    if std::env::args_os().count() != 1 {
+        return false;
+    }
+    if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+        return false;
+    }
+    let Ok(dir_context) = fresh::config_io::DirectoryContext::from_system() else {
+        return false;
+    };
+    let working_dir = std::env::current_dir().unwrap_or_default();
+    config::Config::load_with_layers(&dir_context, &working_dir).orchestrator_mode
 }
 
 /// `locale` and `config` are the client's own `--locale` and `--config`,
@@ -5040,6 +5100,7 @@ fn run_attach(
     files: &[String],
     locale: Option<&str>,
     config: Option<&Path>,
+    orchestrator_mode: bool,
 ) -> AnyhowResult<()> {
     use crossterm::terminal::enable_raw_mode;
     use fresh::server::protocol::{
@@ -5085,7 +5146,13 @@ fn run_attach(
         eprintln!("Starting daemon...");
 
         // Spawn server in background
-        let _pid = spawn_server_detached(session_name, ssh_url.as_deref(), locale, config)?;
+        let _pid = spawn_server_detached(&fresh::server::DaemonSpawn {
+            session_name,
+            ssh_url: ssh_url.as_deref(),
+            locale,
+            config,
+            orchestrator_mode,
+        })?;
         true
     } else {
         false

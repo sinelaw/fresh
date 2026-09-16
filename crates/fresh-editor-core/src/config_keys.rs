@@ -79,6 +79,7 @@ macro_rules! setting_keys {
 }
 
 setting_keys! {
+    ORCHESTRATOR_MODE: bool = "/orchestrator_mode";
     EDITOR_LINE_NUMBERS: bool = "/editor/line_numbers";
     EDITOR_LINE_WRAP: bool = "/editor/line_wrap";
     EDITOR_HIGHLIGHT_CURRENT_LINE: bool = "/editor/highlight_current_line";

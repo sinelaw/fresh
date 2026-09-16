@@ -31,6 +31,11 @@
       "type": "boolean",
       "default": true
     },
+    "orchestrator_mode": {
+      "description": "Master switch for Orchestrator mode (default: true).\n\nOrchestrator mode is what a bare `fresh` — no files, no flags —\nlaunches into: the editor runs as a background daemon this terminal\nattaches to, the workspace dock is on screen, and the workspace you\nwere last in comes back regardless of which directory you typed\n`fresh` in. A second bare `fresh`, anywhere, reattaches to that same\neditor rather than starting a second one.\n\nTurning it off makes a bare `fresh` what it always was: an editor in\nthis terminal, in this directory, with no daemon. Every other\ninvocation (`fresh FILE`, `fresh --cmd …`, `fresh -a …`) is unaffected\neither way — the mode is only ever chosen when the command line is\nempty, so a named file or flag always means \"just this, here\".",
+      "type": "boolean",
+      "default": true
+    },
     "editor": {
       "description": "Editor behavior settings (indentation, line numbers, wrapping, etc.)",
       "$ref": "#/$defs/EditorConfig",
