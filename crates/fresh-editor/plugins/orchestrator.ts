@@ -59,7 +59,7 @@ const editor = getEditor();
 // quiet to think reads as idle or blocked until it prints again. `blocked`
 // (a question on screen) and `done` (unseen finished work) are heuristics
 // over the output stream — see `sessionState` — good enough to drive the
-// dock's attention line, never a guarantee. `idle` is a workspace with no
+// dock's badges and its folder roll-ups, never a guarantee. `idle` is a workspace with no
 // agent terminal; `unknown` is one whose terminal has printed nothing yet,
 // which is the difference `agent wait --until` turns on.
 type AgentState = "working" | "blocked" | "done" | "idle" | "unknown";
@@ -1019,7 +1019,7 @@ editor.defineConfigEnum("notifications", {
   values: ["all", "needs-you", "off"] as const,
   default: "all",
   description:
-    "Announce a background workspace in the status bar when it needs you ('needs-you'), or also when it finishes a run ('all'). 'off' leaves only the dock's attention line.",
+    "Announce a background workspace in the status bar when it needs you ('needs-you'), or also when it finishes a run ('all'). 'off' leaves only the dock's own badges.",
 });
 editor.defineConfigBoolean("notifySound", {
   default: false,
@@ -2716,7 +2716,7 @@ function sessionState(s: AgentSession): AgentState {
 }
 
 // How many live sessions currently need the user / have unseen work —
-// the numbers on the dock's attention line and in the folder roll-ups.
+// the numbers on the dock's folder roll-ups.
 function attentionCounts(ids: Iterable<number>): { blocked: number; done: number } {
   let blocked = 0;
   let done = 0;
@@ -2762,9 +2762,9 @@ function noteRecentLine(s: AgentSession, line: string): void {
 // =============================================================================
 // Attention notifications + jump
 //
-// The attention line only helps while the dock is in view, so a workspace
-// that turns `blocked` or `done` while the user is elsewhere is also
-// announced in the status bar — `● ux-3 needs you · F8 to jump` — with an
+// A badge only helps while the dock is in view, so a workspace that turns
+// `blocked` or `done` while the user is elsewhere is also announced in the
+// status bar — `● ux-3 needs you · F8 to jump` — with an
 // optional bell, and `orchestrator_jump` takes the user there and back.
 // =============================================================================
 
@@ -5296,35 +5296,6 @@ function pickProject(optionKey: string): void {
   }
 }
 
-// The dock's attention line (§2.3): how many workspaces need the user
-// and how many finished unseen work, in the same glyph + colour the rows
-// use. Both halves are optional; the separator only appears between two.
-function dockAttentionRow(att: { blocked: number; done: number }): WidgetSpec {
-  const parts: WidgetSpec[] = [];
-  if (att.blocked > 0) {
-    const sym = STATE_SYMBOL.blocked;
-    parts.push(
-      label(`${sym.glyph} ${editor.t("dock.need_you", { n: String(att.blocked) })}`, {
-        style: { fg: sym.fg, bold: true },
-      }),
-    );
-  }
-  if (att.done > 0) {
-    if (parts.length > 0) {
-      parts.push(label(" · ", { style: { fg: "ui.menu_disabled_fg" } }));
-    }
-    const sym = STATE_SYMBOL.done;
-    parts.push(
-      label(`${sym.glyph} ${editor.t("dock.done_count", { n: String(att.done) })}`, {
-        style: { fg: sym.fg, bold: true },
-      }),
-    );
-  }
-  // Counts only: the way to the workspace that needs you is `Orchestrator:
-  // Jump to Attention` (F8 by default) or the row itself.
-  return row(spacer(1), ...parts, spacer(1));
-}
-
 // The dock's title bar: "Orchestrator" as a menu-bar strip spanning the dock,
 // with the hide `×` pinned to the right edge (mouse-only, like the file
 // explorer's; the keyboard has Toggle Dock). The accelerator that focuses
@@ -5468,10 +5439,6 @@ function buildDockSpec(): WidgetSpec {
   // rest.
   const screen = editor.getScreenSize();
   const innerH = Math.max(8, screen.height > 0 ? screen.height : 30);
-  // §2.3 attention line: `● 2 need you · ✓ 1 done`, only when there is
-  // something to say — a dock with nothing pending stays as tall as before.
-  const att = attentionCounts(orchestratorSessions.keys());
-  const attentionRow: WidgetSpec[] = att.blocked > 0 || att.done > 0 ? [dockAttentionRow(att)] : [];
   // A failed workspace is reported on its own page — the one the user is
   // looking at, since creating it takes them there — not a second time here.
   // The row keeps its one-line summary, which is the list's job: *which*
@@ -5480,8 +5447,8 @@ function buildDockSpec(): WidgetSpec {
   // same error twice and two sets of Retry / Dismiss buttons.
   const failureRowCount = 0;
   // Top chrome: the title bar, the action row, the search row while it is
-  // open, the attention line when there is one, and the divider.
-  const chromeRows = 3 + searchRow.length + attentionRow.length + bottomRows + failureRowCount;
+  // open, and the divider.
+  const chromeRows = 3 + searchRow.length + bottomRows + failureRowCount;
   const listRows = Math.max(MIN_LIST_ROWS, innerH - chromeRows);
   openDialog.listVisibleRows = listRows;
   // Rows of chrome above the tree (everything in chromeRows except the
@@ -5529,7 +5496,6 @@ function buildDockSpec(): WidgetSpec {
     ...(openDialog.dockMenu?.kind === "main" ? [dockMainMenu()] : []),
     ...(openDialog.projectMenuOpen ? [dockProjectMenu()] : []),
     ...searchRow,
-    ...attentionRow,
     // The "Move to folder…" dropdown floats over the tree without
     // reflowing it.
     ...(openDialog.dockMenu?.kind === "move" ? [dockMoveMenu()] : []),
