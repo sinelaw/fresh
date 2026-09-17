@@ -1,0 +1,12 @@
+{
+  "theme": "builtin://dracula",
+  "check_for_updates": false,
+  "editor": { "restore_previous_session": false },
+  "plugins": {
+    "orchestrator": { "enabled": true },
+    "welcome_screen": { "enabled": false },
+    "dashboard": { "enabled": false },
+    "git_heatmap": { "enabled": false },
+    "vi_mode": { "enabled": false }
+  }
+}

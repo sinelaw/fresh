@@ -1,0 +1,63 @@
+// Stage the dock the clip films: eleven live sessions that are about to
+// change their minds.
+//
+// @CLIP_HOME@ is substituted by record.sh -- the staging script needs
+// absolute paths and the capture copies this directory wholesale, so the
+// template is rendered before the editor ever sees it.
+//
+// Nothing here tells the dock what to show. Every badge is derived from a
+// terminal's output, so the states are staged by handing each row a script
+// that stops talking at a chosen moment (bin/agent.sh). The dock is opened
+// by the orchestrator itself (`autoOpenDock`, on by default) -- toggling it
+// from here would only close it again.
+//
+// Two phases, because they cannot be one: creating eleven workspaces is
+// eleven layout changes, and the orchestrator discards output from a session
+// that has not spoken yet for 1.5s after each. So every agent waits for W --
+// the camera's first shutter, or LEAD seconds from now when there is no
+// camera -- and then they all start together.
+const HOME = "@CLIP_HOME@";
+const A = `${HOME}/bin/agent.sh`;
+const T = `${HOME}/tree`;
+const LEAD = 16;   // seconds from init to W, when nothing is filming
+
+const TABLE = JSON.parse(editor.readFile(`${HOME}/rows.json`));
+
+(async () => {
+  const log = (m) => editor.writeFile(`${HOME}/stage.log`, m);
+  try {
+    const orch = editor.getPluginApi("orchestrator");
+    // The defaults the clip is about: one line per workspace, nothing
+    // filtered out. Set explicitly so a stale dock setting on the recording
+    // machine cannot change what is filmed.
+    orch.setDockView("compact");
+    orch.setDockFilter({ text: "", project: null, worktrees: false, showEmpty: true });
+    const t0 = Date.now();
+    const W = (t0 + LEAD * 1000) / 1000;
+    const made = [];
+    for (const [name, proj, branch, mode, run] of TABLE.rows) {
+      const r = await orch.newWorkspace({
+        path: `${T}/${proj}`, name, worktree: true, newBranch: branch,
+        // `visit: false` keeps the launch window active throughout: a row
+        // is only ever `done` while its window is NOT the one being looked
+        // at, and activating a row would clear its unseen-work flag.
+        visit: false, teach: false,
+        agent: `${A} ${mode} ${proj} ${W} ${run}`,
+      });
+      // A workspace takes its name from whatever its terminal calls itself
+      // unless it has been given one; without this the rows would all read
+      // `claude`.
+      orch.renameWorkspace(r.workspaceId, name);
+      made.push({ name, mode, run });
+    }
+    // The launch workspace is a row like any other -- it is the checkout you
+    // read and review from, and it is the one that stays active.
+    const self = orch.listWorkspaces().find((w) => w.active);
+    if (self) orch.renameWorkspace(self.workspaceId, "main");
+    editor.writeFile(`${HOME}/staged.json`, JSON.stringify(
+      { stagedInMs: Date.now() - t0, workStartsAt: W, rows: made }, null, 2));
+    log(`staged ${made.length} in ${Date.now() - t0}ms`);
+  } catch (e) {
+    log("STAGE ERROR: " + String((e && e.message) || e));
+  }
+})();

@@ -1,0 +1,29 @@
+{
+  "_": [
+    "The dock the clip films, as a table. `mode` is not a claim about a row:",
+    "it picks which script bin/agent.sh runs, and the badge is whatever the",
+    "orchestrator makes of that script's output. `run` is how many seconds",
+    "after W (the moment every agent starts together) the row stops talking;",
+    "its badge lands `run` + IDLE_AFTER_MS (5s) later, which is what staggers",
+    "the three checks on camera.",
+    "",
+    "  working  never stops        -> *  amber",
+    "  done     stops at `run`     -> v  green, once the idle window passes",
+    "  blocked  stops, asks a y/n  -> o  red; checked before done, so it wins",
+    "  idle     one line, too short a burst to count as work -> .  dim"
+  ],
+  "projects": ["api", "web", "infra", "docs"],
+  "rows": [
+    ["auth-bypass",   "api",   "fix/auth-bypass",    "blocked", 6.2],
+    ["db-pool",       "api",   "perf/db-pool",       "done",    3.0],
+    ["rate-limit",    "api",   "feat/rate-limit",    "working", 0],
+    ["checkout",      "web",   "feat/checkout",      "working", 0],
+    ["hydration",     "web",   "fix/hydration",      "done",    4.2],
+    ["ssr-cache",     "web",   "perf/ssr-cache",     "working", 0],
+    ["otel-traces",   "infra", "feat/otel-traces",   "working", 0],
+    ["tf-drift",      "infra", "chore/tf-drift",     "idle",    0],
+    ["api-reference", "docs",  "feat/api-reference", "done",    5.4],
+    ["broken-links",  "docs",  "fix/broken-links",   "working", 0],
+    ["changelog",     "docs",  "chore/changelog",    "working", 0]
+  ]
+}

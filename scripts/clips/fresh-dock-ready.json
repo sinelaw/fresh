@@ -1,0 +1,203 @@
+{
+  "name": "fresh-dock-ready",
+  "capture": {
+    "geometry": "150x50",
+    "font": "JetBrains Mono 21",
+    "screen": "2600x2000x24",
+    "display": ":99",
+    "settle": 24,
+    "term": "xfce4-terminal",
+    "key_settle": 0.2,
+    "type_settle": 0.5,
+    "copy_dirs": {
+      "~/.cache/fresh-dock-ready/config/fresh": "{scratch}/config/fresh"
+    },
+    "env": {
+      "XDG_CONFIG_HOME": "{scratch}/config",
+      "XDG_DATA_HOME": "{scratch}/data-{pane}",
+      "XDG_STATE_HOME": "{scratch}/state-{pane}",
+      "XDG_CACHE_HOME": "{scratch}/cache-{pane}",
+      "XDG_RUNTIME_DIR": "{scratch}/run-{pane}",
+      "CLIP_HOME": "~/.cache/fresh-dock-ready",
+      "CLIP_SHOTS_DIR": "$CLIP_SHOTS_DIR"
+    },
+    "panes": {
+      "dock": {
+        "argv": [
+          "$FRESH_BIN",
+          "--no-upgrade-check",
+          "--no-restore",
+          "$CLIP_HOME/tree"
+        ]
+      }
+    },
+    "keys": [
+      {
+        "mark": true
+      },
+      {
+        "shot": "go"
+      },
+      {
+        "at": 6.5
+      },
+      {
+        "shot": "busy"
+      },
+      {
+        "at": 8.55
+      },
+      {
+        "shot": "d1"
+      },
+      {
+        "at": 9.75
+      },
+      {
+        "shot": "d2"
+      },
+      {
+        "at": 10.95
+      },
+      {
+        "shot": "d3"
+      },
+      {
+        "at": 11.75
+      },
+      {
+        "shot": "need"
+      },
+      {
+        "at": 13.0
+      },
+      {
+        "shot": "settle"
+      }
+    ]
+  },
+  "render": {
+    "size": [
+      1080,
+      1080
+    ],
+    "fps": 60,
+    "rows": 50,
+    "cols": 150,
+    "title": "fresh \u2014 orchestrator dock",
+    "note_size": 56,
+    "views": {
+      "list": {
+        "rows": [
+          0,
+          16
+        ],
+        "cols": [
+          0,
+          40
+        ]
+      }
+    },
+    "timing": {
+      "intro": 0,
+      "zoom": 0,
+      "hold": 0.8,
+      "pan": 0.15,
+      "push": 0.9,
+      "wipe": 0.7,
+      "outro": 0.25
+    },
+    "annotations": [
+      {
+        "shot": "busy",
+        "view": "list",
+        "rows": [
+          1,
+          15
+        ],
+        "cols": [
+          2,
+          20
+        ],
+        "band": false,
+        "hold": 1.8,
+        "tag": {
+          "text": "which ones are done?",
+          "at": "center-right",
+          "width": 0.4,
+          "color": "fg",
+          "bg": true
+        }
+      },
+      {
+        "shots": [
+          "d1",
+          "d2",
+          "d3"
+        ],
+        "crossfade": 0,
+        "view": "list",
+        "rows": [
+          1,
+          15
+        ],
+        "cols": [
+          2,
+          20
+        ],
+        "band": false,
+        "hold": 2.5,
+        "tag": {
+          "text": "\u2713 ready to review",
+          "at": "center-right",
+          "width": 0.4,
+          "color": "after",
+          "bg": true
+        }
+      },
+      {
+        "shot": "need",
+        "view": "list",
+        "rows": [
+          1,
+          15
+        ],
+        "cols": [
+          2,
+          20
+        ],
+        "band": false,
+        "hold": 2.7,
+        "tag": {
+          "text": "\u25cf one needs you",
+          "at": "center-right",
+          "width": 0.4,
+          "color": [
+            255,
+            85,
+            85
+          ],
+          "bg": true
+        }
+      },
+      {
+        "shot": "settle",
+        "view": "list",
+        "rows": [
+          0,
+          16
+        ],
+        "cols": [
+          0,
+          40
+        ],
+        "band": false,
+        "hold": 1.1
+      }
+    ]
+  },
+  "encode": {
+    "crf": 18,
+    "preset": "slow"
+  }
+}

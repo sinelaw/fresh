@@ -37,6 +37,7 @@ specific to filming *this* program.
 | `fresh-dock-cleanup-short.json` | solo, stepped | the same, cut to 14s for a feed |
 | `fresh-dock-cleanup-short-vertical.json` | solo, stepped | the 14s cut at 9:16 |
 | `fresh-dock-cleanup-focus.json` | solo, stepped | the dock alone: 25 rows filed one at a time, then renamed |
+| `fresh-dock-ready.json` | solo, stepped | eleven agents working; three finish, one asks, and the dock says which |
 
 `assets/<clip>/fresh/config.json` is a config directory a spec copies in, so a
 capture gets a deliberate theme and a known set of enabled plugins instead of
@@ -267,3 +268,61 @@ how much of each one moved rather than exactly — two screens of the same dock
 differ by a caret phase or a scrollbar segment without a word of text
 differing, and on a good take the rewritten rows score 11.5–20.1 mean absolute
 difference against 0.95–5.7 for those.
+
+## The badges clip
+
+`fresh-dock-ready.json` films the other half of the dock: not the list being
+tidied, but the list telling you what has happened in it. Eleven sessions are
+working, three of them finish, one stops to ask a question, and the panel
+grows a line that counts both. Nine seconds, one camera, nothing typed.
+
+**The agent is the repo's own fake agent.** Every row runs
+`crates/fresh-editor/tests/fixtures/coding_agent.py`, copied in by `record.sh`
+rather than duplicated here, so this clip and the e2e showcases film the same
+program. That matters beyond tidiness: the dock reads a terminal, and a bare
+line printer is not one. `bin/agent.sh` wraps it, and the only thing it stages
+is *when each row stops talking* — the badge is whatever `sessionState` makes
+of that.
+
+**A state is a schedule, not a claim.** A row that goes quiet at `W + run` is
+still `working` for `IDLE_AFTER_MS` (5s) and repaints 100ms after that, so
+`rows.json`'s four `run` values *are* the edit: 3.0, 4.2 and 5.4 put the three
+checks on screen 1.2s apart, and 6.2 lands the red dot last. `gen-spec.py`
+derives every shot time from the same table, so moving a row in the table
+moves the camera with it.
+
+**Two phases, because they cannot be one.** Creating eleven workspaces is
+eleven layout changes, and the orchestrator writes off output from a session
+that has not spoken yet for 1.5s after each one (`layoutChangedAt`) — plus
+1.5s after any window becomes active (`ACTIVATION_GRACE_MS`). Stage and work
+at the same time and the front of every burst is eaten. So staging runs first
+and every agent waits for W.
+
+**W is the camera's first shutter.** Not a clock: `bin/wait-for-start.py`
+holds every row until a raw `.xwd` appears in `CLIP_SHOTS_DIR`, which is the
+instant `shot` grabs, and the capture's `at:` marks are measured from the
+`mark` beside that same shot. Two clocks joined by a guessed constant drift;
+this is the same camera-leads trick the focused cut uses, with one gate
+instead of twenty-five. With no camera (staging by hand, or in tmux) it falls
+back to `LEAD` seconds after `init.ts` starts, which is what makes the fixture
+inspectable without recording anything.
+
+**`visit: false` on every create.** A row is only `done` while its window is
+*not* the one being looked at — activating it is what "seen" means — so the
+launch workspace stays active for the whole take, and it is a row in the list
+like any other (`main`).
+
+**It films this tree's plugin, not the binary's.** Plugins are embedded at
+build time, so a released `FRESH_BIN` carries the orchestrator it shipped
+with. `record.sh` copies `crates/fresh-editor/plugins/orchestrator.ts` and its
+`lib/` into the capture's config directory, where a plugin wins over the
+embedded copy — unedited, so what is on screen is the plugin as committed
+beside it.
+
+The take found a bug rather than working around one. `✓` could not appear at
+all for a workspace created in the current session: the burst clock starts on
+`lastOutputAt === null`, two of the session constructors left the field
+absent, and `undefined` matches neither that nor `>= IDLE_AFTER_MS`. Fixed in
+`orchestrator.ts`, with `e2e::orchestrator_done_badge` to keep it fixed. The
+fixture is not allowed to paper over the product; if a badge will not appear,
+that is the news.
