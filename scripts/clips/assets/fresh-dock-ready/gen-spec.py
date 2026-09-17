@@ -1,10 +1,17 @@
 #!/usr/bin/env python3
 """Generate scripts/clips/fresh-dock-ready.json -- the dock's badges, filmed.
 
-One camera, held still on the dock column, for nine seconds. Nothing is
-typed and nothing moves except the rows' own minds: eleven agents are
-working, three of them finish, one stops to ask a question, and the dock
+One camera, held still on the dock column, for nine seconds. Eleven agents
+in two folders, staged before the take; nothing is typed and nothing moves
+except the rows' own minds. Three finish, one stops to ask, and the dock
 says so before you have looked at any of them.
+
+The list never shifts, which is the point of framing it this way: every
+pixel that changes is a badge changing. (It used to shift -- the dock
+carried a `● N need you · ✓ N done` line that was drawn only while the
+counts were non-zero, so the first check to land pushed every row down one.
+That line is gone; see the withdrawal note in
+docs/internal/orchestrator-ux-redesign.md 2.3.)
 
 The whole clip is one take of real time. A row's badge is a function of when
 its terminal last spoke (orchestrator.ts: `sessionState`), so the only way to
@@ -64,18 +71,22 @@ keys += [{"at": round(lands(ASKS) + 1.7, 2)}, {"shot": "settle"}]
 # each side and then fills the rest of the frame with whatever the capture
 # has there, so a couple of columns of editor arrive whatever this says --
 # better they arrive behind the wall, where they read as the edge of a
-# window, than in front of it. 40 x 16 capture cells is 680 x 609 px, near
-# enough the viewport's own 1080 x 980 that the fit wastes nothing. Row 0 is
-# the panel's title, which is part of what the clip is showing.
+# window, than in front of it. Row 0 is the panel's title, which is part of
+# what the clip is showing, and row 16 is the last one the list uses: three
+# rows of chrome, `main`, two folder headers and eleven rows.
 DOCK = [0, 40]
-VIEW = {"rows": [0, 16], "cols": DOCK}
+VIEW = {"rows": [0, 17], "cols": DOCK}
 # What a tag hangs off. Tags are placed against the frame, so this rect only
 # decides which part of the picture the beat is nominally about; keeping it
 # off the right-hand column stops the plate being dealt over the names.
 NOTE_AT = [2, 20]
 
 GREEN = "after"           # the theme's added/ok key -- the `✓`s own colour
-RED = [255, 85, 85]       # Dracula's red, what `●` is drawn in
+
+# One plate, in the same place for the whole clip, rather than three swapping
+# over: the beats are three states of one picture, not three subjects.
+TAG = {"text": "better status icons", "at": "center-right",
+       "width": 0.40, "color": GREEN, "bg": True}
 
 spec = {
   "name": "fresh-dock-ready",
@@ -115,6 +126,19 @@ spec = {
     "title": "fresh — orchestrator dock",
     "note_size": 56,
     "views": {"list": VIEW},
+    # A tube, but a quiet one. The dock-cleanup cut wears a pronounced CRT
+    # because its subject is rows moving; this one's subject is five glyphs
+    # that have to stay legible, and a deep scanline comb is the first thing
+    # a feed's encoder turns to mush. The curve is the part that earns its
+    # place: the other four are corrections applied to a flat rectangle,
+    # which is what a screenshot already is, so without it the pass reads as
+    # a filter over a picture rather than a picture on a tube -- and the
+    # power-off needs a tube to be a power-off. `shutdown` takes the end of
+    # the clip rather than adding to it: the raster collapses to a line, the
+    # line to a dot, the dot decays, all inside beat 4's hold.
+    "crt": {"scanlines": 0.18, "gap": 4, "bloom": 0.35, "shift": 2,
+            "vignette": 0.30, "curve": 0.07,
+            "shutdown": 0.55, "off_glow": 1.5},
     # No beat carries a `head` or a `sub`, so the caption bar is never drawn
     # and the viewport takes the full frame. The words are tags, not notes: a
     # note draws a leader back to its rect, which is right when it singles
@@ -123,30 +147,24 @@ spec = {
     "timing": {"intro": 0, "zoom": 0, "hold": 0.8, "pan": 0.15,
                "push": 0.9, "wipe": 0.7, "outro": 0.25},
     "annotations": [
-      # 1 — eleven rows, all working. The question the rest of the clip
-      # answers, asked while there is nothing on screen to answer it.
-      {"shot": "busy", "view": "list", "rows": [1, 15], "cols": NOTE_AT,
-       "band": False, "hold": 1.8,
-       "tag": {"text": "which ones are done?", "at": "center-right",
-               "width": 0.40, "color": "fg", "bg": True}},
+      # 1 — eleven rows in two folders, all working.
+      {"shot": "busy", "view": "list", "rows": [1, 16], "cols": NOTE_AT,
+       "band": False, "hold": 1.8, "tag": TAG},
 
-      # 2 — three checks land, one at a time, and the panel grows a line
-      # that counts them.
+      # 2 — three checks land, one at a time, each in its own folder's stretch
+      # of the list. Nothing else on screen moves.
       {"shots": [f"d{i + 1}" for i in range(len(DONE))],
-       "crossfade": 0, "view": "list", "rows": [1, 15], "cols": NOTE_AT,
-       "band": False, "hold": 2.5,
-       "tag": {"text": "✓ ready to review", "at": "center-right",
-               "width": 0.40, "color": GREEN, "bg": True}},
+       "crossfade": 0, "view": "list", "rows": [1, 16], "cols": NOTE_AT,
+       "band": False, "hold": 2.5, "tag": TAG},
 
       # 3 — and one of them stopped to ask. Red beats green: a question is
-      # checked before unseen work, so the count line leads with it.
-      {"shot": "need", "view": "list", "rows": [1, 15], "cols": NOTE_AT,
-       "band": False, "hold": 2.7,
-       "tag": {"text": "● one needs you", "at": "center-right",
-               "width": 0.40, "color": RED, "bg": True}},
+      # checked before unseen work, so `backend` rolls up `●1 ✓1`.
+      {"shot": "need", "view": "list", "rows": [1, 16], "cols": NOTE_AT,
+       "band": False, "hold": 2.7, "tag": TAG},
 
-      # 4 — the dock, said plainly, with nothing written over it.
-      {"shot": "settle", "view": "list", "rows": [0, 16], "cols": DOCK,
+      # 4 — the dock, said plainly, with nothing written over it. The tube
+      # powers off across this beat rather than after it.
+      {"shot": "settle", "view": "list", "rows": [0, 17], "cols": DOCK,
        "band": False, "hold": 1.1}
     ]
   },
@@ -163,4 +181,7 @@ print("shots  : " + "  ".join(
     f"{k['shot']}@W+{keys[i - 1]['at']}" if "at" in keys[i - 1] else k["shot"]
     for i, k in enumerate(keys) if "shot" in k))
 print("capture: %ds settle + %.1fs of take" % (SETTLE, keys[-2]["at"]))
-print("clip   : ~%.2fs over %d beats" % (holds + travel + t["outro"], len(a)))
+total = holds + travel + t["outro"]
+off = float(spec["render"]["crt"].get("shutdown", 0))
+print("clip   : ~%.2fs over %d beats (the tube starts dying at %.2fs)"
+      % (total, len(a), total - off))

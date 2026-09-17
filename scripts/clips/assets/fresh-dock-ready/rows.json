@@ -10,20 +10,25 @@
     "  working  never stops        -> *  amber",
     "  done     stops at `run`     -> v  green, once the idle window passes",
     "  blocked  stops, asks a y/n  -> o  red; checked before done, so it wins",
-    "  idle     one line, too short a burst to count as work -> .  dim"
+    "  idle     one line, too short a burst to count as work -> .  dim",
+    "",
+    "`folder` files the row under one of the dock folders below, staged before",
+    "filming rather than during it: this clip is about what the badges say,",
+    "and a list reorganising itself is the other clip."
   ],
   "projects": ["api", "web", "infra", "docs"],
+  "folders": ["backend", "frontend"],
   "rows": [
-    ["auth-bypass",   "api",   "fix/auth-bypass",    "blocked", 6.2],
-    ["db-pool",       "api",   "perf/db-pool",       "done",    3.0],
-    ["rate-limit",    "api",   "feat/rate-limit",    "working", 0],
-    ["checkout",      "web",   "feat/checkout",      "working", 0],
-    ["hydration",     "web",   "fix/hydration",      "done",    4.2],
-    ["ssr-cache",     "web",   "perf/ssr-cache",     "working", 0],
-    ["otel-traces",   "infra", "feat/otel-traces",   "working", 0],
-    ["tf-drift",      "infra", "chore/tf-drift",     "idle",    0],
-    ["api-reference", "docs",  "feat/api-reference", "done",    5.4],
-    ["broken-links",  "docs",  "fix/broken-links",   "working", 0],
-    ["changelog",     "docs",  "chore/changelog",    "working", 0]
+    ["auth-bypass",   "api",   "fix/auth-bypass",    "blocked", 6.2, "backend"],
+    ["db-pool",       "api",   "perf/db-pool",       "done",    3.0, "backend"],
+    ["rate-limit",    "api",   "feat/rate-limit",    "working", 0,   "backend"],
+    ["otel-traces",   "infra", "feat/otel-traces",   "working", 0,   "backend"],
+    ["tf-drift",      "infra", "chore/tf-drift",     "idle",    0,   "backend"],
+    ["checkout",      "web",   "feat/checkout",      "working", 0,   "frontend"],
+    ["hydration",     "web",   "fix/hydration",      "done",    4.2, "frontend"],
+    ["ssr-cache",     "web",   "perf/ssr-cache",     "working", 0,   "frontend"],
+    ["api-reference", "docs",  "feat/api-reference", "done",    5.4, "frontend"],
+    ["broken-links",  "docs",  "fix/broken-links",   "working", 0,   "frontend"],
+    ["changelog",     "docs",  "chore/changelog",    "working", 0,   "frontend"]
   ]
 }

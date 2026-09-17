@@ -11,6 +11,10 @@
 // by the orchestrator itself (`autoOpenDock`, on by default) -- toggling it
 // from here would only close it again.
 //
+// The two folders are filed before filming, not during it. This clip is
+// about what a badge says; a list reorganising itself is the other clip,
+// and doing both at once would mean neither is legible.
+//
 // Two phases, because they cannot be one: creating eleven workspaces is
 // eleven layout changes, and the orchestrator discards output from a session
 // that has not spoken yet for 1.5s after each. So every agent waits for W --
@@ -34,8 +38,11 @@ const TABLE = JSON.parse(editor.readFile(`${HOME}/rows.json`));
     orch.setDockFilter({ text: "", project: null, worktrees: false, showEmpty: true });
     const t0 = Date.now();
     const W = (t0 + LEAD * 1000) / 1000;
+    // Folders first, so every row has somewhere to land as it is created.
+    const folderId = {};
+    for (const name of TABLE.folders) folderId[name] = orch.createFolder(name);
     const made = [];
-    for (const [name, proj, branch, mode, run] of TABLE.rows) {
+    for (const [name, proj, branch, mode, run, folder] of TABLE.rows) {
       const r = await orch.newWorkspace({
         path: `${T}/${proj}`, name, worktree: true, newBranch: branch,
         // `visit: false` keeps the launch window active throughout: a row
@@ -48,10 +55,12 @@ const TABLE = JSON.parse(editor.readFile(`${HOME}/rows.json`));
       // unless it has been given one; without this the rows would all read
       // `claude`.
       orch.renameWorkspace(r.workspaceId, name);
-      made.push({ name, mode, run });
+      orch.moveWorkspace(r.workspaceId, folderId[folder]);
+      made.push({ name, mode, run, folder });
     }
-    // The launch workspace is a row like any other -- it is the checkout you
-    // read and review from, and it is the one that stays active.
+    // The launch workspace stays at the top level: it is the checkout you
+    // read and review from rather than a task, and it is the one that stays
+    // active, which is what makes every other row's work unseen.
     const self = orch.listWorkspaces().find((w) => w.active);
     if (self) orch.renameWorkspace(self.workspaceId, "main");
     editor.writeFile(`${HOME}/staged.json`, JSON.stringify(
