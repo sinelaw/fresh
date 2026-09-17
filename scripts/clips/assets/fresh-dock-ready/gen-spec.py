@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """Generate scripts/clips/fresh-dock-ready.json -- the dock's badges, filmed.
 
-One camera, held still on the dock column. Eleven agents in two folders,
-staged before the take; nothing is typed and nothing moves except the rows'
-own minds. Seven finish, one stops to ask, and the dock says so before you
-have looked at any of them.
+Two subjects, and the cut breaks to get from one to the other. For the first
+two and a half seconds the camera is on the dock column: eleven agents in two
+folders, staged before the take, and nothing moving except the rows' own
+minds -- six finish, one stops to ask, and the dock says so before you have
+looked at any of them. Then the picture shatters and the camera lands on the
+toolbar, which is the other half of what changed.
 
 The take and the cut keep different clocks on purpose. A badge cannot land
 sooner than `run` + IDLE_AFTER_MS, so the shots are spread over thirteen
@@ -88,12 +90,31 @@ VIEW = {"rows": [0, 17], "cols": DOCK}
 # off the right-hand column stops the plate being dealt over the names.
 NOTE_AT = [2, 20]
 
+# The second subject: the panel's title and its one row of controls. The
+# toolbar is forty columns wide and two rows tall, so a square frame cannot
+# make it much bigger without cutting `/ search` and the `⋯` off the right --
+# and those are half of what there is to look at. So the move is vertical:
+# the same width, framed on the top four rows, which drops the camera's
+# centre to the toolbar and lets everything below row ~12 fall out of frame.
+# The list is still there under it; it is just no longer what the picture is
+# about.
+#
+# The scale does not change between the two views -- both are bound by the
+# same forty columns -- so this is a pan, not a zoom, and the black above the
+# panel is the evidence that the camera has reached the top of the window.
+BAR = {"rows": [0, 6], "cols": [0, 40]}
+
 GREEN = "after"           # the theme's added/ok key -- the `✓`s own colour
 
 # One plate, in the same place for the whole clip, rather than three swapping
 # over: the beats are three states of one picture, not three subjects.
 TAG = {"text": "better status icons", "at": "center-right",
        "width": 0.40, "color": GREEN, "bg": True}
+# Low, not centred: the toolbar lands in the middle of the frame on this
+# beat, and a plate at centre-right sits straight over `/ search` and the
+# `⋯` -- the half of the toolbar the beat is there to show.
+TAG2 = {"text": "cleaner toolbar", "at": "bottom-right",
+        "width": 0.40, "color": GREEN, "bg": True}
 
 spec = {
   "name": "fresh-dock-ready",
@@ -132,7 +153,7 @@ spec = {
     "rows": 50, "cols": 150,
     "title": "fresh — orchestrator dock",
     "note_size": 56,
-    "views": {"list": VIEW},
+    "views": {"list": VIEW, "bar": BAR},
     # A tube, but a quiet one. The dock-cleanup cut wears a pronounced CRT
     # because its subject is rows moving; this one's subject is five glyphs
     # that have to stay legible, and a deep scanline comb is the first thing
@@ -155,34 +176,44 @@ spec = {
     # same rect, and at 0.1 it is a cut with the edge taken off rather than a
     # transition -- which is what these are, since the camera never moves.
     "timing": {"intro": 0, "zoom": 0, "hold": 0.8, "pan": 0.1,
-               "push": 0.9, "wipe": 0.7, "outro": 0.2},
+               "push": 0.9, "wipe": 0.7, "shatter": 0.7, "outro": 0.2},
     "annotations": [
       # 1 — eleven rows in two folders, all working. Long enough to read as
-      # the before and no longer: 0.3s here plus the 0.1s crossfade puts the
-      # first check on screen four tenths of a second in.
+      # the before and no longer: 0.25s here plus the 0.1s crossfade puts the
+      # first check on screen a third of a second in.
       {"shot": "busy", "view": "list", "rows": [1, 16], "cols": NOTE_AT,
-       "band": False, "hold": 0.3, "tag": TAG},
+       "band": False, "hold": 0.25, "tag": TAG},
 
-      # 2 — seven checks, a third of a second each, alternating between the
-      # two folders and ticking their roll-ups as they go. One thing changes
-      # per still and it is always the same kind of thing, so the eye can
-      # keep up at a cadence that would be unreadable if the stills differed
-      # in any other way.
+      # 2 — six checks, a third of a second each, alternating between the two
+      # folders and ticking their roll-ups as they go. One thing changes per
+      # still and it is always the same kind of thing, so the eye can keep up
+      # at a cadence that would be unreadable if the stills differed in any
+      # other way.
       {"shots": [f"d{i + 1}" for i in range(len(DONE))],
        "crossfade": 0, "view": "list", "rows": [1, 16], "cols": NOTE_AT,
-       "band": False, "hold": 0.35 * len(DONE), "tag": TAG},
+       "band": False, "hold": 0.28 * len(DONE), "tag": TAG},
 
-      # 3 — and one of them stopped to ask. Longer than a check: it is the
-      # one badge that is not green, and the only one that asks for
-      # something. Red beats green, so `backend` rolls up `●1 ✓3`.
+      # 3 — and one of them stopped to ask. The last beat on this subject:
+      # by now the list has said everything it has to say, and holding it
+      # any longer is where the clip used to go quiet.
       {"shot": "need", "view": "list", "rows": [1, 16], "cols": NOTE_AT,
-       "band": False, "hold": 1.6, "tag": TAG},
+       "band": False, "hold": 0.5, "tag": TAG},
 
-      # 4 — the dock, said plainly, with nothing written over it. The tube
-      # powers off across this beat rather than after it, so the clip does
-      # not pay for its own ending.
-      {"shot": "settle", "view": "list", "rows": [0, 17], "cols": DOCK,
-       "band": False, "hold": 1.3}
+      # 4 — break. The list shatters outward and the toolbar sweeps in behind
+      # it. A push or a wipe would say "and then this"; the next beat is not
+      # the next state of the list, it is a different part of the same window,
+      # and only a break says so. Once per clip — twice and the picture is
+      # the effect.
+      {"shot": "settle", "view": "bar", "rows": [0, 6], "cols": DOCK,
+       "band": False, "hold": 1.6, "transition": "shatter",
+       "shatter": {"cols": 12, "rows": 9, "spread": 1.15, "spin": 14},
+       "tag": TAG2},
+
+      # 5 — the toolbar with nothing written over it, and the tube powers off
+      # across the hold rather than after it, so the clip does not pay for
+      # its own ending.
+      {"shot": "settle", "view": "bar", "rows": [0, 6], "cols": DOCK,
+       "band": False, "hold": 1.0}
     ]
   },
   "encode": {"crf": 18, "preset": "slow"}

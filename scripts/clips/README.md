@@ -273,9 +273,9 @@ difference against 0.95–5.7 for those.
 
 `fresh-dock-ready.json` films the other half of the dock: not the list being
 tidied, but the list telling you what has happened in it. Eleven sessions in
-two folders are working, seven of them finish, one stops to ask a question,
-and the folder headers roll the counts up as they go. Six seconds, one
-camera, nothing typed.
+two folders are working, six of them finish, one stops to ask a question, and
+the folder headers roll the counts up as they go. Then the picture shatters
+and the camera lands on the toolbar. Six seconds, nothing typed.
 
 **The take and the cut keep different clocks, on purpose.** A badge cannot
 land sooner than `run` + `IDLE_AFTER_MS`, so the shots are spread over
@@ -306,11 +306,11 @@ of that.
 
 **A state is a schedule, not a claim.** A row that goes quiet at `W + run` is
 still `working` for `IDLE_AFTER_MS` (5s) and repaints 100ms after that, so
-`rows.json`'s `run` column *is* the edit: seven values 0.6s apart put seven
-checks on the camera in turn, alternating between the two folders, and the
-eighth lands the red dot after them. 0.6s is what leaves a shot room to land
-cleanly between two flips (each is taken 0.4s after the one it records), and
-nothing under about
+`rows.json`'s `run` column *is* the edit: six values 0.6s apart put six checks
+on the camera in turn, alternating between the two folders, and the seventh
+lands the red dot after them. 0.6s is what leaves a shot room to land cleanly
+between two flips (each is taken 0.4s after the one it records), and nothing
+under about
 2.0 works at all — `coding_agent.py` waits 0.5s before its first line, so the
 burst is `run` minus that, and it has to clear `WORK_MIN_MS` (1.5s) with room
 to spare or the row files as idle instead. `gen-spec.py` derives every shot
@@ -345,9 +345,25 @@ with. `record.sh` copies `crates/fresh-editor/plugins/orchestrator.ts` and its
 embedded copy — unedited, so what is on screen is the plugin as committed
 beside it.
 
-One plate, `better status icons`, sits in the same place for the whole clip
-rather than three swapping over — the beats are three states of one picture,
-not three subjects — and `render.crt` ends it by powering the tube off.
+**Two subjects, and a break to get between them.** At 2.6s the list has said
+everything it has to say, which is where the clip used to go quiet; instead
+the picture shatters (`transition: "shatter"`, added to tui-clips for this)
+and the camera lands on the toolbar. A push or a wipe would have said "and
+then this", and the next beat is not the next state of the list — it is a
+different part of the same window. The two plates, `better status icons` and
+`cleaner toolbar`, ride the shatter's edge rather than cross-fading, so one
+replaces the other in place.
+
+The second framing is a pan, not a zoom. The toolbar is forty columns wide
+and two rows tall, so a square frame cannot make it much bigger without
+cutting `/ search` and the `⋯` off the right — and those are half of what
+there is to look at. Both views are bound by the same forty columns, so the
+scale never changes; what changes is the camera's centre, and the black above
+the panel is the evidence that it has reached the top of the window. The tag
+goes to `bottom-right` there for the same reason it exists: at centre-right
+it sat straight over the half of the toolbar the beat is for.
+
+`render.crt` ends the clip by powering the tube off.
 Lighter than the dock-cleanup cut wears: that one's subject is rows moving,
 this one's is five glyphs that have to stay legible, and a deep scanline comb
 is the first thing a feed's encoder turns to mush. The curve stays, because a
