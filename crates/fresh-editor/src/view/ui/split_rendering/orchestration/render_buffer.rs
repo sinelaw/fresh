@@ -678,6 +678,7 @@ pub(crate) fn draw_buffer_in_split(
             &ruler_columns,
             Style::default().theme_bg(theme, "editor.ruler_bg"),
             Style::default().theme_fg(theme, "editor.fg"),
+            theme.resolve_theme_key("editor.current_line_bg"),
             height,
         );
     }
@@ -693,6 +694,7 @@ pub(crate) fn draw_buffer_in_split(
                     &[cx as usize],
                     Style::default().theme_bg(theme, "editor.current_line_bg"),
                     Style::default().theme_fg(theme, "editor.fg"),
+                    None,
                     layout_output.render_output.content_lines_rendered,
                 );
             }
