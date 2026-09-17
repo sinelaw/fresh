@@ -369,3 +369,6 @@ assets = [
     # via dnf/rpm so updates defer to the system package manager.
     { source = "target/install-receipt.toml", dest = "/usr/share/fresh-editor/install-receipt.toml", mode = "644" },
 ]
+
+[lints]
+workspace = true

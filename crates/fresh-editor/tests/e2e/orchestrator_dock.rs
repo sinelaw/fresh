@@ -2386,8 +2386,14 @@ fn dock_context_menu_delete_shows_centered_confirmation() {
     h.mouse_click(dcol, drow).unwrap();
     h.wait_until(|h| h.screen_to_string().contains("Confirm Delete"))
         .unwrap();
-    // The destructive-action warning and the Confirm/Cancel pair render.
-    h.assert_screen_contains("Uncommitted changes will be lost");
+    // The consequence list and the Confirm/Cancel pair render.
+    //
+    // `alphaproj` is the project row — an in-place session with no worktree —
+    // so the pane deliberately carries neither the `git worktree remove` lines
+    // nor the "uncommitted changes will be lost" warning: deleting it removes
+    // no files, and the warning used to claim otherwise. The last consequence
+    // line stands in as the "the list rendered" anchor.
+    h.assert_screen_contains("drop the workspace record");
     h.assert_screen_contains("Cancel");
 }
 

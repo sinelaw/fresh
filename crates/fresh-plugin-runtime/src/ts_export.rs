@@ -327,6 +327,16 @@ type RemoteAgentSpec = {
   label?: string;
   /** Optional agent argv for the new window's seed terminal (window mode). */
   command?: string[];
+  /**
+   * Grow this *preparing* window (from `createPreparingWindow`) into the
+   * session instead of minting a new one — window mode only. The
+   * Orchestrator opens a placeholder the user lands in while the connect
+   * runs, so a remote workspace is somewhere to be from the moment it is
+   * asked for, and a connect that fails reports on that page rather than
+   * only in the dock. Ignored if the window is gone by the time the connect
+   * lands.
+   */
+  adopt_window?: number;
 };"#;
 
 /// Hand-written declaration for `RemoteIndicatorStatePayload`. Keep in

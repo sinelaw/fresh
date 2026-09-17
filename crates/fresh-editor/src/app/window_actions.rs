@@ -711,6 +711,13 @@ impl crate::app::Editor {
         // derives from the active window's root, so moving the pointer
         // is all it takes (no separate working_dir to sync).
         self.active_window = id;
+        // ...and the one thing about the switch worth remembering past
+        // this process: which workspace you were last in. Orchestrator
+        // mode reopens it on the next bare `fresh`, whatever directory
+        // that `fresh` is typed in.
+        if let Some(window) = self.windows.get_mut(&id) {
+            window.last_focused_at = crate::workspace::now_millis();
+        }
 
         // For a never-activated incoming window, install the freshly
         // built layout into the window's `splits` field and attach
@@ -1376,10 +1383,11 @@ impl crate::app::Editor {
                 // source window genuinely looks blank instead of forcing a
                 // visible `[No Name]`.
                 let new_id = self.new_buffer();
-                if !self
-                    .config
-                    .editor
-                    .auto_create_empty_buffer_on_last_buffer_close
+                if !(self.fills_an_empty_workspace()
+                    && self
+                        .config
+                        .editor
+                        .auto_create_empty_buffer_on_last_buffer_close)
                 {
                     if let Some(meta) = self.active_window_mut().buffer_metadata.get_mut(&new_id) {
                         meta.hidden_from_tabs = true;
@@ -1509,6 +1517,7 @@ impl crate::app::Editor {
         label: String,
         command: Option<Vec<String>>,
         spec: crate::services::authority::SessionAuthoritySpec,
+        adopt: Option<WindowId>,
     ) -> Result<WindowId, String> {
         match self.create_window_with_terminal(
             root.clone(),
@@ -1520,9 +1529,12 @@ impl crate::app::Editor {
             None,
             None,
             false,
-            // Remote sessions are born attached to their connected backend
-            // rather than growing out of a local placeholder.
-            None,
+            // A remote session is born attached to its connected backend, but
+            // it can still grow out of the placeholder the user has been
+            // sitting in since they asked for it — the same adoption the local
+            // path uses, which is what keeps the window id, the durable
+            // workspace id and the dock slot across the connect.
+            adopt,
         ) {
             Ok((window_id, _terminal, _buffer)) => {
                 self.session_keepalives.insert(window_id, keepalive);
@@ -1710,6 +1722,12 @@ impl crate::app::Editor {
         window.seed_initial_layout();
         let seed_buffer = window.active_buffer();
         window.mark_buffer_read_only(seed_buffer, true);
+        // The page stands in for the workspace, so the buffer under it is
+        // bookkeeping — an untitled tab for a workspace that does not exist
+        // yet is one the user can neither use nor meaningfully close.
+        if let Some(meta) = window.buffer_metadata.get_mut(&seed_buffer) {
+            meta.hidden_from_tabs = true;
+        }
         self.windows.insert(id, window);
         self.preparing_windows.insert(
             id,

@@ -136,6 +136,12 @@ struct Cli {
     #[arg(long, hide = true, value_name = "NAME")]
     session_name: Option<String>,
 
+    /// Boot the daemon in Orchestrator mode (internal, used by
+    /// spawn_server_detached). The client knows the launch was a bare
+    /// `fresh`; the daemon is a different process and cannot see that.
+    #[arg(long, hide = true)]
+    orchestrator_mode: bool,
+
     /// Remote SSH URL for server mode (internal, used by spawn_server_detached
     /// when the client was launched with `ssh://…` or `user@host:path`).  The
     /// server parses this, connects, and installs the result as
@@ -215,6 +221,10 @@ struct Args {
     /// when the client saw an `ssh://` / scp-style remote in
     /// `files`.  Populated only for the daemon side.
     ssh_url: Option<String>,
+    /// Forwarded to the detached daemon by `spawn_server_detached` when the
+    /// client was a bare `fresh` and `orchestrator_mode` was on.  Populated
+    /// only for the daemon side.
+    orchestrator_mode: bool,
     // Daemon-related fields (set via subcommands or -a shortcut)
     attach: bool,
     list_sessions: bool,
@@ -559,6 +569,7 @@ impl From<Cli> for Args {
             init,
             server: cli.server,
             ssh_url: cli.ssh_url,
+            orchestrator_mode: cli.orchestrator_mode,
             attach,
             list_sessions,
             session_name,
@@ -3090,6 +3101,7 @@ fn run_server_command(args: &Args, web_addr: Option<String>) -> AnyhowResult<()>
         dir_context,
         plugins_enabled: !args.no_plugins,
         init_enabled: !args.no_init,
+        orchestrator_mode: args.orchestrator_mode,
         startup_authority,
         workspace_trust,
         env_provider,
@@ -3249,7 +3261,13 @@ fn run_open_files_command(
 
     // Start server if not running (like nvr does by default)
     let server_was_started = if !socket_paths.is_server_alive() {
-        let _pid = spawn_server_detached(session_name, ssh_url.as_deref(), locale, config)?;
+        let _pid = spawn_server_detached(&fresh::server::DaemonSpawn {
+            session_name,
+            ssh_url: ssh_url.as_deref(),
+            locale,
+            config,
+            ..Default::default()
+        })?;
 
         // Wait for server to be ready
         loop {
@@ -3288,7 +3306,7 @@ fn run_open_files_command(
         // the files have been queued.
         drop(conn);
         if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
-            return run_attach(session_name, &[], locale, config);
+            return run_attach(session_name, &[], locale, config, false);
         } else {
             eprintln!(
                 "Started a new daemon and opened {} file(s). Attach with: fresh -a{}",
@@ -5026,7 +5044,61 @@ fn run_attach_command(args: &Args) -> AnyhowResult<()> {
         &args.files,
         args.locale.as_deref(),
         args.config.as_deref(),
+        false,
     )
+}
+
+/// A bare `fresh` — no files, no flags, nothing — with
+/// `orchestrator_mode` left on.
+///
+/// The whole launch is "attach to the shared daemon, starting it if it isn't
+/// up". That is deliberately the *entire* behaviour when the daemon already
+/// runs: no files to open, no working directory to impose, nothing to
+/// reconfigure — this terminal simply becomes another view onto the editor
+/// that is already there, showing whatever workspace it was left in.
+///
+/// The daemon it starts is told `--orchestrator-mode` because it is a
+/// separate process: the shape of *this* command line is the only evidence
+/// that orchestrator mode was chosen, and it does not survive the spawn on
+/// its own (see [`fresh::server::DaemonSpawn`]).
+fn run_orchestrator_launch() -> AnyhowResult<()> {
+    run_attach(
+        Some(fresh::server::ORCHESTRATOR_DAEMON),
+        &[],
+        None,
+        None,
+        true,
+    )
+}
+
+/// Whether a bare `fresh` should launch into Orchestrator mode.
+///
+/// Two conditions, and both are about *this* invocation rather than about
+/// the editor:
+///
+///   * the command line is empty (`argv.len() == 1`) — a file or a flag,
+///     any flag, means "just this, here", and is left alone; and
+///   * stdin is a terminal — `fresh` under `$GIT_EDITOR`, in a pipe, or as
+///     a subprocess is not someone sitting down to work.
+///
+/// Only then is the config consulted, which is why this loads it rather than
+/// taking the one `initialize_app` builds: on this path we hand off to the
+/// daemon and never build an editor here at all, and on every other path
+/// this function has already answered `false` without reading anything. A
+/// config that cannot be read is not an error — it means the ordinary
+/// launch, which will report the problem properly.
+fn wants_orchestrator_launch() -> bool {
+    if std::env::args_os().count() != 1 {
+        return false;
+    }
+    if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+        return false;
+    }
+    let Ok(dir_context) = fresh::config_io::DirectoryContext::from_system() else {
+        return false;
+    };
+    let working_dir = std::env::current_dir().unwrap_or_default();
+    config::Config::load_with_layers(&dir_context, &working_dir).orchestrator_mode
 }
 
 /// `locale` and `config` are the client's own `--locale` and `--config`,
@@ -5040,6 +5112,7 @@ fn run_attach(
     files: &[String],
     locale: Option<&str>,
     config: Option<&Path>,
+    orchestrator_mode: bool,
 ) -> AnyhowResult<()> {
     use crossterm::terminal::enable_raw_mode;
     use fresh::server::protocol::{
@@ -5085,7 +5158,13 @@ fn run_attach(
         eprintln!("Starting daemon...");
 
         // Spawn server in background
-        let _pid = spawn_server_detached(session_name, ssh_url.as_deref(), locale, config)?;
+        let _pid = spawn_server_detached(&fresh::server::DaemonSpawn {
+            session_name,
+            ssh_url: ssh_url.as_deref(),
+            locale,
+            config,
+            orchestrator_mode,
+        })?;
         true
     } else {
         false
@@ -5783,6 +5862,14 @@ fn real_main() -> AnyhowResult<()> {
     // Print deprecation warnings for old flags
     print_deprecation_warnings(&cli);
 
+    // A bare `fresh` on a terminal, with `orchestrator_mode` on: hand the
+    // whole launch to the shared daemon and relay it. Checked here, after
+    // clap, so `--help` and `--version` still answer for themselves — both
+    // put something on the command line, so neither reaches this.
+    if wants_orchestrator_launch() {
+        return run_orchestrator_launch();
+    }
+
     // `--skill` is the shortcut an agent is told to run first: one short,
     // stable flag that resolves to whichever guide is currently the best
     // introduction, so the injected contract never has to name a topic.
@@ -5986,7 +6073,12 @@ fn real_main() -> AnyhowResult<()> {
             color_capability,
             boot_authority,
             true, // defer_plugin_load: TUI startup; plugin loads run on the
-                  // plugin thread and arrive via AsyncBridge each tick.
+            // plugin thread and arrive via AsyncBridge each tick.
+            //
+            // Never orchestrator mode: a bare `fresh` with the setting on
+            // hands off to the daemon long before this loop, so an editor
+            // built here is by construction an ordinary in-terminal launch.
+            false,
         )
         .context("Failed to create editor instance")?;
         tracing::info!("Editor instance created");

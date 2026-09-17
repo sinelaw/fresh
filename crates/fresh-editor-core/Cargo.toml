@@ -104,3 +104,6 @@ tempfile = "3.25"
 [build-dependencies]
 serde_json.workspace = true
 syntect = { version = "5.3", default-features = false, features = ["parsing", "dump-load", "dump-create", "yaml-load", "default-syntaxes", "regex-onig"] }
+
+[lints]
+workspace = true

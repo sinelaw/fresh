@@ -43,6 +43,7 @@ import {
   tree,
   treeNode,
   windowEmbed,
+  WidgetPanel,
   type WidgetSpec,
 } from "./lib/widgets.ts";
 import { BIG_FILE_ARGS } from "./lib/git_repo.ts";
@@ -292,6 +293,10 @@ interface PendingCreate {
   // in Background" (and for restored/resumed rows — a relaunch never yanks
   // focus). Either way the create itself is non-blocking.
   visit: boolean;
+  // The placeholder window's seed buffer, which this workspace's page is
+  // drawn into (see `renderPlaceholderPage`). Absent only for a row whose
+  // window is gone.
+  bufferId?: number;
 }
 
 // Local git summary + freshness bookkeeping (mirrors `PrProbe`).
@@ -397,14 +402,6 @@ function discoveredIdFor(path: string): number {
   return id;
 }
 
-// Pending (being-created) placeholder rows take ids from a range well
-// below the discovered-worktree ids (which count down from `-2`), so the
-// two synthetic id spaces can never collide in `orchestratorSessions`.
-let nextPendingId = -1_000_000;
-function allocPendingId(): number {
-  return nextPendingId--;
-}
-
 // Only one remote attach may be in flight at a time. The host's
 // `cancelRemoteAgent()` cancels *every* in-flight connect, so
 // backgrounding two concurrent remote creates would let cancelling one
@@ -468,12 +465,6 @@ interface NewSessionForm {
   // `machineOptions()`.
   machineId: string | null;
   machinePick: number;
-  // `Add machine…` is armed by moving the Machine control onto it and
-  // fires on Enter — never on the move itself, which the dropdown reports
-  // for every ←/→ step (and wraps), so a stray keystroke can't throw the
-  // form away. Esc / Tab put the control back on `machinePickBefore`.
-  machineAddArmed: boolean;
-  machinePickBefore: number;
   // `Remember this machine` (§5.2): save a hand-typed host or cluster to the
   // registry on submit, under `rememberAs` (blank = a name from the target).
   remember: boolean;
@@ -1006,7 +997,7 @@ let lastDockProjectFilter: string | null = null;
 editor.defineConfigBoolean("autoOpenDock", {
   default: true,
   description:
-    "Open the workspace dock automatically when Fresh starts. The dock opens unfocused, so typing still goes to the editor. Off keeps it hidden until Orchestrator: Toggle Dock.",
+    "Open the workspace dock when Fresh starts (a bare `fresh` always opens it).",
 });
 editor.defineConfigEnum("defaultView", {
   values: ["compact", "card"] as const,
@@ -1400,6 +1391,21 @@ function workspaceCustomName(s: AgentSession): string | undefined {
   return customNameFor(s.stableId, s.root);
 }
 
+// The workspace's own name, without the terminal-title suffix a dock row
+// carries.
+//
+// `label` is built for a wide row: with no manual rename and a live terminal it
+// is `<workspace> · <terminal title>`, and a shell's title is routinely its
+// whole `user@host: /long/path`. Beside a row that is useful context; as the
+// only line of a dialog heading it is actively harmful, because the heading
+// truncates and what gets cut is the end — leaving
+// `Delete workspace demo-3 · bash — root@vm: ~/.local/share/…/dem`, which
+// answers everything except the one question the heading exists for: *which
+// workspace*. A manual rename is the user's own name for it and is kept as is.
+function sessionShortName(s: AgentSession): string {
+  return workspaceCustomName(s) || s.hostLabel || editor.pathBasename(s.root) || "";
+}
+
 // Compute the display name for a session from the three sources above.
 function workspaceDisplayName(s: AgentSession): string {
   const manual = workspaceCustomName(s);
@@ -1428,6 +1434,9 @@ function applyResolvedLabel(s: AgentSession): void {
 // (remote) placeholder, which has no page to write to.
 function syncPreparingPage(s: AgentSession): void {
   if (!s.pending || s.id <= 0) return;
+  // Keep the host's record of "this window is a placeholder" current: it is
+  // what makes the window adoptable when the create lands, and it carries the
+  // fallback page for anyone who is not us.
   editor.setWindowPreparing(
     s.id,
     s.pending.message,
@@ -1437,6 +1446,132 @@ function syncPreparingPage(s: AgentSession): void {
     pendingActionable(s.pending),
     false,
   );
+  renderPlaceholderPage(s);
+}
+
+// ── The placeholder page ─────────────────────────────────────────────
+//
+// A workspace being built is a window the user is standing in, and its page
+// is ours to write: we are the only thing that knows what it is waiting on,
+// what failed, and that "retry" means re-running *this* recipe against
+// *this* host. The host draws a generic page for a window nobody has
+// claimed; mounting a panel on the placeholder's seed buffer replaces it.
+//
+// This is why the failure is not also a panel at the bottom of the dock any
+// more. It was in both places because the page could not carry buttons and
+// the dock could; now that it can, the dock row is back to being a summary —
+// *which* workspace is unhappy — and everything else is here.
+
+/** The mark the page carries, matching the host's own placeholder page so
+ *  the two read as one surface. */
+const PREPARING_GLYPH = "⛭";
+
+/** The panel each placeholder page is drawn by, keyed by window id. */
+const placeholderPanels = new Map<number, WidgetPanel>();
+/** Reverse lookup for `widget_event`: which window a panel id belongs to. */
+const placeholderWindows = new Map<number, number>();
+/** Panel ids for placeholder pages. Per-plugin, so any range we do not
+ *  otherwise use will do; offsetting by the window id keeps one page per
+ *  workspace. */
+const PLACEHOLDER_PANEL_BASE = 900_000;
+
+/** The page's measure and its left margin, in columns.
+ *
+ *  Set here rather than left to `wrap: true`, which breaks at whatever width
+ *  layout settles on — the whole pane, so on a wide terminal the error ran
+ *  the width of the screen. A paragraph that wide is a worse read than a
+ *  clipped one; this holds it to something a reader's eye can track and
+ *  centres what is left over. */
+function placeholderMeasure(): { measure: number; margin: number } {
+  const screen = editor.getScreenSize();
+  const dock = openPanel && dockMode ? dockDefaultWidth() : 0;
+  const pane = Math.max(20, (screen.width > 0 ? screen.width : 100) - dock);
+  const measure = Math.max(24, Math.min(72, pane - 8));
+  return { measure, margin: Math.max(1, Math.floor((pane - measure) / 2)) };
+}
+
+/** Greedy word wrap at `cols`, measured the way the terminal measures — the
+ *  message carries host names and ssh's own punctuation, so character counts
+ *  are not column counts. */
+function wrapToMeasure(textValue: string, cols: number): string[] {
+  const out: string[] = [];
+  let line = "";
+  for (const word of textValue.split(/\s+/).filter(Boolean)) {
+    if (!line) line = word;
+    else if (editor.stringWidth(line) + 1 + editor.stringWidth(word) <= cols) line += " " + word;
+    else {
+      out.push(line);
+      line = word;
+    }
+  }
+  if (line) out.push(line);
+  return out.length > 0 ? out : [""];
+}
+
+function placeholderSpec(s: AgentSession): WidgetSpec {
+  const p = s.pending!;
+  const { measure, margin } = placeholderMeasure();
+  const wrapped = (t: string, style: Record<string, unknown>): WidgetSpec[] =>
+    wrapToMeasure(t, measure).map((l) => label(l, { style }));
+  const body: WidgetSpec[] = [
+    label(`${PREPARING_GLYPH} ${s.label}`, { style: { bold: true } }),
+    spacer(1),
+    ...wrapped(p.message, { fg: pendingMsgFg(p) }),
+    spacer(1),
+  ];
+  // No hint line under the message: the two buttons below say what can be
+  // done, and the dock's "Enter to retry · menu to dismiss" copy describes
+  // the *row's* affordances, which are not the ones on this page.
+  if (pendingActionable(p)) {
+    body.push(
+      wrappingRow(
+        button(editor.t("dock.ctx_retry"), {
+          intent: "primary",
+          key: "placeholder-retry",
+        }),
+        spacer(1),
+        // "Delete", not "Dismiss": this does not put a notice away, it gets
+        // rid of the workspace — the row goes, the window closes, and a
+        // worktree the create had already added is removed with it. A label
+        // that reads as "do nothing" on a button that destroys something is
+        // the wrong way round.
+        button(editor.t("dock.ctx_delete"), {
+          intent: "danger",
+          key: "placeholder-dismiss",
+        }),
+      ),
+    );
+  }
+  // Nothing else while it is still working: the message is the whole content
+  // of the wait, and a line of reassurance under it is one more thing to
+  // read on the way to the only fact that matters.
+  return col(spacer(1), row(spacer(margin), col(...body), spacer(margin)));
+}
+
+function renderPlaceholderPage(s: AgentSession): void {
+  const bufferId = s.pending?.bufferId;
+  if (!bufferId) return;
+  let panel = placeholderPanels.get(s.id);
+  if (!panel) {
+    const panelId = PLACEHOLDER_PANEL_BASE + s.id;
+    // `autoFocusFirst: false`: the page opens as something to read. The
+    // buttons are there when there is something to decide, and Tab reaches
+    // them; seeding focus onto Retry the moment a create starts would arm
+    // Enter on an action nobody has asked for yet.
+    panel = new WidgetPanel(bufferId, panelId, { autoFocusFirst: false });
+    placeholderPanels.set(s.id, panel);
+    placeholderWindows.set(panelId, s.id);
+  }
+  panel.set(placeholderSpec(s));
+}
+
+/** Drop a placeholder page — the workspace became real, or went away. */
+function dropPlaceholderPage(id: number): void {
+  const panel = placeholderPanels.get(id);
+  if (!panel) return;
+  panel.unmount();
+  placeholderPanels.delete(id);
+  placeholderWindows.delete(PLACEHOLDER_PANEL_BASE + id);
 }
 
 // Set (or, with an empty name, clear) the manual name for a session and
@@ -1542,7 +1677,7 @@ interface DockTree {
 // sessions at top level. When a search is active, folders with no
 // matching descendant are dropped so results aren't buried under empty
 // folders.
-function buildDockTree(filtered: number[], activeId: number): DockTree {
+function buildDockTree(filtered: number[]): DockTree {
   const nodes: TreeNode[] = [];
   const keys: string[] = [];
   const model: DockNode[] = [];
@@ -1584,7 +1719,7 @@ function buildDockTree(filtered: number[], activeId: number): DockTree {
   // single-row line either way.
   const card = dockMode && dockView === "card";
   const emitSession = (id: number, depth: number): void => {
-    const primary = card ? sessionCardPrimary(id, activeId) : sessionNodeEntry(id, activeId);
+    const primary = card ? sessionCardPrimary(id) : sessionNodeEntry(id);
     nodes.push(
       treeNode(primary, {
         depth,
@@ -1649,7 +1784,7 @@ function folderNodeEntry(
 // Message colour: red once the create has failed, amber while it is still
 // creating or is paused (interrupted, awaiting resume).
 function pendingMsgFg(p: PendingCreate): string {
-  return p.phase === "error" ? "ui.status_error_indicator_fg" : "diagnostic.warning_fg";
+  return p.phase === "error" ? "diagnostic.error_fg" : "diagnostic.warning_fg";
 }
 
 // `error` and `paused` are actionable — Enter retries / resumes them — while
@@ -1666,16 +1801,42 @@ function pendingHintText(p: PendingCreate): string {
     : editor.t("dock.pending_dismiss_hint");
 }
 
+// The workspace the dock's highlighted node stands for, when it is a session
+// row at all (a folder header is not).
+function dockSelectedSession(): AgentSession | null {
+  const key = openDialog?.dockSelKey;
+  if (!key || !key.startsWith(SESSION_NODE_PREFIX)) return null;
+  return orchestratorSessions.get(Number(key.slice(SESSION_NODE_PREFIX.length))) ?? null;
+}
+
+// The backend target (host / ns·pod) as a trailing row segment — unless the
+// label already carries it.
+//
+// A remote row's label is `<name> · ssh:<target>`, so appending the bare target
+// after it prints the machine twice: exactly the duplication the cold study
+// reported, and only half-fixed when the name was added to the label. On a
+// narrow dock the repeat is not merely redundant, it is destructive: the row is
+// one line, and the duplicate pushes the pending status — the one part that
+// changes while a workspace is being created — off the end, leaving a row that
+// says what the session is but never what it is doing.
+function remoteDetailSegs(s: AgentSession): Entry[] {
+  const detail = s.remote?.detail;
+  if (!detail || s.label.includes(detail)) return [];
+  return [{
+    text: "  " + detail,
+    style: { fg: remoteStateFg(s.remote!.state), italic: true },
+  }];
+}
+
 // One tree row for a session leaf: state glyph, optional remote facet,
 // and the name (highlighted when it's the active window). A single
 // line — the tree owns indentation and the disclosure column, so the
 // rich two-line PR pill of the modal picker is traded for a compact,
 // nestable row here. The branch is deliberately dropped in this density
 // (it's the "compact" trade — card view carries it on its second line).
-function sessionNodeEntry(id: number, activeId: number): TextPropertyEntry {
+function sessionNodeEntry(id: number): TextPropertyEntry {
   const s = orchestratorSessions.get(id);
   if (!s) return styledRow([{ text: editor.t("pill.unknown") }]);
-  const isActive = id === activeId;
   const segs: Entry[] = [stateGlyphEntry(s)];
   if (s.remote) {
     segs.push({
@@ -1683,18 +1844,16 @@ function sessionNodeEntry(id: number, activeId: number): TextPropertyEntry {
       style: { fg: remoteStateFg(s.remote.state), bold: true },
     });
   }
-  segs.push({
-    text: s.label,
-    style: { fg: isActive ? "ui.help_key_fg" : undefined, bold: true },
-  });
+  // No "active" styling here, deliberately. The dock has exactly one
+  // highlight — the tree's — and `buildDockSpec` keeps it on the active
+  // session whenever the dock is blurred, so the highlight *is* the
+  // answer to "which workspace am I in". A second marker on the name
+  // could only ever agree with it or contradict it.
+  segs.push({ text: s.label, style: { bold: true } });
   // A remote session surfaces its backend target (host / ns·pod), coloured
-  // by the connection state — the same detail the pill shows on the right.
-  if (s.remote) {
-    segs.push({
-      text: "  " + s.remote.detail,
-      style: { fg: remoteStateFg(s.remote.state), italic: true },
-    });
-  }
+  // by the connection state — the same detail the pill shows on the right,
+  // and skipped when the label already names it (see `remoteDetailSegs`).
+  segs.push(...remoteDetailSegs(s));
   // A discovered on-disk worktree keeps its "· on-disk" tag — the "this
   // row isn't an open session yet" indicator the pill also shows.
   if (s.discovered) {
@@ -1778,10 +1937,9 @@ function cardInnerColsEstimate(): number {
 // session — its backend target, with the git summary flush right.
 // Distinct from the compact `sessionNodeEntry`, which trails the git
 // summary on the single line it has.
-function sessionCardPrimary(id: number, activeId: number): TextPropertyEntry {
+function sessionCardPrimary(id: number): TextPropertyEntry {
   const s = orchestratorSessions.get(id);
   if (!s) return styledRow([{ text: editor.t("pill.unknown") }]);
-  const isActive = id === activeId;
   const segs: Entry[] = [stateGlyphEntry(s)];
   if (s.remote) {
     segs.push({
@@ -1789,19 +1947,12 @@ function sessionCardPrimary(id: number, activeId: number): TextPropertyEntry {
       style: { fg: remoteStateFg(s.remote.state), bold: true },
     });
   }
-  segs.push({
-    text: s.label,
-    style: { fg: isActive ? "ui.help_key_fg" : undefined, bold: true },
-  });
+  // See `sessionNodeEntry`: the tree's highlight is the only one.
+  segs.push({ text: s.label, style: { bold: true } });
   // A remote session surfaces its backend target (host / ns·pod) coloured
   // by the connection state — pill parity (the pill shows it at the right
-  // end of line 1).
-  if (s.remote) {
-    segs.push({
-      text: "  " + s.remote.detail,
-      style: { fg: remoteStateFg(s.remote.state), italic: true },
-    });
-  }
+  // end of line 1), and skipped when the label already names it.
+  segs.push(...remoteDetailSegs(s));
   // Right group. A being-created placeholder has no git summary; it gets
   // the one-key affordance instead ("↵ Retry"), so the row below is free
   // for the whole status message.
@@ -2094,8 +2245,15 @@ function reconcileSessions(): void {
 let discoveryInFlight = false;
 
 function isInternalWorktreePath(path: string): boolean {
-  // The sync-workspace and the `.archived/` graveyard are
-  // orchestrator bookkeeping, not user sessions.
+  // The `.archived/` graveyard is orchestrator bookkeeping, not a user
+  // session.
+  //
+  // `.sync-workspace` is kept here although nothing creates one any more: it
+  // was the worktree the removed session-list-on-a-branch mechanism
+  // maintained inside the user's own repository, and anyone who ran a build
+  // that had it still has one registered in `git worktree list`. Dropping the
+  // filter would turn that leftover into a discovered session row — a stray
+  // row appearing out of nowhere on upgrade. It costs one string compare.
   return path.includes(".sync-workspace") || path.includes("/.archived/");
 }
 
@@ -2846,7 +3004,7 @@ function remoteStateFg(state: "starting" | "running" | "stopped" | "error"): str
     case "starting":
       return "diagnostic.warning_fg";
     case "error":
-      return "ui.status_error_indicator_fg";
+      return "diagnostic.error_fg";
     case "stopped":
       return "ui.menu_disabled_fg";
   }
@@ -3321,13 +3479,9 @@ function renderPillSpec(
     { text: PROJECT_ICON + " ", style: { fg: "ui.menu_disabled_fg" } },
     { text: proj, style: { fg: "ui.menu_disabled_fg", italic: true } },
   ];
-  // For a remote session, surface the backend target (host / ns·pod) on the right.
-  if (s.remote) {
-    projEntries.push({
-      text: "  " + s.remote.detail,
-      style: { fg: remoteStateFg(s.remote.state), italic: true },
-    });
-  }
+  // For a remote session, surface the backend target (host / ns·pod) on the
+  // right — unless the label already names it.
+  projEntries.push(...remoteDetailSegs(s));
   const git = gitLineParts(s);
 
   // Compact: one un-boxed line — glyph + (facet) + name on the left, the
@@ -3485,6 +3639,18 @@ function buildPreviewEntries(
       { text: s.root, style: { fg: "ui.menu_disabled_fg" } },
     ]),
   ];
+}
+
+// Is there a worktree for Delete to remove at all?
+//
+// `ownsWorktree` answers it for a local session (and for a discovered on-disk
+// one); a remote session needs the separate test, because the host records no
+// separate project for it. The confirm dialog asks this to decide whether the
+// "also remove the worktree" choice is even meaningful — an in-place or
+// shared-tree session has nothing to remove, and offering the choice there
+// would imply it does.
+function hasRemovableWorktree(s: AgentSession): boolean {
+  return ownsWorktree(s) || looksLikeOurRemoteWorktree(s);
 }
 
 // A session "owns" a removable git worktree when it was created as a
@@ -3827,7 +3993,43 @@ function buildPreviewPane(s: AgentSession | undefined): WidgetSpec {
 // The per-action bullet lines shown in the confirmation panel.
 // `delete` adds a separate red "uncommitted changes" line in the
 // caller because it needs distinct styling.
-function confirmActionLines(action: BulkAction): string[] {
+//
+// The list is exhaustive on purpose: a careful reader takes it as "and
+// nothing else happens", so anything the action does belongs here. There
+// used to be a fifth line disclosing a `<user>/fresh-sessions` branch that
+// archive and delete wrote into the user's own repository. That mechanism is
+// gone, so the line is too — the list is true again without it.
+// The Delete confirmation's "also remove the worktree" choice, for as long as
+// one confirmation is open. It lives here rather than on `pendingConfirm`
+// because the dock's context menu reaches the same pane through
+// `dockMenuState`, and a confirmation is modal — there is never a second one to
+// confuse it with. Both entry points reset it, so it never carries a previous
+// decision into a new dialog.
+let confirmRemoveWorktree = true;
+
+// Does this confirmation have a worktree to offer a choice about? True when
+// any target has one — a mixed bulk selection still gets the checkbox, and the
+// sessions without a worktree simply have nothing for it to do.
+function confirmTouchesWorktree(ids: number[]): boolean {
+  return ids.some((id) => {
+    const s = orchestratorSessions.get(id);
+    return !!s && hasRemovableWorktree(s);
+  });
+}
+
+// Is any target a remote worktree the delete will *not* be able to reach? A
+// disconnected host has no authority to route `git worktree remove` through
+// (see `remoteWorktreeReachable`), so promising it would be the same kind of
+// lie the rest of this dialog was fixed for — the pane says the worktree stays
+// put and why, instead.
+function confirmHasUnreachableRemote(ids: number[]): boolean {
+  return ids.some((id) => {
+    const s = orchestratorSessions.get(id);
+    return !!s && looksLikeOurRemoteWorktree(s) && !remoteWorktreeReachable(s);
+  });
+}
+
+function confirmActionLines(action: BulkAction, worktree = true, unreachable = false): string[] {
   switch (action) {
     case "stop":
       return [
@@ -3845,9 +4047,26 @@ function confirmActionLines(action: BulkAction): string[] {
         editor.t("confirm.archive_note"),
       ];
     case "delete":
+      // The fourth line is the one the dialog used to leave out. Everything
+      // else about this confirmation is exhaustive, which is exactly what
+      // makes an omission read as "this is all that happens" — and the branch
+      // outliving the workspace then turns up later as an unexplained ref.
+      // Keeping it is the right default; saying nothing about it is not.
+      // **The worktree lines are conditional, because they were not always
+      // true.** An in-place or shared-tree session has no worktree, and a
+      // dialog that still announced `git worktree remove` and a surviving
+      // branch described an action it was not about to take. Now the list says
+      // what will happen to *this* selection: the worktree removed, the
+      // worktree kept, or neither line at all.
       return [
         editor.t("confirm.delete_line1"),
-        editor.t("confirm.delete_line2"),
+        ...(worktree
+          ? confirmRemoveWorktree
+            ? unreachable
+              ? [editor.t("confirm.delete_worktree_unreachable")]
+              : [editor.t("confirm.delete_line2"), editor.t("confirm.delete_line4")]
+            : [editor.t("confirm.delete_keep_worktree")]
+          : []),
         editor.t("confirm.delete_line3"),
       ];
   }
@@ -3906,7 +4125,7 @@ function buildConfirmPane(
       const ss = orchestratorSessions.get(id)!;
       entries.push(
         styledRow([
-          { text: `  ${ss.label}` },
+          { text: `  ${sessionShortName(ss)}` },
           { text: diskNote(id), style: { fg: "ui.menu_disabled_fg", italic: true } },
         ]),
       );
@@ -3926,24 +4145,37 @@ function buildConfirmPane(
     const ss = id !== undefined ? orchestratorSessions.get(id) : undefined;
     entries.push(
       styledRow([
-        { text: editor.t("confirm.single_header", { cap, name: ss?.label ?? "" }), style: { bold: true } },
+        {
+          text: editor.t("confirm.single_header", {
+            cap,
+            name: ss ? sessionShortName(ss) : "",
+          }),
+          style: { bold: true },
+        },
       ]),
     );
   }
+  const worktree = action === "delete" && confirmTouchesWorktree(existing);
+  const unreachable = worktree && confirmHasUnreachableRemote(existing);
   entries.push(
     styledRow([{ text: "" }]),
     styledRow([{ text: bulk ? editor.t("confirm.for_each") : editor.t("confirm.this_will") }]),
   );
-  for (const line of confirmActionLines(action)) {
+  for (const line of confirmActionLines(action, worktree, unreachable)) {
     entries.push(styledRow([{ text: line }]));
   }
-  if (action === "delete") {
+  // **Only when files are actually going.** Delete removes nothing on disk for
+  // an in-place session, and nothing when the worktree is being kept, so in
+  // both of those the warning describes a loss that does not happen — and a
+  // warning that cries wolf is worse than none, because the one that matters
+  // stops being read.
+  if (action === "delete" && worktree && confirmRemoveWorktree && !unreachable) {
     entries.push(
       styledRow([{ text: "" }]),
       styledRow([
         {
           text: editor.t("confirm.uncommitted_lost"),
-          style: { fg: "ui.status_error_indicator_fg", bold: true },
+          style: { fg: "diagnostic.error_fg", bold: true },
         },
       ]),
     );
@@ -3954,6 +4186,19 @@ function buildConfirmPane(
       : editor.t("confirm.label_single", { cap }),
     child: col(
       { kind: "raw", entries },
+      // Only rendered when there is a worktree to remove: on an in-place or
+      // shared-tree session the control would be a switch wired to nothing.
+      // Checked by default, because removing it is what Delete has always
+      // done — this adds a way to keep the files, it does not quietly change
+      // what the button means.
+      ...(worktree
+        ? [
+          spacer(0),
+          toggle(confirmRemoveWorktree, editor.t("confirm.remove_worktree"), {
+            key: "confirm-worktree",
+          }),
+        ]
+        : []),
       spacer(0),
       // wrappingRow so the Cancel / Confirm pair reflows instead of the
       // Confirm button being clipped on a narrow confirmation pane. The
@@ -4029,7 +4274,7 @@ function buildBulkPane(): WidgetSpec {
   // skip so the count discrepancy explains itself.
   const items: TextPropertyEntry[] = sel.map((id) => {
     const ss = orchestratorSessions.get(id)!;
-    const rowParts: StyledSegment[] = [{ text: `  ${ss.label}` }];
+    const rowParts: StyledSegment[] = [{ text: `  ${sessionShortName(ss)}` }];
     if (!ss.discovered && !ownsWorktree(ss)) {
       rowParts.push({
         text: editor.t("confirm.row_in_place"),
@@ -4134,11 +4379,11 @@ function buildOpenSpec(): WidgetSpec {
           styledRow([
             {
               text: editor.t("list.warn_prefix"),
-              style: { fg: "ui.status_error_indicator_fg", bold: true },
+              style: { fg: "diagnostic.error_fg", bold: true },
             },
             {
               text: openDialog.lastError,
-              style: { fg: "ui.status_error_indicator_fg" },
+              style: { fg: "diagnostic.error_fg" },
             },
           ]),
         ],
@@ -4307,35 +4552,8 @@ function buildOpenSpec(): WidgetSpec {
         { keys: "Esc", label: editor.t("hint.close") },
       ]),
       flexSpacer(),
-      syncIndicator(),
     ),
   );
-}
-
-// Tiny status glyph rendered at the trailing edge of the
-// footer. `↻` while a push is in flight, `⤒` when the last
-// push failed (with the error in the tooltip — for now, just a
-// status-bar setStatus on focus), and an empty entry otherwise
-// so the layout stays put.
-function syncIndicator(): WidgetSpec {
-  let glyph = "";
-  let style: { fg?: string; italic?: boolean } | undefined;
-  switch (syncStatus) {
-    case "syncing":
-      glyph = " ↻ ";
-      style = { fg: "editor.whitespace_indicator_fg" };
-      break;
-    case "error":
-      glyph = " ⤒ ";
-      style = { fg: "ui.status_error_indicator_fg" };
-      break;
-    default:
-      glyph = "   ";
-  }
-  return {
-    kind: "raw",
-    entries: [styledRow([{ text: glyph, style }])],
-  };
 }
 
 // Surface a lifecycle-action refusal in two places: the dialog
@@ -4407,6 +4625,18 @@ function refreshOpenDialog(): void {
 // editor actually switched to instead of stranding the highlight on the
 // previously-active row. No-op when the active window isn't in the
 // (filtered) list.
+// Move the dock's highlight onto one session's row. A no-op when the dock
+// isn't showing, or when the row isn't in the tree (filtered out, or inside a
+// collapsed folder) — the highlight is a pointer into the rendered list.
+function selectDockRow(id: number): void {
+  if (!openDialog || !openPanel || !dockMode) return;
+  const key = sessionNodeKey(id);
+  const idx = openDialog.dockKeys.indexOf(key);
+  if (idx < 0) return;
+  openDialog.dockSelKey = key;
+  openPanel.setSelectedIndex("sessions", idx);
+}
+
 function syncDockSelectionToActive(): void {
   if (!openDialog || !openPanel || !dockMode) return;
   const activeKey = sessionNodeKey(editor.activeWindow());
@@ -5134,15 +5364,34 @@ function buildDockSpec(): WidgetSpec {
   if (!openDialog) return col();
   const filtered = openDialog.filteredIds;
   const activeId = editor.activeWindow();
-  const dockTree = buildDockTree(filtered, activeId);
+  const dockTree = buildDockTree(filtered);
   // Mirror the emitted node model so selection / activation / context
   // can resolve `dockSelKey` back to a folder or session.
   openDialog.dockNodes = dockTree.model;
   openDialog.dockKeys = dockTree.keys;
+  // The dock has one highlight, and what it means depends on whether the
+  // dock has the keyboard:
+  //
+  //   * Blurred — the dock is a passive mirror of the editor, so the
+  //     highlight is pinned to the active session every paint. There is no
+  //     cursor to preserve: nothing here is taking keys, and a highlight
+  //     left on a row you are not in is a lie about where you are. This is
+  //     a *re-assertion*, not a fallback — a stale key from before the dock
+  //     lost focus would otherwise survive and strand the highlight.
+  //   * Focused — the highlight is the cursor, and moving it live-switches
+  //     the active session, so the two converge by themselves. It is left
+  //     alone here so a deliberate move isn't undone mid-debounce.
+  //
+  // Either way one row is highlighted and it is the one whose buffers are
+  // on screen (or about to be), which is why no row needs an "active"
+  // marker of its own.
+  const activeKey = sessionNodeKey(activeId);
+  if (dockBlurred && dockTree.keys.includes(activeKey)) {
+    openDialog.dockSelKey = activeKey;
+  }
   // Keep the highlighted node key pointing at something real: default to
   // the active session's node, else the first node.
   if (!openDialog.dockSelKey || !dockTree.keys.includes(openDialog.dockSelKey)) {
-    const activeKey = sessionNodeKey(activeId);
     openDialog.dockSelKey = dockTree.keys.includes(activeKey)
       ? activeKey
       : (dockTree.keys[0] ?? null);
@@ -5223,14 +5472,21 @@ function buildDockSpec(): WidgetSpec {
   // something to say — a dock with nothing pending stays as tall as before.
   const att = attentionCounts(orchestratorSessions.keys());
   const attentionRow: WidgetSpec[] = att.blocked > 0 || att.done > 0 ? [dockAttentionRow(att)] : [];
+  // A failed workspace is reported on its own page — the one the user is
+  // looking at, since creating it takes them there — not a second time here.
+  // The row keeps its one-line summary, which is the list's job: *which*
+  // workspace is unhappy. What it says and what to do about it belong
+  // together, on the page, and having them in both places meant reading the
+  // same error twice and two sets of Retry / Dismiss buttons.
+  const failureRowCount = 0;
   // Top chrome: the title bar, the action row, the search row while it is
   // open, the attention line when there is one, and the divider.
-  const chromeRows = 3 + searchRow.length + attentionRow.length + bottomRows;
+  const chromeRows = 3 + searchRow.length + attentionRow.length + bottomRows + failureRowCount;
   const listRows = Math.max(MIN_LIST_ROWS, innerH - chromeRows);
   openDialog.listVisibleRows = listRows;
   // Rows of chrome above the tree (everything in chromeRows except the
   // bottom hint row) — where the first tree row lands on screen.
-  openDialog.dockTreeTop = chromeRows - bottomRows;
+  openDialog.dockTreeTop = chromeRows - bottomRows - failureRowCount;
 
   const expandedSeed = dockTreeExpandedKeys(dockTree);
 
@@ -5242,7 +5498,7 @@ function buildDockSpec(): WidgetSpec {
   // non-interactive rows so `bottom` always lands on the dock's last
   // rows. Zero when the tree fills or overflows its budget.
   const treeRows = Math.min(listRows, dockTreeContentRows(dockTree, expandedSeed));
-  const padRows = bottomRows > 0 ? Math.max(0, listRows - treeRows) : 0;
+  const padRows = bottomRows + failureRowCount > 0 ? Math.max(0, listRows - treeRows) : 0;
   const bottomPad: WidgetSpec[] = padRows > 0
     ? [raw(Array.from({ length: padRows }, () => ({ text: "" })))]
     : [];
@@ -6093,6 +6349,7 @@ registerHandler("orchestrator_move", openMoveToFolderForCurrent);
 function dockMenuEnterConfirm(action: "archive" | "delete"): void {
   if (!dockMenuPanel || !dockMenuState) return;
   if (dockMenuState.target.kind !== "session") return;
+  confirmRemoveWorktree = true;
   dockMenuState = {
     target: dockMenuState.target,
     anchorCol: dockMenuState.anchorCol,
@@ -6186,6 +6443,44 @@ function scheduleDockSwitch(fromEdge: "top" | "bottom" | null): void {
   })();
 }
 
+/** What activating a dock row *means* — the one place that decides it.
+ *
+ *  This used to be an inline predicate, written out three times (click,
+ *  Enter, and the tree's own activate), each with its own comment restating
+ *  the rule. When the rule changed — a workspace being built now owns a
+ *  window and a page, so it is entered like any other rather than retried
+ *  from the row — every copy had to change, and a copy left behind is a row
+ *  that highlights and then does nothing. That is not a rule anyone can keep
+ *  in three places; it is one answer, so it is computed once here and the
+ *  callers switch on it.
+ *
+ *  The union is the point: adding a row kind makes every caller fail to
+ *  compile until it says what activating that kind does, rather than falling
+ *  through whichever inline `if` happened not to match.
+ *
+ *  It leans on the id's sign, which is the deeper problem and not this
+ *  function's to fix: live windows own the positive id space, synthetic rows
+ *  (discovered worktrees, and any placeholder that never got a window) the
+ *  negative. "Does this row own a window" being the sign of an integer is
+ *  what let the three call sites disagree in the first place.
+ */
+type RowActivation =
+  | { kind: "enter"; windowId: number }
+  | { kind: "attach"; session: AgentSession }
+  | { kind: "inert" };
+
+function rowActivation(sess: AgentSession | undefined): RowActivation {
+  if (!sess) return { kind: "inert" };
+  // A discovered on-disk worktree has no window yet: opening it means
+  // attaching a session to it first.
+  if (sess.discovered) return { kind: "attach", session: sess };
+  if (sess.id > 0) return { kind: "enter", windowId: sess.id };
+  // A placeholder that owns no window: nothing to enter, and the caller must
+  // not blur to the editor — that would drop focus onto whatever buffer sits
+  // behind the phantom row.
+  return { kind: "inert" };
+}
+
 // A click on a dock row is a deliberate "open this session" gesture, so
 // it both switches the active window *and* hands keyboard focus to the
 // editor — exactly like pressing Enter (`dock_activate`). This differs
@@ -6199,19 +6494,12 @@ function diveDockSelectionFromClick(fromEdge: "top" | "bottom" | null): void {
   dockSwitchToken++;
   const id = dockSelectedSessionId();
   if (typeof id !== "number") return;
-  const sess = orchestratorSessions.get(id);
-  // On a workspace whose build has failed or is paused, a click/Enter is
-  // "try again" rather than "go there" — the retry is the only thing that
-  // moves it forward, and the row already shows why. A still-creating one
-  // (and any windowless remote placeholder) just keeps showing its progress;
-  // one that owns a window falls through and is entered like any workspace.
-  if (sess?.pending && (pendingActionable(sess.pending) || id <= 0)) {
-    if (pendingActionable(sess.pending)) retryPending(id);
-    return;
-  }
-  // A discovered (on-disk) worktree has no live window — attach a fresh
-  // session and dive in (attachToWorktree hands focus to the editor).
-  if (sess?.discovered) {
+  const act = rowActivation(orchestratorSessions.get(id));
+  if (act.kind === "inert") return;
+  if (act.kind === "attach") {
+    // A discovered (on-disk) worktree has no live window — attach a fresh
+    // session and dive in (attachToWorktree hands focus to the editor).
+    const sess = act.session;
     void attachToWorktree({
       root: sess.root,
       projectPath: sess.projectPath ?? sess.root,
@@ -6222,9 +6510,9 @@ function diveDockSelectionFromClick(fromEdge: "top" | "bottom" | null): void {
     });
     return;
   }
-  if (id > 0 && id !== editor.activeWindow()) {
-    if (fromEdge) editor.setActiveWindowAnimated(id, fromEdge);
-    else editor.setActiveWindow(id);
+  if (act.windowId !== editor.activeWindow()) {
+    if (fromEdge) editor.setActiveWindowAnimated(act.windowId, fromEdge);
+    else editor.setActiveWindow(act.windowId);
   }
   // Hand keyboard focus to the activated window (mirror `dock_activate`).
   // Picking a row is not "leaving the dock", so the search filter that
@@ -6367,8 +6655,8 @@ function scanArchiveManifests(): { slug: string; manifest: ArchiveManifest }[] {
   // `scanSessionContent`, which reads its directory the same way).
   if (!entries) return out;
   for (const e of entries) {
-    // `.archived` and `.sync-workspace` are the graveyard and the sync
-    // worktree, not per-repo state directories.
+    // A dot-directory here is orchestrator bookkeeping (the `.archived`
+    // graveyard), not a per-repo state directory.
     if (!e.is_dir || e.name.startsWith(".")) continue;
     const path = editor.pathJoin(base, e.name, "archived.json");
     const raw = editor.readFile(editor.localPath(path));
@@ -6557,6 +6845,12 @@ interface LifecycleResult {
   ok: boolean;
   err?: string;
   repoRoot?: string;
+  // Something that succeeded but is worth saying — today, a remote worktree
+  // left on its host. Not an `err`: the delete did what it could, and failing
+  // the row would misreport it. Carried out to the batch rather than written
+  // to the status bar here, because the batch sets its own summary afterwards
+  // and would overwrite anything this wrote.
+  note?: string;
 }
 
 // Archive a single session: SIGKILL its processes (archive is a
@@ -6703,206 +6997,6 @@ async function archiveOne(id: number): Promise<LifecycleResult> {
   return { ok: true, repoRoot };
 }
 
-// ---------------------------------------------------------------------
-// Cross-machine recovery (Phase 6)
-//
-// Every lifecycle action that mutates the local archive manifest also
-// fires an asynchronous push to `refs/heads/<user>/fresh-sessions` on
-// origin so the same sessions can be recovered on another machine.
-// The push runs in the background and never blocks the user-visible
-// action; failures get surfaced through `syncStatus` (and a small ⤒
-// glyph in the dialog footer when the error is fresh).
-//
-// The branch is orphan-style: a single root file `sessions.json` and
-// commits with the sessions snapshot. We maintain it through a
-// dedicated worktree at `<XDG>/orchestrator/.sync-workspace` so we don't
-// disturb the user's normal `git worktree` set.
-// ---------------------------------------------------------------------
-
-type SyncStatus = "idle" | "syncing" | "error";
-let syncStatus: SyncStatus = "idle";
-let syncError: string | null = null;
-
-function deriveSyncUser(): string {
-  // Priority order documented in
-  // docs/internal/orchestrator-open-dialog-and-lifecycle.md.
-  const envOverride = editor.getEnv("FRESH_SESSIONS_USER");
-  if (envOverride && envOverride.trim()) return envOverride.trim();
-  const localPart = (envEmailLocalPart() || "").trim();
-  if (localPart) return localPart;
-  const u = editor.getEnv("USER");
-  if (u && u.trim()) return u.trim();
-  return "fresh";
-}
-
-function envEmailLocalPart(): string | null {
-  // Best-effort sync read of git config user.email's local-part.
-  // Reading from env first (since spawnProcess is async) keeps
-  // deriveSyncUser synchronous; users with no env override will
-  // probably have `$USER` available as fallback.
-  const email = editor.getEnv("GIT_AUTHOR_EMAIL") ||
-    editor.getEnv("EMAIL");
-  if (!email) return null;
-  const at = email.indexOf("@");
-  return at > 0 ? email.slice(0, at) : null;
-}
-
-function syncWorkspacePath(): string {
-  return editor.pathJoin(editor.getDataDir(), "orchestrator", ".sync-workspace");
-}
-
-// Fire-and-forget sync. Never blocks the caller; updates
-// `syncStatus`/`syncError` and refreshes the dialog (if open)
-// so the footer indicator can reflect the result.
-function triggerSyncAsync(repoRoot: string): void {
-  void (async () => {
-    syncStatus = "syncing";
-    if (openPanel) refreshOpenDialog();
-    const result = await syncSessions(repoRoot);
-    if (result.ok) {
-      syncStatus = "idle";
-      syncError = null;
-    } else {
-      syncStatus = "error";
-      syncError = result.err ?? "unknown error";
-    }
-    if (openPanel) refreshOpenDialog();
-  })();
-}
-
-interface SyncResult {
-  ok: boolean;
-  err?: string;
-}
-
-async function syncSessions(repoRoot: string): Promise<SyncResult> {
-  const user = deriveSyncUser();
-  const branch = `${user}/fresh-sessions`;
-  const wt = syncWorkspacePath();
-
-  // Ensure the sync worktree exists and is on the right branch.
-  // First-time setup creates the worktree as an orphan branch
-  // with no parent commit (cleanest history; no leftover files
-  // from the original tree).
-  if (!editor.createDir(editor.localPath(editor.pathDirname(wt)))) {
-    return { ok: false, err: "createDir failed for sync workspace parent" };
-  }
-  const branchExists = await spawnCollect(
-    "git",
-    ["-C", repoRoot, "show-ref", "--verify", "--quiet", `refs/heads/${branch}`],
-    repoRoot,
-  );
-  const wtExists = await spawnCollect(
-    "git",
-    ["-C", repoRoot, "worktree", "list", "--porcelain"],
-    repoRoot,
-  );
-  const wtAlreadyTracked = wtExists.exit_code === 0 &&
-    wtExists.stdout.includes(wt);
-
-  if (!wtAlreadyTracked) {
-    if (branchExists.exit_code === 0) {
-      const addRes = await spawnCollect(
-        "git",
-        ["-C", repoRoot, "worktree", "add", wt, branch],
-        repoRoot,
-      );
-      if (addRes.exit_code !== 0) {
-        return { ok: false, err: lastNonEmptyLine(addRes.stderr) };
-      }
-    } else {
-      // Create an orphan worktree by adding detached then
-      // switching to a new orphan branch.
-      const addRes = await spawnCollect(
-        "git",
-        ["-C", repoRoot, "worktree", "add", "--detach", wt, "HEAD"],
-        repoRoot,
-      );
-      if (addRes.exit_code !== 0) {
-        return { ok: false, err: lastNonEmptyLine(addRes.stderr) };
-      }
-      const orphanRes = await spawnCollect(
-        "git",
-        ["-C", wt, "checkout", "--orphan", branch],
-        wt,
-      );
-      if (orphanRes.exit_code !== 0) {
-        return { ok: false, err: lastNonEmptyLine(orphanRes.stderr) };
-      }
-      // Strip everything inherited from HEAD's tree so the
-      // orphan branch starts clean.
-      await spawnCollect("git", ["-C", wt, "rm", "-rf", "."], wt);
-    }
-  }
-
-  // Snapshot active + archived sessions into the JSON that
-  // lives at the root of the sync branch.
-  const snapshot = await buildSyncSnapshot(repoRoot);
-  const sessionsPath = editor.pathJoin(wt, "sessions.json");
-  if (!editor.writeFile(editor.localPath(sessionsPath), JSON.stringify(snapshot, null, 2))) {
-    return { ok: false, err: "writeFile sessions.json failed" };
-  }
-
-  const addRes = await spawnCollect(
-    "git",
-    ["-C", wt, "add", "sessions.json"],
-    wt,
-  );
-  if (addRes.exit_code !== 0) {
-    return { ok: false, err: lastNonEmptyLine(addRes.stderr) };
-  }
-  // The commit may noop when nothing changed — git exits with
-  // 1 in that case, which we treat as success rather than an
-  // error.
-  const commitRes = await spawnCollect(
-    "git",
-    [
-      "-C",
-      wt,
-      "commit",
-      "--allow-empty-message",
-      "-m",
-      "Update sessions",
-    ],
-    wt,
-  );
-  if (commitRes.exit_code !== 0 && !commitRes.stdout.includes("nothing to commit")) {
-    // Permissive: stderr "nothing to commit" / "working tree clean"
-    // means there was nothing new to push. Skip the push and
-    // report success.
-    if (!commitRes.stderr.includes("nothing to commit")) {
-      // Other commit failures: report.
-      return { ok: false, err: lastNonEmptyLine(commitRes.stderr) };
-    }
-  }
-
-  const pushRes = await spawnCollect(
-    "git",
-    ["-C", wt, "push", "origin", branch],
-    wt,
-  );
-  if (pushRes.exit_code !== 0) {
-    return { ok: false, err: lastNonEmptyLine(pushRes.stderr) };
-  }
-  return { ok: true };
-}
-
-async function buildSyncSnapshot(repoRoot: string): Promise<unknown> {
-  const manifest = loadArchiveManifest(repoRoot);
-  return {
-    version: 1,
-    machine_id: editor.getEnv("HOSTNAME") || "unknown",
-    updated_at: new Date().toISOString(),
-    active: Array.from(orchestratorSessions.values()).map((s) => ({
-      label: s.label,
-      branch: s.label,
-      base_ref: "origin/master",
-      created_at: new Date(s.createdAt).toISOString(),
-    })),
-    archived: manifest.sessions,
-  };
-}
-
 // Delete a single session: close the editor session, then — only when
 // the session owns a worktree — `git worktree remove --force` to drop
 // it from disk (and prune any archive-manifest entry). A launch or
@@ -6911,10 +7005,37 @@ async function buildSyncSnapshot(repoRoot: string): Promise<unknown> {
 // can always be opened there again). Handles discovered on-disk
 // worktrees (no window to close). Does NOT trigger sync — the caller
 // batches it.
-async function deleteOne(id: number): Promise<LifecycleResult> {
+async function deleteOne(
+  id: number,
+  // Whether to remove the worktree as well as the workspace record. The
+  // confirm dialog offers this as a checkbox; every other caller (the plugin
+  // API, in particular) gets the long-standing behaviour by default, so the
+  // choice cannot leak out of the dialog that asked for it.
+  removeWorktree = true,
+): Promise<LifecycleResult> {
   const s = orchestratorSessions.get(id);
   if (!s) return { ok: false, err: editor.t("err.workspace_gone") };
   const removable = ownsWorktree(s);
+
+  // **The remote worktree goes first, while its own window is still here.**
+  // The confirm dialog promises `git worktree remove`, and for a remote
+  // workspace nothing used to run it: `ownsWorktree` answers on
+  // `projectPath !== root`, which the host does not record for a remote
+  // session, so every delete left a directory behind on the far side. The
+  // removal has to happen before the teardown below, because that closes the
+  // very window this spawn routes through.
+  let remoteLeftBehind: string | null = null;
+  if (removeWorktree && !s.discovered && id > 0 && looksLikeOurRemoteWorktree(s)) {
+    if (!remoteWorktreeReachable(s)) {
+      // Disconnected: there is no authority to route through, and forcing one
+      // open here would race the connect (see `remoteWorktreeReachable`).
+      remoteLeftBehind = editor.t("err.remote_disconnected");
+    } else {
+      if (id !== editor.activeWindow()) editor.setActiveWindow(id);
+      remoteLeftBehind = await removeRemoteWorktree(s);
+      if (!orchestratorSessions.has(id)) return { ok: false, err: editor.t("err.workspace_gone") };
+    }
+  }
 
   if (!s.discovered && id > 0) {
     // The editor must keep at least one window. If this is the only live
@@ -6941,19 +7062,24 @@ async function deleteOne(id: number): Promise<LifecycleResult> {
     const rr = await worktreeRepoRoot(s);
     if (!rr) return { ok: false, err: editor.t("err.not_git_repo") };
     repoRoot = rr;
-    // `--force` because the worktree may have unstaged changes the user
-    // explicitly chose to discard via the confirm step.
-    const removeRes = await spawnCollect(
-      "git",
-      ["-C", rr, "worktree", "remove", "--force", s.root],
-      rr,
-    );
-    if (removeRes.exit_code !== 0) {
-      return {
-        ok: false,
-        err: lastNonEmptyLine(removeRes.stderr) || editor.t("err.worktree_remove_failed"),
-        repoRoot,
-      };
+    // The repo root is resolved either way — the manifest entry below and the
+    // session-list sync both need it — but the removal itself is the part the
+    // user chose.
+    if (removeWorktree) {
+      // `--force` because the worktree may have unstaged changes the user
+      // explicitly chose to discard via the confirm step.
+      const removeRes = await spawnCollect(
+        "git",
+        ["-C", rr, "worktree", "remove", "--force", s.root],
+        rr,
+      );
+      if (removeRes.exit_code !== 0) {
+        return {
+          ok: false,
+          err: lastNonEmptyLine(removeRes.stderr) || editor.t("err.worktree_remove_failed"),
+          repoRoot,
+        };
+      }
     }
 
     // Drop the matching manifest entry too, in case the session was
@@ -6983,7 +7109,16 @@ async function deleteOne(id: number): Promise<LifecycleResult> {
   // directory, so its `workspaces/<root>.json` must be dropped explicitly
   // or the row reappears after a restart.
   editor.deleteWorkspace(s.root);
-  return { ok: true, repoRoot };
+  // A host that could not be reached does not block the delete — the row goes
+  // either way — but it is said out loud, with the path, so the user knows
+  // what is still sitting on the far side.
+  return {
+    ok: true,
+    repoRoot,
+    ...(remoteLeftBehind
+      ? { note: editor.t("err.remote_worktree_kept", { path: s.root, error: remoteLeftBehind }) }
+      : {}),
+  };
 }
 
 /// Outcome of a lifecycle batch: how many targets the action ran on
@@ -6992,6 +7127,10 @@ interface LifecycleBatchResult {
   ran: number;
   ok: number;
   lastErr: string;
+  // The first "succeeded, but…" note any member produced (see
+  // `LifecycleResult.note`). One is enough for a status line; the rest of the
+  // batch is reported by the counts.
+  note?: string;
 }
 
 /// Run Archive / Delete over `targets`, batching one sync per touched repo.
@@ -7011,16 +7150,21 @@ async function runLifecycleBatch(
   action: "archive" | "delete",
   targets: number[],
   onProgress?: (doneIndex: number, id: number) => void,
+  removeWorktree = true,
 ): Promise<LifecycleBatchResult> {
   const touchedRepos = new Set<string>();
   let okCount = 0;
   let lastErr = "";
+  let note = "";
   for (let i = 0; i < targets.length; i++) {
     const id = targets[i];
-    const res = action === "archive" ? await archiveOne(id) : await deleteOne(id);
+    const res = action === "archive"
+      ? await archiveOne(id)
+      : await deleteOne(id, removeWorktree);
     if (res.ok) {
       okCount += 1;
       if (res.repoRoot) touchedRepos.add(res.repoRoot);
+      if (res.note && !note) note = res.note;
     } else {
       lastErr = res.err ?? editor.t("err.failed");
     }
@@ -7028,8 +7172,7 @@ async function runLifecycleBatch(
   }
   // The cores deliberately skip this so a batch pushes once per repo rather
   // than once per workspace.
-  for (const repo of touchedRepos) triggerSyncAsync(repo);
-  return { ran: targets.length, ok: okCount, lastErr };
+  return { ran: targets.length, ok: okCount, lastErr, ...(note ? { note } : {}) };
 }
 
 /// Signal the agent process groups of `targets`. Shared by the picker's
@@ -7076,7 +7219,10 @@ async function runConfirmedAction(
   }
   refreshOpenDialog();
 
-  const { ok: okCount, lastErr } = await runLifecycleBatch(
+  // Read the checkbox once, here: the batch below runs across several awaits
+  // and the dialog it came from is already gone.
+  const removeWorktree = action === "delete" ? confirmRemoveWorktree : true;
+  const { ok: okCount, lastErr, note } = await runLifecycleBatch(
     action,
     targets,
     (i, id) => {
@@ -7084,6 +7230,7 @@ async function runConfirmedAction(
       if (openDialog?.bulkInFlight) openDialog.bulkInFlight.done = i + 1;
       refreshOpenDialog();
     },
+    removeWorktree,
   );
   if (openDialog) {
     openDialog.inFlight = null;
@@ -7095,6 +7242,11 @@ async function runConfirmedAction(
     setDialogError(editor.t("err.action_failed", { action, error: lastErr || editor.t("err.unknown_error") }));
   } else if (lastErr) {
     setDialogError(editor.t("err.partial_done", { verb, ok: String(okCount), total: String(targets.length), error: lastErr }));
+  } else if (note) {
+    // Succeeded, with something the user needs to know — say that instead of
+    // the bare count, which would read as "all done" while a directory is
+    // still sitting on a host.
+    editor.setStatus(editor.t("status.prefix", { msg: note }));
   } else {
     editor.setStatus(editor.t("status.bulk_done", { verb, count: String(okCount) }));
   }
@@ -8104,6 +8256,25 @@ function sessionNameBaseFor(repoRoot: string): string {
   return slug.length > 0 ? slug : "session";
 }
 
+// Advance the persisted counter past `name` when it is one of this project's
+// `<base>-N` auto-names. Idempotent and monotonic: a name the user typed, or
+// one from another project, leaves the counter alone, and a re-submit of the
+// same name cannot walk it backwards.
+function claimAutoSessionName(name: string): void {
+  // **Only a name this counter issued.** The counter is global across
+  // projects, so a *typed* name that merely ends in digits — `release-2026`,
+  // a ticket number, a date — would drive every later auto-name in every
+  // project past it. The caller establishes provenance by passing the name
+  // only when it is the one the form generated; all this does is advance the
+  // counter past its number, monotonically, so a re-submit cannot walk it
+  // backwards.
+  const m = /-(\d+)$/.exec(name);
+  if (!m) return;
+  const n = parseInt(m[1], 10);
+  const cur = (editor.getGlobalState("orchestrator.session_counter") as number | undefined) ?? 0;
+  if (n > cur) editor.setGlobalState("orchestrator.session_counter", n);
+}
+
 async function nextAutoSessionName(
   repoRoot: string,
   options?: { persist?: boolean },
@@ -8232,68 +8403,135 @@ interface Machine {
 
 type Field = { value: string; cursor: number };
 
-function machinesFile(): string {
-  return editor.pathJoin(editor.getDataDir(), "orchestrator", "machines.json");
+// Machines live one JSON file per machine under
+// `<data dir>/orchestrator/machines/<id>.json`, not in a single registry file.
+//
+// **Why a directory.** This is editor-wide state, so every concurrent `fresh`
+// writes it, and a single file made each of those writes a whole-registry
+// rewrite built from a snapshot the process had read earlier. Two sessions
+// adding different machines lost one of them; worse, a connection test
+// finishing in one session rewrote every machine from a list that could be
+// minutes old. With a file per machine a write touches only the machine it is
+// about, so those two sessions no longer collide at all. It also bounds the
+// damage of a bad write to one machine rather than the registry, and makes
+// delete an `unlink` instead of a rewrite-everything-minus-one.
+//
+// It is the shape the rest of the editor already uses, for the same reason —
+// see `DirectoryContext::project_state_dir`: "Using a directory per project —
+// rather than one shared file — keeps concurrent `fresh` processes on
+// different projects from contending over a single file."
+function machinesDir(): string {
+  return editor.pathJoin(editor.getDataDir(), "orchestrator", "machines");
+}
+
+// An id is a path segment, so it has to be one that cannot escape the
+// directory or collide with the temp files `writeMachineFile` makes.
+// `newMachineId` only ever produces `m-<base36>-<base36>`; this is the guard
+// that keeps a hand-edited or future id from being load-bearing on the
+// filesystem.
+function isSafeMachineId(id: string): boolean {
+  return /^[A-Za-z0-9._-]{1,64}$/.test(id) && !id.startsWith(".");
+}
+
+function machineFile(id: string): string {
+  return editor.pathJoin(machinesDir(), `${id}.json`);
 }
 
 let machinesCache: Machine[] | null = null;
 
-// Every saved machine, by name. A missing or corrupt file is an empty
-// registry, never a crash: the dialog that writes it repairs it.
+// Forget the in-memory copy so the next read comes off disk.
+//
+// The cache exists because `loadMachines` is called from render paths. It is
+// dropped at the two moments another session's change could matter to this
+// one: opening the Machines dialog, and opening the New Workspace form. That
+// is deliberately not live-watching — a machine added elsewhere while one of
+// those is already on screen still will not appear until it is reopened — but
+// neither is ever opened showing a list this session cached earlier.
+function invalidateMachines(): void {
+  machinesCache = null;
+}
+
+function parseMachine(raw: string): Machine | null {
+  try {
+    const x = JSON.parse(raw) as Partial<Machine>;
+    if (typeof x.id !== "string" || typeof x.name !== "string") return null;
+    if (x.kind !== "ssh" && x.kind !== "kubernetes") return null;
+    return {
+      id: x.id,
+      name: x.name,
+      kind: x.kind,
+      target: x.target ?? "",
+      identity: x.identity ?? "",
+      options: x.options ?? "",
+      context: x.context ?? "",
+      namespace: x.namespace ?? "",
+      pod: x.pod ?? "",
+      path: x.path ?? "",
+      lastTest: x.lastTest ?? null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+// Every saved machine, by name. A file that will not parse is skipped rather
+// than fatal, and now costs only itself: the single-file version had to throw
+// the whole registry away to stay usable.
 function loadMachines(): Machine[] {
   if (machinesCache) return machinesCache;
   const out: Machine[] = [];
-  const raw = editor.readFile(editor.localPath(machinesFile()));
-  if (raw) {
-    try {
-      const parsed = JSON.parse(raw) as { machines?: unknown[] };
-      for (const item of parsed.machines ?? []) {
-        const x = item as Partial<Machine>;
-        if (typeof x.id !== "string" || typeof x.name !== "string") continue;
-        if (x.kind !== "ssh" && x.kind !== "kubernetes") continue;
-        out.push({
-          id: x.id,
-          name: x.name,
-          kind: x.kind,
-          target: x.target ?? "",
-          identity: x.identity ?? "",
-          options: x.options ?? "",
-          context: x.context ?? "",
-          namespace: x.namespace ?? "",
-          pod: x.pod ?? "",
-          path: x.path ?? "",
-          lastTest: x.lastTest ?? null,
-        });
-      }
-    } catch {
-      // Unreadable JSON: start over rather than refuse every dialog.
-    }
+  for (const e of editor.readDir(editor.localPath(machinesDir()))) {
+    if (!e.is_file || !e.name.endsWith(".json") || e.name.startsWith(".")) continue;
+    const raw = editor.readFile(editor.localPath(editor.pathJoin(machinesDir(), e.name)));
+    if (!raw) continue;
+    const m = parseMachine(raw);
+    // The filename is the id, so a file whose contents disagree is not one
+    // this code wrote; ignore it rather than serve two identities.
+    if (m && isSafeMachineId(m.id) && `${m.id}.json` === e.name) out.push(m);
   }
   out.sort((a, b) => a.name.localeCompare(b.name));
   machinesCache = out;
   return out;
 }
 
-function saveMachines(list: Machine[]): boolean {
-  list.sort((a, b) => a.name.localeCompare(b.name));
-  machinesCache = list;
-  editor.createDir(editor.localPath(editor.pathJoin(editor.getDataDir(), "orchestrator")));
-  return editor.writeFile(
-    editor.localPath(machinesFile()),
-    JSON.stringify({ version: 1, machines: list }, null, 2),
-  );
+// Write one machine, atomically.
+//
+// `writeFile` truncates and writes in place, so a crash or a full disk mid-write
+// leaves a half-file. Writing a temp first and renaming over the target makes
+// the replacement a single `rename(2)`: a reader sees either the old machine or
+// the new one, never a partial one. The temp sits in the same directory so the
+// rename cannot fall into the bridge's cross-device copy-then-remove path,
+// which would not be atomic.
+function writeMachineFile(m: Machine): boolean {
+  if (!isSafeMachineId(m.id)) return false;
+  if (!editor.createDir(editor.localPath(machinesDir()))) return false;
+  const tmp = editor.pathJoin(machinesDir(), `.${m.id}.${Date.now().toString(36)}.tmp`);
+  if (!editor.writeFile(editor.localPath(tmp), JSON.stringify(m, null, 2))) return false;
+  if (!editor.renamePath(editor.localPath(tmp), editor.localPath(machineFile(m.id)))) {
+    // Leaving the temp behind is litter `loadMachines` skips but a user would
+    // still find.
+    editor.removePath(editor.localPath(tmp));
+    return false;
+  }
+  return true;
 }
 
 function machineById(id: string): Machine | null {
   return loadMachines().find((m) => m.id === id) ?? null;
 }
 
+// Add or replace one machine. Unlike the registry-rewriting version this
+// replaced, it neither reads nor rewrites anybody else's machine, so a
+// concurrent session editing a different one cannot be clobbered.
 function upsertMachine(m: Machine): void {
-  saveMachines([...loadMachines().filter((x) => x.id !== m.id), m]);
+  writeMachineFile(m);
+  invalidateMachines();
 }
 
 function removeMachine(id: string): void {
-  saveMachines(loadMachines().filter((x) => x.id !== id));
+  if (!isSafeMachineId(id)) return;
+  editor.removePath(editor.localPath(machineFile(id)));
+  invalidateMachines();
 }
 
 function newMachineId(): string {
@@ -8378,21 +8616,32 @@ function shQuote(s: string): string {
 // that wants a password fails instead of hanging on a prompt no dialog can
 // answer, and a connect timeout so an unreachable one does not wedge the
 // form.
+//
+// **A picked `~/.ssh/config` alias goes to ssh as the alias.** Resolving it
+// here to `user@host:port` — which this used to do — hands ssh a destination
+// that matches no `Host` block, so every directive in the user's own entry
+// except the three this file parses (`HostName`, `User`, `Port`) silently
+// stops applying: `IdentityFile`, `IdentitiesOnly`, `UserKnownHostsFile`,
+// `StrictHostKeyChecking`, `ProxyJump`, `ProxyCommand`. The picker reads the
+// config only to *list* aliases and to show what one resolves to; ssh stays
+// the thing that interprets it. This is the same alias `captureCreateSpec`
+// hands the attach, so the probe, the worktree and the session all reach the
+// host by the same route and cannot disagree about how.
 function formSshArgv(f: NewSessionForm, connectTimeout: number): string[] | null {
   const m = f.machineId ? machineById(f.machineId) : null;
   if (m && m.kind !== "ssh") return null;
-  const target = m
-    ? m.target
-    : formSshOther(f)
-    ? f.sshHost.value.trim()
-    : sshResolvedTarget(f.sshHosts[f.sshPick]);
+  const base = ["-o", "BatchMode=yes", "-o", `ConnectTimeout=${connectTimeout}`];
+  if (!m && !formSshOther(f)) {
+    const alias = f.sshHosts[f.sshPick]?.alias ?? "";
+    return alias ? [...base, "--", alias] : null;
+  }
+  const target = m ? m.target : f.sshHost.value.trim();
   const { dest, port } = parseSshTarget(target);
   if (!dest) return null;
-  const identity = m ? m.identity.trim() : formSshOther(f) ? f.sshIdentity.value.trim() : "";
-  const options = m ? m.options.trim() : formSshOther(f) ? f.sshOptions.value.trim() : "";
+  const identity = m ? m.identity.trim() : f.sshIdentity.value.trim();
+  const options = m ? m.options.trim() : f.sshOptions.value.trim();
   return [
-    "-o", "BatchMode=yes",
-    "-o", `ConnectTimeout=${connectTimeout}`,
+    ...base,
     ...(port ? ["-p", port] : []),
     ...(identity ? ["-i", expandHome(identity)] : []),
     ...(options ? options.split(/\s+/) : []),
@@ -8498,6 +8747,345 @@ async function createRemoteWorktree(
     return { ok: false, error: err };
   }
   return { ok: true, root };
+}
+
+// The ssh argv for a captured spec — the same shape `formSshArgv` builds, but
+// from the transport, so a retry or a row restored after a restart does not
+// need the form that made it. `null` for a transport that is not ssh.
+function specSshArgv(spec: RemoteAgentSpec, connectTimeout: number): string[] | null {
+  const t = spec.transport;
+  if (t.kind !== "ssh") return null;
+  const host = t.host?.trim() ?? "";
+  if (!host) return null;
+  return [
+    "-o", "BatchMode=yes",
+    "-o", `ConnectTimeout=${connectTimeout}`,
+    ...(t.port ? ["-p", String(t.port)] : []),
+    ...(t.identity_file ? ["-i", expandHome(t.identity_file)] : []),
+    ...(t.extra_args ?? []),
+    "--",
+    t.user ? `${t.user}@${host}` : host,
+  ];
+}
+
+// === Host-key trust (trust on first use) ====================================
+//
+// ssh refuses a host key it has never seen, and every ssh call the
+// orchestrator makes runs under `BatchMode=yes` — a carrier with piped stdio
+// and a probe behind a dialog both have nowhere to put an interactive prompt.
+// So a host the user has never connected to fails with a bare
+// `Host key verification failed.` and no way forward inside the editor: the
+// remedy is a shell, which is exactly what a workspace dialog exists to save
+// the user. Every other ssh client answers this with a yes/no prompt showing
+// the key's fingerprint. This is that prompt.
+//
+// **Accepting re-runs ssh rather than writing `known_hosts` here.** Which file
+// the line belongs in is the user's config to decide (`UserKnownHostsFile`,
+// possibly several, possibly hashed by `HashKnownHosts`), and reimplementing
+// that lookup would be a second answer to a question ssh already answers.
+// `StrictHostKeyChecking=accept-new` on one throwaway connection makes ssh
+// record it, in the right file, in the right form.
+
+// A scan is a direct TCP dial; it should not outlive the form's own probe.
+const HOSTKEY_SCAN_TIMEOUT_S = 6;
+
+// True when `err` is ssh refusing to continue because it does not trust the
+// host key. Deliberately the one error the trust flow triggers on: a broad
+// `Err(_)` retry would re-run creates that failed for reasons a fingerprint
+// dialog cannot fix.
+function isHostKeyFailure(err: string): boolean {
+  return /host key verification failed/i.test(err);
+}
+
+// What ssh itself resolves for a destination (`ssh -G`), lowercased keyword →
+// value. Read instead of re-parsing `~/.ssh/config` because the file's real
+// grammar — `Match`, `Include`, canonicalisation, system-wide defaults, the
+// first-value-wins rule across all of them — is ssh's to interpret; the
+// plugin's own parser reads only enough to list aliases.
+async function sshEffectiveConfig(argv: string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const r = await editor.spawnHostProcess("ssh", ["-G", ...argv]);
+  if (r.exit_code !== 0) return out;
+  for (const line of (r.stdout || "").split(/\r?\n/)) {
+    const i = line.indexOf(" ");
+    if (i <= 0) continue;
+    const key = line.slice(0, i).toLowerCase();
+    if (!out.has(key)) out.set(key, line.slice(i + 1).trim());
+  }
+  return out;
+}
+
+// The fingerprints of the keys a host presents, as `ssh-keygen -l` renders
+// them (`256 SHA256:… (ED25519)`).
+//
+// Empty is a legitimate answer, not a failure: `ssh-keyscan` dials the address
+// directly, so a host reached through `ProxyJump` / `ProxyCommand` has no
+// fingerprint to show from here. The dialog says so rather than inventing one.
+async function scanHostKeyFingerprints(host: string, port: string): Promise<string[]> {
+  if (!host) return [];
+  const scan = await editor.spawnHostProcess("ssh-keyscan", [
+    "-T", String(HOSTKEY_SCAN_TIMEOUT_S),
+    ...(port ? ["-p", port] : []),
+    "--", host,
+  ]);
+  const keys = (scan.stdout || "")
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter((l) => l && !l.startsWith("#"));
+  if (keys.length === 0) return [];
+  // `ssh-keygen -l` reads a *file*, and `spawnHostProcess` execs rather than
+  // running a shell, so there is no pipe to hand it — the scan goes through a
+  // scratch file, removed on both paths.
+  const tmp = editor.pathJoin(
+    editor.getTempDir(),
+    `fresh-hostkey-${Date.now().toString(36)}-${Math.floor(Math.random() * 1e6).toString(36)}`,
+  );
+  if (!editor.writeFile(editor.localPath(tmp), `${keys.join("\n")}\n`)) return [];
+  const fp = await editor.spawnHostProcess("ssh-keygen", ["-l", "-f", tmp]);
+  editor.removePath(editor.localPath(tmp));
+  if (fp.exit_code !== 0) return [];
+  return (fp.stdout || "")
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .map(trimFingerprintComment);
+}
+
+// `ssh-keygen -l` prints `<bits> <fingerprint> <comment> (<TYPE>)`, and for a
+// scanned key the comment is the address — which the dialog already states on
+// its own line. Drop it so the line the user has to *compare* is the
+// fingerprint and nothing else. Anything that does not match the shape is
+// left exactly as ssh-keygen wrote it.
+function trimFingerprintComment(line: string): string {
+  const m = /^(\S+\s+\S+)\s+.*\s(\([^()]*\))$/.exec(line);
+  return m ? `${m[1]} ${m[2]}` : line;
+}
+
+// Everything the trust dialog states about the host being trusted.
+interface HostKeyOffer {
+  // The destination as the user named it (an alias, or `user@host`).
+  target: string;
+  // Where ssh will actually connect, from `ssh -G`.
+  where: string;
+  // `ssh-keygen -l` lines; empty when the key could not be read from here.
+  fingerprints: string[];
+  // The `known_hosts` the accept will write to, for the consequence line.
+  knownHosts: string;
+}
+
+// Gather what the dialog needs to show. Two cheap host processes, run only on
+// the failure path — nothing here happens on a host that is already trusted.
+async function hostKeyOffer(argv: string[], target: string): Promise<HostKeyOffer> {
+  const cfg = await sshEffectiveConfig(argv);
+  const host = cfg.get("hostname") ?? "";
+  const port = cfg.get("port") ?? "";
+  // `UserKnownHostsFile` may name several files; ssh writes the first.
+  const knownHosts = (cfg.get("userknownhostsfile") ?? "").split(/\s+/)[0] ?? "";
+  return {
+    target,
+    where: host ? (port && port !== "22" ? `${host} port ${port}` : host) : target,
+    fingerprints: await scanHostKeyFingerprints(host, port),
+    knownHosts,
+  };
+}
+
+// Put the fingerprint in front of the user and, if they accept, make ssh
+// record the key. Resolves `true` once the host is trusted.
+async function offerHostKeyTrust(argv: string[], target: string): Promise<boolean> {
+  const offer = await hostKeyOffer(argv, target);
+  if (!(await askHostKeyTrust(offer))) return false;
+  // The exit status is not the answer: host-key verification happens before
+  // authentication, so a host that records its key and *then* rejects our
+  // credentials has still been trusted — and the caller's real command is
+  // about to report that authentication failure in its own words.
+  await editor.spawnHostProcess("ssh", [
+    "-o", "StrictHostKeyChecking=accept-new",
+    ...argv,
+    "true",
+  ]);
+  return true;
+}
+
+// The dialog itself: a centered, dimmed modal over whatever asked for it.
+// Cancel sits first — the safe option in the first position, as the delete
+// confirmation does — and Esc / click-outside is Cancel too.
+const HOSTKEY_MODE = "orchestrator-hostkey";
+let hostKeyPanel: FloatingWidgetPanel | null = null;
+let hostKeyState: { offer: HostKeyOffer; settle: (trust: boolean) => void } | null = null;
+
+function buildHostKeySpec(offer: HostKeyOffer): WidgetSpec {
+  const dim = { fg: "ui.menu_disabled_fg" };
+  const parts: WidgetSpec[] = [
+    label(editor.t("hostkey.headline", { host: offer.target }), { wrap: true }),
+    spacer(0),
+    label([
+      { text: `  ${editor.t("hostkey.field_where")}  `, style: dim },
+      { text: offer.where, style: { bold: true } },
+    ]),
+  ];
+  if (offer.fingerprints.length > 0) {
+    for (const fp of offer.fingerprints) {
+      parts.push(label([
+        { text: `  ${editor.t("hostkey.field_key")}    `, style: dim },
+        { text: fp, style: { bold: true } },
+      ], { elide: "tail" }));
+    }
+  } else {
+    parts.push(label(`  ${editor.t("hostkey.no_fingerprint")}`, {
+      style: { ...dim, italic: true },
+      wrap: true,
+    }));
+  }
+  parts.push(
+    spacer(0),
+    label(
+      offer.knownHosts
+        ? editor.t("hostkey.records_in", { file: offer.knownHosts })
+        : editor.t("hostkey.records"),
+      { style: dim, wrap: true },
+    ),
+    label(editor.t("hostkey.warning"), {
+      style: { fg: "diagnostic.error_fg" },
+      wrap: true,
+    }),
+    spacer(0),
+    wrappingRow(
+      withAccel(button(editor.t("hostkey.btn_cancel"), { key: "hostkey-cancel" }), "Esc"),
+      spacer(2),
+      button(editor.t("hostkey.btn_trust"), { intent: "primary", key: "hostkey-trust" }),
+    ),
+  );
+  return col(...parts);
+}
+
+// Resolve the pending ask exactly once and tear the panel down. `unmount`
+// is skipped when the host already did it (an Esc / click-outside `cancel`).
+function settleHostKey(trust: boolean, unmount: boolean): void {
+  const st = hostKeyState;
+  if (unmount && hostKeyPanel) hostKeyPanel.unmount();
+  hostKeyPanel = null;
+  hostKeyState = null;
+  editor.setEditorMode(null);
+  restoreDockAfterDialog();
+  if (st) st.settle(trust);
+}
+
+function askHostKeyTrust(offer: HostKeyOffer): Promise<boolean> {
+  // A second ask while one is open would strand the first promise; remote
+  // creates are serialised (`pumpRemoteQueue`), so this is belt-and-braces.
+  if (hostKeyState) settleHostKey(false, true);
+  return new Promise<boolean>((resolve) => {
+    yieldDockToDialog();
+    hostKeyState = { offer, settle: resolve };
+    hostKeyPanel = new FloatingWidgetPanel();
+    hostKeyPanel.mount(buildHostKeySpec(offer), {
+      widthPct: 64,
+      heightPct: 40,
+      focusMarker: true,
+      title: editor.t("hostkey.title"),
+      closable: true,
+    });
+    editor.floatingPanelControl(hostKeyPanel.id(), "fullscreen", 1);
+    editor.setEditorMode(HOSTKEY_MODE);
+    // The safe option holds the keyboard, so Enter never trusts by reflex.
+    hostKeyPanel.setFocusKey("hostkey-cancel");
+  });
+}
+
+editor.defineMode(HOSTKEY_MODE, [], true, true);
+
+function handleHostKeyEvent(e: WidgetEvt): void {
+  if (e.event_type === "cancel") {
+    settleHostKey(false, false);
+    return;
+  }
+  if (e.event_type !== "activate") return;
+  if (e.widget_key === "hostkey-trust") settleHostKey(true, true);
+  else if (e.widget_key === "hostkey-cancel") settleHostKey(false, true);
+}
+
+// The directory every remote worktree the orchestrator makes lives under, as
+// `createRemoteWorktree` writes it (`$HOME/.fresh/worktrees/<repo>/<name>`).
+// The `$HOME` prefix is the remote's, so only the tail is matched.
+const REMOTE_WORKTREE_MARKER = "/.fresh/worktrees/";
+
+// Is this session a worktree *we* cut on a remote host — as opposed to a
+// remote directory the user pointed a session at with the worktree toggle off?
+//
+// The distinction is the whole safety of the teardown below: the first is ours
+// to remove, the second is the user's actual project and must never be touched.
+// A local session answers this with `projectPath !== root`, which a remote one
+// cannot — the host records no separate project for it — so the two facts that
+// *are* checkable at delete time stand in, and both must hold: the path is
+// under Fresh's own `~/.fresh/worktrees/`, and git says it is a *linked*
+// worktree rather than a main checkout. Neither alone is enough; together they
+// match only what `createRemoteWorktree` made.
+function looksLikeOurRemoteWorktree(s: AgentSession): boolean {
+  return s.remote?.kind === "ssh" && s.root.includes(REMOTE_WORKTREE_MARKER);
+}
+
+// Can the removal actually reach the host *right now*?
+//
+// **This is a safety check, not an optimisation.** The removal routes through
+// the active authority, and `setActiveWindow` on a dormant remote session
+// installs an empty local shell and starts the connect *afterwards*
+// (`PluginCommand::SetActiveWindow`), so a spawn issued straight after the
+// switch races that connect and is served by the LOCAL spawner instead. It
+// would then run `git worktree remove --force` against a remote absolute path
+// on this machine — a no-op if nothing is there, and a deletion of the user's
+// files if anything is. Only a session the host already reports as connected
+// is safe to act on; everything else is left alone and said out loud.
+function remoteWorktreeReachable(s: AgentSession): boolean {
+  // **Asked of the host, not of our own facet.** `s.remote.state` is a display
+  // badge: a freshly created session keeps the `"starting"` its create stamped
+  // on it and nothing promotes it, so testing it here refused the live
+  // sessions this is meant to allow. `WindowInfo.remote.connected` is the
+  // host's own answer and is recomputed every time it is asked.
+  return editor.listWindows().find((w) => w.id === s.id)?.remote?.connected === true;
+}
+
+// Remove a remote worktree over the session's **own** connection.
+//
+// **This runs while the session's window is still active, and that is the
+// point.** `spawnProcess` routes through the active authority, so with the
+// remote window in front the `git` below executes on the far side with no ssh
+// argv to rebuild — the plugin never sees a live session's transport
+// (`WindowInfo.remote` carries a display identity, not an identity file), and
+// reconstructing one would be guessing. It is the exact inverse of
+// `createRemoteWorktree`, which also ran on the far side.
+//
+// `git -C <worktree> worktree remove <worktree>` is deliberate: a worktree can
+// remove itself through its own common dir, so the repository root — which
+// this side does not know — is never needed.
+//
+// Answers `null` on success, or the reason it could not, which the caller
+// reports *without* failing the delete: a host that is down must not leave the
+// user unable to drop the row.
+async function removeRemoteWorktree(s: AgentSession): Promise<string | null> {
+  const linked = await spawnCollect(
+    "git",
+    ["-C", s.root, "rev-parse", "--path-format=absolute", "--git-dir", "--git-common-dir"],
+    s.root,
+  );
+  const lines = (linked.stdout || "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  if (linked.exit_code !== 0 || lines.length < 2) {
+    return lastNonEmptyLine(linked.stderr) || editor.t("err.remote_worktree_remove_failed");
+  }
+  // A main checkout has `--git-dir` === `--git-common-dir`; only a linked
+  // worktree has its own. Refusing here is what keeps a user's project safe if
+  // the path check above ever matched something it should not.
+  if (lines[0] === lines[1]) return editor.t("err.remote_not_linked_worktree");
+  const rm = await spawnCollect(
+    "git",
+    // `--force` for the same reason the local path uses it: the confirm step
+    // is where the user chose to discard whatever is uncommitted.
+    ["-C", s.root, "worktree", "remove", "--force", s.root],
+    s.root,
+  );
+  if (rm.exit_code !== 0) {
+    return lastNonEmptyLine(rm.stderr) || editor.t("err.remote_worktree_remove_failed");
+  }
+  return null;
 }
 
 // Why an ssh test failed, said beside the field that caused it.
@@ -8832,7 +9420,7 @@ function buildMachineDialogSpec(): WidgetSpec {
   if (d.error) {
     children.push(label(`✗ ${d.error}`, {
       labelWidth: FORM_LABEL_W,
-      style: { fg: "ui.status_error_indicator_fg", bold: true },
+      style: { fg: "diagnostic.error_fg", bold: true },
     }));
   } else if (d.test.state === "running") {
     children.push(label(`… ${editor.t("machine.testing")}`, { labelWidth: FORM_LABEL_W, style: NOTE_STYLE }));
@@ -8844,7 +9432,7 @@ function buildMachineDialogSpec(): WidgetSpec {
   } else if (d.test.state === "fail") {
     children.push(label(`✗ ${d.test.summary}`, {
       labelWidth: FORM_LABEL_W,
-      style: { fg: "ui.status_error_indicator_fg", bold: true },
+      style: { fg: "diagnostic.error_fg", bold: true },
     }));
     if (d.test.detail) {
       children.push(label(`  ${d.test.detail}`, { labelWidth: FORM_LABEL_W, style: NOTE_STYLE }));
@@ -9076,6 +9664,9 @@ function machineForHost(h: SshConfigHost): Machine {
 }
 
 function openMachinesDialog(): void {
+  // Another `fresh` may have added, edited or removed a machine since this
+  // session last read them. Re-read before the list goes on screen.
+  invalidateMachines();
   yieldDockToDialog();
   const idx = machinesState?.index ?? 0;
   machinesState = { index: Math.min(idx, machinesRows().length - 1), focus: "machines" };
@@ -9129,7 +9720,7 @@ function machinesRowEntry(r: MachinesRow): TextPropertyEntry {
     ? { text: pad("—", 12), style: dim }
     : m.lastTest.ok
     ? { text: pad(editor.t("machine.test_ok"), 12), style: { fg: "ui.help_key_fg" } }
-    : { text: pad(`✗ ${agoText(m.lastTest.at)}`, 12), style: { fg: "ui.status_error_indicator_fg" } };
+    : { text: pad(`✗ ${agoText(m.lastTest.at)}`, 12), style: { fg: "diagnostic.error_fg" } };
   const n = machineWorkspaceCount(m);
   const tail = r.host
     ? editor.t("machine.from_ssh_config")
@@ -9577,7 +10168,7 @@ function targetRow(): WidgetSpec {
 interface MachineOption {
   key: string;
   label: string;
-  kind: "local" | "machine" | "sshhost" | "other" | "k8s" | "devcontainer" | "add";
+  kind: "local" | "machine" | "sshhost" | "other" | "k8s" | "devcontainer";
   machine?: Machine;
   hostIndex?: number;
 }
@@ -9591,7 +10182,15 @@ function machineOptions(): MachineOption[] {
   out.push({ key: "other", label: editor.t("form.ssh_other_host"), kind: "other" });
   out.push({ key: "k8s", label: editor.t("form.k8s_manual"), kind: "k8s" });
   out.push({ key: "devcontainer", label: editor.t("backend.devcontainer"), kind: "devcontainer" });
-  out.push({ key: "add", label: editor.t("machine.add"), kind: "add" });
+  // **No "Add machine…" here.** Picking it only *armed* a choice that a
+  // further, unadvertised Enter completed: clicking it — the obvious gesture —
+  // left the field reading "Add machine…", revealed nothing, and silently
+  // reverted to Local on Tab. Two things already do its job better and are
+  // right next to it: the `~/.ssh/config` hosts above, which need no
+  // registration at all, and `Other host…` for one typed by hand. Registering
+  // a machine keeps its own home in the dock's `⋯` → Machines and the
+  // `Orchestrator: Machines` command; a control that needs a secret keystroke
+  // beside two that do not only teaches distrust.
   return out;
 }
 
@@ -9611,40 +10210,11 @@ function machineOptionNote(o: MachineOption): string {
   }
 }
 
-// Enter on an armed `Add machine…`: leave for the dialog, which comes back
-// to a fresh form with the new machine chosen. `true` when it fired.
-function commitMachineAdd(): boolean {
-  if (!form || !form.machineAddArmed) return false;
-  form.machineAddArmed = false;
-  cancelForm();
-  openMachineDialog(null, "form");
-  return true;
-}
-
-// Esc / Tab away from an armed `Add machine…`: back to the previous pick.
-function revertMachineAdd(): void {
-  if (!form || !form.machineAddArmed) return;
-  form.machineAddArmed = false;
-  applyMachinePick(form.machinePickBefore);
-  // The dropdown's selection is host-owned after first render, so a
-  // re-render alone leaves it showing `Add machine…`: push the pick back.
-  formPanel?.setDropdown("machine", form.machinePick);
-  rebuildFormFocusCycle();
-  renderForm();
-}
-
 function applyMachinePick(index: number): void {
   if (!form) return;
   const opts = machineOptions();
   const o = opts[index];
   if (!o) return;
-  if (o.kind === "add") {
-    if (!form.machineAddArmed) form.machinePickBefore = form.machinePick;
-    form.machinePick = index;
-    form.machineAddArmed = true;
-    return;
-  }
-  form.machineAddArmed = false;
   form.machinePick = index;
   form.machineId = null;
   switch (o.kind) {
@@ -9880,6 +10450,55 @@ function localBodyFields(): WidgetSpec[] {
   return fields;
 }
 
+// What the workspace will be called: the typed name, or the auto-generated
+// default the Workspace Name field is showing as its placeholder.
+function plannedWorkspaceName(f: NewSessionForm): string {
+  return f.name.value.trim() || f.defaultSessionName;
+}
+
+// The one line that says what `Create` will actually do to the repository.
+//
+// The hint this replaces read "leave empty to use provided branch", and the
+// code does the opposite: with both branch fields blank, `git worktree add`
+// is given `-b <workspace name>` off the default branch, so a user following
+// the hint silently got a branch they never asked for. Rather than restate
+// the rule in better prose — a rule with three arms, two of which depend on
+// fields above — the form names the branch. A preview cannot drift from the
+// behaviour the way a sentence about it can.
+//
+// `base` is the fork point as the create resolves it: the typed Checkout
+// branch, else the detected default. Blank on a remote host that has not
+// answered yet, where the far side's `git worktree add` picks the fork point
+// and this side would only be guessing.
+// `typedBase` is what the user actually put in "Checkout branch"; `fallback`
+// is the detected default shown there as a placeholder. The two are NOT
+// interchangeable, and conflating them is what this function got wrong first
+// time round: the create has three arms, and which one runs turns on whether
+// Checkout branch was *typed*, not on what the field displays.
+//
+//   new branch set              → cut `newBranch` off the base
+//   new branch blank, base set  → check `base` out; NO new branch is cut
+//   both blank                  → cut `<workspace name>` off the default
+//
+// The middle arm is the one a preview that only looked at "is there a base"
+// described as cutting a branch. It does not: `runLocalCreate` takes its
+// `else if (checkoutBranch)` arm and `createRemoteWorktree` omits `-b`.
+function branchPlanNote(f: NewSessionForm, typedBase: string, fallback: string): string {
+  const named = f.newBranch.value.trim();
+  if (named) {
+    const base = typedBase || fallback;
+    return base
+      ? editor.t("form.branch_plan", { branch: named, base })
+      : editor.t("form.branch_plan_nobase", { branch: named });
+  }
+  if (typedBase) return editor.t("form.branch_plan_checkout", { base: typedBase });
+  const branch = plannedWorkspaceName(f);
+  if (!branch) return "";
+  return fallback
+    ? editor.t("form.branch_plan_default", { branch, base: fallback })
+    : editor.t("form.branch_plan_default_nobase", { branch });
+}
+
 // The worktree group (local backend): the toggle, then what it reveals.
 // Disclosure is value-driven — the branch field shows on any git path (it
 // drives an in-place checkout when no worktree is cut), the new-branch field
@@ -9928,9 +10547,32 @@ function worktreeFields(f: NewSessionForm): WidgetSpec[] {
   // meaningful when a worktree is being created, so it appears with it.
   if (on) {
     const nb = splitLabel("form.new_branch");
-    out.push(...field(nb.label, f.newBranch, { key: "new_branch", note: nb.hint }));
+    out.push(...field(nb.label, f.newBranch, {
+      key: "new_branch",
+      note: branchPlanNote(f, f.branch.value.trim(), f.defaultBranch) || undefined,
+    }));
+    // Where the files land. A first-run user expects to be taken to their
+    // project and is instead dropped in a deep directory under the data dir,
+    // which nothing named beforehand.
+    const name = plannedWorkspaceName(f);
+    if (name) {
+      out.push(fieldNote(
+        editor.t("form.worktree_where", { path: localWorktreePath(f, name) }),
+        { fg: "ui.menu_disabled_fg", italic: true },
+      ));
+    }
   }
   return out;
+}
+
+// The directory `runLocalCreate` will put the worktree in, for the preview.
+// Kept beside the preview rather than shared with the create: the create
+// resolves the repository's canonical root first (a probe this side of the
+// dialog does not run), so the two agree on the shape and the preview shows
+// the project path the user can see in the field above.
+function localWorktreePath(f: NewSessionForm, name: string): string {
+  const project = f.projectPath.value.trim() || f.defaultProjectPath;
+  return editor.pathJoin(editor.getDataDir(), "orchestrator", slugify(project), name);
 }
 
 // Ask the remote whether the path it was given is a repository, and what it
@@ -9989,7 +10631,17 @@ function remoteWorktreeFields(f: NewSessionForm): WidgetSpec[] {
     // the remote's own `git rev-parse` is what decides — refusing here would
     // be this side guessing on the strength of one failed connection.
     out.push(formToggle(f.createWorktree, editor.t("form.create_worktree_short"), "worktree"));
-    out.push(fieldNote(editor.t("form.remote_unreachable"), { fg: "diff.removed_fg", italic: true }));
+    // "Could not ask" has two causes that send the user to different places:
+    // a host that did not answer, and one that answered with a key we have
+    // never seen. The second is not an error the user has to go and fix —
+    // Create will ask them to confirm the fingerprint — so it must not read
+    // like one.
+    out.push(fieldNote(
+      isHostKeyFailure(f.remoteProbeError)
+        ? editor.t("form.remote_untrusted")
+        : editor.t("form.remote_unreachable"),
+      { fg: "diff.removed_fg", italic: true },
+    ));
     return out;
   }
   if (f.remoteIsGit === false) {
@@ -10027,8 +10679,20 @@ function remoteWorktreeFields(f: NewSessionForm): WidgetSpec[] {
     }),
   );
   const nb = splitLabel("form.new_branch");
-  out.push(...field(nb.label, f.newBranch, { key: "new_branch", note: nb.hint }));
-  out.push(fieldNote(editor.t("form.remote_worktree_where")));
+  out.push(...field(nb.label, f.newBranch, {
+    key: "new_branch",
+    note: branchPlanNote(f, f.branch.value.trim(), f.remoteDefaultBranch) || undefined,
+  }));
+  // The remote resolves `$HOME` and the repository's basename itself, so the
+  // preview says the shape and fills in the part this side does know — the
+  // workspace name — rather than guessing at a path it cannot resolve.
+  const name = plannedWorkspaceName(f);
+  const repo = f.remoteRepoRoot.split("/").filter(Boolean).pop() ?? "";
+  out.push(fieldNote(
+    repo && name
+      ? editor.t("form.remote_worktree_where_at", { path: `~/.fresh/worktrees/${repo}/${name}` })
+      : editor.t("form.remote_worktree_where"),
+  ));
   return out;
 }
 
@@ -10334,26 +10998,45 @@ function connectionRowsMax(f: NewSessionForm): number {
 // the switch was flipped. The reservation is a constant of the form, not of
 // whichever shape happens to be showing.
 function tailRowsMax(f: NewSessionForm): number {
+  // **Every input the tail's height depends on is pinned, not read.** Three
+  // of them arrive from async probes — is the path a repository, what is its
+  // default branch, what is the workspace called — and each one decides
+  // whether a row exists. Measured from the live values, the reservation is
+  // whatever those probes had answered by that frame, so it *grew* when they
+  // landed and the whole dialog re-centred under the user a second after it
+  // opened. Pinned, the reservation is the form's final height from the first
+  // frame. Only row counts are being measured here, so what the pinned values
+  // say never reaches the screen — `NONBLANK` stands for "this note exists".
+  const NONBLANK = "x";
+  const tallest = {
+    ...f,
+    target: "new" as const,
+    machineId: null,
+    createWorktree: true,
+    // The branch preview names a branch and a fork point, and the worktree
+    // path preview names a directory; all three need a workspace name.
+    defaultSessionName: f.defaultSessionName || NONBLANK,
+    // A default branch detected as HEAD carries a note the others do not.
+    defaultBranch: f.defaultBranch || NONBLANK,
+    defaultBranchIsHeadFallback: true,
+  };
   return Math.max(
     6,
-    rowsOf(
-      { ...f, target: "new", backend: "local", machineId: null, createWorktree: true },
-      modeTailFields,
-    ),
+    // The tallest local shape: a repository, so the worktree group is open
+    // rather than the two dim rows a non-git path gets.
+    rowsOf({ ...tallest, backend: "local", projectPathIsGit: true }, modeTailFields),
     // The tallest remote shape: a typed host (so `Remember this machine`
     // shows) over a repository (so the worktree group is at full height).
     rowsOf(
       {
-        ...f,
-        target: "new",
+        ...tallest,
         backend: "ssh",
-        machineId: null,
         sshPick: f.sshHosts.length,
         remember: true,
         remoteProbing: false,
         remoteProbeError: "",
         remoteIsGit: true,
-        createWorktree: true,
+        remoteRepoRoot: f.remoteRepoRoot || NONBLANK,
       },
       modeTailFields,
     ),
@@ -10534,6 +11217,10 @@ function renderForm(): void {
 }
 
 function openForm(options?: { fromPicker?: boolean; target?: RunAgentTarget }): void {
+  // Same reason as `openMachinesDialog`: the Machine picker is built from the
+  // saved machines, so re-read them rather than offer this session's cached
+  // list — a machine added in another window is otherwise unreachable here.
+  invalidateMachines();
   const lastCmd =
     (editor.getGlobalState("orchestrator.last_cmd") as string | undefined) ?? "";
   form = {
@@ -10546,8 +11233,6 @@ function openForm(options?: { fromPicker?: boolean; target?: RunAgentTarget }): 
     sshPick: 0,
     machineId: null,
     machinePick: 0,
-    machineAddArmed: false,
-    machinePickBefore: 0,
     remember: false,
     rememberAs: { value: "", cursor: 0 },
     sshPath: { value: "", cursor: 0 },
@@ -11239,6 +11924,20 @@ function buildSshSpec(o: SshSpecInputs): CaptureResult {
   if (!host) return { ok: false, error: editor.t("err.ssh_host_required") };
   const agentArgv = remoteAgentArgv(o.cmd, o);
   const target = user ? `${user}@${host}` : host;
+  // **The workspace name, not the machine twice.** A remote row renders the
+  // label and then the backend target beside it, so a blank name read
+  // `ssh:testbox  testbox` — naming the machine twice and the workspace never,
+  // leaving two sessions on one host indistinguishable. The fix is upstream of
+  // here: the form now hands over its generated default when the field is left
+  // empty, so `o.name` is populated and the label is the workspace name, with
+  // the machine appearing exactly once, in the row's target segment.
+  //
+  // The label deliberately does *not* also carry the target. Spelling it
+  // `<name> · ssh:<target>` reads well in isolation but puts the machine back
+  // in twice, and the dock is one narrow line: the extra width pushed the
+  // pending status off the end, so a workspace being created showed its name
+  // and host but never what it was doing. `remoteDetailSegs` guards the
+  // duplication; keeping the label short is what leaves room for the status.
   const label = o.name || `ssh:${target}`;
   const spec: RemoteAgentSpec = {
     transport: {
@@ -11438,7 +12137,12 @@ function captureCreateSpec(f: NewSessionForm): CaptureResult {
     return buildSshSpec({
       ...agentOptions,
       host: other ? f.sshHost.value.trim() : f.sshHosts[f.sshPick].alias,
-      name: sessionName,
+      // The auto-generated name counts as a name. Leaving the field blank is
+      // the common case, and passing "" here left the row with no workspace
+      // name at all — the very thing the label change is for — while the
+      // worktree it created was named all along (the plan below uses the same
+      // fallback).
+      name: sessionName || f.defaultSessionName,
       cmd,
       remotePath: f.sshPath.value.trim(),
       identity: other ? f.sshIdentity.value.trim() : "",
@@ -11481,9 +12185,10 @@ function pendingCreatingMessage(spec: CreateSpec): string {
 // filing it into a folder, switching to it and closing it all work on the
 // window, not on a stub that only offers "dismiss".
 //
-// A REMOTE workspace still gets a synthetic placeholder row: its window is
-// born by the connect itself (`attachRemoteAgent`), so there is nothing here
-// to adopt.
+// A REMOTE workspace gets the same treatment. Its window used to be born by
+// the connect itself (`attachRemoteAgent`), which meant there was nothing to
+// land in while it ran and nothing to report on when it failed; the connect
+// now adopts this placeholder instead (`adopt_window`).
 async function startPendingWorkspace(
   spec: CreateSpec,
   opts?: { restored?: boolean; visit?: boolean; label?: string },
@@ -11505,6 +12210,7 @@ async function startPendingWorkspace(
 
   let id: number;
   let stableId: string | undefined;
+  let bufferId: number | undefined;
   let root: string;
   if (spec.backend === "local") {
     // Root the placeholder at the project directory: the workspace's own
@@ -11518,11 +12224,34 @@ async function startPendingWorkspace(
     });
     id = born.windowId;
     stableId = born.stableId || undefined;
+    bufferId = born.bufferId || undefined;
     root = spec.projectPath;
   } else {
-    id = allocPendingId();
-    // Synthetic root — a placeholder owns no real directory yet, and a
-    // unique key keeps it in its own stable dock-order slot.
+    // A remote workspace gets the same placeholder window a local one does,
+    // and for the same two reasons: the user lands in the workspace they
+    // asked for straight away instead of being left on the previous one, and
+    // a connect that never arrives has a page of its own to say so on.
+    //
+    // It used to get a synthetic row and no window, because the window was
+    // born by the connect itself — so pressing Create against an unreachable
+    // machine looked like nothing had happened, and the eventual error could
+    // only be reported as a line at the bottom of the dock.
+    //
+    // The window is anchored at a *local* directory because the workspace's
+    // own root is on a machine we have not reached yet; the connect re-roots
+    // it onto the remote path when the session adopts it (`adopt_window`).
+    // The row keeps a synthetic root of its own so it cannot collide with a
+    // real workspace at the anchor.
+    const anchor = editor.getCwd();
+    const born = await editor.createPreparingWindow({
+      root: anchor,
+      label,
+      message,
+      activate: visit,
+    });
+    id = born.windowId;
+    stableId = born.stableId || undefined;
+    bufferId = born.bufferId || undefined;
     root = `pending:${id}`;
   }
   orchestratorSessions.set(id, {
@@ -11544,6 +12273,7 @@ async function startPendingWorkspace(
     pending: {
       phase: restored ? "paused" : "creating",
       message,
+      bufferId,
       spec,
       // A restored/resumed row never yanks focus on relaunch.
       visit,
@@ -11681,6 +12411,11 @@ function failPending(id: number, reason: string): void {
   if (s.remote) s.remote.state = "error";
   editor.setStatus(editor.t("status.prefix", { msg: s.pending.message }));
   savePendingSpecs();
+  // Highlight the row that just failed, so the failure panel — the full
+  // reason and its Retry / Dismiss — is on screen at the moment it is needed
+  // rather than after the user has gone looking for it. The dock highlight is
+  // not the active window, so this moves nothing the user is working in.
+  selectDockRow(id);
   if (openPanel) refreshOpenDialog();
   // The row stays for the user to retry or dismiss, but a caller waiting on
   // this create is done — it gets the reason rather than hanging.
@@ -11715,6 +12450,7 @@ function retryPending(id: number): void {
 function dismissPending(id: number): void {
   const s = orchestratorSessions.get(id);
   if (!s || !s.pending) return;
+  dropPlaceholderPage(id);
   if (remoteInFlightId === id) {
     pendingRemoteFacet = null;
     editor.cancelRemoteAgent();
@@ -12025,6 +12761,7 @@ async function runLocalCreate(id: number): Promise<void> {
     // `winId === id`, so this replaces the row in place and it keeps its dock
     // slot; otherwise the placeholder is superseded by the new row.
     const wasPending = orchestratorSessions.get(id);
+    dropPlaceholderPage(id);
     orchestratorSessions.delete(id);
     savePendingSpecs();
     orchestratorSessions.set(winId, {
@@ -12141,11 +12878,61 @@ async function runRemoteCreate(id: number): Promise<void> {
     // repository, makes the worktree if it is not already there, and answers
     // with the absolute path. A failure here is the create's failure: the row
     // says what the remote said rather than connecting to the wrong place.
+    // **Without a worktree to make, nothing else would ask.** The agent
+    // carrier trusts an unknown key on its own (`accept-new`), so a create
+    // with the worktree toggle off connected silently — while the form had
+    // already promised "you'll be asked to confirm it on create". One cheap
+    // round trip buys the promise back; on a host that is already trusted it
+    // succeeds and costs nothing more.
+    if (spec.backend === "ssh" && !spec.remoteWorktree) {
+      const argv = specSshArgv(spec.spec, REMOTE_CREATE_TIMEOUT_S);
+      if (argv) {
+        const probe = await editor.spawnHostProcess("ssh", [...argv, "true"]);
+        if (!orchestratorSessions.get(id)?.pending) return;
+        if (probe.exit_code !== 0 && isHostKeyFailure(lastNonEmptyLine(probe.stderr))) {
+          setPendingMessage(id, editor.t("dock.pending_awaiting_hostkey"));
+          const trusted = await offerHostKeyTrust(argv, spec.facet.detail);
+          if (!orchestratorSessions.get(id)?.pending) return;
+          if (!trusted) {
+            failPending(id, editor.t("hostkey.declined"));
+            return;
+          }
+        }
+      }
+    }
     if (spec.backend === "ssh" && spec.remoteWorktree) {
       s.pending.message = editor.t("dock.pending_adding_worktree");
       if (openPanel) refreshOpenDialog();
-      const made = await createRemoteWorktree(spec.remoteWorktree);
+      let made = await createRemoteWorktree(spec.remoteWorktree);
       if (!orchestratorSessions.get(id)?.pending) return;
+      // An untrusted host key is the one failure the user can clear from
+      // right here, and the first ssh call of the create is where it shows
+      // up. Ask for the fingerprint the way every other ssh client does and
+      // run the same create again; declining is an outcome, not a crash, so
+      // the row says what happened and Retry asks once more.
+      if (!made.ok && isHostKeyFailure(made.error)) {
+        // **Say that it is waiting, not that it is working.** The modal below
+        // blocks until the user answers, and for as long as it does there is
+        // no ssh process, no worktree and no `known_hosts` — so a row still
+        // reading "Adding worktree…" describes work that is not happening,
+        // and a user who looks at the dock rather than the modal sees a
+        // create wedged mid-step. This is the state the study recorded as
+        // "permanently in progress".
+        setPendingMessage(id, editor.t("dock.pending_awaiting_hostkey"));
+        const trusted = await offerHostKeyTrust(
+          spec.remoteWorktree.ssh,
+          spec.facet.detail,
+        );
+        if (!orchestratorSessions.get(id)?.pending) return;
+        if (!trusted) {
+          failPending(id, editor.t("hostkey.declined"));
+          return;
+        }
+        s.pending.message = editor.t("dock.pending_adding_worktree");
+        if (openPanel) refreshOpenDialog();
+        made = await createRemoteWorktree(spec.remoteWorktree);
+        if (!orchestratorSessions.get(id)?.pending) return;
+      }
       if (!made.ok) {
         failPending(id, made.error);
         return;
@@ -12157,9 +12944,16 @@ async function runRemoteCreate(id: number): Promise<void> {
       if (spec.spec.transport.kind === "ssh") spec.spec.transport.remote_path = made.root;
       savePendingSpecs();
     }
+    // Grow the placeholder the user has been sitting in since they pressed
+    // Create into the live session, rather than minting a second window
+    // beside it. Keeps its window id, its durable workspace id and its dock
+    // slot across the connect — the same adoption the local path does.
+    if (id > 0) spec.spec.adopt_window = id;
     await editor.attachRemoteAgent(spec.spec);
-    // Success: the born-attached window is live and already tracked (the
-    // hook adopted the facet). Drop the placeholder.
+    // Success: the workspace is live in the window the user has been sitting
+    // in. Its page has done its job, so take it down before the row is
+    // replaced — the pane behind it is the workspace's own content now.
+    dropPlaceholderPage(id);
     orchestratorSessions.delete(id);
     savePendingSpecs();
     // Hand a waiting caller its ids. The attach dove into the born window, so
@@ -12290,11 +13084,28 @@ async function submitForm(visit: boolean): Promise<void> {
   // now, and whatever ran is what the next form opens on — by option key,
   // since most options (an ssh-config host, Kubernetes) have no machine id.
   rememberMachineFromForm(form);
+  // Claim a remote workspace's auto-generated name so the *next* dialog does
+  // not propose it again. A local create derives its own name at create time
+  // and advances the counter there (`runLocalCreate`, which also pins the
+  // result back into the spec so a retry targets the same worktree); a remote
+  // create baked the name in at capture, so nothing downstream advances
+  // anything. That left an ssh workspace holding `<project>-2` with the
+  // counter still at 1, and the following dialog offered `<project>-2` again.
+  // The branch scan that backs the counter up cannot cover it either — a
+  // worktree cut on another machine leaves no ref in this repository.
+  // Only when the user left Workspace Name blank, so the name in the spec is
+  // the generated `<project>-N` rather than something they typed. A typed name
+  // is theirs and says nothing about the counter — deriving a base to test
+  // against would not help either, since an ssh form's default name is
+  // generated from the *local* project probe, not the remote repository.
+  if (
+    captured.spec.backend === "ssh" && captured.spec.remoteWorktree &&
+    !form.name.value.trim() && captured.spec.remoteWorktree.name === form.defaultSessionName
+  ) {
+    claimAutoSessionName(captured.spec.remoteWorktree.name);
+  }
   const picked = machineOptions()[form.machinePick];
-  editor.setGlobalState(
-    "orchestrator.last_machine",
-    picked && picked.kind !== "add" ? picked.key : "",
-  );
+  editor.setGlobalState("orchestrator.last_machine", picked ? picked.key : "");
   await startPendingWorkspace(captured.spec, { visit });
 }
 
@@ -13364,7 +14175,6 @@ async function apiUnarchiveWorkspace(target: string): Promise<boolean> {
   const res = await unarchiveOne(match);
   if (!res.ok) throw new Error(res.err || "unarchive failed");
   // The manifest changed, so push it the same way the archive path does.
-  if (res.repoRoot) triggerSyncAsync(res.repoRoot);
   refreshOpenDialog();
   return true;
 }
@@ -13534,23 +14344,16 @@ function dockActivate(): void {
   }
   const id = dockSelectedSessionId();
   const sel = typeof id === "number" ? orchestratorSessions.get(id) : undefined;
-  // Enter on a workspace whose build failed or is paused: retry it —
-  // that is the only move that gets it anywhere. A windowless
-  // placeholder (a remote create) has nothing to dive into either, and
-  // must never blur to the editor: that would drop focus onto whatever
-  // buffer sits behind the phantom row. One that owns a window falls
-  // through and is entered like any workspace.
-  if (sel && sel.pending && (pendingActionable(sel.pending) || (id as number) <= 0)) {
-    if (pendingActionable(sel.pending)) retryPending(id as number);
-    return;
-  }
-  if (sel && sel.discovered) {
+  const act = rowActivation(sel);
+  if (act.kind === "inert") return;
+  if (act.kind === "attach") {
+    const w = act.session;
     void attachToWorktree({
-      root: sel.root,
-      projectPath: sel.projectPath ?? sel.root,
-      label: sel.label,
-      branch: sel.branch,
-      discoveredId: sel.id,
+      root: w.root,
+      projectPath: w.projectPath ?? w.root,
+      label: w.label,
+      branch: w.branch,
+      discoveredId: w.id,
       dive: true,
     });
     return;
@@ -13561,8 +14364,8 @@ function dockActivate(): void {
   // now. For a dormant remote this lands in its "Connecting…" shell (the
   // #2570 dive path); for a live/local row it's the switch arrow-nav would
   // otherwise have made before the debounce landed.
-  if (typeof id === "number" && id > 0 && id !== editor.activeWindow()) {
-    editor.setActiveWindow(id);
+  if (act.windowId !== editor.activeWindow()) {
+    editor.setActiveWindow(act.windowId);
   }
   // Same as the row click: the filter that surfaced this row is kept
   // across the dive (see `dockDiveBlur`).
@@ -13767,7 +14570,6 @@ registerHandler("orchestrator_form_key_tab", () => {
   // fires `completion_accept` (no `focus` event to snap back from).
   // With no popup, the host always advances and fires an authoritative
   // `focus` event, so the optimistic advance just avoids a frame lag.
-  revertMachineAdd();
   if (!completionVisibleForFocused()) {
     advanceFormFocus(1);
   }
@@ -13795,9 +14597,6 @@ registerHandler("orchestrator_form_key_enter", () => {
   // smart-key dispatch, which opens the pop-over and — when it is already
   // open — commits the highlighted option.
   if (formDropdownFocused()) {
-    // An armed `Add machine…` commits on Enter whether the list is open
-    // (Enter closes it) or the control was moved with ←/→ while closed.
-    if (formFocusedKey() === "machine" && commitMachineAdd()) return;
     dispatchFormKey("Enter");
     return;
   }
@@ -13814,7 +14613,6 @@ registerHandler(
     // (The convention is that S-Tab is the "go back" gesture;
     // overloading it to accept-then-go-back is more confusing
     // than useful.)
-    revertMachineAdd();
     closeCompletion();
     advanceFormFocus(-1);
     dispatchFormKey("Shift+Tab");
@@ -13835,11 +14633,6 @@ registerHandler("orchestrator_form_key_escape", () => {
   // falls through to `cancelForm` below.
   if (openFormDropdown !== null && formFocusedKey() === openFormDropdown) {
     dispatchFormKey("Escape");
-    return;
-  }
-  // An armed `Add machine…` is a choice not yet made: Esc unmakes it.
-  if (form?.machineAddArmed) {
-    revertMachineAdd();
     return;
   }
   if (form) cancelForm();
@@ -13952,6 +14745,7 @@ function enterConfirm(action: "stop" | "archive" | "delete"): void {
   // live window opens a replacement first (see `ensureReplacementWindow`
   // in `archiveOne` / `deleteOne`). So no eligibility refusal here — just
   // confirm and run.
+  confirmRemoveWorktree = true;
   openDialog.pendingConfirm = { action, ids: [id] };
   openPanel.update(buildOpenSpec());
   openPanel.setFocusKey("confirm-cancel");
@@ -13978,12 +14772,26 @@ function enterBulkConfirm(action: BulkAction): void {
   // All three actions confirm — even Stop, so a bulk Stop over a
   // large selection isn't a single mis-key away. The confirm panel
   // lists the targets and shows the eligible count.
+  confirmRemoveWorktree = true;
   openDialog.pendingConfirm = { action, ids: targets };
   openPanel.update(buildOpenSpec());
   openPanel.setFocusKey("confirm-cancel");
 }
 
 editor.on("widget_event", (e) => {
+  // ---------------------------------------------------------------------
+  // A workspace's placeholder page: the two things to do about a build that
+  // has stalled, on the page that is reporting it. They are here rather than
+  // in the dock because this is where the user already is — creating a
+  // workspace takes them into it.
+  // ---------------------------------------------------------------------
+  const placeholderWindow = placeholderWindows.get(e.panel_id);
+  if (placeholderWindow !== undefined) {
+    if (e.event_type !== "activate") return;
+    if (e.widget_key === "placeholder-retry") retryPending(placeholderWindow);
+    else if (e.widget_key === "placeholder-dismiss") dismissPending(placeholderWindow);
+    return;
+  }
   // ---------------------------------------------------------------------
   // Machines: the Add / Edit Machine dialog and the Machines list.
   // ---------------------------------------------------------------------
@@ -13997,6 +14805,10 @@ editor.on("widget_event", (e) => {
   }
   if (explainPanel && e.panel_id === explainPanel.id()) {
     handleExplainEvent(e);
+    return;
+  }
+  if (hostKeyPanel && hostKeyState && e.panel_id === hostKeyPanel.id()) {
+    handleHostKeyEvent(e);
     return;
   }
   // ---------------------------------------------------------------------
@@ -14075,6 +14887,18 @@ editor.on("widget_event", (e) => {
         openPanel.setFocusKey("sessions");
         refreshOpenDialog();
       }
+      return;
+    }
+    // The confirm pane's "also remove the worktree" checkbox. Handled before
+    // the `activate` narrowing below, because a toggle is its own event type.
+    if (e.event_type === "toggle" && e.widget_key === "confirm-worktree") {
+      const payload = (e.payload ?? {}) as Record<string, unknown>;
+      confirmRemoveWorktree = typeof payload.checked === "boolean"
+        ? payload.checked
+        : !confirmRemoveWorktree;
+      // The consequence list above the checkbox says what it will do, so it
+      // has to be rebuilt with it.
+      renderDockMenu();
       return;
     }
     if (e.event_type === "activate") {
@@ -14310,6 +15134,10 @@ editor.on("widget_event", (e) => {
         renderForm();
       } else if (field === "branch") {
         scheduleCompletionRefresh("branch");
+        // The branch preview under "New branch name" names the fork point,
+        // so it has to redraw as the fork point is typed — a preview that
+        // lags the field it previews is the stale-hint problem again.
+        renderForm();
       } else {
         // Any other field's change implicitly closes the
         // dropdown (the user moved on).
@@ -14332,7 +15160,14 @@ editor.on("widget_event", (e) => {
         }
         // The remaining Create-gating fields: re-render so the disabled
         // state on the Create buttons tracks what the user has typed.
-        if (field === "ssh_host" || field === "k8s_pod") {
+        //
+        // `name` and `new_branch` are here for the branch/worktree preview:
+        // it names the branch and the directory the create will make, both
+        // of which are derived from these two.
+        if (
+          field === "ssh_host" || field === "k8s_pod" ||
+          field === "name" || field === "new_branch"
+        ) {
           renderForm();
         }
       }
@@ -14649,10 +15484,14 @@ editor.on("widget_event", (e) => {
       (e.widget_key === "sessions" || e.widget_key === "visit")
     ) {
       const id = openDialog.filteredIds[openDialog.selectedIndex];
-      const sel = typeof id === "number" ? orchestratorSessions.get(id) : undefined;
-      if (sel && sel.discovered) {
+      const act = rowActivation(
+        typeof id === "number" ? orchestratorSessions.get(id) : undefined,
+      );
+      if (act.kind === "inert") return;
+      if (act.kind === "attach") {
         // Discovered worktree: there's no window to switch to —
         // open one by attaching a fresh session to the worktree.
+        const sel = act.session;
         closeOpenDialog();
         void attachToWorktree({
           root: sel.root,
@@ -14663,15 +15502,8 @@ editor.on("widget_event", (e) => {
         });
         return;
       }
-      if (sel && sel.pending && (pendingActionable(sel.pending) || (id as number) <= 0)) {
-        // A failed/paused build retries; a windowless placeholder (remote
-        // create) has no window to open. A still-creating workspace that
-        // owns one opens like any other.
-        if (pendingActionable(sel.pending)) retryPending(id as number);
-        return;
-      }
-      if (typeof id === "number" && id > 0 && id !== editor.activeWindow()) {
-        editor.setActiveWindow(id);
+      if (act.windowId !== editor.activeWindow()) {
+        editor.setActiveWindow(act.windowId);
       }
       if (dockMode && openPanel) {
         // Dock stays visible; Enter just hands keyboard focus to the
@@ -14823,6 +15655,14 @@ editor.on("widget_event", (e) => {
       openPanel.update(buildOpenSpec());
       return;
     }
+    if (e.event_type === "toggle" && e.widget_key === "confirm-worktree") {
+      const payload = (e.payload ?? {}) as Record<string, unknown>;
+      confirmRemoveWorktree = typeof payload.checked === "boolean"
+        ? payload.checked
+        : !confirmRemoveWorktree;
+      openPanel.update(buildOpenSpec());
+      return;
+    }
     // Confirmed Stop / Archive / Delete — single row or bulk batch.
     // The ids were captured into `pendingConfirm` by enterConfirm /
     // enterBulkConfirm; `runConfirmedAction` re-checks eligibility,
@@ -14930,14 +15770,11 @@ editor.on("window_closed", () => {
 editor.on("ready", () => {
   void loadDetectionRules();
   recoverPendingWorkspaces();
-  // Auto-open the dock when the user asked for it in Settings (Plugin:
-  // orchestrator → autoOpenDock). Runs after the recovery pass, which
-  // may already have shown the dock for a restored placeholder —
-  // `showDockUnfocused` is a no-op on an open panel, so the two can't
-  // fight. Like the pending-workspace case, the dock comes up *blurred*:
-  // it's a switcher, not something to type into, so the keyboard stays
-  // with whatever the editor restored.
-  if (dockSettings().autoOpenDock !== false) showDockUnfocused();
+  // Blurred, so the keyboard stays with the editor. An orchestrator-mode
+  // launch always opens it — a bare `fresh` is a request for the switcher.
+  if (editor.orchestratorMode() || dockSettings().autoOpenDock !== false) {
+    showDockUnfocused();
+  }
 });
 
 // Grace window after a session becomes active during which terminal

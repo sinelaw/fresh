@@ -312,6 +312,18 @@ pub struct Window {
     /// than the workspace on it.
     pub stable_id: String,
 
+    /// When this window was last brought to the foreground, in Unix epoch
+    /// milliseconds. Seeded at construction (a window is created *because*
+    /// you are going to it) and re-stamped by `set_active_window`.
+    ///
+    /// Persisted through [`Workspace::last_focused_at`], which is what
+    /// Orchestrator mode reads at boot to reopen the workspace you were
+    /// last in. Deliberately not touched by the temporary retargeting in
+    /// `with_window_retargeted` — that borrows the active pointer to run
+    /// something against another window and puts it straight back, which
+    /// is not the user going anywhere.
+    pub last_focused_at: u64,
+
     /// Whether this window ever adopted an on-disk workspace snapshot.
     ///
     /// Set by `apply_workspace_layout`, which is the one door every
@@ -1267,7 +1279,7 @@ pub(crate) fn build_window_lsp(
     // No runtime means async features are disabled (matches the
     // historical base-window path when the tokio runtime fails to build).
     if let Some(runtime) = resources.tokio_runtime.as_ref() {
-        lsp.set_runtime(runtime.handle().clone(), bridge.clone());
+        lsp.set_runtime(runtime.clone(), bridge.clone());
     }
 
     // Wire the LSP backend from the window's authority at construction:
@@ -2345,6 +2357,12 @@ impl Window {
             id,
             label,
             stable_id: crate::workspace::generate_stable_id(),
+            // A window is created because someone is about to work in it,
+            // so it starts as the most recently focused one. Without a seed
+            // a brand-new workspace would rank below every restored one and
+            // lose the next boot's "reopen where I was" to a workspace the
+            // user left hours ago.
+            last_focused_at: crate::workspace::now_millis(),
             workspace_restored: false,
             root,
             authority,

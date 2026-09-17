@@ -16,6 +16,7 @@ use crate::services::async_bridge::{
     LspServerStatus,
 };
 use crate::services::process_limits::ProcessLimits;
+use crate::services::runtime::LiveRuntime;
 use lsp_types::{
     notification::{
         DidChangeTextDocument, DidCloseTextDocument, DidOpenTextDocument, DidSaveTextDocument,
@@ -4695,8 +4696,11 @@ pub struct LspHandle {
     /// Client state
     state: Arc<Mutex<LspClientState>>,
 
-    /// Runtime handle for blocking operations
-    runtime: tokio::runtime::Handle,
+    /// The runtime the LSP task runs on. Owned rather than a bare `Handle`
+    /// so the work put on it later cannot be silently discarded: a `Handle`
+    /// whose runtime has gone away still accepts a task and then drops it,
+    /// which for the shutdown path means the server is never told to stop.
+    runtime: LiveRuntime,
 
     /// Document version tracking (shared with the async LSP task).
     /// Used to check document versions in workspace/applyEdit.
@@ -4741,7 +4745,7 @@ impl LspHandle {
     /// (Local honors it, Docker logs and skips).
     #[allow(clippy::too_many_arguments)]
     pub fn spawn(
-        runtime: &tokio::runtime::Handle,
+        runtime: &LiveRuntime,
         command: &str,
         args: &[String],
         env: std::collections::HashMap<String, String>,
@@ -6384,7 +6388,7 @@ mod tests {
     async fn test_lsp_handle_spawn_and_drop() {
         // This test spawns a mock LSP server (cat command that echoes input)
         // and tests the spawn/drop lifecycle
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = LiveRuntime::multi_thread("lsp-test", 1).expect("test runtime");
         let async_bridge = AsyncBridge::new();
 
         // Use 'cat' as a mock LSP server (it will just echo stdin to stdout)
@@ -6416,7 +6420,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_lsp_handle_did_open_queues_before_initialization() {
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = LiveRuntime::multi_thread("lsp-test", 1).expect("test runtime");
         let async_bridge = AsyncBridge::new();
 
         let handle = LspHandle::spawn(
@@ -6446,7 +6450,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_lsp_handle_did_change_queues_before_initialization() {
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = LiveRuntime::multi_thread("lsp-test", 1).expect("test runtime");
         let async_bridge = AsyncBridge::new();
 
         let handle = LspHandle::spawn(
@@ -6492,7 +6496,7 @@ mod tests {
             scope: LanguageScope::single("test"),
             command_tx,
             state: Arc::new(Mutex::new(LspClientState::Starting)),
-            runtime: tokio::runtime::Handle::current(),
+            runtime: LiveRuntime::current_thread().expect("test runtime"),
             // Seeded as already open: only documents the server holds can desync.
             document_versions: Arc::new(std::sync::Mutex::new(HashMap::from([(
                 path.clone(),
@@ -6597,7 +6601,7 @@ mod tests {
                     scope: LanguageScope::single("test"),
                     command_tx,
                     state: Arc::new(Mutex::new(LspClientState::Starting)),
-                    runtime: tokio::runtime::Handle::current(),
+                    runtime: LiveRuntime::current_thread().expect("test runtime"),
                     document_versions: versions.clone(),
                     desynced: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
                     pending_saves: Arc::new(std::sync::Mutex::new(HashMap::new())),
@@ -7090,7 +7094,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_lsp_handle_incremental_change_with_range() {
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = LiveRuntime::multi_thread("lsp-test", 1).expect("test runtime");
         let async_bridge = AsyncBridge::new();
 
         let handle = LspHandle::spawn(
@@ -7126,7 +7130,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_lsp_handle_spawn_invalid_command() {
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = LiveRuntime::multi_thread("lsp-test", 1).expect("test runtime");
         let async_bridge = AsyncBridge::new();
 
         // Try to spawn with an invalid command
@@ -7170,7 +7174,7 @@ mod tests {
             let async_bridge = AsyncBridge::new();
 
             let handle = rt.block_on(async {
-                let runtime = tokio::runtime::Handle::current();
+                let runtime = LiveRuntime::multi_thread("lsp-test", 1).expect("test runtime");
                 LspHandle::spawn(
                     &runtime,
                     "cat",
@@ -7240,7 +7244,7 @@ mod tests {
         // The bug manifested as:
         // ERROR: Failed to send initialize command for rust: Cannot initialize: client is in state Starting
 
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = LiveRuntime::multi_thread("lsp-test", 1).expect("test runtime");
         let async_bridge = AsyncBridge::new();
 
         // Spawn creates the handle with state = Starting
@@ -7277,7 +7281,7 @@ mod tests {
         // 3. get_or_spawn() immediately calls handle.initialize()
         // 4. initialize() should succeed even though state is Starting
 
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = LiveRuntime::multi_thread("lsp-test", 1).expect("test runtime");
         let async_bridge = AsyncBridge::new();
 
         // Create a simple fake LSP server script that responds to initialize
@@ -7365,7 +7369,7 @@ mod tests {
         // be able to advance the state past Error (to Stopping or
         // Stopped) — before the fix it stayed stuck at Error and
         // emitted `Invalid state transition from Error to Stopping`.
-        let runtime = tokio::runtime::Handle::current();
+        let runtime = LiveRuntime::multi_thread("lsp-test", 1).expect("test runtime");
         let async_bridge = AsyncBridge::new();
 
         let handle = LspHandle::spawn(

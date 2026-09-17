@@ -1172,6 +1172,15 @@ type PreparingWindowResult = {
 	* The new workspace's durable identity (`ws-…`), stable across restarts.
 	*/
 	stableId: string;
+	/**
+	* The placeholder's seed buffer. Mount a widget panel here
+	* (`mountWidgetPanel`) to describe the page yourself: the plugin
+	* building the workspace knows what it is waiting on, what failed and
+	* what the user can do about it, so the page is its to write. The
+	* editor's own page — name, state, one line of explanation — is only
+	* the fallback for a window nothing has described.
+	*/
+	bufferId: number;
 };
 type CreateTerminalOptions = {
 	/**
@@ -2875,6 +2884,16 @@ type RemoteAgentSpec = {
 	label?: string;
 	/** Optional agent argv for the new window's seed terminal (window mode). */
 	command?: string[];
+	/**
+	* Grow this *preparing* window (from `createPreparingWindow`) into the
+	* session instead of minting a new one — window mode only. The
+	* Orchestrator opens a placeholder the user lands in while the connect
+	* runs, so a remote workspace is somewhere to be from the moment it is
+	* asked for, and a connect that fails reports on that page rather than
+	* only in the dock. Ignored if the window is gone by the time the connect
+	* lands.
+	*/
+	adopt_window?: number;
 };
 type RemoteIndicatorStatePayload = {
 	kind: "local";
@@ -3427,6 +3446,13 @@ interface EditorAPI {
 	*/
 	envActive(): boolean;
 	/**
+	* Launched by a bare `fresh` in Orchestrator mode. Exposed to JS as
+	* `editor.orchestratorMode()`. The launch, not the `orchestrator_mode`
+	* preference, which stays on for `fresh FILE`. Plugins in the mode use
+	* it to override their own settings.
+	*/
+	orchestratorMode(): boolean;
+	/**
 	* The environment core detected in the workspace, as a JSON string
 	* (`{name, kind, snippet}`) or empty when none. Exposed to JS as
 	* `editor.detectedEnv()`. Detection lives only in core; the env-manager
@@ -3660,6 +3686,25 @@ interface EditorAPI {
 	* editor processes the command.
 	*/
 	setSetting(path: string, value: unknown): boolean;
+	/**
+	* Persist a single core config setting to the user's config file.
+	* 
+	* The durable counterpart to `setSetting`: `setSetting` patches the
+	* running editor and is gone at exit, this writes `config.json` the way
+	* the Settings UI does (same layer resolution, same comment-preserving
+	* rewrite) *and* applies the value immediately, so a checkbox a plugin
+	* draws can own a real setting.
+	* 
+	* `path` is dot-separated (e.g. `"orchestrator_mode"`,
+	* `"editor.tab_size"`). The host refuses a path that is not a real
+	* config setting rather than writing a key that would be silently
+	* dropped on the next load, and says so in the status bar.
+	* 
+	* Returns `true` if the write was queued; it is applied asynchronously,
+	* so a following `getConfig()` reflects it only after the editor
+	* processes the command.
+	*/
+	saveSetting(path: string, value: unknown): boolean;
 	/**
 	* Reload theme registry from disk
 	* Call this after installing theme packages or saving new themes

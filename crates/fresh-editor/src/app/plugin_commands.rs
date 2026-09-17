@@ -3141,10 +3141,10 @@ impl Editor {
         callback_id: JsCallbackId,
         is_registration: bool,
     ) {
-        // A handle, not the owning `Arc` — see `OffLoop::handle`: the capability
-        // rides into the spawned task, and an owning reference dropped there at
-        // shutdown would panic the worker.
-        let Some(handle) = self.tokio_runtime.as_ref().map(|rt| rt.handle().clone()) else {
+        // Held here, not inside the capability — see `OffLoop`: the capability
+        // rides into the spawned task, and an owning runtime in there would
+        // keep the work running after the editor has gone.
+        let Some(runtime) = self.tokio_runtime.clone() else {
             self.plugin_manager
                 .read()
                 .unwrap()
@@ -3159,9 +3159,9 @@ impl Editor {
             return;
         };
         super::plugin_offloop::load_diff_baseline(
+            &runtime,
             super::plugin_offloop::OffLoop {
                 filesystem: self.authority().filesystem.clone(),
-                handle,
                 sender,
             },
             super::plugin_offloop::BaselineLoadRequest {
@@ -3461,10 +3461,10 @@ impl Editor {
             clean_buffers.insert(path, *bid);
         }
 
-        // A handle, not the owning `Arc` — see `OffLoop::handle`: the capability
-        // rides into the spawned task, and an owning reference dropped there at
-        // shutdown would panic the worker.
-        let Some(handle) = self.tokio_runtime.as_ref().map(|rt| rt.handle().clone()) else {
+        // Held here, not inside the capability — see `OffLoop`: the capability
+        // rides into the spawned task, and an owning runtime in there would
+        // keep the work running after the editor has gone.
+        let Some(runtime) = self.tokio_runtime.clone() else {
             self.plugin_manager
                 .read()
                 .unwrap()
@@ -3495,9 +3495,9 @@ impl Editor {
             .insert(plugin_name, Arc::clone(&cancel));
 
         super::plugin_offloop::grep_project(
+            &runtime,
             super::plugin_offloop::OffLoop {
                 filesystem: self.authority().filesystem.clone(),
-                handle,
                 sender,
             },
             super::plugin_offloop::GrepProjectRequest {

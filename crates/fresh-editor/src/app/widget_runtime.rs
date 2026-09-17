@@ -3426,6 +3426,80 @@ mod tests {
         );
     }
 
+    /// **A modal that blurred the dock on its way in does not hand the
+    /// keyboard back to it on its way out.**
+    ///
+    /// A centred panel mounting over a focused dock blurs it
+    /// (`handle_mount_floating_widget`), so the keyboard is the editor's
+    /// from that moment and stays the editor's when the modal closes. The
+    /// tree used to say otherwise: focus was inside the dock when the
+    /// modal's scope opened, so the settle that opened it recorded the dock
+    /// widget as the place to come back to, and closing the modal restored
+    /// focus there — to a panel that had given the keyboard up while the
+    /// modal was up. Every key after that resolved in the `Dock` context
+    /// and died: the Orchestrator's New-Workspace form (a centred modal
+    /// over the dock) left the workspace it had just created unable to
+    /// type, so a file opened in it never took the keyboard.
+    ///
+    /// Gated on `plugins`: it mounts and unmounts the modal through the
+    /// plugin command path (`handle_plugin_command`), which only exists
+    /// when the plugin runtime is compiled in — and the mount is the half
+    /// that blurs the dock, so driving it any other way would be modelling
+    /// the thing under test rather than running it.
+    #[cfg(feature = "plugins")]
+    #[test]
+    fn a_modal_that_blurred_the_dock_leaves_the_keyboard_with_the_editor() {
+        use crate::input::keybindings::KeyContext;
+        let (mut editor, _t) = make_editor();
+        let dock_key = crate::widgets::PanelKey::new("test-plugin", 1);
+        mount_list_panel(
+            &mut editor,
+            &dock_key,
+            crate::app::PanelSlot::Dock.buffer_id(),
+        );
+        editor.dock = Some(dock_panel(dock_key.clone()));
+        frame_the_shell(&mut editor);
+        assert_eq!(editor.get_key_context(), KeyContext::Dock);
+
+        // The form: a centred modal, which blurs the dock as it mounts.
+        editor
+            .handle_plugin_command(fresh_core::api::PluginCommand::MountFloatingWidget {
+                plugin: "test-plugin".to_string(),
+                panel_id: 2,
+                spec: list_of(3),
+                width_pct: 60,
+                height_pct: 60,
+                as_dock: false,
+                focus_marker: false,
+                label_align: Default::default(),
+                title: None,
+                closable: false,
+                start_blurred: false,
+                mode: None,
+            })
+            .unwrap();
+        frame_the_shell(&mut editor);
+        assert!(
+            !editor.is_dock_focused(),
+            "mounting a centred modal blurs the dock"
+        );
+
+        // Submitting it closes the form — and the dock stays blurred.
+        editor
+            .handle_plugin_command(fresh_core::api::PluginCommand::UnmountFloatingWidget {
+                plugin: "test-plugin".to_string(),
+                panel_id: 2,
+            })
+            .unwrap();
+        frame_the_shell(&mut editor);
+        assert!(!editor.is_dock_focused(), "the dock is still blurred");
+        assert_eq!(
+            editor.get_key_context(),
+            KeyContext::Normal,
+            "the keyboard is the editor's, not the blurred dock's"
+        );
+    }
+
     /// **A panel the tree does not hold advances along the tree's ring
     /// anyway.** A mounted but unfocused panel has no keyboard layer, so
     /// `Ui::move_focus` is not the move — but its interior is described, its

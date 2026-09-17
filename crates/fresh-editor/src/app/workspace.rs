@@ -2552,6 +2552,15 @@ impl crate::app::window::Window {
             self.stable_id = id.clone();
         }
 
+        // Same reasoning for when it was last focused: the window continues
+        // the persisted workspace, so it inherits that workspace's place in
+        // the recency order rather than the "now" its construction seeded.
+        // A legacy snapshot without the field keeps the seed, which is the
+        // right answer too — it is being materialized, so it is current.
+        if let Some(focused) = workspace.last_focused_at {
+            self.last_focused_at = focused;
+        }
+
         // Window-local config override (the rest of the overrides mutate
         // the editor-global `Config` and are applied by the caller). Mouse
         // capture is a single global terminal property shared by every window
@@ -2955,6 +2964,12 @@ impl crate::app::window::Window {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs(),
+            // Carried through from the window rather than stamped here: this
+            // records when the workspace was last *focused*, and a save is
+            // not a focus. At quit every materialized window is captured in
+            // the same instant, so stamping here would make them all equally
+            // recent and the "reopen where I was" pick meaningless.
+            last_focused_at: Some(self.last_focused_at),
             // Workspace identity (windows.json is gone — the per-dir
             // workspace file is the sole record).
             label: Some(self.label.clone()),
