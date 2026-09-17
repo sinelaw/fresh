@@ -646,6 +646,24 @@ impl EditorServer {
                 {
                     needs_render = true;
                 }
+
+                // **Everything else that owes a frame at a time, from the one
+                // place that knows.** The two conditions above are a
+                // hand-copied subset of `next_periodic_redraw_deadline`, which
+                // the TUI (`main.rs`) and the web loop both wait on — so every
+                // other time-driven effect simply did not happen here until
+                // some input forced a frame. The occurrence highlight is how
+                // that showed: its debounce is applied inside a render, the
+                // daemon renders only on events, and so the highlight for the
+                // word under the cursor waited for the next keystroke and
+                // then jumped, which reads as a flicker while typing. The LSP
+                // spinner and the async-paste fallback had the same hole.
+                if editor
+                    .next_periodic_redraw_deadline()
+                    .is_some_and(|deadline| Instant::now() >= deadline)
+                {
+                    needs_render = true;
+                }
             }
 
             // Push the browser scene on the web bridge's own (gentler) cadence:

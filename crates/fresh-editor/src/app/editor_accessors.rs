@@ -336,11 +336,25 @@ impl Editor {
         // A wheel gesture walking its remaining lines needs a frame per
         // line; without this the walk would stall on an idle loop.
         let wheel_deadline = self.pending_wheel_scroll_deadline();
+        // The occurrence highlight's debounce. It is applied inside a render
+        // and only once its delay has elapsed, so like the spinner above it
+        // needs the loop to come back for it: with the editor idle after a
+        // cursor move there is no next frame, and the highlight stayed armed
+        // until an unrelated event forced one — which is why it appeared to
+        // jump on the next keystroke. Across every buffer in the window, not
+        // just the active one: each rendered split runs its own update.
+        let highlight_deadline = self
+            .active_window()
+            .buffers
+            .iter()
+            .filter_map(|(_, state)| state.reference_highlight_overlay.next_deadline())
+            .min();
         [
             lsp_progress_deadline,
             anim_deadline,
             paste_deadline,
             wheel_deadline,
+            highlight_deadline,
         ]
         .into_iter()
         .flatten()
