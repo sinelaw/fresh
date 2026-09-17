@@ -272,9 +272,20 @@ difference against 0.95–5.7 for those.
 ## The badges clip
 
 `fresh-dock-ready.json` films the other half of the dock: not the list being
-tidied, but the list telling you what has happened in it. Eleven sessions are
-working, three of them finish, one stops to ask a question, and the panel
-grows a line that counts both. Nine seconds, one camera, nothing typed.
+tidied, but the list telling you what has happened in it. Eleven sessions in
+two folders are working, three of them finish, one stops to ask a question,
+and the folder headers roll the counts up. Nine seconds, one camera, nothing
+typed.
+
+**The list never shifts, and that is the framing.** Every pixel that changes
+in the crop is a badge changing. It used to shift: the dock carried a
+`● N need you · ✓ N done` line drawn only while the counts were non-zero, so
+the first check to land pushed every row below it down one, and *that* was
+the motion your eye caught rather than the badge. The line is gone — see the
+withdrawal note in `docs/internal/orchestrator-ux-redesign.md` §2.3 — and the
+folders are staged before the take rather than during it, for the same
+reason: this clip is about what a badge says, and a list reorganising itself
+is the other clip.
 
 **The agent is the repo's own fake agent.** Every row runs
 `crates/fresh-editor/tests/fixtures/coding_agent.py`, copied in by `record.sh`
@@ -318,6 +329,14 @@ with. `record.sh` copies `crates/fresh-editor/plugins/orchestrator.ts` and its
 `lib/` into the capture's config directory, where a plugin wins over the
 embedded copy — unedited, so what is on screen is the plugin as committed
 beside it.
+
+One plate, `better status icons`, sits in the same place for the whole clip
+rather than three swapping over — the beats are three states of one picture,
+not three subjects — and `render.crt` ends it by powering the tube off.
+Lighter than the dock-cleanup cut wears: that one's subject is rows moving,
+this one's is five glyphs that have to stay legible, and a deep scanline comb
+is the first thing a feed's encoder turns to mush. The curve stays, because a
+power-off needs a tube to read as a power-off.
 
 The take found a bug rather than working around one. `✓` could not appear at
 all for a workspace created in the current session: the burst clock starts on
