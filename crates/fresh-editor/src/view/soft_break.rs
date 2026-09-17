@@ -212,7 +212,8 @@ impl SoftBreakManager {
             namespace,
             marker_id,
             indent,
-            activation: activation.map(|rule| ScopedActivation::from_absolute(&rule, position)),
+            activation: activation
+                .map(|rule| ScopedActivation::from_absolute(&rule, position, marker_list)),
             prefix,
         });
         self.version = self.version.wrapping_add(1);
@@ -276,6 +277,9 @@ impl SoftBreakManager {
         let had_any = !self.breaks.is_empty();
         for bp in &self.breaks {
             marker_list.delete(bp.marker_id);
+            if let Some(a) = &bp.activation {
+                a.release(marker_list);
+            }
         }
         self.breaks.clear();
         self.marker_to_idx.clear();
@@ -290,6 +294,9 @@ impl SoftBreakManager {
         let removed = self.breaks.swap_remove(idx);
         self.marker_to_idx.remove(&removed.marker_id);
         marker_list.delete(removed.marker_id);
+        if let Some(a) = &removed.activation {
+            a.release(marker_list);
+        }
         if let Some(moved) = self.breaks.get(idx) {
             self.marker_to_idx.insert(moved.marker_id, idx);
         }
@@ -315,7 +322,7 @@ impl SoftBreakManager {
             .filter_map(|b| {
                 let pos = b.position(marker_list);
                 if let Some(a) = &b.activation {
-                    if !a.is_active(pos, cursors) {
+                    if !a.is_active(marker_list, cursors) {
                         return None;
                     }
                 }
@@ -356,7 +363,7 @@ impl SoftBreakManager {
             .filter_map(|b| {
                 let pos = b.position(marker_list);
                 if let Some(a) = &b.activation {
-                    if !a.is_active(pos, cursors) {
+                    if !a.is_active(marker_list, cursors) {
                         return None;
                     }
                 }
@@ -397,7 +404,7 @@ impl SoftBreakManager {
                 if pos < start || pos >= end {
                     return None;
                 }
-                (a.is_active(pos, cursors) != a.is_active(pos, &[])).then_some(pos)
+                (a.is_active(marker_list, cursors) != a.is_active(marker_list, &[])).then_some(pos)
             })
             .min()
     }

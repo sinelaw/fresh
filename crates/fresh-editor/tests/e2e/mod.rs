@@ -16,6 +16,7 @@ pub mod buffer_groups;
 pub mod buffer_lifecycle;
 pub mod buffer_settings_commands;
 pub mod capslock_shortcuts;
+pub mod caret_with_a_virtual_line_below;
 pub mod cargo_config_editing;
 pub mod code_tour_dock;
 pub mod command_palette;

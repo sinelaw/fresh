@@ -1115,9 +1115,25 @@ pub(crate) fn render_view_lines(input: LineRenderInput<'_>) -> LineRenderOutput 
         };
         let line_len_chars = line_content.chars().count();
 
+        // A plugin's virtual row is no more the buffer's last content line
+        // than the iterator's trailing empty one, and for a sharper reason:
+        // it is rendered from an *injected* newline, so standing as
+        // `last_line_end` it makes a buffer with no trailing newline of its
+        // own look newline-terminated. The implicit empty line that only a
+        // final newline can have is then drawn below it — and takes the caret
+        // of a cursor sitting at the buffer end, which is how deleting the `a`
+        // of a `- a` in markdown compose (a list hangs a virtual row under it)
+        // threw the caret two rows down and to the left edge.
+        //
+        // Read off the mapping just pushed for this row, so "virtual" means
+        // here exactly what it means to `move_visual_line`.
+        let is_plugin_virtual_row = view_line_mappings
+            .last()
+            .is_some_and(|m: &ViewLineMapping| m.is_plugin_virtual);
+
         // Don't update last_line_end for the iterator's trailing empty
         // line — it's a display aid, not actual content.
-        if !is_iterator_trailing_empty {
+        if !is_iterator_trailing_empty && !is_plugin_virtual_row {
             last_line_end = Some(LastLineEnd {
                 pos: (end_x, current_row),
                 terminated_with_newline: line_has_newline,

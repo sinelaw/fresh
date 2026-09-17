@@ -1309,6 +1309,17 @@ impl RenderObject for TextRender {
                 out.push_themed(Draw::Wash, rect, g.clip, theme.clone());
             }
         }
+        // A caret drawn as a cell, for a surface that cannot take the
+        // terminal's cursor. Placed through the same `cell_of` as the cursor
+        // below and for the same reason — a caret is a point between cells,
+        // so the position after a row's last glyph is on that row. A one-byte
+        // wash could not say that: `selected_spans` yields the cells its bytes
+        // are drawn in, and the end of a line is drawn nowhere.
+        if let Some((byte, theme)) = &self.props.block_caret {
+            let (row, col) = cell_of(&shaping.rows, &shaping.whole, *byte);
+            let rect = Rect::new(g.rect.x + col as i32, g.rect.y + row as i32, 1, 1);
+            out.push_themed(Draw::Wash, rect, g.clip, theme.clone());
+        }
         // The caret is a byte of the run's own string, and this is where the
         // wrap put it. Placing it here rather than asking the caller for a row
         // and a column is the point of stating it in bytes: only the shaping
@@ -1958,6 +1969,7 @@ mod measure_tests {
             elide: Elide::None,
             cursor: None,
             selection: None,
+            block_caret: None,
         }
     }
 
@@ -2016,6 +2028,7 @@ mod measure_tests {
             elide: Elide::None,
             cursor: None,
             selection: None,
+            block_caret: None,
         });
         assert_eq!(t.layout(loose(), &mut Leaf), Size::new(7, 1));
         assert!(t
@@ -2064,6 +2077,7 @@ mod measure_tests {
             elide: Elide::None,
             cursor: None,
             selection: None,
+            block_caret: None,
         });
         let narrow = Constraints {
             min_w: 0,

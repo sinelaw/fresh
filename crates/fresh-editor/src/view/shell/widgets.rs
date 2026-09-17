@@ -2250,24 +2250,30 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
             if let (Some(k), Some(ed)) = (wk, editor) {
                 if cx.is_focused(Some(k)) {
                     let caret = ed.flat_cursor_byte().min(text_len);
-                    let (range, ink) = match ed.selection_flat_range() {
-                        Some((a, b)) if a != b => (
-                            a.min(b).min(text_len)..a.max(b).min(text_len),
-                            "ui.popup_selection_fg/ui.popup_selection_bg".to_string(),
-                        ),
-                        _ => {
-                            let next = doc.text[caret..]
-                                .chars()
-                                .next()
-                                .map(|c| caret + c.len_utf8())
-                                .unwrap_or(caret);
-                            (
-                                caret..next.min(text_len),
-                                cx.surface.clone().plus(Attrs::REVERSED).to_string(),
-                            )
+                    match ed.selection_flat_range() {
+                        Some((a, b)) if a != b => {
+                            run = run.selection_bytes(
+                                a.min(b).min(text_len)..a.max(b).min(text_len),
+                                "ui.popup_selection_fg/ui.popup_selection_bg",
+                            );
                         }
-                    };
-                    run = run.selection_bytes(range, ink);
+                        // **A caret, not a one-byte selection.** It was the
+                        // latter: the range from the caret to the next
+                        // character, washed reversed. A selection is the cells
+                        // its bytes are *drawn* in, and the byte at the end of
+                        // a rendered line is the `\n` the wrap dropped — drawn
+                        // nowhere — so the caret painted nothing at all and
+                        // vanished the moment a click or a drag put it there.
+                        // `block_caret_byte` is placed through the run's own
+                        // `cell_of`, which answers the trailing edge of a row
+                        // like every other position.
+                        _ => {
+                            run = run.block_caret_byte(
+                                caret,
+                                cx.surface.clone().plus(Attrs::REVERSED).to_string(),
+                            );
+                        }
+                    }
                 }
             }
             let body = match wk {

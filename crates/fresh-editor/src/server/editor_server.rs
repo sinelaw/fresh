@@ -302,6 +302,24 @@ impl EditorServer {
     pub fn run(&mut self) -> io::Result<()> {
         tracing::info!("Editor server starting for {:?}", self.config.working_dir);
 
+        // Bind this process's local control socket, exactly as the TUI
+        // (main.rs), GUI (gui::run) and standalone web (webui::run) paths do.
+        // The daemon hosts embedded terminals of its own, and the spawner
+        // advertises `FRESH_SESSION` to them only when this socket is bound
+        // (`local_control::local_session_id()`). Without it a terminal opened
+        // in a daemon-backed editor — which is *every* terminal once
+        // Orchestrator mode is on, since a bare `fresh` hands the launch to
+        // the shared daemon — got `FRESH_BIN` but no `FRESH_SESSION`, so a
+        // nested `fresh FILE` opened a second editor in the terminal instead
+        // of forwarding to the parent, and `fresh --cmd …` reported "not
+        // inside a Fresh session". Agent terminals were unaffected because
+        // `agent_command_env` calls `start()` itself; plain ones never did.
+        // Best-effort, like every other caller: on failure the daemon still
+        // serves, and nested launches open inline.
+        if let Err(e) = crate::server::local_control::start() {
+            tracing::warn!("Local control socket unavailable: {}", e);
+        }
+
         let mut next_client_id = 1u64;
         let mut needs_render = true;
         let mut last_render = Instant::now();
@@ -625,6 +643,24 @@ impl EditorServer {
                 if editor.active_window().animations.is_active()
                     || editor.active_window_mut().animations.take_settle_frame()
                     || editor.has_pending_wheel_scroll()
+                {
+                    needs_render = true;
+                }
+
+                // **Everything else that owes a frame at a time, from the one
+                // place that knows.** The two conditions above are a
+                // hand-copied subset of `next_periodic_redraw_deadline`, which
+                // the TUI (`main.rs`) and the web loop both wait on — so every
+                // other time-driven effect simply did not happen here until
+                // some input forced a frame. The occurrence highlight is how
+                // that showed: its debounce is applied inside a render, the
+                // daemon renders only on events, and so the highlight for the
+                // word under the cursor waited for the next keystroke and
+                // then jumped, which reads as a flicker while typing. The LSP
+                // spinner and the async-paste fallback had the same hole.
+                if editor
+                    .next_periodic_redraw_deadline()
+                    .is_some_and(|deadline| Instant::now() >= deadline)
                 {
                     needs_render = true;
                 }

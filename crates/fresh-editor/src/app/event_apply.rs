@@ -73,7 +73,26 @@ impl Editor {
             .filter_map(|&(start, end)| {
                 if end <= position {
                     Some((start, end))
-                } else if start >= edit_end {
+                } else if start >= edit_end && start > position {
+                    // **Entirely after the edit**, so only its coordinates
+                    // moved. `start > position` is the half an insertion needs:
+                    // it removes nothing, so `edit_end == position`, and
+                    // `start >= edit_end` alone also caught the line the text
+                    // was inserted at the *start* of — whose content plainly
+                    // changed. That line kept a seen entry, shifted along, and
+                    // the set was left holding a range no line has.
+                    //
+                    // Which bites when the edit is taken back. An undo or a
+                    // backspace runs the shift in reverse, the stale entry
+                    // lands exactly on the restored line's range, and the line
+                    // reads as already offered — so `lines_changed` never
+                    // fires for it and a per-line decoration plugin never
+                    // rebuilds it. In compose a heading kept its text and lost
+                    // its bold until an unrelated edit offered the line again.
+                    //
+                    // A deletion is unaffected: `removed > 0` makes `edit_end`
+                    // strictly greater than `position`, so the added test can
+                    // only be true where the first one already was.
                     Some(((start + inserted) - removed, (end + inserted) - removed))
                 } else {
                     None // overlaps the edit, so its content changed
