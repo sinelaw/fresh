@@ -241,6 +241,7 @@ pub mod open_folder;
 pub mod orchestrator_dialog_trust_repro;
 pub mod orchestrator_dock;
 pub mod orchestrator_dock_settings;
+pub mod orchestrator_done_badge;
 pub mod orchestrator_new_workspace_open_file;
 pub mod orchestrator_window_lsp;
 pub mod overlay_extend_to_line_end;
