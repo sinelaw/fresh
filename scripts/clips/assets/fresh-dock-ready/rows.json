@@ -5,8 +5,9 @@
     "orchestrator makes of that script's output. `run` is how many seconds",
     "after W (the moment every agent starts together) the row stops talking;",
     "its badge lands `run` + IDLE_AFTER_MS (5s) later, which is what staggers",
-    "the six checks on camera -- 0.6s apart, which is as tight as the default",
-    "5s idle window allows without moving the whole cascade later.",
+    "the seven checks on camera -- 0.6s apart, which is as tight as the default",
+    "5s idle window allows while still leaving a shot room to land between",
+    "two of them.",
     "",
     "A `done` run under ~2.0 does not work: coding_agent.py waits 0.5s before",
     "its first line, so the burst is `run` - 0.5, and it has to clear",
@@ -24,16 +25,16 @@
   "projects": ["api", "web", "infra", "docs"],
   "folders": ["backend", "frontend"],
   "rows": [
-    ["auth-bypass",   "api",    "fix/auth-bypass",     "blocked", 5.8, "backend"],
+    ["auth-bypass",   "api",    "fix/auth-bypass",     "blocked", 6.4, "backend"],
     ["db-pool",       "api",    "perf/db-pool",        "done",    2.2, "backend"],
     ["rate-limit",    "api",    "feat/rate-limit",     "done",    3.4, "backend"],
-    ["otel-traces",   "infra",  "feat/otel-traces",    "working", 0,   "backend"],
+    ["otel-traces",   "infra",  "feat/otel-traces",    "done",    4.6, "backend"],
     ["tf-drift",      "infra",  "chore/tf-drift",      "idle",    0,   "backend"],
     ["checkout",      "web",    "feat/checkout",       "done",    2.8, "frontend"],
     ["hydration",     "web",    "fix/hydration",       "done",    4.0, "frontend"],
     ["ssr-cache",     "web",    "perf/ssr-cache",      "working", 0,   "frontend"],
-    ["api-reference", "docs",   "feat/api-reference",  "done",    4.6, "frontend"],
-    ["broken-links",  "docs",   "fix/broken-links",    "done",    5.2, "frontend"],
+    ["api-reference", "docs",   "feat/api-reference",  "done",    5.2, "frontend"],
+    ["broken-links",  "docs",   "fix/broken-links",    "done",    5.8, "frontend"],
     ["changelog",     "docs",   "chore/changelog",     "working", 0,   "frontend"]
   ]
 }

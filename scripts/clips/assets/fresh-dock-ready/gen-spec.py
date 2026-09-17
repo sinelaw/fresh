@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
 """Generate scripts/clips/fresh-dock-ready.json -- the dock's badges, filmed.
 
-One camera, held still on the dock column, for nine seconds. Eleven agents
-in two folders, staged before the take; nothing is typed and nothing moves
-except the rows' own minds. Three finish, one stops to ask, and the dock
-says so before you have looked at any of them.
+One camera, held still on the dock column. Eleven agents in two folders,
+staged before the take; nothing is typed and nothing moves except the rows'
+own minds. Seven finish, one stops to ask, and the dock says so before you
+have looked at any of them.
+
+The take and the cut keep different clocks on purpose. A badge cannot land
+sooner than `run` + IDLE_AFTER_MS, so the shots are spread over thirteen
+seconds of real dock; the cut then plays them a third of a second apart,
+because a still is worth exactly as long as it takes to see what changed in
+it. The first check is on screen four tenths of a second in.
 
 The list never shifts, which is the point of framing it this way: every
 pixel that changes is a badge changing. (It used to shift -- the dock
@@ -56,7 +62,7 @@ SETTLE = 24
 # Everything working, once. Late enough that every row has been printing for
 # a while, early enough to be clear of the first check at W+7.3 -- and past
 # `tf-drift` settling to `·` at W+5.6, so this one still frame is the only
-# thing in the clip that is not a check landing.
+# thing in the clip that is not a badge landing.
 BUSY_AT = 6.0
 
 keys = [{"mark": True}, {"shot": "go"}, {"at": BUSY_AT}, {"shot": "busy"}]
@@ -145,30 +151,38 @@ spec = {
     # note draws a leader back to its rect, which is right when it singles
     # out one row and wrong when it names the whole beat. All three sit in
     # the same place, so each reads as the one before it swapping over.
-    "timing": {"intro": 0, "zoom": 0, "hold": 0.8, "pan": 0.15,
-               "push": 0.9, "wipe": 0.7, "outro": 0.25},
+    # Short everywhere. `pan` is the crossfade between beats framed on the
+    # same rect, and at 0.1 it is a cut with the edge taken off rather than a
+    # transition -- which is what these are, since the camera never moves.
+    "timing": {"intro": 0, "zoom": 0, "hold": 0.8, "pan": 0.1,
+               "push": 0.9, "wipe": 0.7, "outro": 0.2},
     "annotations": [
-      # 1 — eleven rows in two folders, all working. One still: it is the
-      # before, not a beat, and the first check is 1.3s away.
+      # 1 — eleven rows in two folders, all working. Long enough to read as
+      # the before and no longer: 0.3s here plus the 0.1s crossfade puts the
+      # first check on screen four tenths of a second in.
       {"shot": "busy", "view": "list", "rows": [1, 16], "cols": NOTE_AT,
-       "band": False, "hold": 1.3, "tag": TAG},
+       "band": False, "hold": 0.3, "tag": TAG},
 
-      # 2 — six checks land, one at a time, alternating between the two
-      # folders and ticking their roll-ups as they go. Half a second each,
-      # which is the cascade the `run` column was spaced for.
+      # 2 — seven checks, a third of a second each, alternating between the
+      # two folders and ticking their roll-ups as they go. One thing changes
+      # per still and it is always the same kind of thing, so the eye can
+      # keep up at a cadence that would be unreadable if the stills differed
+      # in any other way.
       {"shots": [f"d{i + 1}" for i in range(len(DONE))],
        "crossfade": 0, "view": "list", "rows": [1, 16], "cols": NOTE_AT,
-       "band": False, "hold": 3.3, "tag": TAG},
+       "band": False, "hold": 0.35 * len(DONE), "tag": TAG},
 
-      # 3 — and one of them stopped to ask. Red beats green: a question is
-      # checked before unseen work, so `backend` rolls up `●1 ✓2`.
+      # 3 — and one of them stopped to ask. Longer than a check: it is the
+      # one badge that is not green, and the only one that asks for
+      # something. Red beats green, so `backend` rolls up `●1 ✓3`.
       {"shot": "need", "view": "list", "rows": [1, 16], "cols": NOTE_AT,
-       "band": False, "hold": 2.3, "tag": TAG},
+       "band": False, "hold": 1.6, "tag": TAG},
 
       # 4 — the dock, said plainly, with nothing written over it. The tube
-      # powers off across this beat rather than after it.
+      # powers off across this beat rather than after it, so the clip does
+      # not pay for its own ending.
       {"shot": "settle", "view": "list", "rows": [0, 17], "cols": DOCK,
-       "band": False, "hold": 1.1}
+       "band": False, "hold": 1.3}
     ]
   },
   "encode": {"crf": 18, "preset": "slow"}
