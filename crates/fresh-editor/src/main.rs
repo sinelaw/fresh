@@ -5073,13 +5073,26 @@ fn run_orchestrator_launch() -> AnyhowResult<()> {
 
 /// Whether a bare `fresh` should launch into Orchestrator mode.
 ///
-/// Two conditions, and both are about *this* invocation rather than about
-/// the editor:
+/// Three conditions, and all of them are about *this* invocation rather than
+/// about the editor:
 ///
 ///   * the command line is empty (`argv.len() == 1`) — a file or a flag,
-///     any flag, means "just this, here", and is left alone; and
+///     any flag, means "just this, here", and is left alone;
 ///   * stdin is a terminal — `fresh` under `$GIT_EDITOR`, in a pipe, or as
-///     a subprocess is not someone sitting down to work.
+///     a subprocess is not someone sitting down to work; and
+///   * we are not already *inside* a Fresh editor's embedded terminal.
+///
+/// That last one is not a nicety. Orchestrator mode attaches to the shared
+/// daemon, and a terminal buffer inside that very daemon is exactly where
+/// this can be typed: the daemon then renders one shared screen into a
+/// client that lives inside its own output, which is not a second editor
+/// but a feedback loop — the pane fills with shredded frames. Falling
+/// through here launches an ordinary inline editor in the terminal, which
+/// is what a nested `fresh` did before Orchestrator mode existed and which
+/// renders perfectly well. `FRESH_SESSION` is the signal because it is what
+/// every local embedded terminal advertises (see
+/// `server::local_control`); a stale or unreachable value costs nothing,
+/// since the fallback is the ordinary launch either way.
 ///
 /// Only then is the config consulted, which is why this loads it rather than
 /// taking the one `initialize_app` builds: on this path we hand off to the
@@ -5092,6 +5105,9 @@ fn wants_orchestrator_launch() -> bool {
         return false;
     }
     if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+        return false;
+    }
+    if std::env::var("FRESH_SESSION").is_ok_and(|s| !s.trim().is_empty()) {
         return false;
     }
     let Ok(dir_context) = fresh::config_io::DirectoryContext::from_system() else {

@@ -302,6 +302,24 @@ impl EditorServer {
     pub fn run(&mut self) -> io::Result<()> {
         tracing::info!("Editor server starting for {:?}", self.config.working_dir);
 
+        // Bind this process's local control socket, exactly as the TUI
+        // (main.rs), GUI (gui::run) and standalone web (webui::run) paths do.
+        // The daemon hosts embedded terminals of its own, and the spawner
+        // advertises `FRESH_SESSION` to them only when this socket is bound
+        // (`local_control::local_session_id()`). Without it a terminal opened
+        // in a daemon-backed editor — which is *every* terminal once
+        // Orchestrator mode is on, since a bare `fresh` hands the launch to
+        // the shared daemon — got `FRESH_BIN` but no `FRESH_SESSION`, so a
+        // nested `fresh FILE` opened a second editor in the terminal instead
+        // of forwarding to the parent, and `fresh --cmd …` reported "not
+        // inside a Fresh session". Agent terminals were unaffected because
+        // `agent_command_env` calls `start()` itself; plain ones never did.
+        // Best-effort, like every other caller: on failure the daemon still
+        // serves, and nested launches open inline.
+        if let Err(e) = crate::server::local_control::start() {
+            tracing::warn!("Local control socket unavailable: {}", e);
+        }
+
         let mut next_client_id = 1u64;
         let mut needs_render = true;
         let mut last_render = Instant::now();
