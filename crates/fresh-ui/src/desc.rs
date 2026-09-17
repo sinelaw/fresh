@@ -323,6 +323,21 @@ pub struct TextProps {
     /// text stays and takes the theme's background — so a styled run keeps its
     /// colours under a selection instead of being repainted in one.
     pub selection: Option<(std::ops::Range<usize>, crate::render::spec::ThemeKey)>,
+    /// A caret drawn as a washed *cell* rather than as the terminal's own
+    /// cursor: the byte it sits on, and the theme its cell takes.
+    ///
+    /// The companion of [`cursor`](Self::cursor) for a surface that cannot
+    /// use the hardware cursor — a panel whose caret must not move the
+    /// terminal's one, or one drawn inside a viewport the cursor would drag
+    /// along with it.
+    ///
+    /// **Not expressible as a one-byte [`selection`](Self::selection).** A
+    /// selection is the cells its bytes are *drawn* in, so a range covering a
+    /// byte no row shows — the `\n` a wrap dropped, or the end of the text —
+    /// covers no cells and paints nothing: a caret at the end of a line
+    /// simply disappeared. A caret is a point between cells, which is what
+    /// [`cell_of`](crate::render::prim::cell_of) answers and a range cannot.
+    pub block_caret: Option<(usize, crate::render::spec::ThemeKey)>,
 }
 
 /// One piece of a text run, and the theme it paints in.
@@ -1166,6 +1181,7 @@ pub fn text<M>(s: impl AsRef<str>) -> Node<M> {
         elide: Elide::None,
         cursor: None,
         selection: None,
+        block_caret: None,
     }))
 }
 
@@ -1187,6 +1203,7 @@ pub fn text_runs<M>(runs: impl IntoIterator<Item = Run>) -> Node<M> {
         elide: Elide::None,
         cursor: None,
         selection: None,
+        block_caret: None,
     }))
 }
 
@@ -1692,6 +1709,24 @@ impl<M> Node<M> {
     /// The theme is named here rather than inherited because a wash in the
     /// run's own theme is a wash in the ground already under it, which is no
     /// selection at all.
+    /// Draw the caret at this byte as a washed cell in `theme`, instead of as
+    /// the terminal's cursor.
+    ///
+    /// See [`TextProps::block_caret`] for why this is not a one-byte
+    /// selection.
+    pub fn block_caret_byte(mut self, byte: usize, theme: impl AsRef<str>) -> Self {
+        match &mut self.desc {
+            Desc::TextRun(p) => {
+                p.block_caret = Some((
+                    byte,
+                    crate::render::spec::ThemeKey(Some(Rc::from(theme.as_ref()))),
+                ))
+            }
+            _ => panic!("block_caret_byte() applies to TextRun nodes only"),
+        }
+        self
+    }
+
     pub fn selection_bytes(
         mut self,
         bytes: std::ops::Range<usize>,

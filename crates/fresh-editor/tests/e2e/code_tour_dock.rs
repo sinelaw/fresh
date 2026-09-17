@@ -2340,3 +2340,71 @@ fn test_clicking_the_prose_takes_focus_from_the_file() {
         "expected the source line to survive untouched\nScreen:\n{screen}"
     );
 }
+
+/// The prose caret stays visible when it lands at the end of a line.
+///
+/// It was drawn as a one-byte *selection* — the range from the caret to the
+/// next character, washed reversed. A selection is the cells its bytes are
+/// drawn in, and the byte at the end of a rendered line is the `\n` the wrap
+/// dropped, which is drawn nowhere: the wash covered no cells and the caret
+/// simply disappeared. Clicking or dragging past the end of a line is exactly
+/// how a reader puts it there.
+///
+/// Read off the rendered cells rather than the text: the caret *is* a cell
+/// attribute. The first click pins down what a visible caret looks like, so
+/// the assertion cannot pass on a panel that never drew one.
+#[test]
+fn test_prose_caret_survives_the_end_of_a_line() {
+    let (_temp, project_root) = setup_tour_project();
+    let mut harness = harness_in(&project_root, 160, 40);
+
+    let manifest = project_root.join(".fresh-tour.json");
+    load_tour(
+        &mut harness,
+        &manifest.display().to_string(),
+        "*Tour: Pipeline Tour*",
+    );
+
+    let seam = prose_start_col(&harness) as u16;
+    let row = row_of(&harness, "Where it starts") as u16;
+    // Cells of the prose section on `row` carrying the caret's reversed ink.
+    let carets = |h: &EditorTestHarness| -> Vec<u16> {
+        (seam..seam + 60)
+            .filter(|col| {
+                h.get_cell_style(*col, row).is_some_and(|s| {
+                    s.add_modifier
+                        .contains(ratatui::style::Modifier::REVERSED)
+                })
+            })
+            .collect()
+    };
+
+    // A click on the heading's text: the caret is on a character, which even
+    // the one-byte wash could paint.
+    harness.mouse_click(seam + 4, row).unwrap();
+    harness.wait_for_async_quiescence(3).unwrap();
+    let on_text = carets(&harness);
+    assert_eq!(
+        on_text.len(),
+        1,
+        "expected exactly one caret cell on the clicked prose row\nScreen:\n{}",
+        harness.screen_to_string()
+    );
+
+    // A click past that line's text — still inside the prose column — puts
+    // the caret at the row's trailing edge, where it used to vanish.
+    harness.mouse_click(seam + 30, row).unwrap();
+    harness.wait_for_async_quiescence(3).unwrap();
+    let past_text = carets(&harness);
+    assert_eq!(
+        past_text.len(),
+        1,
+        "the caret must still be drawn when it sits at the end of a line\nScreen:\n{}",
+        harness.screen_to_string()
+    );
+    assert!(
+        past_text != on_text,
+        "the caret must have moved to the end of the line, not stayed put\nScreen:\n{}",
+        harness.screen_to_string()
+    );
+}
