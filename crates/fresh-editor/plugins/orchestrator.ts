@@ -12776,7 +12776,13 @@ async function runLocalCreate(id: number): Promise<void> {
       projectPath: effectiveProjectPath,
       sharedWorktree,
       terminalId: result.terminalId,
-      state: "running",
+      // Nothing has been heard from the terminal yet. `lastOutputAt` must
+      // start as `null`, not absent: the burst clock in `terminal_output`
+      // starts on `lastOutputAt === null`, and `undefined` matches neither
+      // that nor the `>= IDLE_AFTER_MS` arm — so it would never start, and
+      // a workspace created this session could never reach `done`.
+      state: "idle",
+      lastOutputAt: null,
       createdAt: Date.now(),
       branch: reportedBranch || undefined,
     });
@@ -13159,7 +13165,10 @@ async function attachToWorktree(opts: {
       projectPath: opts.projectPath,
       sharedWorktree: false,
       terminalId: result.terminalId,
-      state: "running",
+      // Same as `runLocalCreate`: `null` (not absent) is what starts the
+      // burst clock, and "running" is not an `AgentState`.
+      state: "idle",
+      lastOutputAt: null,
       createdAt: Date.now(),
       branch: opts.branch,
     });
