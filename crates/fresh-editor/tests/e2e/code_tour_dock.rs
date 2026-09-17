@@ -2308,14 +2308,18 @@ fn test_clicking_the_prose_takes_focus_from_the_file() {
     // Focus the file and type into it, so the click below is answering a
     // keyboard that really is somewhere else.
     harness.mouse_click(file_col, file_row).unwrap();
-    harness.send_key(KeyCode::Char('Z'), KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Char('Z'), KeyModifiers::NONE)
+        .unwrap();
     harness.wait_for_async_quiescence(3).unwrap();
     let screen = harness.screen_to_string();
     assert!(
         screen.contains(&format!("Z{FILE_LINE}")),
         "the file must have the keyboard before the click under test\nScreen:\n{screen}"
     );
-    harness.send_key(KeyCode::Char('z'), KeyModifiers::CONTROL).unwrap();
+    harness
+        .send_key(KeyCode::Char('z'), KeyModifiers::CONTROL)
+        .unwrap();
     harness
         .wait_until(|h| !h.screen_to_string().contains(&format!("Z{FILE_LINE}")))
         .unwrap();
@@ -2327,7 +2331,9 @@ fn test_clicking_the_prose_takes_focus_from_the_file() {
     harness.mouse_click(prose_col, prose_row).unwrap();
     harness.wait_for_async_quiescence(3).unwrap();
 
-    harness.send_key(KeyCode::Char('Z'), KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Char('Z'), KeyModifiers::NONE)
+        .unwrap();
     harness.wait_for_async_quiescence(3).unwrap();
     let screen = harness.screen_to_string();
     assert!(
@@ -2371,10 +2377,8 @@ fn test_prose_caret_survives_the_end_of_a_line() {
     let carets = |h: &EditorTestHarness| -> Vec<u16> {
         (seam..seam + 60)
             .filter(|col| {
-                h.get_cell_style(*col, row).is_some_and(|s| {
-                    s.add_modifier
-                        .contains(ratatui::style::Modifier::REVERSED)
-                })
+                h.get_cell_style(*col, row)
+                    .is_some_and(|s| s.add_modifier.contains(ratatui::style::Modifier::REVERSED))
             })
             .collect()
     };
