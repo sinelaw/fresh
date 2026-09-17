@@ -2315,6 +2315,17 @@ impl Editor {
                 byte,
                 mods,
             } => {
+                // **The pane half of the press, as the `WidgetHit` arm above
+                // makes it.** The prose run calls `e.stop()` like any other
+                // `hit_node`, so the pane's own pointer surface never sees
+                // this press and nothing else moves the *editor's* focus to
+                // the split the panel is mounted in. Only the widget focus
+                // key moved, so a click on the code tour's description while
+                // the file beside it held the keyboard put a caret in the
+                // prose and left every keystroke going to the file.
+                if let crate::view::shell::widgets::Slot::Pane(pane) = slot {
+                    self.focus_pane(pane);
+                }
                 let Some(pk) = self.panel_key_of_slot(&slot) else {
                     return;
                 };
