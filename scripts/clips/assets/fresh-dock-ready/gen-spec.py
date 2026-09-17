@@ -36,7 +36,7 @@ TABLE = json.load(open(os.path.join(HERE, "rows.json")))
 
 IDLE_AFTER = 5.0        # orchestrator.ts IDLE_AFTER_MS
 SWEEP = 0.1             # scheduleIdleSweep's extra 100ms
-MARGIN = 0.45           # past the repaint, before the next badge
+MARGIN = 0.4            # past the repaint, before the next badge
 
 def lands(name):
     """When `name`'s badge appears, in seconds after W."""
@@ -53,10 +53,11 @@ ASKS = next(r[0] for r in TABLE["rows"] if r[3] == "blocked")
 # written off as layout noise (see bin/agent.sh).
 SETTLE = 24
 
-# Everything working. Late enough that every row has been printing for a
-# while and none has stopped yet: the first badge to change is
-# `tf-drift`'s, at W+7.1.
-BUSY_AT = 6.5
+# Everything working, once. Late enough that every row has been printing for
+# a while, early enough to be clear of the first check at W+7.3 -- and past
+# `tf-drift` settling to `·` at W+5.6, so this one still frame is the only
+# thing in the clip that is not a check landing.
+BUSY_AT = 6.0
 
 keys = [{"mark": True}, {"shot": "go"}, {"at": BUSY_AT}, {"shot": "busy"}]
 for i, name in enumerate(DONE):
@@ -64,7 +65,7 @@ for i, name in enumerate(DONE):
 keys += [{"at": round(lands(ASKS) + MARGIN, 2)}, {"shot": "need"}]
 # One beat of the settled dock, far enough past the last change that nothing
 # is still moving.
-keys += [{"at": round(lands(ASKS) + 1.7, 2)}, {"shot": "settle"}]
+keys += [{"at": round(lands(ASKS) + 1.6, 2)}, {"shot": "settle"}]
 
 # The dock is 39 columns at this geometry and its wall sits in the 40th. The
 # crop takes the column and the wall: `fit` pads a framed rect by FIT_PAD on
@@ -147,20 +148,22 @@ spec = {
     "timing": {"intro": 0, "zoom": 0, "hold": 0.8, "pan": 0.15,
                "push": 0.9, "wipe": 0.7, "outro": 0.25},
     "annotations": [
-      # 1 — eleven rows in two folders, all working.
+      # 1 — eleven rows in two folders, all working. One still: it is the
+      # before, not a beat, and the first check is 1.3s away.
       {"shot": "busy", "view": "list", "rows": [1, 16], "cols": NOTE_AT,
-       "band": False, "hold": 1.8, "tag": TAG},
+       "band": False, "hold": 1.3, "tag": TAG},
 
-      # 2 — three checks land, one at a time, each in its own folder's stretch
-      # of the list. Nothing else on screen moves.
+      # 2 — six checks land, one at a time, alternating between the two
+      # folders and ticking their roll-ups as they go. Half a second each,
+      # which is the cascade the `run` column was spaced for.
       {"shots": [f"d{i + 1}" for i in range(len(DONE))],
        "crossfade": 0, "view": "list", "rows": [1, 16], "cols": NOTE_AT,
-       "band": False, "hold": 2.5, "tag": TAG},
+       "band": False, "hold": 3.3, "tag": TAG},
 
       # 3 — and one of them stopped to ask. Red beats green: a question is
-      # checked before unseen work, so `backend` rolls up `●1 ✓1`.
+      # checked before unseen work, so `backend` rolls up `●1 ✓2`.
       {"shot": "need", "view": "list", "rows": [1, 16], "cols": NOTE_AT,
-       "band": False, "hold": 2.7, "tag": TAG},
+       "band": False, "hold": 2.3, "tag": TAG},
 
       # 4 — the dock, said plainly, with nothing written over it. The tube
       # powers off across this beat rather than after it.

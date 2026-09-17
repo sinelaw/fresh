@@ -273,9 +273,9 @@ difference against 0.95–5.7 for those.
 
 `fresh-dock-ready.json` films the other half of the dock: not the list being
 tidied, but the list telling you what has happened in it. Eleven sessions in
-two folders are working, three of them finish, one stops to ask a question,
-and the folder headers roll the counts up. Nine seconds, one camera, nothing
-typed.
+two folders are working, six of them finish, one stops to ask a question, and
+the folder headers roll the counts up as they go. Nine seconds, one camera,
+nothing typed.
 
 **The list never shifts, and that is the framing.** Every pixel that changes
 in the crop is a badge changing. It used to shift: the dock carried a
@@ -297,10 +297,15 @@ of that.
 
 **A state is a schedule, not a claim.** A row that goes quiet at `W + run` is
 still `working` for `IDLE_AFTER_MS` (5s) and repaints 100ms after that, so
-`rows.json`'s four `run` values *are* the edit: 3.0, 4.2 and 5.4 put the three
-checks on screen 1.2s apart, and 6.2 lands the red dot last. `gen-spec.py`
-derives every shot time from the same table, so moving a row in the table
-moves the camera with it.
+`rows.json`'s `run` column *is* the edit: six values 0.6s apart put six checks
+on screen half a second apart, alternating between the two folders, and the
+seventh lands the red dot after them. 0.6s is as tight as the default idle
+window allows without moving the whole cascade later, and nothing under about
+2.0 works at all — `coding_agent.py` waits 0.5s before its first line, so the
+burst is `run` minus that, and it has to clear `WORK_MIN_MS` (1.5s) with room
+to spare or the row files as idle instead. `gen-spec.py` derives every shot
+time from the same table, so moving a row in the table moves the camera with
+it.
 
 **Two phases, because they cannot be one.** Creating eleven workspaces is
 eleven layout changes, and the orchestrator writes off output from a session

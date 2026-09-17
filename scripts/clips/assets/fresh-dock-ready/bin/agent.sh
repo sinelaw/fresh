@@ -44,7 +44,7 @@ case "$mode" in
   blocked) run_for "$run"
            printf '\n\033[32m●\033[0m src/auth.rs rejects the expired token now.\n'
            printf '  Apply this change and re-run the suite? (y/n)\n' ;;
-  idle)    sleep 2; printf '  worktree clean, nothing queued\n' ;;
+  idle)    sleep 0.5; printf '  worktree clean, nothing queued\n' ;;
 esac
 # Keep the PTY open: a row whose terminal exits reads `?`, not a state.
 while :; do sleep 3600; done

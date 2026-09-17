@@ -39,37 +39,55 @@
         "shot": "go"
       },
       {
-        "at": 6.5
+        "at": 6.0
       },
       {
         "shot": "busy"
       },
       {
-        "at": 8.55
+        "at": 7.7
       },
       {
         "shot": "d1"
       },
       {
-        "at": 9.75
+        "at": 8.3
       },
       {
         "shot": "d2"
       },
       {
-        "at": 10.95
+        "at": 8.9
       },
       {
         "shot": "d3"
       },
       {
-        "at": 11.75
+        "at": 9.5
+      },
+      {
+        "shot": "d4"
+      },
+      {
+        "at": 10.1
+      },
+      {
+        "shot": "d5"
+      },
+      {
+        "at": 10.7
+      },
+      {
+        "shot": "d6"
+      },
+      {
+        "at": 11.3
       },
       {
         "shot": "need"
       },
       {
-        "at": 13.0
+        "at": 12.5
       },
       {
         "shot": "settle"
@@ -130,7 +148,7 @@
           20
         ],
         "band": false,
-        "hold": 1.8,
+        "hold": 1.3,
         "tag": {
           "text": "better status icons",
           "at": "center-right",
@@ -143,7 +161,10 @@
         "shots": [
           "d1",
           "d2",
-          "d3"
+          "d3",
+          "d4",
+          "d5",
+          "d6"
         ],
         "crossfade": 0,
         "view": "list",
@@ -156,7 +177,7 @@
           20
         ],
         "band": false,
-        "hold": 2.5,
+        "hold": 3.3,
         "tag": {
           "text": "better status icons",
           "at": "center-right",
@@ -177,7 +198,7 @@
           20
         ],
         "band": false,
-        "hold": 2.7,
+        "hold": 2.3,
         "tag": {
           "text": "better status icons",
           "at": "center-right",
