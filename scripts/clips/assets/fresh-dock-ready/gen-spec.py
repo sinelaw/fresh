@@ -1,12 +1,18 @@
 #!/usr/bin/env python3
 """Generate scripts/clips/fresh-dock-ready.json -- the dock's badges, filmed.
 
-Two subjects, and the cut breaks to get from one to the other. For the first
-two and a half seconds the camera is on the dock column: eleven agents in two
-folders, staged before the take, and nothing moving except the rows' own
-minds -- six finish, one stops to ask, and the dock says so before you have
-looked at any of them. Then the picture shatters and the camera lands on the
-toolbar, which is the other half of what changed.
+Two subjects, and a cut to get from one to the other. For the first two and a
+half seconds the camera is on the dock column: eleven agents in two folders,
+staged before the take, and nothing moving except the rows' own minds -- six
+finish, one stops to ask, and the dock says so before you have looked at any
+of them. Then it wipes to the toolbar and takes it apart: `[ + New ]`, the
+search affordance and the `⋯` menu lift out of the bar and label themselves.
+
+Those three rects are not measured off the picture. `Dump UI Tree` (bound to
+F9 in the clip's config) writes the window's retained layout to a buffer, and
+the pieces below are that dump's own numbers -- `widget:new-session` at
+(0,1) 9x1, `widget:search-toggle` at (28,1) 8x1, `widget:dock-menu` at
+(38,1) 1x1. A font or geometry change costs one re-dump and no arithmetic.
 
 The take and the cut keep different clocks on purpose. A badge cannot land
 sooner than `run` + IDLE_AFTER_MS, so the shots are spread over thirteen
@@ -90,6 +96,32 @@ VIEW = {"rows": [0, 17], "cols": DOCK}
 # off the right-hand column stops the plate being dealt over the names.
 NOTE_AT = [2, 20]
 
+# The toolbar's three controls, exactly as the window reported them:
+#
+#   ~/repos/tui-clips/bin/tui-tree ui-tree.json --list
+#     E62   @(0,1 9x1)   Gesture #widget:new-session
+#     E61   @(28,1 8x1)  Gesture #widget:search-toggle
+#     E116  @(38,1 1x1)  Gesture #widget:dock-menu
+#
+# `offset` deals each one down the frame -- a different drop each, so three
+# pieces read as three things rather than one row sliding -- and the hole each
+# leaves behind is drawn as ground, which is what says where it came from.
+# Down and to the right: an offset is a move *within the capture*, and there
+# is nothing above row 0 to move into. So the list is what they land on --
+# which is why the rest of the screen falls back by `dim` as they go, and why
+# they are dealt into the right-hand half of it, where the rows are blank.
+# A piece set down on top of a name reads as two words in one place however
+# far back the name is pushed.
+#
+# Cells, not pixels: the scale is applied at render time, so this survives a
+# geometry change the same way the dump does.
+PARTS = {"dim": 0.75, "at": 0.35, "over": 0.85, "pieces": [
+    {"rows": [1, 2], "cols": [0, 9],   "offset": [19, 3], "label": "new workspace"},
+    {"rows": [1, 2], "cols": [28, 36], "offset": [-6, 6], "label": "search"},
+    {"rows": [1, 2], "cols": [38, 39], "offset": [-9, 9], "label": "menu"},
+]}
+HELD = dict(PARTS, at=0.0, over=0)      # the same group, already open
+
 # The second subject: the panel's title and its one row of controls. The
 # toolbar is forty columns wide and two rows tall, so a square frame cannot
 # make it much bigger without cutting `/ search` and the `⋯` off the right --
@@ -100,9 +132,10 @@ NOTE_AT = [2, 20]
 # about.
 #
 # The scale does not change between the two views -- both are bound by the
-# same forty columns -- so this is a pan, not a zoom, and the black above the
-# panel is the evidence that the camera has reached the top of the window.
-BAR = {"rows": [0, 6], "cols": [0, 40]}
+# same forty columns -- so this is a pan, not a zoom. Framed on the top ten
+# rows: high enough that the toolbar sits in the upper third, low enough that
+# the three pieces have somewhere to be dealt to.
+BAR = {"rows": [0, 10], "cols": [0, 40]}
 
 GREEN = "after"           # the theme's added/ok key -- the `✓`s own colour
 
@@ -110,10 +143,10 @@ GREEN = "after"           # the theme's added/ok key -- the `✓`s own colour
 # over: the beats are three states of one picture, not three subjects.
 TAG = {"text": "better status icons", "at": "center-right",
        "width": 0.40, "color": GREEN, "bg": True}
-# Low, not centred: the toolbar lands in the middle of the frame on this
-# beat, and a plate at centre-right sits straight over `/ search` and the
-# `⋯` -- the half of the toolbar the beat is there to show.
-TAG2 = {"text": "cleaner toolbar", "at": "bottom-right",
+# Same place as the first plate, so one reads as the other swapping over --
+# and the pieces are dealt down the left and middle of the frame, which keeps
+# the right-hand column free for it.
+TAG2 = {"text": "cleaner toolbar", "at": "center-right",
         "width": 0.40, "color": GREEN, "bg": True}
 
 spec = {
@@ -199,21 +232,19 @@ spec = {
       {"shot": "need", "view": "list", "rows": [1, 16], "cols": NOTE_AT,
        "band": False, "hold": 0.5, "tag": TAG},
 
-      # 4 — break. The list shatters outward and the toolbar sweeps in behind
-      # it. A push or a wipe would say "and then this"; the next beat is not
-      # the next state of the list, it is a different part of the same window,
-      # and only a break says so. Once per clip — twice and the picture is
-      # the effect.
-      {"shot": "settle", "view": "bar", "rows": [0, 6], "cols": DOCK,
-       "band": False, "hold": 1.6, "transition": "shatter",
-       "shatter": {"cols": 12, "rows": 9, "spread": 1.15, "spin": 14},
-       "tag": TAG2},
+      # 4 — the cut, and the anatomy. The list wipes away and the toolbar
+      # arrives; then its three controls lift out of the bar and name
+      # themselves. A wipe rather than a dissolve for the same reason the
+      # cascade uses stills: one screen per pixel, so the arrival is
+      # unambiguous.
+      {"shot": "settle", "view": "bar", "rows": [0, 10], "cols": DOCK,
+       "band": False, "hold": 2.9, "transition": "wipe",
+       "explode": PARTS, "tag": TAG2},
 
-      # 5 — the toolbar with nothing written over it, and the tube powers off
-      # across the hold rather than after it, so the clip does not pay for
-      # its own ending.
-      {"shot": "settle", "view": "bar", "rows": [0, 6], "cols": DOCK,
-       "band": False, "hold": 1.0}
+      # 5 — held open, with nothing written over it, while the tube powers
+      # off across the hold rather than after it.
+      {"shot": "settle", "view": "bar", "rows": [0, 10], "cols": DOCK,
+       "band": False, "hold": 1.0, "explode": HELD}
     ]
   },
   "encode": {"crf": 18, "preset": "slow"}

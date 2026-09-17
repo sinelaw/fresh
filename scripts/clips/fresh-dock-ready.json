@@ -118,7 +118,7 @@
       "bar": {
         "rows": [
           0,
-          6
+          10
         ],
         "cols": [
           0,
@@ -223,24 +223,70 @@
         "view": "bar",
         "rows": [
           0,
-          6
+          10
         ],
         "cols": [
           0,
           40
         ],
         "band": false,
-        "hold": 1.6,
-        "transition": "shatter",
-        "shatter": {
-          "cols": 12,
-          "rows": 9,
-          "spread": 1.15,
-          "spin": 14
+        "hold": 2.9,
+        "transition": "wipe",
+        "explode": {
+          "dim": 0.75,
+          "at": 0.35,
+          "over": 0.85,
+          "pieces": [
+            {
+              "rows": [
+                1,
+                2
+              ],
+              "cols": [
+                0,
+                9
+              ],
+              "offset": [
+                19,
+                3
+              ],
+              "label": "new workspace"
+            },
+            {
+              "rows": [
+                1,
+                2
+              ],
+              "cols": [
+                28,
+                36
+              ],
+              "offset": [
+                -6,
+                6
+              ],
+              "label": "search"
+            },
+            {
+              "rows": [
+                1,
+                2
+              ],
+              "cols": [
+                38,
+                39
+              ],
+              "offset": [
+                -9,
+                9
+              ],
+              "label": "menu"
+            }
+          ]
         },
         "tag": {
           "text": "cleaner toolbar",
-          "at": "bottom-right",
+          "at": "center-right",
           "width": 0.4,
           "color": "after",
           "bg": true
@@ -251,14 +297,66 @@
         "view": "bar",
         "rows": [
           0,
-          6
+          10
         ],
         "cols": [
           0,
           40
         ],
         "band": false,
-        "hold": 1.0
+        "hold": 1.0,
+        "explode": {
+          "dim": 0.75,
+          "at": 0.0,
+          "over": 0,
+          "pieces": [
+            {
+              "rows": [
+                1,
+                2
+              ],
+              "cols": [
+                0,
+                9
+              ],
+              "offset": [
+                19,
+                3
+              ],
+              "label": "new workspace"
+            },
+            {
+              "rows": [
+                1,
+                2
+              ],
+              "cols": [
+                28,
+                36
+              ],
+              "offset": [
+                -6,
+                6
+              ],
+              "label": "search"
+            },
+            {
+              "rows": [
+                1,
+                2
+              ],
+              "cols": [
+                38,
+                39
+              ],
+              "offset": [
+                -9,
+                9
+              ],
+              "label": "menu"
+            }
+          ]
+        }
       }
     ]
   },

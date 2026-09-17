@@ -345,14 +345,28 @@ with. `record.sh` copies `crates/fresh-editor/plugins/orchestrator.ts` and its
 embedded copy — unedited, so what is on screen is the plugin as committed
 beside it.
 
-**Two subjects, and a break to get between them.** At 2.6s the list has said
+**Two subjects, and a cut to get between them.** At 2.6s the list has said
 everything it has to say, which is where the clip used to go quiet; instead
-the picture shatters (`transition: "shatter"`, added to tui-clips for this)
-and the camera lands on the toolbar. A push or a wipe would have said "and
-then this", and the next beat is not the next state of the list — it is a
-different part of the same window. The two plates, `better status icons` and
-`cleaner toolbar`, ride the shatter's edge rather than cross-fading, so one
-replaces the other in place.
+it wipes to the toolbar and takes it apart — `[ + New ]`, the search
+affordance and the `⋯` menu lift out of the bar and label themselves
+(`explode` on a solo beat, added to tui-clips for this). The two plates,
+`better status icons` and `cleaner toolbar`, ride the wipe's edge rather than
+cross-fading, so one replaces the other in place.
+
+**The three rects are not measured off the picture.** `Dump UI Tree` — bound
+to F9 in the clip's config, because the palette route would dump the frame
+with the palette over everything — writes the window's retained layout to a
+buffer, and `ctrl+s` offers Save As. `tui-tree ui-tree.json --list` then reads
+out `widget:new-session` at `(0,1 9x1)`, `widget:search-toggle` at
+`(28,1 8x1)` and `widget:dock-menu` at `(38,1 1x1)`, which is exactly what
+goes in the spec. A geometry change costs one re-dump and no arithmetic.
+
+An offset is a move *within* the capture, so the pieces are dealt down and to
+the right rather than up: there is nothing above row 0 to move into, and the
+right-hand half of the list is the only part of the screen with room. The
+hole each one leaves is drawn as ground — a control that has moved must not
+leave a ghost where it was — and the rest of the screen falls back by `dim`
+as they go.
 
 The second framing is a pan, not a zoom. The toolbar is forty columns wide
 and two rows tall, so a square frame cannot make it much bigger without

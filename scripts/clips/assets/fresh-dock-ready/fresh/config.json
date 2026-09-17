@@ -1,12 +1,32 @@
 {
   "theme": "builtin://dracula",
   "check_for_updates": false,
-  "editor": { "restore_previous_session": false },
+  "editor": {
+    "restore_previous_session": false
+  },
+  "keybindings": [
+    {
+      "key": "F9",
+      "modifiers": [],
+      "action": "dump_ui_tree",
+      "when": "normal"
+    }
+  ],
   "plugins": {
-    "orchestrator": { "enabled": true },
-    "welcome_screen": { "enabled": false },
-    "dashboard": { "enabled": false },
-    "git_heatmap": { "enabled": false },
-    "vi_mode": { "enabled": false }
+    "orchestrator": {
+      "enabled": true
+    },
+    "welcome_screen": {
+      "enabled": false
+    },
+    "dashboard": {
+      "enabled": false
+    },
+    "git_heatmap": {
+      "enabled": false
+    },
+    "vi_mode": {
+      "enabled": false
+    }
   }
 }
