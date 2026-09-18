@@ -474,6 +474,16 @@ impl Editor {
         self.active_window_mut().seen_byte_ranges.remove(&id);
         self.active_window_mut().buffer_metadata.remove(&id);
         self.active_window_mut().status_bar_values.remove(&id);
+        // Trails are keyed by pane, so the closing buffer's are the ones
+        // tagged with it — and any pane that went away with it.
+        let window = self.active_window_mut();
+        window
+            .breadcrumbs
+            .retain(|_, (described, _)| *described != id);
+        let described: Vec<_> = window.breadcrumbs.keys().copied().collect();
+        window
+            .breadcrumb_owners
+            .retain(|leaf, _| described.contains(leaf));
         if let Some((request_id, _, _)) = self
             .active_window_mut()
             .semantic_tokens_in_flight

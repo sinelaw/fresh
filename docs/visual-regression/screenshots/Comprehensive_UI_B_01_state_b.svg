@@ -3180,7 +3180,7 @@
   <text x="1054" y="356" fill="#8c8c8c" class="terminal" style="">i</text>
   <rect x="1062" y="342" width="9" height="18" fill="#000000"/>
   <text x="1063" y="356" fill="#8c8c8c" class="terminal" style="">n</text>
-  <rect x="1071" y="342" width="9" height="18" fill="#505050"/>
+  <rect x="1071" y="342" width="9" height="18" fill="#ffff00"/>
   <rect x="0" y="360" width="9" height="18" fill="#000000"/>
   <text x="1" y="374" fill="#00ffff" class="terminal" style="">│</text>
   <rect x="9" y="360" width="9" height="18" fill="#000000"/>

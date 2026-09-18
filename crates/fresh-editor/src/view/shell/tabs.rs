@@ -635,6 +635,7 @@ mod tests {
             pane(),
             crate::view::shell::splits::PaneChrome {
                 tabs: true,
+                breadcrumbs: false,
                 vscroll: true,
                 hscroll: false,
             },
@@ -657,6 +658,7 @@ mod tests {
                     controls,
                     groups: Default::default(),
                     interiors: Default::default(),
+                    breadcrumbs: Default::default(),
                     strips,
                     hover: None,
                     drop_zone: None,

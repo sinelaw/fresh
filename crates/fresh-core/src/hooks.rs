@@ -100,6 +100,12 @@ pub enum HookArgs {
         cursor_id: CursorId,
         old_position: usize,
         new_position: usize,
+        /// Whether this is the buffer's primary cursor.
+        ///
+        /// A plugin that follows "the" caret wants only this one, and cannot
+        /// work it out from `cursor_id`: adding a cursor makes the new one
+        /// primary, so the primary's id is whatever was handed out last.
+        is_primary: bool,
         /// Line number at new position (1-indexed)
         line: usize,
         /// Text properties at the new cursor position
@@ -111,6 +117,20 @@ pub enum HookArgs {
 
     /// Buffer was deactivated
     BufferDeactivated { buffer_id: BufferId },
+
+    /// A language server finished its `initialize` handshake and is ready to
+    /// answer requests.
+    ///
+    /// A plugin that asked before this — because the buffer opened first —
+    /// got an error, and had no way to know when to try again. This is that
+    /// signal, fired where the editor already re-requests semantic tokens
+    /// and inlay hints for the same reason.
+    LspReady {
+        /// The language whose server came up
+        language: String,
+        /// The server's configured name
+        server_name: String,
+    },
 
     /// LSP diagnostics were updated for a file
     DiagnosticsUpdated {

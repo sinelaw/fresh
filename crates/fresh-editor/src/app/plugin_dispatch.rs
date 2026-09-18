@@ -81,38 +81,6 @@ fn canonicalize_deepest_existing(path: &std::path::Path) -> std::path::PathBuf {
     }
 }
 
-/// Returns the byte offset of the start (want_end=false) or end (want_end=true)
-/// of `line` (0-indexed) within `content`. Returns `None` when `line` is out of
-/// range. The "end" position is the byte index of the terminating `\n`; for the
-/// last line with no trailing newline it is `buffer_len`.
-fn buffer_line_byte_offset(
-    content: &str,
-    buffer_len: usize,
-    line: usize,
-    want_end: bool,
-) -> Option<usize> {
-    if !want_end && line == 0 {
-        return Some(0);
-    }
-    let mut current_line = 0usize;
-    for (byte_idx, c) in content.char_indices() {
-        if c == '\n' {
-            if want_end && current_line == line {
-                return Some(byte_idx);
-            }
-            current_line += 1;
-            if !want_end && current_line == line {
-                return Some(byte_idx + 1);
-            }
-        }
-    }
-    if want_end && current_line == line {
-        Some(buffer_len)
-    } else {
-        None
-    }
-}
-
 impl Editor {
     /// Update the plugin state snapshot with current editor state.
     ///
@@ -1177,6 +1145,19 @@ impl Editor {
             } => {
                 self.handle_set_status_bar_value(buffer_id, key, value);
             }
+            PluginCommand::ClearBreadcrumbs {
+                plugin_name,
+                buffer_id,
+            } => {
+                self.handle_clear_breadcrumbs(&plugin_name, buffer_id);
+            }
+            PluginCommand::SetBreadcrumbs {
+                plugin_name,
+                buffer_id,
+                items,
+            } => {
+                self.handle_set_breadcrumbs(plugin_name, buffer_id, items);
+            }
             PluginCommand::UnregisterCommand { name } => {
                 self.handle_unregister_command(name);
             }
@@ -1552,6 +1533,20 @@ impl Editor {
                 request_id,
             } => {
                 self.handle_get_line_end_position(buffer_id, line, request_id);
+            }
+            PluginCommand::GetLineStartForPosition {
+                buffer_id,
+                position,
+                request_id,
+            } => {
+                self.handle_get_line_for_position(buffer_id, position, request_id, false);
+            }
+            PluginCommand::GetLineEndForPosition {
+                buffer_id,
+                position,
+                request_id,
+            } => {
+                self.handle_get_line_for_position(buffer_id, position, request_id, true);
             }
             PluginCommand::GetBufferLineCount {
                 buffer_id,
@@ -2327,6 +2322,79 @@ impl Editor {
         }
     }
 
+    /// Withdraw a buffer's trail from every pane the plugin set one on.
+    ///
+    /// `handle_set_breadcrumbs` with no items keeps the row and empties it —
+    /// the caret between symbols. This is the other statement: the plugin has
+    /// nothing to say about the buffer, so the row goes.
+    fn handle_clear_breadcrumbs(&mut self, plugin_name: &str, buffer_id: u64) {
+        let id = fresh_core::BufferId(buffer_id as usize);
+        for window in self.windows.values_mut() {
+            let owned: Vec<_> = window
+                .breadcrumbs
+                .iter()
+                .filter(|(leaf, (described, _))| {
+                    *described == id
+                        && window.breadcrumb_owners.get(leaf) == Some(&plugin_name.to_string())
+                })
+                .map(|(leaf, _)| *leaf)
+                .collect();
+            for leaf in owned {
+                window.breadcrumbs.remove(&leaf);
+                window.breadcrumb_owners.remove(&leaf);
+            }
+        }
+    }
+
+    fn handle_set_breadcrumbs(
+        &mut self,
+        plugin_name: String,
+        buffer_id: u64,
+        items: Vec<fresh_core::api::BreadcrumbItem>,
+    ) {
+        let id = fresh_core::BufferId(buffer_id as usize);
+        for window in self.windows.values_mut() {
+            if !window.buffers.contains_key(&id) {
+                continue;
+            }
+            if items.is_empty() {
+                // An empty trail is the caret sitting between symbols, which
+                // every pane on the buffer shares until its own caret says
+                // otherwise. The row stays; it draws its root.
+                let owned: Vec<_> = window
+                    .breadcrumbs
+                    .iter()
+                    .filter(|(leaf, (described, _))| {
+                        *described == id && window.breadcrumb_owners.get(leaf) == Some(&plugin_name)
+                    })
+                    .map(|(leaf, _)| *leaf)
+                    .collect();
+                for leaf in owned {
+                    window.breadcrumbs.insert(leaf, (id, Vec::new()));
+                }
+                // The focused pane learns it too, even if it had no trail yet.
+                let leaf = window.effective_active_split();
+                if window.pane_buffer(leaf) == Some(id) {
+                    window.breadcrumbs.insert(leaf, (id, Vec::new()));
+                    window.breadcrumb_owners.insert(leaf, plugin_name);
+                }
+                return;
+            }
+            // A trail names the scopes around one caret — the focused pane's,
+            // which is the caret the plugin read. When the focused pane is
+            // showing something else there is no way to tell which pane the
+            // trail is for, so it is dropped rather than guessed at.
+            let leaf = window.effective_active_split();
+            if window.pane_buffer(leaf) != Some(id) {
+                return;
+            }
+            window.breadcrumbs.insert(leaf, (id, items));
+            window.breadcrumb_owners.insert(leaf, plugin_name);
+            return;
+        }
+        tracing::debug!("Skipped breadcrumbs for stale buffer {:?}", id);
+    }
+
     fn handle_cancel_animation(&mut self, id: u64) {
         self.active_window_mut()
             .animations
@@ -2537,7 +2605,14 @@ impl Editor {
     /// `handle_get_line_end_position`. When `want_end` is false the byte
     /// offset of the line's first character is returned; when true, the
     /// byte offset of its terminating newline (or `buffer_len` for the
-    /// last line without a trailing newline).
+    /// last line without a trailing newline). Uses the piece-tree line index;
+    /// it never materializes or scans the whole buffer.
+    ///
+    /// A buffer with no line index — a large file in byte-offset mode, before
+    /// a line scan — therefore answers `None` for every line. That is the
+    /// point: the scan this replaced loaded the whole file to answer, which
+    /// is what byte-offset mode exists to avoid. `getLineStartPosition` says
+    /// so, and a caller that needs a line on such a buffer asks for the scan.
     fn handle_get_line_position(
         &mut self,
         buffer_id: crate::model::event::BufferId,
@@ -2553,9 +2628,72 @@ impl Editor {
             .expect("active window present")
             .get_mut(&actual_buffer_id)
             .and_then(|state| {
-                let len = state.buffer.len();
-                let content = state.get_text_range(0, len);
-                buffer_line_byte_offset(&content, len, line as usize, want_end)
+                let line = line as usize;
+                let start = state.buffer.line_start_offset(line)?;
+                if !want_end {
+                    return Some(start);
+                }
+                Some(
+                    state
+                        .buffer
+                        .line_start_offset(line.saturating_add(1))
+                        .map(|next| next.saturating_sub(1))
+                        .unwrap_or_else(|| state.buffer.len()),
+                )
+            });
+        self.resolve_json_callback(request_id, result);
+    }
+
+    /// Byte-offset counterpart to [`Self::handle_get_line_position`]: the
+    /// bounds of the line *containing* a position.
+    ///
+    /// Answers from a bounded scan out from the position, the one the fold and
+    /// margin code already use, so it needs no line index — which is the whole
+    /// reason it exists. A caller that already holds a byte (a caret, a match,
+    /// a hunk it jumped to) should ask this rather than convert to a line
+    /// number and back.
+    fn handle_get_line_for_position(
+        &mut self,
+        buffer_id: crate::model::event::BufferId,
+        position: u64,
+        request_id: u64,
+        want_end: bool,
+    ) {
+        use crate::view::folding::indent_folding;
+        // `slice_bytes` yields short data for a region that is not loaded
+        // rather than failing, so a scan across one would report a line start
+        // that is simply wrong. Answer `None` there instead: no answer is
+        // recoverable, a confident wrong byte is not.
+        fn loaded(buffer: &crate::model::buffer::Buffer, from: usize, to: usize) -> bool {
+            from >= to || buffer.slice_bytes(from..to).len() == to - from
+        }
+        let actual_buffer_id = self.resolve_buffer_id(buffer_id);
+        let result = self
+            .windows
+            .get_mut(&self.active_window)
+            .map(|w| &mut w.buffers)
+            .expect("active window present")
+            .get_mut(&actual_buffer_id)
+            .and_then(|state| {
+                let pos = (position as usize).min(state.buffer.len());
+                if !want_end {
+                    let start = indent_folding::find_line_start_byte(&state.buffer, pos)?;
+                    return loaded(&state.buffer, start, pos).then_some(start);
+                }
+                let exclusive = indent_folding::find_line_end_byte(&state.buffer, pos)?;
+                if !loaded(&state.buffer, pos, exclusive) {
+                    return None;
+                }
+                // The scan's end is past the newline; the plugin API reports
+                // the newline's own offset, as `getLineEndPosition` does.
+                Some(match exclusive.checked_sub(1) {
+                    Some(prev)
+                        if state.buffer.slice_bytes(prev..exclusive).first() == Some(&b'\n') =>
+                    {
+                        prev
+                    }
+                    _ => exclusive,
+                })
             });
         self.resolve_json_callback(request_id, result);
     }

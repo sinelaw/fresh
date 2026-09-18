@@ -41,7 +41,7 @@ while true; do
         "initialized") ;;
         "textDocument/didOpen"|"textDocument/didChange"|"textDocument/didSave") ;;
         "textDocument/documentSymbol")
-            send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":[{"name":"MyClass","kind":5,"location":{"uri":"file://test.ts","range":{"start":{"line":0,"character":0},"end":{"line":8,"character":1}}}},{"name":"constructor","kind":9,"location":{"uri":"file://test.ts","range":{"start":{"line":1,"character":2},"end":{"line":3,"character":3}}}},{"name":"myMethod","kind":6,"location":{"uri":"file://test.ts","range":{"start":{"line":5,"character":2},"end":{"line":7,"character":3}}}}]}'
+            send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":[{"name":"MyClass","kind":5,"range":{"start":{"line":0,"character":0},"end":{"line":8,"character":1}},"selectionRange":{"start":{"line":0,"character":6},"end":{"line":0,"character":13}},"children":[{"name":"constructor","kind":9,"range":{"start":{"line":1,"character":2},"end":{"line":3,"character":3}},"selectionRange":{"start":{"line":1,"character":2},"end":{"line":1,"character":13}}},{"name":"myMethod","kind":6,"range":{"start":{"line":5,"character":2},"end":{"line":7,"character":3}},"selectionRange":{"start":{"line":5,"character":2},"end":{"line":5,"character":10}}}]}]}'
             ;;
         "shutdown")
             send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":null}'
@@ -63,6 +63,22 @@ const TEST_FILE_CONTENT: &str = r#"class MyClass {
 "#;
 
 fn setup_lsp_test() -> anyhow::Result<(EditorTestHarness, tempfile::TempDir)> {
+    setup_lsp_test_with_script(FAKE_LSP_SCRIPT)
+}
+
+fn setup_lsp_test_with_script(
+    script: &str,
+) -> anyhow::Result<(EditorTestHarness, tempfile::TempDir)> {
+    setup_lsp_test_for(script, "test.ts", "typescript")
+}
+
+/// The same fixture, served as whichever language the test needs — the
+/// breadcrumb filter is per language, so a test of it has to choose one.
+fn setup_lsp_test_for(
+    script: &str,
+    file_name: &str,
+    language: &str,
+) -> anyhow::Result<(EditorTestHarness, tempfile::TempDir)> {
     let temp_dir = tempfile::TempDir::new()?;
     let project_root = temp_dir.path().to_path_buf();
 
@@ -72,7 +88,7 @@ fn setup_lsp_test() -> anyhow::Result<(EditorTestHarness, tempfile::TempDir)> {
     copy_plugin_lib(&plugins_dir);
 
     let script_path = project_root.join("fake_lsp.sh");
-    fs::write(&script_path, FAKE_LSP_SCRIPT)?;
+    fs::write(&script_path, script)?;
 
     #[cfg(unix)]
     {
@@ -82,12 +98,12 @@ fn setup_lsp_test() -> anyhow::Result<(EditorTestHarness, tempfile::TempDir)> {
         fs::set_permissions(&script_path, perms)?;
     }
 
-    let test_file = project_root.join("test.ts");
+    let test_file = project_root.join(file_name);
     fs::write(&test_file, TEST_FILE_CONTENT)?;
 
     let mut config = fresh::config::Config::default();
     config.lsp.insert(
-        "typescript".to_string(),
+        language.to_string(),
         fresh::types::LspLanguageConfig::Multi(vec![fresh::services::lsp::LspServerConfig {
             command: script_path.to_string_lossy().to_string(),
             args: Some(vec![]),
@@ -186,6 +202,41 @@ fn test_lsp_navigation_symbols() -> anyhow::Result<()> {
     harness.wait_until(|h| {
         selected_suggestion_text(h).is_some_and(|t| t.contains("[method] myMethod"))
     })?;
+
+    Ok(())
+}
+
+/// The top-of-buffer breadcrumb row follows the cursor through nested LSP
+/// DocumentSymbols, and each visible crumb is a navigation target.
+#[test]
+#[cfg_attr(windows, ignore)]
+fn test_lsp_symbol_breadcrumbs_render_update_and_navigate() -> anyhow::Result<()> {
+    let (mut harness, _temp_dir) = setup_lsp_test()?;
+
+    // Enter the constructor body. The hierarchical response should produce
+    // both its enclosing class and the innermost method in the row below tabs.
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE)?;
+    harness.wait_until(|h| {
+        h.screen_to_string()
+            .lines()
+            .any(|line| line.contains("MyClass > constructor"))
+    })?;
+
+    let screen = harness.screen_to_string();
+    let (row, line) = screen
+        .lines()
+        .enumerate()
+        .find(|(_, line)| line.contains("MyClass > constructor"))
+        .expect("nested breadcrumb row should be visible");
+    let class_col = line.find("MyClass").expect("class crumb") as u16;
+
+    // Move elsewhere, then click the outer crumb. The host uses its stored
+    // byte target, so this lands on the class name (line 1, column 7).
+    for _ in 0..5 {
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE)?;
+    }
+    harness.mouse_click(class_col, row as u16)?;
+    harness.wait_until(|h| h.screen_to_string().contains("Ln 1, Col 7"))?;
 
     Ok(())
 }
@@ -395,4 +446,354 @@ fn selected_suggestion_text(harness: &EditorTestHarness) -> Option<String> {
         }
     }
     None
+}
+
+/// The breadcrumb row sits between the tab bar and the first buffer line.
+/// Addressed by screen row, because the buffer's own `class MyClass {` line
+/// would otherwise match a search for the crumb text.
+fn breadcrumb_row(harness: &EditorTestHarness, row: usize) -> String {
+    harness
+        .screen_to_string()
+        .lines()
+        .nth(row)
+        .unwrap_or_default()
+        .trim()
+        .to_string()
+}
+
+/// Find the row showing a nested trail, which only the breadcrumb row can be:
+/// `>` separators never appear in the buffer text.
+fn nested_breadcrumb_row(harness: &EditorTestHarness) -> Option<usize> {
+    harness
+        .screen_to_string()
+        .lines()
+        .position(|line| line.contains("MyClass > "))
+}
+
+/// Clicking a crumb jumps the cursor, so the trail must redraw for where the
+/// cursor landed instead of keeping the path it was clicked from.
+#[test]
+#[cfg_attr(windows, ignore)]
+fn test_lsp_symbol_breadcrumbs_refresh_after_crumb_click() -> anyhow::Result<()> {
+    let (mut harness, _temp_dir) = setup_lsp_test()?;
+
+    // Into myMethod's body, so the trail is two crumbs deep.
+    harness.send_key_repeat(KeyCode::Down, KeyModifiers::NONE, 6)?;
+    harness.wait_until(|h| {
+        h.screen_to_string()
+            .lines()
+            .any(|line| line.contains("MyClass > myMethod"))
+    })?;
+
+    let row = nested_breadcrumb_row(&harness).expect("nested breadcrumb row");
+    let screen = harness.screen_to_string();
+    let class_col = screen
+        .lines()
+        .nth(row)
+        .and_then(|line| line.find("MyClass"))
+        .expect("class crumb") as u16;
+
+    // Clicking the outer crumb lands the cursor on the class name, which is
+    // outside myMethod — the trail must drop back to the class alone.
+    harness.mouse_click(class_col, row as u16)?;
+    harness.wait_until(|h| !breadcrumb_row(h, row).contains("myMethod"))?;
+    assert_eq!(breadcrumb_row(&harness, row), "> MyClass");
+
+    Ok(())
+}
+
+/// The trail is computed from the cursor's line, so a cursor resting on a
+/// symbol's last line still belongs to that symbol.
+#[test]
+#[cfg_attr(windows, ignore)]
+fn test_lsp_symbol_breadcrumbs_on_symbol_last_line() -> anyhow::Result<()> {
+    let (mut harness, _temp_dir) = setup_lsp_test()?;
+
+    // Let the first symbol fetch settle, so what the trail shows next comes
+    // from the cursor move alone and not from a refresh landing behind it.
+    harness.wait_until(|h| {
+        h.screen_to_string()
+            .lines()
+            .any(|line| line.trim() == "> MyClass")
+    })?;
+    let row = harness
+        .screen_to_string()
+        .lines()
+        .position(|line| line.trim() == "> MyClass")
+        .expect("breadcrumb row");
+
+    // Line 4 (1-indexed) is the constructor's closing brace — its last line.
+    harness.send_key_repeat(KeyCode::Down, KeyModifiers::NONE, 3)?;
+    harness.wait_until(|h| breadcrumb_row(h, row) == "> MyClass > constructor")?;
+
+    Ok(())
+}
+
+/// Fails the first `documentSymbol` (as a server that has not finished
+/// starting does), then publishes diagnostics and answers normally.
+const LATE_START_LSP_SCRIPT: &str = r#"#!/bin/bash
+read_message() {
+    local content_length=0
+    while IFS=: read -r key value; do
+        key=$(echo "$key" | tr -d '\r\n')
+        value=$(echo "$value" | tr -d '\r\n ')
+        if [ "$key" = "Content-Length" ]; then
+            content_length=$value
+        fi
+        if [ -z "$key" ]; then
+            break
+        fi
+    done
+    if [ $content_length -gt 0 ]; then
+        dd bs=1 count=$content_length 2>/dev/null
+    fi
+}
+send_message() {
+    local message="$1"
+    local length=${#message}
+    echo -en "Content-Length: $length\r\n\r\n$message"
+}
+asked=0
+while true; do
+    msg=$(read_message)
+    if [ -z "$msg" ]; then
+        break
+    fi
+    method=$(echo "$msg" | grep -o '"method":"[^"]*"' | cut -d'"' -f4)
+    msg_id=$(echo "$msg" | grep -o '"id":[0-9]*' | cut -d':' -f2)
+    uri=$(echo "$msg" | grep -o '"uri":"[^"]*"' | head -1 | cut -d'"' -f4)
+    case "$method" in
+        "initialize")
+            send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"capabilities":{"documentSymbolProvider":true,"textDocumentSync":1}}}'
+            ;;
+        "initialized") ;;
+        "textDocument/didOpen"|"textDocument/didChange"|"textDocument/didSave") ;;
+        "textDocument/documentSymbol")
+            if [ "$asked" = "0" ]; then
+                asked=1
+                send_message '{"jsonrpc":"2.0","id":'$msg_id',"error":{"code":-32603,"message":"server still starting"}}'
+                send_message '{"jsonrpc":"2.0","method":"textDocument/publishDiagnostics","params":{"uri":"'$uri'","diagnostics":[]}}'
+            else
+                send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":[{"name":"MyClass","kind":5,"range":{"start":{"line":0,"character":0},"end":{"line":8,"character":1}},"selectionRange":{"start":{"line":0,"character":6},"end":{"line":0,"character":13}}}]}'
+            fi
+            ;;
+        "shutdown")
+            send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":null}'
+            break
+            ;;
+    esac
+done
+"#;
+
+/// A symbol fetch that failed because the server was not up yet must not be
+/// cached as "this buffer has no symbols" — the trail has to fill in once
+/// the server starts answering.
+#[test]
+#[cfg_attr(windows, ignore)]
+fn test_lsp_symbol_breadcrumbs_recover_from_failed_fetch() -> anyhow::Result<()> {
+    let (mut harness, _temp_dir) = setup_lsp_test_with_script(LATE_START_LSP_SCRIPT)?;
+
+    harness.wait_until(|h| {
+        h.screen_to_string()
+            .lines()
+            .any(|line| line.trim() == "> MyClass")
+    })?;
+
+    Ok(())
+}
+
+/// Reports a local variable nested inside a method, as pylsp does for
+/// comprehension bindings.
+const NOISY_LSP_SCRIPT: &str = r#"#!/bin/bash
+read_message() {
+    local content_length=0
+    while IFS=: read -r key value; do
+        key=$(echo "$key" | tr -d '\r\n')
+        value=$(echo "$value" | tr -d '\r\n ')
+        if [ "$key" = "Content-Length" ]; then
+            content_length=$value
+        fi
+        if [ -z "$key" ]; then
+            break
+        fi
+    done
+    if [ $content_length -gt 0 ]; then
+        dd bs=1 count=$content_length 2>/dev/null
+    fi
+}
+send_message() {
+    local message="$1"
+    local length=${#message}
+    echo -en "Content-Length: $length\r\n\r\n$message"
+}
+while true; do
+    msg=$(read_message)
+    if [ -z "$msg" ]; then
+        break
+    fi
+    method=$(echo "$msg" | grep -o '"method":"[^"]*"' | cut -d'"' -f4)
+    msg_id=$(echo "$msg" | grep -o '"id":[0-9]*' | cut -d':' -f2)
+    case "$method" in
+        "initialize")
+            send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"capabilities":{"documentSymbolProvider":true,"textDocumentSync":1}}}'
+            ;;
+        "initialized") ;;
+        "textDocument/didOpen"|"textDocument/didChange"|"textDocument/didSave") ;;
+        "textDocument/documentSymbol")
+            send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":[{"name":"MyClass","kind":5,"range":{"start":{"line":0,"character":0},"end":{"line":8,"character":1}},"selectionRange":{"start":{"line":0,"character":6},"end":{"line":0,"character":13}},"children":[{"name":"impl MyClass","kind":19,"range":{"start":{"line":3,"character":0},"end":{"line":8,"character":1}},"selectionRange":{"start":{"line":3,"character":5},"end":{"line":3,"character":12}},"children":[{"name":"myMethod","kind":6,"range":{"start":{"line":5,"character":2},"end":{"line":7,"character":3}},"selectionRange":{"start":{"line":5,"character":2},"end":{"line":5,"character":10}},"children":[{"name":"localVar","kind":13,"range":{"start":{"line":6,"character":4},"end":{"line":6,"character":13}},"selectionRange":{"start":{"line":6,"character":11},"end":{"line":6,"character":19}}}]}]}]}]}'
+            ;;
+        "shutdown")
+            send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":null}'
+            break
+            ;;
+    esac
+done
+"#;
+
+/// Reports one `Module` enclosing one `Method`. `Module` is a scope in some
+/// languages and an `import` in others, which is the whole point of the test.
+const MODULE_LSP_SCRIPT: &str = r#"#!/bin/bash
+read_message() {
+    local content_length=0
+    while IFS=: read -r key value; do
+        key=$(echo "$key" | tr -d '\r\n')
+        value=$(echo "$value" | tr -d '\r\n ')
+        if [ "$key" = "Content-Length" ]; then
+            content_length=$value
+        fi
+        if [ -z "$key" ]; then
+            break
+        fi
+    done
+    if [ $content_length -gt 0 ]; then
+        dd bs=1 count=$content_length 2>/dev/null
+    fi
+}
+send_message() {
+    local message="$1"
+    local length=${#message}
+    echo -en "Content-Length: $length\r\n\r\n$message"
+}
+while true; do
+    msg=$(read_message)
+    if [ -z "$msg" ]; then
+        break
+    fi
+    method=$(echo "$msg" | grep -o '"method":"[^"]*"' | cut -d'"' -f4)
+    msg_id=$(echo "$msg" | grep -o '"id":[0-9]*' | cut -d':' -f2)
+    case "$method" in
+        "initialize")
+            send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":{"capabilities":{"documentSymbolProvider":true,"textDocumentSync":1}}}'
+            ;;
+        "initialized") ;;
+        "textDocument/didOpen"|"textDocument/didChange"|"textDocument/didSave") ;;
+        "textDocument/documentSymbol")
+            send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":[{"name":"Outer","kind":2,"range":{"start":{"line":0,"character":0},"end":{"line":8,"character":1}},"selectionRange":{"start":{"line":0,"character":0},"end":{"line":0,"character":5}},"children":[{"name":"myMethod","kind":6,"range":{"start":{"line":5,"character":2},"end":{"line":7,"character":3}},"selectionRange":{"start":{"line":5,"character":2},"end":{"line":5,"character":10}}}]}]}'
+            ;;
+        "shutdown")
+            send_message '{"jsonrpc":"2.0","id":'$msg_id',"result":null}'
+            break
+            ;;
+    esac
+done
+"#;
+
+/// Which kinds name a scope is a fact about a language's server, not about
+/// symbols: `Module` carries a `namespace` in TypeScript and an `import` in
+/// Python. The same reported symbols therefore have to read differently.
+#[test]
+#[cfg_attr(windows, ignore)]
+fn test_lsp_symbol_breadcrumbs_filter_is_per_language() -> anyhow::Result<()> {
+    let trail_for = |file: &str, language: &str| -> anyhow::Result<String> {
+        let (mut harness, _temp) = setup_lsp_test_for(MODULE_LSP_SCRIPT, file, language)?;
+        harness.send_key_repeat(KeyCode::Down, KeyModifiers::NONE, 6)?;
+        // The trail is the only line that starts with the root, so matching on
+        // it cannot pick up the source line that also names the method.
+        let is_trail = |line: &str| line.trim_start().starts_with("> ");
+        harness.wait_until(|h| {
+            h.screen_to_string()
+                .lines()
+                .any(|line| is_trail(line) && line.contains("myMethod"))
+        })?;
+        let row = harness
+            .screen_to_string()
+            .lines()
+            .position(|line| is_trail(line) && line.contains("myMethod"))
+            .expect("a trail naming the method");
+        Ok(breadcrumb_row(&harness, row))
+    };
+
+    assert_eq!(
+        trail_for("test.ts", "typescript")?,
+        "> Outer > myMethod",
+        "a TypeScript namespace is a scope the caret is inside"
+    );
+    assert_eq!(
+        trail_for("test.py", "python")?,
+        "> myMethod",
+        "a Python import is not"
+    );
+    Ok(())
+}
+
+/// A breadcrumb trail names the scopes you are inside, so a local the server
+/// happens to report is not one of them — while a scope reported under a kind
+/// we did not think to list, as rust-analyzer does for an `impl` block, is.
+#[test]
+#[cfg_attr(windows, ignore)]
+fn test_lsp_symbol_breadcrumbs_skip_non_scope_symbols() -> anyhow::Result<()> {
+    let (mut harness, _temp_dir) = setup_lsp_test_with_script(NOISY_LSP_SCRIPT)?;
+
+    // Line 7 is inside myMethod, and inside the local the server reports there.
+    harness.send_key_repeat(KeyCode::Down, KeyModifiers::NONE, 6)?;
+    harness.wait_until(|h| {
+        nested_breadcrumb_row(h).is_some_and(|row| breadcrumb_row(h, row).contains("myMethod"))
+    })?;
+
+    let row = nested_breadcrumb_row(&harness).expect("nested breadcrumb row");
+    assert_eq!(
+        breadcrumb_row(&harness, row),
+        "> MyClass > impl MyClass > myMethod"
+    );
+
+    Ok(())
+}
+
+/// Two panes on one buffer have two carets, so they have two trails. Keyed by
+/// buffer, the second pane drew the first one's path, and a click there jumped
+/// that caret to a symbol it never pointed at.
+#[test]
+#[cfg_attr(windows, ignore)]
+fn test_lsp_symbol_breadcrumbs_are_per_pane() -> anyhow::Result<()> {
+    use fresh::input::keybindings::Action;
+
+    let (mut harness, _temp_dir) = setup_lsp_test()?;
+
+    // Into myMethod's body, so the trail is two crumbs deep.
+    harness.send_key_repeat(KeyCode::Down, KeyModifiers::NONE, 6)?;
+    harness.wait_until(|h| trails_on_screen(h) == 1)?;
+
+    // A vertical split puts the panes side by side, so both panes' rows share
+    // screen lines — the trail is counted, not located.
+    harness
+        .editor_mut()
+        .dispatch_action_for_tests(Action::SplitVertical);
+    harness.render()?;
+    assert_eq!(
+        trails_on_screen(&harness),
+        1,
+        "the new pane has its own caret and no trail of its own yet, so it \
+         must not be drawing the focused pane's"
+    );
+
+    Ok(())
+}
+
+/// How many panes are drawing the two-crumb trail. `>` never appears in the
+/// fixture's text, so every occurrence is a breadcrumb row.
+fn trails_on_screen(harness: &EditorTestHarness) -> usize {
+    harness
+        .screen_to_string()
+        .matches("MyClass > myMethod")
+        .count()
 }

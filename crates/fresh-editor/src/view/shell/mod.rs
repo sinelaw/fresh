@@ -21,6 +21,7 @@
 //! migrated are `Host` leaves, painted by the code that always painted them,
 //! into the rectangles this same layout produced.
 
+pub mod breadcrumbs;
 pub mod buffer_host;
 pub mod calibration;
 pub mod context_menu;

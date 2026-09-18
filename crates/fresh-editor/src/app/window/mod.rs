@@ -1058,6 +1058,20 @@ pub struct Window {
     /// values plugins have pushed for individual buffers.
     pub status_bar_values: HashMap<BufferId, HashMap<String, String>>,
 
+    /// Each pane's breadcrumb trail as supplied by a plugin, tagged with the
+    /// buffer it describes.
+    ///
+    /// Keyed by *pane*, not by buffer. Two panes can show one buffer and each
+    /// has its own caret, while a trail names the scopes around one caret;
+    /// keyed by buffer, the second pane showed the first one's trail, and
+    /// clicking a crumb there jumped to a symbol that pane never pointed at.
+    /// The buffer travels with the trail so a pane that has since switched
+    /// buffers shows nothing rather than the previous one's path.
+    pub breadcrumbs: HashMap<LeafId, (BufferId, Vec<fresh_core::api::BreadcrumbItem>)>,
+    /// Plugin that last supplied each pane's breadcrumb trail, used to clean
+    /// up chrome when that plugin is unloaded.
+    pub breadcrumb_owners: HashMap<LeafId, String>,
+
     /// Mouse drag/selection/scrollbar state for this window. Drag
     /// targets reference per-window LeafIds and BufferIds.
     pub(crate) mouse_state: crate::app::types::MouseState,
@@ -2501,6 +2515,8 @@ impl Window {
             exited_terminals: HashMap::new(),
             plugin_dev_workspaces: HashMap::new(),
             status_bar_values: HashMap::new(),
+            breadcrumbs: HashMap::new(),
+            breadcrumb_owners: HashMap::new(),
             mouse_state: crate::app::types::MouseState::default(),
             key_context: crate::input::keybindings::KeyContext::Normal,
             chord_state: Vec::new(),
@@ -2782,6 +2798,7 @@ impl Window {
             active: None,
             chrome: self.pane_chrome(PaneChrome {
                 tabs: self.tab_bar_visible,
+                breadcrumbs: self.resources.config.editor.show_breadcrumbs,
                 vscroll: self.resources.config.editor.show_vertical_scrollbar,
                 hscroll: self.resources.config.editor.show_horizontal_scrollbar,
             }),
@@ -2792,6 +2809,7 @@ impl Window {
             groups: self.pane_groups(),
             interiors: Default::default(),
             strips: Default::default(),
+            breadcrumbs: Default::default(),
             hover: None,
             drop_zone: None,
             hosts: Default::default(),
@@ -2873,6 +2891,33 @@ impl Window {
     /// holds the group. `hover` is the tab under the pointer, by target,
     /// pane and whether it is the close button — the frame's, or none for a
     /// grid nothing points at.
+    /// Each pane's breadcrumb trail, by the pane: the window keeps them per
+    /// buffer, and a pane describes the one its buffer has.
+    ///
+    /// Only panes whose chrome carries the row are listed — `pane_chrome`
+    /// already dropped the row for a buffer with no trail, and a trail
+    /// described into a row that is not there would be laid out at zero
+    /// height and never seen.
+    pub(crate) fn pane_breadcrumbs(
+        &self,
+        chrome: &HashMap<LeafId, crate::view::shell::splits::PaneChrome>,
+    ) -> HashMap<LeafId, Vec<fresh_core::api::BreadcrumbItem>> {
+        self.panes_with_buffers()
+            .into_iter()
+            .filter(|(leaf, _)| chrome.get(leaf).is_some_and(|c| c.breadcrumbs))
+            .map(|(leaf, buffer)| {
+                // An empty trail is a real state — the caret between symbols —
+                // and the row draws its root for it. `pane_chrome` already
+                // decided which panes carry a row at all.
+                let items = match self.breadcrumbs.get(&leaf) {
+                    Some((described, items)) if *described == buffer => items.clone(),
+                    _ => Vec::new(),
+                };
+                (leaf, items)
+            })
+            .collect()
+    }
+
     pub(crate) fn pane_strips(
         &self,
         chrome: &HashMap<LeafId, crate::view::shell::splits::PaneChrome>,
@@ -3387,7 +3432,19 @@ impl Window {
                 scrollable: self.buffers.get(&buffer).is_none_or(|s| s.scrollable),
                 terminal_live_grid: terminal && !self.split_terminal_scrollback(leaf, buffer),
             };
-            (leaf, PaneChrome::resolve(window, kind))
+            let mut chrome = PaneChrome::resolve(window, kind);
+            // A trail *source* earns the row, not a trail: once a plugin has
+            // spoken for this buffer the row stays, whether or not the caret
+            // is inside anything, so it no longer appears and vanishes as the
+            // caret crosses between symbols. A plugin with nothing to say
+            // about the buffer — no server, or a server that reports no
+            // symbols — withdraws it with `clearBreadcrumbs` and there is no
+            // row at all.
+            chrome.breadcrumbs &= self
+                .breadcrumbs
+                .get(&leaf)
+                .is_some_and(|(described, _)| *described == buffer);
+            (leaf, chrome)
         };
         for (leaf, buffer) in mgr.visible_leaves() {
             let (k, v) = resolve(leaf, buffer, false);

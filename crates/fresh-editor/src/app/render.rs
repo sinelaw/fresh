@@ -4077,6 +4077,7 @@ impl Editor {
                 groups,
                 interiors,
                 strips,
+                breadcrumbs: self.active_window().pane_breadcrumbs(&pane_chrome),
                 hover: self.shell_hover.clone(),
                 drop_zone: self
                     .active_window()
@@ -4176,6 +4177,7 @@ impl Editor {
         self.active_window()
             .pane_chrome(crate::view::shell::splits::PaneChrome {
                 tabs: self.active_window().tab_bar_visible,
+                breadcrumbs: self.config.editor.show_breadcrumbs,
                 vscroll: self.config.editor.show_vertical_scrollbar,
                 hscroll: self.config.editor.show_horizontal_scrollbar,
             })
@@ -6272,11 +6274,13 @@ impl Editor {
         };
         let chrome = win.pane_chrome(PaneChrome {
             tabs: win.tab_bar_visible,
+            breadcrumbs: self.config.editor.show_breadcrumbs,
             vscroll: false,
             hscroll: false,
         });
         let groups = win.pane_groups();
         let strips = win.pane_strips(&chrome, None);
+        let breadcrumbs = win.pane_breadcrumbs(&chrome);
         let rowless: std::collections::HashSet<_> = groups.keys().copied().collect();
         let hosts = win.pane_hosts(&rowless);
         Some(std::rc::Rc::new(Splits {
@@ -6291,6 +6295,7 @@ impl Editor {
             groups,
             interiors: Default::default(),
             strips,
+            breadcrumbs,
             hover: None,
             drop_zone: None,
             hosts,

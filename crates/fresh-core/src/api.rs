@@ -165,6 +165,34 @@ pub struct VirtualBufferResult {
     pub split_id: Option<u64>,
 }
 
+/// One entry in the breadcrumb trail displayed above an editor buffer.
+///
+/// `line` and `character` are LSP coordinates — a 0-indexed line and a
+/// UTF-16 character offset within it — so a plugin forwards what its server
+/// said instead of resolving a byte offset of its own. Resolving one costs a
+/// plugin a read per symbol; the editor already has the line index.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, rename_all = "camelCase")]
+pub struct BreadcrumbItem {
+    pub label: String,
+    #[ts(type = "number")]
+    pub line: u32,
+    #[ts(type = "number")]
+    pub character: u32,
+}
+
+#[cfg(feature = "plugins")]
+impl<'js> rquickjs::FromJs<'js> for BreadcrumbItem {
+    fn from_js(_ctx: &rquickjs::Ctx<'js>, value: rquickjs::Value<'js>) -> rquickjs::Result<Self> {
+        rquickjs_serde::from_value(value).map_err(|e| rquickjs::Error::FromJs {
+            from: "object",
+            to: "BreadcrumbItem",
+            message: Some(e.to_string()),
+        })
+    }
+}
+
 /// A rectangular region, in cells. Used by the animation plugin API so
 /// callers can target arbitrary screen regions without going through a
 /// virtual buffer.
@@ -3616,6 +3644,14 @@ pub enum PluginCommand {
         value: String,
     },
 
+    /// Replace the breadcrumb trail displayed for a buffer. An empty list
+    /// clears the row and gives its screen line back to the editor viewport.
+    SetBreadcrumbs {
+        plugin_name: String,
+        buffer_id: u64,
+        items: Vec<BreadcrumbItem>,
+    },
+
     /// Unregister a command by name
     UnregisterCommand { name: String },
 
@@ -5164,6 +5200,46 @@ pub enum PluginCommand {
         buffer_id: BufferId,
         /// Line number (0-indexed)
         line: u32,
+        /// Request ID for async response
+        request_id: u64,
+    },
+
+    /// Withdraw a buffer's breadcrumb trail entirely, so its panes draw no
+    /// row at all.
+    ///
+    /// Distinct from `SetBreadcrumbs` with no items, which is a trail the
+    /// caret is simply outside of — the row stays and draws its root. This one
+    /// says the plugin has nothing to say about the buffer.
+    ClearBreadcrumbs {
+        /// Plugin that owned the trail
+        plugin_name: String,
+        /// Buffer to withdraw
+        buffer_id: u64,
+    },
+
+    /// Byte offset of the start of the line *containing* a byte offset (async).
+    ///
+    /// Answers from a bounded scan around the position rather than from the
+    /// line index, so it works on a buffer that has none — a large file in
+    /// byte-offset mode. `None` only when no line start lies within the
+    /// search window, i.e. inside a single enormous line.
+    GetLineStartForPosition {
+        /// Buffer ID (0 for active buffer)
+        buffer_id: BufferId,
+        /// Byte offset somewhere on the line
+        position: u64,
+        /// Request ID for async response
+        request_id: u64,
+    },
+
+    /// Byte offset of the end of the line *containing* a byte offset (async),
+    /// before its newline. The counterpart to [`Self::GetLineStartForPosition`]
+    /// and bounded the same way.
+    GetLineEndForPosition {
+        /// Buffer ID (0 for active buffer)
+        buffer_id: BufferId,
+        /// Byte offset somewhere on the line
+        position: u64,
         /// Request ID for async response
         request_id: u64,
     },

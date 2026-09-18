@@ -252,6 +252,7 @@ mod tests {
     fn chrome(tabs: bool, vscroll: bool, hscroll: bool) -> PaneChrome {
         PaneChrome {
             tabs,
+            breadcrumbs: false,
             vscroll,
             hscroll,
         }
@@ -287,6 +288,7 @@ mod tests {
             groups: Default::default(),
             interiors: Default::default(),
             strips: Default::default(),
+            breadcrumbs: Default::default(),
             hover: None,
             drop_zone: None,
             hosts: Default::default(),
@@ -342,6 +344,7 @@ mod tests {
             groups: Default::default(),
             interiors: Default::default(),
             strips: Default::default(),
+            breadcrumbs: Default::default(),
             hover: None,
             drop_zone: None,
             hosts: Default::default(),
@@ -381,6 +384,7 @@ mod tests {
             groups: [(id(0), group.clone())].into_iter().collect(),
             interiors: Default::default(),
             strips: Default::default(),
+            breadcrumbs: Default::default(),
             hover: None,
             drop_zone: None,
             hosts: Default::default(),

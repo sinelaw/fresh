@@ -799,6 +799,18 @@ pub struct UiColors {
     /// Tab hover background color
     #[serde(default = "default_tab_hover_bg")]
     pub tab_hover_bg: ColorDef,
+    /// Symbol breadcrumb row background
+    #[serde(default = "default_breadcrumb_bg")]
+    pub breadcrumb_bg: ColorDef,
+    /// Symbol breadcrumb text — the ancestors of the symbol at the cursor
+    #[serde(default = "default_breadcrumb_fg")]
+    pub breadcrumb_fg: ColorDef,
+    /// Symbol breadcrumb text for the innermost crumb, where the cursor is
+    #[serde(default = "default_breadcrumb_current_fg")]
+    pub breadcrumb_current_fg: ColorDef,
+    /// Symbol breadcrumb background under the pointer
+    #[serde(default = "default_breadcrumb_hover_bg")]
+    pub breadcrumb_hover_bg: ColorDef,
     /// Menu bar background
     #[serde(default = "default_menu_bg")]
     pub menu_bg: ColorDef,
@@ -1086,6 +1098,22 @@ fn default_tab_close_hover_fg() -> ColorDef {
 }
 fn default_tab_hover_bg() -> ColorDef {
     ColorDef::Rgb(70, 70, 75) // Slightly lighter than inactive tab bg for hover
+}
+
+// Breadcrumbs default to the colours the row was first drawn in: the tab
+// strip's separator ground, line-number grey for the ancestors, and the
+// inactive-tab foreground for the symbol the cursor is in.
+fn default_breadcrumb_bg() -> ColorDef {
+    ColorDef::Rgb(45, 45, 48)
+}
+fn default_breadcrumb_fg() -> ColorDef {
+    ColorDef::Rgb(128, 128, 128)
+}
+fn default_breadcrumb_current_fg() -> ColorDef {
+    ColorDef::Rgb(200, 200, 200)
+}
+fn default_breadcrumb_hover_bg() -> ColorDef {
+    ColorDef::Rgb(70, 70, 75)
 }
 
 // Default menu colors (for backward compatibility with existing themes)
@@ -1529,6 +1557,10 @@ pub struct Theme {
     pub tab_separator_bg: Color,
     pub tab_close_hover_fg: Color,
     pub tab_hover_bg: Color,
+    pub breadcrumb_bg: Color,
+    pub breadcrumb_fg: Color,
+    pub breadcrumb_current_fg: Color,
+    pub breadcrumb_hover_bg: Color,
 
     // Menu bar colors
     pub menu_bg: Color,
@@ -1783,6 +1815,10 @@ impl From<ThemeFile> for Theme {
             tab_separator_bg: file.ui.tab_separator_bg.into(),
             tab_close_hover_fg: file.ui.tab_close_hover_fg.into(),
             tab_hover_bg: file.ui.tab_hover_bg.into(),
+            breadcrumb_bg: file.ui.breadcrumb_bg.into(),
+            breadcrumb_fg: file.ui.breadcrumb_fg.into(),
+            breadcrumb_current_fg: file.ui.breadcrumb_current_fg.into(),
+            breadcrumb_hover_bg: file.ui.breadcrumb_hover_bg.into(),
             menu_bg: file.ui.menu_bg.clone().into(),
             menu_fg: file.ui.menu_fg.clone().into(),
             menu_active_bg: file.ui.menu_active_bg.into(),
@@ -2039,6 +2075,10 @@ impl From<Theme> for ThemeFile {
                 tab_separator_bg: theme.tab_separator_bg.into(),
                 tab_close_hover_fg: theme.tab_close_hover_fg.into(),
                 tab_hover_bg: theme.tab_hover_bg.into(),
+                breadcrumb_bg: theme.breadcrumb_bg.into(),
+                breadcrumb_fg: theme.breadcrumb_fg.into(),
+                breadcrumb_current_fg: theme.breadcrumb_current_fg.into(),
+                breadcrumb_hover_bg: theme.breadcrumb_hover_bg.into(),
                 menu_bg: theme.menu_bg.into(),
                 menu_fg: theme.menu_fg.into(),
                 menu_active_bg: theme.menu_active_bg.into(),
@@ -2629,6 +2669,10 @@ theme_color_keys! {
         "tab_close_hover_fg" => color tab_close_hover_fg,
         "tab_drop_zone_bg" => color tab_drop_zone_bg,
         "tab_drop_zone_border" => color tab_drop_zone_border,
+        "breadcrumb_bg" => color breadcrumb_bg,
+        "breadcrumb_current_fg" => color breadcrumb_current_fg,
+        "breadcrumb_fg" => color breadcrumb_fg,
+        "breadcrumb_hover_bg" => color breadcrumb_hover_bg,
         "tab_hover_bg" => color tab_hover_bg,
         "tab_inactive_bg" => color tab_inactive_bg,
         "tab_inactive_fg" => color tab_inactive_fg,
