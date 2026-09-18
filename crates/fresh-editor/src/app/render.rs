@@ -6779,7 +6779,9 @@ impl Editor {
     }
 }
 
-#[cfg(test)]
+// The startup decision is driven from plugin manifests and released by a
+// plugin command, neither of which exists in a plugin-less build.
+#[cfg(all(test, feature = "plugins"))]
 mod dock_reservation_tests {
     //! The dock column the host holds open at startup for the plugin that
     //! will fill it — see [`Editor::dock_reserved`] and
