@@ -138,7 +138,9 @@ fn pointer_is_a_real_setting(path: &str, pointer: &str, value: &serde_json::Valu
 ///   discovered plugin configs back into `config`, and write the aggregate
 ///   `.d.ts` declarations.
 ///
-/// No-op when the plugin manager is inactive.
+/// Returns the enabled plugins' manifests (`services::plugins::manifest`),
+/// read synchronously on both load paths so the host can lay out for them
+/// before the first frame. No-op when the plugin manager is inactive.
 #[allow(clippy::too_many_arguments)]
 fn load_startup_plugins(
     plugin_manager: &std::rc::Rc<RwLock<PluginManager>>,
@@ -150,9 +152,9 @@ fn load_startup_plugins(
     #[cfg_attr(not(feature = "embed-plugins"), allow(unused_variables))]
     enable_embedded_plugins: bool,
     defer_plugin_load: bool,
-) {
+) -> HashMap<String, crate::services::plugins::manifest::PluginManifest> {
     if !plugin_manager.read().unwrap().is_active() {
-        return;
+        return HashMap::new();
     }
     let mut plugin_dirs: Vec<std::path::PathBuf> = vec![];
 
@@ -205,6 +207,9 @@ fn load_startup_plugins(
             working_dir
         );
     }
+
+    let manifests =
+        crate::services::plugins::manifest::read_manifests(&plugin_dirs, &config.plugins);
 
     if defer_plugin_load {
         // Async startup path: hand each dir + a trailing
@@ -350,6 +355,7 @@ fn load_startup_plugins(
         let declarations = plugin_manager.read().unwrap().plugin_declarations();
         crate::init_script::write_plugin_declarations(&dir_context.config_dir, &declarations);
     }
+    manifests
 }
 
 /// Pre-built non-trivial inputs handed to [`Editor::from_parts`].
@@ -758,7 +764,9 @@ impl Editor {
             widget_registry: crate::widgets::WidgetRegistry::new(),
             floating_widget_panel: None,
             dock: None,
+            dock_reserved: false,
             dock_width: None,
+            dock_width_rule: crate::view::shell::frame::DockWidthRule::default(),
             dock_resizing: false,
             sidebar_sections: vec![sidebar::SidebarSection::explorer()],
             sidebar_drag: None,
@@ -914,6 +922,8 @@ impl Editor {
         grammar_registry: Option<Arc<crate::primitives::grammar::GrammarRegistry>>,
         enable_plugins: bool,
         enable_embedded_plugins: bool,
+        // A construction-time flag (see `Editor::orchestrator_mode`).
+        orchestrator_mode: bool,
     ) -> AnyhowResult<Self> {
         let mut grammar_registry =
             grammar_registry.unwrap_or_else(crate::primitives::grammar::GrammarRegistry::empty);
@@ -942,7 +952,7 @@ impl Editor {
             color_capability,
             grammar_registry,
             false,
-            false,
+            orchestrator_mode,
         )?;
         // Tests typically have no async_bridge, so the deferred grammar build
         // would just drain pending_grammars and early-return. Skip it entirely.
@@ -1315,7 +1325,7 @@ impl Editor {
 
         // Discover plugin directories and load every plugin (see the helper for
         // the discovery order and the async-vs-sync load paths).
-        load_startup_plugins(
+        let plugin_manifests = load_startup_plugins(
             &plugin_manager,
             &dir_context,
             &scan_result.bundle_plugin_dirs,
@@ -1613,6 +1623,7 @@ impl Editor {
         let mut editor = Editor::from_parts(parts);
 
         t.phase("editor_struct_assembly");
+        editor.apply_startup_dock_chrome(&plugin_manifests, orchestrator_mode);
         // Apply clipboard configuration
         editor.clipboard.apply_config(&editor.config.clipboard);
 

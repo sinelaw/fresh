@@ -253,6 +253,10 @@ impl Editor {
             .to_string();
         snapshot.env_active = self.authority().env_provider.is_active();
         snapshot.orchestrator_mode = self.orchestrator_mode();
+        // The dock slot as the host sees it: the plugin mounts at `ready`
+        // iff `dock_open`, and lays its content out to `dock_cols`.
+        snapshot.dock_open = self.dock.is_some() || self.dock_slot_reserved();
+        snapshot.dock_cols = self.dock_cols_if_open();
 
         // Core is the *only* place that detects which environment a workspace
         // has. The env-manager plugin reads this resolved result via
@@ -831,8 +835,16 @@ impl Editor {
             PluginCommand::RefreshAllLines => {
                 self.handle_refresh_all_lines();
             }
-            PluginCommand::HookCompleted { .. } => {
-                // Sentinel processed in render loop; no-op if encountered elsewhere.
+            PluginCommand::HookCompleted { hook_name } => {
+                // Sentinel processed in render loop; no-op if encountered
+                // elsewhere — except `ready`'s, which releases the dock
+                // column held open at startup if nothing mounted into it
+                // (every mount the hook sent is ahead of it in the channel).
+                // Frames were painted with the column in them, so the
+                // reclaimed strip gets the full repaint hiding the dock gets.
+                if hook_name == "ready" && self.release_startup_dock_reservation() {
+                    self.request_full_redraw();
+                }
             }
             PluginCommand::SetLineIndicator {
                 buffer_id,
@@ -5833,12 +5845,10 @@ impl Editor {
         if !as_dock && self.dock.as_ref().is_some_and(|f| f.focused) {
             self.blur_floating_panel(super::PanelSlot::Dock);
         }
+        // A dock's width is the editor's (`dock_width` / `dock_width_rule`),
+        // not the panel's.
         let placement = if as_dock {
-            let width = self
-                .dock_width
-                .unwrap_or(32)
-                .clamp(10, self.terminal_width.max(20).saturating_sub(20).max(10));
-            super::PanelPlacement::LeftDock { width_cols: width }
+            super::PanelPlacement::LeftDock
         } else {
             super::PanelPlacement::Centered
         };
@@ -5915,6 +5925,7 @@ impl Editor {
         // viewports reflow to the post-dock width right away (a centered
         // panel leaves `dock_cols` at 0, so this is a cheap no-op there).
         if as_dock {
+            self.dock_reserved = false;
             self.relayout();
         }
     }
@@ -6113,6 +6124,17 @@ impl Editor {
             self.blur_floating_panel(slot);
             return;
         }
+        // `dock_width` sets the editor's dock width, not the panel's, so it
+        // is answered before the panel is borrowed. It sticks like a drag:
+        // across resizes and launches, until the next one.
+        if op == "dock_width" {
+            if slot == super::PanelSlot::Dock {
+                self.dock_width = Some(self.clamp_dock_width(arg.max(0.0) as u16));
+                self.persist_dock_width();
+                self.relayout();
+            }
+            return;
+        }
         // **The ops that move a panel between slots**, resolved before the
         // in-place ones below: a section is a different slot, so "sidebar"
         // on a dock or centred panel and "dock" / "center" on a section each
@@ -6180,43 +6202,24 @@ impl Editor {
                 if let Some(o) = self.panel_opt_mut(to) {
                     *o = Some(panel);
                 }
+                if to == super::PanelSlot::Dock {
+                    self.dock_reserved = false;
+                }
                 to
             }
             _ => slot,
         };
-        // Clamp the dock width relative to the terminal so it can never
-        // swallow the whole chrome. Read before the &mut borrow below.
-        // A user-dragged width (`dock_width`) overrides the plugin's
-        // default so the resize survives toggling the dock off/on.
-        let max_cols = self.terminal_width.max(20).saturating_sub(20).max(10);
-        let persisted = self.dock_width;
         let Some(fwp) = self.panel_mut(slot) else {
             return;
         };
         // Whether this op changed the chrome geometry (dock width/placement),
         // so we know to re-derive the layout once the `fwp` borrow ends.
         let geometry_changed = match op {
+            // `arg` is ignored: the width is the editor's; see `dock_width`.
             "dock" => {
-                let requested = persisted.unwrap_or(arg as u16);
-                let width_cols = requested.clamp(10, max_cols);
-                fwp.placement = super::PanelPlacement::LeftDock { width_cols };
+                fwp.placement = super::PanelPlacement::LeftDock;
                 fwp.focused = true;
                 true
-            }
-            // Update the dock's width WITHOUT touching focus — used by the
-            // plugin to make the dock responsive (re-issued on terminal
-            // resize). Unlike "dock" this never steals keyboard focus back
-            // from the editor, and it's a no-op unless the panel is already
-            // docked. A user-dragged width still wins (persisted override).
-            "dock_width" => {
-                if let super::PanelPlacement::LeftDock { .. } = fwp.placement {
-                    let requested = persisted.unwrap_or(arg as u16);
-                    let width_cols = requested.clamp(10, max_cols);
-                    fwp.placement = super::PanelPlacement::LeftDock { width_cols };
-                    true
-                } else {
-                    false
-                }
             }
             "center" => {
                 fwp.placement = super::PanelPlacement::Centered;

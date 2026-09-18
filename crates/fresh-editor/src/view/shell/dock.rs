@@ -47,16 +47,21 @@ pub fn grip_key() -> Key {
 /// painter fills — the same safety valve the floating panel has had since
 /// M6a, and the reason this flip cannot half-land: `panel_interior` returns
 /// `None` for an uncovered spec and the dock stays exactly as it was.
+///
+/// `reserved` is a column held open for a dock not mounted yet
+/// (`Frame::dock_reserved`): no interior and no painter, so the ground and
+/// the divider — the column's own, not its content's — are drawn from here.
 pub fn dock(
     interior: Option<super::panel::Interior>,
     grip_hovered: bool,
     focused: bool,
+    reserved: bool,
 ) -> Node<UiMsg> {
     let described = interior.is_some();
     stack().children([
-        ground(described),
+        ground(described || reserved),
         column(interior),
-        grip_strip(grip_hovered, focused, described),
+        grip_strip(grip_hovered, focused, described || reserved),
     ])
 }
 
@@ -83,9 +88,10 @@ pub fn dock(
 /// presses its widgets decline.
 ///
 /// Nothing when the interior is still a painter: that column is the `Host`
-/// leaf's to fill, and two grounds on one cell is how they drift apart.
-fn ground(described: bool) -> Node<UiMsg> {
-    if !described {
+/// leaf's to fill, and two grounds on one cell is how they drift apart. A
+/// reserved column has no painter, so it gets the ground here.
+fn ground(painted: bool) -> Node<UiMsg> {
+    if !painted {
         return row();
     }
     row()
@@ -287,7 +293,7 @@ const DIVIDER_COLS: u16 = 1;
 ///
 /// While the interior is still a painter the border stays the painter's, so
 /// this draws nothing but the hover: two nodes painting one cell is how they
-/// drift apart.
+/// drift apart. A reserved column has no painter and gets the divider here.
 ///
 /// **The one thing that interrupts it is the active card's tab** (F.8), and
 /// it is not this node's business which rows those are. The dock's active
@@ -303,14 +309,14 @@ const DIVIDER_COLS: u16 = 1;
 /// side. The alternative — passing a row band from the interior to here —
 /// would be the two halves of one rectangle computed twice, which is what
 /// the painter did and what F.8 was.
-fn grip_ink(hovered: bool, focused: bool, described: bool) -> Node<UiMsg> {
+fn grip_ink(hovered: bool, focused: bool, painted: bool) -> Node<UiMsg> {
     use crate::app::shell_host::shell_theme::pair;
     let fg = match (hovered, focused) {
         (true, _) => "ui.split_separator_hover_fg",
         (false, true) => "editor.cursor",
         (false, false) => "ui.popup_border_fg",
     };
-    if !hovered && !described {
+    if !hovered && !painted {
         return row();
     }
     let ink = pair(fg, "editor.bg");
@@ -322,7 +328,7 @@ fn grip_ink(hovered: bool, focused: bool, described: bool) -> Node<UiMsg> {
     })
 }
 
-fn grip_strip(hovered: bool, focused: bool, described: bool) -> Node<UiMsg> {
+fn grip_strip(hovered: bool, focused: bool, painted: bool) -> Node<UiMsg> {
     // The width and the key go on the OUTSIDE, on the gesture node `draggable`
     // returns: it is the node that hit-tests, and an unconstrained one would
     // stretch across the whole strip and swallow presses meant for the panel
@@ -332,7 +338,7 @@ fn grip_strip(hovered: bool, focused: bool, described: bool) -> Node<UiMsg> {
     };
     let grip = super::grip::draggable(
         super::msg::Grip::DockWidth,
-        grip_ink(hovered, focused, described),
+        grip_ink(hovered, focused, painted),
         Rc::new(|_: &Event| Some(UiMsg::Ui(UiFact::DockResizeBegin))),
     )
     .w(Sizing::Cells(1))
@@ -393,6 +399,60 @@ mod tests {
                 _ => None,
             })
             .collect()
+    }
+
+    /// A column held open for a dock not mounted yet.
+    fn reserved(dock: Option<u16>, w: u16, h: u16) -> Ui<UiMsg> {
+        let mut ui: Ui<UiMsg> = Ui::new();
+        ui.frame(
+            frame_tree(Frame {
+                menu_bar: false,
+                status_bar: false,
+                dock,
+                dock_reserved: true,
+                ..Frame::default()
+            }),
+            Size::new(w, h),
+        );
+        ui
+    }
+
+    /// Cells of the column's last column drawn as the divider glyph.
+    fn divider_rows(ui: &Ui<UiMsg>, last_col: i32) -> usize {
+        ui.spec()
+            .in_flow()
+            .iter()
+            .filter(|i| {
+                i.rect.x == last_col
+                    && matches!(&i.draw, fresh_ui::Draw::Lines(l)
+                        if l.first().map(|r| &**r) == Some("\u{2502}"))
+            })
+            .count()
+    }
+
+    /// Whether anything fills the whole column with a ground.
+    fn has_ground(ui: &Ui<UiMsg>, width: u16, height: u16) -> bool {
+        ui.spec().in_flow().iter().any(|i| {
+            matches!(i.draw, fresh_ui::Draw::Fill)
+                && (i.rect.x, i.rect.w, i.rect.h) == (0, width, height)
+        })
+    }
+
+    /// A reserved column has no interior and no painter; without its own
+    /// ground and wall it would be a bare strip of terminal until the mount.
+    #[test]
+    fn a_reserved_column_paints_its_ground_and_its_divider() {
+        let ui = reserved(Some(24), 100, 30);
+        assert!(has_ground(&ui, 24, 30), "the column's ground");
+        assert_eq!(divider_rows(&ui, 23), 30, "the wall, top to bottom");
+    }
+
+    /// An unreserved empty column paints neither.
+    #[test]
+    fn an_unreserved_empty_column_leaves_its_cells_alone() {
+        let ui = laid_out(Some(24), 100, 30);
+        assert!(!has_ground(&ui, 24, 30), "no ground without a panel");
+        assert_eq!(divider_rows(&ui, 23), 0, "no wall without a panel");
     }
 
     /// A dock whose spec the adapter covers, for the two tests that care

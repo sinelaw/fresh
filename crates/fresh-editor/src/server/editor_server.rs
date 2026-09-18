@@ -720,6 +720,7 @@ impl EditorServer {
             } else {
                 tracing::debug!("Workspaces saved successfully");
             }
+            editor.save_dock_chrome();
         }
 
         // Clean shutdown
@@ -1063,6 +1064,8 @@ impl EditorServer {
             if let Err(e) = editor.save_all_windows_workspaces() {
                 tracing::warn!("Rebuild: failed to save workspaces: {}", e);
             }
+            // The replacement editor reads this back at construction.
+            editor.save_dock_chrome();
         }
 
         // Non-transition rebuild (working-dir change, config reload): carry the

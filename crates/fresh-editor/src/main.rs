@@ -6668,6 +6668,7 @@ where
             // data dir (see `orchestrator_persistence`). Best-effort;
             // failures are logged inside, never block quit.
             editor.save_orchestrator_state();
+            editor.save_dock_chrome();
             break;
         }
 

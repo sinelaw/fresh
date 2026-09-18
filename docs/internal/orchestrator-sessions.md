@@ -372,10 +372,21 @@ What the mode is, end to end:
   path already synthesizes for the blank-workspace settings. An untitled buffer
   answers "you have nothing open, here is somewhere to type", which is the
   wrong question when the dock is showing your workspaces.
-- **The dock opens** on the `ready` hook, regardless of the plugin's own
-  `autoOpenDock` setting — the mode overrides it, since a bare `fresh` is a
-  request for the switcher. The plugin reads the launch mode (not the config
-  preference, which stays on for `fresh FILE`) via `editor.orchestratorMode()`.
+- **The dock opens** — regardless of the plugin's own `autoOpenDock` setting
+  and of whether the user last closed it: the mode overrides both, since a
+  bare `fresh` is a request for the switcher. The host makes that call at
+  construction (`Editor::apply_startup_dock_chrome`, from the launch mode it
+  was built with), and the plugin mounts at `ready` because
+  `editor.dockOpen()` says so.
+- **The column is carved before the dock exists.** The dock's content is
+  this plugin's, mounted from `ready` after every plugin has loaded; the
+  column is the host's. The plugin declares it in
+  `orchestrator.manifest.json`, the host remembers what the user left in
+  `<data>/chrome.json`, and `Editor::apply_startup_dock_chrome` decides at
+  construction whether the slot is open and how wide. The plugin mounts at
+  `ready` iff `editor.dockOpen()`, laid out to `editor.dockCols()`; a column
+  nothing mounted into is handed back when the hook's sentinel lands. See
+  `docs/internal/plugins.md` §6.2a.
 - **First run** — no workspaces at all — boots a clean base window at the cwd
   and lands on the welcome screen. Nothing special-cases the welcome screen to
   get there: it opens itself as a background tab as always, and a background

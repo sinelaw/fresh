@@ -660,11 +660,10 @@ pub struct Editor {
     /// Last layout signature the plugin `resize` hook fired for, used
     /// by `Editor::relayout` to dedupe notifications. The tuple is
     /// `(terminal_width, terminal_height, dock_cols, file_explorer_cols)`
-    /// — the content geometry plugins observe. Deduping is what keeps
-    /// the orchestrator's resize→`dock_width`→relayout reaction from
-    /// looping: once the dock width settles, the signature stops
-    /// changing and the hook stops re-firing. `None` until the first
-    /// relayout.
+    /// — the content geometry plugins observe. A plugin that answers
+    /// `resize` with a layout change loops back through `relayout`; the
+    /// signature stops that re-firing once the geometry settles. `None`
+    /// until the first relayout.
     last_layout_signature: Option<(u16, u16, u16, u16)>,
 
     // LSP manager moved onto `Window`. Access via
@@ -1494,11 +1493,24 @@ pub struct Editor {
     /// while a centered modal is open. Always rendered as a `LeftDock`.
     pub(crate) dock: Option<FloatingWidgetState>,
 
-    /// Persisted width (columns) of the orchestrator left dock after the
-    /// user drags its right border. `None` until first resized; when set,
-    /// `FloatingPanelControl{op:"dock"}` restores this instead of the
-    /// plugin's default so the width survives toggling the dock off/on.
+    /// The dock's column is held open for a panel that has not arrived yet.
+    /// The plugin mounts the dock from `ready`, after every plugin has
+    /// loaded; without this the first frames paint a full-width editor and
+    /// the dock shoves it aside. Decided at construction
+    /// (`Editor::apply_startup_dock_chrome`); cleared by the mount, or by
+    /// `ready`'s `HookCompleted` sentinel when nothing mounted. Read through
+    /// [`Editor::dock_slot_reserved`], never bare.
+    pub(crate) dock_reserved: bool,
+
+    /// The dock's explicit width in columns (a drag, or a plugin's
+    /// `dock_width` op); `None` while it follows [`Self::dock_width_rule`].
+    /// Once set it sticks across resizes and launches (`chrome.json`, see
+    /// `app::chrome::dock`) until the next drag.
     pub(crate) dock_width: Option<u16>,
+    /// How wide the dock opens with no explicit width: the rule the plugin's
+    /// manifest declared, or the default. Read on every frame, which is what
+    /// makes the dock responsive.
+    pub(crate) dock_width_rule: crate::view::shell::frame::DockWidthRule,
     /// True while the user is dragging the dock's right border to resize.
     pub(crate) dock_resizing: bool,
     /// The sidebar's sections, top to bottom; section 0 is the explorer.
@@ -1599,7 +1611,9 @@ pub(crate) enum PanelPlacement {
     /// chrome (left of the menu bar, splits, and status bar). The
     /// chrome is laid out in the remaining width; no background
     /// dimming. Non-modal — see `FloatingWidgetState::focused`.
-    LeftDock { width_cols: u16 },
+    /// The column's width is the editor's (`Editor::dock_width`), not the
+    /// panel's.
+    LeftDock,
     /// Content-sized popup anchored near a screen cell — a right-click
     /// context menu. Drawn at `(x, y)` (clamped to stay fully on
     /// screen), sized to its rendered content, with **no** background
@@ -2299,10 +2313,7 @@ mod tests {
 
         let mut editor = default_test_editor();
         editor.active_window_mut().key_context = KeyContext::Terminal;
-        editor.dock = Some(test_panel(
-            PanelPlacement::LeftDock { width_cols: 30 },
-            true,
-        ));
+        editor.dock = Some(test_panel(PanelPlacement::LeftDock, true));
         frame_the_shell(&mut editor);
         assert_eq!(editor.get_key_context(), KeyContext::Dock);
         assert!(!pty_open(&editor), "the dock holds the keyboard");
@@ -2324,10 +2335,7 @@ mod tests {
 
         let mut editor = default_test_editor();
         editor.active_window_mut().key_context = KeyContext::Terminal;
-        editor.dock = Some(test_panel(
-            PanelPlacement::LeftDock { width_cols: 30 },
-            true,
-        ));
+        editor.dock = Some(test_panel(PanelPlacement::LeftDock, true));
         editor.floating_widget_panel = Some(test_panel(PanelPlacement::Centered, true));
         frame_the_shell(&mut editor);
         assert_eq!(editor.get_key_context(), KeyContext::Normal);
@@ -2351,10 +2359,7 @@ mod tests {
         use fresh_core::api::PluginCommand;
 
         let mut editor = default_test_editor();
-        editor.dock = Some(test_panel(
-            PanelPlacement::LeftDock { width_cols: 30 },
-            true,
-        ));
+        editor.dock = Some(test_panel(PanelPlacement::LeftDock, true));
         // Drop any redraw request left over from construction.
         let _ = editor.take_full_redraw_request();
 

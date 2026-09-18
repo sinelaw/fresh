@@ -2652,7 +2652,7 @@ impl Editor {
         }
         let panel = self.panel(slot)?;
         let h = match panel.placement {
-            super::PanelPlacement::LeftDock { .. } => term_h,
+            super::PanelPlacement::LeftDock => term_h,
             _ => {
                 let pct = panel.height_pct.clamp(1, 100) as u32;
                 (term_h * pct) / 100
@@ -3136,7 +3136,7 @@ mod tests {
         let dir_context = DirectoryContext::for_testing(temp_dir.path());
         let fs: Arc<dyn crate::model::filesystem::FileSystem + Send + Sync> =
             Arc::new(crate::model::filesystem::StdFileSystem);
-        let editor = Editor::new(
+        let mut editor = Editor::new(
             Config::default(),
             80,
             24,
@@ -3145,6 +3145,8 @@ mod tests {
             fs,
         )
         .unwrap();
+        // Pin the dock to the 30 columns `frame_the_shell` hands the tree.
+        editor.dock_width = Some(30);
         (editor, temp_dir)
     }
 
@@ -3153,7 +3155,7 @@ mod tests {
             panel_key,
             width_pct: 30,
             height_pct: 100,
-            placement: crate::app::PanelPlacement::LeftDock { width_cols: 30 },
+            placement: crate::app::PanelPlacement::LeftDock,
             focused: true,
             mode: None,
             scrollbar_zone_hovered: false,
@@ -4015,9 +4017,7 @@ mod tests {
         );
 
         // Widen the dock: the same bytes wrap into fewer rows.
-        if let Some(d) = editor.dock.as_mut() {
-            d.placement = crate::app::PanelPlacement::LeftDock { width_cols: 60 };
-        }
+        editor.dock_width = Some(60);
         editor.shell_description_stale = true;
         let dock = ratatui::layout::Rect::new(0, 0, 60, 24);
         let chrome = ratatui::layout::Rect::new(60, 0, 20, 24);

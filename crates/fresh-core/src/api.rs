@@ -1627,6 +1627,15 @@ pub struct EditorStateSnapshot {
     /// `orchestrator_mode` preference, which stays on for `fresh FILE`.
     #[serde(default)]
     pub orchestrator_mode: bool,
+    /// The left dock slot is open: a panel is in it, or the host is holding
+    /// the column for one its manifest declared. The plugin mounts at
+    /// `ready` iff this is set. Read via `editor.dockOpen()`.
+    #[serde(default)]
+    pub dock_open: bool,
+    /// The dock column's width in cells, open or not; `0` when the terminal
+    /// is too narrow for a dock. Read via `editor.dockCols()`.
+    #[serde(default)]
+    pub dock_cols: u16,
     /// The environment core detected in the workspace, as a JSON string
     /// (`{"name","kind","snippet"}`) or empty when none is detected. The
     /// env-manager plugin reads this via `editor.detectedEnv()` instead of
@@ -1805,6 +1814,8 @@ impl EditorStateSnapshot {
             workspace_trust_level: String::new(),
             env_active: false,
             orchestrator_mode: false,
+            dock_open: false,
+            dock_cols: 0,
             detected_env: String::new(),
             diagnostics: Arc::new(HashMap::new()),
             folding_ranges: Arc::new(HashMap::new()),

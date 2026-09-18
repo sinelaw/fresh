@@ -212,6 +212,10 @@ pub struct Frame {
     /// Whether the dock has keyboard focus; its divider wears the accent then,
     /// the way the file explorer's border does.
     pub dock_focused: bool,
+    /// The column is held open for a dock not mounted yet (see
+    /// [`Editor::dock_reserved`](crate::app::Editor)): no interior, so the
+    /// tree paints the column's ground and divider and nothing else.
+    pub dock_reserved: bool,
     /// The sidebar's content, or `None` when it is hidden. Like the
     /// search-options row, content rather than a flag: the tree measures the
     /// panel's rows and reads their rectangles back. A column of sections,
@@ -345,6 +349,7 @@ impl Default for Frame {
             dock_interior: None,
             dock_grip_hovered: false,
             dock_focused: false,
+            dock_reserved: false,
             sidebar: None,
             menu: None,
             dropdowns: Vec::new(),
@@ -388,6 +393,55 @@ pub fn fixed_rows(menu_bar: bool, status_bar: bool, search_options: bool, prompt
 pub const EDITOR_MIN: u16 = 20;
 /// Narrower than this and a dock is not worth showing at all.
 pub const DOCK_MIN: u16 = 24;
+/// Wider than this and the dock is taking room it has no content for.
+pub const DOCK_MAX: u16 = 40;
+
+/// How wide the dock opens before any user drag: a share of the frame,
+/// clamped. Declared by the plugin's manifest (`chrome.dock.width`) and
+/// owned by the host from before the first frame.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DockWidthRule {
+    /// The share of the frame width the dock asks for.
+    #[serde(default = "DockWidthRule::default_fraction")]
+    pub fraction: f32,
+    /// Never narrower than this, whatever the fraction says.
+    #[serde(default = "DockWidthRule::default_min")]
+    pub min: u16,
+    /// Never wider than this.
+    #[serde(default = "DockWidthRule::default_max")]
+    pub max: u16,
+}
+
+impl DockWidthRule {
+    fn default_fraction() -> f32 {
+        0.28
+    }
+    fn default_min() -> u16 {
+        DOCK_MIN
+    }
+    fn default_max() -> u16 {
+        DOCK_MAX
+    }
+
+    /// The width this rule gives a frame `frame_width` wide. A frame too
+    /// narrow for any dock is `dock_width`'s to refuse.
+    pub fn width(&self, frame_width: u16) -> u16 {
+        let target = (frame_width as f32 * self.fraction).round() as u16;
+        // A floor above the ceiling would make `clamp` panic; the floor wins.
+        target.clamp(self.min, self.max.max(self.min))
+    }
+}
+
+impl Default for DockWidthRule {
+    fn default() -> Self {
+        Self {
+            fraction: Self::default_fraction(),
+            min: Self::default_min(),
+            max: Self::default_max(),
+        }
+    }
+}
 
 /// How wide the dock actually gets, or `None` when it does not fit.
 ///
@@ -717,7 +771,12 @@ pub fn frame_tree(f: Frame) -> Node<UiMsg> {
         match f.dock {
             Some(w) => named(
                 HostRegion::Dock,
-                super::dock::dock(f.dock_interior.clone(), f.dock_grip_hovered, f.dock_focused),
+                super::dock::dock(
+                    f.dock_interior.clone(),
+                    f.dock_grip_hovered,
+                    f.dock_focused,
+                    f.dock_reserved,
+                ),
             )
             .w(Sizing::Cells(w)),
             None => region(HostRegion::Dock).w(Sizing::Cells(0)),
@@ -1527,6 +1586,34 @@ mod tests {
         assert!(
             got.claimed,
             "the seam stops as it emits, so the tree reports the claim;              it is the host's `Option<bool>` verdict that overrides it"
+        );
+    }
+
+    /// The default rule: the fraction in the middle, both clamps at the ends.
+    #[test]
+    fn the_default_rule_is_a_clamped_fraction_of_the_frame() {
+        let rule = DockWidthRule::default();
+        assert_eq!(rule.width(120), 34, "0.28 of 120, rounded");
+        assert_eq!(rule.width(100), 28, "0.28 of 100");
+        assert_eq!(rule.width(80), DOCK_MIN, "0.28 of 80 is under the floor");
+        assert_eq!(rule.width(300), DOCK_MAX, "0.28 of 300 is over the ceiling");
+    }
+
+    /// A manifest states only what it changes; the rest is the default rule.
+    #[test]
+    fn a_declared_rule_fills_in_from_the_default() {
+        let rule: DockWidthRule = serde_json::from_str(r#"{"fraction": 0.5}"#).unwrap();
+        assert_eq!((rule.min, rule.max), (DOCK_MIN, DOCK_MAX));
+        assert_eq!(
+            rule.width(100),
+            DOCK_MAX,
+            "half of 100 clamps to the ceiling"
+        );
+        let rule: DockWidthRule = serde_json::from_str(r#"{"min": 30, "max": 30}"#).unwrap();
+        assert_eq!(rule.width(120), 30, "a fixed width");
+        assert!(
+            serde_json::from_str::<DockWidthRule>(r#"{"cols": 30}"#).is_err(),
+            "an unknown field is a typo"
         );
     }
 }

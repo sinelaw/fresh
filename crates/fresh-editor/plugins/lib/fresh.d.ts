@@ -3453,6 +3453,20 @@ interface EditorAPI {
 	*/
 	orchestratorMode(): boolean;
 	/**
+	* Whether the left dock slot is open: a panel is in it, or the host is
+	* holding the column for one its manifest declared. Exposed to JS as
+	* `editor.dockOpen()`. The plugin that fills the dock mounts it at
+	* `ready` iff this is true.
+	*/
+	dockOpen(): boolean;
+	/**
+	* The dock column's width in cells, open or not; `0` when the terminal
+	* is too narrow for a dock. Exposed to JS as `editor.dockCols()`. Lay
+	* dock content out to this: the host owns the width and re-fits it on
+	* resize.
+	*/
+	dockCols(): number;
+	/**
 	* The environment core detected in the workspace, as a JSON string
 	* (`{name, kind, snippet}`) or empty when none. Exposed to JS as
 	* `editor.detectedEnv()`. Detection lives only in core; the env-manager
@@ -5002,9 +5016,11 @@ interface EditorAPI {
 	unmountFloatingWidget(panelId: number): boolean;
 	/**
 	* Control a mounted floating panel's placement / focus without
-	* re-sending its spec. `op`: "dock" (`arg` = width in columns),
-	* "center", "focus", "blur", "fullscreen" (`arg != 0` makes a
-	* centered panel cover the whole frame over the dock), "sidebar"
+	* re-sending its spec. `op`: "dock" (re-anchor as the left dock and
+	* focus; `arg` unused — the width is the editor's), "dock_width"
+	* (`arg` = width in columns; sticks like a drag, across resizes and
+	* launches), "center", "focus", "blur", "fullscreen" (`arg != 0` makes
+	* a centered panel cover the whole frame over the dock), "sidebar"
 	* (`arg` = requested rows; re-anchors the panel as a sidebar section
 	* under the file explorer — "dock" / "center" re-anchor it back out),
 	* "sidebar_rows" (`arg` = requested rows for a section; a divider the

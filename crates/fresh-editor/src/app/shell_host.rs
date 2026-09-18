@@ -3086,15 +3086,13 @@ impl Editor {
             UiFact::GripRelease { which } => {
                 use crate::view::shell::msg::Grip;
                 match which {
-                    // End a dock-resize drag and persist the chosen width so
-                    // it survives toggling the dock off and on.
+                    // End a dock-resize drag. The width itself landed in
+                    // `dock_width` with every step of the drag (so the
+                    // responsive re-fit never snapped it back); the release
+                    // is when it is worth a write to disk.
                     Grip::DockWidth => {
                         self.dock_resizing = false;
-                        if let Some(crate::app::PanelPlacement::LeftDock { width_cols }) =
-                            self.dock.as_ref().map(|f| f.placement)
-                        {
-                            self.dock_width = Some(width_cols);
-                        }
+                        self.persist_dock_width();
                     }
                     // A finished separator drag changed the ratios, so the
                     // frame reflows through the one layout funnel.
