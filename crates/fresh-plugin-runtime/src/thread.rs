@@ -161,6 +161,8 @@ pub enum TrackedAsyncResource {
     CompositeBuffer(fresh_core::BufferId),
     Terminal(fresh_core::TerminalId),
     WatchHandle(u64),
+    /// A machine handle from `openMachine`, holding a connection open.
+    Machine(u64),
 }
 
 /// Simple oneshot channel implementation
@@ -525,6 +527,12 @@ impl PluginThreadHandle {
                 split_id,
             } => {
                 self.resolve_json_callback(request_id, split_id.map(|s| s.0), "null");
+            }
+            PluginResponse::MachineOpened { request_id, info } => {
+                if let Some(machine) = info.get("id").and_then(serde_json::Value::as_u64) {
+                    self.track_async_resource(request_id, TrackedAsyncResource::Machine(machine));
+                }
+                self.resolve_callback(JsCallbackId(request_id), info.to_string());
             }
             PluginResponse::WatchPathRegistered { request_id, result } => match result {
                 Ok(handle) => {
@@ -1387,6 +1395,9 @@ async fn handle_request(
                 }
                 TrackedAsyncResource::WatchHandle(handle) => {
                     state.watch_handles.push(handle);
+                }
+                TrackedAsyncResource::Machine(machine) => {
+                    state.machine_ids.push(machine);
                 }
             }
         }

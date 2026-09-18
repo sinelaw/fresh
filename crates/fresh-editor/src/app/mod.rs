@@ -470,8 +470,43 @@ pub struct PerfCounters {
     pub panel_content_rows: u64,
 }
 
+/// A machine a plugin opened with `openMachine`.
+///
+/// An `AuthorityPayload` can only describe a local filesystem, so a remote
+/// machine is reached by borrowing the connection of a window attached to it.
+pub(crate) enum OpenMachineKind {
+    /// Built from a plugin payload; a reference into the connection registry.
+    Owned(Arc<crate::services::authority::Connection>),
+    /// A window's own connection, resolved on each use so the handle sees reconnects.
+    Window(fresh_core::WindowId),
+}
+
+pub(crate) struct OpenMachine {
+    pub(crate) kind: OpenMachineKind,
+    /// Set when the handle is closed. Off-loop work still running against the
+    /// machine (a walk streaming batches) checks it and stops.
+    pub(crate) cancel: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl OpenMachine {
+    pub(crate) fn new(kind: OpenMachineKind) -> Self {
+        Self {
+            kind,
+            cancel: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+        }
+    }
+}
+
 /// The main editor struct - manages multiple buffers, clipboard, and rendering
 pub struct Editor {
+    /// Every connection this editor has open, and the only owner of any of
+    /// them. See [`crate::services::authority::ConnectionRegistry`].
+    pub(crate) connections: crate::services::authority::ConnectionRegistry,
+    /// Machines a plugin opened with `openMachine`, by handle id. Held until
+    /// the plugin closes the handle, so a scan connects once rather than per call.
+    pub(crate) open_machines: std::collections::HashMap<u64, OpenMachine>,
+    /// Source of `open_machines` keys. Starts at 1 so 0 can mean "active window" on the wire.
+    pub(crate) next_machine_id: u64,
     /// See [`PerfCounters`]. Cheap to maintain (two increments on a path
     /// that is already copying), and the only way an assertion can tell a
     /// per-tick copy from a per-change one.
@@ -640,10 +675,6 @@ pub struct Editor {
     /// These get prepended to the next render output
     pending_escape_sequences: Vec<u8>,
 
-    /// If set, the editor should restart with this new working directory
-    /// This is used by Open Folder to do a clean context switch
-    restart_with_dir: Option<PathBuf>,
-
     // status_message, plugin_status_message, prompt moved onto
     // `Window` (Step 0k phase 3) — each window has its own chrome,
     // and the active window's chrome is what renders.
@@ -752,32 +783,6 @@ pub struct Editor {
     // each window has its own tree view.
     // `preview` (per-window preview-tab tracker) moved onto `Window`.
     // Each window has its own preview slot.
-
-    // suppress_position_history_once moved onto `Window` (Step 0f).
-    // The file explorer and Open File browser ride per-window fs_managers
-    // (`WindowResources::fs_manager`, derived from each window's authority), so
-    // the editor no longer holds a global one that could go stale against the
-    // active authority.
-    // The editor's active backend is *not* a field here — it lives on the
-    // active `Window` (owned, non-`Clone`), read via `Editor::authority()`.
-    // Keeping it single-owned per window is what makes a session's
-    // backend/trust/env impossible to share into another window by
-    // construction (issue #2280).
-    /// Authority queued by `install_authority`, picked up by `main.rs`
-    /// right before dropping this editor on restart. `None` in the
-    /// steady state. Not durable state — restarts from `main.rs`'s
-    /// restart-dir path leave this `None`, and the main loop carries
-    /// the authority over through its own channel.
-    pending_authority: Option<crate::services::authority::Authority>,
-
-    /// Keepalive bundle queued alongside `pending_authority` for a
-    /// connection-backed authority (remote agent / K8s), parked by the
-    /// restart loop so the live carrier + reconnect/heartbeat tasks
-    /// survive the rebuild. `None` for synchronously-constructible
-    /// authorities (local, docker). See
-    /// [`Editor::install_authority_with_keepalive`].
-    pending_keepalive: Option<Box<dyn std::any::Any + Send>>,
-
     /// Plugin-supplied override for the Remote Indicator. Takes
     /// precedence over the authority-derived state at render time.
     /// Cleared on editor restart (plugins must reassert the state
@@ -826,15 +831,6 @@ pub struct Editor {
     /// (issue #2056). Holds exactly one session (`WindowId(1)`, the
     /// "base") until the orchestrator adds more.
     pub(crate) windows: HashMap<fresh_core::WindowId, crate::app::window::Window>,
-
-    /// Connection keepalives for born-attached remote windows, keyed by
-    /// `WindowId`. A remote (Kubernetes / SSH / …) window's carrier process +
-    /// reconnect/heartbeat tasks + dedicated runtime live in this opaque
-    /// bundle; it must outlive the `Editor` rebuilds that *don't* drop the
-    /// window and is torn down when the window is closed (`close_window`).
-    /// Local windows have no entry. This is the per-window analogue of the
-    /// process-level keepalive the restart-based attach parks.
-    pub(crate) session_keepalives: HashMap<fresh_core::WindowId, Box<dyn std::any::Any + Send>>,
 
     /// Request ids of `attachRemoteAgent` connects currently in flight (added
     /// when the connect is spawned, removed when it settles). Lets a plugin

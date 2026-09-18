@@ -2875,9 +2875,9 @@ type RemoteAgentSpec = {
 	base_env?: [string, string][];
 	/**
 	* When true, attach as a NEW window (born-attached, coexisting with the
-	* existing windows) instead of the default global restart that replaces the
-	* whole editor's authority. The Orchestrator sets this so a cloud session is
-	* a real session row beside local ones.
+	* existing windows) rather than re-pointing the window showing the current
+	* project. The Orchestrator sets this so a cloud session is a real session
+	* row beside local ones.
 	*/
 	window?: boolean;
 	/** Window label (window mode only). Omit to use the transport's display. */
@@ -5071,13 +5071,13 @@ interface EditorAPI {
 	* The payload is a JS object describing filesystem + spawner +
 	* terminal wrapper + display label. The canonical schema lives in
 	* the `AuthorityPayload` type in `fresh-editor`; plugins should
-	* hand-build objects that match it. Fire-and-forget: the editor
-	* restarts as part of the transition, so the plugin is reloaded
-	* before any follow-up work can run on this call's return value.
+	* hand-build objects that match it. Fire-and-forget: returns before the
+	* authority is live and reloads nothing, so follow-up work belongs in an
+	* `authority_changed` handler.
 	*/
 	setAuthority(payload: AuthorityPayload): boolean;
 	/**
-	* Restore the default local authority. Same restart semantics as
+	* Restore the default local authority on this window. Same semantics as
 	* `setAuthority`.
 	*/
 	clearAuthority(): void;
@@ -5131,9 +5131,8 @@ interface EditorAPI {
 	* ```
 	* 
 	* The override sticks until replaced or cleared via
-	* `clearRemoteIndicatorState`. Editor restart (e.g. on
-	* `setAuthority`) resets it — plugins must reassert after a
-	* post-restart init if they want the override to persist.
+	* `clearRemoteIndicatorState`. It survives an authority change but not a
+	* relaunch.
 	*/
 	setRemoteIndicatorState(state: RemoteIndicatorStatePayload): boolean;
 	/**
@@ -5475,6 +5474,81 @@ interface EditorAPI {
 		source: string;
 		plugin: string;
 	}>>;
+}
+/** A machine opened with `editor.openMachine`. Closed on `close()` or plugin unload. */
+interface FreshMachine {
+	id: number;
+	/** "linux" | "macos" | "windows" | "other", as the machine reports. */
+	platform: string;
+	home: string;
+	/** The authority's own label, empty for a plain local one. */
+	label: string;
+	walkTree(root: string, options?: WalkTreeOptions): Promise<WalkTreeResult>;
+	readFilePrefixes(requests: {
+		path: string;
+		maxBytes: number;
+	}[]): Promise<FilePrefix[]>;
+	run(program: string, args?: string[], cwd?: string): Promise<CommandResult>;
+	/** Environment variables, for the names that are set. A remote machine is
+	*  asked with `printenv`; never this computer's values for another machine. */
+	env(names: string[]): Promise<Record<string, string>>;
+	/** Idempotent: closing twice is not an error. */
+	close(): Promise<boolean>;
+}
+interface WalkTreeOptions {
+	/** Directory basenames skipped at every depth. */
+	skipDirs?: string[];
+	includeHidden?: boolean;
+	includeDirs?: boolean;
+	/** Depth below the root; 1 is a direct child. Omitted means unbounded. */
+	maxDepth?: number;
+	maxEntries?: number;
+}
+interface WalkTreeEntry {
+	path: string;
+	/** Path relative to the walk root, "/"-separated on every platform. */
+	rel: string;
+	kind: "file" | "dir" | "symlink";
+	/** Unix timestamp. */
+	mtime: number;
+	size: number;
+}
+interface WalkTreeResult {
+	entries: WalkTreeEntry[];
+	/** True when `maxEntries` stopped the walk early. */
+	truncated: boolean;
+}
+/** One result from `readFilePrefixes`: `text` on success, else `error`. */
+interface FilePrefix {
+	path: string;
+	text?: string;
+	error?: string;
+}
+/** A non-zero `code` resolves rather than rejecting. */
+interface CommandResult {
+	code: number;
+	stdout: string;
+	stderr: string;
+}
+/** Bare shapes bound to machine 0, the active window's own authority. */
+interface EditorAPI {
+	/** Open a machine to read without attaching it to a window.
+	*  `{ kind: "window", window?: number }` borrows a window's own authority.
+	*  `{ kind: "ssh" | "kubectl-exec", ... }` connects to a machine nothing is
+	*  attached to; it is read-only, so `run` rejects. Anything else is an
+	*  `AuthorityPayload`, as `setAuthority` takes. */
+	openMachine(spec: {
+		kind: "window";
+		window?: number;
+	} | RemoteAgentTransport | AuthorityPayload): Promise<FreshMachine>;
+	walkTree(root: string, options?: WalkTreeOptions): Promise<WalkTreeResult>;
+	readFilePrefixes(requests: {
+		path: string;
+		maxBytes: number;
+	}[]): Promise<FilePrefix[]>;
+	/** Unlike `spawnHostProcess`, a remote authority runs the command there. */
+	runOnTarget(program: string, args?: string[], cwd?: string): Promise<CommandResult>;
+	machineEnv(names: string[]): Promise<Record<string, string>>;
 }
 /**
 * Typed overload of `editor.getPluginApi`. When the caller passes a

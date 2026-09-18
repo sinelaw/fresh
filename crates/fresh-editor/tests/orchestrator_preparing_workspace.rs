@@ -150,7 +150,7 @@ fn finishing_a_background_create_leaves_the_user_where_they_are() {
             Some(project.clone()),
             Some(vec!["sh".into(), "-c".into(), "sleep 60".into()]),
             Some("agent".into()),
-            authority,
+            std::sync::Arc::new(fresh::services::authority::Connection::plain(authority)),
             None,
             None,
             false,

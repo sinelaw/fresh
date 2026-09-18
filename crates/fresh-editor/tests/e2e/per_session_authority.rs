@@ -70,12 +70,13 @@ fn set_session_authority_on_active_window_updates_window_and_editor() -> anyhow:
     Ok(())
 }
 
+/// Stands in for a remote backend's carrier bundle.
+struct KeepaliveProbe;
+
+/// A remote attach installs its connection on the window for that root.
 #[test]
-fn install_authority_with_keepalive_queues_both_and_requests_restart() -> anyhow::Result<()> {
-    // The path the `attachRemoteAgent` op lands on once its async connect
-    // succeeds: a connection-backed authority is queued *alongside* its
-    // keepalive, and a restart is requested so both restart loops adopt them
-    // before the old editor is dropped.
+fn install_authority_with_keepalive_attaches_the_window_and_keeps_the_carrier() -> anyhow::Result<()>
+{
     let temp = tempfile::tempdir()?;
     let mut harness = EditorTestHarness::create(
         100,
@@ -83,34 +84,24 @@ fn install_authority_with_keepalive_queues_both_and_requests_restart() -> anyhow
         HarnessOptions::new().with_working_dir(temp.path().to_path_buf()),
     )?;
 
-    // A real attach would pass an `KubeKeepalive`; the slot is opaque
-    // `Box<dyn Any + Send>`, so any owned value exercises the wiring.
-    let keepalive: Box<dyn std::any::Any + Send> = Box::new(());
-    let remote_root = std::path::PathBuf::from("/workspace");
+    let root = temp.path().to_path_buf();
     harness.editor_mut().install_authority_with_keepalive(
         container_authority("Container:ka"),
-        keepalive,
-        remote_root.clone(),
+        Box::new(KeepaliveProbe),
+        root,
     );
 
-    // The authority is queued…
-    let pending = harness.editor_mut().take_pending_authority();
     assert_eq!(
-        pending.expect("authority queued").display_label,
-        "Container:ka"
+        harness.editor_mut().authority().display_label,
+        "Container:ka",
+        "the attach lands on the window, with no restart in between"
     );
-    // …so is the keepalive…
     assert!(
-        harness.editor_mut().take_pending_keepalive().is_some(),
-        "keepalive queued alongside the authority"
-    );
-    // …and a restart was requested that re-roots the editor at the *remote*
-    // workspace (not the local working dir) — the fix for the explorer /
-    // quick-open / open-file all pointing at a host path absent in the pod.
-    assert_eq!(
-        harness.editor_mut().take_restart_dir(),
-        Some(remote_root),
-        "restart re-roots at the remote workspace"
+        harness
+            .editor_mut()
+            .open_connection_labels()
+            .contains(&"Container:ka".to_string()),
+        "and the connection is registered like any other"
     );
     Ok(())
 }
@@ -247,9 +238,9 @@ fn new_local_session_is_born_with_its_own_local_authority() -> anyhow::Result<()
     // authority — exactly the state after `editor.setAuthority(...)` +
     // restart, which `set_boot_authority` mirrors inline.
     let owner = harness.editor_mut().active_window_id();
-    harness
-        .editor_mut()
-        .set_boot_authority(container_authority("Container:dc"));
+    harness.editor_mut().set_boot_authority(std::sync::Arc::new(
+        fresh::services::authority::Connection::plain(container_authority("Container:dc")),
+    ));
     assert_eq!(
         harness.editor_mut().authority().display_label,
         "Container:dc"
@@ -269,7 +260,9 @@ fn new_local_session_is_born_with_its_own_local_authority() -> anyhow::Result<()
             Some(proj_b.clone()),
             Some(vec!["sh".into(), "-c".into(), "sleep 60".into()]),
             Some("agent".into()),
-            born_authority,
+            std::sync::Arc::new(fresh::services::authority::Connection::plain(
+                born_authority,
+            )),
             None,
             None,
             false,
@@ -334,9 +327,9 @@ fn attach_does_not_leak_authority_onto_background_windows() -> anyhow::Result<()
         .create_window_at(bg_root, "projB".into());
 
     // Attach a devcontainer to the active project.
-    harness
-        .editor_mut()
-        .set_boot_authority(container_authority("Container:dc"));
+    harness.editor_mut().set_boot_authority(std::sync::Arc::new(
+        fresh::services::authority::Connection::plain(container_authority("Container:dc")),
+    ));
 
     // The owner runs under the container; the background project does not.
     assert_eq!(
@@ -579,7 +572,7 @@ fn activating_env_in_one_session_does_not_affect_another() -> anyhow::Result<()>
 /// no rebuild is needed. The old `handle_set_env` called `request_restart`,
 /// which rebuilds the whole editor process — dropping every window's
 /// `terminal_manager` (all orchestrator sessions' PTYs) and reconstructing the
-/// orchestrator plugin (closing the dock). Asserting `!should_restart()` after
+/// orchestrator plugin (closing the dock). Asserting `!should_quit()` after
 /// activation locks that out. Drives `PluginCommand::SetEnv` directly (what
 /// `editor.setEnv` dispatches) rather than poking the provider, so it covers
 /// the actual restart decision.
@@ -623,9 +616,61 @@ fn activating_env_does_not_restart_the_editor() -> anyhow::Result<()> {
         "env activated in place"
     );
     assert!(
-        !harness.editor().should_restart(),
+        !harness.editor().should_quit(),
         "activating an env must not request a process-wide editor restart \
          (a rebuild tears down other sessions' terminals and closes the dock)"
     );
+    Ok(())
+}
+
+/// A window built after boot registers its connection; closing it closes only that one.
+#[test]
+fn every_window_connection_is_registered_and_closing_one_closes_it() -> anyhow::Result<()> {
+    let temp = tempfile::tempdir()?;
+    let mut harness = EditorTestHarness::create(
+        100,
+        30,
+        HarnessOptions::new().with_working_dir(temp.path().to_path_buf()),
+    )?;
+
+    // The boot window was built before the registry existed.
+    assert_eq!(
+        harness.editor_mut().open_connection_count(),
+        1,
+        "the boot window's connection is adopted into the registry"
+    );
+
+    let second_root = temp.path().join("second");
+    std::fs::create_dir_all(&second_root)?;
+    let second = harness
+        .editor_mut()
+        .create_window_at(second_root, "second".into());
+    assert_eq!(
+        harness.editor_mut().open_connection_count(),
+        2,
+        "a new window opens its own connection rather than sharing the boot one"
+    );
+
+    // The old connection has no references left, so the next prune closes it.
+    harness
+        .editor_mut()
+        .set_session_authority(second, container_authority("Container:second"));
+    assert_eq!(
+        harness.editor_mut().open_connection_labels(),
+        vec!["Container:second", "local"],
+        "the window's old connection closed when it let go of it — swapping a \
+         backend must not leave the previous one open"
+    );
+
+    assert!(
+        harness.editor_mut().close_window(second),
+        "the second window closes"
+    );
+    assert_eq!(
+        harness.editor_mut().open_connection_count(),
+        1,
+        "closing the window closed its connection, and only its connection"
+    );
+    assert_eq!(harness.editor_mut().open_connection_labels(), vec!["local"]);
     Ok(())
 }

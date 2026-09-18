@@ -707,6 +707,8 @@ pub struct PluginTrackedState {
     /// unload, so a hot-reload during plugin development doesn't leave the
     /// previous copy's timers ticking against the new one.
     pub timer_ids: Vec<u64>,
+    /// Machine handles from `editor.openMachine`, each holding a connection. Closed on unload.
+    pub machine_ids: Vec<u64>,
 }
 
 /// Type alias for the shared async resource owner map.
@@ -1819,6 +1821,236 @@ impl JsEditorApi {
             .ok()
             .and_then(|s| s.primary_cursor.as_ref().and_then(|c| c.line))
             .unwrap_or(0) as u32
+    }
+
+    /// Open a machine without attaching it to a window. `spec` is the same
+    /// payload `setAuthority` takes. Resolves with `{id, platform, home, label}`.
+    /// The handle is closed when the plugin is unloaded.
+    #[plugin_api(
+        async_promise,
+        js_name = "_openMachineRaw",
+        ts_return = "{ id: number; platform: string; home: string; label: string }"
+    )]
+    #[qjs(rename = "_openMachineStart")]
+    pub fn open_machine_start<'js>(
+        &self,
+        ctx: rquickjs::Ctx<'js>,
+        #[plugin_api(ts_type = "unknown")] spec: rquickjs::Value<'js>,
+    ) -> rquickjs::Result<u64> {
+        let payload: serde_json::Value = rquickjs_serde::from_value(spec)
+            .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))?;
+        if !payload.is_object() {
+            return Err(throw_js(&ctx, "openMachine: spec must be an object"));
+        }
+        let id = self.alloc_request_id();
+        // Attributed to this plugin so the handle is closed on unload.
+        if let Ok(mut owners) = self.async_resource_owners.lock() {
+            owners.insert(id, self.plugin_name.clone());
+        }
+        let _ = self.command_sender.send(PluginCommand::OpenMachine {
+            payload,
+            callback_id: JsCallbackId::new(id),
+        });
+        Ok(id)
+    }
+
+    /// Close a machine opened by `openMachine`. Idempotent.
+    #[plugin_api(async_promise, js_name = "_closeMachineRaw", ts_return = "boolean")]
+    #[qjs(rename = "_closeMachineStart")]
+    pub fn close_machine_start(&self, _ctx: rquickjs::Ctx<'_>, machine: i64) -> u64 {
+        let id = self.alloc_request_id();
+        let _ = self.command_sender.send(PluginCommand::CloseMachine {
+            machine: machine.max(0) as u64,
+            callback_id: Some(JsCallbackId::new(id)),
+        });
+        id
+    }
+
+    /// Read environment variables from a machine; only set names come back.
+    /// A remote machine is asked with `printenv`; never this computer's values
+    /// for another machine. No `printenv` reports nothing.
+    #[plugin_api(
+        async_promise,
+        js_name = "_machineEnvOn",
+        ts_return = "Record<string, string>"
+    )]
+    #[qjs(rename = "_machineEnvStart")]
+    pub fn machine_env_start<'js>(
+        &self,
+        ctx: rquickjs::Ctx<'js>,
+        machine: i64,
+        #[plugin_api(ts_type = "string[]")] names: rquickjs::Value<'js>,
+    ) -> rquickjs::Result<u64> {
+        let parsed: serde_json::Value = rquickjs_serde::from_value(names)
+            .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))?;
+        let serde_json::Value::Array(items) = parsed else {
+            return Err(throw_js(&ctx, "machineEnv: `names` must be an array"));
+        };
+        let names = items
+            .iter()
+            .filter_map(|v| v.as_str().map(str::to_string))
+            .collect();
+
+        let id = self.alloc_request_id();
+        let _ = self.command_sender.send(PluginCommand::MachineEnv {
+            machine: (machine > 0).then_some(machine as u64),
+            names,
+            callback_id: JsCallbackId::new(id),
+        });
+        Ok(id)
+    }
+
+    /// Walk a directory tree on the machine. Resolves with `{entries, truncated}`;
+    /// each entry is `{path, rel, kind, mtime, size}`, `kind` one of `"file"`,
+    /// `"dir"`, `"symlink"`, `mtime` a unix timestamp. A missing root resolves
+    /// empty. `includeHidden` is off by default.
+    #[plugin_api(
+        async_promise,
+        js_name = "_walkTreeOn",
+        ts_return = "{ entries: { path: string; rel: string; kind: 'file' | 'dir' | 'symlink'; mtime: number; size: number }[]; truncated: boolean }"
+    )]
+    #[qjs(rename = "_walkTreeStart")]
+    pub fn walk_tree_start<'js>(
+        &self,
+        ctx: rquickjs::Ctx<'js>,
+        machine: i64,
+        root: String,
+        #[plugin_api(
+            ts_type = "{ skipDirs?: string[]; includeHidden?: boolean; includeDirs?: boolean; maxDepth?: number; maxEntries?: number }"
+        )]
+        options: rquickjs::Object<'js>,
+    ) -> rquickjs::Result<u64> {
+        let opts = parse_options(&ctx, "walkTree", &root, options)?;
+        validate_allowed_keys(
+            &ctx,
+            "walkTree",
+            &root,
+            &opts,
+            &[
+                "skipDirs",
+                "includeHidden",
+                "includeDirs",
+                "maxDepth",
+                "maxEntries",
+            ],
+        )?;
+        let skip_dirs = match opts.get("skipDirs") {
+            Some(serde_json::Value::Array(items)) => items
+                .iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect(),
+            _ => Vec::new(),
+        };
+        let flag = |key: &str| matches!(opts.get(key), Some(serde_json::Value::Bool(true)));
+        let count = |key: &str| {
+            opts.get(key)
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0) as usize
+        };
+
+        let id = self.alloc_request_id();
+        let _ = self.command_sender.send(PluginCommand::WalkTree {
+            machine: (machine > 0).then_some(machine as u64),
+            root,
+            skip_dirs,
+            include_hidden: flag("includeHidden"),
+            include_dirs: flag("includeDirs"),
+            // 0 reads as "no limit" on the editor side.
+            max_depth: count("maxDepth"),
+            max_entries: count("maxEntries"),
+            callback_id: JsCallbackId::new(id),
+        });
+        Ok(id)
+    }
+
+    /// Read the first bytes of many files in one call. Takes
+    /// `[{path, maxBytes}, …]` and resolves with one result per request, in
+    /// order: `{path, text}` on success, `{path, error}` on failure.
+    #[plugin_api(
+        async_promise,
+        js_name = "_readFilePrefixesOn",
+        ts_return = "{ path: string; text?: string; error?: string }[]"
+    )]
+    #[qjs(rename = "_readFilePrefixesStart")]
+    pub fn read_file_prefixes_start<'js>(
+        &self,
+        ctx: rquickjs::Ctx<'js>,
+        machine: i64,
+        #[plugin_api(ts_type = "{ path: string; maxBytes: number }[]")] requests: rquickjs::Value<
+            'js,
+        >,
+    ) -> rquickjs::Result<u64> {
+        let parsed: serde_json::Value = rquickjs_serde::from_value(requests)
+            .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))?;
+        let serde_json::Value::Array(items) = parsed else {
+            return Err(throw_js(
+                &ctx,
+                "readFilePrefixes: expected an array of { path, maxBytes }",
+            ));
+        };
+        let mut requests = Vec::with_capacity(items.len());
+        for item in items {
+            let Some(path) = item.get("path").and_then(serde_json::Value::as_str) else {
+                return Err(throw_js(
+                    &ctx,
+                    "readFilePrefixes: every entry needs a `path` string",
+                ));
+            };
+            let max_bytes = item
+                .get("maxBytes")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0) as usize;
+            requests.push((path.to_string(), max_bytes));
+        }
+
+        let id = self.alloc_request_id();
+        let _ = self.command_sender.send(PluginCommand::ReadFilePrefixes {
+            machine: (machine > 0).then_some(machine as u64),
+            requests,
+            callback_id: JsCallbackId::new(id),
+        });
+        Ok(id)
+    }
+
+    /// Run a command on the machine. Resolves with `{code, stdout, stderr}`; a
+    /// non-zero `code` resolves rather than rejecting. Unlike `spawnHostProcess`,
+    /// a remote machine runs it there. Rejects on a machine opened read-only.
+    #[plugin_api(
+        async_promise,
+        js_name = "_runOnTargetOn",
+        ts_return = "{ code: number; stdout: string; stderr: string }"
+    )]
+    #[qjs(rename = "_runOnTargetStart")]
+    pub fn run_on_target_start<'js>(
+        &self,
+        ctx: rquickjs::Ctx<'js>,
+        machine: i64,
+        program: String,
+        #[plugin_api(ts_type = "string[]")] args: rquickjs::Value<'js>,
+        cwd: String,
+    ) -> rquickjs::Result<u64> {
+        let parsed: serde_json::Value = rquickjs_serde::from_value(args)
+            .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))?;
+        let serde_json::Value::Array(items) = parsed else {
+            return Err(throw_js(&ctx, "runOnTarget: `args` must be an array"));
+        };
+        let args = items
+            .iter()
+            .map(|v| match v {
+                serde_json::Value::String(s) => s.clone(),
+                other => other.to_string(),
+            })
+            .collect();
+
+        let id = self.alloc_request_id();
+        let _ = self.command_sender.send(PluginCommand::RunOnTarget {
+            machine: (machine > 0).then_some(machine as u64),
+            program,
+            args,
+            cwd: (!cwd.is_empty()).then_some(cwd),
+            callback_id: JsCallbackId::new(id),
+        });
+        Ok(id)
     }
 
     /// Get the byte offset of the start of a line (0-indexed line number)
@@ -7421,9 +7653,9 @@ impl JsEditorApi {
     /// The payload is a JS object describing filesystem + spawner +
     /// terminal wrapper + display label. The canonical schema lives in
     /// the `AuthorityPayload` type in `fresh-editor`; plugins should
-    /// hand-build objects that match it. Fire-and-forget: the editor
-    /// restarts as part of the transition, so the plugin is reloaded
-    /// before any follow-up work can run on this call's return value.
+    /// hand-build objects that match it. Fire-and-forget: returns before the
+    /// authority is live and reloads nothing, so follow-up work belongs in an
+    /// `authority_changed` handler.
     #[plugin_api(js_name = "setAuthority")]
     pub fn set_authority(
         &self,
@@ -7437,7 +7669,7 @@ impl JsEditorApi {
         true
     }
 
-    /// Restore the default local authority. Same restart semantics as
+    /// Restore the default local authority on this window. Same semantics as
     /// `setAuthority`.
     #[plugin_api(js_name = "clearAuthority")]
     pub fn clear_authority(&self) {
@@ -7514,9 +7746,8 @@ impl JsEditorApi {
     /// ```
     ///
     /// The override sticks until replaced or cleared via
-    /// `clearRemoteIndicatorState`. Editor restart (e.g. on
-    /// `setAuthority`) resets it — plugins must reassert after a
-    /// post-restart init if they want the override to persist.
+    /// `clearRemoteIndicatorState`. It survives an authority change but not a
+    /// relaunch.
     #[plugin_api(js_name = "setRemoteIndicatorState")]
     pub fn set_remote_indicator_state(
         &self,
@@ -8828,6 +9059,52 @@ const EDITOR_PROMISE_BOOTSTRAP: &str = r#"
                 editor.listCommands = _wrapAsync("_listCommandsStart", "listCommands");
                 editor.prompt = _wrapAsync("_promptStart", "prompt");
                 editor.getNextKey = _wrapAsync("_getNextKeyStart", "getNextKey");
+                editor._walkTreeOn = _wrapAsync("_walkTreeStart", "walkTree");
+                editor._readFilePrefixesOn = _wrapAsync("_readFilePrefixesStart", "readFilePrefixes");
+                editor._runOnTargetOn = _wrapAsync("_runOnTargetStart", "runOnTarget");
+                editor._machineEnvOn = _wrapAsync("_machineEnvStart", "machineEnv");
+                editor._openMachineRaw = _wrapAsync("_openMachineStart", "openMachine");
+                editor._closeMachineRaw = _wrapAsync("_closeMachineStart", "closeMachine");
+
+                // Machine id 0 means the active window's authority.
+                editor.walkTree = function(root, options) {
+                    return editor._walkTreeOn(0, root, options || {});
+                };
+                editor.readFilePrefixes = function(requests) {
+                    return editor._readFilePrefixesOn(0, requests);
+                };
+                editor.runOnTarget = function(program, args, cwd) {
+                    return editor._runOnTargetOn(0, program, args || [], cwd || "");
+                };
+                editor.machineEnv = function(names) {
+                    return editor._machineEnvOn(0, names || []);
+                };
+                editor.openMachine = function(spec) {
+                    return editor._openMachineRaw(spec).then(function(info) {
+                        var id = info.id;
+                        return {
+                            id: id,
+                            platform: info.platform,
+                            home: info.home,
+                            label: info.label,
+                            walkTree: function(root, options) {
+                                return editor._walkTreeOn(id, root, options || {});
+                            },
+                            readFilePrefixes: function(requests) {
+                                return editor._readFilePrefixesOn(id, requests);
+                            },
+                            run: function(program, args, cwd) {
+                                return editor._runOnTargetOn(id, program, args || [], cwd || "");
+                            },
+                            env: function(names) {
+                                return editor._machineEnvOn(id, names || []);
+                            },
+                            close: function() {
+                                return editor._closeMachineRaw(id);
+                            },
+                        };
+                    });
+                };
                 editor.getLineStartPosition = _wrapAsync("_getLineStartPositionStart", "getLineStartPosition");
                 editor.getLineEndPosition = _wrapAsync("_getLineEndPositionStart", "getLineEndPosition");
                 editor.createTerminal = _wrapAsync("_createTerminalStart", "createTerminal");
@@ -9511,6 +9788,15 @@ impl QuickJsBackend {
             for timer_id in &tracked.timer_ids {
                 let _ = self.command_sender.send(PluginCommand::ClearPluginTimer {
                     timer_id: *timer_id,
+                });
+            }
+
+            // Close the machines this plugin opened. No callback: the promise is
+            // in the heap being discarded. Closing twice is a no-op editor-side.
+            for machine in &tracked.machine_ids {
+                let _ = self.command_sender.send(PluginCommand::CloseMachine {
+                    machine: *machine,
+                    callback_id: None,
                 });
             }
         }

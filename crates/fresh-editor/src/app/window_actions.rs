@@ -89,6 +89,48 @@ impl crate::app::Editor {
             .map(|(id, _)| *id)
     }
 
+    /// Attach `connection` to the project at `root` and make it the active
+    /// window. A window already at `root` is re-pointed in place and keeps its
+    /// buffers and layout; otherwise a new window opens. Other windows keep
+    /// the machines they were on.
+    pub(crate) fn attach_connection_at(
+        &mut self,
+        connection: std::sync::Arc<crate::services::authority::Connection>,
+        root: PathBuf,
+    ) -> WindowId {
+        let root = root.canonicalize().unwrap_or(root);
+        // Prefer the active window: several windows can share a root, and
+        // `find_window_by_root` would pick whichever comes first.
+        let here = self.active_window;
+        let at_root = |editor: &Self, id: fresh_core::WindowId| {
+            editor.windows.get(&id).is_some_and(|w| {
+                crate::app::orchestrator_persistence::canonical_key(&w.root)
+                    == crate::app::orchestrator_persistence::canonical_key(&root)
+            })
+        };
+        let target = if at_root(self, here) {
+            Some(here)
+        } else {
+            self.find_window_by_root(&root)
+        };
+        let Some(existing) = target else {
+            let label = root
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| root.to_string_lossy().into_owned());
+            let id = self.create_window_with_authority(root, label, connection);
+            self.set_active_window(id);
+            return id;
+        };
+        self.set_session_connection(existing, connection);
+        // Its terminals are still on the machine it just left; move them.
+        self.move_window_terminals_to_its_authority(existing);
+        if self.active_window != existing {
+            self.set_active_window(existing);
+        }
+        existing
+    }
+
     /// Open the window for `root`, creating it if absent. Enforces
     /// one-session-per-directory: if a window already exists at the
     /// same canonical root it is returned as-is and `label` is
@@ -112,7 +154,13 @@ impl crate::app::Editor {
         // session's authority/trust (which would leak a trust decision across
         // projects). Its `fs_manager` rides the same (host) filesystem.
         let local_authority = self.local_session_authority(&root);
-        self.create_window_with_authority(root, label, local_authority)
+        self.create_window_with_authority(
+            root,
+            label,
+            std::sync::Arc::new(crate::services::authority::Connection::plain(
+                local_authority,
+            )),
+        )
     }
 
     /// Number of live windows whose canonical root matches `root` — the size
@@ -162,7 +210,11 @@ impl crate::app::Editor {
         // per-session trust/env). For a local source that IS the final backend;
         // for a remote source it is a placeholder the reconnect re-points.
         let authority = self.local_session_authority(&root);
-        let id = self.create_window_with_authority(root, label, authority);
+        let id = self.create_window_with_authority(
+            root,
+            label,
+            std::sync::Arc::new(crate::services::authority::Connection::plain(authority)),
+        );
         if let Some(w) = self.windows.get_mut(&id) {
             w.authority_spec = spec;
         }
@@ -215,16 +267,17 @@ impl crate::app::Editor {
         &mut self,
         root: PathBuf,
         label: String,
-        authority: crate::services::authority::Authority,
+        connection: std::sync::Arc<crate::services::authority::Connection>,
     ) -> WindowId {
+        let connection = self.adopt_connection(connection);
         let id = WindowId(self.next_window_id);
         self.next_window_id += 1;
 
         let mut resources = self.window_resources();
         resources.fs_manager = std::sync::Arc::new(crate::services::fs::FsManager::new(
-            std::sync::Arc::clone(&authority.filesystem),
+            std::sync::Arc::clone(&connection.authority.filesystem),
         ));
-        let mut session = Window::new(id, label, root.clone(), authority, resources);
+        let mut session = Window::new(id, label, root.clone(), connection, resources);
         session.terminal_width = self.terminal_width;
         session.terminal_height = self.terminal_height;
         let resolved_label = session.label.clone();
@@ -355,7 +408,7 @@ impl crate::app::Editor {
         cwd: Option<PathBuf>,
         command: Option<Vec<String>>,
         title: Option<String>,
-        window_authority: crate::services::authority::Authority,
+        connection: std::sync::Arc<crate::services::authority::Connection>,
         resume: Option<Vec<String>>,
         env: Option<HashMap<String, String>>,
         allow_script: bool,
@@ -379,15 +432,16 @@ impl crate::app::Editor {
         // whether the active authority actually changed and skip the
         // hook/snapshot churn when it didn't.
         let previous_authority_label = self.authority().display_label.clone();
+        let connection = self.adopt_connection(connection);
 
         let mut resources = self.window_resources();
         // Re-derive the window's `fs_manager` from *its* backend's filesystem
         // so the file explorer rides this session's backend, then build the
         // window owning `window_authority` outright.
         resources.fs_manager = std::sync::Arc::new(crate::services::fs::FsManager::new(
-            std::sync::Arc::clone(&window_authority.filesystem),
+            std::sync::Arc::clone(&connection.authority.filesystem),
         ));
-        let mut session = Window::new(id, label, root.clone(), window_authority, resources);
+        let mut session = Window::new(id, label, root.clone(), connection, resources);
         session.terminal_width = self.terminal_width;
         session.terminal_height = self.terminal_height;
         // Drop the placeholder now — everything above that reads through the
@@ -1479,16 +1533,13 @@ impl crate::app::Editor {
         // nothing left to describe, and a stale entry would make a later
         // window that reuses the id render as "still being created".
         self.preparing_windows.remove(&id);
-        // Tear down a born-attached remote session's connection (carrier +
-        // reconnect/heartbeat + runtime) when its window closes. No-op for
-        // local windows, which never have an entry.
-        if self.session_keepalives.remove(&id).is_some() {
-            tracing::info!("close_window: dropped remote session keepalive for window {id}");
-        }
         self.plugin_manager
             .read()
             .unwrap()
             .run_hook("window_closed", HookArgs::WindowClosed { id: id.0 });
+
+        // The window's reference is gone; close its connection if nothing else shares it.
+        self.prune_connections();
 
         true
     }
@@ -1511,8 +1562,7 @@ impl crate::app::Editor {
     /// into the editor-wide caches before returning.
     pub(crate) fn create_remote_session_window(
         &mut self,
-        authority: crate::services::authority::Authority,
-        keepalive: Box<dyn std::any::Any + Send>,
+        connection: std::sync::Arc<crate::services::authority::Connection>,
         root: PathBuf,
         label: String,
         command: Option<Vec<String>>,
@@ -1525,7 +1575,7 @@ impl crate::app::Editor {
             Some(root),
             command,
             None,
-            authority,
+            connection,
             None,
             None,
             false,
@@ -1537,7 +1587,6 @@ impl crate::app::Editor {
             adopt,
         ) {
             Ok((window_id, _terminal, _buffer)) => {
-                self.session_keepalives.insert(window_id, keepalive);
                 // Persist how to reconnect this backend on the new session so
                 // a restart / relaunch can bring it back rather than degrade
                 // it to local.
@@ -1552,9 +1601,8 @@ impl crate::app::Editor {
                 // `create_window_with_terminal` already rolled the active
                 // pointer back to the previous window and left the
                 // editor-wide authority untouched (it never installed the
-                // remote one), so just drop the keepalive (tears down the
-                // carrier).
-                drop(keepalive);
+                // remote one). No window holds the connection, so prune closes it.
+                self.prune_connections();
                 Err(e)
             }
         }
@@ -1593,7 +1641,7 @@ impl crate::app::Editor {
         // created through the orchestrator plugin); without it there is nothing
         // to connect through, so diving into one is a no-op.
         #[cfg(feature = "plugins")]
-        self.start_remote_connect(spec, Some(id), request_id);
+        self.start_remote_connect(spec, Some(id), request_id, false);
         #[cfg(not(feature = "plugins"))]
         let _ = (spec, request_id);
     }
@@ -1608,13 +1656,12 @@ impl crate::app::Editor {
     pub(crate) fn promote_dormant_remote(
         &mut self,
         id: WindowId,
-        authority: crate::services::authority::Authority,
-        keepalive: Box<dyn std::any::Any + Send>,
+        connection: std::sync::Arc<crate::services::authority::Connection>,
     ) {
+        let connection = self.adopt_connection(connection);
         let Some(descriptor) = self.dormant_remote.remove(&id) else {
-            // Raced with a close / a second connect — nothing to promote.
-            drop(authority);
-            drop(keepalive);
+            // Raced with a close / a second connect: nothing to promote.
+            drop(connection);
             return;
         };
         let root = descriptor.root.clone();
@@ -1623,13 +1670,12 @@ impl crate::app::Editor {
         // so its file explorer / quick-open ride the session's backend.
         let mut resources = self.window_resources();
         resources.fs_manager = std::sync::Arc::new(crate::services::fs::FsManager::new(
-            std::sync::Arc::clone(&authority.filesystem),
+            std::sync::Arc::clone(&connection.authority.filesystem),
         ));
 
         // Restore the persisted workspace through the connected authority (its
         // terminals spawn over SSH/kube), or seed an empty layout when there is
-        // no saved workspace. Either constructor takes the authority by value —
-        // the window is born owning its real backend.
+        // no saved workspace. Either constructor takes the connection.
         // One store, whatever launched this editor — see `save_workspace_for`.
         let workspace = crate::workspace::Workspace::load(&root).ok().flatten();
         let mut window = match workspace {
@@ -1637,7 +1683,7 @@ impl crate::app::Editor {
                 id,
                 descriptor.label.clone(),
                 root.clone(),
-                authority,
+                connection,
                 resources,
                 &ws,
             ),
@@ -1646,7 +1692,7 @@ impl crate::app::Editor {
                     id,
                     descriptor.label.clone(),
                     root.clone(),
-                    authority,
+                    connection,
                     resources,
                 );
                 w.seed_initial_layout();
@@ -1664,7 +1710,6 @@ impl crate::app::Editor {
         let previous_authority_label = self.authority().display_label.clone();
         let already_active = self.active_window == id;
         self.windows.insert(id, window);
-        self.session_keepalives.insert(id, keepalive);
 
         if already_active {
             // The restored window replaced this session's disconnected shell
@@ -1712,7 +1757,10 @@ impl crate::app::Editor {
         let id = WindowId(self.next_window_id);
         self.next_window_id += 1;
         let authority = self.local_session_authority(&root);
-        let mut window = Window::new(id, label, root, authority, self.window_resources());
+        let connection =
+            self.open_connection(crate::services::authority::Connection::plain(authority));
+        let resources = self.window_resources();
+        let mut window = Window::new(id, label, root, connection, resources);
         window.terminal_width = self.terminal_width;
         window.terminal_height = self.terminal_height;
         // Seed a layout so the renderer has a populated `splits` to paint
@@ -1767,26 +1815,27 @@ impl crate::app::Editor {
         let Some(descriptor) = self.dormant_remote.get(&id) else {
             return;
         };
+        // Copied out before `open_connection` borrows `self` mutably.
         let root = descriptor.root.clone();
+        let label = descriptor.label.clone();
+        let plugin_state = descriptor.plugin_state.clone();
+        let authority_spec = descriptor.authority_spec.clone();
         // Same per-session local scope a boot-discovered local shell gets:
         // its own trust + env handles, never a clone of the previous
         // window's. Routed through the blessed factory so this shell inherits
         // the worktree→repo trust keying too.
         let authority = self.local_session_authority(&root);
-        let mut window = Window::new(
-            id,
-            descriptor.label.clone(),
-            root,
-            authority,
-            self.window_resources(),
-        );
+        let connection =
+            self.open_connection(crate::services::authority::Connection::plain(authority));
+        let resources = self.window_resources();
+        let mut window = Window::new(id, label, root, connection, resources);
         window.terminal_width = self.terminal_width;
         window.terminal_height = self.terminal_height;
-        window.plugin_state = descriptor.plugin_state.clone();
+        window.plugin_state = plugin_state;
         // Keep the backend identity so the status bar / dock present the
         // session as its real (not-yet-connected) backend and a retry knows
         // what to reconnect to — never downgraded to local.
-        window.authority_spec = descriptor.authority_spec.clone();
+        window.authority_spec = authority_spec;
         // The shell renders as a placeholder page (see
         // `render_dormant_shell_page`), not as an editable buffer — nothing
         // can be meaningfully edited before the backend connects. Seed the

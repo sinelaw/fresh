@@ -1101,14 +1101,14 @@ impl Editor {
     /// Either way the embedded terminal PTYs died with the old carrier (a
     /// separate `ssh -t` / `kubectl exec` from the agent channel), so we respawn
     /// them in place through the now-live authority, reusing each backing file
-    /// so scrollback continues. `respawn_terminals_through_authority` skips
-    /// still-live terminals, so this is idempotent under duplicate signals.
+    /// so scrollback continues. Still-live terminals are skipped, so this is
+    /// idempotent; an authority change uses `move_window_terminals_to_its_authority`.
     pub(crate) fn reattach_window(&mut self, window_id: fresh_core::WindowId) {
         let Some(window) = self.windows.get_mut(&window_id) else {
             return;
         };
         window.remote_reconnect_error = None;
-        let revived = window.respawn_terminals_through_authority();
+        let revived = window.respawn_terminals_through_authority(false);
         if revived > 0 {
             let label = window.label.clone();
             self.set_status_message(format!("Reconnected: {label}"));
@@ -1121,6 +1121,28 @@ impl Editor {
             // brings it back live in place. Only the active window owns the
             // `terminal_mode` / `key_context` input state; a background window
             // re-syncs when the user next focuses it.
+            if window_id == self.active_window {
+                self.sync_terminal_mode_to_active_buffer();
+            }
+        }
+    }
+
+    /// Move a window's terminals onto the machine its authority now names.
+    /// Unlike a reconnect, live terminals are respawned too: after an authority
+    /// change they still run on the machine the window has left.
+    pub(crate) fn move_window_terminals_to_its_authority(
+        &mut self,
+        window_id: fresh_core::WindowId,
+    ) {
+        let Some(window) = self.windows.get_mut(&window_id) else {
+            return;
+        };
+        window.remote_reconnect_error = None;
+        let moved = window.respawn_terminals_through_authority(true);
+        if moved > 0 {
+            let label = window.label.clone();
+            tracing::info!("moved {moved} terminal(s) in window {window_id} ({label})");
+            // A background window re-syncs terminal mode when next focused.
             if window_id == self.active_window {
                 self.sync_terminal_mode_to_active_buffer();
             }
@@ -1554,15 +1576,12 @@ impl Editor {
                     authority.display_label,
                     root.display()
                 );
-                // Resolve before the restart tears the plugin
-                // runtime down, so the awaiting caller observes
-                // success rather than a vanished promise.
                 self.resolve_remote_attach(request_id);
-                // Record the reconnect spec on the (re-rooted)
-                // active session before the restart so it persists
-                // and the rebuilt editor restores this backend.
-                self.active_window_mut().authority_spec = spec;
-                self.install_authority_with_keepalive(authority, keepalive, root);
+                let landed = self.install_authority_with_keepalive(authority, keepalive, root);
+                // Stamp the window the backend landed on; the attach may have opened a new one.
+                if let Some(w) = self.windows.get_mut(&landed) {
+                    w.authority_spec = spec;
+                }
             }
             crate::services::async_bridge::RemoteAttachMode::Window {
                 label,
@@ -1578,17 +1597,47 @@ impl Editor {
                 // exists. Resolve on success; on a window-creation
                 // failure reject so the plugin keeps its dialog
                 // open with the reason and no half-built window.
+                let connection = std::sync::Arc::new(crate::services::authority::Connection {
+                    authority,
+                    keepalive: std::sync::Mutex::new(Some(keepalive)),
+                });
                 // Only adopt a window that is still there and still a
                 // placeholder: the user may have closed it while the connect
                 // ran, and growing a *live* window into this session would
                 // take somebody's workspace away from them.
                 let adopt = adopt.filter(|id| self.preparing_windows.contains_key(id));
-                match self.create_remote_session_window(
-                    authority, keepalive, root, label, command, spec, adopt,
-                ) {
+                match self
+                    .create_remote_session_window(connection, root, label, command, spec, adopt)
+                {
                     Ok(_) => self.resolve_remote_attach(request_id),
                     Err(e) => self.reject_remote_attach(request_id, e),
                 }
+            }
+            #[cfg(feature = "plugins")]
+            crate::services::async_bridge::RemoteAttachMode::Machine => {
+                // A plugin's machine handle: a registered connection with no
+                // window, torn down when the last reference to it goes.
+                tracing::info!(
+                    "Machine opened ({}); registered as a connection with no window",
+                    authority.display_label
+                );
+                let id = self.next_machine_id;
+                self.next_machine_id += 1;
+                let info = Self::machine_info(&authority, id);
+                let connection = self.open_connection(crate::services::authority::Connection {
+                    authority,
+                    keepalive: std::sync::Mutex::new(Some(keepalive)),
+                });
+                self.open_machines.insert(
+                    id,
+                    crate::app::OpenMachine::new(crate::app::OpenMachineKind::Owned(connection)),
+                );
+                // A response, not a bare resolve, so the runtime closes the
+                // handle on unload.
+                self.send_plugin_response(fresh_core::api::PluginResponse::MachineOpened {
+                    request_id,
+                    info,
+                });
             }
             crate::services::async_bridge::RemoteAttachMode::Reconnect { window_id } => {
                 // The common case: a dormant remote session the user
@@ -1603,7 +1652,13 @@ impl Editor {
                         "Promoting dormant remote session {window_id} ({})",
                         authority.display_label
                     );
-                    self.promote_dormant_remote(window_id, authority, keepalive);
+                    self.promote_dormant_remote(
+                        window_id,
+                        std::sync::Arc::new(crate::services::authority::Connection {
+                            authority,
+                            keepalive: std::sync::Mutex::new(Some(keepalive)),
+                        }),
+                    );
                 } else if self.windows.contains_key(&window_id) {
                     tracing::info!(
                         "Reconnected dormant session {window_id} ({})",
@@ -1616,8 +1671,13 @@ impl Editor {
                     // authority. The silent hot-swap path keeps the existing
                     // authority and reaches the same `reattach_window` via
                     // `AsyncMessage::RemoteReconnected`.
-                    self.set_session_authority(window_id, authority);
-                    self.session_keepalives.insert(window_id, keepalive);
+                    self.set_session_connection(
+                        window_id,
+                        std::sync::Arc::new(crate::services::authority::Connection {
+                            authority,
+                            keepalive: std::sync::Mutex::new(Some(keepalive)),
+                        }),
+                    );
                     self.reattach_window(window_id);
                 } else {
                     // The window was closed while the connect was in

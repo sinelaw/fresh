@@ -667,9 +667,6 @@ impl Editor {
                 if let Some(w) = self.windows.get_mut(&id) {
                     w.authority_spec = spec;
                 }
-                if let Some(keepalive) = self.session_keepalives.remove(&old_id) {
-                    self.session_keepalives.insert(id, keepalive);
-                }
                 id
             } else {
                 // Local window: the new project gets its own fresh local

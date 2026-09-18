@@ -604,7 +604,7 @@ impl Editor {
             let (label, root2, authority, resources, tw, th, pstate) = (
                 old.label,
                 old.root,
-                old.authority,
+                old.connection,
                 old.resources,
                 old.terminal_width,
                 old.terminal_height,
@@ -2630,11 +2630,11 @@ impl crate::app::window::Window {
         id: fresh_core::WindowId,
         label: impl Into<String>,
         root: PathBuf,
-        authority: crate::services::authority::Authority,
+        connection: std::sync::Arc<crate::services::authority::Connection>,
         resources: crate::app::window_resources::WindowResources,
         workspace: &Workspace,
     ) -> Self {
-        let mut window = Self::new(id, label, root, authority, resources);
+        let mut window = Self::new(id, label, root, connection, resources);
         window.seed_initial_layout();
         window.apply_workspace_layout(workspace, None);
         window

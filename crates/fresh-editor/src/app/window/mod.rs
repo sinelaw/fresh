@@ -288,14 +288,11 @@ pub struct Window {
     /// Stable identifier. The base window is always `WindowId(1)`.
     pub id: WindowId,
 
-    /// This workspace's backend — *where* it acts, *whether* it may
-    /// (`workspace_trust`), and *with what env*. **Owned outright by this
-    /// window**, never shared with another: it lives here (not in the
-    /// `Clone` `WindowResources`) so the type system prevents one workspace's
-    /// authority/trust/env from leaking into another (issue #2280). The
-    /// editor's active backend is just `active_window().authority` — there is
-    /// no separate clonable editor-wide copy.
-    pub(crate) authority: crate::services::authority::Authority,
+    /// The connection this workspace acts through: where it acts, whether it
+    /// may (`workspace_trust`), with what env, and what keeps the carrier alive.
+    /// Shared with the registry, never with another window (issue #2280); that
+    /// is why it is here and not in the `Clone` `WindowResources`.
+    pub(crate) connection: std::sync::Arc<crate::services::authority::Connection>,
 
     /// User-visible label. Defaults to the basename of `root` (or
     /// "main" when the root is the original process cwd). Not
@@ -2329,7 +2326,7 @@ impl Window {
         id: WindowId,
         label: impl Into<String>,
         root: PathBuf,
-        authority: crate::services::authority::Authority,
+        connection: std::sync::Arc<crate::services::authority::Connection>,
         resources: WindowResources,
     ) -> Self {
         let mut label = label.into();
@@ -2352,7 +2349,7 @@ impl Window {
         // construction (see `build_window_lsp`). `&root`/`&resources`
         // are borrowed here, then moved into the struct below.
         let bridge = crate::services::async_bridge::AsyncBridge::new();
-        let lsp = build_window_lsp(id, &root, &authority, &resources, &bridge);
+        let lsp = build_window_lsp(id, &root, &connection.authority, &resources, &bridge);
         Self {
             id,
             label,
@@ -2365,7 +2362,7 @@ impl Window {
             last_focused_at: crate::workspace::now_millis(),
             workspace_restored: false,
             root,
-            authority,
+            connection,
             file_explorer: None,
             file_mod_times: HashMap::new(),
             plugin_state: HashMap::new(),
@@ -2565,10 +2562,9 @@ impl Window {
         &self.resources.config
     }
 
-    /// This window's backend (local / devcontainer / remote) — owned by the
-    /// window, never shared with another.
+    /// This window's backend (local / devcontainer / remote).
     pub fn authority(&self) -> &crate::services::authority::Authority {
-        &self.authority
+        &self.connection.authority
     }
 
     /// Allocate the next globally-unique `BufferId`.

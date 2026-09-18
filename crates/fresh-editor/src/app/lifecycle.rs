@@ -125,19 +125,6 @@ impl Editor {
         self.clipboard.take_pending_clipboard()
     }
 
-    /// Check if the editor should restart with a new working directory
-    pub fn should_restart(&self) -> bool {
-        self.restart_with_dir.is_some()
-    }
-
-    /// Take the restart directory, clearing the restart request
-    /// Returns the new working directory if a restart was requested
-    pub fn take_restart_dir(&mut self) -> Option<PathBuf> {
-        self.restart_with_dir.take()
-    }
-
-    /// Request the editor to restart with a new working directory
-    /// This triggers a clean shutdown and restart with the new project root
     /// Request a full hardware terminal clear and redraw on the next frame.
     /// Used after external commands have messed up the terminal state.
     pub fn request_full_redraw(&mut self) {
@@ -163,16 +150,6 @@ impl Editor {
         let requested = self.suspend_requested;
         self.suspend_requested = false;
         requested
-    }
-
-    pub fn request_restart(&mut self, new_working_dir: PathBuf) {
-        tracing::info!(
-            "Restart requested with new working directory: {}",
-            new_working_dir.display()
-        );
-        self.restart_with_dir = Some(new_working_dir);
-        // Also signal quit so the event loop exits
-        self.should_quit = true;
     }
 
     /// Get the active theme (read lock).
