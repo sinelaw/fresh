@@ -132,6 +132,42 @@ const s2 = await scene(page);
 check('typed text appears in the real pipeline-rendered cells', paneText(s2).includes('QWZX'), `head="${paneText(s2).slice(0, 40)}"`);
 await page.screenshot({ path: `${SHOTS}/21-real-pipeline-typed.png` });
 
+console.log('\n[unicode: the grid walks GRAPHEME CLUSTERS, not UTF-16 units]');
+// Every cell gets one x in the SVG. A ZWJ sequence, a flag, a skin tone or a
+// base+combining pair is ONE cell made of several UTF-16 units, so counting
+// `.length` used to hand each piece its own column: the emoji broke into
+// fragments and the rest of the line drifted right. The rendered row must stay
+// exactly as wide (in cells) as a plain ASCII row of the same pane.
+const UNI = 'UNI[\u{1F468}\u200D\u{1F469}\u200D\u{1F467}\u200D\u{1F466}|\u{1F1EE}\u{1F1F1}|\u{1F44D}\u{1F3FD}|a\u0301e\u0300o\u0302]';
+await page.keyboard.press('Home');
+await page.keyboard.insertText(UNI + '\n');
+await page.waitForFunction(t => window.fresh.scene.regions.panes[0].cells
+  .some(r => r.map(x => x.t).join('').includes(t)), 'UNI[', { timeout: 5000 }).catch(() => {});
+const uni = await page.evaluate(() => {
+  const texts = [...document.querySelectorAll('.region.pane-content svg.cells text')];
+  const xs = t => [...t.querySelectorAll('tspan')]
+    .reduce((n, sp) => n + (sp.getAttribute('x') || '').trim().split(/\s+/).filter(Boolean).length, 0);
+  const row = texts.find(t => t.textContent.includes('UNI['));
+  if (!row) return null;
+  const plain = texts.find(t => t !== row && /^[\x20-\x7E]*$/.test(t.textContent));
+  const cluster = [...row.querySelectorAll('tspan')].find(sp => sp.textContent === '\u{1F44D}\u{1F3FD}');
+  return {
+    cells: xs(row),
+    plainCells: plain ? xs(plain) : null,
+    clusterXs: cluster ? (cluster.getAttribute('x') || '').trim().split(/\s+/).filter(Boolean).length : null,
+  };
+});
+check('the unicode row rendered', !!uni, 'row not found');
+check('a multi-unit cluster is ONE positioned cell', uni && uni.clusterXs === 1, JSON.stringify(uni));
+check('the unicode row is exactly as wide (in cells) as an ASCII row',
+  !!uni && uni.plainCells != null && uni.cells === uni.plainCells, JSON.stringify(uni));
+await page.screenshot({ path: `${SHOTS}/21-unicode-graphemes.png` });
+// Undo the probe line so the rest of the suite sees the file it expected.
+for (let i = 0; i < 8 && (await scene(page)).regions.panes[0].cells
+  .some(r => r.map(x => x.t).join('').includes('UNI[')); i++) {
+  await page.keyboard.press('Control+z'); await page.waitForTimeout(120);
+}
+
 console.log('\n[file explorer = native tree, NOT cells]');
 await page.locator('body').click();
 // Open the sidebar if it isn't already (Ctrl+B toggles; the live editor may

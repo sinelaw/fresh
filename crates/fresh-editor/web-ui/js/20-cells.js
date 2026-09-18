@@ -52,6 +52,27 @@ function fileIcon(name, opts){
 // tree guides and rules. Rendered as crisp full-height vector lines instead of
 // the font glyph — stacked glyphs leave gaps at our cell height, so the gutter
 // looked dashed; a rule per cell is contiguous row-to-row, i.e. one clean line.
+// The bridge sends one string per run whose CELLS are already column-aligned
+// (a wide glyph is followed by the blank cell it occupies). What JS must not
+// do is count UTF-16 units: a ZWJ family, a flag, a skin tone and a combining
+// cluster are each ONE cell made of several units, so `.length` pinned their
+// pieces to separate columns and the browser could no longer shape them —
+// the emoji rendered as a fragment followed by a gap.
+//
+// `Intl.Segmenter` gives the real cluster boundaries. ASCII-only runs (the
+// overwhelming majority, every frame) take a fast path that skips it.
+const GRAPHEMES = typeof Intl !== "undefined" && Intl.Segmenter
+  ? new Intl.Segmenter(undefined, { granularity: "grapheme" })
+  : null;
+const ASCII = /^[\x20-\x7E]*$/;
+function cellUnits(t){
+  if(ASCII.test(t)) return null;                       // fast path: 1 unit = 1 cell
+  if(GRAPHEMES) return [...GRAPHEMES.segment(t)].map(g => g.segment);
+  return [...t];                                       // last resort: code points
+}
+// How many cells a run occupies.
+function cellLen(t){ const g=cellUnits(t); return g ? g.length : t.length; }
+
 const VRULE = "│┃";
 // Draw a block of cells (rows of styled runs) as SVG <text>/<tspan>.
 function cellsSvg(cells, wCells){
@@ -62,8 +83,8 @@ function cellsSvg(cells, wCells){
     let col=0;
     for(const r of cells[row]){
       const ebg=r.r?(r.fg||"#d4d4d4"):r.bg;
-      if(ebg){ s+=`<rect x="${(px(col,CW)).toFixed(1)}" y="${(row*CH).toFixed(1)}" width="${(px(r.t.length,CW)).toFixed(1)}" height="${CH}" fill="${ebg}"/>`; }
-      col+=r.t.length;
+      if(ebg){ s+=`<rect x="${(px(col,CW)).toFixed(1)}" y="${(row*CH).toFixed(1)}" width="${(px(cellLen(r.t),CW)).toFixed(1)}" height="${CH}" fill="${ebg}"/>`; }
+      col+=cellLen(r.t);
     }
     s+=`<text y="${y.toFixed(1)}" xml:space="preserve">`;
     col=0;
@@ -76,13 +97,15 @@ function cellsSvg(cells, wCells){
       // full-height line per cell, and blank the glyph in the text so only the
       // rule shows (no dashed glyph behind it).
       let shown=r.t;
-      if([...r.t].some(ch=>VRULE.includes(ch))){
-        for(let i=0;i<r.t.length;i++){ if(VRULE.includes(r.t[i])){
+      const vunits=cellUnits(r.t);              // null when one unit is one cell
+      if((vunits||r.t).length && (vunits||[...r.t]).some(ch=>VRULE.includes(ch))){
+        const list=vunits||[...r.t];
+        for(let i=0;i<list.length;i++){ if(VRULE.includes(list[i])){
           const cx=px(col+i,CW)+CW/2;
-          const hv=(r.t[i]==="┃"?1.8:1.1)*zoom;
+          const hv=(list[i]==="┃"?1.8:1.1)*zoom;
           rules+=`<rect x="${(cx-hv/2).toFixed(2)}" y="${(row*CH).toFixed(1)}" width="${hv}" height="${CH}" fill="${fill}"/>`;
         }}
-        shown=[...r.t].map(ch=>VRULE.includes(ch)?" ":ch).join("");
+        shown=list.map(ch=>VRULE.includes(ch)?" ":ch).join("");
       }
       // Pin EVERY glyph to its exact cell column via a per-character x list.
       // The font's glyph advance isn't exactly CW, so relying on natural advance
@@ -91,10 +114,35 @@ function cellsSvg(cells, wCells){
       // glyphs drift when run boundaries change — e.g. toggling occurrence /
       // current-line highlights re-split runs and visibly nudged the text. A
       // hard x per cell makes column position independent of run grouping.
-      let xs="";
-      for(let i=0;i<shown.length;i++){ xs+=(i?" ":"")+px(col+i,CW).toFixed(1); }
-      s+=`<tspan x="${xs}" fill="${fill}"${weight}${style}${deco}>${esc(shown)}</tspan>`;
-      col+=r.t.length;
+      //
+      // One x per CELL, never per UTF-16 unit — and an x on a character starts
+      // a new SVG text chunk, across which the browser will not shape. So a
+      // cluster made of several units (a ZWJ sequence, a flag, a skin tone, a
+      // base + combining mark) gets ONE x on its own tspan and no x inside it;
+      // single-unit cells stay batched into one tspan with an x list.
+      const attrs=`fill="${fill}"${weight}${style}${deco}`;
+      const units=cellUnits(shown);            // null when one unit is one cell
+      if(!units){
+        let xs="";
+        for(let i=0;i<shown.length;i++){ xs+=(i?" ":"")+px(col+i,CW).toFixed(1); }
+        s+=`<tspan x="${xs}" ${attrs}>${esc(shown)}</tspan>`;
+        col+=shown.length;
+      }else{
+        for(let i=0;i<units.length;){
+          if(units[i].length===1){             // a plain BMP character
+            let j=i,txt="",xs="";
+            while(j<units.length && units[j].length===1){
+              txt+=units[j]; xs+=(j>i?" ":"")+px(col+j,CW).toFixed(1); j++;
+            }
+            s+=`<tspan x="${xs}" ${attrs}>${esc(txt)}</tspan>`;
+            i=j;
+          }else{
+            s+=`<tspan x="${px(col+i,CW).toFixed(1)}" ${attrs}>${esc(units[i])}</tspan>`;
+            i++;
+          }
+        }
+        col+=units.length;
+      }
     }
     s+=`</text>`;
   }
