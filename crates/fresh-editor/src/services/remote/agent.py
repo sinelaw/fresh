@@ -10,10 +10,15 @@ import subprocess
 import re
 import threading
 import select
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 CHUNK = 65536
 VERSION = 1
+# How often an `exec` stream says "still running" while the process is quiet.
+# Must stay well below the client's STREAM_IDLE_TIMEOUT (channel.rs), which
+# gives up on a stream that goes silent for that long.
+EXEC_KEEPALIVE_SECS = 10
 
 # Active background processes: id -> Popen
 procs = {}
@@ -493,6 +498,9 @@ def cmd_exec(id, p):
     def stream_output():
         """Stream process output in a background thread."""
         try:
+            # Pipes still open; one at EOF leaves the set or select() reports it forever.
+            live = [proc.stdout, proc.stderr]
+            last_sent = time.monotonic()
             while proc.poll() is None:
                 # Check for cancellation
                 if id in cancelled:
@@ -504,15 +512,26 @@ def cmd_exec(id, p):
                     send(id, e="cancelled")
                     return
 
-                # Non-blocking read from stdout and stderr
-                readable, _, _ = select.select(
-                    [proc.stdout, proc.stderr], [], [], 0.05
-                )
+                if live:
+                    readable, _, _ = select.select(live, [], [], 0.05)
+                else:
+                    time.sleep(0.05)
+                    readable = []
                 for fd in readable:
-                    data = fd.read(4096)
-                    if data:
-                        key = "out" if fd == proc.stdout else "err"
-                        send(id, d={key: b64(data)})
+                    # os.read, not fd.read(n): the latter blocks until n bytes or
+                    # EOF, so a quiet command streamed nothing until it exited.
+                    data = os.read(fd.fileno(), CHUNK)
+                    if not data:
+                        live.remove(fd)
+                        continue
+                    key = "out" if fd == proc.stdout else "err"
+                    send(id, d={key: b64(data)})
+                    last_sent = time.monotonic()
+
+                # A quiet process is not a dead link; say so on the keepalive cadence.
+                if time.monotonic() - last_sent >= EXEC_KEEPALIVE_SECS:
+                    send(id, d={})
+                    last_sent = time.monotonic()
 
             # Drain any remaining output
             out, err = proc.communicate(timeout=5)
@@ -560,6 +579,86 @@ def cmd_cancel(id, p):
         proc.terminate()
 
     send(id, r={})
+
+
+def cmd_walk_entries(id, p):
+    """Recursively walk a directory, streaming entries in batches.
+
+    The general form of cmd_walk_files: honours include_hidden, include_dirs
+    and max_depth, and carries each entry's kind, mtime and size, which
+    scandir has already stat'd.
+    """
+    root = validate_path(p["path"])
+    skip_dirs = set(p.get("skip_dirs", []))
+    include_hidden = bool(p.get("include_hidden", False))
+    include_dirs = bool(p.get("include_dirs", False))
+    max_depth = p.get("max_depth")
+    if max_depth is None:
+        max_depth = 1 << 62
+    max_files = p.get("max_files", 50000)
+    batch_size = 500
+
+    count = 0
+    batch = []
+    # (dir, depth); depth 1 is a direct child of root.
+    stack = [(root, 1)]
+
+    while stack:
+        if id in cancelled:
+            send(id, r={"count": count, "cancelled": True})
+            return
+
+        d, depth = stack.pop()
+        if depth > max_depth:
+            continue
+        try:
+            entries = os.scandir(d)
+        except OSError:
+            continue
+
+        for entry in entries:
+            if id in cancelled:
+                send(id, r={"count": count, "cancelled": True})
+                return
+
+            if not include_hidden and entry.name.startswith("."):
+                continue
+
+            try:
+                is_dir = entry.is_dir(follow_symlinks=False)
+                is_link = entry.is_symlink()
+                kind = "dir" if is_dir else ("symlink" if is_link else "file")
+
+                if not is_dir or include_dirs:
+                    try:
+                        st = entry.stat(follow_symlinks=False)
+                        mtime, size = st.st_mtime, st.st_size
+                    except OSError:
+                        mtime, size = 0, 0
+                    batch.append({
+                        "rel": os.path.relpath(entry.path, root),
+                        "kind": kind,
+                        "mtime": mtime,
+                        "size": size,
+                    })
+                    count += 1
+                    if len(batch) >= batch_size:
+                        send(id, d={"entries": batch})
+                        batch = []
+                    if count >= max_files:
+                        if batch:
+                            send(id, d={"entries": batch})
+                        send(id, r={"count": count, "truncated": True})
+                        return
+
+                if is_dir and entry.name not in skip_dirs:
+                    stack.append((entry.path, depth + 1))
+            except OSError:
+                continue
+
+    if batch:
+        send(id, d={"entries": batch})
+    send(id, r={"count": count})
 
 
 def cmd_walk_files(id, p):
@@ -647,6 +746,7 @@ METHODS = {
     "kill": cmd_kill,
     "cancel": cmd_cancel,
     "walk_files": cmd_walk_files,
+    "walk_entries": cmd_walk_entries,
 }
 
 

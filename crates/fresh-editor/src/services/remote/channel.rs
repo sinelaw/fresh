@@ -13,7 +13,58 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::{mpsc, oneshot};
-use tracing::warn;
+use tracing::{debug, warn};
+
+/// How long a stream may deliver nothing before its consumer gives up. An idle
+/// bound, not a total one: every chunk resets it. Must exceed the agent's
+/// `EXEC_KEEPALIVE_SECS` (`agent.py`), which keeps a quiet `exec` talking.
+pub const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(45);
+
+/// What ended a wait for the next streamed chunk.
+#[derive(Debug)]
+pub enum ChunkWait {
+    Data(serde_json::Value),
+    /// The stream finished, or the connection went away under it.
+    Closed,
+    /// Nothing arrived for [`STREAM_IDLE_TIMEOUT`].
+    Idle,
+    /// The caller's cancellation flag was set.
+    Cancelled,
+}
+
+/// Wait for the next streamed chunk, or for a reason to stop waiting.
+///
+/// `blocking_recv` wakes only on data, so it cannot see a caller that has gone
+/// or a machine gone quiet. Polled rather than timed: this runs under
+/// `spawn_blocking`, where a timer would cost a scratch thread per chunk.
+pub fn recv_chunk_blocking(
+    rx: &mut mpsc::Receiver<serde_json::Value>,
+    cancel: &std::sync::atomic::AtomicBool,
+    idle: Duration,
+) -> ChunkWait {
+    use std::sync::atomic::Ordering as AtomicOrdering;
+    use tokio::sync::mpsc::error::TryRecvError;
+
+    const MAX_NAP: Duration = Duration::from_millis(8);
+    let start = std::time::Instant::now();
+    let mut nap = Duration::from_micros(50);
+    loop {
+        match rx.try_recv() {
+            Ok(value) => return ChunkWait::Data(value),
+            Err(TryRecvError::Disconnected) => return ChunkWait::Closed,
+            Err(TryRecvError::Empty) => {}
+        }
+        // Cancellation first: a gone caller should not wait out the idle bound.
+        if cancel.load(AtomicOrdering::Relaxed) {
+            return ChunkWait::Cancelled;
+        }
+        if start.elapsed() >= idle {
+            return ChunkWait::Idle;
+        }
+        std::thread::sleep(nap);
+        nap = (nap * 2).min(MAX_NAP);
+    }
+}
 
 /// Default capacity for the per-request streaming data channel.
 const DEFAULT_DATA_CHANNEL_CAPACITY: usize = 64;
@@ -509,6 +560,25 @@ impl AgentChannel {
         ),
         ChannelError,
     > {
+        let (_id, data_rx, result_rx) = self.request_streaming_id(method, params).await?;
+        Ok((data_rx, result_rx))
+    }
+
+    /// [`Self::request_streaming`], plus the request's id, so a consumer that
+    /// stops reading can cancel the producer. Dropping the receivers only works
+    /// as backpressure, which a quiet remote never feels.
+    pub async fn request_streaming_id(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+    ) -> Result<
+        (
+            u64,
+            mpsc::Receiver<serde_json::Value>,
+            oneshot::Receiver<Result<serde_json::Value, String>>,
+        ),
+        ChannelError,
+    > {
         if !self.is_connected() {
             return Err(ChannelError::ChannelClosed);
         }
@@ -532,7 +602,19 @@ impl AgentChannel {
             .await
             .map_err(|_| ChannelError::ChannelClosed)?;
 
-        Ok((data_rx, result_rx))
+        Ok((id, data_rx, result_rx))
+    }
+
+    /// Tell the agent to stop producing for `request_id`, without waiting for
+    /// an answer. [`Self::cancel`] waits ten seconds for an ack, which is wrong
+    /// when the machine is the one not answering. Best-effort.
+    pub fn cancel_detached(&self, request_id: u64) {
+        use crate::services::remote::protocol::cancel_params;
+        let id = self.next_id.fetch_add(1, Ordering::SeqCst);
+        let req = AgentRequest::new(id, "cancel", cancel_params(request_id));
+        if self.write_tx.try_send(req.to_json_line()).is_err() {
+            debug!("remote channel: could not post a cancel for request {request_id}");
+        }
     }
 
     /// Block on `fut` from a synchronous context, safe to call whether or not
@@ -719,6 +801,22 @@ impl AgentChannel {
         ChannelError,
     > {
         self.block_on_request(self.request_streaming(method, params))?
+    }
+
+    /// [`Self::request_streaming_blocking`], with the request's id.
+    pub fn request_streaming_id_blocking(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+    ) -> Result<
+        (
+            u64,
+            mpsc::Receiver<serde_json::Value>,
+            oneshot::Receiver<Result<serde_json::Value, String>>,
+        ),
+        ChannelError,
+    > {
+        self.block_on_request(self.request_streaming_id(method, params))?
     }
 
     /// Cancel a request

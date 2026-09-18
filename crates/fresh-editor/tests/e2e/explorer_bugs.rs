@@ -214,14 +214,14 @@ impl FileSystem for FaultInjectingFileSystem {
     ) -> io::Result<Vec<fresh::model::filesystem::SearchMatch>> {
         fresh::model::filesystem::default_search_file(&*self.inner, path, pattern, opts, cursor)
     }
-    fn walk_files(
+    fn walk(
         &self,
         root: &Path,
-        skip_dirs: &[&str],
+        opts: &fresh_editor_core::model::filesystem::WalkOptions<'_>,
         cancel: &std::sync::atomic::AtomicBool,
-        on_file: &mut dyn FnMut(&Path, &str) -> bool,
-    ) -> io::Result<()> {
-        self.inner.walk_files(root, skip_dirs, cancel, on_file)
+        on_entry: &mut dyn FnMut(fresh_editor_core::model::filesystem::WalkEntry<'_>) -> bool,
+    ) -> std::io::Result<()> {
+        self.inner.walk(root, opts, cancel, on_entry)
     }
 }
 
