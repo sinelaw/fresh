@@ -363,8 +363,8 @@ newtype, not part of the theme module, defaulting to a high-contrast theme.
 
 Built-in themes are embedded JSON. A build script scans the themes directory and
 generates a built-in-themes table that includes each file's JSON, pulled in at
-runtime. Eight files ship: dark, light, high-contrast, nostalgia, dracula, nord,
-solarized-dark, and terminal.
+runtime. Ten files ship: dark, light, high-contrast, nostalgia, dracula, nord,
+solarized-dark, tokyo-night, gruvbox, and terminal.
 
 The theme loader deserializes each built-in JSON to the file form and then to the
 runtime form, then scans user themes (recursively under the config directory's
