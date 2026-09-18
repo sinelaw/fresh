@@ -145,6 +145,37 @@ pub struct Confirm {
     pub escape: Option<usize>,
 }
 
+/// The button a dialog may open with, given the one it asked for.
+///
+/// **A dialog never opens on an outcome that loses work.** The card appears
+/// under the pointer and takes the keyboard, so whatever is armed is one
+/// reflexive Enter — or one click of a mouse already moving — away. Callers
+/// list their outcomes in order of consequence, which puts the most
+/// consequential first, so "the first choice" and "the choice it is safe to
+/// arm" are frequently not the same button: `Ctrl+S` onto a file that changed
+/// underneath you led with Overwrite, and either paste conflict led with
+/// Overwrite over a file the user had not looked at.
+///
+/// Stated here rather than at each call site because a call site that forgets
+/// it is a silently dangerous dialog, and there is no version of this rule
+/// that some future prompt should be allowed to opt out of.
+fn armable(choices: &[Choice], want: usize, escape: Option<usize>) -> usize {
+    let destructive = |i: usize| choices.get(i).is_some_and(|c| c.tone == Tone::Destructive);
+    if !destructive(want) {
+        return want;
+    }
+    // The retreat, when there is one and it is itself safe to arm.
+    match escape.filter(|e| !destructive(*e)) {
+        Some(e) => e,
+        // Otherwise the last outcome that costs nothing; a dialog whose every
+        // button is destructive has nothing safer to offer and keeps its lead.
+        None => choices
+            .iter()
+            .rposition(|c| c.tone != Tone::Destructive)
+            .unwrap_or(want),
+    }
+}
+
 impl Confirm {
     /// A confirmation whose first choice is in hand and whose last choice is
     /// what Esc means.
@@ -155,12 +186,13 @@ impl Confirm {
     /// rather than each prompt repeating it.
     pub fn new(title: impl Into<String>, body: impl Into<String>, choices: Vec<Choice>) -> Self {
         let escape = choices.len().checked_sub(1);
+        let selected = armable(&choices, 0, escape);
         Confirm {
             title: title.into(),
             body: body.into(),
             detail: String::new(),
             choices,
-            selected: 0,
+            selected,
             escape,
         }
     }
@@ -189,7 +221,8 @@ impl Confirm {
     /// "Cancel" instead — a modal that appears under the pointer must never
     /// have a destructive button armed.
     pub fn selecting(mut self, selected: usize) -> Self {
-        self.selected = selected.min(self.choices.len().saturating_sub(1));
+        let want = selected.min(self.choices.len().saturating_sub(1));
+        self.selected = armable(&self.choices, want, self.escape);
         self
     }
 
@@ -411,5 +444,70 @@ mod tests {
     fn a_destructive_lead_can_open_on_the_retreat() {
         let c = abc().selecting(2);
         assert_eq!(c.current().map(|c| c.label.as_str()), Some("Cancel"));
+    }
+
+    /// A dialog whose most consequential outcome is listed first must not
+    /// open on it. `Ctrl+S` onto a file that changed underneath you, and
+    /// either paste conflict, all led with Overwrite.
+    #[test]
+    fn a_dialog_never_opens_on_a_destructive_button() {
+        let c = Confirm::new(
+            "File Changed on Disk",
+            "B",
+            vec![
+                Choice::new("Overwrite", "o", Tone::Destructive),
+                Choice::new("Cancel", "C", Tone::Safe),
+            ],
+        );
+        assert_eq!(c.current().map(|c| c.label.as_str()), Some("Cancel"));
+        // Asking for it explicitly does not get around the rule either.
+        let c = c.selecting(0);
+        assert_eq!(c.current().map(|c| c.label.as_str()), Some("Cancel"));
+    }
+
+    /// The retreat is not always last, and not always safe to arm — the rule
+    /// falls back to the last outcome that costs nothing.
+    #[test]
+    fn the_fallback_is_the_last_harmless_outcome() {
+        let c = Confirm::new(
+            "Name Conflict",
+            "B",
+            vec![
+                Choice::new("Overwrite", "o", Tone::Destructive),
+                Choice::new("Skip", "s", Tone::Safe),
+                Choice::new("Overwrite All", "O", Tone::Destructive),
+            ],
+        );
+        assert_eq!(c.current().map(|c| c.label.as_str()), Some("Skip"));
+    }
+
+    /// A dialog with nothing safe to offer keeps its lead rather than
+    /// silently arming some other destructive button.
+    #[test]
+    fn a_dialog_of_only_destructive_outcomes_keeps_its_lead() {
+        let c = Confirm::new(
+            "T",
+            "B",
+            vec![
+                Choice::new("Delete", "d", Tone::Destructive),
+                Choice::new("Delete All", "D", Tone::Destructive),
+            ],
+        );
+        assert_eq!(c.selected, 0);
+    }
+
+    /// The safe outcomes still open where they were asked to.
+    #[test]
+    fn a_harmless_lead_is_left_alone() {
+        let c = Confirm::new(
+            "Large File",
+            "B",
+            vec![
+                Choice::new("Load", "L", Tone::Safe),
+                Choice::new("Choose Encoding…", "e", Tone::Safe),
+                Choice::new("Cancel", "c", Tone::Safe),
+            ],
+        );
+        assert_eq!(c.current().map(|c| c.label.as_str()), Some("Load"));
     }
 }

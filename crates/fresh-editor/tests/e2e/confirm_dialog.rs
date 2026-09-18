@@ -458,3 +458,52 @@ fn the_quit_confirmation_opens_on_no_and_answers_to_it() {
     harness.render().unwrap();
     assert!(!harness.should_quit(), "`n` was the advertised key");
 }
+
+/// **No dialog opens on an outcome that loses work**, however its caller
+/// ordered the buttons. Found by driving the real prompts in a terminal: the
+/// save-conflict dialog and both paste conflicts list Overwrite first, so
+/// they opened with Overwrite armed — `Ctrl+S` onto a file that changed
+/// underneath you, then one reflexive Enter, and the other version was gone.
+#[test]
+fn a_destructive_button_is_never_the_one_enter_would_take() {
+    let _pin = pin();
+    let (mut harness, file) = dirty_buffer(Config::default());
+
+    // The file changes on disk behind the editor's back.
+    std::fs::write(&file, "changed by someone else\n").unwrap();
+    // Pushed into the future so the change is unambiguous whatever the
+    // filesystem's timestamp granularity is.
+    let later = std::time::SystemTime::now() + std::time::Duration::from_secs(60);
+    std::fs::File::options()
+        .write(true)
+        .open(&file)
+        .unwrap()
+        .set_times(std::fs::FileTimes::new().set_modified(later))
+        .unwrap();
+
+    harness
+        .send_key(KeyCode::Char('s'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("File Changed on Disk");
+
+    let row = (0..HEIGHT)
+        .find(|r| harness.screen_row_text(*r).contains("Overwrite"))
+        .expect("the button row is on screen");
+    let text = harness.screen_row_text(row);
+    assert!(
+        text.contains("[ Cancel ]") && !text.contains("[ Overwrite ]"),
+        "Overwrite must not be armed; row was {text:?}"
+    );
+
+    // And Enter really does take the armed one, leaving the disk alone.
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        "changed by someone else\n",
+        "Enter on the armed button must not have overwritten the file"
+    );
+}
