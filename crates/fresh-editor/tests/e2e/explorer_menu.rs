@@ -1434,12 +1434,8 @@ fn test_paste_conflict_overwrite() {
     harness.wait_for_prompt().unwrap();
 
     // Choose overwrite
-    if let Some(prompt) = harness.editor_mut().prompt_mut() {
-        prompt.clear();
-        prompt.insert_str("o");
-    }
     harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .send_key(KeyCode::Char('o'), KeyModifiers::NONE)
         .unwrap();
     harness.render().unwrap();
 
@@ -1476,13 +1472,9 @@ fn test_paste_conflict_cancel() {
         .unwrap();
     harness.wait_for_prompt().unwrap();
 
-    // Choose cancel
-    if let Some(prompt) = harness.editor_mut().prompt_mut() {
-        prompt.clear();
-        prompt.insert_str("c");
-    }
+    // Choose Cancel, by its accelerator.
     harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .send_key(KeyCode::Char('c'), KeyModifiers::NONE)
         .unwrap();
     harness.render().unwrap();
 
@@ -1805,10 +1797,7 @@ fn test_multi_delete_shows_count_prompt() {
 
     // Cancel
     harness
-        .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
-        .unwrap();
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .send_key(KeyCode::Char('c'), KeyModifiers::NONE)
         .unwrap();
     harness.wait_for_prompt_closed().unwrap();
 }
@@ -1899,13 +1888,9 @@ fn test_multi_paste_per_conflict_overwrite_all() {
         screen
     );
 
-    // Choose overwrite all (uppercase O)
-    if let Some(prompt) = harness.editor_mut().prompt_mut() {
-        prompt.clear();
-        prompt.insert_str("O");
-    }
+    // Choose Overwrite All — the `A` of "All"; `o` is plain Overwrite.
     harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .send_key(KeyCode::Char('a'), KeyModifiers::NONE)
         .unwrap();
     harness.wait_for_prompt_closed().unwrap();
 
@@ -1949,12 +1934,8 @@ fn test_multi_paste_per_conflict_skip_one() {
     harness.wait_for_prompt().unwrap();
 
     // First conflict: skip
-    if let Some(prompt) = harness.editor_mut().prompt_mut() {
-        prompt.clear();
-        prompt.insert_str("s");
-    }
     harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .send_key(KeyCode::Char('s'), KeyModifiers::NONE)
         .unwrap();
 
     // Second conflict prompt must appear
@@ -1967,12 +1948,8 @@ fn test_multi_paste_per_conflict_skip_one() {
     );
 
     // Overwrite second
-    if let Some(prompt) = harness.editor_mut().prompt_mut() {
-        prompt.clear();
-        prompt.insert_str("o");
-    }
     harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .send_key(KeyCode::Char('o'), KeyModifiers::NONE)
         .unwrap();
     harness.wait_for_prompt_closed().unwrap();
 

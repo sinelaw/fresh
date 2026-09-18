@@ -258,6 +258,7 @@ Its remaining members are listed under *Smaller residue*.
 | Split grid: panes, dividers, tab strips, scrollbars | `view::shell::splits` |
 | Pane content, terminal grid, window embeds | `HostSpec::Leaf` + the text pipeline |
 | Settings, keybinding editor, calibration, trust | `view::shell::settings`, `keybinding`, `modal` |
+| Confirmations (quit, close, delete, overwrite, …) | `view::shell::confirm` — a `Modality::Exclusive` card over a `Scrim::Dim`, driven by `app::confirm_dialog` |
 | Popups, context menus, theme inspector | `view::shell::popup`, `context_menu`, `theme_info` |
 | The web's projections | `view::scene` — reads rectangles off the tree by key |
 

@@ -3,6 +3,7 @@
 //! piping, and the should_quit confirmation flow that walks modified buffers.
 
 use super::*;
+use crate::view::confirm::{Choice, Confirm, Tone};
 use fresh_core::WindowId;
 
 impl Editor {
@@ -192,111 +193,73 @@ impl Editor {
             // No dirty buffers, but the user has opted into a
             // safety-net confirmation for a stray Ctrl+Q (issue #2030).
             let msg = t!("prompt.quit_confirm").to_string();
-            self.start_prompt(msg, PromptType::ConfirmQuit);
+            let confirm = Confirm::new(
+                t!("dialog.title.quit").into_owned(),
+                msg.clone(),
+                vec![
+                    Choice::new(
+                        t!("dialog.btn.quit").into_owned(),
+                        t!("prompt.key.quit").into_owned(),
+                        Tone::Safe,
+                    ),
+                    crate::app::confirm_dialog::cancel(),
+                ],
+            )
+            // `(y)es, (N)o` — the capital was the default, and this prompt
+            // exists precisely to catch a *stray* `Ctrl+Q` (issue #2030), so
+            // an armed Quit one stray Enter later would defeat it.
+            .selecting(1);
+            self.start_confirm_prompt(msg, PromptType::ConfirmQuit, confirm);
             return;
         }
         if modified_count > 0 {
-            let save_key = t!("prompt.key.save").to_string();
-            let cancel_key = t!("prompt.key.cancel").to_string();
-            let hot_exit = self.config.editor.hot_exit;
             // When some of the unsaved work is in a workspace the user is not
             // looking at, a bare count is the wrong thing to show: it says
             // there is something to lose without saying where, and the whole
             // failure this prompt exists to prevent is work going unnoticed in
             // a background workspace (issue #3189). Name the workspaces then.
             let where_clause = self.unsaved_workspace_summary();
-
-            let discard_key = t!("prompt.key.discard").to_string();
-            let msg = if let Some(ref where_clause) = where_clause {
-                if hot_exit {
-                    let quit_key = t!("prompt.key.quit").to_string();
-                    if modified_count == 1 {
-                        t!(
-                            "prompt.quit_modified_hot_one_where",
-                            where = where_clause,
-                            save_key = save_key,
-                            discard_key = discard_key,
-                            quit_key = quit_key,
-                            cancel_key = cancel_key
-                        )
-                        .to_string()
-                    } else {
-                        t!(
-                            "prompt.quit_modified_hot_many_where",
-                            count = modified_count,
-                            where = where_clause,
-                            save_key = save_key,
-                            discard_key = discard_key,
-                            quit_key = quit_key,
-                            cancel_key = cancel_key
-                        )
-                        .to_string()
-                    }
-                } else if modified_count == 1 {
-                    t!(
-                        "prompt.quit_modified_one_where",
-                        where = where_clause,
-                        save_key = save_key,
-                        discard_key = discard_key,
-                        cancel_key = cancel_key
-                    )
-                    .to_string()
-                } else {
-                    t!(
-                        "prompt.quit_modified_many_where",
-                        count = modified_count,
-                        where = where_clause,
-                        save_key = save_key,
-                        discard_key = discard_key,
-                        cancel_key = cancel_key
-                    )
-                    .to_string()
+            // **The outcomes are buttons now, not letters in the sentence.**
+            // That is what collapsed eight message strings into four: the
+            // hot-exit variants differed only in offering a third way out,
+            // which is one more `Choice` rather than another whole phrasing
+            // of the question.
+            let body = match (&where_clause, modified_count) {
+                (Some(w), 1) => t!("prompt.quit_modified_one_where", where = w).to_string(),
+                (Some(w), n) => {
+                    t!("prompt.quit_modified_many_where", count = n, where = w).to_string()
                 }
-            } else if hot_exit {
-                // With hot exit: offer save, discard, quit-without-saving (recoverable), or cancel
-                let quit_key = t!("prompt.key.quit").to_string();
-                if modified_count == 1 {
-                    t!(
-                        "prompt.quit_modified_hot_one",
-                        save_key = save_key,
-                        discard_key = discard_key,
-                        quit_key = quit_key,
-                        cancel_key = cancel_key
-                    )
-                    .to_string()
-                } else {
-                    t!(
-                        "prompt.quit_modified_hot_many",
-                        count = modified_count,
-                        save_key = save_key,
-                        discard_key = discard_key,
-                        quit_key = quit_key,
-                        cancel_key = cancel_key
-                    )
-                    .to_string()
-                }
-            } else {
-                // Without hot exit: offer save, discard, or cancel
-                if modified_count == 1 {
-                    t!(
-                        "prompt.quit_modified_one",
-                        save_key = save_key,
-                        discard_key = discard_key,
-                        cancel_key = cancel_key
-                    )
-                    .to_string()
-                } else {
-                    t!(
-                        "prompt.quit_modified_many",
-                        count = modified_count,
-                        save_key = save_key,
-                        discard_key = discard_key,
-                        cancel_key = cancel_key
-                    )
-                    .to_string()
-                }
+                (None, 1) => t!("prompt.quit_modified_one").to_string(),
+                (None, n) => t!("prompt.quit_modified_many", count = n).to_string(),
             };
-            self.start_prompt(msg, PromptType::ConfirmQuitWithModified);
+            let mut choices = vec![
+                Choice::new(
+                    t!("dialog.btn.save_and_quit").into_owned(),
+                    t!("prompt.key.save").into_owned(),
+                    Tone::Safe,
+                ),
+                Choice::new(
+                    t!("dialog.btn.discard_and_quit").into_owned(),
+                    t!("prompt.key.discard").into_owned(),
+                    Tone::Destructive,
+                ),
+            ];
+            if self.config.editor.hot_exit {
+                // Not destructive: hot exit is exactly the promise that this
+                // one gets the work back.
+                choices.push(Choice::new(
+                    t!("dialog.btn.quit_recoverable").into_owned(),
+                    t!("prompt.key.quit").into_owned(),
+                    Tone::Safe,
+                ));
+            }
+            choices.push(crate::app::confirm_dialog::cancel());
+            let confirm = Confirm::new(
+                t!("dialog.title.unsaved_changes").into_owned(),
+                body.clone(),
+                choices,
+            );
+            self.start_confirm_prompt(body, PromptType::ConfirmQuitWithModified, confirm);
         } else {
             self.should_quit = true;
         }

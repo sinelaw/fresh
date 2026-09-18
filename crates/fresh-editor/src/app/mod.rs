@@ -18,6 +18,7 @@ pub(crate) mod click_geometry;
 mod click_handlers;
 mod clipboard;
 mod composite_buffer_actions;
+pub mod confirm_dialog;
 mod dabbrev_actions;
 mod diagnostic_jumps;
 pub(crate) mod diff_baselines;

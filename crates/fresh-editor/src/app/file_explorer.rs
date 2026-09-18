@@ -628,9 +628,14 @@ impl Editor {
                 .to_string_lossy()
                 .to_string();
             let type_str = if is_dir { "directory" } else { "file" };
-            self.start_prompt(
+            let confirm = crate::app::confirm_dialog::delete(
                 t!("explorer.delete_confirm", "type" = type_str, name = &name).to_string(),
+            )
+            .detail(path.display().to_string());
+            self.start_confirm_prompt(
+                confirm.body.clone(),
                 PromptType::ConfirmDeleteFile { path, is_dir },
+                confirm,
             );
         } else {
             let count = paths.len();
@@ -639,14 +644,18 @@ impl Editor {
             // about to be deleted. Include '…' when there are more than
             // fit in the minibuffer budget.
             let names = format_path_preview_for_prompt(&all_paths, 3);
-            self.start_prompt(
+            let confirm = crate::app::confirm_dialog::delete(
                 t!(
                     "explorer.delete_multi_confirm",
                     count = count,
                     names = &names
                 )
                 .to_string(),
+            );
+            self.start_confirm_prompt(
+                confirm.body.clone(),
                 PromptType::ConfirmMultiDelete { paths: all_paths },
+                confirm,
             );
         }
     }
@@ -1086,13 +1095,15 @@ impl Editor {
 
             if self.authority().filesystem.exists(&dst_path) {
                 let name = truncate_name_for_prompt(&file_name.to_string_lossy(), 40);
-                self.start_prompt(
-                    t!("explorer.paste_conflict", name = &name).to_string(),
+                let confirm = crate::app::confirm_dialog::paste_conflict(&name);
+                self.start_confirm_prompt(
+                    confirm.body.clone(),
                     crate::view::prompt::PromptType::ConfirmPasteConflict {
                         src,
                         dst: dst_path,
                         is_cut,
                     },
+                    confirm,
                 );
             } else {
                 self.perform_file_explorer_paste(src, dst_path, is_cut);
@@ -1152,14 +1163,16 @@ impl Editor {
                         .to_string_lossy(),
                     40,
                 );
-                self.start_prompt(
-                    t!("explorer.paste_conflict_multi", name = &name).to_string(),
+                let confirm = crate::app::confirm_dialog::multi_paste_conflict(&name);
+                self.start_confirm_prompt(
+                    confirm.body.clone(),
                     crate::view::prompt::PromptType::ConfirmMultiPasteConflict {
                         safe,
                         confirmed: Vec::new(),
                         pending: conflicts,
                         is_cut,
                     },
+                    confirm,
                 );
             }
         }

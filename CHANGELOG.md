@@ -1,5 +1,11 @@
 # Release Notes
 
+## Unreleased
+
+### Features
+
+* **Confirmations are a modal dialog now, not a line on the bottom row** - quitting with unsaved buffers, closing a modified buffer, deleting from the file explorer, overwriting a file, reverting, paste conflicts, saving with sudo and loading a large file in a fixed encoding all ask in a centred card over a dimmed frame, with the outcomes spelled out as buttons ("Discard and Quit") instead of run together as parenthesised letters ("(d)iscard and quit"). Arrow keys or Tab move between the buttons, Enter takes the armed one, Esc backs out, and the mouse works — buttons light up under the pointer. Every button answers to a key it actually shows — a letter of its own label, underlined, or a number where the language's own words offer no letter a keyboard can type — and the same key means the same thing in every dialog (`c` is always Cancel, `1` is always the way out where the buttons are numbered). Destructive outcomes are in the error colour and are never the button that opens armed
+
 ## 0.5.2
 
 For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
