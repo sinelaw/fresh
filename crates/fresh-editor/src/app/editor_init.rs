@@ -758,6 +758,7 @@ impl Editor {
             widget_registry: crate::widgets::WidgetRegistry::new(),
             floating_widget_panel: None,
             dock: None,
+            dock_reserved: false,
             dock_width: None,
             dock_resizing: false,
             sidebar_sections: vec![sidebar::SidebarSection::explorer()],
@@ -914,6 +915,11 @@ impl Editor {
         grammar_registry: Option<Arc<crate::primitives::grammar::GrammarRegistry>>,
         enable_plugins: bool,
         enable_embedded_plugins: bool,
+        // What a bare `fresh` launches into — see `Editor::orchestrator_mode`.
+        // A construction-time flag (it decides the seed buffer and which
+        // workspace is activated), so a test that wants the mode has to ask
+        // for it here.
+        orchestrator_mode: bool,
     ) -> AnyhowResult<Self> {
         let mut grammar_registry =
             grammar_registry.unwrap_or_else(crate::primitives::grammar::GrammarRegistry::empty);
@@ -942,7 +948,7 @@ impl Editor {
             color_capability,
             grammar_registry,
             false,
-            false,
+            orchestrator_mode,
         )?;
         // Tests typically have no async_bridge, so the deferred grammar build
         // would just drain pending_grammars and early-return. Skip it entirely.
@@ -2181,13 +2187,25 @@ impl Editor {
     }
 
     /// Fire the `ready` hook (design M2, §3.3 phase 3).
-    pub fn fire_ready_hook(&self) {
+    ///
+    /// In orchestrator mode this is also where the dock's column is reserved.
+    /// `ready` is where the orchestrator plugin opens the dock, and it is
+    /// fire-and-forget: the hook is queued onto the plugin thread *behind
+    /// that thread's plugin loading*, so the mount lands a few hundred
+    /// milliseconds after the first frame. Reserving here — rather than at
+    /// construction — pairs the reservation with this dispatch, whose
+    /// `HookCompleted` sentinel always follows and is what releases it (see
+    /// [`Editor::dock_reserved`]).
+    pub fn fire_ready_hook(&mut self) {
         #[cfg(feature = "plugins")]
         if self.plugin_manager.read().unwrap().is_active() {
             self.plugin_manager
                 .read()
                 .unwrap()
                 .run_hook("ready", crate::services::plugins::hooks::HookArgs::Ready {});
+            if self.orchestrator_mode {
+                self.dock_reserved = true;
+            }
         }
     }
 

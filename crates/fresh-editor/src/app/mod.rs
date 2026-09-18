@@ -1493,6 +1493,22 @@ pub struct Editor {
     /// while a centered modal is open. Always rendered as a `LeftDock`.
     pub(crate) dock: Option<FloatingWidgetState>,
 
+    /// The dock's column is held open for a panel that has not arrived yet.
+    ///
+    /// Orchestrator mode always opens the dock, but the plugin that mounts it
+    /// does so from the `ready` hook — which is fire-and-forget onto the
+    /// plugin thread, behind that thread's own plugin loading. The first
+    /// frames therefore painted a full-width editor, and the dock shoved it
+    /// aside a few hundred milliseconds later. This holds the column from the
+    /// moment `ready` is *queued* until its `HookCompleted` sentinel comes
+    /// back, so the layout the user first sees is the layout they keep: the
+    /// column is there, empty, and the dock fills it in place.
+    ///
+    /// Set by [`Editor::fire_ready_hook`] (only in orchestrator mode, and
+    /// only when the hook was really dispatched, so the sentinel that clears
+    /// it is guaranteed to follow), cleared when that sentinel lands.
+    pub(crate) dock_reserved: bool,
+
     /// Persisted width (columns) of the orchestrator left dock after the
     /// user drags its right border. `None` until first resized; when set,
     /// `FloatingPanelControl{op:"dock"}` restores this instead of the

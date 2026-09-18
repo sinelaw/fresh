@@ -4113,6 +4113,9 @@ impl Editor {
                 Some(crate::app::types::HoverTarget::DockBorder)
             ),
             dock_focused: self.dock.as_ref().is_some_and(|d| d.focused),
+            // A column with no panel in it that the layout carved anyway:
+            // the tree, not the painter, owns every cell of it.
+            dock_reserved: self.dock.is_none() && self.dock_reserved,
             // Which workspace the window-owned half of the frame belongs to.
             // One retained tree, N windows: without this the two match each
             // other and window B's first pane inherits window A's element
@@ -6070,6 +6073,14 @@ impl Editor {
         // could pass while this path disagreed with it.
         let requested = match self.dock.as_ref().map(|f| f.placement) {
             Some(super::PanelPlacement::LeftDock { width_cols }) => Some(width_cols),
+            // Nothing mounted, and orchestrator mode is waiting for the panel
+            // its `ready` hook will mount: hold the column open at the width
+            // that mount will ask for, so the editor is never laid out across
+            // columns it is about to lose (see `Editor::dock_reserved`).
+            None if self.dock_reserved => Some(
+                self.dock_width
+                    .unwrap_or_else(|| crate::view::shell::frame::dock_default_width(size.width)),
+            ),
             _ => None,
         };
         let Some(width) = crate::view::shell::frame::dock_width(requested, size.width) else {
@@ -6761,5 +6772,134 @@ impl Editor {
                 ),
             }
         })
+    }
+}
+
+#[cfg(test)]
+mod dock_reservation_tests {
+    //! The dock column orchestrator mode holds open while the plugin that
+    //! fills it is still on its way — see [`Editor::dock_reserved`].
+    use super::*;
+    use crate::config::Config;
+    use crate::config_io::DirectoryContext;
+    use std::sync::Arc;
+
+    const COLS: u16 = 120;
+    const ROWS: u16 = 40;
+
+    /// An editor with the plugin runtime up (the reservation is paired with a
+    /// `ready` hook that was really dispatched, so a plugin-less editor never
+    /// reserves anything) in the mode a bare `fresh` launches into.
+    fn orchestrator_editor() -> Editor {
+        let temp = tempfile::tempdir().unwrap();
+        let dir_context = DirectoryContext::for_testing(temp.path());
+        // Keep the temp dir alive for the editor's lifetime.
+        std::mem::forget(temp);
+        Editor::for_test(
+            Config::default(),
+            COLS,
+            ROWS,
+            None,
+            dir_context,
+            crate::view::color_support::ColorCapability::TrueColor,
+            Arc::new(crate::model::filesystem::StdFileSystem),
+            None,
+            None,
+            true,
+            false,
+            true,
+        )
+        .unwrap()
+    }
+
+    fn frame() -> ratatui::layout::Rect {
+        ratatui::layout::Rect::new(0, 0, COLS, ROWS)
+    }
+
+    /// **The layout that the first frame shows is the layout it keeps.**
+    ///
+    /// `ready` is fire-and-forget onto the plugin thread, behind that
+    /// thread's own plugin loading, so the dock lands a few hundred
+    /// milliseconds after the editor is first painted. Firing the hook
+    /// carves the column then and there; the editor is never laid out across
+    /// cells it is about to lose.
+    #[test]
+    fn the_ready_hook_carves_the_docks_column_before_the_dock_arrives() {
+        let mut editor = orchestrator_editor();
+        let (dock, chrome) = editor.compute_dock_split(frame());
+        assert!(dock.is_none(), "nothing is reserved before `ready` fires");
+        assert_eq!(chrome.width, COLS);
+
+        editor.fire_ready_hook();
+        let want = crate::view::shell::frame::dock_default_width(COLS);
+        let (dock, chrome) = editor.compute_dock_split(frame());
+        assert_eq!(
+            dock.map(|d| d.width),
+            Some(want),
+            "the column is held at the width the mount will ask for"
+        );
+        assert_eq!((chrome.x, chrome.width), (want, COLS - want));
+    }
+
+    /// And released by the hook's own sentinel: every command the handler
+    /// sent is ahead of it in the channel, so a dock that is ever going to
+    /// mount has mounted by now, and a column still empty belongs to nobody.
+    /// (Which is what happens when the orchestrator plugin is switched off —
+    /// as it is here, with no plugins installed at all.)
+    #[test]
+    fn the_hooks_own_sentinel_releases_a_column_nothing_mounted_into() {
+        let mut editor = orchestrator_editor();
+        editor.fire_ready_hook();
+        assert!(editor.compute_dock_split(frame()).0.is_some());
+
+        editor
+            .handle_plugin_command(fresh_core::api::PluginCommand::HookCompleted {
+                hook_name: "ready".to_string(),
+            })
+            .unwrap();
+        let (dock, chrome) = editor.compute_dock_split(frame());
+        assert!(dock.is_none(), "the column goes back to the editor");
+        assert_eq!(chrome.width, COLS);
+    }
+
+    /// Another hook's sentinel is not `ready`'s: the column stays.
+    #[test]
+    fn another_hooks_sentinel_leaves_the_reservation_alone() {
+        let mut editor = orchestrator_editor();
+        editor.fire_ready_hook();
+        editor
+            .handle_plugin_command(fresh_core::api::PluginCommand::HookCompleted {
+                hook_name: "plugins_loaded".to_string(),
+            })
+            .unwrap();
+        assert!(editor.compute_dock_split(frame()).0.is_some());
+    }
+
+    /// An ordinary launch — one that names a directory or a file — reserves
+    /// nothing: its dock opens only if the user asks for it, or if the
+    /// `autoOpenDock` setting is on, and neither is a promise the host can
+    /// make on the plugin's behalf.
+    #[test]
+    fn an_ordinary_launch_reserves_nothing() {
+        let temp = tempfile::tempdir().unwrap();
+        let dir_context = DirectoryContext::for_testing(temp.path());
+        std::mem::forget(temp);
+        let mut editor = Editor::for_test(
+            Config::default(),
+            COLS,
+            ROWS,
+            None,
+            dir_context,
+            crate::view::color_support::ColorCapability::TrueColor,
+            Arc::new(crate::model::filesystem::StdFileSystem),
+            None,
+            None,
+            true,
+            false,
+            false,
+        )
+        .unwrap();
+        editor.fire_ready_hook();
+        assert!(editor.compute_dock_split(frame()).0.is_none());
     }
 }

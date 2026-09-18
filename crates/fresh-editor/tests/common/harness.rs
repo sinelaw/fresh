@@ -190,6 +190,10 @@ pub struct HarnessOptions {
     /// the #1722 regression test) need to override it to match
     /// production semantics. Defaults to false.
     pub force_embedded_plugins: bool,
+    /// Build the editor in Orchestrator mode — what a bare `fresh` launches
+    /// into (`Config::orchestrator_mode`). Defaults to false, the same as
+    /// every launch that names a directory or a file.
+    pub orchestrator_mode: bool,
     /// Per-test fake-devcontainer state. Set by [`HarnessOptions::with_fake_devcontainer`];
     /// moved into the harness on `create()` so the lock + tempdir live as long as the test.
     /// Unix-only: the fake CLI is a bash script that doesn't run on Windows.
@@ -213,6 +217,7 @@ impl HarnessOptions {
             preserve_keybinding_map: false,
             use_full_grammar_registry: false,
             force_embedded_plugins: false,
+            orchestrator_mode: false,
             #[cfg(unix)]
             fake_devcontainer: None,
         }
@@ -224,6 +229,14 @@ impl HarnessOptions {
     /// regression).
     pub fn with_forced_embedded_plugins(mut self) -> Self {
         self.force_embedded_plugins = true;
+        self
+    }
+
+    /// Build the editor in Orchestrator mode (a bare `fresh`): the dock
+    /// opens itself, the last-focused workspace wins over the launch
+    /// directory, and nothing auto-fills an empty workspace.
+    pub fn with_orchestrator_mode(mut self) -> Self {
+        self.orchestrator_mode = true;
         self
     }
 
@@ -757,6 +770,7 @@ impl EditorTestHarness {
             grammar_registry,
             enable_plugins_for_editor,
             enable_embedded_plugins,
+            options.orchestrator_mode,
         )?;
 
         t.phase("Editor::for_test");

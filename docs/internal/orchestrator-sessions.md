@@ -376,6 +376,22 @@ What the mode is, end to end:
   `autoOpenDock` setting — the mode overrides it, since a bare `fresh` is a
   request for the switcher. The plugin reads the launch mode (not the config
   preference, which stays on for `fresh FILE`) via `editor.orchestratorMode()`.
+- **The column is carved before the dock exists.** `ready` is fire-and-forget
+  onto the plugin thread, *behind that thread's own plugin loading*, so the
+  mount lands a few hundred milliseconds after the editor is first painted:
+  the UI came up full-width and the dock shoved it aside a moment later.
+  `Editor::fire_ready_hook` therefore sets `Editor::dock_reserved` when it
+  fires the hook in orchestrator mode, and `compute_dock_split` holds the
+  column open at `frame::dock_default_width` — the same responsive number the
+  mount takes (`handle_mount_floating_widget`) and the plugin re-issues as
+  `dock_width` on every resize (`orchestrator.ts:dockDefaultWidth`), so the
+  dock fills the column instead of moving it. The column paints its own ground
+  and divider while it is empty (`Frame::dock_reserved` → `shell::dock::dock`),
+  since nothing else paints a slot with no panel in it. The reservation is
+  released by the hook's own `HookCompleted` sentinel: every command the
+  handlers sent is ahead of it in the channel, so a dock that was ever going
+  to mount has mounted by then, and a column still empty (the plugin is
+  disabled) is handed back to the editor with a redraw and a relayout.
 - **First run** — no workspaces at all — boots a clean base window at the cwd
   and lands on the welcome screen. Nothing special-cases the welcome screen to
   get there: it opens itself as a background tab as always, and a background

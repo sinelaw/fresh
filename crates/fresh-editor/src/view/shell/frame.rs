@@ -212,6 +212,13 @@ pub struct Frame {
     /// Whether the dock has keyboard focus; its divider wears the accent then,
     /// the way the file explorer's border does.
     pub dock_focused: bool,
+    /// The column is held open for a dock that is not mounted yet — the
+    /// orchestrator's `ready` hook is still on its way (see
+    /// [`Editor::dock_reserved`](crate::app::Editor)). It has no interior, so
+    /// the tree paints the column's ground and its divider and nothing else:
+    /// an empty dock, rather than a strip of the terminal's own colour that
+    /// the editor is about to be pushed out of.
+    pub dock_reserved: bool,
     /// The sidebar's content, or `None` when it is hidden. Like the
     /// search-options row, content rather than a flag: the tree measures the
     /// panel's rows and reads their rectangles back. A column of sections,
@@ -339,6 +346,7 @@ impl Default for Frame {
             dock_interior: None,
             dock_grip_hovered: false,
             dock_focused: false,
+            dock_reserved: false,
             sidebar: None,
             menu: None,
             dropdowns: Vec::new(),
@@ -381,6 +389,31 @@ pub fn fixed_rows(menu_bar: bool, status_bar: bool, search_options: bool, prompt
 pub const EDITOR_MIN: u16 = 20;
 /// Narrower than this and a dock is not worth showing at all.
 pub const DOCK_MIN: u16 = 24;
+/// Wider than this and the dock is taking room it has no content for.
+pub const DOCK_MAX: u16 = 40;
+/// The share of the frame the dock asks for when nobody has said otherwise.
+const DOCK_WIDTH_FRACTION: f32 = 0.28;
+/// The dock's width on a frame whose size is not known yet.
+const DOCK_DEFAULT: u16 = 32;
+
+/// The width the dock opens at on this frame, before any user drag.
+///
+/// **The one copy of the responsive default**, shared by the two places that
+/// have to agree about it: the width a dock mount lands at
+/// (`handle_mount_floating_widget`) and the width the column is held open at
+/// while the orchestrator's `ready` hook is still on its way to mounting one
+/// (`Editor::compute_dock_split`). The orchestrator plugin computes the same
+/// number for the `dock_width` it re-issues on every resize
+/// (`orchestrator.ts:dockDefaultWidth`); a third number here is a visible
+/// jump the moment the dock lands, which is the whole of what the reserved
+/// column exists to prevent.
+pub fn dock_default_width(frame_width: u16) -> u16 {
+    if frame_width == 0 {
+        return DOCK_DEFAULT;
+    }
+    let target = (frame_width as f32 * DOCK_WIDTH_FRACTION).round() as u16;
+    target.clamp(DOCK_MIN, DOCK_MAX)
+}
 
 /// How wide the dock actually gets, or `None` when it does not fit.
 ///
@@ -710,7 +743,12 @@ pub fn frame_tree(f: Frame) -> Node<UiMsg> {
         match f.dock {
             Some(w) => named(
                 HostRegion::Dock,
-                super::dock::dock(f.dock_interior.clone(), f.dock_grip_hovered, f.dock_focused),
+                super::dock::dock(
+                    f.dock_interior.clone(),
+                    f.dock_grip_hovered,
+                    f.dock_focused,
+                    f.dock_reserved,
+                ),
             )
             .w(Sizing::Cells(w)),
             None => region(HostRegion::Dock).w(Sizing::Cells(0)),
@@ -1511,6 +1549,32 @@ mod tests {
         assert!(
             got.claimed,
             "the seam stops as it emits, so the tree reports the claim;              it is the host's `Option<bool>` verdict that overrides it"
+        );
+    }
+
+    /// The responsive default, at the widths that decide it: the fraction in
+    /// the middle, both clamps at the ends. These are the numbers
+    /// `orchestrator.ts:dockDefaultWidth` computes for the `dock_width` it
+    /// re-issues on resize, and a reserved column held open at a different
+    /// one is the re-flow the reservation exists to remove.
+    #[test]
+    fn dock_default_width_is_a_clamped_fraction_of_the_frame() {
+        assert_eq!(dock_default_width(120), 34, "0.28 of 120, rounded");
+        assert_eq!(dock_default_width(100), 28, "0.28 of 100");
+        assert_eq!(
+            dock_default_width(80),
+            DOCK_MIN,
+            "0.28 of 80 is under the floor"
+        );
+        assert_eq!(
+            dock_default_width(300),
+            DOCK_MAX,
+            "0.28 of 300 is over the ceiling"
+        );
+        assert_eq!(
+            dock_default_width(0),
+            DOCK_DEFAULT,
+            "a frame of unknown width gets the fixed default"
         );
     }
 }

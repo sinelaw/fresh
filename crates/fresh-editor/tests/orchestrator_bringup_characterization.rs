@@ -177,6 +177,7 @@ impl Scenario {
             None,
             false,
             false,
+            false,
         )
         .unwrap()
     }
@@ -407,6 +408,7 @@ fn restore_previous_session_false_still_picks_window_but_skips_workspace() {
         filesystem,
         None,
         None,
+        false,
         false,
         false,
     )

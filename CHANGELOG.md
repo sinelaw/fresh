@@ -14,6 +14,7 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 ### Bug Fixes
 
 * **Orchestrator dock polish** - the welcome screen and dock could fail to appear in a daemon session, a context menu could close itself too fast, and a workspace just created from the dock could end up not taking keyboard input (#3306, #3275)
+* **Orchestrator mode starts with its dock already in place** - the editor came up full width and the dock shoved it aside a moment later, once the plugins had finished loading. The column is now there from the first frame, and the dock fills it without moving anything
 * **SSH workspaces** - creating one didn't always honor your `~/.ssh/config`, and hung with a plain error on an unrecognized host key instead of asking to trust it; deleting one could occasionally crash the app (#3301, #3299, #3300)
 * **Highlighted lines** (diff view, code tour) no longer hide inlay hints at the end of the line; cursor visibility there is still an open issue for code tour (#3314)
 * **`editor.scroll_offset` fixed** for files under 5000 lines with line wrap off (#3248)

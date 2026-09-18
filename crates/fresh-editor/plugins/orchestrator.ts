@@ -903,6 +903,13 @@ const DOCK_CLOSE_GLYPH = "×";
 // clamped to [`DOCK_MIN`..`DOCK_MAX`]. Re-evaluated on resize so the dock
 // grows/shrinks with the window. Falls back to the fixed default when the
 // screen size isn't known yet.
+//
+// **The host computes this same number**, in `view::shell::frame::
+// dock_default_width`: it is the width a dock mount lands at, and the width
+// orchestrator mode holds the column open at while this plugin is still
+// loading (so the dock fills the column instead of shoving the editor
+// aside). The two have to agree — a change to the fraction or either clamp
+// belongs in both.
 function dockDefaultWidth(): number {
   const w = editor.getScreenSize().width;
   if (w <= 0) return DOCK_WIDTH_COLS;

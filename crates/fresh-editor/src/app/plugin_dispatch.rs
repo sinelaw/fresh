@@ -831,8 +831,28 @@ impl Editor {
             PluginCommand::RefreshAllLines => {
                 self.handle_refresh_all_lines();
             }
-            PluginCommand::HookCompleted { .. } => {
-                // Sentinel processed in render loop; no-op if encountered elsewhere.
+            PluginCommand::HookCompleted { hook_name } => {
+                // Sentinel processed in render loop; no-op if encountered
+                // elsewhere — except for `ready`, which is what releases the
+                // dock column orchestrator mode reserved when it fired the
+                // hook (`Editor::dock_reserved`). Every command that hook's
+                // handlers sent is ahead of this one in the channel, so a
+                // dock that was ever going to mount has mounted by now; the
+                // column is either a panel's or nobody's.
+                //
+                // Nobody's — the orchestrator plugin is disabled, say — frees
+                // a full-height strip, so it ends the same way hiding the
+                // dock does: a full redraw for the stale glyphs and a
+                // relayout for the reclaimed width. With a dock in it there
+                // is no geometry change at all, and the release is bookkeeping.
+                // (`take` first, so the release happens whichever it is.)
+                if hook_name == "ready"
+                    && std::mem::take(&mut self.dock_reserved)
+                    && self.dock.is_none()
+                {
+                    self.request_full_redraw();
+                    self.relayout();
+                }
             }
             PluginCommand::SetLineIndicator {
                 buffer_id,
@@ -5834,9 +5854,19 @@ impl Editor {
             self.blur_floating_panel(super::PanelSlot::Dock);
         }
         let placement = if as_dock {
+            // The user's dragged width, else the responsive default — the same
+            // number `compute_dock_split` holds a reserved column open at and
+            // the plugin re-issues as `dock_width`, so a mount into a reserved
+            // column changes nothing about the geometry. The fixed 32 this
+            // used to be is the responsive number only on the handful of
+            // terminal widths where the two happen to agree; everywhere else
+            // it was a mount at one width followed by the plugin's
+            // `dock_width` at another.
             let width = self
                 .dock_width
-                .unwrap_or(32)
+                .unwrap_or_else(|| {
+                    crate::view::shell::frame::dock_default_width(self.terminal_width)
+                })
                 .clamp(10, self.terminal_width.max(20).saturating_sub(20).max(10));
             super::PanelPlacement::LeftDock { width_cols: width }
         } else {
