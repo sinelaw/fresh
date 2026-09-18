@@ -293,6 +293,14 @@ pub enum PluginResponse {
         request_id: u64,
         result: Result<u64, String>,
     },
+    /// `openMachine` resolved with `{id, platform, home, label}`. A response,
+    /// not a bare callback, so the runtime can record the handle against its
+    /// plugin and close it on unload.
+    MachineOpened {
+        request_id: u64,
+        #[ts(type = "unknown")]
+        info: JsonValue,
+    },
 }
 
 impl PluginResponse {
@@ -310,6 +318,7 @@ impl PluginResponse {
             | Self::SplitByLabel { request_id, .. }
             | Self::SplitWindowCreated { request_id, .. }
             | Self::SnapshotSynced { request_id }
+            | Self::MachineOpened { request_id, .. }
             | Self::WatchPathRegistered { request_id, .. } => *request_id,
         }
     }
@@ -5660,6 +5669,72 @@ pub enum PluginCommand {
     /// automatically when their buffer closes.
     ReleaseDiffBaseline { baseline_id: u64 },
 
+    /// Open a machine from a `setAuthority` payload, without attaching it to
+    /// a window. Resolves with `{id, platform, home, label}`. The handle stays
+    /// open until `closeMachine` or the plugin is unloaded.
+    OpenMachine {
+        #[ts(type = "unknown")]
+        payload: JsonValue,
+        callback_id: JsCallbackId,
+    },
+
+    /// Close a machine opened by `openMachine`. Idempotent. `callback_id` is
+    /// `None` when the runtime closes handles an unloaded plugin left behind.
+    CloseMachine {
+        machine: u64,
+        callback_id: Option<JsCallbackId>,
+    },
+
+    /// Read environment variables from the machine; only set names come back.
+    /// A remote machine is asked with `printenv` and is never answered from
+    /// this computer's environment. No `printenv` reports nothing.
+    MachineEnv {
+        machine: Option<u64>,
+        names: Vec<String>,
+        callback_id: JsCallbackId,
+    },
+
+    /// Walk a subtree in one call, off the editor thread. A remote machine
+    /// walks server-side.
+    WalkTree {
+        /// Which open machine to act on. `None` means the active window's.
+        machine: Option<u64>,
+        /// Directory to walk. A missing path is an empty walk, not an error.
+        root: String,
+        /// Directory basenames skipped at every depth.
+        skip_dirs: Vec<String>,
+        /// Report dot-prefixed entries. Off by default.
+        include_hidden: bool,
+        include_dirs: bool,
+        /// Maximum depth below `root`; depth 1 is a direct child.
+        max_depth: usize,
+        /// Stop after this many entries, reporting the walk as truncated.
+        max_entries: usize,
+        callback_id: JsCallbackId,
+    },
+
+    /// Read the first bytes of many files in one call. A failure is reported
+    /// per path, so one unreadable file does not lose the rest.
+    ReadFilePrefixes {
+        /// Which open machine to act on. `None` means the active window's.
+        machine: Option<u64>,
+        /// `(path, max_bytes)` pairs.
+        requests: Vec<(String, usize)>,
+        callback_id: JsCallbackId,
+    },
+
+    /// Run a command on the machine. Unlike `spawnHostProcess`, a remote
+    /// machine runs it there. A non-zero exit resolves with the code instead
+    /// of rejecting. Rejects on a machine opened read-only.
+    RunOnTarget {
+        /// Which open machine to act on. `None` means the active window's.
+        machine: Option<u64>,
+        program: String,
+        args: Vec<String>,
+        cwd: Option<String>,
+        callback_id: JsCallbackId,
+    },
+
     /// Project-wide grep search (async)
     /// Searches all project files via FileSystem trait, respecting .gitignore.
     /// For open buffers with dirty edits, searches the buffer's piece tree.
@@ -5740,11 +5815,9 @@ pub enum PluginCommand {
     /// `crates/fresh-editor/src/services/authority/mod.rs` for the
     /// canonical schema.
     ///
-    /// Fire-and-forget: the transition piggy-backs on the existing
-    /// editor restart flow, so the plugin that sent this command will
-    /// be re-loaded as part of the restart. Any follow-up work the
-    /// plugin wants to do after the switch belongs in its post-restart
-    /// init code, not in a callback here.
+    /// Fire-and-forget: returns before the backend is live. The sending
+    /// plugin is not reloaded, so follow-up work belongs in an
+    /// `authority_changed` handler.
     SetAuthority {
         #[ts(type = "unknown")]
         payload: JsonValue,

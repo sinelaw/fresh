@@ -435,14 +435,6 @@ impl WebBridge {
         self.ws.len()
     }
 
-    /// Re-seed the clipboard mirror against a freshly built editor — the daemon
-    /// rebuilds in place on an authority / working-directory change. Without
-    /// this the next scene would bump `seq` for a clipboard nobody touched and
-    /// the browser would paste stale text into its system clipboard.
-    pub fn rebound_editor(&mut self, editor: &Editor) {
-        self.clip = ClipboardSync::new(editor);
-    }
-
     /// The grid size that fits every connected browser: the element-wise MIN of
     /// their wanted (cols, rows), so each can see the whole grid (bigger
     /// windows letterbox). Clients that haven't reported a size yet

@@ -641,7 +641,6 @@ enum ParsedLocation {
 struct IterationOutcome {
     loop_result: AnyhowResult<()>,
     update_result: Option<release_checker::ReleaseCheckResult>,
-    restart_dir: Option<PathBuf>,
 }
 
 struct SetupState {
@@ -887,9 +886,7 @@ fn handle_first_run_setup(
             .active_window_mut()
             .enable_event_streaming(log_path)?;
     }
-    // The warning-log channel and status-log path used to be wired up
-    // here from `tracing_handles`; that wiring now lives in the main
-    // loop so it survives editor restarts (e.g. devcontainer attach).
+    // The warning-log channel and status-log path are wired up in main.
 
     // If the user passed any file argument on the command line and the
     // `skip_session_restore_when_files_passed` option is on (default), treat
@@ -2055,12 +2052,10 @@ fn run_editor_iteration(
     }
 
     let update_result = editor.get_update_result().cloned();
-    let restart_dir = editor.take_restart_dir();
 
     Ok(IterationOutcome {
         loop_result,
         update_result,
-        restart_dir,
     })
 }
 
@@ -3103,7 +3098,9 @@ fn run_server_command(args: &Args, web_addr: Option<String>) -> AnyhowResult<()>
     let session_keepalive: Option<Box<dyn std::any::Any + Send>> =
         remote_session.map(|rs| Box::new(rs) as Box<dyn std::any::Any + Send>);
     let startup_authority = if remote_info.is_some() {
-        Some(authority)
+        Some(std::sync::Arc::new(
+            fresh::services::authority::Connection::plain(authority),
+        ))
     } else {
         None
     };
@@ -5607,38 +5604,6 @@ fn run_if_subcommand(
     None
 }
 
-/// Attempt workspace or hot-exit restore when the editor restarts into a new project.
-fn restore_editor_workspace(editor: &mut Editor, args: &Args) {
-    if args.force_restore || editor.config().editor.restore_previous_session {
-        // Shared restore flow (same as startup / the dock's
-        // `materialize_window`): applies the new project's persisted
-        // explorer visibility, or the fresh-session default when there is
-        // nothing to restore — so a project whose explorer was closed
-        // does not spring back open on a Switch Project restart.
-        match editor.restore_active_window_on_launch(false) {
-            Ok(true) => tracing::info!("Workspace restored successfully"),
-            Ok(false) => tracing::debug!("No previous workspace found"),
-            Err(e) => tracing::warn!("Failed to restore workspace: {}", e),
-        }
-    } else {
-        tracing::info!(
-            "Skipping workspace restore on restart: editor.restore_previous_session is disabled"
-        );
-        // Session restore opted out, but hot-exit content for the newly-switched
-        // project is still restored so in-progress work is not lost.
-        match editor.try_restore_hot_exit_buffers() {
-            Ok(n) if n > 0 => tracing::info!(
-                "Restored {} hot-exit buffer(s) on restart despite skipping session restore",
-                n
-            ),
-            Ok(_) => {}
-            Err(e) => tracing::warn!("Failed to restore hot-exit buffers on restart: {}", e),
-        }
-        // Nothing restored — apply the bare-directory explorer default.
-        editor.apply_active_window_explorer_default(false, false);
-    }
-}
-
 fn main() -> AnyhowResult<()> {
     match real_main() {
         Ok(()) => Ok(()),
@@ -6025,26 +5990,19 @@ fn real_main() -> AnyhowResult<()> {
     let (terminal_width, terminal_height) = terminal_size;
 
     // Track whether this is the first run (for session restore, file open, etc.)
-    let mut is_first_run = true;
-
-    // Track whether we should restore workspace on restart (for project switching)
-    let mut restore_workspace_on_restart = false;
 
     // Authority that will drive the next `Editor` constructed in the
     // loop. Starts from the startup authority (local or SSH); when a
     // plugin calls `editor.setAuthority(...)` the previous Editor
     // stashes the new authority in its `pending_authority` slot, which
     // we consume right before dropping it below.
-    let mut current_authority = startup_authority;
-
-    // Process-lifetime keepalive for a connection-backed authority.
-    // Seeded from the SSH startup session (if any); replaced when a
-    // plugin attaches a remote agent (K8s) mid-session via
-    // `attachRemoteAgent`. Held purely for its `Drop` — replacing it
-    // tears the previous connection down. Boxed opaquely so this loop
-    // never names a backend.
-    let mut current_keepalive: Option<Box<dyn std::any::Any + Send>> =
-        remote_session.map(|rs| Box::new(rs) as Box<dyn std::any::Any + Send>);
+    // The startup session's keepalive travels with its connection.
+    let mut current_authority = std::sync::Arc::new(fresh::services::authority::Connection {
+        authority: startup_authority,
+        keepalive: std::sync::Mutex::new(
+            remote_session.map(|rs| Box::new(rs) as Box<dyn std::any::Any + Send>),
+        ),
+    });
 
     // Status-message log path is just a clone-able path — capture it
     // once and re-bind to every restarted editor instance. Without
@@ -6073,10 +6031,9 @@ fn real_main() -> AnyhowResult<()> {
         tracing::warn!("Local control socket unavailable: {}", e);
     }
 
-    // Main editor loop - supports restarting with a new working directory
+    // One editor, built once; nothing rebuilds it.
     // Returns (loop_result, last_update_result) tuple
-    let (result, last_update_result) = loop {
-        let first_run = is_first_run;
+    let (result, last_update_result) = {
         let workspace_enabled = !args.no_session;
 
         // Detect terminal color capability
@@ -6102,16 +6059,18 @@ fn real_main() -> AnyhowResult<()> {
             // is what resolves a linked worktree to the repo that owns its
             // trust decision.
             let trust_owner = fresh::services::workspace_trust::trust_owner_root(
-                current_authority.filesystem.as_ref(),
+                current_authority.authority.filesystem.as_ref(),
                 &placeholder_root,
             );
-            let placeholder = fresh::services::authority::Authority::local_scoped(
-                fresh::services::authority::SessionScope::for_root(
-                    &placeholder_root,
-                    &dir_context.project_state_dir(&placeholder_root),
-                    &dir_context.project_state_dir(&trust_owner),
+            let placeholder = std::sync::Arc::new(fresh::services::authority::Connection::plain(
+                fresh::services::authority::Authority::local_scoped(
+                    fresh::services::authority::SessionScope::for_root(
+                        &placeholder_root,
+                        &dir_context.project_state_dir(&placeholder_root),
+                        &dir_context.project_state_dir(&trust_owner),
+                    ),
                 ),
-            );
+            ));
             std::mem::replace(&mut current_authority, placeholder)
         };
         let mut editor = Editor::with_working_dir_opts(
@@ -6185,37 +6144,17 @@ fn real_main() -> AnyhowResult<()> {
             editor.set_warning_log(rx, p);
         }
 
-        if first_run {
-            tracing::info!("Running first-run setup...");
-            handle_first_run_setup(
-                &mut editor,
-                &args,
-                &file_locations,
-                show_file_explorer,
-                &mut stdin_stream,
-                workspace_enabled,
-            )
-            .context("Failed first run setup")?;
-            tracing::info!("First-run setup complete");
-        } else {
-            if restore_workspace_on_restart {
-                restore_editor_workspace(&mut editor, &args);
-            } else {
-                // Not restoring on this restart at all — still default the
-                // explorer for the freshly-entered directory.
-                editor.apply_active_window_explorer_default(false, false);
-            }
-            // Mid-session restart: reflow so the (possibly toggled) sidebar
-            // and the split/terminal viewports match the new visibility.
-            editor.relayout();
-            let path = current_working_dir
-                .as_ref()
-                .map(|p| p.display().to_string())
-                .unwrap_or_else(|| ".".to_string());
-            editor.set_status_message(
-                fresh_i18n::t!("file.switched_to_project", path = path).to_string(),
-            );
-        }
+        tracing::info!("Running first-run setup...");
+        handle_first_run_setup(
+            &mut editor,
+            &args,
+            &file_locations,
+            show_file_explorer,
+            &mut stdin_stream,
+            workspace_enabled,
+        )
+        .context("Failed first run setup")?;
+        tracing::info!("First-run setup complete");
 
         if let Err(e) = editor.start_recovery_session() {
             tracing::warn!("Failed to start recovery session: {}", e);
@@ -6253,7 +6192,6 @@ fn real_main() -> AnyhowResult<()> {
         .context("Editor iteration failed")?;
 
         let update_result = iteration.update_result;
-        let restart_dir = iteration.restart_dir;
         let loop_result = iteration.loop_result;
 
         // If a plugin called `editor.setAuthority(...)` (or cleared it)
@@ -6261,68 +6199,12 @@ fn real_main() -> AnyhowResult<()> {
         // `pending_authority` and triggered a restart. Move it into
         // the loop-local var *before* dropping the editor so the next
         // iteration builds against the new backend.
-        if let Some(new_authority) = editor.take_pending_authority() {
-            tracing::info!("Authority transition queued; restarting editor");
-            current_authority = new_authority;
-            // A connection-backed authority (remote agent / K8s) queues
-            // its keepalive alongside the authority. Adopt it here so the
-            // live carrier + reconnect/heartbeat tasks survive into the
-            // next iteration; the previous keepalive drops (tearing down
-            // the old connection). A plain local/docker transition
-            // carries no keepalive, leaving the slot — and any current
-            // remote session — untouched.
-            if let Some(new_keepalive) = editor.take_pending_keepalive() {
-                // Swap in the new session and drop the previous one,
-                // explicitly tearing the old connection down before the
-                // next iteration builds against the new backend.
-                let previous = current_keepalive.replace(new_keepalive);
-                drop(previous);
-            }
-        } else if restart_dir.is_some() {
-            // Non-transition restart (e.g. change-working-dir, config reload):
-            // carry the *active session's own backend* forward by moving it out
-            // of the editor we're about to drop, rather than booting the next
-            // iteration on the local placeholder. Without this a `fresh
-            // user@host` (or other CLI-remote) session would silently drop to
-            // local on restart — `Authority` is non-`Clone`, so it must be
-            // moved, not copied. Its `current_keepalive` (the carrier) is a
-            // loop-local and already survives the rebuild.
-            current_authority = editor.take_active_authority();
-        }
-
-        // Pluck the warning-log channel back out of the soon-to-be-
-        // dropped editor so the next iteration can re-bind it.
+        // Pluck the warning-log channel back out so the shutdown path can reach it.
         warning_log_slot = editor.take_warning_log();
-
-        // Persist every session before a restart rebuilds the editor from
-        // disk. Quit already saves (after the loop); the restart branch did
-        // not, so a session's per-window state — notably its backend
-        // `authority_spec` — would be lost across an `install_authority`
-        // restart and the session would come back local. Only needed when we
-        // are actually restarting; a real quit saves below.
-        if restart_dir.is_some() {
-            if let Err(e) = editor.save_all_windows_workspaces() {
-                tracing::warn!("Failed to save sessions before restart: {e}");
-            }
-        }
 
         drop(editor);
 
-        if let Some(new_dir) = restart_dir {
-            tracing::info!(
-                "Restarting editor with new working directory: {}",
-                new_dir.display()
-            );
-            current_working_dir = Some(new_dir);
-            is_first_run = false;
-            restore_workspace_on_restart = true; // Restore workspace for the new project
-            terminal
-                .clear()
-                .context("Failed to clear terminal for restart")?;
-            continue;
-        }
-
-        break (loop_result, update_result);
+        (loop_result, update_result)
     };
 
     // Restore terminal state

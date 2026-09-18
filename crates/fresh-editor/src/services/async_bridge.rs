@@ -52,6 +52,11 @@ pub enum RemoteAttachMode {
     /// window's* authority at the freshly-connected backend and park the
     /// keepalive — no new window, no editor restart.
     Reconnect { window_id: fresh_core::WindowId },
+    /// No window: a plugin opened this machine to read it (`editor.openMachine`).
+    /// The connection is registered and handed back as a machine handle. Its
+    /// authority is built under `TrustLevel::Blocked`, so it cannot run commands.
+    #[cfg(feature = "plugins")]
+    Machine,
 }
 
 /// A completed remote-agent attach: the assembled authority plus the

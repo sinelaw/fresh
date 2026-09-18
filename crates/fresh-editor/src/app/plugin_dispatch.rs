@@ -207,7 +207,7 @@ impl Editor {
             )> = self
                 .windows
                 .iter()
-                .map(|(id, w)| (*id, std::sync::Arc::clone(&w.authority.filesystem)))
+                .map(|(id, w)| (*id, std::sync::Arc::clone(&w.authority().filesystem)))
                 .collect();
             registry.rebuild(active, entries);
         }
@@ -337,11 +337,11 @@ impl Editor {
                     root: normalize_plugin_path(s.root.clone()),
                     project_path: normalize_plugin_path(project_path),
                     shared_worktree,
-                    // A parked keepalive is what distinguishes a live remote
+                    // A live connection is what distinguishes a live remote
                     // window from a dormant one's disconnected shell.
                     remote: s
                         .authority_spec
-                        .remote_backend_info(self.session_keepalives.contains_key(&s.id)),
+                        .remote_backend_info(self.window_connection_is_live(s.id)),
                 }
             })
             .collect();
@@ -1930,6 +1930,68 @@ impl Editor {
 
             PluginCommand::ReleaseDiffBaseline { baseline_id } => {
                 self.handle_release_diff_baseline(baseline_id);
+            }
+
+            PluginCommand::OpenMachine {
+                payload,
+                callback_id,
+            } => {
+                self.handle_open_machine(payload, callback_id);
+            }
+
+            PluginCommand::CloseMachine {
+                machine,
+                callback_id,
+            } => {
+                self.handle_close_machine(machine, callback_id);
+            }
+
+            PluginCommand::MachineEnv {
+                machine,
+                names,
+                callback_id,
+            } => {
+                self.handle_machine_env(machine, names, callback_id);
+            }
+
+            PluginCommand::WalkTree {
+                machine,
+                root,
+                skip_dirs,
+                include_hidden,
+                include_dirs,
+                max_depth,
+                max_entries,
+                callback_id,
+            } => {
+                self.handle_walk_tree(
+                    machine,
+                    root,
+                    skip_dirs,
+                    include_hidden,
+                    include_dirs,
+                    max_depth,
+                    max_entries,
+                    callback_id,
+                );
+            }
+
+            PluginCommand::ReadFilePrefixes {
+                machine,
+                requests,
+                callback_id,
+            } => {
+                self.handle_read_file_prefixes(machine, requests, callback_id);
+            }
+
+            PluginCommand::RunOnTarget {
+                machine,
+                program,
+                args,
+                cwd,
+                callback_id,
+            } => {
+                self.handle_run_on_target(machine, program, args, cwd, callback_id);
             }
 
             PluginCommand::GrepProject {
@@ -4551,7 +4613,9 @@ impl Editor {
         // passes its connected authority. `resume` is the agent-resume argv
         // carried through to the new session's terminal. The new local
         // session gets its own per-session trust scoped to its root.
-        let new_authority = self.local_session_authority(&root);
+        let new_connection = std::sync::Arc::new(crate::services::authority::Connection::plain(
+            self.local_session_authority(&root),
+        ));
         // Only adopt an id that really is a placeholder: anything else would
         // mean silently tearing down a live workspace to reuse its number.
         let adopt = adopt_window.filter(|id| self.preparing_windows.contains_key(id));
@@ -4561,7 +4625,7 @@ impl Editor {
             cwd_buf,
             command,
             title,
-            new_authority,
+            new_connection,
             resume,
             env,
             allow_script,
@@ -4933,8 +4997,10 @@ impl Editor {
                 {
                     Ok(auth) => {
                         tracing::info!("Plugin installed new authority");
-                        self.active_window_mut().authority_spec = spec;
-                        self.install_authority(auth);
+                        let landed = self.install_authority(auth);
+                        if let Some(w) = self.windows.get_mut(&landed) {
+                            w.authority_spec = spec;
+                        }
                     }
                     Err(e) => {
                         tracing::warn!("setAuthority: invalid payload: {}", e);
@@ -4958,10 +5024,10 @@ impl Editor {
     /// Idempotent: a reconnect already in flight for this window is a no-op.
     pub(crate) fn reconnect_dormant_session_if_needed(&mut self, window_id: fresh_core::WindowId) {
         // The *activate* path (diving into a session). A live session already
-        // holds its connection (keepalive), so leave it alone here — switching
-        // to an already-connected window must not tear down and rebuild it. A
-        // local session has nothing to reconnect.
-        if self.session_keepalives.contains_key(&window_id) {
+        // holds its connection, so leave it alone here — switching to an
+        // already-connected window must not tear down and rebuild it. A local
+        // session has nothing to reconnect.
+        if self.window_connection_is_live(window_id) {
             return;
         }
         // A session still descriptor-backed in `dormant_remote` (its window,
@@ -5015,7 +5081,7 @@ impl Editor {
                 if let Some(w) = self.windows.get_mut(&window_id) {
                     w.remote_reconnect_error = None;
                 }
-                self.start_remote_connect(agent_spec, Some(window_id), request_id);
+                self.start_remote_connect(agent_spec, Some(window_id), request_id, false);
             }
             crate::services::authority::SessionAuthoritySpec::Plugin(_) => {
                 // Container: only the owning plugin can rebuild the backend
@@ -5040,7 +5106,7 @@ impl Editor {
             };
         // A plugin attach: spawn a born-attached window or restart (per
         // `spec.window`), not a reconnect of an existing one.
-        self.start_remote_connect(spec, None, request_id);
+        self.start_remote_connect(spec, None, request_id, false);
     }
 
     /// Spawn the async remote connect (carrier + agent bootstrap) for `spec`
@@ -5049,11 +5115,15 @@ impl Editor {
     /// `reconnect_window = Some(id)` re-points *that dormant window's*
     /// authority on success (no new window / no restart); `None` follows
     /// `spec.window` (born-attached window vs. global restart).
+    ///
+    /// `for_machine` connects for a plugin's `openMachine` handle instead of a
+    /// window. Its authority gets `TrustLevel::Blocked`, so it cannot run anything.
     pub(crate) fn start_remote_connect(
         &mut self,
         spec: crate::services::authority::RemoteAgentSpec,
         reconnect_window: Option<fresh_core::WindowId>,
         request_id: u64,
+        for_machine: bool,
     ) {
         // Take owned handles up front so the immutable borrows of `self`
         // end before the mutable `set_status_message` / spawn below.
@@ -5088,7 +5158,11 @@ impl Editor {
         // inactive (the remote's env rides the spawner's captured probe).
         let trust = std::sync::Arc::new(crate::services::workspace_trust::WorkspaceTrust::new(
             None,
-            self.authority().workspace_trust.level(),
+            if for_machine {
+                crate::services::workspace_trust::TrustLevel::Blocked
+            } else {
+                self.authority().workspace_trust.level()
+            },
         ));
         let env = std::sync::Arc::new(crate::services::env_provider::EnvProvider::inactive());
 
@@ -5105,7 +5179,9 @@ impl Editor {
         let session_spec =
             crate::services::authority::SessionAuthoritySpec::RemoteAgent(spec.clone());
         let mode_for = |label: &str| {
-            if let Some(window_id) = reconnect_window {
+            if for_machine {
+                crate::services::async_bridge::RemoteAttachMode::Machine
+            } else if let Some(window_id) = reconnect_window {
                 crate::services::async_bridge::RemoteAttachMode::Reconnect { window_id }
             } else if window_mode {
                 crate::services::async_bridge::RemoteAttachMode::Window {
