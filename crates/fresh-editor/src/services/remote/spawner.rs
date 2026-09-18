@@ -521,31 +521,58 @@ impl ProcessSpawner for RemoteProcessSpawner {
         let (eff_cmd, eff_args) = env_wrap(&captured, &command, &args);
         let params = exec_params(&eff_cmd, &eff_args, cwd.as_deref());
 
-        // Use streaming request to get live output
-        let (mut data_rx, result_rx) = self.channel.request_streaming("exec", params).await?;
+        // With the id, so a consumer that gives up can stop the producer.
+        let (request_id, mut data_rx, result_rx) =
+            self.channel.request_streaming_id("exec", params).await?;
 
         let mut stdout = Vec::new();
         let mut stderr = Vec::new();
 
-        // Collect streaming output
-        while let Some(data) = data_rx.recv().await {
-            if let Some(out) = data.get("out").and_then(|v| v.as_str()) {
-                if let Ok(decoded) = decode_base64(out) {
-                    stdout.extend_from_slice(&decoded);
+        // Bounded by the agent's silence, not the command's: a quiet command is
+        // fine, a machine that has stopped answering is not. The agent sends an
+        // empty chunk every `EXEC_KEEPALIVE_SECS` while the process is quiet, so
+        // nothing arriving within `STREAM_IDLE_TIMEOUT` means the agent is gone.
+        loop {
+            match tokio::time::timeout(
+                crate::services::remote::channel::STREAM_IDLE_TIMEOUT,
+                data_rx.recv(),
+            )
+            .await
+            {
+                Ok(Some(data)) => {
+                    if let Some(out) = data.get("out").and_then(|v| v.as_str()) {
+                        if let Ok(decoded) = decode_base64(out) {
+                            stdout.extend_from_slice(&decoded);
+                        }
+                    }
+                    if let Some(err) = data.get("err").and_then(|v| v.as_str()) {
+                        if let Ok(decoded) = decode_base64(err) {
+                            stderr.extend_from_slice(&decoded);
+                        }
+                    }
                 }
-            }
-            if let Some(err) = data.get("err").and_then(|v| v.as_str()) {
-                if let Ok(decoded) = decode_base64(err) {
-                    stderr.extend_from_slice(&decoded);
+                Ok(None) => break,
+                Err(_elapsed) => {
+                    self.channel.cancel_detached(request_id);
+                    return Err(SpawnError::Channel(ChannelError::Timeout));
                 }
             }
         }
 
-        // Get final result
-        let result = result_rx
-            .await
-            .map_err(|_| SpawnError::Channel(ChannelError::ChannelClosed))?
-            .map_err(SpawnError::Process)?;
+        // The result is still a promise the remote has to keep, so it gets the same bound.
+        let result = match tokio::time::timeout(
+            crate::services::remote::channel::STREAM_IDLE_TIMEOUT,
+            result_rx,
+        )
+        .await
+        {
+            Ok(Ok(result)) => result.map_err(SpawnError::Process)?,
+            Ok(Err(_recv)) => return Err(SpawnError::Channel(ChannelError::ChannelClosed)),
+            Err(_elapsed) => {
+                self.channel.cancel_detached(request_id);
+                return Err(SpawnError::Channel(ChannelError::Timeout));
+            }
+        };
 
         let exit_code = result
             .get("code")

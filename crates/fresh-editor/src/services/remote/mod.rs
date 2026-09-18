@@ -26,8 +26,8 @@ pub use connection::spawn_local_agent_transport;
 #[doc(hidden)]
 pub use connection::spawn_local_agent_with_capacity;
 pub use connection::{
-    spawn_heartbeat_task, spawn_reconnect_task, spawn_reconnect_task_with, ReconnectConfig,
-    DEFAULT_HEARTBEAT_INTERVAL,
+    spawn_heartbeat_task, spawn_reconnect_task, spawn_reconnect_task_with, Carrier,
+    ReconnectConfig, DEFAULT_HEARTBEAT_INTERVAL,
 };
 pub use connection::{ConnectionParams, SshConnection, SshError};
 pub use filesystem::RemoteFileSystem;
