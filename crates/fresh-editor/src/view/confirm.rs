@@ -508,17 +508,18 @@ mod tests {
         assert_eq!(c.by_mnemonic('z'), None);
     }
 
-    /// A label with no letters left cannot be marked, and must not silently
-    /// steal another button's.
+    /// A label with no letter of its own is numbered rather than left mute,
+    /// and must not silently steal another button's key.
     #[test]
-    fn a_label_with_nothing_to_offer_gets_no_letter() {
+    fn a_label_with_nothing_to_offer_is_numbered() {
         let c = Confirm::new(
             "T",
             "B",
             vec![choice("…", Tone::Safe), choice("Cancel", Tone::Safe)],
         );
-        assert_eq!(marked(&c), ["…[-]", "Cancel[C]"]);
+        assert_eq!(marked(&c), ["… (1)[1]", "Cancel[C]"]);
         assert_eq!(c.by_mnemonic('c'), Some(1));
+        assert_eq!(c.by_mnemonic('1'), Some(0));
     }
 
     /// Esc dismisses rather than answering when every button does something.
@@ -606,59 +607,71 @@ mod tests {
         assert_eq!(c.current().map(|c| c.label.as_str()), Some("Load"));
     }
 
-    /// Two buttons must not split one letter across its cases.
+    /// Folding is case-insensitive in every alphabet, not just ASCII.
     ///
-    /// German's multi-file paste conflict: `Überschreiben` and
-    /// `Alle überschreiben`. Folding only ASCII let the first take `Ü` and the
-    /// second take `ü`, so the `ü` a keyboard produces answered the *more*
-    /// destructive button while the underline sat on the other one.
+    /// `eq_ignore_ascii_case` is plain `==` outside ASCII, so it called `Ü`
+    /// and `ü` different keys. Nothing assigns non-ASCII letters any more, so
+    /// this guards the rule itself rather than a dialog that could reach it.
     #[test]
-    fn case_folds_outside_ascii_too() {
+    fn folding_is_case_insensitive_beyond_ascii() {
+        assert!(same_letter('Ü', 'ü'));
+        assert!(same_letter('О', 'о'));
+        assert!(same_letter('A', 'a'));
+        assert!(!same_letter('Ü', 'U'));
+        assert!(!same_letter('o', 'о'), "Latin o is not Cyrillic о");
+    }
+
+    /// German's paste conflict: every button gets a distinct key the keyboard
+    /// can actually send, and the umlauts answer nothing.
+    ///
+    /// This dialog is where the old rule went wrong: `Überschreiben` was
+    /// marked on `Ü` while `Alle überschreiben` took `ü`, so the `ü` a
+    /// keyboard produces fired the *more* destructive button.
+    #[test]
+    fn german_umlauts_never_become_accelerators() {
         let c = Confirm::new(
-            "Name Conflict",
+            "Namenskonflikt",
             "B",
             vec![
                 choice("Überschreiben", Tone::Destructive),
                 choice("Alle überschreiben", Tone::Destructive),
                 choice("Überspringen", Tone::Safe),
+                choice("Alle überspringen", Tone::Safe),
                 choice("Abbrechen", Tone::Safe),
             ],
         )
-        .escaping(Some(3));
+        .escaping(Some(4));
 
         let marks: Vec<char> = c
             .choices
             .iter()
-            .filter_map(|x| x.mnemonic)
-            .map(|m| m.ch)
+            .map(|x| x.mnemonic.expect("every button answers to something").ch)
             .collect();
+        for m in &marks {
+            assert!(
+                m.is_ascii_alphanumeric(),
+                "{m:?} is not a key a terminal sends"
+            );
+        }
         for (i, a) in marks.iter().enumerate() {
             for b in &marks[i + 1..] {
-                assert!(
-                    !same_letter(*a, *b),
-                    "{a} and {b} are the same key in different cases"
-                );
+                assert!(!same_letter(*a, *b), "{a} and {b} are one key");
             }
         }
-        // And the letter answers the button it is drawn on, in either case.
-        let over = c.by_mnemonic('ü');
-        assert_eq!(
-            over,
-            c.by_mnemonic('Ü'),
-            "case must not pick a different button"
-        );
-        assert_eq!(
-            c.choices[over.unwrap()].label,
-            "Überschreiben",
-            "the unshifted letter must not reach the All variant"
-        );
+        assert_eq!(c.by_mnemonic('ü'), None, "an umlaut must answer nothing");
+        assert_eq!(c.by_mnemonic('Ü'), None);
+        // The retreat picked first, so it keeps the initial of its own word.
+        assert_eq!(c.by_mnemonic('a'), Some(4));
     }
 
-    /// Russian's retreat keeps its own letter against a rival in the other case.
+    /// An all-Cyrillic dialog is numbered throughout, retreat first.
+    ///
+    /// Russian's `Отмена` and `Пропустить все` used to take `О` and `о` —
+    /// one key between them — so typing `о` to cancel skipped every file.
     #[test]
-    fn cyrillic_cancel_is_not_shadowed() {
+    fn cyrillic_labels_are_numbered_not_shadowed() {
         let c = Confirm::new(
-            "Name Conflict",
+            "Namenskonflikt",
             "B",
             vec![
                 choice("Перезаписать", Tone::Destructive),
@@ -667,10 +680,18 @@ mod tests {
             ],
         )
         .escaping(Some(2));
-        let cancel = c
-            .by_mnemonic('о')
-            .expect("the retreat answers to its letter");
-        assert_eq!(c.choices[cancel].label, "Отмена");
+
+        assert_eq!(c.by_mnemonic('1'), Some(2), "the retreat is numbered first");
+        assert_eq!(
+            c.by_mnemonic('о'),
+            None,
+            "a Cyrillic letter answers nothing"
+        );
+        for ch in &c.choices {
+            let m = ch.mnemonic.expect("every button answers to something");
+            assert!(m.ch.is_ascii_digit());
+            assert!(ch.label.contains(m.ch), "{} must show its key", ch.label);
+        }
     }
 
     /// A label the keyboard cannot produce still gets a key, and shows it.
