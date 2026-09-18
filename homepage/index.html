@@ -702,8 +702,13 @@
             background: var(--bg-darker) !important;
             border: none !important;
         }
-        .asciinema-host .ap-term {
+        .asciinema-host .ap-terminal {
             padding: 8px !important;
+            /* 3.12.x hardcodes its own monospace stack on pre.ap-terminal, so
+               restate the stack the hero was tuned against — the demo is a TUI
+               and its box-drawing characters only line up in these fonts. */
+            font-family: "Cascadia Code", "Source Code Pro", Menlo, Consolas,
+                         "DejaVu Sans Mono", monospace, "Symbols Nerd Font" !important;
         }
         /* Keep the player muted — no control bar chrome in the hero. */
         .asciinema-host .ap-control-bar {
@@ -2099,7 +2104,22 @@
     <!-- Asciinema player: recorded demo of Fresh. Keeps the static hero PNG if
          the bundle or cast fail to load.
 
-         The bundle is deferred so its ~176KB never blocks the parser. Deferred
+         Vendored build: asciinema-player 3.12.1, from
+         https://cdn.jsdelivr.net/npm/asciinema-player@3.12.1/dist/bundle/
+         (asciinema-player.min.js + asciinema-player.css).
+
+         Pinned to 3.12.1 on purpose — do not bump blindly (see issue #3106).
+         From 3.13.0 on, the renderer splits the terminal into three stacked
+         layers inside div.ap-term: a <canvas> painting every cell's BACKGROUND
+         colour, an <svg>, and a <pre> holding only the text. On Chrome/Linux
+         that canvas intermittently never paints — about half of page loads —
+         and because the cell backgrounds live nowhere else, the hero collapses
+         to an unreadable near-black rectangle even though the text spans are
+         present and visible. 3.12.1 is the last release whose renderer is a
+         single <pre class="ap-terminal"> with per-span background colours, so
+         there is no separate compositing layer that can fail.
+
+         The bundle is deferred so its ~160KB never blocks the parser. Deferred
          scripts run before DOMContentLoaded, so by the time the listener below
          fires, AsciinemaPlayer is defined. -->
     <script defer src="public/vendor/asciinema-player/asciinema-player.min.js"></script>
