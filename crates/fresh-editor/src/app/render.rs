@@ -6071,18 +6071,20 @@ impl Editor {
         // `Frame::resolve_dock`, which is what the frame-parity test runs.
         // They were separate before, each with its own constants, so the test
         // could pass while this path disagreed with it.
-        let requested = match self.dock.as_ref().map(|f| f.placement) {
-            Some(super::PanelPlacement::LeftDock { width_cols }) => Some(width_cols),
-            // Nothing mounted, and orchestrator mode is waiting for the panel
-            // its `ready` hook will mount: hold the column open at the width
-            // that mount will ask for, so the editor is never laid out across
-            // columns it is about to lose (see `Editor::dock_reserved`).
-            None if self.dock_reserved => Some(
-                self.dock_width
-                    .unwrap_or_else(|| crate::view::shell::frame::dock_default_width(size.width)),
-            ),
-            _ => None,
-        };
+        // The slot is open with a panel in it, or held open for one on its
+        // way (`Editor::dock_reserved`); either way the column is the same
+        // width, from the same two facts: the explicit width if there is
+        // one, else the rule — re-read every frame, which is what makes the
+        // dock follow a resize.
+        let slot_open = self
+            .dock
+            .as_ref()
+            .is_some_and(|f| matches!(f.placement, super::PanelPlacement::LeftDock))
+            || (self.dock.is_none() && self.dock_reserved);
+        let requested = slot_open.then(|| {
+            self.dock_width
+                .unwrap_or_else(|| self.dock_width_rule.width(size.width))
+        });
         let Some(width) = crate::view::shell::frame::dock_width(requested, size.width) else {
             return (None, size);
         };
@@ -6497,13 +6499,14 @@ impl Editor {
             // it, and is gone otherwise — see `widgets::Ctx::scrollbar_reveal`
             // for why that is a fact handed down rather than a rule the tree
             // could apply itself.
-            scrollbar_reveal: matches!(panel.placement, super::PanelPlacement::LeftDock { .. })
-                .then(|| {
+            scrollbar_reveal: matches!(panel.placement, super::PanelPlacement::LeftDock).then(
+                || {
                     panel.scrollbar_zone_hovered
                         || panel
                             .scrollbar_flash_until
                             .is_some_and(|until| self.time_source().now() < until)
-                }),
+                },
+            ),
             // **The panel's keymap: the mode its plugin defined.** The one
             // it declared at mount, or else the active window's editor mode,
             // which is how a plugin that mounts a centred form declares one;
@@ -6553,8 +6556,9 @@ impl Editor {
             super::PanelPlacement::Anchored { x, y } => Spot::Anchored { x, y },
             // The dock panel's frame is the dock column's, not this box's —
             // and a sidebar section's is its column's.
-            super::PanelPlacement::LeftDock { .. }
-            | super::PanelPlacement::SidebarSection { .. } => return None,
+            super::PanelPlacement::LeftDock | super::PanelPlacement::SidebarSection { .. } => {
+                return None
+            }
         };
         Some(Panel {
             // **No interior means no panel**: a slot whose panel the registry
@@ -6777,26 +6781,36 @@ impl Editor {
 
 #[cfg(test)]
 mod dock_reservation_tests {
-    //! The dock column orchestrator mode holds open while the plugin that
-    //! fills it is still on its way — see [`Editor::dock_reserved`].
+    //! The dock column the host holds open at startup for the plugin that
+    //! will fill it — see [`Editor::dock_reserved`] and
+    //! [`Editor::apply_startup_dock_chrome`].
     use super::*;
-    use crate::config::Config;
+    use crate::config::{Config, PluginConfig};
     use crate::config_io::DirectoryContext;
     use std::sync::Arc;
 
     const COLS: u16 = 120;
     const ROWS: u16 = 40;
 
-    /// An editor with the plugin runtime up (the reservation is paired with a
-    /// `ready` hook that was really dispatched, so a plugin-less editor never
-    /// reserves anything) in the mode a bare `fresh` launches into.
-    fn orchestrator_editor() -> Editor {
+    /// A data/config home with `plugins/<name>.manifest.json` planted, so the
+    /// host's discovery finds a declaration without any plugin code to run.
+    /// The tempdir is leaked for the editor's lifetime, as the neighbouring
+    /// test editors do.
+    fn home_with_manifest(manifest: Option<&str>) -> DirectoryContext {
         let temp = tempfile::tempdir().unwrap();
         let dir_context = DirectoryContext::for_testing(temp.path());
-        // Keep the temp dir alive for the editor's lifetime.
+        if let Some(body) = manifest {
+            let plugins = dir_context.config_dir.join("plugins");
+            std::fs::create_dir_all(&plugins).unwrap();
+            std::fs::write(plugins.join("orchestrator.manifest.json"), body).unwrap();
+        }
         std::mem::forget(temp);
+        dir_context
+    }
+
+    fn editor_in(dir_context: DirectoryContext, config: Config, orchestrator_mode: bool) -> Editor {
         Editor::for_test(
-            Config::default(),
+            config,
             COLS,
             ROWS,
             None,
@@ -6807,51 +6821,195 @@ mod dock_reservation_tests {
             None,
             true,
             false,
-            true,
+            orchestrator_mode,
         )
         .unwrap()
     }
+
+    const DECLARES_DOCK: &str = r#"{"chrome":{"dock":{"open_setting":"autoOpenDock"}}}"#;
 
     fn frame() -> ratatui::layout::Rect {
         ratatui::layout::Rect::new(0, 0, COLS, ROWS)
     }
 
-    /// **The layout that the first frame shows is the layout it keeps.**
-    ///
-    /// `ready` is fire-and-forget onto the plugin thread, behind that
-    /// thread's own plugin loading, so the dock lands a few hundred
-    /// milliseconds after the editor is first painted. Firing the hook
-    /// carves the column then and there; the editor is never laid out across
-    /// cells it is about to lose.
-    #[test]
-    fn the_ready_hook_carves_the_docks_column_before_the_dock_arrives() {
-        let mut editor = orchestrator_editor();
-        let (dock, chrome) = editor.compute_dock_split(frame());
-        assert!(dock.is_none(), "nothing is reserved before `ready` fires");
-        assert_eq!(chrome.width, COLS);
-
-        editor.fire_ready_hook();
-        let want = crate::view::shell::frame::dock_default_width(COLS);
-        let (dock, chrome) = editor.compute_dock_split(frame());
-        assert_eq!(
-            dock.map(|d| d.width),
-            Some(want),
-            "the column is held at the width the mount will ask for"
-        );
-        assert_eq!((chrome.x, chrome.width), (want, COLS - want));
+    fn dock_width_of(editor: &Editor) -> Option<u16> {
+        editor.compute_dock_split(frame()).0.map(|d| d.width)
     }
 
-    /// And released by the hook's own sentinel: every command the handler
-    /// sent is ahead of it in the channel, so a dock that is ever going to
-    /// mount has mounted by now, and a column still empty belongs to nobody.
-    /// (Which is what happens when the orchestrator plugin is switched off —
-    /// as it is here, with no plugins installed at all.)
+    /// **The layout the first frame shows is the layout it keeps.** A plugin
+    /// that declares the dock gets its column carved at construction, at the
+    /// width the declared rule gives this frame — before any plugin has run.
+    #[test]
+    fn a_declared_dock_is_carved_before_any_plugin_runs() {
+        let editor = editor_in(
+            home_with_manifest(Some(DECLARES_DOCK)),
+            Config::default(),
+            false,
+        );
+        let want = crate::view::shell::frame::dock_default_width(COLS);
+        assert_eq!(dock_width_of(&editor), Some(want));
+        let (_, chrome) = editor.compute_dock_split(frame());
+        assert_eq!((chrome.x, chrome.width), (want, COLS - want));
+        assert_eq!(
+            editor.dock_cols_if_open(),
+            want,
+            "what the plugin lays out to"
+        );
+    }
+
+    /// No declaration, no column: the host holds nothing open for a plugin
+    /// that never said it would fill it.
+    #[test]
+    fn no_declaration_reserves_nothing() {
+        let editor = editor_in(home_with_manifest(None), Config::default(), false);
+        assert_eq!(dock_width_of(&editor), None);
+        let editor = editor_in(
+            home_with_manifest(Some(r#"{"chrome":{}}"#)),
+            Config::default(),
+            false,
+        );
+        assert_eq!(dock_width_of(&editor), None);
+    }
+
+    /// The manifest's width rule is the host's from the first frame.
+    #[test]
+    fn the_declared_width_rule_is_adopted() {
+        let editor = editor_in(
+            home_with_manifest(Some(r#"{"chrome":{"dock":{"width":{"min":30,"max":30}}}}"#)),
+            Config::default(),
+            false,
+        );
+        assert_eq!(dock_width_of(&editor), Some(30));
+    }
+
+    /// The plugin's own switch, named in the manifest: `false` in the user's
+    /// settings and the dock never opens itself...
+    #[test]
+    fn the_named_setting_switches_auto_open_off() {
+        let mut config = Config::default();
+        config.plugins.insert(
+            "orchestrator".into(),
+            PluginConfig {
+                enabled: true,
+                path: None,
+                settings: serde_json::json!({ "autoOpenDock": false }),
+            },
+        );
+        let editor = editor_in(
+            home_with_manifest(Some(DECLARES_DOCK)),
+            config.clone(),
+            false,
+        );
+        assert_eq!(dock_width_of(&editor), None);
+        // ...except for a bare `fresh`, which is a request for the switcher.
+        let editor = editor_in(home_with_manifest(Some(DECLARES_DOCK)), config, true);
+        assert!(dock_width_of(&editor).is_some());
+    }
+
+    /// A disabled plugin declares nothing.
+    #[test]
+    fn a_disabled_plugin_declares_nothing() {
+        let mut config = Config::default();
+        config.plugins.insert(
+            "orchestrator".into(),
+            PluginConfig {
+                enabled: false,
+                path: None,
+                settings: serde_json::Value::Null,
+            },
+        );
+        let editor = editor_in(home_with_manifest(Some(DECLARES_DOCK)), config, false);
+        assert_eq!(dock_width_of(&editor), None);
+    }
+
+    /// The mount that fills the column is what releases the reservation —
+    /// and what is remembered: mounted, the dock comes back next launch;
+    /// unmounted by the user, it stays away.
+    #[test]
+    fn what_the_user_leaves_is_what_comes_back() {
+        let dir_context = home_with_manifest(Some(DECLARES_DOCK));
+        let mut editor = editor_in(dir_context.clone(), Config::default(), false);
+        assert!(editor.dock_reserved, "held open on a first launch");
+
+        let mount = |editor: &mut Editor| {
+            editor
+                .handle_plugin_command(fresh_core::api::PluginCommand::MountFloatingWidget {
+                    plugin: "orchestrator".into(),
+                    panel_id: 7,
+                    spec: fresh_core::api::WidgetSpec::Raw {
+                        entries: Vec::new(),
+                        key: None,
+                    },
+                    width_pct: 100,
+                    height_pct: 100,
+                    as_dock: true,
+                    focus_marker: false,
+                    title: None,
+                    closable: false,
+                    start_blurred: true,
+                    mode: None,
+                    label_align: fresh_core::api::LabelAlign::Left,
+                })
+                .unwrap();
+        };
+        mount(&mut editor);
+        assert!(!editor.dock_reserved, "the mount fills the column");
+        assert!(
+            dock_width_of(&editor).is_some(),
+            "...and the column is the same"
+        );
+
+        // Close it, as Toggle Dock does.
+        editor
+            .handle_plugin_command(fresh_core::api::PluginCommand::UnmountFloatingWidget {
+                plugin: "orchestrator".into(),
+                panel_id: 7,
+            })
+            .unwrap();
+        assert_eq!(dock_width_of(&editor), None);
+
+        // Next launch: closed is remembered, over the manifest's `open`.
+        let editor = editor_in(dir_context.clone(), Config::default(), false);
+        assert!(!editor.dock_reserved, "the user closed it");
+        assert_eq!(dock_width_of(&editor), None);
+        // ...unless it is a bare `fresh`.
+        let editor = editor_in(dir_context.clone(), Config::default(), true);
+        assert!(editor.dock_reserved);
+
+        // Open it again and drag it: both come back.
+        let mut editor = editor_in(dir_context.clone(), Config::default(), false);
+        mount(&mut editor);
+        editor.handle_dock_resize_drag(37); // the wall lands on column 37: width 38
+        editor.persist_dock_chrome();
+        let editor = editor_in(dir_context, Config::default(), false);
+        assert_eq!(
+            dock_width_of(&editor),
+            Some(38),
+            "open, at the dragged width"
+        );
+    }
+
+    /// Released by the `ready` hook's own sentinel when nothing mounted: every
+    /// command the handlers sent is ahead of it in the channel, so a column
+    /// still empty then belongs to nobody. (The plugin errored, say — or, as
+    /// here, there is a manifest and no plugin behind it at all.)
     #[test]
     fn the_hooks_own_sentinel_releases_a_column_nothing_mounted_into() {
-        let mut editor = orchestrator_editor();
-        editor.fire_ready_hook();
-        assert!(editor.compute_dock_split(frame()).0.is_some());
-
+        let mut editor = editor_in(
+            home_with_manifest(Some(DECLARES_DOCK)),
+            Config::default(),
+            false,
+        );
+        assert!(dock_width_of(&editor).is_some());
+        editor
+            .handle_plugin_command(fresh_core::api::PluginCommand::HookCompleted {
+                hook_name: "plugins_loaded".to_string(),
+            })
+            .unwrap();
+        assert!(
+            dock_width_of(&editor).is_some(),
+            "another hook's sentinel is not `ready`'s"
+        );
         editor
             .handle_plugin_command(fresh_core::api::PluginCommand::HookCompleted {
                 hook_name: "ready".to_string(),
@@ -6860,46 +7018,9 @@ mod dock_reservation_tests {
         let (dock, chrome) = editor.compute_dock_split(frame());
         assert!(dock.is_none(), "the column goes back to the editor");
         assert_eq!(chrome.width, COLS);
-    }
-
-    /// Another hook's sentinel is not `ready`'s: the column stays.
-    #[test]
-    fn another_hooks_sentinel_leaves_the_reservation_alone() {
-        let mut editor = orchestrator_editor();
-        editor.fire_ready_hook();
-        editor
-            .handle_plugin_command(fresh_core::api::PluginCommand::HookCompleted {
-                hook_name: "plugins_loaded".to_string(),
-            })
-            .unwrap();
-        assert!(editor.compute_dock_split(frame()).0.is_some());
-    }
-
-    /// An ordinary launch — one that names a directory or a file — reserves
-    /// nothing: its dock opens only if the user asks for it, or if the
-    /// `autoOpenDock` setting is on, and neither is a promise the host can
-    /// make on the plugin's behalf.
-    #[test]
-    fn an_ordinary_launch_reserves_nothing() {
-        let temp = tempfile::tempdir().unwrap();
-        let dir_context = DirectoryContext::for_testing(temp.path());
-        std::mem::forget(temp);
-        let mut editor = Editor::for_test(
-            Config::default(),
-            COLS,
-            ROWS,
-            None,
-            dir_context,
-            crate::view::color_support::ColorCapability::TrueColor,
-            Arc::new(crate::model::filesystem::StdFileSystem),
-            None,
-            None,
-            true,
-            false,
-            false,
-        )
-        .unwrap();
-        editor.fire_ready_hook();
-        assert!(editor.compute_dock_split(frame()).0.is_none());
+        // Not the user's doing, so nothing is remembered: the next launch
+        // holds the column open again, as the manifest says.
+        let again = editor_in(editor.dir_context.clone(), Config::default(), false);
+        assert!(again.dock_reserved);
     }
 }

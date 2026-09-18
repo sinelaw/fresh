@@ -391,28 +391,71 @@ pub const EDITOR_MIN: u16 = 20;
 pub const DOCK_MIN: u16 = 24;
 /// Wider than this and the dock is taking room it has no content for.
 pub const DOCK_MAX: u16 = 40;
-/// The share of the frame the dock asks for when nobody has said otherwise.
-const DOCK_WIDTH_FRACTION: f32 = 0.28;
 /// The dock's width on a frame whose size is not known yet.
 const DOCK_DEFAULT: u16 = 32;
 
-/// The width the dock opens at on this frame, before any user drag.
+/// How wide the dock opens before any user drag: a share of the frame,
+/// clamped.
 ///
-/// **The one copy of the responsive default**, shared by the two places that
-/// have to agree about it: the width a dock mount lands at
-/// (`handle_mount_floating_widget`) and the width the column is held open at
-/// while the orchestrator's `ready` hook is still on its way to mounting one
-/// (`Editor::compute_dock_split`). The orchestrator plugin computes the same
-/// number for the `dock_width` it re-issues on every resize
-/// (`orchestrator.ts:dockDefaultWidth`); a third number here is a visible
-/// jump the moment the dock lands, which is the whole of what the reserved
-/// column exists to prevent.
-pub fn dock_default_width(frame_width: u16) -> u16 {
-    if frame_width == 0 {
-        return DOCK_DEFAULT;
+/// **Host chrome, declared by the plugin that fills the slot.** The rule
+/// lived in the orchestrator plugin, which re-issued the number to the host
+/// on every resize; the host had no rule of its own and mounted a dock at a
+/// fixed 32 until that arrived. Now the plugin's manifest states the rule
+/// (`chrome.dock.width`, see `services::plugins::manifest`), the host owns
+/// it from before the first frame, and nothing is computed twice: the column
+/// held open at startup, the mount that fills it, and every resize after
+/// read one number from one place — `Editor::compute_dock_split`.
+#[derive(Clone, Copy, Debug, PartialEq, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DockWidthRule {
+    /// The share of the frame width the dock asks for.
+    #[serde(default = "DockWidthRule::default_fraction")]
+    pub fraction: f32,
+    /// Never narrower than this, whatever the fraction says.
+    #[serde(default = "DockWidthRule::default_min")]
+    pub min: u16,
+    /// Never wider than this.
+    #[serde(default = "DockWidthRule::default_max")]
+    pub max: u16,
+}
+
+impl DockWidthRule {
+    fn default_fraction() -> f32 {
+        0.28
     }
-    let target = (frame_width as f32 * DOCK_WIDTH_FRACTION).round() as u16;
-    target.clamp(DOCK_MIN, DOCK_MAX)
+    fn default_min() -> u16 {
+        DOCK_MIN
+    }
+    fn default_max() -> u16 {
+        DOCK_MAX
+    }
+
+    /// The width this rule gives a frame `frame_width` wide. A frame of
+    /// unknown width (zero) gets the fixed default rather than the floor.
+    pub fn width(&self, frame_width: u16) -> u16 {
+        if frame_width == 0 {
+            return DOCK_DEFAULT;
+        }
+        let target = (frame_width as f32 * self.fraction).round() as u16;
+        // A declared floor above the ceiling is nonsense; the floor wins,
+        // which is the answer `clamp` would panic over.
+        target.clamp(self.min, self.max.max(self.min))
+    }
+}
+
+impl Default for DockWidthRule {
+    fn default() -> Self {
+        Self {
+            fraction: Self::default_fraction(),
+            min: Self::default_min(),
+            max: Self::default_max(),
+        }
+    }
+}
+
+/// The width the dock opens at on this frame under the default rule.
+pub fn dock_default_width(frame_width: u16) -> u16 {
+    DockWidthRule::default().width(frame_width)
 }
 
 /// How wide the dock actually gets, or `None` when it does not fit.
@@ -1575,6 +1618,28 @@ mod tests {
             dock_default_width(0),
             DOCK_DEFAULT,
             "a frame of unknown width gets the fixed default"
+        );
+    }
+
+    /// A manifest states only what it changes; the rest is the default rule.
+    #[test]
+    fn a_declared_rule_fills_in_from_the_default() {
+        let rule: DockWidthRule = serde_json::from_str(r#"{"fraction": 0.5}"#).unwrap();
+        assert_eq!((rule.min, rule.max), (DOCK_MIN, DOCK_MAX));
+        assert_eq!(
+            rule.width(100),
+            DOCK_MAX,
+            "half of 100 clamps to the ceiling"
+        );
+        let rule: DockWidthRule = serde_json::from_str(r#"{"min": 30, "max": 30}"#).unwrap();
+        assert_eq!(
+            rule.width(120),
+            30,
+            "a fixed width is a floor meeting a ceiling"
+        );
+        assert!(
+            serde_json::from_str::<DockWidthRule>(r#"{"cols": 30}"#).is_err(),
+            "an unknown field is a typo, not a silent no-op"
         );
     }
 }

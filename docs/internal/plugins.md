@@ -315,6 +315,45 @@ same-plugin re-registration (hot reload) is allowed.
 After discovery and the init plugin, the editor fires the plugins-loaded hook
 then the ready hook.
 
+### 6.2a Manifests: what a plugin declares before it runs
+
+A plugin's code runs on the plugin thread, after every plugin has been
+transpiled and evaluated, and reaches the host over an asynchronous command
+channel. Anything the host needs to know **before the first frame** cannot
+come from that code. For that there is the `<plugin>.manifest.json` sidecar,
+read synchronously by the host at directory discovery
+(`services::plugins::manifest::read_manifests`, from `load_startup_plugins`)
+on both the synchronous and the deferred load paths — next to the `.i18n.json`
+and `.schema.json` sidecars a plugin already keeps. Only *enabled* plugins'
+manifests count; a file that does not parse is logged and skipped.
+
+Today a manifest declares one thing, chrome:
+
+```json
+{ "chrome": { "dock": {
+    "open": true,
+    "open_setting": "autoOpenDock",
+    "width": { "fraction": 0.28, "min": 24, "max": 40 } } } }
+```
+
+`chrome.dock` says the plugin fills the editor-global left dock. From it the
+host decides, at construction, whether the dock slot is open and how wide the
+column is (`Editor::apply_startup_dock_chrome`): the launch first (a bare
+`fresh` in Orchestrator mode always opens it), then the plugin's own switch
+(`open_setting` names a boolean in `plugins.<name>.settings`; `false` means
+the dock never opens itself), then what the user left — remembered in
+`<data>/chrome.json` (open or closed, and the dragged width) — and on a first
+launch the manifest's `open`. The width rule (`DockWidthRule`) is the host's
+from then on: it carves the column, re-fits it on resize, and the plugin reads
+the number back (`editor.dockCols()`) rather than computing one.
+
+A manifest is a declaration, not a command. The plugin still mounts its dock
+from `ready`, gated on `editor.dockOpen()`, into a column that is already
+there; a column held open for a dock that never arrives is handed back when
+the hook's `HookCompleted` sentinel lands. This is what keeps the first frame's
+layout the layout the user keeps — without it the editor was painted full
+width and the dock shoved it aside when the plugin got round to mounting it.
+
 ### 6.3 Unload cleanup
 
 Unload removes the JS context, event handlers, actions and callback contexts,

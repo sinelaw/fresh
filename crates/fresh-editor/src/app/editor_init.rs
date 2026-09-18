@@ -138,7 +138,13 @@ fn pointer_is_a_real_setting(path: &str, pointer: &str, value: &serde_json::Valu
 ///   discovered plugin configs back into `config`, and write the aggregate
 ///   `.d.ts` declarations.
 ///
-/// No-op when the plugin manager is inactive.
+/// Returns the manifests of the enabled plugins found in those directories
+/// (`services::plugins::manifest`): what each declares about itself before
+/// it runs, read here synchronously so the host can lay out for it before
+/// the first frame — on the async path too, where the plugins themselves
+/// are still loading when the editor is first painted.
+///
+/// No-op (and no manifests) when the plugin manager is inactive.
 #[allow(clippy::too_many_arguments)]
 fn load_startup_plugins(
     plugin_manager: &std::rc::Rc<RwLock<PluginManager>>,
@@ -150,9 +156,9 @@ fn load_startup_plugins(
     #[cfg_attr(not(feature = "embed-plugins"), allow(unused_variables))]
     enable_embedded_plugins: bool,
     defer_plugin_load: bool,
-) {
+) -> HashMap<String, crate::services::plugins::manifest::PluginManifest> {
     if !plugin_manager.read().unwrap().is_active() {
-        return;
+        return HashMap::new();
     }
     let mut plugin_dirs: Vec<std::path::PathBuf> = vec![];
 
@@ -205,6 +211,11 @@ fn load_startup_plugins(
             working_dir
         );
     }
+
+    // Before any plugin code runs, on either path below: a sidecar read is
+    // cheap, and what it declares is needed by the first frame.
+    let manifests =
+        crate::services::plugins::manifest::read_manifests(&plugin_dirs, &config.plugins);
 
     if defer_plugin_load {
         // Async startup path: hand each dir + a trailing
@@ -350,6 +361,7 @@ fn load_startup_plugins(
         let declarations = plugin_manager.read().unwrap().plugin_declarations();
         crate::init_script::write_plugin_declarations(&dir_context.config_dir, &declarations);
     }
+    manifests
 }
 
 /// Pre-built non-trivial inputs handed to [`Editor::from_parts`].
@@ -760,6 +772,7 @@ impl Editor {
             dock: None,
             dock_reserved: false,
             dock_width: None,
+            dock_width_rule: crate::view::shell::frame::DockWidthRule::default(),
             dock_resizing: false,
             sidebar_sections: vec![sidebar::SidebarSection::explorer()],
             sidebar_drag: None,
@@ -1321,7 +1334,7 @@ impl Editor {
 
         // Discover plugin directories and load every plugin (see the helper for
         // the discovery order and the async-vs-sync load paths).
-        load_startup_plugins(
+        let plugin_manifests = load_startup_plugins(
             &plugin_manager,
             &dir_context,
             &scan_result.bundle_plugin_dirs,
@@ -1619,6 +1632,10 @@ impl Editor {
         let mut editor = Editor::from_parts(parts);
 
         t.phase("editor_struct_assembly");
+        // The chrome the first frame is laid out with: whether the dock
+        // slot is open and how wide, decided here from what the plugins
+        // declared and what the user left, before any plugin has run.
+        editor.apply_startup_dock_chrome(&plugin_manifests, orchestrator_mode);
         // Apply clipboard configuration
         editor.clipboard.apply_config(&editor.config.clipboard);
 
@@ -2187,25 +2204,13 @@ impl Editor {
     }
 
     /// Fire the `ready` hook (design M2, §3.3 phase 3).
-    ///
-    /// In orchestrator mode this is also where the dock's column is reserved.
-    /// `ready` is where the orchestrator plugin opens the dock, and it is
-    /// fire-and-forget: the hook is queued onto the plugin thread *behind
-    /// that thread's plugin loading*, so the mount lands a few hundred
-    /// milliseconds after the first frame. Reserving here — rather than at
-    /// construction — pairs the reservation with this dispatch, whose
-    /// `HookCompleted` sentinel always follows and is what releases it (see
-    /// [`Editor::dock_reserved`]).
-    pub fn fire_ready_hook(&mut self) {
+    pub fn fire_ready_hook(&self) {
         #[cfg(feature = "plugins")]
         if self.plugin_manager.read().unwrap().is_active() {
             self.plugin_manager
                 .read()
                 .unwrap()
                 .run_hook("ready", crate::services::plugins::hooks::HookArgs::Ready {});
-            if self.orchestrator_mode {
-                self.dock_reserved = true;
-            }
         }
     }
 

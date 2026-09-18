@@ -558,11 +558,12 @@ impl Editor {
 
     /// Fire the plugin `resize` hook and rerender mounted panels, but only
     /// when the content geometry plugins observe has actually changed since
-    /// the last notification. The dedupe is load-bearing: the orchestrator
-    /// reacts to `resize` by re-issuing the dock's `dock_width`, which loops
-    /// back through `relayout`; without the signature guard that would
-    /// re-fire every frame. Once the dock width settles the signature stops
-    /// changing and the cascade stops.
+    /// the last notification. The dedupe is load-bearing: a plugin that
+    /// answers `resize` with a layout change of its own loops back through
+    /// `relayout`, and without the signature guard that would re-fire every
+    /// frame. (The orchestrator used to do exactly that, re-issuing the
+    /// dock's width on every resize; the host owns the width now and re-fits
+    /// it itself, but the guard stays for any plugin that reacts this way.)
     fn notify_layout_changed(&mut self) {
         let dock_cols = self.dock_cols();
         // File-explorer width of the active window, measured against the

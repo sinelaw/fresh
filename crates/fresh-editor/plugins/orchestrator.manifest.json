@@ -1,0 +1,9 @@
+{
+  "chrome": {
+    "dock": {
+      "open": true,
+      "open_setting": "autoOpenDock",
+      "width": { "fraction": 0.28, "min": 24, "max": 40 }
+    }
+  }
+}

@@ -3453,6 +3453,23 @@ interface EditorAPI {
 	*/
 	orchestratorMode(): boolean;
 	/**
+	* Whether the left dock slot is open: a panel is in it, or the host is
+	* holding the column for one it was told to expect. Exposed to JS as
+	* `editor.dockOpen()`. The plugin that fills the dock mounts it at
+	* `ready` iff this is true — the host decided from the plugin's
+	* manifest, the user's remembered chrome and the launch mode, before
+	* the first frame, so the column is already there when the mount lands.
+	*/
+	dockOpen(): boolean;
+	/**
+	* The dock column's width in cells — what the slot has, or would get if
+	* opened now; `0` when the terminal is too narrow for a dock. Exposed to
+	* JS as `editor.dockCols()`. Lay dock content out to this rather than
+	* computing a width of your own: the host owns the width (the rule your
+	* manifest declared, or the user's drag) and re-fits it on resize.
+	*/
+	dockCols(): number;
+	/**
 	* The environment core detected in the workspace, as a JSON string
 	* (`{name, kind, snippet}`) or empty when none. Exposed to JS as
 	* `editor.detectedEnv()`. Detection lives only in core; the env-manager

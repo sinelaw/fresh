@@ -372,26 +372,30 @@ What the mode is, end to end:
   path already synthesizes for the blank-workspace settings. An untitled buffer
   answers "you have nothing open, here is somewhere to type", which is the
   wrong question when the dock is showing your workspaces.
-- **The dock opens** on the `ready` hook, regardless of the plugin's own
-  `autoOpenDock` setting — the mode overrides it, since a bare `fresh` is a
-  request for the switcher. The plugin reads the launch mode (not the config
-  preference, which stays on for `fresh FILE`) via `editor.orchestratorMode()`.
-- **The column is carved before the dock exists.** `ready` is fire-and-forget
-  onto the plugin thread, *behind that thread's own plugin loading*, so the
-  mount lands a few hundred milliseconds after the editor is first painted:
-  the UI came up full-width and the dock shoved it aside a moment later.
-  `Editor::fire_ready_hook` therefore sets `Editor::dock_reserved` when it
-  fires the hook in orchestrator mode, and `compute_dock_split` holds the
-  column open at `frame::dock_default_width` — the same responsive number the
-  mount takes (`handle_mount_floating_widget`) and the plugin re-issues as
-  `dock_width` on every resize (`orchestrator.ts:dockDefaultWidth`), so the
-  dock fills the column instead of moving it. The column paints its own ground
-  and divider while it is empty (`Frame::dock_reserved` → `shell::dock::dock`),
-  since nothing else paints a slot with no panel in it. The reservation is
-  released by the hook's own `HookCompleted` sentinel: every command the
-  handlers sent is ahead of it in the channel, so a dock that was ever going
-  to mount has mounted by then, and a column still empty (the plugin is
-  disabled) is handed back to the editor with a redraw and a relayout.
+- **The dock opens** — regardless of the plugin's own `autoOpenDock` setting
+  and of whether the user last closed it: the mode overrides both, since a
+  bare `fresh` is a request for the switcher. The host makes that call at
+  construction (`Editor::apply_startup_dock_chrome`, from the launch mode it
+  was built with), and the plugin mounts at `ready` because
+  `editor.dockOpen()` says so.
+- **The column is carved before the dock exists.** The dock's *content* is
+  this plugin's, mounted from `ready` — fire-and-forget onto the plugin
+  thread, after every plugin has loaded (on the TUI path, hundreds of
+  milliseconds after the first frame). Left to that, the editor was painted
+  full width and the dock shoved it aside when the mount landed. The
+  *column* is the host's: the plugin declares the dock in
+  `orchestrator.manifest.json` (`chrome.dock`: open by default, `autoOpenDock`
+  as the switch, the width rule), the host remembers what the user left it as
+  in `<data>/chrome.json`, and `Editor::apply_startup_dock_chrome` decides at
+  construction — launch mode, then the switch, then memory, then the
+  manifest — whether the slot is open and how wide. `compute_dock_split` lays
+  the column out from the first frame; the plugin mounts at `ready` iff
+  `editor.dockOpen()`, into the column that is already there, laid out to
+  `editor.dockCols()`. Empty, the column paints its own ground and divider
+  (`Frame::dock_reserved`), since nothing else paints a slot with no panel.
+  A column held open for a dock that never arrives (the plugin errored) is
+  handed back when the hook's `HookCompleted` sentinel lands. See
+  `docs/internal/plugins.md` §6.2a for the manifest.
 - **First run** — no workspaces at all — boots a clean base window at the cwd
   and lands on the welcome screen. Nothing special-cases the welcome screen to
   get there: it opens itself as a background tab as always, and a background

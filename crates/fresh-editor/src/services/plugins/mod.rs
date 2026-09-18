@@ -13,6 +13,7 @@ pub mod bridge;
 pub mod event_hooks;
 pub mod hooks;
 pub mod manager;
+pub mod manifest;
 
 #[cfg(feature = "embed-plugins")]
 pub mod embedded;
