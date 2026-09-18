@@ -692,8 +692,9 @@ fn test_save_as_nested_path() {
     // use a wide terminal to avoid truncation of long macOS temp paths)
     harness.assert_screen_contains("does not exist");
 
-    // Confirm directory creation
-    harness.type_text("c").unwrap();
+    // Confirm directory creation with the Create Folder button's letter
+    // (`c` is Cancel)
+    harness.type_text("f").unwrap();
     harness.render().unwrap();
 
     // File should be saved successfully
