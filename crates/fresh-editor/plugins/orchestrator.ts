@@ -3581,7 +3581,7 @@ function buildPreviewEntries(
       styledRow([
         {
           text: editor.t("preview.no_workspace_selected"),
-          style: { fg: "editor.whitespace_indicator_fg", italic: true },
+          style: { fg: "ui.menu_disabled_fg", italic: true },
         },
       ]),
     ];
@@ -10512,10 +10512,10 @@ function worktreeFields(f: NewSessionForm): WidgetSpec[] {
     out.push(
       label(`[ ] ${editor.t("form.create_worktree_short")}`, {
         labelWidth: FORM_LABEL_W,
-        style: { fg: "editor.whitespace_indicator_fg" },
+        style: { fg: "ui.menu_disabled_fg" },
       }),
       fieldNote(editor.t("form.disabled_non_git").replace(/^\s*[(（]|[)）]\s*$/g, ""), {
-        fg: "editor.whitespace_indicator_fg",
+        fg: "ui.menu_disabled_fg",
         italic: true,
       }),
     );
@@ -10616,10 +10616,10 @@ function remoteWorktreeFields(f: NewSessionForm): WidgetSpec[] {
     out.push(
       label(`[ ] ${editor.t("form.create_worktree_short")}`, {
         labelWidth: FORM_LABEL_W,
-        style: { fg: "editor.whitespace_indicator_fg" },
+        style: { fg: "ui.menu_disabled_fg" },
       }),
       fieldNote(editor.t("form.remote_probing"), {
-        fg: "editor.whitespace_indicator_fg",
+        fg: "ui.menu_disabled_fg",
         italic: true,
       }),
     );
@@ -10648,10 +10648,10 @@ function remoteWorktreeFields(f: NewSessionForm): WidgetSpec[] {
     out.push(
       label(`[ ] ${editor.t("form.create_worktree_short")}`, {
         labelWidth: FORM_LABEL_W,
-        style: { fg: "editor.whitespace_indicator_fg" },
+        style: { fg: "ui.menu_disabled_fg" },
       }),
       fieldNote(editor.t("form.remote_non_git"), {
-        fg: "editor.whitespace_indicator_fg",
+        fg: "ui.menu_disabled_fg",
         italic: true,
       }),
     );
@@ -10661,7 +10661,7 @@ function remoteWorktreeFields(f: NewSessionForm): WidgetSpec[] {
   out.push(formToggle(on, editor.t("form.create_worktree_short"), "worktree"));
   if (f.remoteIsGit === null) {
     out.push(fieldNote(editor.t("form.remote_unknown"), {
-      fg: "editor.whitespace_indicator_fg",
+      fg: "ui.menu_disabled_fg",
       italic: true,
     }));
     return out;
@@ -15520,7 +15520,21 @@ editor.on("widget_event", (e) => {
       if (dockMode) {
         // `+ New` goes straight to the dialog — a centered modal in its
         // own slot, so the dock stays visible behind it.
+        //
+        // **Repaint the dock here, before the modal is mounted.** The press
+        // that activated this button moved the panel's focus onto it, and a
+        // tree that loses focus drops its highlight (the host clears it, so
+        // a focus ring and a highlighted row are never up at once). The dock
+        // is about to be the inert background, where the rule is the
+        // opposite — `buildDockSpec` pins the highlight to the active
+        // workspace on every blurred paint — and the paint that re-asserts
+        // it would otherwise be the one the host's own `blur` notification
+        // triggers, which lands a few hundred ms later, with the modal
+        // already up. The dock must not change under a modal, so it settles
+        // now: `refreshOpenDialog` pushes the spec *and* re-pins the
+        // highlight (the tree's `selectedIndex` is a seed, not a setter).
         dockBlurred = true;
+        refreshOpenDialog();
         openForm({ fromPicker: true });
         return;
       }

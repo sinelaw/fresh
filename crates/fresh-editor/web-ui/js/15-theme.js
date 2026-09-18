@@ -64,7 +64,7 @@ const WEB_THEME_VARS = {
   // controlAccent / selectedContentBackground blue (#0064e1). Values follow the
   // documented macOS system colours (developer.apple.com HIG + NSColor dumps).
   macos: {
-    "--fg": "#1d1d1f", "--muted": "#8a8a8e",
+    "--fg": "#1d1d1f", "--muted": "#6e6e73",
     "--bg2": "#ffffff", "--bg3": "#f2f2f4",
     "--menuhi": "#0064e1", "--border": "#d3d3d8",
     "--status-bg": "#ececec", "--status-fg": "#71717a",
@@ -126,7 +126,7 @@ const WEB_THEME_VARS = {
   // hard offset drop shadow instead of a soft one. Structure (bevels, metal
   // gradients, scanlines) lives in css/95-theme-winamp.css.
   winamp: {
-    "--fg": "#e9d9c2", "--muted": "#9b856a",
+    "--fg": "#e9d9c2", "--muted": "#bda88c",
     "--bg2": "#4a2d1c", "--bg3": "#3b2417",
     "--menuhi": "#313c90", "--border": "#1b1109",
     "--status-bg": "#050705", "--status-fg": "#1a8f43",
@@ -230,6 +230,22 @@ function applyWebTheme() {
     if (k in vars) r.setProperty(k, vars[k]);
     else if (!THEME_KEYS.includes(k)) r.removeProperty(k);   // back to the :root default
     // keys applyTheme owns are left as it just set them (Cosmos wants the TUI value)
+  }
+  // A skin may replace the fills themselves (Winamp's navy highlight, macOS's
+  // blue), and the ink that goes ON a fill is computed from it — so recompute
+  // after the overrides land, or a row keeps the ink picked for the editor
+  // theme's fill (gruvbox's amber ink on Winamp's navy measured 1.9:1).
+  //
+  // Only when the skin actually replaced that fill, and only when the skin
+  // did not state the ink itself. Otherwise this overwrites two better
+  // answers: the ink a skin declared (macOS Dark names `--on-accent`), and
+  // the ink the THEME declared (`menu_highlight_fg`, which applyTheme just
+  // set and which beats any black-or-white pick).
+  const eff = getComputedStyle(document.documentElement);
+  for (const [fill, ink] of [["--menuhi", "--on-menuhi"], ["--accent", "--on-accent"]]) {
+    if (!(fill in vars) || ink in vars) continue;
+    const c = onColor(eff.getPropertyValue(fill).trim());
+    if (c) r.setProperty(ink, c); else r.removeProperty(ink);
   }
   // Density: re-measure only when the multiplier actually changed (this runs on
   // every full render). The caller (render/hello) re-fits the grid afterwards.
