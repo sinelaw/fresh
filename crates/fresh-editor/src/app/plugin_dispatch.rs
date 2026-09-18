@@ -852,8 +852,10 @@ impl Editor {
                 // dock does: a full redraw for the stale glyphs and a
                 // relayout for the reclaimed width. With a dock in it there
                 // is no geometry change at all, and the release is bookkeeping.
-                if hook_name == "ready" {
-                    self.release_startup_dock_reservation();
+                // Frames were painted with the empty column in them, so the
+                // reclaimed strip gets the full repaint hiding the dock gets.
+                if hook_name == "ready" && self.release_startup_dock_reservation() {
+                    self.request_full_redraw();
                 }
             }
             PluginCommand::SetLineIndicator {

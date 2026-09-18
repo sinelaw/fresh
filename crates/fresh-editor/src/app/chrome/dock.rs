@@ -125,22 +125,27 @@ impl Editor {
     }
 
     /// Hand back a column held open at startup that nothing mounted into.
+    /// Returns whether there was one to hand back.
     ///
     /// The startup window is over: in production the `ready` hook's
     /// `HookCompleted` sentinel says so (every command its handlers sent is
     /// ahead of it in the channel, so a dock that was ever going to mount
     /// has), and a test harness that runs no startup hooks says so itself
     /// (`HarnessOptions::with_startup_chrome`), or the column would sit
-    /// empty for the whole test. Freeing a full-height strip ends the way
-    /// hiding the dock does — a full redraw for the stale glyphs and a
-    /// relayout for the reclaimed width. Nothing is remembered: the column
-    /// going away is not the user's doing. A no-op once a dock is mounted,
-    /// which is the mount having cleared the reservation already.
-    pub fn release_startup_dock_reservation(&mut self) {
-        if std::mem::take(&mut self.dock_reserved) && self.dock.is_none() {
-            self.request_full_redraw();
+    /// empty for the whole test. The chrome reflows to the reclaimed width
+    /// through the one layout funnel; whether the strip also needs a full
+    /// repaint is the caller's to say, because only the caller knows if a
+    /// frame was ever painted with the column in it — the sentinel arrives
+    /// after several, the harness releases before any. Nothing is
+    /// remembered: the column going away is not the user's doing. A no-op
+    /// once a dock is mounted, which is the mount having cleared the
+    /// reservation already.
+    pub fn release_startup_dock_reservation(&mut self) -> bool {
+        let released = std::mem::take(&mut self.dock_reserved) && self.dock.is_none();
+        if released {
             self.relayout();
         }
+        released
     }
 
     /// Write the dock's chrome to `chrome.json`: whether a dock is mounted
