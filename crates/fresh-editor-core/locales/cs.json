@@ -1708,7 +1708,7 @@
   "dialog.btn.skip": "Přeskočit",
   "dialog.btn.skip_all": "Přeskočit vše",
   "dialog.btn.rename": "Přejmenovat…",
-  "dialog.btn.create": "Vytvořit",
+  "dialog.btn.create": "Vytvořit složku",
   "dialog.btn.revert": "Vrátit",
   "dialog.btn.save_with_sudo": "Uložit přes sudo",
   "dialog.btn.load": "Načíst",

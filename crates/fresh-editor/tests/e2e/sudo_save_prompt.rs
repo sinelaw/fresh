@@ -176,9 +176,9 @@ fn test_sudo_prompt_cancel_returns_to_editing() {
     // Verify sudo prompt appears
     let screen = harness.screen_to_string();
     if screen.contains("sudo") {
-        // Cancel the sudo prompt with 'n' (No)
+        // Cancel the sudo prompt with the Cancel button's letter
         harness
-            .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
+            .send_key(KeyCode::Char('c'), KeyModifiers::NONE)
             .unwrap();
         harness.render().unwrap();
 

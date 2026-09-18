@@ -850,8 +850,8 @@ fn test_file_explorer_focus_after_delete() {
         screen_prompt
     );
 
-    // Confirm deletion with 'y'
-    harness.type_text("y").unwrap();
+    // Confirm deletion with the Delete button's letter
+    harness.type_text("d").unwrap();
     harness.sleep(std::time::Duration::from_millis(100));
     harness.render().unwrap();
 

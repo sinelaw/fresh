@@ -197,18 +197,12 @@ impl Editor {
                 t!("dialog.title.quit").into_owned(),
                 msg.clone(),
                 vec![
-                    // `prompt.quit_confirm` advertised `(y)es, (N)o` while
-                    // `handle_confirm_quit` also takes the `Action::Quit`
-                    // letter. The button is marked with the quit letter and
-                    // answers to `y` as well, so neither spelling is a dead
-                    // key inside a modal that swallows what it does not know.
                     Choice::new(
                         t!("dialog.btn.quit").into_owned(),
                         t!("prompt.key.quit").into_owned(),
                         Tone::Safe,
-                    )
-                    .also('y'),
-                    crate::app::confirm_dialog::cancel_keyed(Some('n')),
+                    ),
+                    crate::app::confirm_dialog::cancel(),
                 ],
             )
             // `(y)es, (N)o` — the capital was the default, and this prompt

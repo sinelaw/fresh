@@ -1708,7 +1708,7 @@
   "dialog.btn.skip": "ข้าม",
   "dialog.btn.skip_all": "ข้ามทั้งหมด",
   "dialog.btn.rename": "เปลี่ยนชื่อ…",
-  "dialog.btn.create": "สร้าง",
+  "dialog.btn.create": "สร้างโฟลเดอร์",
   "dialog.btn.revert": "คืนค่า",
   "dialog.btn.save_with_sudo": "บันทึกด้วย sudo",
   "dialog.btn.load": "โหลด",

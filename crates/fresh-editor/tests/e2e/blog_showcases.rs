@@ -1494,10 +1494,10 @@ fn blog_showcase_fresh_0_2_9_large_file_scanning() {
     snap(&mut h, &mut s, Some("Ctrl+G"), 500);
     hold(&mut h, &mut s, 3, 200);
 
-    // Type "y" to accept the scan
-    h.send_key(KeyCode::Char('y'), KeyModifiers::NONE).unwrap();
+    // Press the Scan button's letter to accept the scan
+    h.send_key(KeyCode::Char('s'), KeyModifiers::NONE).unwrap();
     h.render().unwrap();
-    snap(&mut h, &mut s, Some("y"), 300);
+    snap(&mut h, &mut s, Some("s"), 300);
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
     h.render().unwrap();
     snap(&mut h, &mut s, Some("Enter"), 400);

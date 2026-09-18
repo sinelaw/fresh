@@ -1708,7 +1708,7 @@
   "dialog.btn.skip": "Ignorer",
   "dialog.btn.skip_all": "Tout ignorer",
   "dialog.btn.rename": "Renommer…",
-  "dialog.btn.create": "Créer",
+  "dialog.btn.create": "Créer le dossier",
   "dialog.btn.revert": "Rétablir",
   "dialog.btn.save_with_sudo": "Enregistrer avec sudo",
   "dialog.btn.load": "Charger",

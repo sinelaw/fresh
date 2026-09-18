@@ -35,87 +35,104 @@ pub enum Tone {
     Destructive,
 }
 
+/// Where a choice's accelerator sits in its own label.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Mnemonic {
+    /// The letter itself, matched case-insensitively.
+    pub ch: char,
+    /// Its byte range in the label, so the renderer marks the character the
+    /// user is being told to press rather than searching for it again.
+    pub at: (usize, usize),
+}
+
 /// One button on the dialog.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Choice {
     /// What the button says, already localized and spelled in full —
     /// "Discard and Quit", not "(d)iscard".
     pub label: String,
-    /// The accelerator key, which is also the letter the bottom-row prompt
-    /// used to ask for. `None` for a choice with no letter of its own.
-    ///
-    /// Case is significant: the multi-file paste conflict distinguishes `o`
-    /// (this one) from `O` (all of them), and that is the one prompt in the
-    /// editor that ever did.
-    pub mnemonic: Option<char>,
+    /// The accelerator, assigned from this label by [`assign_mnemonics`] when
+    /// the dialog is built. Never set by a caller.
+    pub mnemonic: Option<Mnemonic>,
     /// The string handed to `Editor::confirm_prompt` when this choice wins.
     /// This is what keeps every existing confirm handler working unchanged.
-    pub input: String,
-    /// Further letters that also activate this choice, but are not the one
-    /// marked in the label.
     ///
-    /// The row prompts sometimes advertised two spellings of one answer —
-    /// `prompt.quit_confirm` said `(y)es` while its handler equally accepts
-    /// the `Action::Quit` letter — and a modal that swallows every key would
-    /// turn the unlisted one into a dead key.
-    pub aliases: Vec<char>,
+    /// **Not a key.** It is the answer this prompt's handler already
+    /// understood, and no user ever types it.
+    pub input: String,
     pub tone: Tone,
 }
 
 impl Choice {
-    /// A choice whose accelerator is the first character of its `input`.
     pub fn new(label: impl Into<String>, input: impl Into<String>, tone: Tone) -> Self {
-        let input: String = input.into();
         Choice {
             label: label.into(),
-            mnemonic: input.chars().next(),
-            input,
-            aliases: Vec::new(),
-            tone,
-        }
-    }
-
-    /// A choice whose accelerator is not its input's first character.
-    pub fn with_mnemonic(
-        label: impl Into<String>,
-        mnemonic: char,
-        input: impl Into<String>,
-        tone: Tone,
-    ) -> Self {
-        Choice {
-            label: label.into(),
-            mnemonic: Some(mnemonic),
+            mnemonic: None,
             input: input.into(),
-            aliases: Vec::new(),
             tone,
         }
     }
+}
 
-    /// Another letter that activates this choice without being marked in the
-    /// label. See [`Choice::aliases`].
-    pub fn also(mut self, c: char) -> Self {
-        self.aliases.push(c);
-        self
+/// The letters a label offers as an accelerator, best first: the initial of
+/// each word, then every other character left to right.
+///
+/// Word initials first is what keeps the second-choice letter legible — a
+/// dialog with both "Cancel" and "Create Folder" marks the `F` of Folder
+/// rather than the `r` of Create.
+fn candidates(label: &str) -> Vec<(usize, char)> {
+    let (mut initials, mut rest) = (Vec::new(), Vec::new());
+    let mut starting = true;
+    for (i, c) in label.char_indices() {
+        match c.is_alphanumeric() {
+            true => {
+                match starting {
+                    true => initials.push((i, c)),
+                    false => rest.push((i, c)),
+                }
+                starting = false;
+            }
+            false => starting = true,
+        }
     }
+    initials.extend(rest);
+    initials
+}
 
-    /// Where the accelerator letter appears in the label, as a byte range, so
-    /// the renderer can mark it. `None` when the letter is not in the label at
-    /// all — a localized label need not contain the English key it answers to,
-    /// and an accelerator that is absent from the text is still an accelerator.
-    ///
-    /// `exact` forbids the case-insensitive match. Use
-    /// [`Confirm::mnemonic_span`] rather than this directly: whether the loose
-    /// match is safe depends on the *other* choices, which a `Choice` cannot
-    /// see.
-    fn span(&self, exact: bool) -> Option<(usize, usize)> {
-        let m = self.mnemonic?;
-        self.label
-            .char_indices()
-            .find(|(_, c)| match exact {
-                true => *c == m,
-                false => c.eq_ignore_ascii_case(&m),
-            })
-            .map(|(i, c)| (i, i + c.len_utf8()))
+/// Give every choice a letter **of its own label**, unique within the dialog.
+///
+/// **The accelerator is whatever the button says it is.** The letters used to
+/// be inherited from the bottom-row prompts, which chose them to be *typed* —
+/// `y` for Delete, `y`/`n` for the scan prompt, `o`/`O` for the two paste
+/// overwrites. A letter that is not in the word cannot be marked in it, so
+/// four dialogs advertised nothing at all and the multi-file paste conflict
+/// marked only its two `All` variants, pointing the one visible `O` at the
+/// more destructive button. Deriving the letter from the label instead means
+/// a button can always show what it answers to.
+///
+/// Derived rather than tabulated because the labels are localized: a table
+/// would need a letter per label per locale, and any locale it missed would
+/// go back to advertising nothing.
+///
+/// **The retreat picks first.** `Cancel` is `c` in every dialog that has one,
+/// so a caller cannot shift it by adding a button that shares its initial —
+/// which is exactly what "Create" did to it.
+fn assign_mnemonics(choices: &mut [Choice], escape: Option<usize>) {
+    let mut taken: Vec<char> = Vec::new();
+    for i in escape.into_iter().chain(0..choices.len()) {
+        if choices[i].mnemonic.is_some() {
+            continue;
+        }
+        let free = candidates(&choices[i].label)
+            .into_iter()
+            .find(|(_, c)| !taken.iter().any(|t| t.eq_ignore_ascii_case(c)));
+        if let Some((at, ch)) = free {
+            taken.push(ch);
+            choices[i].mnemonic = Some(Mnemonic {
+                ch,
+                at: (at, at + ch.len_utf8()),
+            });
+        }
     }
 }
 
@@ -133,6 +150,15 @@ pub struct Confirm {
     pub choices: Vec<Choice>,
     /// Which button has the keyboard.
     pub selected: usize,
+    /// Which button the pointer is over, if any.
+    ///
+    /// **Hover shows, it does not arm.** Moving the pointer across the card
+    /// lights the button under it so a click is predictable, but Enter still
+    /// takes the armed one — the same separation the workspace-trust prompt
+    /// makes between pointing at an option and consenting to it, and what
+    /// keeps a pointer that happens to cross "Delete" from putting it one
+    /// keystroke away.
+    pub hovered: Option<usize>,
     /// Which choice Esc resolves to. `None` means Esc cancels the prompt
     /// outright (`Editor::cancel_prompt`), which is what every one of these
     /// prompts did before: cancelling fed the empty string, and every
@@ -185,7 +211,9 @@ impl Confirm {
     /// end, so "Esc is the last button" is a rule the dialog can state once
     /// rather than each prompt repeating it.
     pub fn new(title: impl Into<String>, body: impl Into<String>, choices: Vec<Choice>) -> Self {
+        let mut choices = choices;
         let escape = choices.len().checked_sub(1);
+        assign_mnemonics(&mut choices, escape);
         let selected = armable(&choices, 0, escape);
         Confirm {
             title: title.into(),
@@ -193,6 +221,7 @@ impl Confirm {
             detail: String::new(),
             choices,
             selected,
+            hovered: None,
             escape,
         }
     }
@@ -228,26 +257,11 @@ impl Confirm {
 
     /// Where to mark choice `i`'s accelerator inside its label.
     ///
-    /// **The mark has to agree with the keyboard.** `by_mnemonic` is
-    /// case-aware, because Czech ships `discard = "z"` beside `cancel = "Z"`
-    /// (Russian the same with `о`/`О`); a loose match when drawing would put
-    /// an underline under the capital `Z` of *both* "Zahodit a ukončit" and
-    /// "Zrušit", advertising one letter for two outcomes when only one of
-    /// them is what typing it does. So when another choice answers to the
-    /// same letter in the other case, the mark is exact or there is no mark.
-    /// Everywhere else — which is every locale but those two, and every
-    /// dialog in them whose letters do not collide — "Discard" still
-    /// underlines its `D` for the accelerator `d`.
+    /// Always `Some` for a choice whose label has a letter to spare, because
+    /// the accelerator was taken *from* that label — there is nothing to
+    /// search for and nothing that can fail to be found.
     pub fn mnemonic_span(&self, i: usize) -> Option<(usize, usize)> {
-        let choice = self.choices.get(i)?;
-        let m = choice.mnemonic?;
-        let collides = self.choices.iter().enumerate().any(|(j, other)| {
-            j != i
-                && other
-                    .mnemonic
-                    .is_some_and(|o| o != m && o.eq_ignore_ascii_case(&m))
-        });
-        choice.span(collides)
+        Some(self.choices.get(i)?.mnemonic?.at)
     }
 
     /// The choice in hand, if the dialog has any at all.
@@ -273,32 +287,14 @@ impl Confirm {
 
     /// The choice a typed character activates.
     ///
-    /// **Exact case first, then insensitively.** `o` and `O` are different
-    /// answers in the multi-file paste conflict and the same answer
-    /// everywhere else; trying the exact match before the loose one gets both
-    /// right without either prompt knowing about the other. The loose pass is
-    /// skipped when it would be ambiguous, so a stray Shift can never pick
-    /// the wrong one of a case-distinguishing pair.
+    /// One pass, case-insensitively: [`assign_mnemonics`] already guaranteed
+    /// the letters are distinct that way, so there is no ambiguity left to
+    /// resolve and no unmarked spelling to try afterwards. What the button
+    /// shows is the whole of what it answers to.
     pub fn by_mnemonic(&self, c: char) -> Option<usize> {
-        if let Some(i) = self.choices.iter().position(|ch| ch.mnemonic == Some(c)) {
-            return Some(i);
-        }
-        // An unmarked second spelling of an answer the row prompt advertised.
-        // Exact, and after the marked letters, so it can never take a key one
-        // of those owns.
-        if let Some(i) = self.choices.iter().position(|ch| ch.aliases.contains(&c)) {
-            return Some(i);
-        }
-        let mut loose = self
-            .choices
+        self.choices
             .iter()
-            .enumerate()
-            .filter(|(_, ch)| ch.mnemonic.is_some_and(|m| m.eq_ignore_ascii_case(&c)));
-        let first = loose.next()?;
-        match loose.next() {
-            Some(_) => None,
-            None => Some(first.0),
-        }
+            .position(|ch| ch.mnemonic.is_some_and(|m| m.ch.eq_ignore_ascii_case(&c)))
     }
 }
 
@@ -306,16 +302,31 @@ impl Confirm {
 mod tests {
     use super::*;
 
+    fn choice(label: &str, tone: Tone) -> Choice {
+        Choice::new(label, "x", tone)
+    }
+
     fn abc() -> Confirm {
         Confirm::new(
             "T",
             "B",
             vec![
-                Choice::new("Save", "s", Tone::Safe),
-                Choice::new("Discard", "d", Tone::Destructive),
-                Choice::new("Cancel", "C", Tone::Safe),
+                choice("Save", Tone::Safe),
+                choice("Discard", Tone::Destructive),
+                choice("Cancel", Tone::Safe),
             ],
         )
+    }
+
+    /// The letter a choice answers to, as the button shows it.
+    fn marked(c: &Confirm) -> Vec<String> {
+        c.choices
+            .iter()
+            .map(|ch| match ch.mnemonic {
+                Some(m) => format!("{}[{}]", ch.label, &ch.label[m.at.0..m.at.1]),
+                None => format!("{}[-]", ch.label),
+            })
+            .collect()
     }
 
     #[test]
@@ -326,103 +337,142 @@ mod tests {
     #[test]
     fn selection_wraps_in_both_directions() {
         let mut c = abc();
+        c.selected = 0;
         c.select_prev();
         assert_eq!(c.selected, 2);
         c.select_next();
         assert_eq!(c.selected, 0);
     }
 
+    /// **Every button shows the letter it answers to.** The letters used to be
+    /// inherited from the row prompts — `y` for Delete, `y`/`n` for the scan
+    /// prompt — and a letter that is not in the word cannot be marked in it.
     #[test]
-    fn a_mnemonic_matches_regardless_of_case_when_unambiguous() {
+    fn every_button_marks_a_letter_of_its_own_label() {
+        for c in [
+            abc(),
+            Confirm::new(
+                "T",
+                "B",
+                vec![
+                    choice("Delete", Tone::Destructive),
+                    choice("Cancel", Tone::Safe),
+                ],
+            ),
+            Confirm::new(
+                "T",
+                "B",
+                vec![
+                    choice("Scan", Tone::Safe),
+                    choice("Go to Byte Offset", Tone::Safe),
+                ],
+            ),
+            Confirm::new(
+                "T",
+                "B",
+                vec![
+                    choice("Save with sudo", Tone::Safe),
+                    choice("Cancel", Tone::Safe),
+                ],
+            ),
+        ] {
+            for ch in &c.choices {
+                let m = ch.mnemonic.expect("every button has a letter");
+                assert_eq!(
+                    &ch.label[m.at.0..m.at.1],
+                    m.ch.to_string(),
+                    "the marked span must be the letter itself, in {:?}",
+                    ch.label
+                );
+            }
+        }
+    }
+
+    /// One letter, one meaning: `Cancel` is `c` even next to a button whose
+    /// own initial is `C`, because the retreat picks before the rest.
+    #[test]
+    fn cancel_keeps_its_letter_against_a_rival_initial() {
+        let c = Confirm::new(
+            "Folder Not Found",
+            "B",
+            vec![
+                choice("Create Folder", Tone::Safe),
+                choice("Cancel", Tone::Safe),
+            ],
+        );
+        assert_eq!(marked(&c), ["Create Folder[F]", "Cancel[C]"]);
+
+        let c = Confirm::new(
+            "Large File",
+            "B",
+            vec![
+                choice("Load", Tone::Safe),
+                choice("Choose Encoding…", Tone::Safe),
+                choice("Cancel", Tone::Safe),
+            ],
+        );
+        assert_eq!(marked(&c), ["Load[L]", "Choose Encoding…[E]", "Cancel[C]"]);
+    }
+
+    /// The five-button paste conflict: the two primary answers used to show
+    /// nothing while the marks sat on the `All` variants, pointing the one
+    /// visible `O` at the more destructive button.
+    #[test]
+    fn the_paste_conflict_marks_all_five_distinctly() {
+        let c = Confirm::new(
+            "Name Conflict",
+            "B",
+            vec![
+                choice("Overwrite", Tone::Destructive),
+                choice("Overwrite All", Tone::Destructive),
+                choice("Skip", Tone::Safe),
+                choice("Skip All", Tone::Safe),
+                choice("Cancel", Tone::Safe),
+            ],
+        );
+        assert_eq!(
+            marked(&c),
+            [
+                "Overwrite[O]",
+                "Overwrite All[A]",
+                "Skip[S]",
+                "Skip All[k]",
+                "Cancel[C]"
+            ]
+        );
+        // Distinct letters mean the keyboard is unambiguous without any
+        // case-sensitivity trick.
+        assert_eq!(c.by_mnemonic('o'), Some(0));
+        assert_eq!(c.by_mnemonic('a'), Some(1));
+        assert_eq!(c.by_mnemonic('s'), Some(2));
+        assert_eq!(c.by_mnemonic('k'), Some(3));
+        assert_eq!(c.by_mnemonic('c'), Some(4));
+    }
+
+    /// The marked letter is what answers, in either case, and nothing else is.
+    #[test]
+    fn only_the_marked_letters_answer() {
         let c = abc();
         assert_eq!(c.by_mnemonic('s'), Some(0));
         assert_eq!(c.by_mnemonic('S'), Some(0));
+        assert_eq!(c.by_mnemonic('d'), Some(1));
         assert_eq!(c.by_mnemonic('c'), Some(2));
-        assert_eq!(c.by_mnemonic('C'), Some(2));
+        // `y` was the delete prompts' answer for years. It is not a key now.
+        assert_eq!(c.by_mnemonic('y'), None);
         assert_eq!(c.by_mnemonic('z'), None);
     }
 
+    /// A label with no letters left cannot be marked, and must not silently
+    /// steal another button's.
     #[test]
-    fn case_distinguishing_choices_keep_their_own_letters() {
-        // The multi-file paste conflict: `o` is this file, `O` is all of them.
+    fn a_label_with_nothing_to_offer_gets_no_letter() {
         let c = Confirm::new(
             "T",
             "B",
-            vec![
-                Choice::new("Overwrite", "o", Tone::Destructive),
-                Choice::new("Overwrite All", "O", Tone::Destructive),
-                Choice::new("Skip", "s", Tone::Safe),
-                Choice::new("Skip All", "S", Tone::Safe),
-                Choice::new("Cancel", "c", Tone::Safe),
-            ],
+            vec![choice("…", Tone::Safe), choice("Cancel", Tone::Safe)],
         );
-        assert_eq!(c.by_mnemonic('o'), Some(0));
-        assert_eq!(c.by_mnemonic('O'), Some(1));
-        assert_eq!(c.by_mnemonic('s'), Some(2));
-        assert_eq!(c.by_mnemonic('S'), Some(3));
-    }
-
-    #[test]
-    fn the_mnemonic_is_found_in_the_label_when_it_is_there() {
-        // `d` marks the `D` of "Discard": the loose match is what makes the
-        // underline work for an ordinary capitalised label.
-        assert_eq!(abc().mnemonic_span(1), Some((0, 1)));
-        assert_eq!(abc().mnemonic_span(2), Some((0, 1)));
-        // A localized label need not contain the letter at all.
-        let c = Confirm::new(
-            "T",
-            "B",
-            vec![Choice::with_mnemonic("Отмена", 'C', "", Tone::Safe)],
-        );
-        assert_eq!(c.mnemonic_span(0), None);
-    }
-
-    /// The mark has to agree with the keyboard. Czech ships `discard = "z"`
-    /// beside `cancel = "Z"`, and a loose match when drawing would underline
-    /// the capital `Z` of both labels — advertising one letter for two
-    /// outcomes when only one of them is what typing it does.
-    #[test]
-    fn a_colliding_pair_is_marked_exactly_or_not_at_all() {
-        let cs = Confirm::new(
-            "Neuložené změny",
-            "B",
-            vec![
-                Choice::with_mnemonic("Uložit a ukončit", 'u', "u", Tone::Safe),
-                Choice::with_mnemonic("Zahodit a ukončit", 'z', "z", Tone::Destructive),
-                Choice::with_mnemonic("Zrušit", 'Z', "", Tone::Safe),
-            ],
-        );
-        // `Z` is what typing `Z` does, so `Z` is marked on "Zrušit" only.
-        assert_eq!(cs.mnemonic_span(2), Some((0, 1)));
-        assert_eq!(
-            cs.mnemonic_span(1),
-            None,
-            "the discard button must not advertise a letter that cancels"
-        );
-        // The non-colliding letter is unaffected.
-        assert_eq!(cs.mnemonic_span(0), Some((0, 1)));
-        // And the keyboard still tells them apart.
-        assert_eq!(cs.by_mnemonic('z'), Some(1));
-        assert_eq!(cs.by_mnemonic('Z'), Some(2));
-    }
-
-    /// A second spelling the row prompt advertised stays live inside a modal
-    /// that swallows every key.
-    #[test]
-    fn an_alias_activates_its_choice_without_being_marked() {
-        let c = Confirm::new(
-            "Quit Fresh",
-            "B",
-            vec![
-                Choice::new("Quit", "q", Tone::Safe).also('y'),
-                Choice::with_mnemonic("Cancel", 'n', "", Tone::Safe),
-            ],
-        );
-        assert_eq!(c.by_mnemonic('q'), Some(0));
-        assert_eq!(c.by_mnemonic('y'), Some(0), "`y` was the advertised key");
-        assert_eq!(c.by_mnemonic('n'), Some(1));
-        // The alias is not what the label marks — `Quit` marks its `Q`.
-        assert_eq!(c.mnemonic_span(0), Some((0, 1)));
+        assert_eq!(marked(&c), ["…[-]", "Cancel[C]"]);
+        assert_eq!(c.by_mnemonic('c'), Some(1));
     }
 
     /// Esc dismisses rather than answering when every button does something.
@@ -432,12 +482,13 @@ mod tests {
             "Go to Line",
             "B",
             vec![
-                Choice::new("Scan", "y", Tone::Safe),
-                Choice::new("Go to Byte Offset", "n", Tone::Safe),
+                choice("Scan", Tone::Safe),
+                choice("Go to Byte Offset", Tone::Safe),
             ],
         )
         .escaping(None);
         assert_eq!(c.escape, None);
+        assert_eq!(marked(&c), ["Scan[S]", "Go to Byte Offset[G]"]);
     }
 
     #[test]
@@ -447,20 +498,18 @@ mod tests {
     }
 
     /// A dialog whose most consequential outcome is listed first must not
-    /// open on it. `Ctrl+S` onto a file that changed underneath you, and
-    /// either paste conflict, all led with Overwrite.
+    /// open on it.
     #[test]
     fn a_dialog_never_opens_on_a_destructive_button() {
         let c = Confirm::new(
             "File Changed on Disk",
             "B",
             vec![
-                Choice::new("Overwrite", "o", Tone::Destructive),
-                Choice::new("Cancel", "C", Tone::Safe),
+                choice("Overwrite", Tone::Destructive),
+                choice("Cancel", Tone::Safe),
             ],
         );
         assert_eq!(c.current().map(|c| c.label.as_str()), Some("Cancel"));
-        // Asking for it explicitly does not get around the rule either.
         let c = c.selecting(0);
         assert_eq!(c.current().map(|c| c.label.as_str()), Some("Cancel"));
     }
@@ -473,9 +522,9 @@ mod tests {
             "Name Conflict",
             "B",
             vec![
-                Choice::new("Overwrite", "o", Tone::Destructive),
-                Choice::new("Skip", "s", Tone::Safe),
-                Choice::new("Overwrite All", "O", Tone::Destructive),
+                choice("Overwrite", Tone::Destructive),
+                choice("Skip", Tone::Safe),
+                choice("Overwrite All", Tone::Destructive),
             ],
         );
         assert_eq!(c.current().map(|c| c.label.as_str()), Some("Skip"));
@@ -489,8 +538,8 @@ mod tests {
             "T",
             "B",
             vec![
-                Choice::new("Delete", "d", Tone::Destructive),
-                Choice::new("Delete All", "D", Tone::Destructive),
+                choice("Delete", Tone::Destructive),
+                choice("Delete All", Tone::Destructive),
             ],
         );
         assert_eq!(c.selected, 0);
@@ -503,9 +552,9 @@ mod tests {
             "Large File",
             "B",
             vec![
-                Choice::new("Load", "L", Tone::Safe),
-                Choice::new("Choose Encoding…", "e", Tone::Safe),
-                Choice::new("Cancel", "c", Tone::Safe),
+                choice("Load", Tone::Safe),
+                choice("Choose Encoding…", Tone::Safe),
+                choice("Cancel", Tone::Safe),
             ],
         );
         assert_eq!(c.current().map(|c| c.label.as_str()), Some("Load"));

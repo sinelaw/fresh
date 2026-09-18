@@ -1708,7 +1708,7 @@
   "dialog.btn.skip": "Pular",
   "dialog.btn.skip_all": "Pular tudo",
   "dialog.btn.rename": "Renomear…",
-  "dialog.btn.create": "Criar",
+  "dialog.btn.create": "Criar pasta",
   "dialog.btn.revert": "Reverter",
   "dialog.btn.save_with_sudo": "Salvar com sudo",
   "dialog.btn.load": "Carregar",

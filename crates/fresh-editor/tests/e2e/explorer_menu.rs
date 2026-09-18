@@ -1797,7 +1797,7 @@ fn test_multi_delete_shows_count_prompt() {
 
     // Cancel
     harness
-        .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
+        .send_key(KeyCode::Char('c'), KeyModifiers::NONE)
         .unwrap();
     harness.wait_for_prompt_closed().unwrap();
 }
@@ -1888,9 +1888,9 @@ fn test_multi_paste_per_conflict_overwrite_all() {
         screen
     );
 
-    // Choose overwrite all (uppercase O)
+    // Choose Overwrite All — the `A` of "All"; `o` is plain Overwrite.
     harness
-        .send_key(KeyCode::Char('O'), KeyModifiers::NONE)
+        .send_key(KeyCode::Char('a'), KeyModifiers::NONE)
         .unwrap();
     harness.wait_for_prompt_closed().unwrap();
 

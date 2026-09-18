@@ -1708,7 +1708,7 @@
   "dialog.btn.skip": "Пропустити",
   "dialog.btn.skip_all": "Пропустити все",
   "dialog.btn.rename": "Перейменувати…",
-  "dialog.btn.create": "Створити",
+  "dialog.btn.create": "Створити теку",
   "dialog.btn.revert": "Відновити",
   "dialog.btn.save_with_sudo": "Зберегти через sudo",
   "dialog.btn.load": "Завантажити",

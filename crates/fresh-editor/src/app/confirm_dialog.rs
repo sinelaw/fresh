@@ -17,40 +17,25 @@ use fresh_i18n::t;
 use super::Editor;
 use crate::view::confirm::{Choice, Confirm, Tone};
 
-/// The retreat, spelled the same way everywhere: `Esc`, the rightmost button,
-/// and the letter the bottom-row prompts used for it.
+/// The retreat, spelled the same way everywhere.
 ///
-/// **Its answer is the empty string, not that letter.** Every confirm handler
-/// reads an answer it does not recognise as "do nothing", which is exactly
-/// what Esc fed them before, so the empty string is the one answer that
-/// cannot be mistaken for an outcome in any locale. The letters cannot say
-/// that: `prompt.key.*` is translated, the handlers lower-case what they
-/// compare, and Czech ships `discard = "z"` beside `cancel = "Z"` (Russian
-/// the same with `о`/`О`) — a Cancel button that sent its letter would
-/// *discard the user's work* there. The letter stays as the accelerator,
-/// where [`Confirm::by_mnemonic`]'s exact-before-loose rule keeps the two
-/// apart.
+/// **Its answer is the empty string.** Every confirm handler reads an answer
+/// it does not recognise as "do nothing", which is exactly what Esc fed them
+/// before, so the empty string is the one answer that cannot be mistaken for
+/// an outcome in any locale. A letter cannot say that: the handlers lower-case
+/// what they compare, and Czech ships `discard = "z"` beside `cancel = "Z"`
+/// (Russian the same with `о`/`О`) — a Cancel that sent a letter would
+/// *discard the user's work* there.
+///
+/// Its accelerator is the `C` of its own label, assigned with every other
+/// button's and reserved ahead of them, so Cancel is the same key in every
+/// dialog that has one.
 ///
 /// The one prompt that cannot take this is the large-file encoding
 /// confirmation, whose handler reads an empty answer as "load anyway"; it
-/// names its own cancel key.
+/// names its own cancel answer.
 pub fn cancel() -> Choice {
-    cancel_keyed(t!("prompt.key.cancel").chars().next())
-}
-
-/// The same retreat under a letter of its own.
-///
-/// **Each prompt keeps the letter it used to advertise.** The row prompts did
-/// not agree on one — the delete prompts said `(N)o`, the missing-folder
-/// prompt `(A)bort`, the paste conflicts `(c)ancel` — and anyone who has the
-/// muscle memory has it per prompt, so the accelerator follows the prompt
-/// rather than being unified now that the button says "Cancel" in all of them.
-pub fn cancel_keyed(mnemonic: Option<char>) -> Choice {
-    let label = t!("dialog.btn.cancel").into_owned();
-    match mnemonic {
-        Some(m) => Choice::with_mnemonic(label, m, "", Tone::Safe),
-        None => Choice::new(label, "", Tone::Safe),
-    }
+    Choice::new(t!("dialog.btn.cancel").into_owned(), "", Tone::Safe)
 }
 
 /// The single-file paste conflict, asked from three places: the explorer's
@@ -66,7 +51,7 @@ pub fn paste_conflict(name: &str) -> Confirm {
                 Tone::Destructive,
             ),
             Choice::new(t!("dialog.btn.rename").into_owned(), "r", Tone::Safe),
-            cancel_keyed(Some('c')),
+            cancel(),
         ],
     )
 }
@@ -91,7 +76,7 @@ pub fn multi_paste_conflict(name: &str) -> Confirm {
             ),
             Choice::new(t!("dialog.btn.skip").into_owned(), "s", Tone::Safe),
             Choice::new(t!("dialog.btn.skip_all").into_owned(), "S", Tone::Safe),
-            cancel_keyed(Some('c')),
+            cancel(),
         ],
     )
 }
@@ -139,7 +124,7 @@ pub fn create_directory(dir_name: &str) -> Confirm {
         t!("buffer.create_directory_confirm", name = dir_name).into_owned(),
         vec![
             Choice::new(t!("dialog.btn.create").into_owned(), "c", Tone::Safe),
-            cancel_keyed(Some('A')),
+            cancel(),
         ],
     )
     // The row prompt spelled this `(c)reate, (A)bort?` — the capital was the
@@ -157,7 +142,7 @@ pub fn delete(body: String) -> Confirm {
         body,
         vec![
             Choice::new(t!("dialog.btn.delete").into_owned(), "y", Tone::Destructive),
-            cancel_keyed(Some('n')),
+            cancel(),
         ],
     )
     .selecting(1)
@@ -244,6 +229,23 @@ impl Editor {
                 }
             }
             _ => {}
+        }
+    }
+
+    /// Light the button under the pointer, or clear the light.
+    ///
+    /// **Hover is not a selection.** It says where a click would land; Enter
+    /// still takes the armed button. A pointer crossing "Delete" on its way
+    /// somewhere else must not leave it one keystroke from happening.
+    pub fn confirm_dialog_hover(&mut self, i: Option<usize>) {
+        if let Some(p) = self.active_window_mut().prompt.as_mut() {
+            if let Some(c) = p.confirm.as_mut() {
+                // A Leave from one button and an Enter into the next arrive in
+                // that order, so a stale `None` must not erase the new one.
+                if i.is_some() || c.hovered.is_some() {
+                    c.hovered = i;
+                }
+            }
         }
     }
 

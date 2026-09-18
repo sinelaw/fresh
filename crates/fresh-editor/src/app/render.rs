@@ -3158,6 +3158,7 @@ impl Editor {
                     // depends on the other choices' letters.
                     mnemonic: c.mnemonic_span(i),
                     destructive: ch.tone == crate::view::confirm::Tone::Destructive,
+                    hovered: c.hovered == Some(i),
                 })
                 .collect(),
             selected: c.selected,

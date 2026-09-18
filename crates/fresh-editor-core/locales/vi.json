@@ -1708,7 +1708,7 @@
   "dialog.btn.skip": "Bỏ qua",
   "dialog.btn.skip_all": "Bỏ qua tất cả",
   "dialog.btn.rename": "Đổi tên…",
-  "dialog.btn.create": "Tạo",
+  "dialog.btn.create": "Tạo thư mục",
   "dialog.btn.revert": "Hoàn nguyên",
   "dialog.btn.save_with_sudo": "Lưu bằng sudo",
   "dialog.btn.load": "Tải",

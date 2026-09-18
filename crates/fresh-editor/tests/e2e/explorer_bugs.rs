@@ -535,7 +535,7 @@ fn test_delete_preserves_sibling_expansion_state() {
         .unwrap();
     harness.wait_for_prompt().unwrap();
     harness
-        .send_key(KeyCode::Char('y'), KeyModifiers::NONE)
+        .send_key(KeyCode::Char('d'), KeyModifiers::NONE)
         .unwrap();
     harness.render().unwrap();
 
@@ -680,7 +680,7 @@ fn test_multi_delete_prompt_names_the_items() {
 
     // Cancel.
     harness
-        .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
+        .send_key(KeyCode::Char('c'), KeyModifiers::NONE)
         .unwrap();
 }
 
@@ -1364,7 +1364,7 @@ fn test_delete_closes_open_buffer_for_deleted_file() {
         .unwrap();
     harness.wait_for_prompt().unwrap();
     harness
-        .send_key(KeyCode::Char('y'), KeyModifiers::NONE)
+        .send_key(KeyCode::Char('d'), KeyModifiers::NONE)
         .unwrap();
     harness.wait_for_prompt_closed().unwrap();
     harness.render().unwrap();

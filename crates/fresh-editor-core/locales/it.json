@@ -1708,7 +1708,7 @@
   "dialog.btn.skip": "Salta",
   "dialog.btn.skip_all": "Salta tutto",
   "dialog.btn.rename": "Rinomina…",
-  "dialog.btn.create": "Crea",
+  "dialog.btn.create": "Crea cartella",
   "dialog.btn.revert": "Ripristina",
   "dialog.btn.save_with_sudo": "Salva con sudo",
   "dialog.btn.load": "Carica",

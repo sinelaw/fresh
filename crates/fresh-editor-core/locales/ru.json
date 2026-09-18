@@ -1708,7 +1708,7 @@
   "dialog.btn.skip": "Пропустить",
   "dialog.btn.skip_all": "Пропустить все",
   "dialog.btn.rename": "Переименовать…",
-  "dialog.btn.create": "Создать",
+  "dialog.btn.create": "Создать папку",
   "dialog.btn.revert": "Восстановить",
   "dialog.btn.save_with_sudo": "Сохранить через sudo",
   "dialog.btn.load": "Загрузить",

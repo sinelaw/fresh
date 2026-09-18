@@ -2548,3 +2548,116 @@ fn test_vi_escape_from_insert_moves_cursor_left() {
 
     harness.assert_buffer_content("ABhello\n");
 }
+
+// ============================================================================
+// Confirmation dialogs under vi mode
+// ============================================================================
+
+/// A confirmation dialog has to survive a modal-editing plugin.
+///
+/// Vi mode installs its own key handler and reads bare letters as motions and
+/// operators — `d` is an operator, `c` changes, `s` substitutes. The dialog's
+/// layer owns the keyboard while it is up, so those letters have to reach the
+/// dialog as accelerators and *not* also edit the buffer behind it.
+#[test]
+fn a_confirmation_dialog_takes_the_keyboard_from_vi_mode() {
+    let (mut harness, _tmp) = vi_mode_harness(100, 30);
+    // A file-backed buffer: hot exit leaves unnamed buffers out of the quit
+    // prompt entirely, and it is the quit prompt this is about.
+    let file = harness.editor().working_dir().join("notes.txt");
+    std::fs::write(&file, "alpha\n").unwrap();
+    harness.open_file(&file).unwrap();
+    enable_vi_mode(&mut harness);
+
+    // Something unsaved, typed in vi's own insert mode.
+    send_vi_key(&mut harness, 'i');
+    harness
+        .wait_until(|h| h.editor().editor_mode() == Some("vi-insert".to_string()))
+        .unwrap();
+    harness.type_text("EDITED").unwrap();
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness
+        .wait_until(|h| h.editor().editor_mode() == Some("vi-normal".to_string()))
+        .unwrap();
+    let before = harness.get_buffer_content();
+
+    harness
+        .send_key(KeyCode::Char('q'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Unsaved Changes");
+    harness.assert_screen_contains("Save and Quit");
+
+    // `l` is vi's "move right" and is nobody's accelerator here: the modal
+    // must swallow it rather than let it move the caret behind the card.
+    harness
+        .send_key(KeyCode::Char('l'), KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Unsaved Changes");
+
+    // The buttons still move and the buffer is untouched.
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    let row = (0..30)
+        .find(|r| harness.screen_row_text(*r).contains("Save and Quit"))
+        .expect("the button row is on screen");
+    assert!(
+        harness
+            .screen_row_text(row)
+            .contains("[ Discard and Quit ]"),
+        "arrows must move the armed button under vi mode; row was {:?}",
+        harness.screen_row_text(row)
+    );
+    assert_eq!(
+        harness.get_buffer_content(),
+        before,
+        "no keystroke may reach the buffer while the dialog is up"
+    );
+
+    // Esc is vi's "back to normal mode" *and* the dialog's retreat. The
+    // dialog has it while it is up.
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    assert!(!harness.should_quit());
+    assert!(!harness.screen_to_string().contains("Unsaved Changes"));
+}
+
+/// And the letters a button marks answer it, even though vi mode binds the
+/// same bare letters to operators.
+#[test]
+fn a_dialog_accelerator_beats_a_vi_operator() {
+    let (mut harness, _tmp) = vi_mode_harness(100, 30);
+    let file = harness.editor().working_dir().join("notes.txt");
+    std::fs::write(&file, "alpha\n").unwrap();
+    harness.open_file(&file).unwrap();
+    enable_vi_mode(&mut harness);
+
+    send_vi_key(&mut harness, 'i');
+    harness
+        .wait_until(|h| h.editor().editor_mode() == Some("vi-insert".to_string()))
+        .unwrap();
+    harness.type_text("EDITED").unwrap();
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness
+        .wait_until(|h| h.editor().editor_mode() == Some("vi-normal".to_string()))
+        .unwrap();
+
+    harness
+        .send_key(KeyCode::Char('q'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Discard and Quit");
+
+    // `d` is vi's delete operator and the D of "Discard and Quit".
+    harness
+        .send_key(KeyCode::Char('d'), KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    assert!(
+        harness.should_quit(),
+        "the dialog's accelerator must win over vi's operator"
+    );
+}

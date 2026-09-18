@@ -1708,7 +1708,7 @@
   "dialog.btn.skip": "Пропусни",
   "dialog.btn.skip_all": "Пропусни всички",
   "dialog.btn.rename": "Преименувай…",
-  "dialog.btn.create": "Създай",
+  "dialog.btn.create": "Създай папка",
   "dialog.btn.revert": "Възстанови",
   "dialog.btn.save_with_sudo": "Запази със sudo",
   "dialog.btn.load": "Зареди",

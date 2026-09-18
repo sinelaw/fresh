@@ -1708,7 +1708,7 @@
   "dialog.btn.skip": "跳过",
   "dialog.btn.skip_all": "全部跳过",
   "dialog.btn.rename": "重命名…",
-  "dialog.btn.create": "创建",
+  "dialog.btn.create": "创建文件夹",
   "dialog.btn.revert": "还原",
   "dialog.btn.save_with_sudo": "使用 sudo 保存",
   "dialog.btn.load": "加载",

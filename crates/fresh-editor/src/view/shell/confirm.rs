@@ -67,6 +67,9 @@ pub struct Button {
     pub mnemonic: Option<(usize, usize)>,
     /// Drawn in the error colour, and never the button that opens in hand.
     pub destructive: bool,
+    /// The pointer is over this button. A third state, distinct from armed:
+    /// it says where a click would land, not what Enter would take.
+    pub hovered: bool,
 }
 
 /// What the dialog shows, with every string already resolved.
@@ -244,27 +247,46 @@ fn gutter() -> Node<UiMsg> {
 }
 
 fn button(i: usize, b: &Button, focused: bool) -> Node<UiMsg> {
-    // Three states, and the destructive ones differ in both: an armed
-    // "Delete" must not look like an armed "Cancel".
-    let (base, accel) = match (focused, b.destructive) {
-        (true, true) => (
+    // Three things a button can be, and they have to stay distinguishable:
+    // armed (what Enter takes), hovered (where a click would land), and
+    // destructive (what it costs). Armed wins the ground; hover takes the
+    // quieter selection ground so it reads as "under the pointer" rather than
+    // "about to happen"; destructive keeps the error colour in every state.
+    let (base, accel) = match (focused, b.hovered, b.destructive) {
+        (true, _, true) => (
             attrs("ui.popup_bg", "diagnostic.error_fg", &["bold"]),
             attrs("ui.popup_bg", "diagnostic.error_fg", &["bold", "underline"]),
         ),
-        (true, false) => (
+        (true, _, false) => (
             attrs("ui.popup_bg", "ui.help_key_fg", &["bold"]),
             attrs("ui.popup_bg", "ui.help_key_fg", &["bold", "underline"]),
         ),
-        (false, true) => (
+        (false, true, true) => (
+            attrs("diagnostic.error_fg", "ui.popup_selection_bg", &["bold"]),
+            attrs(
+                "diagnostic.error_fg",
+                "ui.popup_selection_bg",
+                &["bold", "underline"],
+            ),
+        ),
+        (false, true, false) => (
+            pair("ui.popup_selection_fg", "ui.popup_selection_bg"),
+            attrs(
+                "ui.popup_selection_fg",
+                "ui.popup_selection_bg",
+                &["underline"],
+            ),
+        ),
+        (false, false, true) => (
             pair("diagnostic.error_fg", "ui.popup_bg"),
             attrs("diagnostic.error_fg", "ui.popup_bg", &["underline"]),
         ),
-        (false, false) => (
+        (false, false, false) => (
             pair("ui.popup_text_fg", "ui.popup_bg"),
             attrs("ui.popup_text_fg", "ui.popup_bg", &["underline"]),
         ),
     };
-    // The focused button wears the brackets, so which one is armed survives a
+    // The armed button wears the brackets, so which one Enter takes survives a
     // terminal that drops colour or a theme whose accent is close to its
     // ground — and so the dialog is still readable in a monochrome capture.
     let (open, close) = match focused {
@@ -293,6 +315,16 @@ fn button(i: usize, b: &Button, focused: bool) -> Node<UiMsg> {
                 Some(UiMsg::Ui(UiFact::ConfirmChoose(i)))
             }),
         )
+        // Enter and Leave fire on the node itself, so one pair per button is
+        // the whole of it — no motion handler, no recorded rectangles.
+        .on(
+            GestureKind::Enter,
+            Rc::new(move |_: &Event| Some(UiMsg::Ui(UiFact::ConfirmHover(Some(i))))),
+        )
+        .on(
+            GestureKind::Leave,
+            Rc::new(|_: &Event| Some(UiMsg::Ui(UiFact::ConfirmHover(None)))),
+        )
 }
 
 #[cfg(test)]
@@ -304,6 +336,7 @@ mod tests {
             label: label.into(),
             mnemonic: None,
             destructive: false,
+            hovered: false,
         }
     }
 

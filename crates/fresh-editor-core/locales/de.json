@@ -1708,7 +1708,7 @@
   "dialog.btn.skip": "Überspringen",
   "dialog.btn.skip_all": "Alle überspringen",
   "dialog.btn.rename": "Umbenennen…",
-  "dialog.btn.create": "Erstellen",
+  "dialog.btn.create": "Ordner erstellen",
   "dialog.btn.revert": "Zurücksetzen",
   "dialog.btn.save_with_sudo": "Mit sudo speichern",
   "dialog.btn.load": "Laden",

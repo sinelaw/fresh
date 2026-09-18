@@ -1708,7 +1708,7 @@
   "dialog.btn.skip": "Skip",
   "dialog.btn.skip_all": "Skip All",
   "dialog.btn.rename": "Rename…",
-  "dialog.btn.create": "Create",
+  "dialog.btn.create": "Create Folder",
   "dialog.btn.revert": "Revert",
   "dialog.btn.save_with_sudo": "Save with sudo",
   "dialog.btn.load": "Load",

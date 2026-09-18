@@ -3586,6 +3586,7 @@ impl Editor {
             // A button on the confirmation modal. One press is the answer —
             // see `UiFact::ConfirmChoose`.
             UiFact::ConfirmChoose(i) => self.confirm_dialog_choose(i),
+            UiFact::ConfirmHover(i) => self.confirm_dialog_hover(i),
             // The inspector. Dismissing it is the same statement three
             // places used to make: an outside-press guard returning
             // `PassAfter`, an `on_key` that cleared the field and returned

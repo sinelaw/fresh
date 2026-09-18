@@ -674,6 +674,9 @@ pub enum UiFact {
     /// a selection to be committed afterwards, and requiring a second click
     /// on an `[ OK ]` would put two presses between the user and "Cancel".
     ConfirmChoose(usize),
+    /// The pointer entered a button on the confirmation modal, or left the
+    /// one it was over. Lights the button; does not arm it.
+    ConfirmHover(Option<usize>),
     /// A press on a split divider: start the width drag on *this* container.
     ///
     /// The node knows which container it is, so nothing hit-tests a recorded

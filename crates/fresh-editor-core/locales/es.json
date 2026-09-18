@@ -1708,7 +1708,7 @@
   "dialog.btn.skip": "Omitir",
   "dialog.btn.skip_all": "Omitir todo",
   "dialog.btn.rename": "Renombrar…",
-  "dialog.btn.create": "Crear",
+  "dialog.btn.create": "Crear carpeta",
   "dialog.btn.revert": "Revertir",
   "dialog.btn.save_with_sudo": "Guardar con sudo",
   "dialog.btn.load": "Cargar",

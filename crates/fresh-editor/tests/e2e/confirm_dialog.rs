@@ -221,10 +221,9 @@ fn enter_takes_the_armed_outcome() {
     assert!(!harness.screen_to_string().contains("Unsaved Changes"));
 }
 
-/// The single letters still work — the accelerator is the same key the
-/// bottom-row prompt asked for, so nobody's muscle memory breaks.
+/// Typing the letter a button marks takes that button.
 #[test]
-fn the_old_letter_answers_still_work() {
+fn the_letter_a_button_marks_answers_it() {
     let _pin = pin();
     let mut config = Config::default();
     config.editor.hot_exit = false;
@@ -408,11 +407,12 @@ fn escape_dismisses_a_dialog_whose_every_button_does_something() {
     );
 }
 
-/// The letters each prompt advertised stay live inside a modal that swallows
-/// every key. `prompt.quit_confirm` said `(y)es, (N)o`, and its handler also
-/// takes the `Action::Quit` letter.
+/// **Every button answers to a letter of its own label, and only that.** The
+/// letters used to be inherited from the row prompts — this one advertised
+/// `(y)es, (N)o` — and a letter that is not in the word could not be marked
+/// in it, so several dialogs advertised nothing at all.
 #[test]
-fn the_quit_confirmation_still_answers_to_yes() {
+fn the_quit_confirmation_answers_to_the_letter_it_shows() {
     let _pin = pin();
     let mut config = Config::default();
     config.editor.confirm_quit = true;
@@ -424,17 +424,31 @@ fn the_quit_confirmation_still_answers_to_yes() {
     harness.assert_screen_contains("Quit Fresh");
     assert!(!harness.should_quit(), "the question blocks the exit");
 
+    // `y` was this prompt's answer for years and is nobody's letter now.
     harness
         .send_key(KeyCode::Char('y'), KeyModifiers::NONE)
         .unwrap();
     harness.render().unwrap();
-    assert!(harness.should_quit(), "`y` was the advertised key");
+    assert!(
+        !harness.should_quit(),
+        "an inherited letter that no button shows must not answer"
+    );
+    harness.assert_screen_contains("Quit Fresh");
+
+    harness
+        .send_key(KeyCode::Char('q'), KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    assert!(
+        harness.should_quit(),
+        "the Quit button's own letter answers"
+    );
 }
 
-/// Its `(N)o` half, and the default: a prompt that exists to catch a stray
+/// Its retreat, and the default: a prompt that exists to catch a stray
 /// `Ctrl+Q` must not have Quit armed one stray Enter later.
 #[test]
-fn the_quit_confirmation_opens_on_no_and_answers_to_it() {
+fn the_quit_confirmation_opens_on_cancel_and_answers_to_it() {
     let _pin = pin();
     let mut config = Config::default();
     config.editor.confirm_quit = true;
@@ -453,10 +467,10 @@ fn the_quit_confirmation_opens_on_no_and_answers_to_it() {
     );
 
     harness
-        .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
+        .send_key(KeyCode::Char('c'), KeyModifiers::NONE)
         .unwrap();
     harness.render().unwrap();
-    assert!(!harness.should_quit(), "`n` was the advertised key");
+    assert!(!harness.should_quit(), "Cancel answers to its own `C`");
 }
 
 /// **No dialog opens on an outcome that loses work**, however its caller
@@ -505,5 +519,138 @@ fn a_destructive_button_is_never_the_one_enter_would_take() {
         std::fs::read_to_string(&file).unwrap(),
         "changed by someone else\n",
         "Enter on the armed button must not have overwritten the file"
+    );
+}
+
+/// **Every button shows the letter it answers to**, and the same letter means
+/// the same thing in every dialog. The letters used to be inherited from the
+/// row prompts, which chose them to be typed rather than to appear in a word:
+/// four dialogs advertised nothing at all, and the multi-file paste conflict
+/// marked only its two `All` variants — pointing the one visible `O` at the
+/// more destructive button.
+#[test]
+fn every_button_marks_the_letter_it_answers_to() {
+    let _pin = pin();
+    let (mut harness, _file) = dirty_buffer(Config::default());
+    quit(&mut harness);
+
+    let row = (0..HEIGHT)
+        .find(|r| harness.screen_row_text(*r).contains("Save and Quit"))
+        .expect("the button row is on screen");
+    // Every label's own initial, and Cancel's `C` among them.
+    for (letter, label) in [
+        ('s', "Save and Quit"),
+        ('d', "Discard and Quit"),
+        ('q', "Quit (recoverable)"),
+        ('c', "Cancel"),
+    ] {
+        let text = harness.screen_row_text(row);
+        assert!(
+            text.contains(label),
+            "{label:?} must be on the button row; row was {text:?}"
+        );
+        assert!(
+            label.to_lowercase().contains(letter),
+            "{label:?} must contain its own accelerator {letter:?}"
+        );
+    }
+}
+
+/// `c` is Cancel in every dialog that has one — even where another button
+/// starts with the same letter. The missing-folder prompt used to put `c` on
+/// Create and push Cancel onto an unrelated letter.
+#[test]
+fn cancel_is_the_same_letter_in_every_dialog() {
+    let _pin = pin();
+    let mut harness = EditorTestHarness::with_temp_project(WIDTH, HEIGHT).unwrap();
+    let dir = harness.project_dir().unwrap();
+    std::fs::write(dir.join("victim.txt"), "keep me\n").unwrap();
+    harness.render().unwrap();
+
+    // A delete dialog: `c` must retreat, not delete.
+    harness.editor_mut().start_confirm_prompt(
+        "body".to_string(),
+        fresh::view::prompt::PromptType::ConfirmDeleteFile {
+            path: dir.join("victim.txt"),
+            is_dir: false,
+        },
+        fresh::app::confirm_dialog::delete("Delete file 'victim.txt'?".to_string()),
+    );
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Char('c'), KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    assert!(
+        dir.join("victim.txt").exists(),
+        "`c` must be Cancel here, not the Delete button"
+    );
+
+    // And in a dialog whose other button also begins with C.
+    harness.editor_mut().start_confirm_prompt(
+        "body".to_string(),
+        fresh::view::prompt::PromptType::ConfirmCreateDirectory {
+            path: dir.join("newdir").join("x.txt"),
+        },
+        fresh::app::confirm_dialog::create_directory("newdir"),
+    );
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Char('c'), KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    assert!(
+        !dir.join("newdir").exists(),
+        "`c` must be Cancel here too, not Create Folder"
+    );
+}
+
+/// The button under the pointer lights up, so a click is predictable — and
+/// **hovering does not arm**: Enter still takes the button it took before the
+/// pointer moved. A pointer crossing a destructive button on its way
+/// somewhere else must not leave it one keystroke from happening.
+#[test]
+fn hovering_a_button_lights_it_without_arming_it() {
+    let _pin = pin();
+    let (mut harness, file) = dirty_buffer(Config::default());
+    quit(&mut harness);
+
+    let row = (0..HEIGHT)
+        .find(|r| harness.screen_row_text(*r).contains("Save and Quit"))
+        .expect("the button row is on screen");
+    let armed_before = harness.screen_row_text(row);
+    assert!(armed_before.contains("[ Save and Quit ]"));
+
+    // Move the pointer onto "Discard and Quit".
+    let col = armed_before
+        .find("Discard and Quit")
+        .expect("the discard button is on that row") as u16;
+    harness.mouse_move_reporting_render(col, row).unwrap();
+    harness.render().unwrap();
+
+    let hovered = harness.screen_row_text(row);
+    assert!(
+        hovered.contains("[ Save and Quit ]"),
+        "hovering must not move what Enter takes; row was {hovered:?}"
+    );
+    // The hovered button's ground differs from an untouched button's.
+    let untouched = hovered
+        .find("Quit (recoverable)")
+        .expect("a third, untouched button is on that row") as u16;
+    assert_ne!(
+        harness.get_cell_style(col, row),
+        harness.get_cell_style(untouched, row),
+        "the hovered button must be drawn differently from an untouched one"
+    );
+
+    // Enter still takes the armed button, not the hovered one.
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    assert_eq!(
+        std::fs::read_to_string(&file).unwrap(),
+        "EDITEDoriginal\n",
+        "Enter must have saved, not discarded"
     );
 }

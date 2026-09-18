@@ -1708,7 +1708,7 @@
   "dialog.btn.skip": "スキップ",
   "dialog.btn.skip_all": "すべてスキップ",
   "dialog.btn.rename": "名前を変更…",
-  "dialog.btn.create": "作成",
+  "dialog.btn.create": "フォルダを作成",
   "dialog.btn.revert": "元に戻す",
   "dialog.btn.save_with_sudo": "sudo で保存",
   "dialog.btn.load": "読み込み",

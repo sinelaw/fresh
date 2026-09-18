@@ -1708,7 +1708,7 @@
   "dialog.btn.skip": "건너뛰기",
   "dialog.btn.skip_all": "모두 건너뛰기",
   "dialog.btn.rename": "이름 변경…",
-  "dialog.btn.create": "생성",
+  "dialog.btn.create": "폴더 생성",
   "dialog.btn.revert": "되돌리기",
   "dialog.btn.save_with_sudo": "sudo로 저장",
   "dialog.btn.load": "불러오기",
