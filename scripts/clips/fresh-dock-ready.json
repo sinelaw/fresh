@@ -1,0 +1,367 @@
+{
+  "name": "fresh-dock-ready",
+  "capture": {
+    "geometry": "150x50",
+    "font": "JetBrains Mono 21",
+    "screen": "2600x2000x24",
+    "display": ":99",
+    "settle": 24,
+    "term": "xfce4-terminal",
+    "key_settle": 0.2,
+    "type_settle": 0.5,
+    "copy_dirs": {
+      "~/.cache/fresh-dock-ready/config/fresh": "{scratch}/config/fresh"
+    },
+    "env": {
+      "XDG_CONFIG_HOME": "{scratch}/config",
+      "XDG_DATA_HOME": "{scratch}/data-{pane}",
+      "XDG_STATE_HOME": "{scratch}/state-{pane}",
+      "XDG_CACHE_HOME": "{scratch}/cache-{pane}",
+      "XDG_RUNTIME_DIR": "{scratch}/run-{pane}",
+      "CLIP_HOME": "~/.cache/fresh-dock-ready",
+      "CLIP_SHOTS_DIR": "$CLIP_SHOTS_DIR"
+    },
+    "panes": {
+      "dock": {
+        "argv": [
+          "$FRESH_BIN",
+          "--no-upgrade-check",
+          "--no-restore",
+          "$CLIP_HOME/tree"
+        ]
+      }
+    },
+    "keys": [
+      {
+        "mark": true
+      },
+      {
+        "shot": "go"
+      },
+      {
+        "at": 6.0
+      },
+      {
+        "shot": "busy"
+      },
+      {
+        "at": 7.7
+      },
+      {
+        "shot": "d1"
+      },
+      {
+        "at": 8.3
+      },
+      {
+        "shot": "d2"
+      },
+      {
+        "at": 8.9
+      },
+      {
+        "shot": "d3"
+      },
+      {
+        "at": 9.5
+      },
+      {
+        "shot": "d4"
+      },
+      {
+        "at": 10.1
+      },
+      {
+        "shot": "d5"
+      },
+      {
+        "at": 10.7
+      },
+      {
+        "shot": "d6"
+      },
+      {
+        "at": 11.3
+      },
+      {
+        "shot": "need"
+      },
+      {
+        "at": 12.5
+      },
+      {
+        "shot": "settle"
+      }
+    ]
+  },
+  "render": {
+    "size": [
+      1080,
+      1080
+    ],
+    "fps": 60,
+    "rows": 50,
+    "cols": 150,
+    "title": "fresh \u2014 orchestrator dock",
+    "note_size": 56,
+    "views": {
+      "list": {
+        "rows": [
+          0,
+          17
+        ],
+        "cols": [
+          0,
+          40
+        ]
+      },
+      "bar": {
+        "rows": [
+          0,
+          10
+        ],
+        "cols": [
+          0,
+          40
+        ]
+      }
+    },
+    "crt": {
+      "scanlines": 0.18,
+      "gap": 4,
+      "bloom": 0.35,
+      "shift": 2,
+      "vignette": 0.3,
+      "curve": 0.07,
+      "shutdown": 0.55,
+      "off_glow": 1.5
+    },
+    "timing": {
+      "intro": 0,
+      "zoom": 0,
+      "hold": 0.8,
+      "pan": 0.1,
+      "push": 0.9,
+      "wipe": 0.7,
+      "shatter": 0.7,
+      "outro": 0.2
+    },
+    "annotations": [
+      {
+        "shot": "busy",
+        "view": "list",
+        "rows": [
+          1,
+          16
+        ],
+        "cols": [
+          2,
+          20
+        ],
+        "band": false,
+        "hold": 0.25,
+        "tag": {
+          "text": "better status icons",
+          "at": "center-right",
+          "width": 0.4,
+          "color": "after",
+          "bg": true
+        }
+      },
+      {
+        "shots": [
+          "d1",
+          "d2",
+          "d3",
+          "d4",
+          "d5",
+          "d6"
+        ],
+        "crossfade": 0,
+        "view": "list",
+        "rows": [
+          1,
+          16
+        ],
+        "cols": [
+          2,
+          20
+        ],
+        "band": false,
+        "hold": 1.6800000000000002,
+        "tag": {
+          "text": "better status icons",
+          "at": "center-right",
+          "width": 0.4,
+          "color": "after",
+          "bg": true
+        }
+      },
+      {
+        "shot": "need",
+        "view": "list",
+        "rows": [
+          1,
+          16
+        ],
+        "cols": [
+          2,
+          20
+        ],
+        "band": false,
+        "hold": 0.5,
+        "tag": {
+          "text": "better status icons",
+          "at": "center-right",
+          "width": 0.4,
+          "color": "after",
+          "bg": true
+        }
+      },
+      {
+        "shot": "settle",
+        "view": "bar",
+        "rows": [
+          0,
+          10
+        ],
+        "cols": [
+          0,
+          40
+        ],
+        "band": false,
+        "hold": 2.9,
+        "transition": "wipe",
+        "explode": {
+          "dim": 0.75,
+          "at": 0.35,
+          "over": 0.85,
+          "pieces": [
+            {
+              "rows": [
+                1,
+                2
+              ],
+              "cols": [
+                0,
+                9
+              ],
+              "offset": [
+                19,
+                3
+              ],
+              "label": "new workspace"
+            },
+            {
+              "rows": [
+                1,
+                2
+              ],
+              "cols": [
+                28,
+                36
+              ],
+              "offset": [
+                -6,
+                6
+              ],
+              "label": "search"
+            },
+            {
+              "rows": [
+                1,
+                2
+              ],
+              "cols": [
+                38,
+                39
+              ],
+              "offset": [
+                -9,
+                9
+              ],
+              "label": "menu"
+            }
+          ]
+        },
+        "tag": {
+          "text": "cleaner toolbar",
+          "at": "center-right",
+          "width": 0.4,
+          "color": "after",
+          "bg": true
+        }
+      },
+      {
+        "shot": "settle",
+        "view": "bar",
+        "rows": [
+          0,
+          10
+        ],
+        "cols": [
+          0,
+          40
+        ],
+        "band": false,
+        "hold": 1.0,
+        "explode": {
+          "dim": 0.75,
+          "at": 0.0,
+          "over": 0,
+          "pieces": [
+            {
+              "rows": [
+                1,
+                2
+              ],
+              "cols": [
+                0,
+                9
+              ],
+              "offset": [
+                19,
+                3
+              ],
+              "label": "new workspace"
+            },
+            {
+              "rows": [
+                1,
+                2
+              ],
+              "cols": [
+                28,
+                36
+              ],
+              "offset": [
+                -6,
+                6
+              ],
+              "label": "search"
+            },
+            {
+              "rows": [
+                1,
+                2
+              ],
+              "cols": [
+                38,
+                39
+              ],
+              "offset": [
+                -9,
+                9
+              ],
+              "label": "menu"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "encode": {
+    "crf": 18,
+    "preset": "slow"
+  }
+}

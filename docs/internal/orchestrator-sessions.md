@@ -314,8 +314,10 @@ The dock additionally shows a coarse agent state inferred from terminal output:
 the last screen lines read as a question for the user), `done` (quiet after a
 burst of work that happened while the window was not active — cleared on
 activation), `idle`, `unknown` (no output yet, or the terminal exited). Rows
-show `*` / `●` / `✓` / `·` / `?`, folder rows roll up `●n ✓n`, and the dock
-header carries `● N need you · ✓ N done` while either is non-zero. A
+show `*` / `●` / `✓` / `·` / `?`, and folder rows roll up `●n ✓n`. The dock
+header used to carry `● N need you · ✓ N done` as well; it does not any more,
+because the line appeared and disappeared with the counts and moved every row
+under it when it did. A
 transition into `blocked`/`done` in a non-active window is announced in the
 status bar (`● name needs you (F8 jumps)`, optional bell — see 5.0), and
 `Orchestrator: Jump to Attention` walks the pending workspaces (blocked first)
@@ -427,7 +429,7 @@ the generated settings widgets.
 | `defaultView`         | `"card"` | Density the dock opens at: `card` or `compact`.      |
 | `showAllWorktrees`    | `false`  | Initial state of the "all worktrees" checkbox.       |
 | `showEmptyWorkspaces` | `true`   | Initial state of the "show empty" checkbox (i.e. `hideTrivial = !showEmptyWorkspaces`). |
-| `notifications`       | `"all"`  | Status-bar notice when a background workspace turns `blocked` (`needs-you`) or also `done` (`all`); `off` leaves only the dock's attention line. |
+| `notifications`       | `"all"`  | Status-bar notice when a background workspace turns `blocked` (`needs-you`) or also `done` (`all`); `off` leaves only the dock's own badges. |
 | `notifySound`         | `false`  | Ring the terminal bell with each notice.             |
 | `detectionRulesUrl`   | `""`     | URL of a published detection-rules JSON; adopted when newer than the local file. |
 

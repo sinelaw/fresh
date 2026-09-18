@@ -1,0 +1,8 @@
+#!/usr/bin/env python3
+"""A workspace that should read as busy needs a process that is actually
+producing output — `agentState: "working"` measures exactly that, so a
+sleeping shell would film as idle however the row is labelled."""
+import sys, time, itertools
+for i in itertools.count(1):
+    print(f"  building unit {i:>3} ...", flush=True)
+    time.sleep(1.7)

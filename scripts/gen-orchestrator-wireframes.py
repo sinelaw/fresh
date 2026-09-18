@@ -85,9 +85,10 @@ def art(s): P.append("```\n" + check(s) + "\n```")
 md("""
     # Orchestrator dock & dialogs — UX redesign
 
-    > _Design note. Status: **IMPLEMENTED** — §2 (dock, including the §2.3
-    > attention line), §3 (dialogs), §4 (SSH host picker) and §5 (machines)
-    > ship. See "Implementation status" at the end. The "Today" blocks are transcripts
+    > _Design note. Status: **IMPLEMENTED** — §2 (dock), §3 (dialogs), §4
+    > (SSH host picker) and §5 (machines) ship; §2.3's attention line shipped
+    > and was then **withdrawn** — see the section for why it did not survive
+    > contact. See "Implementation status" at the end. The "Today" blocks are transcripts
     > captured by driving Fresh 0.5.1 by hand in tmux; they are the evidence
     > for every decision that follows, and describe the surfaces as they were
     > before §2 and §3 landed._
@@ -175,8 +176,9 @@ md("""
 
     ### 2.2 Chosen layout
 
-    Actions on one row at the top, then the attention line, then the list. The
-    four header controls collapse to two.
+    Actions on one row at the top, then the list. The four header controls
+    collapse to two. (This wireframe used to carry a summary line between the
+    two; §2.3 says what became of it.)
 """)
 
 TREE = [
@@ -189,9 +191,7 @@ TREE = [
     "   ◐ dark-mode          claude    1m",
     " ▸ infra                   ?1",
 ]
-ATTN = " ● 2 need you · ✓ 1 done            ▾"
-
-art(box([" + New                  / search    ⋯ ", "-", ATTN, "-"]
+art(box([" + New                  / search    ⋯ ", "-"]
         + bar(TREE, DOCK, 0, 5) + [""], w=DOCK, close=False))
 
 md("""
@@ -208,7 +208,23 @@ md("""
     The scrollbar rides the workspace list only — the rows above and below it
     do not scroll, and not drawing a track on them is what says so.
 
-    ### 2.3 The attention line disappears when it is not needed
+    ### 2.3 The attention line, and why it is gone
+
+    The line read `● 2 need you · ✓ 1 done` between the action row and the
+    list, and it was drawn only while one of the counts was non-zero — which
+    is exactly the idea that did not survive. A row that is absent and then
+    present is a row that *appears*, and every row under it moves down one the
+    moment it does. Watching the dock while agents finish, that is the change
+    you see: not the badge that just turned green, but the whole list
+    stepping. The counts were already on the rows and rolled up on the
+    folders, so the line was paying for a shift with a repetition.
+
+    Withdrawn. Rows keep `● * ✓ · ?`, folder rows keep `●n ✓n`, the status-bar
+    notice and `Orchestrator: Jump to Attention` are untouched — the dock's
+    chrome is simply a fixed three rows now, whatever is pending.
+
+    Here it is as it was, with nothing blocked, which is the layout the dock
+    now has in every state:
 """)
 
 QUIET = [
@@ -227,9 +243,7 @@ art(box([" + New                  / search    ⋯ ", "-"] + bar(QUIET, DOCK, 0, 
         w=DOCK, close=False))
 
 md("""
-    With nothing blocked there is no chrome at all above the list: the row that
-    would carry the summary is simply not drawn. The thumb is longer here
-    because fewer rows are hidden.
+    The thumb is longer here because fewer rows are hidden.
 
     ### 2.4 The `⋯` menu
 
@@ -278,7 +292,7 @@ md("""
     are dropped. The scrollbar is the one piece of chrome that does not shrink.
 """)
 
-art(box([" ● 2 need you           ▾", "-"] + bar([
+art(box(bar([
     " ▾ payments-api  ●2 ✓1",
     "   ● fix-webhook…    4m",
     "   ✓ add-idempot…   10m",
@@ -946,16 +960,17 @@ md("""
     happened while the window was not active — cleared on activation),
     `idle`, `unknown` (no output yet / terminal exited). Rows carry `●` /
     `*` / `✓` / `·` / `?`; a folder row rolls its members up as `●n ✓n`;
-    the header shows `● N need you · ✓ N done` only while either is
-    non-zero. A transition into `blocked`/`done` in a window the user is
+    the header carried `● N need you · ✓ N done` while either was
+    non-zero, until that line was withdrawn (§2.3). A transition into
+    `blocked`/`done` in a window the user is
     not looking at is also announced in the status bar (`● name needs you
     (F8 jumps)`, with an optional terminal bell), and one command —
     `Orchestrator: Jump to Attention`, bindable as `orchestrator_jump` —
     walks the pending workspaces and then returns to where it started;
-    the attention line carries counts only (a `jump` button was tried
-    and dropped: it read as a state, not a control). `blocked` and `done`
-    are heuristics over the output stream — good enough for the attention
-    line, never a guarantee. The patterns are data: the built-in set
+    the line carried counts only while it existed (a `jump` button was
+    tried and dropped first: it read as a state, not a control).
+    `blocked` and `done` are heuristics over the output stream — good
+    enough for a badge, never a guarantee. The patterns are data: the built-in set
     (v1) yields to `<data dir>/orchestrator/detection-rules.json`, which
     `detectionRulesUrl` can keep current from a published file, and
     `Orchestrator: Explain State` / `fresh --cmd agent explain` print the

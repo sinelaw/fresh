@@ -33,6 +33,11 @@ specific to filming *this* program.
 | `fresh-review-syntax.json` | comparison | source highlighted inside a Review Diff stream |
 | `fresh-ui-anatomy.json` | explode | the retained UI tree, one element at a time |
 | `fresh-welcome-scroll.json` | solo, stepped | the Welcome screen, scrolled from the wordmark to the theme card, then restyled live |
+| `fresh-dock-cleanup.json` | solo, stepped | 25 unreadable orchestrator rows, filed into folders and renamed by an agent |
+| `fresh-dock-cleanup-short.json` | solo, stepped | the same, cut to 14s for a feed |
+| `fresh-dock-cleanup-short-vertical.json` | solo, stepped | the 14s cut at 9:16 |
+| `fresh-dock-cleanup-focus.json` | solo, stepped | the dock alone: 25 rows filed one at a time, then renamed |
+| `fresh-dock-ready.json` | solo, stepped | eleven agents working; three finish, one asks, and the dock says which |
 
 `assets/<clip>/fresh/config.json` is a config directory a spec copies in, so a
 capture gets a deliberate theme and a known set of enabled plugins instead of
@@ -142,3 +147,246 @@ session Restricted — which blocks the `spawnProcess` calls the welcome screen'
 finder and git cards are made of, and puts a red pill in the status bar besides.
 A demo repo of prose and a couple of scripts has no marker in it, opens Trusted,
 and films with its cards alive.
+
+## Staging a dock, not a file
+
+`fresh-dock-cleanup` is the one clip here that films the *orchestrator*
+rather than a buffer, and it needed three things the others did not.
+
+**Scripting the editor from outside is refused, by design.** `fresh --cmd
+script run` and `fresh --cmd init reload` both answer "no capability token:
+script evaluation is not authorized". The token is minted per terminal and
+injected into the PTY (`FRESH_CMD_TOKEN`), so the only two ways in are
+`init.ts`, which runs at startup with the full API, and a process the editor
+itself spawned. This clip uses both: `assets/fresh-dock-cleanup/fresh/init.ts`
+stages the 25 workspaces, and the agent that cleans them up is launched with
+`runAgent` into a real pane, where it inherits a real token and drives the
+dock with `fresh --cmd script run -` like any agent would.
+
+**Pace the agent to a deadline, not to a sum of sleeps.** Every mutation is a
+process spawn and a round trip; sleeping a fixed pause *after* each one makes
+the agent finish a dozen seconds later than the schedule the capture is
+counting against, and the shots then photograph the wrong states. `clip-agent
+--timeline` publishes the schedule and `gen-spec.py` generates the capture's
+sleeps from it, so the two cannot drift.
+
+**The dock's compact row shows the name and nothing else.** `sessionNodeEntry`
+renders the state glyph, the label and the on-disk/pending tags — branch and
+the git summary belong to card view, and 25 rows of cards do not fit. The
+fixture's branches and uncommitted work are real (`git-report.json` records
+what the probe saw), the compact dock simply does not draw them.
+
+### The short cuts
+
+`fresh-dock-cleanup-short.json` and its `-vertical` twin are the same take as
+the long clip — same capture block, copied from it by `gen-spec-short.py`
+rather than restated, so the two cuts cannot drift apart when the fixture
+changes. Only `render` differs. Regenerate both with:
+
+```sh
+scripts/clips/assets/fresh-dock-cleanup/gen-spec.py
+scripts/clips/assets/fresh-dock-cleanup/gen-spec-short.py
+scripts/clips/assets/fresh-dock-cleanup/gen-spec-short.py --vertical
+```
+
+The short cut is not the long one with beats deleted. It is three ideas — the
+mess, the ask, the result — and the rename is promoted from three annotated
+beats to a single `swipe`, which is the only moment where an old name and its
+replacement occupy the same pixel. No beat carries a `head` or a `sub`, so the
+caption bar is not drawn at all and the viewport takes its height; every word
+is a note, in the frame, on the picture.
+
+**Prefer the vertical one.** The dock is a 41-column, 34-row rect — 0.54:1,
+within a hair of 9:16. A square frame can only fit that by height, so it
+leaves the surplus width to the editor pane beside it and the dock lands at
+about 40% of the frame. Vertical fills edge to edge at roughly twice the type
+size, for the same 14 seconds and the same beats.
+
+### The focused cut
+
+`fresh-dock-cleanup-focus.json` films the dock and nothing else — no agent
+pane, no typed prompt, no before/after, no captions. It needs its own take:
+the long clip photographs only three individual moves before jumping to
+all-25-filed, which is fine when each move is annotated and useless when the
+arranging *is* the subject. This take photographs all twenty-five.
+
+**The agent follows the camera.** Pacing the two off separate clocks does not
+work. They are anchored by one constant — how long `Return` takes to become a
+running agent — and every error in it shifts the whole sequence: at 1.2s every
+shot came back a step late, at 2.3s the middle lined up and the ends did not.
+There is no value that fixes it, because the error is not constant.
+
+So `tui-clip` leads. `shot` writes its raw `.xwd` into `out/<name>/shots` at
+the instant it grabs and only encodes at the end of the take, so a new file
+appearing there is the shutter. `record.sh` passes that directory to the agent
+as `CLIP_SHOTS_DIR`, and the agent makes one dock change, waits for the shot
+that records it, and only then makes the next. The spec's sleeps are then free
+to drift — nothing moves on screen until a shot has been taken — and they only
+have to be longer than one mutation (0.18s typical, 0.32s worst measured).
+
+Square, framed on the top of the list. A 41-column rect over 18 rows is very
+near 1:1, so it fills a square frame at about 58px a row; the whole list needs
+35 rows and only fits by height, at 42% of the frame's width, which is the
+opposite of zoomed in. The rest of the list carries on below the frame, and
+the swipe only cascades the rows the frame can actually show — pacing it to
+sixteen would spend a second wiping rows nobody can see.
+
+The two words on screen are `tag`s rather than notes, and the phases are
+separated by a `wipe`. A note would have been wrong here twice over: it draws
+a leader back to its rect, which has nothing to point at when the words name
+the whole beat, and it lands wherever the rect puts it rather than where the
+frame has room. The tags sit centre-right, wrapped, stroked so they read over
+the list, and they ride the wipe edge — clipped to their own sides of it — so
+"organize into folders" is replaced by "rename" in place as the screen under
+it changes. They are set in the theme's green on a dark fill: a stroke alone
+is enough over a picture, but this picture is itself text, and the rows keep
+showing between the letters until something opaque goes behind them.
+
+`render.crt` puts a tube over the whole thing — a curved raster, scanlines,
+phosphor bloom, channel fringing, corner falloff. The curve is the part that
+does the work: the other four are corrections applied to a flat rectangle,
+which is what a screenshot already is, so without it the pass reads as a
+filter over a picture rather than a picture on a tube. The clip ends by
+powering the tube off — `crt.shutdown` — instead of holding the finished dock
+and fading: the raster squeezes into an over-bright line, the line shortens to
+a dot, the dot decays. That takes the end of the clip rather than adding to
+it, so the last beat's hold is what plays in front of it.
+
+Stage one stops at the tenth move rather than running all twenty-five.
+The camera is on the top of the list, so once the rows being filed drop out
+of the frame the remaining shots are identical pictures — the dock is still
+working, just not where anyone is looking. `gen-spec-focus.py` measures where
+that happens rather than taking a guess: the first ten moves change the
+visible rows by 15-19 mean absolute difference and everything after by under
+seven, most of it by exactly zero. What is left over is carried by the wipe
+into the next beat, which replaces the whole screen anyway, so nothing jumps.
+
+`verify-shots.py` checks a take photographed the states it was aimed at:
+`folders` before any row is filed, one more filed row per `mv<i>`, and exactly
+sixteen rewritten rows between the last move and `after`. Rows are compared by
+how much of each one moved rather than exactly — two screens of the same dock
+differ by a caret phase or a scrollbar segment without a word of text
+differing, and on a good take the rewritten rows score 11.5–20.1 mean absolute
+difference against 0.95–5.7 for those.
+
+## The badges clip
+
+`fresh-dock-ready.json` films the other half of the dock: not the list being
+tidied, but the list telling you what has happened in it. Eleven sessions in
+two folders are working, six of them finish, one stops to ask a question, and
+the folder headers roll the counts up as they go. Then the picture shatters
+and the camera lands on the toolbar. Six seconds, nothing typed.
+
+**The take and the cut keep different clocks, on purpose.** A badge cannot
+land sooner than `run` + `IDLE_AFTER_MS`, so the shots are spread over
+thirteen seconds of real dock; the cut then plays them a third of a second
+apart, because a still is worth exactly as long as it takes to see what
+changed in it — and here that is one glyph and one roll-up, in the same two
+places every time. The first check is on screen four tenths of a second in:
+the opening still is 0.3s plus a 0.1s crossfade, which is all the "before"
+a picture this stable needs.
+
+**The list never shifts, and that is the framing.** Every pixel that changes
+in the crop is a badge changing. It used to shift: the dock carried a
+`● N need you · ✓ N done` line drawn only while the counts were non-zero, so
+the first check to land pushed every row below it down one, and *that* was
+the motion your eye caught rather than the badge. The line is gone — see the
+withdrawal note in `docs/internal/orchestrator-ux-redesign.md` §2.3 — and the
+folders are staged before the take rather than during it, for the same
+reason: this clip is about what a badge says, and a list reorganising itself
+is the other clip.
+
+**The agent is the repo's own fake agent.** Every row runs
+`crates/fresh-editor/tests/fixtures/coding_agent.py`, copied in by `record.sh`
+rather than duplicated here, so this clip and the e2e showcases film the same
+program. That matters beyond tidiness: the dock reads a terminal, and a bare
+line printer is not one. `bin/agent.sh` wraps it, and the only thing it stages
+is *when each row stops talking* — the badge is whatever `sessionState` makes
+of that.
+
+**A state is a schedule, not a claim.** A row that goes quiet at `W + run` is
+still `working` for `IDLE_AFTER_MS` (5s) and repaints 100ms after that, so
+`rows.json`'s `run` column *is* the edit: six values 0.6s apart put six checks
+on the camera in turn, alternating between the two folders, and the seventh
+lands the red dot after them. 0.6s is what leaves a shot room to land cleanly
+between two flips (each is taken 0.4s after the one it records), and nothing
+under about
+2.0 works at all — `coding_agent.py` waits 0.5s before its first line, so the
+burst is `run` minus that, and it has to clear `WORK_MIN_MS` (1.5s) with room
+to spare or the row files as idle instead. `gen-spec.py` derives every shot
+time from the same table, so moving a row in the table moves the camera with
+it.
+
+**Two phases, because they cannot be one.** Creating eleven workspaces is
+eleven layout changes, and the orchestrator writes off output from a session
+that has not spoken yet for 1.5s after each one (`layoutChangedAt`) — plus
+1.5s after any window becomes active (`ACTIVATION_GRACE_MS`). Stage and work
+at the same time and the front of every burst is eaten. So staging runs first
+and every agent waits for W.
+
+**W is the camera's first shutter.** Not a clock: `bin/wait-for-start.py`
+holds every row until a raw `.xwd` appears in `CLIP_SHOTS_DIR`, which is the
+instant `shot` grabs, and the capture's `at:` marks are measured from the
+`mark` beside that same shot. Two clocks joined by a guessed constant drift;
+this is the same camera-leads trick the focused cut uses, with one gate
+instead of twenty-five. With no camera (staging by hand, or in tmux) it falls
+back to `LEAD` seconds after `init.ts` starts, which is what makes the fixture
+inspectable without recording anything.
+
+**`visit: false` on every create.** A row is only `done` while its window is
+*not* the one being looked at — activating it is what "seen" means — so the
+launch workspace stays active for the whole take, and it is a row in the list
+like any other (`main`).
+
+**It films this tree's plugin, not the binary's.** Plugins are embedded at
+build time, so a released `FRESH_BIN` carries the orchestrator it shipped
+with. `record.sh` copies `crates/fresh-editor/plugins/orchestrator.ts` and its
+`lib/` into the capture's config directory, where a plugin wins over the
+embedded copy — unedited, so what is on screen is the plugin as committed
+beside it.
+
+**Two subjects, and a cut to get between them.** At 2.6s the list has said
+everything it has to say, which is where the clip used to go quiet; instead
+it wipes to the toolbar and takes it apart — `[ + New ]`, the search
+affordance and the `⋯` menu lift out of the bar and label themselves
+(`explode` on a solo beat, added to tui-clips for this). The two plates,
+`better status icons` and `cleaner toolbar`, ride the wipe's edge rather than
+cross-fading, so one replaces the other in place.
+
+**The three rects are not measured off the picture.** `Dump UI Tree` — bound
+to F9 in the clip's config, because the palette route would dump the frame
+with the palette over everything — writes the window's retained layout to a
+buffer, and `ctrl+s` offers Save As. `tui-tree ui-tree.json --list` then reads
+out `widget:new-session` at `(0,1 9x1)`, `widget:search-toggle` at
+`(28,1 8x1)` and `widget:dock-menu` at `(38,1 1x1)`, which is exactly what
+goes in the spec. A geometry change costs one re-dump and no arithmetic.
+
+An offset is a move *within* the capture, so the pieces are dealt down and to
+the right rather than up: there is nothing above row 0 to move into, and the
+right-hand half of the list is the only part of the screen with room. The
+hole each one leaves is drawn as ground — a control that has moved must not
+leave a ghost where it was — and the rest of the screen falls back by `dim`
+as they go.
+
+The second framing is a pan, not a zoom. The toolbar is forty columns wide
+and two rows tall, so a square frame cannot make it much bigger without
+cutting `/ search` and the `⋯` off the right — and those are half of what
+there is to look at. Both views are bound by the same forty columns, so the
+scale never changes; what changes is the camera's centre, and the black above
+the panel is the evidence that it has reached the top of the window. The tag
+goes to `bottom-right` there for the same reason it exists: at centre-right
+it sat straight over the half of the toolbar the beat is for.
+
+`render.crt` ends the clip by powering the tube off.
+Lighter than the dock-cleanup cut wears: that one's subject is rows moving,
+this one's is five glyphs that have to stay legible, and a deep scanline comb
+is the first thing a feed's encoder turns to mush. The curve stays, because a
+power-off needs a tube to read as a power-off.
+
+The take found a bug rather than working around one. `✓` could not appear at
+all for a workspace created in the current session: the burst clock starts on
+`lastOutputAt === null`, two of the session constructors left the field
+absent, and `undefined` matches neither that nor `>= IDLE_AFTER_MS`. Fixed in
+`orchestrator.ts`, with `e2e::orchestrator_done_badge` to keep it fixed. The
+fixture is not allowed to paper over the product; if a badge will not appear,
+that is the news.
