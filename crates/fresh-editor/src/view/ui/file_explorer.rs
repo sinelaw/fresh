@@ -78,6 +78,14 @@ pub fn describe_row(d: RowDesc<'_>) -> Option<crate::view::shell::file_explorer:
         .map(|m| m.is_hidden)
         .unwrap_or(false);
     let neutral = fe::neutral_key(is_hidden, node.entry.is_symlink(), node.is_dir());
+    // Ignored entries that are nonetheless shown (respect off, or
+    // show_gitignored on) recede like cut files — VS Code-style dimming
+    // (issue #3283).
+    let is_ignored = matches!(
+        d.view.ignore_patterns().get_status(&node.entry.path, node.is_dir()),
+        crate::view::file_tree::IgnoreStatus::GitIgnored
+            | crate::view::file_tree::IgnoreStatus::CustomIgnored
+    );
     let ground = if d.is_cursor && d.focused {
         "editor.selection_bg"
     } else if d.is_cursor {
@@ -111,7 +119,7 @@ pub fn describe_row(d: RowDesc<'_>) -> Option<crate::view::shell::file_explorer:
     });
 
     let is_cut = d.cut.iter().any(|p| p == &node.entry.path);
-    let name_fg = if is_cut {
+    let name_fg = if is_cut || is_ignored {
         "editor.line_number_fg".to_string()
     } else if let Some(c) = slots.name_color_hint {
         literal(c)
