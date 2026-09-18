@@ -117,12 +117,32 @@ pub fn layer(c: &Confirm) -> Node<UiMsg> {
         ))
 }
 
+/// **The question scrolls; the answers never do.**
+///
+/// The buttons sit outside the viewport, so a card too short for its message
+/// clips the message — which can be scrolled — rather than the row of
+/// outcomes, which could only be reached by guessing. A confirmation with no
+/// visible answer is the fault this whole dialog exists to remove, and a tall
+/// question on a short terminal is exactly where it would have come back.
 fn card(c: &Confirm) -> Node<UiMsg> {
     let ring = pair("ui.popup_border_fg", "ui.popup_bg");
+    let rows_of_buttons = buttons(c);
     let body = fresh_ui::viewport(col().children(rows(c)))
-        .max_h(c.max_height.saturating_sub(2))
+        .max_h(body_budget(c.max_height, rows_of_buttons.len()))
         .scrollbar();
-    col().theme(ring).border().child(body)
+    let mut kids = vec![body];
+    kids.extend(rows_of_buttons);
+    col().theme(ring).border().children(kids)
+}
+
+/// How many rows the scrolling question gets: the card, less its two border
+/// rows, less every row the buttons need. At least one, so a card squeezed
+/// past all reason still renders something above the answers.
+fn body_budget(max_height: u16, button_rows: usize) -> u16 {
+    max_height
+        .saturating_sub(2)
+        .saturating_sub(button_rows as u16)
+        .max(1)
 }
 
 fn rows(c: &Confirm) -> Vec<Node<UiMsg>> {
@@ -155,7 +175,6 @@ fn rows(c: &Confirm) -> Vec<Node<UiMsg>> {
     }
     out.push(blank());
     out.push(rule(ring));
-    out.extend(buttons(c));
     out
 }
 
@@ -411,5 +430,33 @@ mod tests {
         let rows = pack(&quit_buttons(), 4);
         assert_eq!(rows.len(), 4);
         assert_eq!(rows.concat(), vec![0, 1, 2, 3]);
+    }
+
+    /// A card too short for its question gives up question rows, never button
+    /// rows: the body's budget always leaves every packed button row standing.
+    #[test]
+    fn the_buttons_keep_their_rows_on_a_short_card() {
+        for max_height in 3u16..24 {
+            for button_rows in 1usize..5 {
+                let body = body_budget(max_height, button_rows);
+                assert!(body >= 1, "the question never vanishes entirely");
+                // Two border rows plus the buttons plus the body fit, except
+                // where the floor of one body row has to overrun a tiny card.
+                let needed = 2 + button_rows as u16 + body;
+                assert!(
+                    needed <= max_height || body == 1,
+                    "h={max_height} rows={button_rows}: needs {needed}"
+                );
+            }
+        }
+    }
+
+    /// The tall-question case the scrim was hiding: a four-row button block on
+    /// a short card leaves the question one row, and the buttons all four.
+    #[test]
+    fn a_wrapped_button_block_is_never_squeezed_out() {
+        assert_eq!(body_budget(7, 4), 1);
+        assert_eq!(body_budget(12, 4), 6);
+        assert_eq!(body_budget(24, 1), 21);
     }
 }

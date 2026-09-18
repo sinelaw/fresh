@@ -86,9 +86,14 @@ fn candidates(label: &str) -> Vec<(usize, char)> {
     for (i, c) in label.char_indices() {
         match c.is_alphanumeric() {
             true => {
-                match starting {
-                    true => initials.push((i, c)),
-                    false => rest.push((i, c)),
+                // Only ASCII is offered: a terminal delivers `s` as a bare key
+                // press, but `保` or `ก` arrive through an input method, if at
+                // all. Marking one would advertise a key nobody can press.
+                if c.is_ascii_alphanumeric() {
+                    match starting {
+                        true => initials.push((i, c)),
+                        false => rest.push((i, c)),
+                    }
                 }
                 starting = false;
             }
@@ -97,6 +102,17 @@ fn candidates(label: &str) -> Vec<(usize, char)> {
     }
     initials.extend(rest);
     initials
+}
+
+/// Case-insensitive in every alphabet, not just this one.
+///
+/// `eq_ignore_ascii_case` is plain `==` outside ASCII, which let a dialog hand
+/// `Ü` to one button and `ü` to another: German's paste conflict marked
+/// **Ü**berschreiben, and the `ü` a keyboard actually produces answered
+/// "Alle überschreiben" instead — the visible letter pointing at the *more*
+/// destructive button, which is the exact fault this dialog exists to remove.
+fn same_letter(a: char, b: char) -> bool {
+    a == b || a.to_lowercase().eq(b.to_lowercase())
 }
 
 /// Give every choice a letter **of its own label**, unique within the dialog.
@@ -125,7 +141,7 @@ fn assign_mnemonics(choices: &mut [Choice], escape: Option<usize>) {
         }
         let free = candidates(&choices[i].label)
             .into_iter()
-            .find(|(_, c)| !taken.iter().any(|t| t.eq_ignore_ascii_case(c)));
+            .find(|(_, c)| !taken.iter().any(|t| same_letter(*t, *c)));
         if let Some((at, ch)) = free {
             taken.push(ch);
             choices[i].mnemonic = Some(Mnemonic {
@@ -133,6 +149,36 @@ fn assign_mnemonics(choices: &mut [Choice], escape: Option<usize>) {
                 at: (at, at + ch.len_utf8()),
             });
         }
+    }
+    number_the_rest(choices, &mut taken, escape);
+}
+
+/// Give a button whose label offers no typeable letter a number, and show it.
+///
+/// A label written in a script the keyboard cannot produce — `保存`, `저장`,
+/// `ยกเลิก` — has no letter to mark, and the ASCII letters the bottom-row
+/// prompts used are gone with the prompts. Rather than leave those locales
+/// with buttons that answer to nothing, the label grows a `(1)` and the digit
+/// is the accelerator: still derived, still shown, still typeable.
+///
+/// **The retreat is numbered first too**, for the same reason it picks its
+/// letter first: a Japanese user's `1` should be Cancel on every dialog, not
+/// whichever position Cancel happens to occupy.
+fn number_the_rest(choices: &mut [Choice], taken: &mut Vec<char>, escape: Option<usize>) {
+    for i in escape.into_iter().chain(0..choices.len()) {
+        if choices[i].mnemonic.is_some() {
+            continue;
+        }
+        let Some(d) = ('1'..='9').find(|d| !taken.iter().any(|t| same_letter(*t, *d))) else {
+            continue;
+        };
+        taken.push(d);
+        let at = choices[i].label.len() + " (".len();
+        choices[i].label.push_str(&format!(" ({d})"));
+        choices[i].mnemonic = Some(Mnemonic {
+            ch: d,
+            at: (at, at + d.len_utf8()),
+        });
     }
 }
 
@@ -294,7 +340,7 @@ impl Confirm {
     pub fn by_mnemonic(&self, c: char) -> Option<usize> {
         self.choices
             .iter()
-            .position(|ch| ch.mnemonic.is_some_and(|m| m.ch.eq_ignore_ascii_case(&c)))
+            .position(|ch| ch.mnemonic.is_some_and(|m| same_letter(m.ch, c)))
     }
 }
 
@@ -558,5 +604,117 @@ mod tests {
             ],
         );
         assert_eq!(c.current().map(|c| c.label.as_str()), Some("Load"));
+    }
+
+    /// Two buttons must not split one letter across its cases.
+    ///
+    /// German's multi-file paste conflict: `Überschreiben` and
+    /// `Alle überschreiben`. Folding only ASCII let the first take `Ü` and the
+    /// second take `ü`, so the `ü` a keyboard produces answered the *more*
+    /// destructive button while the underline sat on the other one.
+    #[test]
+    fn case_folds_outside_ascii_too() {
+        let c = Confirm::new(
+            "Name Conflict",
+            "B",
+            vec![
+                choice("Überschreiben", Tone::Destructive),
+                choice("Alle überschreiben", Tone::Destructive),
+                choice("Überspringen", Tone::Safe),
+                choice("Abbrechen", Tone::Safe),
+            ],
+        )
+        .escaping(Some(3));
+
+        let marks: Vec<char> = c
+            .choices
+            .iter()
+            .filter_map(|x| x.mnemonic)
+            .map(|m| m.ch)
+            .collect();
+        for (i, a) in marks.iter().enumerate() {
+            for b in &marks[i + 1..] {
+                assert!(
+                    !same_letter(*a, *b),
+                    "{a} and {b} are the same key in different cases"
+                );
+            }
+        }
+        // And the letter answers the button it is drawn on, in either case.
+        let over = c.by_mnemonic('ü');
+        assert_eq!(
+            over,
+            c.by_mnemonic('Ü'),
+            "case must not pick a different button"
+        );
+        assert_eq!(
+            c.choices[over.unwrap()].label,
+            "Überschreiben",
+            "the unshifted letter must not reach the All variant"
+        );
+    }
+
+    /// Russian's retreat keeps its own letter against a rival in the other case.
+    #[test]
+    fn cyrillic_cancel_is_not_shadowed() {
+        let c = Confirm::new(
+            "Name Conflict",
+            "B",
+            vec![
+                choice("Перезаписать", Tone::Destructive),
+                choice("Пропустить все", Tone::Safe),
+                choice("Отмена", Tone::Safe),
+            ],
+        )
+        .escaping(Some(2));
+        let cancel = c
+            .by_mnemonic('о')
+            .expect("the retreat answers to its letter");
+        assert_eq!(c.choices[cancel].label, "Отмена");
+    }
+
+    /// A label the keyboard cannot produce still gets a key, and shows it.
+    #[test]
+    fn a_label_without_ascii_is_numbered() {
+        let c = Confirm::new(
+            "Unsaved Changes",
+            "B",
+            vec![
+                choice("保存", Tone::Safe),
+                choice("破棄", Tone::Destructive),
+                choice("キャンセル", Tone::Safe),
+            ],
+        )
+        .escaping(Some(2));
+
+        for ch in &c.choices {
+            let m = ch.mnemonic.expect("every button answers to something");
+            assert!(
+                m.ch.is_ascii_alphanumeric(),
+                "{} got {:?}, which no terminal can send",
+                ch.label,
+                m.ch
+            );
+            assert!(
+                ch.label.contains(m.ch),
+                "{} does not show the key it answers to",
+                ch.label
+            );
+        }
+        // The retreat is numbered first, so it is 1 wherever it appears.
+        assert_eq!(c.by_mnemonic('1').map(|i| i), Some(2));
+    }
+
+    /// A Latin label is left alone — numbering is the fallback, not the rule.
+    #[test]
+    fn ascii_labels_are_never_numbered() {
+        let c = abc();
+        for ch in &c.choices {
+            assert!(
+                !ch.label.contains('('),
+                "{} was numbered needlessly",
+                ch.label
+            );
+        }
     }
 }
