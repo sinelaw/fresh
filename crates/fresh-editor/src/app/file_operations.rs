@@ -77,7 +77,8 @@ impl Editor {
                                 "y",
                                 crate::view::confirm::Tone::Safe,
                             ),
-                            crate::app::confirm_dialog::cancel(),
+                            // `prompt.sudo_save_confirm` advertised `(N)o`.
+                            crate::app::confirm_dialog::cancel_keyed(Some('n')),
                         ],
                     )
                     .detail(info.dest_path.display().to_string());

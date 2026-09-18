@@ -180,7 +180,12 @@ impl Editor {
                 // the byte-offset prompt, which needs no index.
                 Choice::new(t!("dialog.btn.byte_offset").into_owned(), "n", Tone::Safe),
             ],
-        );
+        )
+        // **Neither button is the retreat here.** Both answers go somewhere —
+        // one scans, the other opens the byte-offset prompt — so Esc dismisses
+        // the question without answering it, which is what Esc did when this
+        // was a row prompt.
+        .escaping(None);
         self.start_confirm_prompt(
             body,
             crate::view::prompt::PromptType::GotoLineScanConfirm,

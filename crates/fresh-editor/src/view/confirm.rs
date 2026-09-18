@@ -51,6 +51,14 @@ pub struct Choice {
     /// The string handed to `Editor::confirm_prompt` when this choice wins.
     /// This is what keeps every existing confirm handler working unchanged.
     pub input: String,
+    /// Further letters that also activate this choice, but are not the one
+    /// marked in the label.
+    ///
+    /// The row prompts sometimes advertised two spellings of one answer —
+    /// `prompt.quit_confirm` said `(y)es` while its handler equally accepts
+    /// the `Action::Quit` letter — and a modal that swallows every key would
+    /// turn the unlisted one into a dead key.
+    pub aliases: Vec<char>,
     pub tone: Tone,
 }
 
@@ -62,6 +70,7 @@ impl Choice {
             label: label.into(),
             mnemonic: input.chars().next(),
             input,
+            aliases: Vec::new(),
             tone,
         }
     }
@@ -77,19 +86,35 @@ impl Choice {
             label: label.into(),
             mnemonic: Some(mnemonic),
             input: input.into(),
+            aliases: Vec::new(),
             tone,
         }
+    }
+
+    /// Another letter that activates this choice without being marked in the
+    /// label. See [`Choice::aliases`].
+    pub fn also(mut self, c: char) -> Self {
+        self.aliases.push(c);
+        self
     }
 
     /// Where the accelerator letter appears in the label, as a byte range, so
     /// the renderer can mark it. `None` when the letter is not in the label at
     /// all — a localized label need not contain the English key it answers to,
     /// and an accelerator that is absent from the text is still an accelerator.
-    pub fn mnemonic_span(&self) -> Option<(usize, usize)> {
+    ///
+    /// `exact` forbids the case-insensitive match. Use
+    /// [`Confirm::mnemonic_span`] rather than this directly: whether the loose
+    /// match is safe depends on the *other* choices, which a `Choice` cannot
+    /// see.
+    fn span(&self, exact: bool) -> Option<(usize, usize)> {
         let m = self.mnemonic?;
         self.label
             .char_indices()
-            .find(|(_, c)| c.eq_ignore_ascii_case(&m))
+            .find(|(_, c)| match exact {
+                true => *c == m,
+                false => c.eq_ignore_ascii_case(&m),
+            })
             .map(|(i, c)| (i, i + c.len_utf8()))
     }
 }
@@ -108,10 +133,15 @@ pub struct Confirm {
     pub choices: Vec<Choice>,
     /// Which button has the keyboard.
     pub selected: usize,
-    /// Which choice Esc, and a click on the scrim, resolve to. `None` means
-    /// Esc cancels the prompt outright (`Editor::cancel_prompt`), which is
-    /// what every one of these prompts did before: cancelling fed the empty
-    /// string, and every handler's `else` arm read that as "do nothing".
+    /// Which choice Esc resolves to. `None` means Esc cancels the prompt
+    /// outright (`Editor::cancel_prompt`), which is what every one of these
+    /// prompts did before: cancelling fed the empty string, and every
+    /// handler's `else` arm read that as "do nothing".
+    ///
+    /// A press on the scrim does *not* resolve to it, deliberately: the
+    /// layer is `Modality::Exclusive` and swallows outside presses without
+    /// dismissing, the way the workspace-trust prompt does. A misaimed click
+    /// should not answer a question about unsaved work.
     pub escape: Option<usize>,
 }
 
@@ -141,6 +171,16 @@ impl Confirm {
         self
     }
 
+    /// What Esc means, when the last choice is not it.
+    ///
+    /// `None` makes Esc dismiss the prompt without answering — for a question
+    /// whose every button *does* something, like the large-file scan prompt,
+    /// where declining the scan still opens the byte-offset prompt.
+    pub fn escaping(mut self, escape: Option<usize>) -> Self {
+        self.escape = escape;
+        self
+    }
+
     /// Open with a different button in hand.
     ///
     /// Used where the first-listed outcome is not the likely one: the
@@ -151,6 +191,30 @@ impl Confirm {
     pub fn selecting(mut self, selected: usize) -> Self {
         self.selected = selected.min(self.choices.len().saturating_sub(1));
         self
+    }
+
+    /// Where to mark choice `i`'s accelerator inside its label.
+    ///
+    /// **The mark has to agree with the keyboard.** `by_mnemonic` is
+    /// case-aware, because Czech ships `discard = "z"` beside `cancel = "Z"`
+    /// (Russian the same with `о`/`О`); a loose match when drawing would put
+    /// an underline under the capital `Z` of *both* "Zahodit a ukončit" and
+    /// "Zrušit", advertising one letter for two outcomes when only one of
+    /// them is what typing it does. So when another choice answers to the
+    /// same letter in the other case, the mark is exact or there is no mark.
+    /// Everywhere else — which is every locale but those two, and every
+    /// dialog in them whose letters do not collide — "Discard" still
+    /// underlines its `D` for the accelerator `d`.
+    pub fn mnemonic_span(&self, i: usize) -> Option<(usize, usize)> {
+        let choice = self.choices.get(i)?;
+        let m = choice.mnemonic?;
+        let collides = self.choices.iter().enumerate().any(|(j, other)| {
+            j != i
+                && other
+                    .mnemonic
+                    .is_some_and(|o| o != m && o.eq_ignore_ascii_case(&m))
+        });
+        choice.span(collides)
     }
 
     /// The choice in hand, if the dialog has any at all.
@@ -184,6 +248,12 @@ impl Confirm {
     /// the wrong one of a case-distinguishing pair.
     pub fn by_mnemonic(&self, c: char) -> Option<usize> {
         if let Some(i) = self.choices.iter().position(|ch| ch.mnemonic == Some(c)) {
+            return Some(i);
+        }
+        // An unmarked second spelling of an answer the row prompt advertised.
+        // Exact, and after the marked letters, so it can never take a key one
+        // of those owns.
+        if let Some(i) = self.choices.iter().position(|ch| ch.aliases.contains(&c)) {
             return Some(i);
         }
         let mut loose = self
@@ -261,14 +331,80 @@ mod tests {
 
     #[test]
     fn the_mnemonic_is_found_in_the_label_when_it_is_there() {
-        let c = Choice::new("Discard", "d", Tone::Destructive);
-        assert_eq!(c.mnemonic_span(), Some((0, 1)));
-        // "Cancel" answers to `C`, which is its first letter.
-        let c = Choice::new("Cancel", "C", Tone::Safe);
-        assert_eq!(c.mnemonic_span(), Some((0, 1)));
+        // `d` marks the `D` of "Discard": the loose match is what makes the
+        // underline work for an ordinary capitalised label.
+        assert_eq!(abc().mnemonic_span(1), Some((0, 1)));
+        assert_eq!(abc().mnemonic_span(2), Some((0, 1)));
         // A localized label need not contain the letter at all.
-        let c = Choice::with_mnemonic("Отмена", 'C', "C", Tone::Safe);
-        assert_eq!(c.mnemonic_span(), None);
+        let c = Confirm::new(
+            "T",
+            "B",
+            vec![Choice::with_mnemonic("Отмена", 'C', "", Tone::Safe)],
+        );
+        assert_eq!(c.mnemonic_span(0), None);
+    }
+
+    /// The mark has to agree with the keyboard. Czech ships `discard = "z"`
+    /// beside `cancel = "Z"`, and a loose match when drawing would underline
+    /// the capital `Z` of both labels — advertising one letter for two
+    /// outcomes when only one of them is what typing it does.
+    #[test]
+    fn a_colliding_pair_is_marked_exactly_or_not_at_all() {
+        let cs = Confirm::new(
+            "Neuložené změny",
+            "B",
+            vec![
+                Choice::with_mnemonic("Uložit a ukončit", 'u', "u", Tone::Safe),
+                Choice::with_mnemonic("Zahodit a ukončit", 'z', "z", Tone::Destructive),
+                Choice::with_mnemonic("Zrušit", 'Z', "", Tone::Safe),
+            ],
+        );
+        // `Z` is what typing `Z` does, so `Z` is marked on "Zrušit" only.
+        assert_eq!(cs.mnemonic_span(2), Some((0, 1)));
+        assert_eq!(
+            cs.mnemonic_span(1),
+            None,
+            "the discard button must not advertise a letter that cancels"
+        );
+        // The non-colliding letter is unaffected.
+        assert_eq!(cs.mnemonic_span(0), Some((0, 1)));
+        // And the keyboard still tells them apart.
+        assert_eq!(cs.by_mnemonic('z'), Some(1));
+        assert_eq!(cs.by_mnemonic('Z'), Some(2));
+    }
+
+    /// A second spelling the row prompt advertised stays live inside a modal
+    /// that swallows every key.
+    #[test]
+    fn an_alias_activates_its_choice_without_being_marked() {
+        let c = Confirm::new(
+            "Quit Fresh",
+            "B",
+            vec![
+                Choice::new("Quit", "q", Tone::Safe).also('y'),
+                Choice::with_mnemonic("Cancel", 'n', "", Tone::Safe),
+            ],
+        );
+        assert_eq!(c.by_mnemonic('q'), Some(0));
+        assert_eq!(c.by_mnemonic('y'), Some(0), "`y` was the advertised key");
+        assert_eq!(c.by_mnemonic('n'), Some(1));
+        // The alias is not what the label marks — `Quit` marks its `Q`.
+        assert_eq!(c.mnemonic_span(0), Some((0, 1)));
+    }
+
+    /// Esc dismisses rather than answering when every button does something.
+    #[test]
+    fn a_dialog_with_no_retreat_has_no_escape_choice() {
+        let c = Confirm::new(
+            "Go to Line",
+            "B",
+            vec![
+                Choice::new("Scan", "y", Tone::Safe),
+                Choice::new("Go to Byte Offset", "n", Tone::Safe),
+            ],
+        )
+        .escaping(None);
+        assert_eq!(c.escape, None);
     }
 
     #[test]

@@ -363,3 +363,98 @@ fn cancel_never_discards_even_where_the_locale_letters_collide() {
         "and must not have written anything either"
     );
 }
+
+/// A press outside the card is swallowed, not taken as an answer. The scrim
+/// dims and blocks; only a button or Esc resolves the question.
+#[test]
+fn clicking_outside_the_card_does_not_answer() {
+    let _pin = pin();
+    let (mut harness, _file) = dirty_buffer(Config::default());
+    quit(&mut harness);
+
+    // The top-left corner is the menu bar, well clear of the card.
+    harness.mouse_click(2, 0).unwrap();
+    harness.render().unwrap();
+
+    assert!(!harness.should_quit());
+    harness.assert_screen_contains("Unsaved Changes");
+}
+
+/// `Ctrl+G` on a buffer with no line index asks whether to scan. **Neither
+/// button is a retreat** — one scans, the other opens the byte-offset prompt —
+/// so Esc has to dismiss the question rather than resolve to the last button,
+/// which is what it did when this was a row prompt.
+#[test]
+fn escape_dismisses_a_dialog_whose_every_button_does_something() {
+    let _pin = pin();
+    let (mut harness, _file) = dirty_buffer(Config::default());
+
+    harness.editor_mut().start_goto_line_scan_confirm();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Go to Line");
+    harness.assert_screen_contains("Go to Byte Offset");
+
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    let screen = harness.screen_to_string();
+    assert!(
+        !screen.contains("Go to Byte Offset"),
+        "Esc must dismiss the question, not pick the last button"
+    );
+    assert!(
+        !screen.contains("byte offset"),
+        "and must not have opened the byte-offset prompt either. Screen:\n{screen}"
+    );
+}
+
+/// The letters each prompt advertised stay live inside a modal that swallows
+/// every key. `prompt.quit_confirm` said `(y)es, (N)o`, and its handler also
+/// takes the `Action::Quit` letter.
+#[test]
+fn the_quit_confirmation_still_answers_to_yes() {
+    let _pin = pin();
+    let mut config = Config::default();
+    config.editor.confirm_quit = true;
+    let mut harness =
+        EditorTestHarness::with_temp_project_and_config(WIDTH, HEIGHT, config).expect("harness");
+    harness.render().unwrap();
+
+    quit(&mut harness);
+    harness.assert_screen_contains("Quit Fresh");
+    assert!(!harness.should_quit(), "the question blocks the exit");
+
+    harness
+        .send_key(KeyCode::Char('y'), KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    assert!(harness.should_quit(), "`y` was the advertised key");
+}
+
+/// Its `(N)o` half, and the default: a prompt that exists to catch a stray
+/// `Ctrl+Q` must not have Quit armed one stray Enter later.
+#[test]
+fn the_quit_confirmation_opens_on_no_and_answers_to_it() {
+    let _pin = pin();
+    let mut config = Config::default();
+    config.editor.confirm_quit = true;
+    let mut harness =
+        EditorTestHarness::with_temp_project_and_config(WIDTH, HEIGHT, config).expect("harness");
+    harness.render().unwrap();
+
+    quit(&mut harness);
+    let row = (0..HEIGHT)
+        .find(|r| harness.screen_row_text(*r).contains("Cancel"))
+        .expect("the button row is on screen");
+    assert!(
+        harness.screen_row_text(row).contains("[ Cancel ]"),
+        "a stray Ctrl+Q must not leave Quit armed; row was {:?}",
+        harness.screen_row_text(row)
+    );
+
+    harness
+        .send_key(KeyCode::Char('n'), KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    assert!(!harness.should_quit(), "`n` was the advertised key");
+}

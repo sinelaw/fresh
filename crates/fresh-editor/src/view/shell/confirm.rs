@@ -96,6 +96,12 @@ pub fn button_key(i: usize) -> Key {
 }
 
 /// The dialog as a layer: centred, dimming, and exclusive.
+///
+/// **The scrim dims and swallows; it does not dismiss.** `Modality::Exclusive`
+/// makes every press outside the card a no-op, and no gesture is declared on
+/// the scrim itself — the same as the workspace-trust prompt. A misaimed click
+/// should not answer a question about unsaved work, so the only ways out are
+/// a button and Esc.
 pub fn layer(c: &Confirm) -> Node<UiMsg> {
     fresh_ui::layer()
         .anchor(Anchor::Screen(Align::Center))
@@ -175,7 +181,7 @@ fn rule(theme: String) -> Node<UiMsg> {
 /// button is always the way out — which is also where Esc lands and where a
 /// pointer reaching for "no" expects to find it.
 fn buttons(c: &Confirm) -> Vec<Node<UiMsg>> {
-    pack(&c.buttons, c.width.saturating_sub(2).max(1) as usize)
+    pack(&c.buttons, row_budget(c.width))
         .into_iter()
         .map(|indices| {
             let mut kids: Vec<Node<UiMsg>> =
@@ -194,6 +200,15 @@ fn buttons(c: &Confirm) -> Vec<Node<UiMsg>> {
         .collect()
 }
 
+/// How many columns a row of buttons has to work with.
+///
+/// Two border columns, and the one column of padding each row keeps inside the
+/// right border — so a row packed to this still fits with its trailing gutter
+/// drawn rather than clipped.
+fn row_budget(width: u16) -> usize {
+    width.saturating_sub(3).max(1) as usize
+}
+
 /// Which buttons go on which row, given the width inside the card's border.
 ///
 /// Greedy, in declaration order, so the outcomes keep the sequence the caller
@@ -205,7 +220,9 @@ fn pack(buttons: &[Button], inner: usize) -> Vec<Vec<usize>> {
     let mut used = 0usize;
     for (i, b) in buttons.iter().enumerate() {
         let w = cell_width(&b.label);
-        match line.is_empty() || used + w + 1 <= inner {
+        // `used + w < inner` is "this button and the one-column gutter before
+        // it still fit", in the form clippy prefers to `used + w + 1 <= inner`.
+        match line.is_empty() || used + w < inner {
             true => used += if line.is_empty() { w } else { w + 1 },
             false => {
                 lines.push(std::mem::take(&mut line));
@@ -338,7 +355,7 @@ mod tests {
     fn a_narrow_frame_clamps_and_wraps() {
         let w = width_for(&labels(&quit_buttons()), 40);
         assert_eq!(w, 36, "the card takes the frame less two columns each side");
-        let rows = pack(&quit_buttons(), w as usize - 2);
+        let rows = pack(&quit_buttons(), row_budget(w));
         assert!(rows.len() > 1, "the buttons must wrap, not be clipped");
         // Every button is placed exactly once, in order.
         let placed: Vec<usize> = rows.concat();
@@ -350,7 +367,7 @@ mod tests {
                 .map(|i| cell_width(&quit_buttons()[*i].label))
                 .sum::<usize>()
                 + r.len().saturating_sub(1);
-            assert!(used <= w as usize - 2, "row {r:?} overflows {w}");
+            assert!(used <= row_budget(w), "row {r:?} overflows {w}");
         }
     }
 

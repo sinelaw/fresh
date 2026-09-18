@@ -3151,9 +3151,12 @@ impl Editor {
             buttons: c
                 .choices
                 .iter()
-                .map(|ch| Button {
+                .enumerate()
+                .map(|(i, ch)| Button {
                     label: ch.label.clone(),
-                    mnemonic: ch.mnemonic_span(),
+                    // Asked of the dialog: whether the loose match is safe
+                    // depends on the other choices' letters.
+                    mnemonic: c.mnemonic_span(i),
                     destructive: ch.tone == crate::view::confirm::Tone::Destructive,
                 })
                 .collect(),
