@@ -53,7 +53,7 @@
   .palette .plist{overflow-y:auto;max-height:50vh;padding:4px 0}
   .palette .prow{display:flex;align-items:center;gap:10px;padding:3px 12px;cursor:default;color:var(--fg)}
   .palette .prow.sel{background:var(--menuhi);color:#fff}
-  .palette .prow.disabled{color:#6a6a6a}
+  .palette .prow.disabled{color:color-mix(in srgb,var(--fg) 45%,var(--bg2))}
   .palette .prow .ptext{flex:0 0 auto}
   .palette .prow .pdesc{flex:1;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .palette .prow.sel .pdesc{color:#dfe8ff}

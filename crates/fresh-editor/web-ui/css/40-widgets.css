@@ -63,18 +63,18 @@
   .w-list-empty{color:var(--muted);font-style:italic;padding:2px 6px}
   .w-tree{display:flex;flex-direction:column;overflow:auto}
   .w-tree-row{padding:1px 6px;white-space:pre;overflow:hidden;text-overflow:ellipsis;cursor:default;border-radius:3px}
-  .w-tree-row.sel{background:var(--menuhi);color:#fff}
-  .w-tree-disc,.w-tree-check{color:var(--muted)} .w-tree-row.sel .w-tree-disc,.w-tree-row.sel .w-tree-check{color:#dfe8ff}
+  .w-tree-row.sel{background:var(--menuhi);color:var(--on-menuhi)}
+  .w-tree-disc,.w-tree-check{color:var(--muted)} .w-tree-row.sel .w-tree-disc,.w-tree-row.sel .w-tree-check{color:var(--on-menuhi-dim)}
   /* Continuation rows of a fixed-height card (Tree.itemHeight > 1): muted
      detail lines that select + highlight with their card's primary row. */
   .w-tree-xrow{padding:0 6px;white-space:pre;overflow:hidden;text-overflow:ellipsis;cursor:default;border-radius:3px;color:var(--muted)}
-  .w-tree-xrow.sel{background:var(--menuhi);color:#dfe8ff}
+  .w-tree-xrow.sel{background:var(--menuhi);color:var(--on-menuhi)}
   /* Bordered card node (Tree.cardBorders): the primary row + its
      continuation rows wrap in a rounded box, mirroring the TUI's
      `╭─…─╮` pill chrome. Selection tints the whole card. */
   .w-tree-card{border:1px solid var(--border);border-radius:6px;padding:1px 2px;margin:1px 2px;background:rgba(255,255,255,.02)}
   .w-tree-card.sel{border-color:var(--accent);background:var(--menuhi)}
-  .w-tree-card.sel .w-tree-xrow{color:#dfe8ff}
+  .w-tree-card.sel .w-tree-xrow{color:var(--on-menuhi)}
   .w-overlay{align-self:flex-start;background:var(--bg2);border:1px solid var(--border);border-radius:6px;
     box-shadow:0 10px 34px rgba(0,0,0,.5);padding:4px;margin:2px 0;z-index:4;position:relative}
   .w-list-cards{gap:4px;padding:2px}
@@ -130,8 +130,8 @@
   .settings-modal .set-list-head,.settings-modal .set-list-head .set-list-sub{color:var(--muted)}
   /* Keyboard focus inside a list control: highlight the focused entry / add
      row and show the TUI's dim `[Enter to edit]` hint. */
-  .settings-modal .set-list-row.sel,.settings-modal .set-list-add.sel{background:var(--menuhi);color:#fff}
-  .settings-modal .set-list-row.sel .set-list-sub{color:#dfe8ff}
+  .settings-modal .set-list-row.sel,.settings-modal .set-list-add.sel{background:var(--menuhi);color:var(--on-menuhi)}
+  .settings-modal .set-list-row.sel .set-list-sub{color:var(--on-menuhi-dim)}
   .settings-modal .set-list-hint{flex:0 0 auto;margin-left:8px;color:var(--muted);font-style:italic}
   .settings-modal .set-list-row.sel .set-list-hint{color:#cfd8ea}
   .settings-modal .set-list-empty{padding:3px 10px;color:var(--muted);font-style:italic}
@@ -145,18 +145,18 @@
   .settings-modal .set-dual-row:hover{background:rgba(255,255,255,.05)}
   .settings-modal .set-dual-row.sel{background:var(--menuhi);color:#fff}
   .settings-modal .set-dual-mid{display:flex;flex-direction:column;justify-content:center;gap:4px}
-  .settings-modal .set-dual-btn{padding:1px 7px;border:1px solid #6a6a6a;border-radius:5px;background:var(--bg2);color:var(--fg);cursor:default;text-align:center}
+  .settings-modal .set-dual-btn{padding:1px 7px;border:1px solid var(--border);border-radius:5px;background:var(--bg2);color:var(--fg);cursor:default;text-align:center}
   .settings-modal .set-dual-btn:hover{border-color:var(--accent)}
   .settings-modal .set-search{padding:4px 14px;color:var(--accent)}
   .settings-modal .set-sresult{padding:2px 14px} .settings-modal .set-sresult.sel{background:var(--menuhi);color:#fff}
   .settings-modal .set-footer{display:flex;gap:8px;justify-content:flex-end;align-items:center;padding:6px 12px;border-top:1px solid var(--border);background:var(--bg3)}
   .settings-modal .set-dlg-btns{display:flex;gap:8px;justify-content:flex-end;margin-top:12px}
-  .settings-modal .btn{padding:3px 14px;border:1px solid #6a6a6a;border-radius:5px;background:var(--bg2);color:var(--fg);cursor:default;line-height:1.4}
+  .settings-modal .btn{padding:3px 14px;border:1px solid var(--border);border-radius:5px;background:var(--bg2);color:var(--fg);cursor:default;line-height:1.4}
   .settings-modal .btn:hover{border-color:#888}
   .settings-modal .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
   .settings-modal .btn.danger{border-color:#c0392b;color:#e57373}
   .settings-modal .btn.sel{outline:2px solid var(--accent);outline-offset:1px}
-  .settings-modal .set-overlay{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);background:#333;border:1px solid #6a6a6a;border-radius:8px;box-shadow:0 12px 40px rgba(0,0,0,.6);padding:10px 14px;min-width:460px;max-height:70%;overflow:auto;z-index:2}
+  .settings-modal .set-overlay{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);background:var(--bg2);border:1px solid var(--border);border-radius:8px;box-shadow:0 12px 40px rgba(0,0,0,.6);padding:10px 14px;min-width:min(460px,92vw);max-width:92vw;max-height:70%;overflow:auto;z-index:2}
   .settings-modal .set-entry-title{font-weight:600;margin-bottom:8px}
   /* native keybinding editor (full modal) */
   .kbedit{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);z-index:96;width:min(900px,88vw);max-height:84vh;
@@ -177,8 +177,10 @@
   .kbedit .kb-col{overflow:hidden;text-overflow:ellipsis}
   .kbedit .kb-key{width:16ch;flex:0 0 auto} .kbedit .kb-action{width:26ch;flex:0 0 auto}
   .kbedit .kb-description{flex:1;min-width:0} .kbedit .kb-context{width:16ch;flex:0 0 auto} .kbedit .kb-source{width:8ch;flex:0 0 auto;color:var(--muted)}
-  .kbedit .kb-footer{padding:4px 12px;border-top:1px solid var(--border);color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .kbedit .kb-overlay{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);background:#333;border:1px solid #6a6a6a;border-radius:8px;box-shadow:0 12px 40px rgba(0,0,0,.6);padding:10px 14px;min-width:420px;z-index:2}
+  /* The footer is a key legend, not a field: truncating it hides the later
+     hints outright, so let it wrap onto a second line instead. */
+  .kbedit .kb-footer{padding:4px 12px;border-top:1px solid var(--border);color:var(--muted);white-space:normal;overflow-wrap:anywhere}
+  .kbedit .kb-overlay{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);background:var(--bg2);border:1px solid var(--border);border-radius:8px;box-shadow:0 12px 40px rgba(0,0,0,.6);padding:10px 14px;min-width:min(420px,92vw);max-width:92vw;z-index:2}
   .kbedit .kb-dlg-title,.kbedit .kb-confirm-msg{font-weight:600;margin-bottom:8px}
   .kbedit .kb-field{display:flex;align-items:center;gap:8px;padding:3px 6px;border-radius:4px}
   .kbedit .kb-field.focus{background:var(--menuhi);color:#fff}
@@ -289,7 +291,7 @@
     border:1px solid var(--hairline,var(--border));border-radius:4px;max-height:200px;overflow-y:auto;
     box-shadow:0 8px 24px rgba(0,0,0,.4)}
   .w-complete-row{padding:1px 8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .w-complete-row.sel{background:var(--menuhi);color:var(--on-sel,#fff)}
+  .w-complete-row.sel{background:var(--menuhi);color:var(--on-menuhi)}
   /* number / dropdown / dual-list controls (host-state-driven) */
   .w-number{display:flex;align-items:center;gap:4px}
   .w-num-step{cursor:default;padding:0 6px;border:1px solid var(--hairline,var(--border));border-radius:4px}
@@ -310,13 +312,13 @@
      children are all position:fixed); high z-index sits above every modal. */
   #fresh-popover-host{position:fixed;left:0;top:0;width:0;height:0;z-index:100000}
   .w-dd-row{padding:1px 10px;white-space:nowrap}
-  .w-dd-row.sel{background:var(--menuhi);color:var(--on-sel,#fff)}
+  .w-dd-row.sel{background:var(--menuhi);color:var(--on-menuhi)}
   .w-dual-cols{display:flex;gap:10px}
   .w-dual-col{flex:1;border:1px solid var(--hairline,var(--border));border-radius:4px;padding:2px;min-height:3em}
   .w-dual-col.active{border-color:var(--accent)}
   .w-dual-title{color:var(--muted);padding:0 4px}
   .w-dual-row{padding:0 4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .w-dual-row.sel{background:var(--menuhi);color:var(--on-sel,#fff)}
+  .w-dual-row.sel{background:var(--menuhi);color:var(--on-menuhi)}
   .w-embed-ph{display:flex;align-items:center;justify-content:center;color:var(--muted);
     border:1px dashed var(--hairline,var(--border));border-radius:4px;padding:8px}
 
