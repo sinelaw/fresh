@@ -2591,14 +2591,14 @@ mod rebuild_pristine_saved_root_tests {
                     cursor,
                 )
             }
-            fn walk_files(
+            fn walk(
                 &self,
                 root: &Path,
-                skip_dirs: &[&str],
+                opts: &crate::model::filesystem::WalkOptions<'_>,
                 cancel: &std::sync::atomic::AtomicBool,
-                on_file: &mut dyn FnMut(&Path, &str) -> bool,
+                on_entry: &mut dyn FnMut(crate::model::filesystem::WalkEntry<'_>) -> bool,
             ) -> std::io::Result<()> {
-                self.inner.walk_files(root, skip_dirs, cancel, on_file)
+                self.inner.walk(root, opts, cancel, on_entry)
             }
         }
 
