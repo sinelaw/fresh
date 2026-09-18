@@ -162,7 +162,11 @@ jobs:
           fi
           # Default features include embed-plugins; plugins (and themes via build.rs)
           # are compiled into the binary, so we ship a single self-contained executable.
-          cargo build --release --target ${{ matrix.target }}
+          # `web` is NOT default (it embeds the browser UI and the sha1
+          # WebSocket-handshake dep), so name it: these archives are what the
+          # AUR -bin package, the Homebrew formula and the npm package install,
+          # and without it every one of them rejects `--web` (#3316).
+          cargo build --release --features web --target ${{ matrix.target }}
 
       # Checks the artifact rather than trusting the build flag above: a
       # released binary must load nothing but the OS's own libraries, or it

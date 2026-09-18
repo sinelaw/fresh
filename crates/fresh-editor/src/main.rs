@@ -179,6 +179,15 @@ struct Cli {
     #[cfg(feature = "web")]
     #[arg(long, value_name = "ADDR", num_args = 0..=1, default_missing_value = "127.0.0.1:8137")]
     web: Option<String>,
+
+    /// Accepted but unavailable: this build was compiled without the `web`
+    /// feature. Hidden from `--help` (advertising a flag that cannot work
+    /// would be worse than not listing it) and taken only so `--web` fails
+    /// with `web_unavailable()`'s explanation of what is missing instead of
+    /// clap's bare "unexpected argument '--web' found".
+    #[cfg(not(feature = "web"))]
+    #[arg(long, value_name = "ADDR", num_args = 0..=1, default_missing_value = "127.0.0.1:8137", hide = true)]
+    web: Option<String>,
 }
 
 // Internal Args struct - maps from new Cli to format used by rest of codebase
@@ -237,6 +246,10 @@ struct Args {
     gui: bool,
     /// Serve the web UI on this bind address (`--web [ADDR]`)
     #[cfg(feature = "web")]
+    web: Option<String>,
+    /// `--web [ADDR]` on a build without the web UI — carried only so the
+    /// failure can explain itself.
+    #[cfg(not(feature = "web"))]
     web: Option<String>,
 }
 
@@ -578,6 +591,8 @@ impl From<Cli> for Args {
             #[cfg(feature = "gui")]
             gui: cli.gui,
             #[cfg(feature = "web")]
+            web: cli.web,
+            #[cfg(not(feature = "web"))]
             web: cli.web,
         }
     }
@@ -3148,6 +3163,22 @@ fn run_server_command(args: &Args, web_addr: Option<String>) -> AnyhowResult<()>
     Ok(())
 }
 
+/// `fresh --web [ADDR]` on a build compiled without the `web` feature.
+///
+/// The web UI is opt-in at compile time (see the `web` feature in Cargo.toml),
+/// so a default build has no bridge to serve. Say that, and say how to get
+/// one, rather than letting clap reject `--web` as an unknown argument —
+/// nothing in that message hints a build feature is missing. Printed and
+/// exited like the "session already running" case in `run_web_command`: a
+/// user error deserves a clean line, not `real_main`'s backtrace.
+#[cfg(not(feature = "web"))]
+fn web_unavailable() -> ! {
+    eprintln!("this build of fresh was compiled without the web UI");
+    eprintln!("rebuild with: cargo build --release --features web");
+    eprintln!("(or install a package that ships it)");
+    std::process::exit(1);
+}
+
 /// `fresh --web [ADDR] [FILES…]` — run the session daemon in the foreground
 /// with the web UI bridge hosted inside it.
 ///
@@ -5556,6 +5587,10 @@ fn run_if_subcommand(
     #[cfg(feature = "web")]
     if let Some(addr) = &args.web {
         return Some(run_web_command(args, addr));
+    }
+    #[cfg(not(feature = "web"))]
+    if args.web.is_some() {
+        web_unavailable();
     }
     #[cfg(feature = "gui")]
     if !console_available || args.gui {
