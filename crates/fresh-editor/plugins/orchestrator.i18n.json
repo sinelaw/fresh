@@ -369,7 +369,9 @@
     "explain.rules_bad": "%{loaded} — %{path} не е файл с правила",
     "machine.from_ssh_config": "~/.ssh/config",
     "form.machine_path_note": "празно = пътят по подразбиране на машината",
-    "form.k8s_workspace_note": "директория в пода"
+    "form.k8s_workspace_note": "директория в пода",
+    "dock.menu_discover": "Всичко…",
+    "machine.all": "Всички машини"
   },
   "cs": {
     "cmd.open": "Orchestrator: Otevřít",
@@ -741,7 +743,9 @@
     "explain.rules_bad": "%{loaded} — %{path} není soubor pravidel",
     "machine.from_ssh_config": "~/.ssh/config",
     "form.machine_path_note": "prázdné = výchozí cesta stroje",
-    "form.k8s_workspace_note": "adresář uvnitř podu"
+    "form.k8s_workspace_note": "adresář uvnitř podu",
+    "dock.menu_discover": "Vše…",
+    "machine.all": "Všechny stroje"
   },
   "de": {
     "cmd.open": "Orchestrator: Öffnen",
@@ -1113,7 +1117,9 @@
     "explain.rules_bad": "%{loaded} — %{path} ist keine Regeldatei",
     "machine.from_ssh_config": "~/.ssh/config",
     "form.machine_path_note": "leer = Standardpfad der Maschine",
-    "form.k8s_workspace_note": "Verzeichnis im Pod"
+    "form.k8s_workspace_note": "Verzeichnis im Pod",
+    "dock.menu_discover": "Alles…",
+    "machine.all": "Alle Maschinen"
   },
   "en": {
     "cmd.open": "Orchestrator: Open",
@@ -1485,7 +1491,9 @@
     "explain.rules_bad": "%{loaded} — %{path} is not a rules file",
     "machine.from_ssh_config": "~/.ssh/config",
     "form.machine_path_note": "blank = the machine's default path",
-    "form.k8s_workspace_note": "directory inside the pod"
+    "form.k8s_workspace_note": "directory inside the pod",
+    "dock.menu_discover": "Everything…",
+    "machine.all": "All machines"
   },
   "es": {
     "cmd.open": "Orchestrator: Abrir",
@@ -1857,7 +1865,9 @@
     "explain.rules_bad": "%{loaded} — %{path} no es un archivo de reglas",
     "machine.from_ssh_config": "~/.ssh/config",
     "form.machine_path_note": "vacío = ruta predeterminada de la máquina",
-    "form.k8s_workspace_note": "directorio dentro del pod"
+    "form.k8s_workspace_note": "directorio dentro del pod",
+    "dock.menu_discover": "Todo…",
+    "machine.all": "Todas las máquinas"
   },
   "fr": {
     "cmd.open": "Orchestrator : ouvrir",
@@ -2229,7 +2239,9 @@
     "explain.rules_bad": "%{loaded} — %{path} n'est pas un fichier de règles",
     "machine.from_ssh_config": "~/.ssh/config",
     "form.machine_path_note": "vide = chemin par défaut de la machine",
-    "form.k8s_workspace_note": "répertoire dans le pod"
+    "form.k8s_workspace_note": "répertoire dans le pod",
+    "dock.menu_discover": "Tout…",
+    "machine.all": "Toutes les machines"
   },
   "it": {
     "cmd.open": "Orchestrator: Apri",
@@ -2601,7 +2613,9 @@
     "explain.rules_bad": "%{loaded} — %{path} non è un file di regole",
     "machine.from_ssh_config": "~/.ssh/config",
     "form.machine_path_note": "vuoto = percorso predefinito della macchina",
-    "form.k8s_workspace_note": "directory nel pod"
+    "form.k8s_workspace_note": "directory nel pod",
+    "dock.menu_discover": "Tutto…",
+    "machine.all": "Tutte le macchine"
   },
   "ja": {
     "cmd.open": "Orchestrator: 開く",
@@ -2973,7 +2987,9 @@
     "explain.rules_bad": "%{loaded} — %{path} はルールファイルではありません",
     "machine.from_ssh_config": "~/.ssh/config",
     "form.machine_path_note": "空欄 = マシンの既定パス",
-    "form.k8s_workspace_note": "Pod 内のディレクトリ"
+    "form.k8s_workspace_note": "Pod 内のディレクトリ",
+    "dock.menu_discover": "すべて…",
+    "machine.all": "すべてのマシン"
   },
   "ko": {
     "cmd.open": "Orchestrator: 열기",
@@ -3345,7 +3361,9 @@
     "explain.rules_bad": "%{loaded} — %{path}은(는) 규칙 파일이 아닙니다",
     "machine.from_ssh_config": "~/.ssh/config",
     "form.machine_path_note": "비워두면 머신의 기본 경로",
-    "form.k8s_workspace_note": "파드 내부의 디렉터리"
+    "form.k8s_workspace_note": "파드 내부의 디렉터리",
+    "dock.menu_discover": "전체…",
+    "machine.all": "모든 머신"
   },
   "pt-BR": {
     "cmd.open": "Orchestrator: Abrir",
@@ -3717,7 +3735,9 @@
     "explain.rules_bad": "%{loaded} — %{path} não é um arquivo de regras",
     "machine.from_ssh_config": "~/.ssh/config",
     "form.machine_path_note": "vazio = caminho padrão da máquina",
-    "form.k8s_workspace_note": "diretório dentro do pod"
+    "form.k8s_workspace_note": "diretório dentro do pod",
+    "dock.menu_discover": "Tudo…",
+    "machine.all": "Todas as máquinas"
   },
   "ru": {
     "cmd.open": "Orchestrator: Открыть",
@@ -4089,7 +4109,9 @@
     "explain.rules_bad": "%{loaded} — %{path} не файл правил",
     "machine.from_ssh_config": "~/.ssh/config",
     "form.machine_path_note": "пусто = путь машины по умолчанию",
-    "form.k8s_workspace_note": "каталог внутри пода"
+    "form.k8s_workspace_note": "каталог внутри пода",
+    "dock.menu_discover": "Всё…",
+    "machine.all": "Все машины"
   },
   "th": {
     "cmd.open": "Orchestrator: เปิด",
@@ -4461,7 +4483,9 @@
     "explain.rules_bad": "%{loaded} — %{path} ไม่ใช่ไฟล์กฎ",
     "machine.from_ssh_config": "~/.ssh/config",
     "form.machine_path_note": "ว่าง = พาธเริ่มต้นของเครื่อง",
-    "form.k8s_workspace_note": "ไดเรกทอรีภายใน pod"
+    "form.k8s_workspace_note": "ไดเรกทอรีภายใน pod",
+    "dock.menu_discover": "ทั้งหมด…",
+    "machine.all": "ทุกเครื่อง"
   },
   "uk": {
     "cmd.open": "Orchestrator: Відкрити",
@@ -4833,7 +4857,9 @@
     "explain.rules_bad": "%{loaded} — %{path} не файл правил",
     "machine.from_ssh_config": "~/.ssh/config",
     "form.machine_path_note": "порожньо = типовий шлях машини",
-    "form.k8s_workspace_note": "каталог усередині пода"
+    "form.k8s_workspace_note": "каталог усередині пода",
+    "dock.menu_discover": "Усе…",
+    "machine.all": "Усі машини"
   },
   "vi": {
     "cmd.open": "Orchestrator: Mở",
@@ -5205,7 +5231,9 @@
     "explain.rules_bad": "%{loaded} — %{path} không phải là tệp quy tắc",
     "machine.from_ssh_config": "~/.ssh/config",
     "form.machine_path_note": "để trống = đường dẫn mặc định của máy",
-    "form.k8s_workspace_note": "thư mục bên trong pod"
+    "form.k8s_workspace_note": "thư mục bên trong pod",
+    "dock.menu_discover": "Tất cả…",
+    "machine.all": "Tất cả máy"
   },
   "zh-CN": {
     "cmd.open": "Orchestrator：打开",
@@ -5577,6 +5605,8 @@
     "explain.rules_bad": "%{loaded} — %{path} 不是规则文件",
     "machine.from_ssh_config": "~/.ssh/config",
     "form.machine_path_note": "留空 = 机器的默认路径",
-    "form.k8s_workspace_note": "Pod 内的目录"
+    "form.k8s_workspace_note": "Pod 内的目录",
+    "dock.menu_discover": "全部…",
+    "machine.all": "所有机器"
   }
 }

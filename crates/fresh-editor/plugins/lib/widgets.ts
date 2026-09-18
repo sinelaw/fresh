@@ -1524,3 +1524,11 @@ let nextPanelId = 1;
 function allocatePanelId(): number {
   return nextPanelId++;
 }
+
+/** A `widget_event` as a panel-owning plugin receives it. */
+export interface WidgetEvt {
+  panel_id?: number;
+  event_type: string;
+  widget_key?: string;
+  payload?: unknown;
+}

@@ -32,7 +32,6 @@ import {
   raw,
   row,
   endRow,
-  wrappingRow,
   overlay,
   radio,
   spacer,
@@ -45,8 +44,15 @@ import {
   windowEmbed,
   WidgetPanel,
   type WidgetSpec,
+  type WidgetEvt,
 } from "./lib/widgets.ts";
 import { BIG_FILE_ARGS } from "./lib/git_repo.ts";
+import {
+  DISCOVER_ALL_KEY,
+  type DiscoverTarget,
+  type DiscoveryHost,
+  type FormSeed,
+} from "./lib/discovery.ts";
 
 const editor = getEditor();
 
@@ -1514,7 +1520,7 @@ function placeholderSpec(s: AgentSession): WidgetSpec {
   // the *row's* affordances, which are not the ones on this page.
   if (pendingActionable(p)) {
     body.push(
-      wrappingRow(
+      endRow(
         button(editor.t("dock.ctx_retry"), {
           intent: "primary",
           key: "placeholder-retry",
@@ -2188,6 +2194,11 @@ function reconcileSessions(): void {
         } else if (existing.remote.state !== "starting") {
           existing.remote.state = facet.state;
         }
+      } else if (existing.remote && existing.remote.state !== "starting") {
+        // The window detached: drop the badge, or the row keeps naming a
+        // backend it has left. "starting" is left alone; the connect sets it
+        // before the window has a backend to report.
+        existing.remote = undefined;
       }
     }
   }
@@ -3875,9 +3886,10 @@ function buildPreviewPane(s: AgentSession | undefined): WidgetSpec {
   // pane the same height as live-session previews so the dialog
   // doesn't jump when the selection moves between row kinds.
   if (s.discovered) {
-    const openButtonRow = row(
+    const openButtonRow = endRow(
       button(editor.t("preview.btn_open"), { intent: "primary", key: "visit" }),
-      flexSpacer(),
+      // A fixed gap: the wrap path ignores flex children.
+      spacer(4),
       button(editor.t("preview.btn_stop"), { key: "stop", disabled: true }),
       spacer(2),
       button(editor.t("preview.btn_archive"), { key: "archive", disabled: true }),
@@ -3929,12 +3941,9 @@ function buildPreviewPane(s: AgentSession | undefined): WidgetSpec {
   const stopDisabled = s.discovered || !s.terminalId;
   const archiveDisabled = false;
   const deleteDisabled = false;
-  // wrappingRow so the preview-pane actions reflow onto extra lines on a
-  // narrow pane instead of the right-most ones (Stop / Archive / Delete)
-  // being clipped off-screen. The wrap path ignores flex spacers, so a
-  // fixed `spacer(4)` separates the primary "Visit" from the rest while
-  // still wrapping cleanly.
-  const buttonRow = wrappingRow(
+  // `endRow`: flush right while the actions fit, reflowing on a narrow pane
+  // instead of clipping. The wrap path ignores flex spacers, hence `spacer(4)`.
+  const buttonRow = endRow(
     button(editor.t("preview.btn_visit"), { intent: "primary", key: "visit" }),
     spacer(4),
     button(detailsToggleLabel, { key: "toggle-details" }),
@@ -4190,11 +4199,9 @@ function buildConfirmPane(
         ]
         : []),
       spacer(0),
-      // wrappingRow so the Cancel / Confirm pair reflows instead of the
-      // Confirm button being clipped on a narrow confirmation pane. The
-      // leading flex spacer is dropped (the wrap path ignores flex and
-      // trims a blank that would lead a line), so the pair left-packs.
-      wrappingRow(
+      // `endRow`: flush right, reflowing instead of clipping on a narrow pane.
+      // No leading flex spacer; the wrap path ignores flex.
+      endRow(
         button(editor.t("confirm.btn_cancel"), { key: "confirm-cancel" }),
         spacer(2),
         button(editor.t("confirm.btn_confirm", { cap }), { intent: "danger", key: `confirm-${action}` }),
@@ -4237,13 +4244,11 @@ function buildBulkPane(): WidgetSpec {
         },
         flexSpacer(),
       )
-    : // wrappingRow (not row): on a narrow pane the action buttons
-      // reflow onto extra lines instead of the right-most ones being
-      // clipped off-screen. The wrap path ignores flex spacers, so a
-      // fixed `spacer(4)` (rather than `flexSpacer()`) keeps a visible
-      // gap between the destructive actions and the non-destructive
+    : // `endRow`: flush right while the actions fit, reflowing on a narrow
+      // pane instead of clipping. The wrap path ignores flex spacers, so a
+      // fixed `spacer(4)` keeps a gap between the destructive actions and
       // "Clear" while still wrapping cleanly.
-      wrappingRow(
+      endRow(
         button(editor.t("confirm.bulk_btn_stop", { count: String(stopN) }), { key: "bulk-stop", disabled: stopN === 0 }),
         spacer(2),
         button(editor.t("confirm.bulk_btn_archive", { count: String(archiveN) }), {
@@ -5605,6 +5610,7 @@ function dockMainOptions(): MenuOption[] {
     { key: "main:folder", label: editor.t("dock.new_menu_folder") },
     { key: "main:manage", label: editor.t("dock.menu_manage") },
     { key: "main:machines", label: editor.t("dock.menu_machines") },
+    { key: "main:discover", label: editor.t("dock.menu_discover") },
     { key: "main:view:compact", label: editor.t("dock.menu_view_compact"), marked: dockView === "compact" },
     { key: "main:view:card", label: editor.t("dock.menu_view_card"), marked: dockView === "card" },
     { key: "main:empty", label: editor.t("dock.show_empty"), marked: !openDialog.hideTrivial },
@@ -5696,20 +5702,48 @@ const DOCK_PROJECT_OVERLAY_KEY = "dock-project-overlay";
 // `⋯` dead.
 let lastMenuDismissed = { key: "", at: 0 };
 
-function dockDropdownOverlay(label: string, opts: MenuOption[], cursor: number): WidgetSpec {
-  return overlay(
-    labeledSection({
-      label,
-      child: list({
-        items: opts.map((o) => ({ text: (o.marked ? "● " : "  ") + o.label })),
-        itemKeys: opts.map((o) => `${DOCK_MENU_KEY}:${o.key}`),
-        selectedIndex: cursor,
-        visibleRows: Math.max(1, opts.length),
-        key: DOCK_MENU_KEY,
-      }),
+/** The width a menu box needs: its widest row plus the two border columns,
+ *  and never narrower than its title. */
+function dockMenuBoxWidth(label: string, rows: string[]): number {
+  const widest = rows.reduce((w, t) => Math.max(w, editor.stringWidth(t)), 0);
+  // `╭─ label ─╮`: the title rides in the top border.
+  return Math.max(widest, editor.stringWidth(label) + 4) + 2;
+}
+
+/** A dock menu box. `anchorRightAt` puts its right edge on that content
+ *  column (the `⋯` it drops from); omitted, the box stays where it is
+ *  emitted. Rows are padded to the widest because a `list` does not widen
+ *  its box and clips longer rows. */
+function dockDropdownOverlay(
+  label: string,
+  opts: MenuOption[],
+  cursor: number,
+  anchorRightAt?: number,
+): WidgetSpec {
+  const rows = opts.map((o) => (o.marked ? "● " : "  ") + o.label);
+  const box = dockMenuBoxWidth(label, rows);
+  const inner = box - 2;
+  const padded = rows.map((t) => t + " ".repeat(Math.max(0, inner - editor.stringWidth(t))));
+  const menu = labeledSection({
+    label,
+    widthCols: box,
+    child: list({
+      items: padded.map((text) => ({ text })),
+      itemKeys: opts.map((o) => `${DOCK_MENU_KEY}:${o.key}`),
+      selectedIndex: cursor,
+      visibleRows: Math.max(1, opts.length),
+      key: DOCK_MENU_KEY,
     }),
-    { key: DOCK_MENU_OVERLAY_KEY },
-  );
+  });
+  if (anchorRightAt === undefined) {
+    return overlay(menu, { key: DOCK_MENU_OVERLAY_KEY });
+  }
+  // An overlay hangs off a zero-height slot node; a leading spacer moves the
+  // slot. Clamped at 0 so a dock narrower than its menu still starts at the
+  // left edge.
+  return row(spacer(Math.max(0, anchorRightAt + 1 - box)), overlay(menu, {
+    key: DOCK_MENU_OVERLAY_KEY,
+  }));
 }
 
 function dockMainMenu(): WidgetSpec {
@@ -5717,7 +5751,14 @@ function dockMainMenu(): WidgetSpec {
     openDialog?.dockMenu?.kind === "main" ? openDialog.dockMenu.index : 0,
     dockMainOptions().length,
   );
-  return dockDropdownOverlay(editor.t("dock.title"), dockMainOptions(), cursor);
+  // Under the `⋯`, the dock's own last column. Not `dockContentCols`, which
+  // subtracts the border and gutter the header row reaches past.
+  return dockDropdownOverlay(
+    editor.t("dock.title"),
+    dockMainOptions(),
+    cursor,
+    dockWidth() - 1,
+  );
 }
 
 function dockMoveMenu(): WidgetSpec {
@@ -5780,6 +5821,11 @@ function runDockMenuOption(optKey: string): void {
   if (optKey === "main:machines") {
     closeDockMenu();
     openMachinesDialog();
+    return;
+  }
+  if (optKey === "main:discover") {
+    closeDockMenu();
+    (editor.getPluginApi("agent-discovery") as { open(): void } | null)?.open();
     return;
   }
   // The settings flip in place and the menu stays up, so a second choice
@@ -5998,7 +6044,7 @@ function buildCreateFolderSpec(): WidgetSpec {
     );
   }
   children.push(
-    wrappingRow(
+    endRow(
       button(editor.t("dock.new_folder_btn_cancel"), { intent: "danger", key: "folder-cancel" }),
       spacer(2),
       button(
@@ -8934,7 +8980,7 @@ function buildHostKeySpec(offer: HostKeyOffer): WidgetSpec {
       wrap: true,
     }),
     spacer(0),
-    wrappingRow(
+    endRow(
       withAccel(button(editor.t("hostkey.btn_cancel"), { key: "hostkey-cancel" }), "Esc"),
       spacer(2),
       button(editor.t("hostkey.btn_trust"), { intent: "primary", key: "hostkey-trust" }),
@@ -9186,14 +9232,6 @@ function agoText(at: number): string {
   return editor.t("machine.ago", { t: `${Math.floor(s / 86400)}d` });
 }
 
-// A widget_event as the dialogs below read it.
-interface WidgetEvt {
-  panel_id?: number;
-  event_type: string;
-  widget_key?: string;
-  payload?: unknown;
-}
-
 function applyTextChange(slot: Field, payload: unknown): void {
   const p = (payload ?? {}) as Record<string, unknown>;
   if (typeof p.value === "string") slot.value = p.value;
@@ -9425,7 +9463,7 @@ function buildMachineDialogSpec(): WidgetSpec {
   }
   children.push(
     spacer(0),
-    wrappingRow(
+    endRow(
       withAccel(
         button(
           d.test.state === "fail" ? editor.t("machine.btn_save_anyway") : editor.t("machine.btn_save"),
@@ -9484,7 +9522,7 @@ function saveMachineDialog(): void {
   // An existing machine keeps its last test when this session did not run one.
   if (!m.lastTest && d.id) m.lastTest = machineById(d.id)?.lastTest ?? null;
   upsertMachine(m);
-  if (d.returnTo === "form") pendingFormMachine = m.id;
+  if (d.returnTo === "form") pendingFormMachine = { kind: "option", key: m.id };
   closeMachineDialog(true);
 }
 
@@ -9589,10 +9627,13 @@ function handleMachineDialogEvent(e: WidgetEvt): void {
 const MACHINES_MODE = "orchestrator-machines";
 let machinesPanel: FloatingWidgetPanel | null = null;
 let machinesState: { index: number; focus: string } | null = null;
-// A machine picked for the next form to open on — `Machines ▸ New workspace
-// here`, or one just added from the form (`null` = Local, `undefined` =
-// nobody asked, so the last one used applies).
-let pendingFormMachine: string | null | undefined = undefined;
+
+/** A machine picked for the next form to open on. `undefined` = nobody
+ *  asked, so the last one used applies. */
+let pendingFormMachine: FormSeed | undefined = undefined;
+/** Fields the next New Workspace form opens with, set when a discovered
+ *  session is rejoined. Consumed once, like `pendingFormMachine`. */
+let pendingFormPrefill: { projectPath: string; cmd: string } | null = null;
 
 interface MachinesRow {
   key: string;
@@ -9646,6 +9687,142 @@ function machineForHost(h: SshConfigHost): Machine {
     path: "",
     lastTest: sshHostTests.get(h.alias) ?? null,
   };
+}
+
+/** The transport that reaches `m`, or null when its record is too incomplete. */
+function machineTransport(m: Machine): RemoteAgentTransport | null {
+  if (m.kind === "kubernetes") {
+    if (!m.namespace || !m.pod) return null;
+    return {
+      kind: "kubectl-exec",
+      context: m.context || null,
+      namespace: m.namespace,
+      pod: m.pod,
+      container: null,
+      workspace: m.path || null,
+    };
+  }
+  const { user, host, port } = sshTargetParts(m.target);
+  if (!host) return null;
+  return {
+    kind: "ssh",
+    user: user || null,
+    host,
+    port,
+    identity_file: m.identity || null,
+    remote_path: m.path || null,
+    extra_args: m.options ? m.options.split(/\s+/).filter(Boolean) : [],
+  };
+}
+
+/** `[user@]host[:port]` split up. Built on `parseSshTarget`, which knows an
+ *  IPv6 literal is all colons. */
+function sshTargetParts(target: string): { user: string; host: string; port: number | null } {
+  const { dest, port } = parseSshTarget(target);
+  const at = dest.lastIndexOf("@");
+  const user = at >= 0 ? dest.slice(0, at) : "";
+  const host = (at >= 0 ? dest.slice(at + 1) : dest).replace(/^\[(.*)\]$/, "$1");
+  return { user, host, port: port === null ? null : Number(port) };
+}
+
+/** The identity `m` attaches as, built like a session's `remote.detail` so a
+ *  configured machine can be recognised among the open windows. */
+function machineFacetKey(m: Machine): string {
+  if (m.kind === "kubernetes") return `kubernetes:${m.namespace}/${m.pod}`;
+  // The facet carries no port, so it is dropped here too.
+  const { user, host } = sshTargetParts(m.target);
+  return `ssh:${user ? `${user}@${host}` : host}`;
+}
+
+/** Machines with an open window first, then configured machines without one. */
+function scanTargets(): DiscoverTarget[] {
+  const active = editor.activeWindow();
+  const saved = loadMachines();
+  const byMachine = new Map<string, DiscoverTarget>();
+  for (const s of orchestratorSessions.values()) {
+    // Discovered worktrees and placeholders have no window to borrow.
+    if (s.id <= 0 || s.pending) continue;
+    const key = s.remote ? `${s.remote.kind}:${s.remote.detail}` : "local";
+    const label = s.remote ? `${s.remote.detail} · ${s.remote.kind}` : editor.t("machine.local");
+    const seen = byMachine.get(key);
+    const seenWindow =
+      seen && seen.spec && "kind" in seen.spec && seen.spec.kind === "window"
+        ? (seen.spec.window ?? active)
+        : null;
+    // The active window wins, then the lowest id, so the choice is stable.
+    if (!seen || s.id === active || (seenWindow !== active && s.id < seenWindow!)) {
+      byMachine.set(key, {
+        key,
+        label,
+        spec: { kind: "window", window: s.id },
+        connects: false,
+        reach: discoverReachOf(s.remote, saved),
+      });
+    }
+  }
+  // With no orchestrator session, the active window is still scannable.
+  if (byMachine.size === 0) {
+    byMachine.set("active", {
+      key: "active",
+      label: editor.getAuthorityLabel() || editor.t("machine.local"),
+      spec: { kind: "window", window: active },
+      connects: false,
+      reach: { kind: "option", key: "local" },
+    });
+  }
+  const targets = [...byMachine.values()].sort((a, b) => {
+    const aHere = a.key === "local" || a.key === "active";
+    const bHere = b.key === "local" || b.key === "active";
+    if (aHere !== bHere) return aHere ? -1 : 1;
+    return a.label.localeCompare(b.label);
+  });
+  for (const m of saved) {
+    if (byMachine.has(machineFacetKey(m))) continue;
+    // No window, so the scan dials it. Core builds that connection with
+    // trust blocked, so it is read-only.
+    const transport = machineTransport(m);
+    targets.push({
+      key: `machine:${m.id}`,
+      label: m.name,
+      spec: transport,
+      connects: transport !== null,
+      reach: { kind: "option", key: m.id },
+    });
+  }
+  // "All machines" goes last because it is the expensive choice, and only
+  // when there is more than one machine to scan.
+  if (targets.filter((t) => t.spec !== null).length > 1) {
+    targets.push({
+      key: DISCOVER_ALL_KEY,
+      label: editor.t("machine.all"),
+      spec: null,
+      connects: false,
+      all: true,
+    });
+  }
+  return targets;
+}
+
+/** Where the form opens for a window's machine: the saved machine matching
+ *  its facet, else the window's own host or pod. Only a window with no
+ *  remote is Local. */
+function discoverReachOf(
+  remote: AgentSession["remote"],
+  saved: Machine[],
+): FormSeed {
+  if (!remote) return { kind: "option", key: "local" };
+  const facet = `${remote.kind}:${remote.detail}`;
+  const match = saved.find((m) => machineFacetKey(m) === facet);
+  if (match) return { kind: "option", key: match.id };
+  if (remote.kind === "kubernetes") {
+    const slash = remote.detail.indexOf("/");
+    return slash >= 0
+      ? { kind: "kubernetes", namespace: remote.detail.slice(0, slash), pod: remote.detail.slice(slash + 1) }
+      : { kind: "kubernetes", namespace: "", pod: remote.detail };
+  }
+  if (remote.kind === "ssh") return { kind: "ssh", target: remote.detail };
+  // A devcontainer is located from the project path in the prefill.
+  return { kind: "option", key: remote.kind === "devcontainer" ? "devcontainer" : "local" };
 }
 
 function openMachinesDialog(): void {
@@ -9738,7 +9915,7 @@ function buildMachinesSpec(): WidgetSpec {
     spacer(0),
     button(`+ ${editor.t("machine.add")}`, { key: "machines-add" }),
     spacer(0),
-    wrappingRow(
+    endRow(
       withAccel(button(editor.t("machine.btn_new_here"), { intent: "primary", key: "machines-new" }), "⏎"),
       spacer(2),
       button(editor.t("machine.btn_edit"), { key: "machines-edit", disabled: !editable }),
@@ -9766,7 +9943,10 @@ function machinesSelected(): MachinesRow | null {
 function newWorkspaceOnSelected(): void {
   const row = machinesSelected();
   if (!row) return;
-  pendingFormMachine = row.machine ? row.machine.id : row.host ? `host:${row.host.alias}` : null;
+  pendingFormMachine = {
+    kind: "option",
+    key: row.machine ? row.machine.id : row.host ? `host:${row.host.alias}` : "local",
+  };
   closeMachinesDialog();
   dockBlurred = true;
   openForm({ fromPicker: true });
@@ -10238,16 +10418,63 @@ function applyMachinePick(index: number): void {
   closeCompletion();
 }
 
-// Open on the machine a caller asked for (`undefined` = nobody asked; `null`
-// = Local), else the last one used.
+/** How `agent` rejoins session `id`, per the agent registry. `exact` is false
+ *  for an agent with no id-addressed resume (codex `resume --last` takes the
+ *  newest session in the directory). */
+function resumeArgv(agent: string, id: string): { argv: string[]; exact: boolean } | null {
+  const entry = agentEntryForCmd(agent);
+  if (!entry) return null;
+  if (entry.spec.provision) {
+    return {
+      argv: [agent, ...entry.spec.provision.resumeArgs.map((a) => a.replace("{id}", id))],
+      exact: true,
+    };
+  }
+  if (entry.spec.continue) {
+    return { argv: [agent, ...entry.spec.continue.resumeArgs], exact: false };
+  }
+  return null;
+}
+
+/** Open the New Workspace form on `seed` with `prefill` filled in; how a
+ *  discovered session is rejoined. The form, not a silent launch, so the
+ *  reader sees what will run where and a connect gets its trust decision. */
+function openWorkspaceForm(seed: FormSeed, prefill: { projectPath: string; cmd: string }): void {
+  pendingFormMachine = seed;
+  pendingFormPrefill = prefill;
+  dockBlurred = true;
+  openForm({ fromPicker: true });
+}
+
 function seedFormMachine(): void {
   if (!form) return;
   const asked = pendingFormMachine;
   pendingFormMachine = undefined;
-  const last = editor.getGlobalState("orchestrator.last_machine");
-  const want = asked !== undefined ? asked : typeof last === "string" ? last : null;
-  if (!want) return;
-  const idx = machineOptions().findIndex((o) => o.key === want);
+  if (asked === undefined) {
+    const last = editor.getGlobalState("orchestrator.last_machine");
+    if (typeof last === "string") pickMachineOption(last);
+    return;
+  }
+  switch (asked.kind) {
+    case "option":
+      pickMachineOption(asked.key);
+      return;
+    // A host the registry does not know: the form's hand-typed entry, prefilled.
+    case "ssh":
+      pickMachineOption("other");
+      form.sshHost = { value: asked.target, cursor: asked.target.length };
+      return;
+    case "kubernetes":
+      pickMachineOption("k8s");
+      form.k8sNamespace = { value: asked.namespace, cursor: asked.namespace.length };
+      form.k8sPod = { value: asked.pod, cursor: asked.pod.length };
+      return;
+  }
+}
+
+/** Apply the `machineOptions()` entry with this key, if it is offered. */
+function pickMachineOption(key: string): void {
+  const idx = machineOptions().findIndex((o) => o.key === key);
   if (idx >= 0) applyMachinePick(idx);
 }
 
@@ -10743,6 +10970,25 @@ function connectionFields(f: NewSessionForm): WidgetSpec[] {
   return [];
 }
 
+/** Put a caller's directory into the slot this backend's Project Path reads
+ *  (see `projectPathFields`). Empty is left alone so a session with no
+ *  recorded directory falls back to the machine's default. */
+function applyPrefillPath(path: string): void {
+  if (!form || path === "") return;
+  const slot = { value: path, cursor: path.length };
+  switch (form.backend) {
+    case "ssh":
+      form.sshPath = slot;
+      break;
+    case "kubernetes":
+      form.k8sWorkspace = slot;
+      break;
+    default:
+      form.projectPath = slot;
+      break;
+  }
+}
+
 // One Project Path in every mode (§3.8): the directory the workspace is
 // rooted at, wherever that is. The hint under it says what blank means.
 function projectPathFields(): WidgetSpec[] {
@@ -10869,7 +11115,7 @@ function buildConnectingView(): WidgetSpec {
       { style: NOTE_STYLE },
     ),
     spacer(0),
-    wrappingRow(
+    endRow(
       button(editor.t("form.btn_cancel"), { intent: "danger", key: "cancel" }),
       spacer(2),
       button(editor.t("form.btn_create"), { intent: "primary", key: "create", disabled: true }),
@@ -11189,7 +11435,6 @@ function deriveProjectLabel(): string {
   return base || cwd;
 }
 
-
 function renderForm(): void {
   if (!form || !formPanel) return;
   // Keep the focus mirror in step with the spec's tabbable set
@@ -11270,10 +11515,21 @@ function openForm(options?: { fromPicker?: boolean; target?: RunAgentTarget }): 
     historyDraft: { project_path: "", name: "", cmd: "", branch: "" },
     completion: { field: null, items: [], selectedIndex: 0, anchor: "", token: 0 },
   };
+  // Rejoining a discovered session: no worktree, since the session's files
+  // are already in that directory.
+  const prefill = pendingFormPrefill;
+  pendingFormPrefill = null;
+  if (prefill) {
+    form.cmd = { value: prefill.cmd, cursor: prefill.cmd.length };
+    form.createWorktree = false;
+    form.agentCustom = !agentPresets().some((pr) => !pr.custom && pr.cmd === prefill.cmd.trim());
+  }
   formPanel = new FloatingWidgetPanel();
   // A machine chosen elsewhere (`Machines ▸ New workspace here`, a machine
   // just added from this form) or the last one used opens the form on it.
   seedFormMachine();
+  // After the machine, because the backend decides which field holds the path.
+  if (prefill) applyPrefillPath(prefill.projectPath);
   mountFormPanel();
   // Kick off the placeholder probes (canonical repo root,
   // default branch, next session name) against the editor's
@@ -13493,7 +13749,7 @@ export type DockFilterOptions = {
 /// ignore the return value and let a real failure surface as a rejected
 /// promise / thrown error, and a caller that is guessing can branch on the
 /// boolean without wrapping everything in try/catch.
-export type OrchestratorApi = {
+export type OrchestratorApi = DiscoveryHost & {
   /** Launch a coding agent in THIS workspace — the headless twin of the
    *  "Run Agent…" dialog. By default resolves once the launch has been seen
    *  to come up (its terminal produced output within `readyTimeoutMs`);
@@ -14260,6 +14516,12 @@ function apiSetDockFilter(
 }
 
 editor.exportPluginApi("orchestrator", {
+  // `DiscoveryHost`: what the Everything dialog (`agent_discovery.ts`) needs.
+  scanTargets,
+  resumeArgv,
+  openWorkspaceForm,
+  yieldDock: yieldDockToDialog,
+  restoreDock: restoreDockAfterDialog,
   runAgent,
   newWorkspace,
   listWorkspaces,
@@ -14517,7 +14779,6 @@ const FOLDER_DIALOG_MODE_BINDINGS: [string, string][] = [
   ["C-Enter", "orchestrator_folder_submit"],
 ];
 editor.defineMode(CREATE_FOLDER_MODE, FOLDER_DIALOG_MODE_BINDINGS, true, true);
-
 
 registerHandler("orchestrator_folder_submit", () => {
   if (!createFolderDialog) return;
@@ -16098,7 +16359,10 @@ function buildExplainSpec(s: AgentSession, ex: StateExplanation): WidgetSpec {
       parts.push(label(`  ${l}`, { style: { ...dim, italic: true }, elide: "tail" }));
     }
   }
-  parts.push(spacer(0), withAccel(button(editor.t("machine.btn_close"), { key: "explain-close" }), "Esc"));
+  parts.push(
+    spacer(0),
+    endRow(withAccel(button(editor.t("machine.btn_close"), { key: "explain-close" }), "Esc")),
+  );
   return col(...parts);
 }
 
