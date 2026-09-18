@@ -258,7 +258,7 @@ impl Editor {
         // plugin that fills the slot lays its content out to `dock_cols`
         // and mounts at `ready` iff `dock_open` — the host decided, before
         // the first frame, and the plugin follows.
-        snapshot.dock_open = self.dock.is_some() || self.dock_reserved;
+        snapshot.dock_open = self.dock.is_some() || self.dock_slot_reserved();
         snapshot.dock_cols = self.dock_cols_if_open();
 
         // Core is the *only* place that detects which environment a workspace
@@ -5943,8 +5943,6 @@ impl Editor {
         if as_dock {
             self.dock_reserved = false;
             self.relayout();
-            // The user has a dock: remember that across launches.
-            self.persist_dock_chrome();
         }
     }
 
@@ -6101,8 +6099,6 @@ impl Editor {
         // it, so clearing on its close would only cause a visible flicker.
         if slot == super::PanelSlot::Dock {
             self.request_full_redraw();
-            // The user closed the dock: remember that across launches.
-            self.persist_dock_chrome();
         }
         // Restore the active window's visible terminal PTYs to their
         // dive-view split rects. The orchestrator picker's preview
@@ -6146,15 +6142,14 @@ impl Editor {
         }
         // `dock_width` sets the editor's dock width, not the panel's, so it
         // is answered before the panel is borrowed. An explicit width — it
-        // sticks, like a drag, until the dock is next opened from scratch
-        // with nothing remembered. The dock itself no longer needs this to
-        // be responsive: the host re-reads its width rule on every frame.
-        // A no-op unless the panel is the dock.
+        // sticks, like a drag: across resizes and across launches, until
+        // the next drag or `dock_width`. The dock itself no longer needs
+        // this to be responsive: the host re-reads its width rule on every
+        // frame. A no-op unless the panel is the dock.
         if op == "dock_width" {
             if slot == super::PanelSlot::Dock {
-                let max_cols = self.terminal_width.max(20).saturating_sub(20).max(10);
-                self.dock_width = Some((arg.max(0.0) as u16).clamp(10, max_cols));
-                self.persist_dock_chrome();
+                self.dock_width = Some(self.clamp_dock_width(arg.max(0.0) as u16));
+                self.persist_dock_width();
                 self.relayout();
             }
             return;
@@ -6225,6 +6220,11 @@ impl Editor {
                 }
                 if let Some(o) = self.panel_opt_mut(to) {
                     *o = Some(panel);
+                }
+                // A panel in the dock slot is the dock: nothing is being
+                // held open for one any more.
+                if to == super::PanelSlot::Dock {
+                    self.dock_reserved = false;
                 }
                 to
             }

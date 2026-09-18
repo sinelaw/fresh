@@ -6633,6 +6633,9 @@ where
             // data dir (see `orchestrator_persistence`). Best-effort;
             // failures are logged inside, never block quit.
             editor.save_orchestrator_state();
+            // The dock as the user left it: open or closed (see
+            // `Editor::save_dock_chrome` for why this is a quit-time fact).
+            editor.save_dock_chrome();
             break;
         }
 

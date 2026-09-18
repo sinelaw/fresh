@@ -1507,13 +1507,18 @@ pub struct Editor {
     /// sentinel when nothing mounted: every command the handlers sent is
     /// ahead of it in the channel, so a column still empty then belongs to
     /// nobody and goes back to the editor.
+    ///
+    /// Read through [`Editor::dock_slot_reserved`], never bare: a slot with
+    /// a panel in it is not reserved whatever this says.
     pub(crate) dock_reserved: bool,
 
     /// The dock's explicit width in columns — the user's drag, or a plugin's
     /// `dock_width` op — and `None` while it follows [`Self::dock_width_rule`]
-    /// as the terminal resizes. Remembered across launches (`chrome.json`,
-    /// see `app::chrome::dock`). The one writer the layout reads; the panel
-    /// placement no longer carries a width of its own.
+    /// as the terminal resizes. Once set it sticks, across launches
+    /// (`chrome.json`, see `app::chrome::dock`) and across resizes: a
+    /// dragged width is a decision, and nothing but another drag revisits
+    /// it. The one writer the layout reads; the panel placement no longer
+    /// carries a width of its own.
     pub(crate) dock_width: Option<u16>,
     /// How wide the dock opens while nothing explicit has been asked for:
     /// the rule the plugin's manifest declared (`chrome.dock.width`), or the

@@ -30,15 +30,15 @@ pub(crate) struct DockChromeState {
 /// this data directory serves, the way plugin global state is.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 struct ChromeState {
-    #[serde(default = "chrome_state_version")]
-    version: u32,
     #[serde(default)]
     dock: DockChromeState,
 }
 
-fn chrome_state_version() -> u32 {
-    1
-}
+/// The narrowest a drag (or a plugin's `dock_width`) may make the dock —
+/// under `DOCK_MIN` deliberately: that floor is where the dock stops being
+/// *opened* by default, not where the user stops being allowed to squeeze
+/// one they have. The other end is the editor's own minimum, `EDITOR_MIN`.
+const DOCK_DRAG_MIN: u16 = 10;
 
 fn chrome_state_path(data_dir: &Path) -> PathBuf {
     data_dir.join("chrome.json")
@@ -90,19 +90,17 @@ impl Editor {
 
         // One slot, so one declaration; by name, so two plugins claiming it
         // resolve the same way on every launch.
-        let mut declared: Vec<(&String, _)> = manifests
-            .iter()
-            .filter_map(|(name, m)| m.chrome.dock.as_ref().map(|d| (name, d)))
-            .collect();
-        declared.sort_by(|a, b| a.0.cmp(b.0));
-        let Some((name, decl)) = declared.first() else {
+        let docks = || {
+            manifests
+                .iter()
+                .filter_map(|(name, m)| m.chrome.dock.as_ref().map(|d| (name, d)))
+        };
+        let Some((name, decl)) = docks().min_by_key(|(name, _)| *name) else {
             return;
         };
-        if declared.len() > 1 {
-            tracing::warn!(
-                "plugin manifest: {} plugins declare the dock; {name} wins",
-                declared.len()
-            );
+        let claimants = docks().count();
+        if claimants > 1 {
+            tracing::warn!("plugin manifest: {claimants} plugins declare the dock; {name} wins");
         }
         self.dock_width_rule = decl.width;
 
@@ -148,28 +146,84 @@ impl Editor {
         released
     }
 
-    /// Write the dock's chrome to `chrome.json`: whether a dock is mounted
-    /// and the explicit width, if any. Called on the events that change
-    /// either — a mount, an unmount, the end of a drag, a `dock_width` op —
-    /// and never for a column merely held open, which is not the user's
-    /// doing. Atomic (tmp + rename) and best-effort, like plugin state.
-    pub(crate) fn persist_dock_chrome(&self) {
-        let state = ChromeState {
-            version: chrome_state_version(),
-            dock: DockChromeState {
-                open: Some(self.dock.is_some()),
-                width: self.dock_width,
-            },
-        };
+    /// Whether the dock slot is held open for a panel that has not arrived
+    /// (`dock_reserved`), as the one place that says so. A slot with a
+    /// panel in it is not reserved whatever the flag says — the mount and
+    /// the slot-move op both clear it, but a reader that keeps asking the
+    /// flag alone is one missed transition from laying out a column twice.
+    pub(crate) fn dock_slot_reserved(&self) -> bool {
+        self.dock_reserved && self.dock.is_none()
+    }
+
+    /// The width the dock column asks for on a frame `frame_width` wide: the
+    /// explicit width if there is one, else the rule. **The one derivation**
+    /// — the layout (`compute_dock_split`) and what the plugin is told
+    /// (`dock_cols_if_open`) both read it, so they cannot disagree by a
+    /// frame. Whether a column is carved at all, and how the request is
+    /// clamped against the frame, is `frame::dock_width`'s.
+    pub(crate) fn requested_dock_width(&self, frame_width: u16) -> u16 {
+        self.dock_width
+            .unwrap_or_else(|| self.dock_width_rule.width(frame_width))
+    }
+
+    /// An explicit width, kept inside what the terminal can give: no
+    /// narrower than `DOCK_DRAG_MIN`, and never so wide the editor loses its
+    /// `EDITOR_MIN` columns. The drag and the `dock_width` op share it, so
+    /// there is one rule about how narrow or wide a user (or a plugin) may
+    /// make the dock, not two spellings of it.
+    pub(crate) fn clamp_dock_width(&self, cols: u16) -> u16 {
+        let max = self
+            .terminal_width
+            .saturating_sub(crate::view::shell::frame::EDITOR_MIN)
+            .max(DOCK_DRAG_MIN);
+        cols.clamp(DOCK_DRAG_MIN, max)
+    }
+
+    /// Remember whether the dock is open — at quit, which is the one moment
+    /// "the way you left it" is literally true.
+    ///
+    /// Not on every mount and unmount: the orchestrator plugin closes and
+    /// reopens the dock on its own (a dive into a worktree closes the picker
+    /// that was holding the dock behind it and brings the dock back when the
+    /// attach lands), and a write on each of those would remember a plugin's
+    /// transient as the user's decision — quit inside the window and the
+    /// next launch has no dock. The slot at quit is what the user actually
+    /// left. A column still merely held open at quit (the plugin never
+    /// mounted) says nothing about the user, and leaves the file as it was.
+    pub fn save_dock_chrome(&self) {
+        let open = (!self.dock_slot_reserved()).then_some(self.dock.is_some());
+        self.persist_dock_chrome(open);
+    }
+
+    /// Remember the dock's explicit width now — the end of a drag, or a
+    /// plugin's `dock_width` op. Unlike `open`, a width is never transient,
+    /// so it is written as it changes rather than at quit. A no-op with no
+    /// dock mounted: a press on a reserved column's grip changes nothing.
+    pub(crate) fn persist_dock_width(&self) {
+        if self.dock.is_some() {
+            self.persist_dock_chrome(None);
+        }
+    }
+
+    /// Write `chrome.json`: the explicit width as it stands, and `open` when
+    /// the caller has an answer. Read-merge-write, so a width write leaves
+    /// `open` as the last quit recorded it and vice versa. Atomic (tmp +
+    /// rename) and best-effort, like plugin state.
+    fn persist_dock_chrome(&self, open: Option<bool>) {
+        let fs = &*self.local_filesystem;
         let path = chrome_state_path(&self.dir_context.data_dir);
-        let bytes = match serde_json::to_vec_pretty(&state) {
+        let mut dock = read_dock_chrome_state(fs, &self.dir_context.data_dir);
+        dock.width = self.dock_width;
+        if let Some(open) = open {
+            dock.open = Some(open);
+        }
+        let bytes = match serde_json::to_vec_pretty(&ChromeState { dock }) {
             Ok(b) => b,
             Err(e) => {
                 tracing::warn!("chrome state: failed to serialise: {e}");
                 return;
             }
         };
-        let fs = &*self.local_filesystem;
         if let Some(dir) = path.parent() {
             if let Err(e) = fs.create_dir_all(dir) {
                 tracing::warn!("chrome state: failed to create {dir:?}: {e}");
@@ -192,30 +246,27 @@ impl Editor {
     /// What the plugin lays its content out to, before its mount has
     /// been processed as much as after.
     pub(crate) fn dock_cols_if_open(&self) -> u16 {
-        let requested = self
-            .dock_width
-            .unwrap_or_else(|| self.dock_width_rule.width(self.terminal_width));
+        let requested = self.requested_dock_width(self.terminal_width);
         crate::view::shell::frame::dock_width(Some(requested), self.terminal_width).unwrap_or(0)
     }
 }
 
 /// Behavior owned by this component — the drag half of the
 /// width-resize grab; the press half arms it in `on_pointer`, and the
-/// release finalizer in `handle_mouse`'s Up arm persists the width.
+/// release finalizer in `shell_host`'s `GripRelease` arm persists the width.
 impl Editor {
     /// Dock resize drag (`PointerGrab::DockResize`, armed by the grip's own
     /// press — see `view::shell::dock`): track the pointer column as the new
     /// dock width (the right border follows the cursor), clamped so it
     /// can't swallow the chrome.
     pub(crate) fn handle_dock_resize_drag(&mut self, col: u16) {
-        let max_cols = self.terminal_width.max(20).saturating_sub(20).max(10);
-        let new_w = col.saturating_add(1).clamp(10, max_cols);
+        let new_w = self.clamp_dock_width(col.saturating_add(1));
         if self.dock.is_none() || self.dock_width == Some(new_w) {
             return;
         }
         // The explicit width is the one fact the layout reads, so setting it
         // is the whole of the drag; `relayout` re-derives the column from
-        // it. Disk waits for the release (`persist_dock_chrome`).
+        // it. Disk waits for the release (`persist_dock_width`).
         self.dock_width = Some(new_w);
         // The dock got wider/narrower: reflow the chrome (terminals,
         // viewports, panels) to the new dock width via the funnel.

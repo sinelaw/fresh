@@ -391,8 +391,6 @@ pub const EDITOR_MIN: u16 = 20;
 pub const DOCK_MIN: u16 = 24;
 /// Wider than this and the dock is taking room it has no content for.
 pub const DOCK_MAX: u16 = 40;
-/// The dock's width on a frame whose size is not known yet.
-const DOCK_DEFAULT: u16 = 32;
 
 /// How wide the dock opens before any user drag: a share of the frame,
 /// clamped.
@@ -430,12 +428,10 @@ impl DockWidthRule {
         DOCK_MAX
     }
 
-    /// The width this rule gives a frame `frame_width` wide. A frame of
-    /// unknown width (zero) gets the fixed default rather than the floor.
+    /// The width this rule gives a frame `frame_width` wide. (A frame too
+    /// narrow for any dock is `dock_width`'s to refuse, not this rule's to
+    /// special-case.)
     pub fn width(&self, frame_width: u16) -> u16 {
-        if frame_width == 0 {
-            return DOCK_DEFAULT;
-        }
         let target = (frame_width as f32 * self.fraction).round() as u16;
         // A declared floor above the ceiling is nonsense; the floor wins,
         // which is the answer `clamp` would panic over.
@@ -451,11 +447,6 @@ impl Default for DockWidthRule {
             max: Self::default_max(),
         }
     }
-}
-
-/// The width the dock opens at on this frame under the default rule.
-pub fn dock_default_width(frame_width: u16) -> u16 {
-    DockWidthRule::default().width(frame_width)
 }
 
 /// How wide the dock actually gets, or `None` when it does not fit.
@@ -1595,30 +1586,17 @@ mod tests {
         );
     }
 
-    /// The responsive default, at the widths that decide it: the fraction in
-    /// the middle, both clamps at the ends. These are the numbers
-    /// `orchestrator.ts:dockDefaultWidth` computes for the `dock_width` it
-    /// re-issues on resize, and a reserved column held open at a different
-    /// one is the re-flow the reservation exists to remove.
+    /// The default rule, at the widths that decide it: the fraction in the
+    /// middle, both clamps at the ends. These are the numbers the
+    /// orchestrator's manifest declares (`orchestrator.manifest.json`), so a
+    /// column held open at startup and the dock that fills it agree.
     #[test]
-    fn dock_default_width_is_a_clamped_fraction_of_the_frame() {
-        assert_eq!(dock_default_width(120), 34, "0.28 of 120, rounded");
-        assert_eq!(dock_default_width(100), 28, "0.28 of 100");
-        assert_eq!(
-            dock_default_width(80),
-            DOCK_MIN,
-            "0.28 of 80 is under the floor"
-        );
-        assert_eq!(
-            dock_default_width(300),
-            DOCK_MAX,
-            "0.28 of 300 is over the ceiling"
-        );
-        assert_eq!(
-            dock_default_width(0),
-            DOCK_DEFAULT,
-            "a frame of unknown width gets the fixed default"
-        );
+    fn the_default_rule_is_a_clamped_fraction_of_the_frame() {
+        let rule = DockWidthRule::default();
+        assert_eq!(rule.width(120), 34, "0.28 of 120, rounded");
+        assert_eq!(rule.width(100), 28, "0.28 of 100");
+        assert_eq!(rule.width(80), DOCK_MIN, "0.28 of 80 is under the floor");
+        assert_eq!(rule.width(300), DOCK_MAX, "0.28 of 300 is over the ceiling");
     }
 
     /// A manifest states only what it changes; the rest is the default rule.

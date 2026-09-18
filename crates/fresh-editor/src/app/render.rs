@@ -4115,7 +4115,7 @@ impl Editor {
             dock_focused: self.dock.as_ref().is_some_and(|d| d.focused),
             // A column with no panel in it that the layout carved anyway:
             // the tree, not the painter, owns every cell of it.
-            dock_reserved: self.dock.is_none() && self.dock_reserved,
+            dock_reserved: self.dock_slot_reserved(),
             // Which workspace the window-owned half of the frame belongs to.
             // One retained tree, N windows: without this the two match each
             // other and window B's first pane inherits window A's element
@@ -6080,11 +6080,8 @@ impl Editor {
             .dock
             .as_ref()
             .is_some_and(|f| matches!(f.placement, super::PanelPlacement::LeftDock))
-            || (self.dock.is_none() && self.dock_reserved);
-        let requested = slot_open.then(|| {
-            self.dock_width
-                .unwrap_or_else(|| self.dock_width_rule.width(size.width))
-        });
+            || self.dock_slot_reserved();
+        let requested = slot_open.then(|| self.requested_dock_width(size.width));
         let Some(width) = crate::view::shell::frame::dock_width(requested, size.width) else {
             return (None, size);
         };
@@ -6848,7 +6845,7 @@ mod dock_reservation_tests {
             Config::default(),
             false,
         );
-        let want = crate::view::shell::frame::dock_default_width(COLS);
+        let want = crate::view::shell::frame::DockWidthRule::default().width(COLS);
         assert_eq!(dock_width_of(&editor), Some(want));
         let (_, chrome) = editor.compute_dock_split(frame());
         assert_eq!((chrome.x, chrome.width), (want, COLS - want));
@@ -6924,9 +6921,10 @@ mod dock_reservation_tests {
         assert_eq!(dock_width_of(&editor), None);
     }
 
-    /// The mount that fills the column is what releases the reservation —
-    /// and what is remembered: mounted, the dock comes back next launch;
-    /// unmounted by the user, it stays away.
+    /// The mount that fills the column is what releases the reservation.
+    /// What is *remembered* is the slot at quit: mounted, the dock comes
+    /// back next launch; closed, it stays away — and a plugin's transient
+    /// close-and-reopen between two quits is not a decision at all.
     #[test]
     fn what_the_user_leaves_is_what_comes_back() {
         let dir_context = home_with_manifest(Some(DECLARES_DOCK));
@@ -6961,14 +6959,32 @@ mod dock_reservation_tests {
             "...and the column is the same"
         );
 
-        // Close it, as Toggle Dock does.
-        editor
-            .handle_plugin_command(fresh_core::api::PluginCommand::UnmountFloatingWidget {
-                plugin: "orchestrator".into(),
-                panel_id: 7,
-            })
-            .unwrap();
+        let unmount = |editor: &mut Editor| {
+            editor
+                .handle_plugin_command(fresh_core::api::PluginCommand::UnmountFloatingWidget {
+                    plugin: "orchestrator".into(),
+                    panel_id: 7,
+                })
+                .unwrap();
+        };
+
+        // A plugin's transient: closed and reopened before the quit. The
+        // quit sees a dock, so a dock is what the next launch holds open.
+        unmount(&mut editor);
         assert_eq!(dock_width_of(&editor), None);
+        mount(&mut editor);
+        editor.save_dock_chrome();
+        let editor = editor_in(dir_context.clone(), Config::default(), false);
+        assert!(
+            editor.dock_reserved,
+            "a close the plugin undid was not a decision"
+        );
+
+        // Close it, as Toggle Dock does, and quit on that.
+        let mut editor = editor;
+        mount(&mut editor);
+        unmount(&mut editor);
+        editor.save_dock_chrome();
 
         // Next launch: closed is remembered, over the manifest's `open`.
         let editor = editor_in(dir_context.clone(), Config::default(), false);
@@ -6978,11 +6994,13 @@ mod dock_reservation_tests {
         let editor = editor_in(dir_context.clone(), Config::default(), true);
         assert!(editor.dock_reserved);
 
-        // Open it again and drag it: both come back.
+        // Open it again and drag it: both come back. The width is written
+        // as the drag ends; `open` waits for the quit.
         let mut editor = editor_in(dir_context.clone(), Config::default(), false);
         mount(&mut editor);
         editor.handle_dock_resize_drag(37); // the wall lands on column 37: width 38
-        editor.persist_dock_chrome();
+        editor.persist_dock_width();
+        editor.save_dock_chrome();
         let editor = editor_in(dir_context, Config::default(), false);
         assert_eq!(
             dock_width_of(&editor),

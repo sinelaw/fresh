@@ -21,8 +21,8 @@ use std::path::PathBuf;
 
 const COLS: u16 = 120;
 const ROWS: u16 = 32;
-/// `frame::dock_default_width(120)` — 0.28 of the frame, rounded. The wall is
-/// the column's last cell, so it lands one to the left of that.
+/// The manifest's rule at 120 columns — 0.28 of the frame, rounded. The wall
+/// is the column's last cell, so it lands one to the left of that.
 const DOCK_COLS: usize = 34;
 const WALL: usize = DOCK_COLS - 1;
 
@@ -137,9 +137,10 @@ fn an_ordinary_launch_lands_the_dock_in_the_column_carved_for_it() {
 }
 
 /// **The dock comes back the way it was left.** Closed with Toggle Dock and
-/// the editor relaunched against the same data directory: no column, and
-/// `ready` mounts nothing. Opened again and relaunched: the column is back
-/// on the first frame.
+/// the editor quit and relaunched against the same data directory: no
+/// column, and `ready` mounts nothing. Opened again, quit and relaunched:
+/// the column is back on the first frame. (The quit is what records it —
+/// see `Editor::save_dock_chrome`.)
 #[test]
 fn the_dock_is_remembered_across_launches() {
     use crossterm::event::{KeyCode, KeyModifiers};
@@ -184,6 +185,7 @@ fn the_dock_is_remembered_across_launches() {
         wall_column(&h).iter().filter(|c| **c == '\u{2502}').count(),
         0
     );
+    h.shutdown(false).unwrap();
     drop(h);
 
     // Second launch: closed is remembered — no column, and nothing mounts.
@@ -208,6 +210,7 @@ fn the_dock_is_remembered_across_launches() {
     toggle_dock(&mut h);
     h.wait_until(|h| h.screen_to_string().contains("+ New"))
         .unwrap();
+    h.shutdown(false).unwrap();
     drop(h);
 
     // Third launch: open is remembered — the column is on the first frame.

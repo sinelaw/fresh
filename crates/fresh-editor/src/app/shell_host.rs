@@ -3092,7 +3092,7 @@ impl Editor {
                     // is when it is worth a write to disk.
                     Grip::DockWidth => {
                         self.dock_resizing = false;
-                        self.persist_dock_chrome();
+                        self.persist_dock_width();
                     }
                     // A finished separator drag changed the ratios, so the
                     // frame reflows through the one layout funnel.

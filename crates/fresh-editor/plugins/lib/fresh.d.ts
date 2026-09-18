@@ -5019,13 +5019,17 @@ interface EditorAPI {
 	unmountFloatingWidget(panelId: number): boolean;
 	/**
 	* Control a mounted floating panel's placement / focus without
-	* re-sending its spec. `op`: "dock" (`arg` = width in columns),
-	* "center", "focus", "blur", "fullscreen" (`arg != 0` makes a
-	* centered panel cover the whole frame over the dock), "sidebar"
-	* (`arg` = requested rows; re-anchors the panel as a sidebar section
-	* under the file explorer — "dock" / "center" re-anchor it back out),
-	* "sidebar_rows" (`arg` = requested rows for a section; a divider the
-	* user has dragged wins). See `PluginCommand::FloatingPanelControl`.
+	* re-sending its spec. `op`: "dock" (re-anchor the panel as the left
+	* dock and focus it; `arg` is unused — the column's width is the
+	* editor's, from the dock's declared rule or the user's drag),
+	* "dock_width" (`arg` = width in columns for the dock; it sticks, like
+	* a drag, across resizes and launches), "center", "focus", "blur",
+	* "fullscreen" (`arg != 0` makes a centered panel cover the whole
+	* frame over the dock), "sidebar" (`arg` = requested rows; re-anchors
+	* the panel as a sidebar section under the file explorer — "dock" /
+	* "center" re-anchor it back out), "sidebar_rows" (`arg` = requested
+	* rows for a section; a divider the user has dragged wins). See
+	* `PluginCommand::FloatingPanelControl`.
 	*/
 	floatingPanelControl(panelId: number, op: string, arg: number): boolean;
 	/**

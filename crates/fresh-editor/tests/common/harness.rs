@@ -2138,6 +2138,9 @@ impl EditorTestHarness {
         if workspace_enabled {
             self.editor.save_workspace()?;
         }
+        // The dock as the user left it, the way both production quit paths
+        // record it.
+        self.editor.save_dock_chrome();
         Ok(())
     }
 
