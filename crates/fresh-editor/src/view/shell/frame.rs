@@ -254,6 +254,12 @@ pub struct Frame {
     /// The workspace-trust prompt. A blocking modal: it dims the whole frame
     /// and nothing outside it is interactive.
     pub trust: Option<super::trust::Trust>,
+    /// The confirmation modal, when a prompt is a question with buttons
+    /// rather than a line to type into. Like the trust prompt: it dims the
+    /// whole frame and nothing outside it is interactive. `prompt_row` is
+    /// `None` whenever this is `Some` — the question is in the card, not on
+    /// the row. See [`super::confirm`].
+    pub confirm: Option<super::confirm::Confirm>,
     /// The split grid, when there is one. Its *content* is the body's `Host`
     /// leaf still; what the tree carries is the panes' geometry and the
     /// dividers, which answer their own presses.
@@ -350,6 +356,7 @@ impl Default for Frame {
             theme_info: None,
             browser: None,
             trust: None,
+            confirm: None,
             settings: None,
             settings_dialog: None,
             settings_entry: Vec::new(),
@@ -781,6 +788,15 @@ pub fn frame_tree(f: Frame) -> Node<UiMsg> {
     // The trust prompt, over everything the frame holds. It is drawn dead last
     // today for the same reason — it dims the *entire* frame, the dock
     // included, and centres in the whole window rather than beside the dock.
+    // The confirmation modal: the same statement as the trust prompt below —
+    // it dims the entire frame, the dock included, and centres in the whole
+    // window. Declared *before* the trust prompt so the trust prompt stays on
+    // top of it: that one is the open-time gate, and nothing may cover the
+    // question of whether this folder is allowed to run code.
+    let frame = match &f.confirm {
+        Some(c) => frame.child(super::confirm::layer(c)),
+        None => frame,
+    };
     let frame = match &f.trust {
         Some(t) => frame.child(super::trust::layer(t)),
         None => frame,

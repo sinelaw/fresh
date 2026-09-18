@@ -29,6 +29,35 @@ impl Editor {
         self.start_prompt_with_suggestions(message, prompt_type, Vec::new());
     }
 
+    /// Ask a question as a modal dialog rather than on the bottom row.
+    ///
+    /// **Use this for every destructive fork.** The bottom-row form states its
+    /// answers as parenthesised letters on the terminal's last line, which is
+    /// where a status message also goes and nowhere near where the user is
+    /// looking — the quit confirmation was reported as a hang more than once
+    /// because of it. `confirm` carries the question, the outcomes spelled out
+    /// in full, and the string each one feeds back to this prompt type's
+    /// `confirm_prompt` arm, so the handler side needs no change at all.
+    ///
+    /// `message` is kept as the prompt's message for the paths that still read
+    /// it — plugin hooks, the web projection, tests that inspect the prompt —
+    /// even though nothing draws it on the row any more.
+    pub fn start_confirm_prompt(
+        &mut self,
+        message: String,
+        prompt_type: PromptType,
+        confirm: crate::view::confirm::Confirm,
+    ) {
+        self.start_prompt(message.clone(), prompt_type.clone());
+        if let Some(p) = self.active_window_mut().prompt.as_mut() {
+            p.confirm = Some(confirm);
+        }
+        // The card is a layer the tree has not been told about yet; without
+        // this the frame it was opened from is reused and the dialog appears
+        // one keystroke late.
+        self.shell_description_stale = true;
+    }
+
     /// Start a search prompt with an optional selection scope
     ///
     /// When `use_selection_range` is true and a single-line selection is present,

@@ -3402,6 +3402,9 @@ impl Editor {
                     KeySlot::WorkspaceTrust => {
                         let _ = self.handle_workspace_trust_key(&ev);
                     }
+                    KeySlot::Confirm => {
+                        self.handle_confirm_dialog_key(&ev);
+                    }
                 }
             }
             // **The prompt: the same seam, and the claim it completes.**
@@ -3580,6 +3583,9 @@ impl Editor {
                     self.should_quit = true;
                 }
             }
+            // A button on the confirmation modal. One press is the answer —
+            // see `UiFact::ConfirmChoose`.
+            UiFact::ConfirmChoose(i) => self.confirm_dialog_choose(i),
             // The inspector. Dismissing it is the same statement three
             // places used to make: an outside-press guard returning
             // `PassAfter`, an `on_key` that cleared the field and returned

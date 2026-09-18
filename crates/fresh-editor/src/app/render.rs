@@ -1513,7 +1513,11 @@ impl Editor {
     fn prompt_row_description(&self) -> Option<crate::view::shell::prompt_line::PromptRow> {
         let win = self.active_window();
         let p = win.prompt.as_ref()?;
-        if p.overlay {
+        // An overlay prompt draws its own card; a confirmation draws its own
+        // modal. Either way the row has nothing to say — and for the
+        // confirmation that is the entire point of the change: the question
+        // used to be *only* here.
+        if p.overlay || p.is_confirm_dialog() {
             return None;
         }
         let dir = matches!(
@@ -3129,6 +3133,42 @@ impl Editor {
         None
     }
 
+    /// The confirmation modal's description, when the active prompt is a
+    /// question with buttons.
+    ///
+    /// The card's extent is app logic keyed on the frame — the same shape as
+    /// the trust prompt's, resolved before the description is built.
+    pub(crate) fn confirm_description(
+        &self,
+        size: ratatui::layout::Rect,
+    ) -> Option<crate::view::shell::confirm::Confirm> {
+        use crate::view::shell::confirm::{Button, Confirm};
+        let c = self.active_window().prompt.as_ref()?.confirm.as_ref()?;
+        Some(Confirm {
+            title: c.title.clone(),
+            body: c.body.clone(),
+            detail: c.detail.clone(),
+            buttons: c
+                .choices
+                .iter()
+                .map(|ch| Button {
+                    label: ch.label.clone(),
+                    mnemonic: ch.mnemonic_span(),
+                    destructive: ch.tone == crate::view::confirm::Tone::Destructive,
+                })
+                .collect(),
+            selected: c.selected,
+            width: crate::view::shell::confirm::width_for(
+                &c.choices
+                    .iter()
+                    .map(|ch| ch.label.clone())
+                    .collect::<Vec<_>>(),
+                size.width,
+            ),
+            max_height: size.height.saturating_sub(2),
+        })
+    }
+
     pub(crate) fn trust_description(
         &self,
         size: ratatui::layout::Rect,
@@ -3817,8 +3857,14 @@ impl Editor {
                 PromptType::OpenFile | PromptType::SwitchProject | PromptType::SaveFileAs
             )
         }) && win.file_open_state.is_some();
-        let prompt_row_visible =
-            (win.prompt_line_visible || win.prompt.is_some()) && !prompt_is_overlay;
+        // A confirmation does not *claim* the row — it has a card of its own —
+        // but it must not take one away either: a user who configured
+        // `show_prompt_line` keeps their row, empty, so the layout does not
+        // jump by a line each time a dialog opens.
+        let prompt_is_confirm = win.prompt.as_ref().is_some_and(|p| p.is_confirm_dialog());
+        let prompt_row_visible = (win.prompt_line_visible
+            || (win.prompt.is_some() && !prompt_is_confirm))
+            && !prompt_is_overlay;
         BottomRowFlags {
             prompt_is_overlay,
             has_suggestions,
@@ -4094,6 +4140,13 @@ impl Editor {
             width: self.active_chrome().last_frame.width,
             height: self.active_chrome().last_frame.height,
         });
+        let confirm = self.confirm_description(ratatui::layout::Rect {
+            x: 0,
+            y: 0,
+            width: self.active_chrome().last_frame.width,
+            height: self.active_chrome().last_frame.height,
+        });
+        let confirm_is_up = confirm.is_some();
         let splits = match placeholder.is_some() {
             true => None,
             false => splits,
@@ -4121,6 +4174,7 @@ impl Editor {
             theme_info,
             browser,
             trust,
+            confirm,
             event_debug: self.event_debug_description(),
             settings: self.settings_chrome_description(),
             settings_dialog: self.settings_dialog_description(),
@@ -4140,7 +4194,14 @@ impl Editor {
             // row's: the overlay form of the prompt draws no prompt row and
             // still owns every key. `chrome::Prompt::layers` asked
             // `is_prompting()` for exactly this and so does the layer.
-            prompt_keys: self.is_prompting(),
+            //
+            // **Except for a confirmation**, whose card is an
+            // `Modality::Exclusive` layer with its own claim inside it
+            // (`confirm::layer`). Declaring the prompt's `Modality::Focus`
+            // layer as well would leave two surfaces asserting the keyboard
+            // for one prompt; the exclusive one is the whole point, so the
+            // prompt's stands down.
+            prompt_keys: self.is_prompting() && !confirm_is_up,
             search_prompt: self.active_prompt_has_search_options(),
             // A focused panel is the keyboard's owner, which is what
             // `chrome::Dock::layers` and `chrome::FloatingModal::layers` say

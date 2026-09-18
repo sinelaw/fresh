@@ -852,9 +852,6 @@ fn test_file_explorer_focus_after_delete() {
 
     // Confirm deletion with 'y'
     harness.type_text("y").unwrap();
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
     harness.sleep(std::time::Duration::from_millis(100));
     harness.render().unwrap();
 

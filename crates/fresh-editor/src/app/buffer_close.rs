@@ -642,19 +642,28 @@ impl Editor {
                 if state.buffer.is_modified() {
                     // Buffer has unsaved changes - prompt for confirmation
                     let name = self.get_buffer_display_name(buffer_id);
-                    let save_key = t!("prompt.key.save").to_string();
-                    let discard_key = t!("prompt.key.discard").to_string();
-                    let cancel_key = t!("prompt.key.cancel").to_string();
-                    self.start_prompt(
-                        t!(
-                            "prompt.buffer_modified",
-                            name = name,
-                            save_key = save_key,
-                            discard_key = discard_key,
-                            cancel_key = cancel_key
-                        )
-                        .to_string(),
+                    let body = t!("prompt.buffer_modified", name = name).to_string();
+                    let confirm = crate::view::confirm::Confirm::new(
+                        t!("dialog.title.unsaved_changes").into_owned(),
+                        body.clone(),
+                        vec![
+                            crate::view::confirm::Choice::new(
+                                t!("dialog.btn.save").into_owned(),
+                                t!("prompt.key.save").into_owned(),
+                                crate::view::confirm::Tone::Safe,
+                            ),
+                            crate::view::confirm::Choice::new(
+                                t!("dialog.btn.discard").into_owned(),
+                                t!("prompt.key.discard").into_owned(),
+                                crate::view::confirm::Tone::Destructive,
+                            ),
+                            crate::app::confirm_dialog::cancel(),
+                        ],
+                    );
+                    self.start_confirm_prompt(
+                        body,
                         PromptType::ConfirmCloseBuffer { buffer_id },
+                        confirm,
                     );
                     return false;
                 }

@@ -67,10 +67,21 @@ impl Editor {
             Err(e) => {
                 if let Some(sudo_info) = e.downcast_ref::<SudoSaveRequired>() {
                     let info = sudo_info.clone();
-                    self.start_prompt(
-                        t!("prompt.sudo_save_confirm").to_string(),
-                        PromptType::ConfirmSudoSave { info },
-                    );
+                    let body = t!("prompt.sudo_save_confirm").to_string();
+                    let confirm = crate::view::confirm::Confirm::new(
+                        t!("dialog.title.permission_denied").into_owned(),
+                        body.clone(),
+                        vec![
+                            crate::view::confirm::Choice::new(
+                                t!("dialog.btn.save_with_sudo").into_owned(),
+                                "y",
+                                crate::view::confirm::Tone::Safe,
+                            ),
+                            crate::app::confirm_dialog::cancel(),
+                        ],
+                    )
+                    .detail(info.dest_path.display().to_string());
+                    self.start_confirm_prompt(body, PromptType::ConfirmSudoSave { info }, confirm);
                     Ok(())
                 } else if let Some(path) = path {
                     // Check if failure is due to non-existent parent directory
@@ -85,10 +96,12 @@ impl Editor {
                                     .unwrap_or(parent)
                                     .display()
                                     .to_string();
-                                self.start_prompt(
-                                    t!("buffer.create_directory_confirm", name = &dir_name)
-                                        .to_string(),
+                                let confirm =
+                                    crate::app::confirm_dialog::create_directory(&dir_name);
+                                self.start_confirm_prompt(
+                                    confirm.body.clone(),
                                     PromptType::ConfirmCreateDirectory { path },
+                                    confirm,
                                 );
                                 return Ok(());
                             }

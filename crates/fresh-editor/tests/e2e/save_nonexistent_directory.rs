@@ -47,9 +47,6 @@ fn test_issue_1434_save_file_in_nonexistent_directory_confirm() {
 
     // Confirm creation by typing "c"
     harness.type_text("c").unwrap();
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
     harness.render().unwrap();
 
     // The file should be saved successfully

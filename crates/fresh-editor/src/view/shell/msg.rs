@@ -667,6 +667,13 @@ pub enum UiFact {
     /// The secondary button — Cancel when the prompt was opened voluntarily,
     /// Quit for the mandatory gate at startup.
     TrustSecondary,
+    /// A button on the confirmation modal was clicked.
+    ///
+    /// **A button IS the consent**, unlike the trust prompt's radios: these
+    /// are already the outcome spelled out in full ("Discard and Quit"), not
+    /// a selection to be committed afterwards, and requiring a second click
+    /// on an `[ OK ]` would put two presses between the user and "Cancel".
+    ConfirmChoose(usize),
     /// A press on a split divider: start the width drag on *this* container.
     ///
     /// The node knows which container it is, so nothing hit-tests a recorded

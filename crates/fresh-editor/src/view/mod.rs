@@ -80,9 +80,11 @@ pub mod keybinding_editor;
 #[cfg(feature = "runtime")]
 pub use fresh_editor_core::markdown;
 #[cfg(feature = "runtime")]
+#[cfg(feature = "runtime")]
+#[cfg(feature = "runtime")]
+pub mod confirm;
+#[cfg(feature = "runtime")]
 pub mod popup;
-#[cfg(feature = "runtime")]
-#[cfg(feature = "runtime")]
 #[cfg(feature = "runtime")]
 pub mod prompt;
 #[cfg(feature = "runtime")]

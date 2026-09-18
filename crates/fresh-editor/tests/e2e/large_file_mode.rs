@@ -631,9 +631,6 @@ fn test_large_file_edits_beginning_middle_end() {
             .unwrap();
         // Dismiss the scan confirmation prompt — opens byte offset prompt
         let _ = harness.type_text("n");
-        harness
-            .send_key(KeyCode::Enter, KeyModifiers::NONE)
-            .unwrap();
         println!("target byte: {}", target_byte);
         let _ = harness.type_text(&format!("{}B", target_byte).to_string());
         println!("{}", harness.screen_to_string());
@@ -764,9 +761,6 @@ fn test_byte_offset_gutter_and_scan() {
 
     // === Test 3: Dismiss with "n" → byte offset prompt opens ===
     let _ = harness.type_text("n");
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
     let screen = harness.screen_to_string();
     assert!(
         screen.contains("byte offset"),
@@ -793,9 +787,6 @@ fn test_byte_offset_gutter_and_scan() {
         .send_key(KeyCode::Char('g'), KeyModifiers::CONTROL)
         .unwrap();
     let _ = harness.type_text("y");
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
     // Drive the incremental scan to completion.
     while harness.editor_mut().process_line_scan() {}
     // After scanning, the Go To Line prompt opens (with exact line numbers now)
@@ -913,9 +904,6 @@ fn test_palette_line_jump_offers_scan_in_large_file() {
 
     // Answering "y" scans, then the Go To Line prompt opens; the jump then works.
     let _ = harness.type_text("y");
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
     while harness.editor_mut().process_line_scan() {}
     let _ = harness.type_text("1000");
     harness
@@ -962,9 +950,6 @@ fn test_line_scan_progress_updates() {
         .send_key(KeyCode::Char('g'), KeyModifiers::CONTROL)
         .unwrap();
     let _ = harness.type_text("y");
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
 
     // After answering "y" but before any tick, the status bar should show
     // the initial "Scanning... 0%" progress message.
@@ -1083,9 +1068,6 @@ fn test_edit_scan_edit_line_numbers_stay_exact() {
         .send_key(KeyCode::Char('g'), KeyModifiers::CONTROL)
         .unwrap();
     let _ = harness.type_text("y");
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
     // Drive the scan to completion.
     while harness.editor_mut().process_line_scan() {}
     // Cancel the Go To Line prompt that opens after scan.
@@ -1565,9 +1547,6 @@ fn test_large_file_gutter_indicators_after_line_scan() {
 
     // Answer "y" to start scanning
     let _ = harness.type_text("y");
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
 
     // Drive incremental scan to completion
     while harness.editor_mut().process_line_scan() {}
@@ -1787,9 +1766,6 @@ fn test_large_file_gutter_indicators_viewport_filtering() {
         .send_key(KeyCode::Char('g'), KeyModifiers::CONTROL)
         .unwrap();
     let _ = harness.type_text("y");
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
 
     // Drive incremental scan to completion
     while harness.editor_mut().process_line_scan() {}

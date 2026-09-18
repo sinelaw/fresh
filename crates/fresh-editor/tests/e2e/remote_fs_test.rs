@@ -266,9 +266,6 @@ fn test_remote_huge_file_mid_and_start_insert() {
             .unwrap();
         // Dismiss the scan confirmation prompt — opens byte offset prompt
         let _ = harness.type_text("n");
-        harness
-            .send_key(KeyCode::Enter, KeyModifiers::NONE)
-            .unwrap();
         let _ = harness.type_text(&format!("{}B", target_byte));
         harness
             .send_key(KeyCode::Enter, KeyModifiers::NONE)
@@ -366,9 +363,6 @@ fn test_remote_large_file_edits_beginning_middle_end() {
             .unwrap();
         // Dismiss the scan confirmation prompt — opens byte offset prompt
         let _ = harness.type_text("n");
-        harness
-            .send_key(KeyCode::Enter, KeyModifiers::NONE)
-            .unwrap();
         println!("target byte: {}", target_byte);
         let _ = harness.type_text(&format!("{}B", target_byte).to_string());
         println!("{}", harness.screen_to_string());

@@ -77,12 +77,10 @@ fn confirm_quit_setting_quits_after_user_confirms() {
         .unwrap();
     assert!(!harness.editor().should_quit());
 
-    // Confirm. The default English binding is "y" (yes).
+    // Confirm. The question is a dialog now, and its affirmative button is
+    // "Quit" — `prompt.key.quit`, the same letter `Action::Quit` uses.
     harness
-        .send_key(KeyCode::Char('y'), KeyModifiers::NONE)
-        .unwrap();
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .send_key(KeyCode::Char('q'), KeyModifiers::NONE)
         .unwrap();
     assert!(
         harness.editor().should_quit(),
