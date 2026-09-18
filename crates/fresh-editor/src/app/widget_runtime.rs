@@ -3145,9 +3145,7 @@ mod tests {
             fs,
         )
         .unwrap();
-        // The dock is the editor's width, not the panel's: pin it to the 30
-        // columns `frame_the_shell` hands the tree, so the geometry the
-        // pointer path derives agrees with the frame these tests lay out.
+        // Pin the dock to the 30 columns `frame_the_shell` hands the tree.
         editor.dock_width = Some(30);
         (editor, temp_dir)
     }

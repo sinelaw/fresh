@@ -881,11 +881,8 @@ type DockMenuState =
     };
 let dockMenuPanel: FloatingWidgetPanel | null = null;
 let dockMenuState: DockMenuState | null = null;
-// The narrowest the dock is ever laid out at — the floor the manifest's
-// width rule declares (`orchestrator.manifest.json`, `chrome.dock.width`).
-// The dock's actual width is the host's: it carves the column from that
-// rule (or the user's drag) and re-fits it on every resize; this plugin
-// reads it back with `dockWidth()` and never computes one of its own.
+// The floor of the manifest's width rule (`orchestrator.manifest.json`).
+// The dock's actual width is the host's; `dockWidth()` reads it back.
 const DOCK_MIN_WIDTH_COLS = 24;
 // Everything that is a *setting* of the dock (density, what to show, the
 // project scope), plus folder creation and hiding it, behind one glyph.
@@ -896,13 +893,9 @@ const DOCK_MORE_GLYPH = "⋯";
 // close affordances read identically.
 const DOCK_CLOSE_GLYPH = "×";
 
-// The dock column's width, as the host carves it — with the dock mounted,
-// held open for it at startup, or closed (what it *would* get). The host
-// owns the number: the manifest's rule or the user's drag, re-fitted on
-// every resize, and the same before our mount is processed as after, so a
-// spec built ahead of the mount is already laid out right. `0` means the
-// terminal is too narrow for a dock at all; content math floors at the
-// declared minimum so it still has a width to wrap to.
+// The dock column's width as the host carves it (mounted, held open at
+// startup, or what it would get). `0` means the terminal is too narrow for
+// a dock; content math floors at the declared minimum so it can still wrap.
 function dockWidth(): number {
   return editor.dockCols() || DOCK_MIN_WIDTH_COLS;
 }
@@ -5053,9 +5046,7 @@ function openControlRoom(
       // focused mount and a follow-up blur command.
       startBlurred,
     });
-    // The column's width is the host's (`dockWidth()`), already carved at
-    // the width this spec was laid out to — nothing to re-issue. The mount
-    // alone decides focus.
+    // The column's width is the host's; nothing to re-issue.
     openPanel.update(buildDockSpec());
   } else {
     // 90% × 90% of the terminal — the open dialog wants room for
@@ -15765,11 +15756,8 @@ editor.on("ready", () => {
   void loadDetectionRules();
   recoverPendingWorkspaces();
   // Blurred, so the keyboard stays with the editor. Whether it opens is the
-  // host's call, made before the first frame from this plugin's manifest
-  // (`orchestrator.manifest.json`: the dock, its width rule, and
-  // `autoOpenDock` as the switch), what the user left the dock as, and the
-  // launch (a bare `fresh` is a request for the switcher). The column is
-  // already carved when this runs; the mount fills it in place.
+  // host's call (`orchestrator.manifest.json`, what the user left, and the
+  // launch mode); the column is already carved, and the mount fills it.
   if (editor.dockOpen()) {
     showDockUnfocused();
   }
@@ -15824,9 +15812,8 @@ editor.on("active_window_changed", () => {
 editor.on("resize", () => {
   noteLayoutChange();
   if (openDialog && openPanel) {
-    // The host has already re-fitted the dock column to the new width
-    // (`dockWidth()` reads it back); buildOpenSpec/buildDockSpec refit
-    // `listVisibleRows` + content width on the refresh.
+    // The host re-fits the dock column itself; buildOpenSpec/buildDockSpec
+    // refit `listVisibleRows` + content width on the refresh.
     refreshOpenDialog();
   }
   // A panel that was measured at mount holds a fact about the frame it was

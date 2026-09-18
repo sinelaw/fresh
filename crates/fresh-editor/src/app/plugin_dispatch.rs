@@ -253,11 +253,8 @@ impl Editor {
             .to_string();
         snapshot.env_active = self.authority().env_provider.is_active();
         snapshot.orchestrator_mode = self.orchestrator_mode();
-        // The dock slot, as the host sees it: open (a panel in it, or a
-        // column held for one) and how wide the column is or would be. The
-        // plugin that fills the slot lays its content out to `dock_cols`
-        // and mounts at `ready` iff `dock_open` — the host decided, before
-        // the first frame, and the plugin follows.
+        // The dock slot as the host sees it: the plugin mounts at `ready`
+        // iff `dock_open`, and lays its content out to `dock_cols`.
         snapshot.dock_open = self.dock.is_some() || self.dock_slot_reserved();
         snapshot.dock_cols = self.dock_cols_if_open();
 
@@ -840,19 +837,10 @@ impl Editor {
             }
             PluginCommand::HookCompleted { hook_name } => {
                 // Sentinel processed in render loop; no-op if encountered
-                // elsewhere — except for `ready`, which is what releases the
-                // dock column orchestrator mode reserved when it fired the
-                // hook (`Editor::dock_reserved`). Every command that hook's
-                // handlers sent is ahead of this one in the channel, so a
-                // dock that was ever going to mount has mounted by now; the
-                // column is either a panel's or nobody's.
-                //
-                // Nobody's — the orchestrator plugin is disabled, say — frees
-                // a full-height strip, so it ends the same way hiding the
-                // dock does: a full redraw for the stale glyphs and a
-                // relayout for the reclaimed width. With a dock in it there
-                // is no geometry change at all, and the release is bookkeeping.
-                // Frames were painted with the empty column in them, so the
+                // elsewhere — except `ready`'s, which releases the dock
+                // column held open at startup if nothing mounted into it
+                // (every mount the hook sent is ahead of it in the channel).
+                // Frames were painted with the column in them, so the
                 // reclaimed strip gets the full repaint hiding the dock gets.
                 if hook_name == "ready" && self.release_startup_dock_reservation() {
                     self.request_full_redraw();
@@ -5857,10 +5845,8 @@ impl Editor {
         if !as_dock && self.dock.as_ref().is_some_and(|f| f.focused) {
             self.blur_floating_panel(super::PanelSlot::Dock);
         }
-        // A dock's width is the editor's, not the panel's (`dock_width` /
-        // `dock_width_rule`), so a mount into a column held open at startup
-        // changes nothing about the geometry: the panel lands in the column
-        // that was already there.
+        // A dock's width is the editor's (`dock_width` / `dock_width_rule`),
+        // not the panel's.
         let placement = if as_dock {
             super::PanelPlacement::LeftDock
         } else {
@@ -5938,8 +5924,6 @@ impl Editor {
         // of the chrome. Run the single layout funnel so terminals and
         // viewports reflow to the post-dock width right away (a centered
         // panel leaves `dock_cols` at 0, so this is a cheap no-op there).
-        // A column held open for this very mount was already carved, and the
-        // funnel finds nothing to move.
         if as_dock {
             self.dock_reserved = false;
             self.relayout();
@@ -6141,11 +6125,8 @@ impl Editor {
             return;
         }
         // `dock_width` sets the editor's dock width, not the panel's, so it
-        // is answered before the panel is borrowed. An explicit width — it
-        // sticks, like a drag: across resizes and across launches, until
-        // the next drag or `dock_width`. The dock itself no longer needs
-        // this to be responsive: the host re-reads its width rule on every
-        // frame. A no-op unless the panel is the dock.
+        // is answered before the panel is borrowed. It sticks like a drag:
+        // across resizes and launches, until the next one.
         if op == "dock_width" {
             if slot == super::PanelSlot::Dock {
                 self.dock_width = Some(self.clamp_dock_width(arg.max(0.0) as u16));
@@ -6221,8 +6202,6 @@ impl Editor {
                 if let Some(o) = self.panel_opt_mut(to) {
                     *o = Some(panel);
                 }
-                // A panel in the dock slot is the dock: nothing is being
-                // held open for one any more.
                 if to == super::PanelSlot::Dock {
                     self.dock_reserved = false;
                 }
@@ -6236,9 +6215,7 @@ impl Editor {
         // Whether this op changed the chrome geometry (dock width/placement),
         // so we know to re-derive the layout once the `fwp` borrow ends.
         let geometry_changed = match op {
-            // The width argument is ignored: the column is the editor's
-            // width (`dock_width` / `dock_width_rule`), and a plugin that
-            // wants a different one says so with `dock_width`.
+            // `arg` is ignored: the width is the editor's; see `dock_width`.
             "dock" => {
                 fwp.placement = super::PanelPlacement::LeftDock;
                 fwp.focused = true;

@@ -720,7 +720,6 @@ impl EditorServer {
             } else {
                 tracing::debug!("Workspaces saved successfully");
             }
-            // The dock as the user left it (`Editor::save_dock_chrome`).
             editor.save_dock_chrome();
         }
 
@@ -1065,8 +1064,7 @@ impl EditorServer {
             if let Err(e) = editor.save_all_windows_workspaces() {
                 tracing::warn!("Rebuild: failed to save workspaces: {}", e);
             }
-            // The editor being rebuilt is quitting as far as the dock is
-            // concerned: the one that replaces it reads this back.
+            // The replacement editor reads this back at construction.
             editor.save_dock_chrome();
         }
 

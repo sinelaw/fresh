@@ -212,12 +212,9 @@ pub struct Frame {
     /// Whether the dock has keyboard focus; its divider wears the accent then,
     /// the way the file explorer's border does.
     pub dock_focused: bool,
-    /// The column is held open for a dock that is not mounted yet — the
-    /// orchestrator's `ready` hook is still on its way (see
-    /// [`Editor::dock_reserved`](crate::app::Editor)). It has no interior, so
-    /// the tree paints the column's ground and its divider and nothing else:
-    /// an empty dock, rather than a strip of the terminal's own colour that
-    /// the editor is about to be pushed out of.
+    /// The column is held open for a dock not mounted yet (see
+    /// [`Editor::dock_reserved`](crate::app::Editor)): no interior, so the
+    /// tree paints the column's ground and divider and nothing else.
     pub dock_reserved: bool,
     /// The sidebar's content, or `None` when it is hidden. Like the
     /// search-options row, content rather than a flag: the tree measures the
@@ -393,16 +390,8 @@ pub const DOCK_MIN: u16 = 24;
 pub const DOCK_MAX: u16 = 40;
 
 /// How wide the dock opens before any user drag: a share of the frame,
-/// clamped.
-///
-/// **Host chrome, declared by the plugin that fills the slot.** The rule
-/// lived in the orchestrator plugin, which re-issued the number to the host
-/// on every resize; the host had no rule of its own and mounted a dock at a
-/// fixed 32 until that arrived. Now the plugin's manifest states the rule
-/// (`chrome.dock.width`, see `services::plugins::manifest`), the host owns
-/// it from before the first frame, and nothing is computed twice: the column
-/// held open at startup, the mount that fills it, and every resize after
-/// read one number from one place — `Editor::compute_dock_split`.
+/// clamped. Declared by the plugin's manifest (`chrome.dock.width`) and
+/// owned by the host from before the first frame.
 #[derive(Clone, Copy, Debug, PartialEq, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DockWidthRule {
@@ -428,13 +417,11 @@ impl DockWidthRule {
         DOCK_MAX
     }
 
-    /// The width this rule gives a frame `frame_width` wide. (A frame too
-    /// narrow for any dock is `dock_width`'s to refuse, not this rule's to
-    /// special-case.)
+    /// The width this rule gives a frame `frame_width` wide. A frame too
+    /// narrow for any dock is `dock_width`'s to refuse.
     pub fn width(&self, frame_width: u16) -> u16 {
         let target = (frame_width as f32 * self.fraction).round() as u16;
-        // A declared floor above the ceiling is nonsense; the floor wins,
-        // which is the answer `clamp` would panic over.
+        // A floor above the ceiling would make `clamp` panic; the floor wins.
         target.clamp(self.min, self.max.max(self.min))
     }
 }
@@ -1586,10 +1573,7 @@ mod tests {
         );
     }
 
-    /// The default rule, at the widths that decide it: the fraction in the
-    /// middle, both clamps at the ends. These are the numbers the
-    /// orchestrator's manifest declares (`orchestrator.manifest.json`), so a
-    /// column held open at startup and the dock that fills it agree.
+    /// The default rule: the fraction in the middle, both clamps at the ends.
     #[test]
     fn the_default_rule_is_a_clamped_fraction_of_the_frame() {
         let rule = DockWidthRule::default();
@@ -1610,14 +1594,10 @@ mod tests {
             "half of 100 clamps to the ceiling"
         );
         let rule: DockWidthRule = serde_json::from_str(r#"{"min": 30, "max": 30}"#).unwrap();
-        assert_eq!(
-            rule.width(120),
-            30,
-            "a fixed width is a floor meeting a ceiling"
-        );
+        assert_eq!(rule.width(120), 30, "a fixed width");
         assert!(
             serde_json::from_str::<DockWidthRule>(r#"{"cols": 30}"#).is_err(),
-            "an unknown field is a typo, not a silent no-op"
+            "an unknown field is a typo"
         );
     }
 }

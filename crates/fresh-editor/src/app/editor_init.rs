@@ -138,13 +138,9 @@ fn pointer_is_a_real_setting(path: &str, pointer: &str, value: &serde_json::Valu
 ///   discovered plugin configs back into `config`, and write the aggregate
 ///   `.d.ts` declarations.
 ///
-/// Returns the manifests of the enabled plugins found in those directories
-/// (`services::plugins::manifest`): what each declares about itself before
-/// it runs, read here synchronously so the host can lay out for it before
-/// the first frame — on the async path too, where the plugins themselves
-/// are still loading when the editor is first painted.
-///
-/// No-op (and no manifests) when the plugin manager is inactive.
+/// Returns the enabled plugins' manifests (`services::plugins::manifest`),
+/// read synchronously on both load paths so the host can lay out for them
+/// before the first frame. No-op when the plugin manager is inactive.
 #[allow(clippy::too_many_arguments)]
 fn load_startup_plugins(
     plugin_manager: &std::rc::Rc<RwLock<PluginManager>>,
@@ -212,8 +208,6 @@ fn load_startup_plugins(
         );
     }
 
-    // Before any plugin code runs, on either path below: a sidecar read is
-    // cheap, and what it declares is needed by the first frame.
     let manifests =
         crate::services::plugins::manifest::read_manifests(&plugin_dirs, &config.plugins);
 
@@ -928,10 +922,7 @@ impl Editor {
         grammar_registry: Option<Arc<crate::primitives::grammar::GrammarRegistry>>,
         enable_plugins: bool,
         enable_embedded_plugins: bool,
-        // What a bare `fresh` launches into — see `Editor::orchestrator_mode`.
-        // A construction-time flag (it decides the seed buffer and which
-        // workspace is activated), so a test that wants the mode has to ask
-        // for it here.
+        // A construction-time flag (see `Editor::orchestrator_mode`).
         orchestrator_mode: bool,
     ) -> AnyhowResult<Self> {
         let mut grammar_registry =
@@ -1632,9 +1623,6 @@ impl Editor {
         let mut editor = Editor::from_parts(parts);
 
         t.phase("editor_struct_assembly");
-        // The chrome the first frame is laid out with: whether the dock
-        // slot is open and how wide, decided here from what the plugins
-        // declared and what the user left, before any plugin has run.
         editor.apply_startup_dock_chrome(&plugin_manifests, orchestrator_mode);
         // Apply clipboard configuration
         editor.clipboard.apply_config(&editor.config.clipboard);

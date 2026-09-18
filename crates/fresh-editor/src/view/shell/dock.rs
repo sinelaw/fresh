@@ -48,11 +48,9 @@ pub fn grip_key() -> Key {
 /// M6a, and the reason this flip cannot half-land: `panel_interior` returns
 /// `None` for an uncovered spec and the dock stays exactly as it was.
 ///
-/// `reserved` is the column held open for a dock that has not mounted yet
-/// (`Frame::dock_reserved`): no interior, and nothing else painting it
-/// either, so the two things that are the *column's* rather than its
-/// content's — the ground and the divider down its last cell — are drawn from
-/// here. What the interior would have added arrives when the panel does.
+/// `reserved` is a column held open for a dock not mounted yet
+/// (`Frame::dock_reserved`): no interior and no painter, so the ground and
+/// the divider — the column's own, not its content's — are drawn from here.
 pub fn dock(
     interior: Option<super::panel::Interior>,
     grip_hovered: bool,
@@ -91,9 +89,7 @@ pub fn dock(
 ///
 /// Nothing when the interior is still a painter: that column is the `Host`
 /// leaf's to fill, and two grounds on one cell is how they drift apart. A
-/// *reserved* column has no painter behind it — the slot is empty — so it
-/// gets the ground here; that is the difference between an empty dock and a
-/// strip of whatever colour the terminal happens to start from.
+/// reserved column has no painter, so it gets the ground here.
 fn ground(painted: bool) -> Node<UiMsg> {
     if !painted {
         return row();
@@ -297,9 +293,7 @@ const DIVIDER_COLS: u16 = 1;
 ///
 /// While the interior is still a painter the border stays the painter's, so
 /// this draws nothing but the hover: two nodes painting one cell is how they
-/// drift apart. A column reserved for a dock still on its way has no painter
-/// and gets the divider from here — the wall is a fact about the column, not
-/// about what is in it.
+/// drift apart. A reserved column has no painter and gets the divider here.
 ///
 /// **The one thing that interrupts it is the active card's tab** (F.8), and
 /// it is not this node's business which rows those are. The dock's active
@@ -407,8 +401,7 @@ mod tests {
             .collect()
     }
 
-    /// The column carved for a dock that has not mounted yet — no interior,
-    /// nothing in the slot, `Frame::dock_reserved` set.
+    /// A column held open for a dock not mounted yet.
     fn reserved(dock: Option<u16>, w: u16, h: u16) -> Ui<UiMsg> {
         let mut ui: Ui<UiMsg> = Ui::new();
         ui.frame(
@@ -445,15 +438,8 @@ mod tests {
         })
     }
 
-    /// **A column reserved for a dock still on its way paints itself.**
-    ///
-    /// Orchestrator mode carves the column before the plugin's `ready` hook
-    /// has mounted anything into it (`Editor::dock_reserved`), so there is no
-    /// interior *and* no painter behind it. Without the two things that are
-    /// the column's own — its ground and the wall down its last cell — what
-    /// the user sees for those few hundred milliseconds is a strip of the
-    /// terminal's own colour with no edge, which is worse than the re-flow
-    /// the reservation removes.
+    /// A reserved column has no interior and no painter; without its own
+    /// ground and wall it would be a bare strip of terminal until the mount.
     #[test]
     fn a_reserved_column_paints_its_ground_and_its_divider() {
         let ui = reserved(Some(24), 100, 30);
@@ -461,10 +447,7 @@ mod tests {
         assert_eq!(divider_rows(&ui, 23), 30, "the wall, top to bottom");
     }
 
-    /// And an *unreserved* empty column paints neither: that is a dock the
-    /// layout has not carved room for, and the region is zero cells wide —
-    /// `Frame::dock` is `None` for it. The case here is the other one, a
-    /// width with nothing behind it, which only the reservation produces.
+    /// An unreserved empty column paints neither.
     #[test]
     fn an_unreserved_empty_column_leaves_its_cells_alone() {
         let ui = laid_out(Some(24), 100, 30);

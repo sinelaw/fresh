@@ -2425,11 +2425,9 @@ impl JsEditorApi {
     }
 
     /// Whether the left dock slot is open: a panel is in it, or the host is
-    /// holding the column for one it was told to expect. Exposed to JS as
+    /// holding the column for one its manifest declared. Exposed to JS as
     /// `editor.dockOpen()`. The plugin that fills the dock mounts it at
-    /// `ready` iff this is true — the host decided from the plugin's
-    /// manifest, the user's remembered chrome and the launch mode, before
-    /// the first frame, so the column is already there when the mount lands.
+    /// `ready` iff this is true.
     pub fn dock_open(&self) -> bool {
         self.state_snapshot
             .read()
@@ -2437,11 +2435,10 @@ impl JsEditorApi {
             .unwrap_or(false)
     }
 
-    /// The dock column's width in cells — what the slot has, or would get if
-    /// opened now; `0` when the terminal is too narrow for a dock. Exposed to
-    /// JS as `editor.dockCols()`. Lay dock content out to this rather than
-    /// computing a width of your own: the host owns the width (the rule your
-    /// manifest declared, or the user's drag) and re-fits it on resize.
+    /// The dock column's width in cells, open or not; `0` when the terminal
+    /// is too narrow for a dock. Exposed to JS as `editor.dockCols()`. Lay
+    /// dock content out to this: the host owns the width and re-fits it on
+    /// resize.
     pub fn dock_cols(&self) -> u32 {
         self.state_snapshot
             .read()
@@ -7274,17 +7271,15 @@ impl JsEditorApi {
     }
 
     /// Control a mounted floating panel's placement / focus without
-    /// re-sending its spec. `op`: "dock" (re-anchor the panel as the left
-    /// dock and focus it; `arg` is unused — the column's width is the
-    /// editor's, from the dock's declared rule or the user's drag),
-    /// "dock_width" (`arg` = width in columns for the dock; it sticks, like
-    /// a drag, across resizes and launches), "center", "focus", "blur",
-    /// "fullscreen" (`arg != 0` makes a centered panel cover the whole
-    /// frame over the dock), "sidebar" (`arg` = requested rows; re-anchors
-    /// the panel as a sidebar section under the file explorer — "dock" /
-    /// "center" re-anchor it back out), "sidebar_rows" (`arg` = requested
-    /// rows for a section; a divider the user has dragged wins). See
-    /// `PluginCommand::FloatingPanelControl`.
+    /// re-sending its spec. `op`: "dock" (re-anchor as the left dock and
+    /// focus; `arg` unused — the width is the editor's), "dock_width"
+    /// (`arg` = width in columns; sticks like a drag, across resizes and
+    /// launches), "center", "focus", "blur", "fullscreen" (`arg != 0` makes
+    /// a centered panel cover the whole frame over the dock), "sidebar"
+    /// (`arg` = requested rows; re-anchors the panel as a sidebar section
+    /// under the file explorer — "dock" / "center" re-anchor it back out),
+    /// "sidebar_rows" (`arg` = requested rows for a section; a divider the
+    /// user has dragged wins). See `PluginCommand::FloatingPanelControl`.
     #[qjs(rename = "floatingPanelControl")]
     pub fn floating_panel_control(&self, panel_id: f64, op: String, arg: f64) -> bool {
         self.command_sender

@@ -97,8 +97,7 @@ pub fn copy_plugin(plugins_dir: &Path, plugin_name: &str) {
     fs::copy(&ts_src, &ts_dest)
         .unwrap_or_else(|e| panic!("Failed to copy {}.ts: {}", plugin_name, e));
 
-    // Copy the sidecars that exist: translations, and the manifest the host
-    // reads before the plugin runs (what it declares about its chrome).
+    // Copy the sidecars that exist.
     for sidecar in ["i18n.json", "manifest.json"] {
         let src = source_dir.join(format!("{plugin_name}.{sidecar}"));
         if src.exists() {
@@ -193,18 +192,12 @@ pub struct HarnessOptions {
     /// the #1722 regression test) need to override it to match
     /// production semantics. Defaults to false.
     pub force_embedded_plugins: bool,
-    /// Build the editor in Orchestrator mode — what a bare `fresh` launches
-    /// into (`Config::orchestrator_mode`). Defaults to false, the same as
-    /// every launch that names a directory or a file.
+    /// Build the editor in Orchestrator mode (a bare `fresh`). Defaults to false.
     pub orchestrator_mode: bool,
-    /// Keep the chrome the host lays out for a real launch: the dock column
-    /// held open for the plugin's `ready` mount (`Editor::dock_reserved`).
-    /// Off by default. The harness fires no startup hooks, so in production
-    /// terms a fresh harness is an editor whose startup never finished — and
-    /// a column held for a mount that never comes would sit empty for the
-    /// test's whole life. A test that fires `ready` itself and expects the
-    /// dock to open turns this on; every other test gets the chrome a
-    /// finished startup with no dock leaves behind.
+    /// Keep the dock column the host holds open at startup for the plugin's
+    /// `ready` mount (`Editor::dock_reserved`). Off by default: the harness
+    /// fires no startup hooks, so the column would otherwise sit empty for
+    /// the test's whole life. A test that fires `ready` itself turns it on.
     pub startup_chrome: bool,
     /// Per-test fake-devcontainer state. Set by [`HarnessOptions::with_fake_devcontainer`];
     /// moved into the harness on `create()` so the lock + tempdir live as long as the test.
@@ -245,17 +238,13 @@ impl HarnessOptions {
         self
     }
 
-    /// Build the editor in Orchestrator mode (a bare `fresh`): the dock
-    /// opens itself, the last-focused workspace wins over the launch
-    /// directory, and nothing auto-fills an empty workspace.
+    /// Build the editor in Orchestrator mode (a bare `fresh`).
     pub fn with_orchestrator_mode(mut self) -> Self {
         self.orchestrator_mode = true;
         self
     }
 
-    /// Keep the dock column the host holds open at startup for the plugin's
-    /// `ready` mount — for a test that fires `ready` itself and expects the
-    /// dock to open. See [`HarnessOptions::startup_chrome`].
+    /// See [`HarnessOptions::startup_chrome`].
     pub fn with_startup_chrome(mut self) -> Self {
         self.startup_chrome = true;
         self
@@ -796,10 +785,8 @@ impl EditorTestHarness {
 
         t.phase("Editor::for_test");
 
-        // The startup window is over as far as this harness is concerned:
-        // no `ready` will fire unless the test fires it, so a column held
-        // for a mount that never comes is handed back now — unless the test
-        // said it will run that startup itself (`with_startup_chrome`).
+        // No `ready` fires unless the test fires it, so the startup column
+        // is handed back now unless the test asked to keep it.
         if !options.startup_chrome {
             editor.release_startup_dock_reservation();
         }
@@ -2138,8 +2125,6 @@ impl EditorTestHarness {
         if workspace_enabled {
             self.editor.save_workspace()?;
         }
-        // The dock as the user left it, the way both production quit paths
-        // record it.
         self.editor.save_dock_chrome();
         Ok(())
     }

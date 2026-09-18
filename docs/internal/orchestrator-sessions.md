@@ -378,24 +378,15 @@ What the mode is, end to end:
   construction (`Editor::apply_startup_dock_chrome`, from the launch mode it
   was built with), and the plugin mounts at `ready` because
   `editor.dockOpen()` says so.
-- **The column is carved before the dock exists.** The dock's *content* is
-  this plugin's, mounted from `ready` — fire-and-forget onto the plugin
-  thread, after every plugin has loaded (on the TUI path, hundreds of
-  milliseconds after the first frame). Left to that, the editor was painted
-  full width and the dock shoved it aside when the mount landed. The
-  *column* is the host's: the plugin declares the dock in
-  `orchestrator.manifest.json` (`chrome.dock`: open by default, `autoOpenDock`
-  as the switch, the width rule), the host remembers what the user left it as
-  in `<data>/chrome.json`, and `Editor::apply_startup_dock_chrome` decides at
-  construction — launch mode, then the switch, then memory, then the
-  manifest — whether the slot is open and how wide. `compute_dock_split` lays
-  the column out from the first frame; the plugin mounts at `ready` iff
-  `editor.dockOpen()`, into the column that is already there, laid out to
-  `editor.dockCols()`. Empty, the column paints its own ground and divider
-  (`Frame::dock_reserved`), since nothing else paints a slot with no panel.
-  A column held open for a dock that never arrives (the plugin errored) is
-  handed back when the hook's `HookCompleted` sentinel lands. See
-  `docs/internal/plugins.md` §6.2a for the manifest.
+- **The column is carved before the dock exists.** The dock's content is
+  this plugin's, mounted from `ready` after every plugin has loaded; the
+  column is the host's. The plugin declares it in
+  `orchestrator.manifest.json`, the host remembers what the user left in
+  `<data>/chrome.json`, and `Editor::apply_startup_dock_chrome` decides at
+  construction whether the slot is open and how wide. The plugin mounts at
+  `ready` iff `editor.dockOpen()`, laid out to `editor.dockCols()`; a column
+  nothing mounted into is handed back when the hook's sentinel lands. See
+  `docs/internal/plugins.md` §6.2a.
 - **First run** — no workspaces at all — boots a clean base window at the cwd
   and lands on the welcome screen. Nothing special-cases the welcome screen to
   get there: it opens itself as a background tab as always, and a background

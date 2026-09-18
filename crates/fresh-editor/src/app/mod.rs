@@ -660,9 +660,9 @@ pub struct Editor {
     /// by `Editor::relayout` to dedupe notifications. The tuple is
     /// `(terminal_width, terminal_height, dock_cols, file_explorer_cols)`
     /// — the content geometry plugins observe. A plugin that answers
-    /// `resize` with a layout change of its own loops back through
-    /// `relayout`; the signature is what stops that re-firing every
-    /// frame once the geometry settles. `None` until the first relayout.
+    /// `resize` with a layout change loops back through `relayout`; the
+    /// signature stops that re-firing once the geometry settles. `None`
+    /// until the first relayout.
     last_layout_signature: Option<(u16, u16, u16, u16)>,
 
     // LSP manager moved onto `Window`. Access via
@@ -1493,38 +1493,22 @@ pub struct Editor {
     pub(crate) dock: Option<FloatingWidgetState>,
 
     /// The dock's column is held open for a panel that has not arrived yet.
-    ///
-    /// The dock is host chrome whose *content* a plugin supplies, and the
-    /// plugin supplies it from the `ready` hook: fire-and-forget onto the
-    /// plugin thread, after every plugin has loaded. Left to that, the first
-    /// frames paint a full-width editor and the dock shoves it aside when it
-    /// lands. So the host decides at construction whether the slot is open —
-    /// from the plugin's manifest, what the user left it as, and the launch
-    /// mode (`Editor::apply_startup_dock_chrome`) — and lays out for it from
-    /// the first frame. The plugin's mount then fills the column in place.
-    ///
-    /// Cleared by that mount, or by the `ready` hook's `HookCompleted`
-    /// sentinel when nothing mounted: every command the handlers sent is
-    /// ahead of it in the channel, so a column still empty then belongs to
-    /// nobody and goes back to the editor.
-    ///
-    /// Read through [`Editor::dock_slot_reserved`], never bare: a slot with
-    /// a panel in it is not reserved whatever this says.
+    /// The plugin mounts the dock from `ready`, after every plugin has
+    /// loaded; without this the first frames paint a full-width editor and
+    /// the dock shoves it aside. Decided at construction
+    /// (`Editor::apply_startup_dock_chrome`); cleared by the mount, or by
+    /// `ready`'s `HookCompleted` sentinel when nothing mounted. Read through
+    /// [`Editor::dock_slot_reserved`], never bare.
     pub(crate) dock_reserved: bool,
 
-    /// The dock's explicit width in columns — the user's drag, or a plugin's
-    /// `dock_width` op — and `None` while it follows [`Self::dock_width_rule`]
-    /// as the terminal resizes. Once set it sticks, across launches
-    /// (`chrome.json`, see `app::chrome::dock`) and across resizes: a
-    /// dragged width is a decision, and nothing but another drag revisits
-    /// it. The one writer the layout reads; the panel placement no longer
-    /// carries a width of its own.
+    /// The dock's explicit width in columns (a drag, or a plugin's
+    /// `dock_width` op); `None` while it follows [`Self::dock_width_rule`].
+    /// Once set it sticks across resizes and launches (`chrome.json`, see
+    /// `app::chrome::dock`) until the next drag.
     pub(crate) dock_width: Option<u16>,
-    /// How wide the dock opens while nothing explicit has been asked for:
-    /// the rule the plugin's manifest declared (`chrome.dock.width`), or the
-    /// default one. Read by `compute_dock_split` on every frame, which is
-    /// what makes the dock responsive without a plugin re-issuing a number
-    /// on every resize.
+    /// How wide the dock opens with no explicit width: the rule the plugin's
+    /// manifest declared, or the default. Read on every frame, which is what
+    /// makes the dock responsive.
     pub(crate) dock_width_rule: crate::view::shell::frame::DockWidthRule,
     /// True while the user is dragging the dock's right border to resize.
     pub(crate) dock_resizing: bool,
@@ -1626,12 +1610,8 @@ pub(crate) enum PanelPlacement {
     /// chrome (left of the menu bar, splits, and status bar). The
     /// chrome is laid out in the remaining width; no background
     /// dimming. Non-modal — see `FloatingWidgetState::focused`.
-    ///
-    /// Carries no width: the column's width is the editor's
-    /// (`Editor::dock_width` / `dock_width_rule`), not the panel's, and it
-    /// is the same whether a panel is in the slot or the slot is merely
-    /// held open. It used to be here too, and the two disagreed for a frame
-    /// on every mount.
+    /// The column's width is the editor's (`Editor::dock_width`), not the
+    /// panel's.
     LeftDock,
     /// Content-sized popup anchored near a screen cell — a right-click
     /// context menu. Drawn at `(x, y)` (clamped to stay fully on

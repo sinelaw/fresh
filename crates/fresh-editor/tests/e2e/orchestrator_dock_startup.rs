@@ -1,17 +1,8 @@
-//! E2E coverage for what a launch shows *before* the dock's content exists.
-//!
-//! The dock's content comes from the orchestrator plugin, mounted from its
-//! `ready` hook — fire-and-forget onto the plugin thread, after every plugin
-//! has loaded. Left to that, the first frames paint a full-width editor and
-//! the dock shoves it aside when it lands: "the UI comes up, then the dock
-//! pops in on the left".
-//!
-//! The host now knows about the dock before any plugin runs — the plugin
-//! declares it in `orchestrator.manifest.json`, the user's last state is
-//! remembered in `chrome.json` — and carves the column from the first
-//! frame; the mount fills it in place. These drive only the rendered screen
-//! (CONTRIBUTING.md §2): where the editor's chrome starts before the dock is
-//! there, and where it starts after.
+//! What a launch shows *before* the dock's content exists. The plugin
+//! mounts the dock from `ready`, after every plugin has loaded; the host
+//! carves the column from the first frame (`orchestrator.manifest.json`,
+//! `chrome.json`) and the mount fills it in place. These drive only the
+//! rendered screen (CONTRIBUTING.md §2).
 
 use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness, HarnessOptions};
 use crate::common::tracing::init_tracing_from_env;
@@ -55,8 +46,7 @@ fn wall_column(h: &EditorTestHarness) -> Vec<char> {
         .collect()
 }
 
-/// Where the menu bar starts — the left edge of everything that is not the
-/// dock. This is the number that used to change under the user when the dock
+/// Where the menu bar starts: the number that used to change when the dock
 /// arrived.
 fn chrome_left_edge(h: &EditorTestHarness) -> usize {
     let screen = h.screen_to_string();
@@ -64,8 +54,7 @@ fn chrome_left_edge(h: &EditorTestHarness) -> usize {
         .lines()
         .find(|row| row.contains("File") && row.contains("Edit"))
         .unwrap_or_else(|| panic!("no menu bar on screen:\n{screen}"));
-    // A column, not a byte offset: the dock's own glyphs to the left of the
-    // bar are multi-byte, and there are more of them once the dock is in.
+    // A column, not a byte offset: the dock's glyphs are multi-byte.
     let cells: Vec<char> = bar.chars().collect();
     cells
         .windows(4)
@@ -73,15 +62,8 @@ fn chrome_left_edge(h: &EditorTestHarness) -> usize {
         .unwrap()
 }
 
-/// **The dock lands in a column that was already there.**
-///
-/// Two things, and the second is why the first is worth having: the column is
-/// carved (walled, and the editor's chrome starts to the right of it) on the
-/// very first frame — before the `ready` hook has even been fired, let alone
-/// any of the dock's own content drawn — and the chrome is in the same place
-/// once the dock has filled in. A column at a width the mount disagreed with
-/// would pass the first and fail the second, and the user would see the
-/// re-flow anyway.
+/// The column is carved on the first frame, before `ready` has fired, and
+/// the chrome is in the same place once the dock has filled it in.
 fn the_dock_lands_in_the_column_startup_carved_for_it(orchestrator_mode: bool) {
     let (_tmp, root) = setup_project();
     let mut options = HarnessOptions::new()
@@ -127,20 +109,15 @@ fn orchestrator_mode_lands_the_dock_in_the_column_carved_for_it() {
     the_dock_lands_in_the_column_startup_carved_for_it(true);
 }
 
-/// An ordinary `fresh .`: the manifest's `open` (via `autoOpenDock`, on by
-/// default) opens the dock — and this is the launch on which the plugin's
-/// loading, not just its `ready` hook, used to stand between the first
-/// frame and the dock.
+/// An ordinary `fresh .`: the manifest's `open` (via `autoOpenDock`) opens it.
 #[test]
 fn an_ordinary_launch_lands_the_dock_in_the_column_carved_for_it() {
     the_dock_lands_in_the_column_startup_carved_for_it(false);
 }
 
-/// **The dock comes back the way it was left.** Closed with Toggle Dock and
-/// the editor quit and relaunched against the same data directory: no
-/// column, and `ready` mounts nothing. Opened again, quit and relaunched:
-/// the column is back on the first frame. (The quit is what records it —
-/// see `Editor::save_dock_chrome`.)
+/// Closed with Toggle Dock, quit, relaunched: no column and `ready` mounts
+/// nothing. Opened again, quit, relaunched: the column is back on the first
+/// frame. The quit records it (`Editor::save_dock_chrome`).
 #[test]
 fn the_dock_is_remembered_across_launches() {
     use crossterm::event::{KeyCode, KeyModifiers};

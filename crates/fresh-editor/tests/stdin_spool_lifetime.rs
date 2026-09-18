@@ -67,13 +67,9 @@ fn isolated_fresh(home: &Path) -> Command {
 /// from stdin` (`stdin.read_complete`, with `LANG` pinned to English above).
 const DRAINED: &str = "bytes from stdin";
 
-/// The terminal the editor is driven on. Wide enough that the status bar has
-/// room for the drained message *beside the workspace dock*: the dock's
-/// column is the editor's from the first frame now (the plugin's manifest
-/// declares it, and `autoOpenDock` is on by default), and at 100 columns the
-/// bar left of it truncated the message away, so the wait below never
-/// matched. It used to match only because the dock arrived later than the
-/// drain — a race this width takes out of the test.
+/// Wide enough that the status bar has room for the drained message beside
+/// the workspace dock, which is there from the first frame now; at 100
+/// columns the message was truncated away and the wait never matched.
 const COLS: u16 = 140;
 const ROWS: u16 = 30;
 

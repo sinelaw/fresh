@@ -1,24 +1,13 @@
 //! What a plugin declares about itself *before it runs*: the
-//! `<plugin>.manifest.json` sidecar.
+//! `<plugin>.manifest.json` sidecar, read synchronously by the host at
+//! discovery, next to the `.i18n.json` and `.schema.json` sidecars.
 //!
-//! A plugin's code runs on the plugin thread, after every plugin has been
-//! transpiled and evaluated, and talks to the host over an asynchronous
-//! command channel. Anything the host needs to know **before the first
-//! frame** — today, that a plugin fills the left dock, and how wide the dock
-//! opens — cannot come from that code: by the time a `ready` handler has
-//! asked for the dock, the editor has been painted without one and the dock
-//! shoves it aside. So the plugin states it here, in a file the host reads
-//! synchronously at discovery, next to the `.i18n.json` and `.schema.json`
-//! sidecars it already keeps.
-//!
-//! The manifest is a declaration, not a command: it says what the plugin
-//! *would* do, so the host can lay out for it. The plugin still does it — it
-//! mounts the dock from `ready` as before — and the host reconciles: a
-//! column held open for a dock that never arrives is handed back when the
-//! hook completes (`Editor::dock_reserved`).
-//!
-//! Only enabled plugins' manifests count. A disabled plugin declares nothing,
-//! because it will do nothing.
+//! Plugin code runs on the plugin thread after every plugin has loaded, so
+//! anything the host needs before the first frame — today, that a plugin
+//! fills the left dock, and how wide — has to come from here. A manifest is
+//! a declaration, not a command: the plugin still mounts the dock from
+//! `ready`, and a column held for one that never arrives is handed back
+//! (`Editor::dock_reserved`). Only enabled plugins' manifests count.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -34,8 +23,7 @@ const MANIFEST_SUFFIX: &str = ".manifest.json";
 #[derive(Clone, Debug, Default, PartialEq, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PluginManifest {
-    /// Chrome the plugin will occupy, laid out by the host before the plugin
-    /// runs.
+    /// Chrome the plugin will occupy, laid out by the host before it runs.
     #[serde(default)]
     pub chrome: ChromeManifest,
 }
@@ -52,15 +40,12 @@ pub struct ChromeManifest {
 #[derive(Clone, Debug, PartialEq, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DockDeclaration {
-    /// Whether the dock opens at startup when nothing is remembered about it
-    /// (`open_setting` and the persisted chrome state both refine this; see
-    /// `Editor::apply_startup_dock_chrome`).
+    /// Whether the dock opens on a first launch, when nothing is remembered
+    /// about it (see `Editor::apply_startup_dock_chrome`).
     #[serde(default = "default_true")]
     pub open: bool,
-    /// A boolean in this plugin's own settings (`plugins.<name>.settings`)
-    /// that switches auto-opening off — the orchestrator's `autoOpenDock`.
-    /// Named here rather than hard-coded in the host, so the plugin owns its
-    /// setting and the host only reads the one it was told about.
+    /// A boolean in this plugin's settings (`plugins.<name>.settings`) that
+    /// switches auto-opening off — the orchestrator's `autoOpenDock`.
     #[serde(default)]
     pub open_setting: Option<String>,
     /// How wide the dock opens before the user drags it.
@@ -73,13 +58,9 @@ fn default_true() -> bool {
 }
 
 /// The manifests of every *enabled* plugin found in `dirs`, keyed by plugin
-/// name — the file stem before `.manifest.json`, which is the plugin's name
-/// exactly as `plugins.<name>` in the config addresses it.
-///
-/// Directories are searched in order, and the first manifest for a name
-/// wins: the same precedence plugin loading gives the directories. A file
-/// that does not parse is a plugin bug, logged and skipped — never a reason
-/// to fail the editor's startup.
+/// name (the stem before `.manifest.json`, as `plugins.<name>` addresses it).
+/// The first directory to name a plugin wins, as with plugin loading; a file
+/// that does not parse is logged and skipped.
 pub fn read_manifests(
     dirs: &[PathBuf],
     plugins: &HashMap<String, PluginConfig>,

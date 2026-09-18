@@ -52,8 +52,8 @@ fn setup(settings: serde_json::Value) -> (tempfile::TempDir, PathBuf, Config) {
     (temp_dir, root, config)
 }
 
-/// A harness that models a real launch — the host's startup chrome kept,
-/// so the `ready` the test fires opens the dock the way `main` would.
+/// A harness with the host's startup chrome kept, so the `ready` the test
+/// fires opens the dock the way `main` would.
 fn launch(config: Config, root: PathBuf) -> EditorTestHarness {
     EditorTestHarness::create(
         120,
