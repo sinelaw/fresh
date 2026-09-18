@@ -5,6 +5,26 @@
 // The editor owns content, selection and scroll; we render natively and forward
 // row clicks / wheel back through handle_mouse at the popup's content cells, so
 // the existing popup hit-tester resolves them (no re-implemented logic).
+// One styled run of a text/markdown popup line, in the same shape a buffer
+// cell run arrives in ({t,fg,bg,b,i,u,r}) — the editor highlights hover docs
+// with the real grammar registry, and the terminal draws every one of those
+// colours, so the browser does too. The ink is written as INLINE style on
+// purpose: a web theme skins the popup's frame (background, border, radius),
+// never the editor colours inside it, and inline style outranks every skin
+// rule without needing !important anywhere.
+function popupRun(run){
+  const el=document.createElement("span");
+  el.textContent=run.t;
+  // REVERSED swaps the pair, exactly like the cell renderer does.
+  const fg=run.r?run.bg:run.fg, bg=run.r?run.fg:run.bg;
+  if(fg) el.style.color=fg;
+  if(bg) el.style.background=bg;
+  if(run.b) el.style.fontWeight="700";
+  if(run.i) el.style.fontStyle="italic";
+  if(run.u) el.style.textDecoration="underline";
+  return el;
+}
+
 function popupEl(p){
   const el=div("popup"); place(el,p.rect);
   if(p.title){ const t=div("popup-title"); t.textContent=p.title; el.appendChild(t); }
@@ -24,8 +44,17 @@ function popupEl(p){
       body.appendChild(row);
     }
   } else {
+    // Editor ink (see popupRun): the body stands on the editor's own popup
+    // ground so the runs keep the contrast they were chosen for under every
+    // chrome skin.
+    body.classList.add("ink");
     const lines=p.content.lines||[];
-    for(let j=0;j<n;j++){ const ln=lines[start+j]; if(ln===undefined) break; const d=div("popup-line"); d.textContent=ln; body.appendChild(d); }
+    for(let j=0;j<n;j++){
+      const ln=lines[start+j]; if(ln===undefined) break;
+      const d=div("popup-line");
+      for(const run of ln) d.appendChild(popupRun(run));
+      body.appendChild(d);
+    }
   }
   el.appendChild(body);
   el.addEventListener("wheel",e=>{ e.stopPropagation(); sendMouse({kind:e.deltaY>0?"scrolldown":"scrollup",col:cr.x+1,row:cr.y,n:Math.min(5,Math.max(1,Math.round(Math.abs(e.deltaY)/40)))}); },{passive:true});

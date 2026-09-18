@@ -600,6 +600,59 @@ pub struct PopupItemView {
     pub disabled: bool,
 }
 
+/// One run of like-styled text inside a popup line. Markdown popups (LSP
+/// hover, the theme inspector) carry syntax-highlighted code blocks and
+/// emphasis, and the terminal draws every one of those runs — so the
+/// projection keeps them instead of flattening the line to a `String`, and
+/// both renderers ink the same thing. The field names are the cell runs'
+/// (`t`/`fg`/`bg`/`b`/`i`/`u`/`r`, see `webui::cells_json`), so a frontend
+/// paints a popup run exactly the way it paints a buffer run.
+#[derive(Debug, Clone, Serialize)]
+pub struct PopupSpanView {
+    #[serde(rename = "t")]
+    pub text: String,
+    #[serde(rename = "fg", skip_serializing_if = "Option::is_none")]
+    pub fg: Option<String>,
+    #[serde(rename = "bg", skip_serializing_if = "Option::is_none")]
+    pub bg: Option<String>,
+    #[serde(rename = "b", skip_serializing_if = "std::ops::Not::not")]
+    pub bold: bool,
+    #[serde(rename = "i", skip_serializing_if = "std::ops::Not::not")]
+    pub italic: bool,
+    #[serde(rename = "u", skip_serializing_if = "std::ops::Not::not")]
+    pub underline: bool,
+    #[serde(rename = "r", skip_serializing_if = "std::ops::Not::not")]
+    pub reverse: bool,
+}
+
+impl PopupSpanView {
+    /// A run carrying no styling of its own — what a plain-text popup line is.
+    fn plain(text: String) -> Self {
+        Self {
+            text,
+            fg: None,
+            bg: None,
+            bold: false,
+            italic: false,
+            underline: false,
+            reverse: false,
+        }
+    }
+
+    fn styled(text: String, style: ratatui::style::Style) -> Self {
+        let m = style.add_modifier;
+        Self {
+            text,
+            fg: style.fg.and_then(css_color),
+            bg: style.bg.and_then(css_color),
+            bold: m.contains(ratatui::style::Modifier::BOLD),
+            italic: m.contains(ratatui::style::Modifier::ITALIC),
+            underline: m.contains(ratatui::style::Modifier::UNDERLINED),
+            reverse: m.contains(ratatui::style::Modifier::REVERSED),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum PopupContentView {
@@ -608,7 +661,9 @@ pub enum PopupContentView {
         selected: usize,
     },
     Lines {
-        lines: Vec<String>,
+        /// One entry per line, each a list of styled runs. A plain-text popup
+        /// line is a single unstyled run.
+        lines: Vec<Vec<PopupSpanView>>,
     },
 }
 
@@ -656,12 +711,20 @@ fn project_popup(
             selected: *selected,
         },
         PopupContent::Text(lines) => PopupContentView::Lines {
-            lines: lines.clone(),
+            lines: lines
+                .iter()
+                .map(|l| vec![PopupSpanView::plain(l.clone())])
+                .collect(),
         },
         PopupContent::Markdown(styled) => PopupContentView::Lines {
             lines: styled
                 .iter()
-                .map(|l| l.spans.iter().map(|s| s.text.as_str()).collect::<String>())
+                .map(|l| {
+                    l.spans
+                        .iter()
+                        .map(|s| PopupSpanView::styled(s.text.clone(), s.style))
+                        .collect()
+                })
                 .collect(),
         },
     };
@@ -2333,5 +2396,57 @@ impl Editor {
             showing_confirm: st.showing_confirm_dialog,
             showing_reset: st.showing_reset_dialog,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::PopupSpanView;
+    use ratatui::style::{Color, Modifier, Style};
+
+    #[test]
+    fn a_popup_span_keeps_the_colour_and_emphasis_the_editor_gave_it() {
+        // Regression: the projection used to flatten a markdown popup's styled
+        // spans into one `String` per line, so an LSP hover reached the web UI
+        // with its syntax highlighting, bold and italics thrown away while the
+        // terminal drew all three.
+        let style = Style::default()
+            .fg(Color::Rgb(255, 255, 0))
+            .bg(Color::Rgb(40, 40, 40))
+            .add_modifier(Modifier::BOLD | Modifier::ITALIC);
+        let span = PopupSpanView::styled("greet".to_string(), style);
+        assert_eq!(span.fg.as_deref(), Some("#ffff00"));
+        assert_eq!(span.bg.as_deref(), Some("#282828"));
+        assert!(span.bold);
+        assert!(span.italic);
+        assert!(!span.underline);
+        assert!(!span.reverse);
+
+        // A plain-text popup line says nothing about colour, so the frontend
+        // inherits the popup's own.
+        let plain = PopupSpanView::plain("hello".to_string());
+        assert!(plain.fg.is_none() && plain.bg.is_none());
+        assert!(!plain.bold && !plain.italic && !plain.underline && !plain.reverse);
+    }
+
+    #[test]
+    fn a_popup_span_is_on_the_wire_in_the_cell_runs_shape() {
+        // The frontend paints a popup run with the code that paints a buffer
+        // run, so the field names have to stay identical — and a flag that is
+        // off must not be sent at all.
+        let span = PopupSpanView::styled(
+            "fn".to_string(),
+            Style::default()
+                .fg(Color::Rgb(0, 255, 255))
+                .add_modifier(Modifier::UNDERLINED | Modifier::REVERSED),
+        );
+        let json = serde_json::to_value(&span).expect("span serializes");
+        assert_eq!(json["t"], "fn");
+        assert_eq!(json["fg"], "#00ffff");
+        assert_eq!(json["u"], true);
+        assert_eq!(json["r"], true);
+        assert!(json.get("bg").is_none(), "unset colour is omitted");
+        assert!(json.get("b").is_none(), "an off flag is omitted");
+        assert!(json.get("i").is_none(), "an off flag is omitted");
     }
 }
