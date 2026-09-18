@@ -1624,13 +1624,18 @@ impl Editor {
             return;
         }
 
-        let working_dir = self.working_dir().to_path_buf();
+        let working_dir =
+            crate::services::terminal::manager::strip_verbatim_prefix(self.working_dir())
+                .into_owned();
         let rendered: Vec<String> = paths
             .iter()
             .map(|p| {
+                // Tree nodes hold canonicalized paths, verbatim (`\\?\...`) on
+                // Windows; strip the prefix for user-facing strings (#3296).
+                let p = crate::services::terminal::manager::strip_verbatim_prefix(p);
                 if relative {
                     p.strip_prefix(&working_dir)
-                        .unwrap_or(p)
+                        .unwrap_or(p.as_ref())
                         .to_string_lossy()
                         .into_owned()
                 } else {
