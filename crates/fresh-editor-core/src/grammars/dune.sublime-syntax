@@ -1,0 +1,68 @@
+%YAML 1.2
+---
+name: Dune
+file_extensions: [dune]
+scope: source.dune
+contexts:
+  main:
+    - include: comments
+    - include: strings
+    - include: variables
+    - include: forms
+    - include: atoms
+    - match: '[()]'
+      scope: punctuation.section.parens.dune
+
+  comments:
+    - match: ';.*$'
+      scope: comment.line.semicolon.dune
+    - match: '#\|'
+      scope: punctuation.definition.comment.begin.dune
+      push:
+        - meta_scope: comment.block.dune
+        - include: comments
+        - match: '\|#'
+          scope: punctuation.definition.comment.end.dune
+          pop: true
+    - match: '#;'
+      scope: punctuation.definition.comment.dune
+
+  strings:
+    - match: '"'
+      scope: punctuation.definition.string.begin.dune
+      push:
+        - meta_scope: string.quoted.double.dune
+        - include: variables
+        - match: '\\(?:[\\"''ntbr ]|[0-9]{3}|x[0-9A-Fa-f]{2})'
+          scope: constant.character.escape.dune
+        - match: '"'
+          scope: punctuation.definition.string.end.dune
+          pop: true
+
+  variables:
+    - match: '%\{[[:alnum:]_.-]+(?::[^}]*)?\}'
+      scope: variable.other.interpolation.dune
+
+  forms:
+    - match: '(\()(library|executable|executables|rule|alias|install|copy_files|copy_files#|include|include_subdirs|env|tests?|test|documentation|dirs|data_only_dirs|vendored_dirs|ignored_subdirs|subdir|toplevel|coq\.theory|coq\.extraction|cram|mdx)(?=\s|\))'
+      captures:
+        1: punctuation.section.parens.begin.dune
+        2: keyword.declaration.stanza.dune
+    - match: '(\()(lang|name|public_name|package|libraries|modules|modules_without_implementation|foreign_stubs|foreign_archives|flags|ocamlc_flags|ocamlopt_flags|link_flags|preprocess|preprocessor_deps|lint|instrumentation|modes|kind|wrapped|virtual_modules|implements|default_implementation|optional|enabled_if|build_if|action|deps|targets|target|locks|mode|promote|fallback|standard|context|profile|display|cache|expand_aliases_in_sandbox|generate_opam_files|using|implicit_transitive_deps|formatting|dialect|map_workspace_root|source_tree|glob_files|glob_files_rec|files_recursively_in)(?=\s|\))'
+      captures:
+        1: punctuation.section.parens.begin.dune
+        2: support.type.field.dune
+    - match: '(\()(run|chdir|setenv|with-stdout-to|with-stderr-to|with-stdin-from|with-outputs-to|ignore-stdout|ignore-stderr|ignore-outputs|progn|concurrent|echo|cat|copy|copy#|system|bash|write-file|diff|diff\?|cmp|no-infer|pipe-outputs|pipe-stdin|pipe-stderr)(?=\s|\))'
+      captures:
+        1: punctuation.section.parens.begin.dune
+        2: support.function.action.dune
+
+  atoms:
+    - match: '\b(true|false)\b'
+      scope: constant.language.boolean.dune
+    - match: ':standard|:include'
+      scope: constant.language.dune
+    - match: '(?<![[:alnum:]_.-])-{1,2}[[:alnum:]_][[:alnum:]_.-]*'
+      scope: variable.parameter.option.dune
+    - match: '\b[0-9]+(?:\.[0-9]+)*\b'
+      scope: constant.numeric.dune
