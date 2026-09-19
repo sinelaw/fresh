@@ -168,7 +168,6 @@ impl Window {
         let tabs_width = self.split_tabs_width(active_split);
         self.ensure_active_tab_visible(active_split, buffer_id, tabs_width);
 
-
         true
     }
 
