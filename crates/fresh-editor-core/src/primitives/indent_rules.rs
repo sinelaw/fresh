@@ -57,7 +57,7 @@ use std::sync::{Arc, RwLock};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Family {
     /// C, C++, C#, Java, Rust, Go, JS, TS, PHP, Swift, Kotlin, Dart, CSS,
-    /// SCSS, JSON, … — block structure is `{ } [ ] ( )`.
+    /// SCSS, JSON, Odin, … — block structure is `{ } [ ] ( )`.
     CurlyBrace,
     /// Python — `:` opens a block; flow-exit statements dedent the next line.
     Python,
@@ -367,9 +367,15 @@ pub fn rules_for_syntax_name(name: &str) -> Option<Arc<IndentRules>> {
 /// adding a language is usually one arm here.
 fn family_for_id(id: &str) -> Option<Family> {
     let f = match id {
+        // Odin is brace-structured throughout: procedure bodies, struct /
+        // union / enum / bit_field bodies and ordinary blocks all open with
+        // `{` and close with `}`, and its control flow (`if x > 3 {`) takes
+        // no braceless form — so the curly family describes it exactly.
         "rust" | "c" | "cpp" | "c++" | "csharp" | "c_sharp" | "java" | "go" | "javascript"
         | "typescript" | "typescriptreact" | "javascriptreact" | "php" | "swift" | "kotlin"
-        | "dart" | "scala" | "json" | "jsonc" | "css" | "scss" | "less" => Family::CurlyBrace,
+        | "dart" | "scala" | "json" | "jsonc" | "css" | "scss" | "less" | "odin" => {
+            Family::CurlyBrace
+        }
         "python" => Family::Python,
         "ruby" => Family::RubyLike,
         "lua" => Family::LuaLike,
@@ -938,6 +944,59 @@ mod tests {
             indent("fish", "if test -n \"$name\"; echo $name; end\n", 4),
             0
         );
+    }
+
+    // ---- Odin (CurlyBrace) ------------------------------------------------
+
+    /// Every block Odin has opens with `{` on the head line: a procedure
+    /// body, the type bodies (`struct`, `union`, `enum`, `bit_field`), and an
+    /// ordinary block, control flow included — Odin's `if`/`for`/`switch`
+    /// take no parentheses and have no braceless form.
+    #[test]
+    fn odin_indents_after_a_block_opener() {
+        for head in [
+            "greet :: proc(name: string) -> string {\n",
+            "main :: proc() {\n",
+            "Point :: struct {\n",
+            "Value :: union {\n",
+            "Colour :: enum {\n",
+            "Flags :: bit_field u8 {\n",
+            "if count > 3 {\n",
+            "for item in items {\n",
+            "switch kind {\n",
+        ] {
+            assert_eq!(indent("odin", head, 4), 4, "after {head:?}");
+        }
+    }
+
+    /// An opener that is already indented carries its own column. Odin indents
+    /// with tabs, and a tab is worth `tab_size` here — so a block opened on a
+    /// tab-indented line has its body two units in, not one.
+    #[test]
+    fn odin_indents_relative_to_the_openers_own_column() {
+        assert_eq!(indent("odin", "\t{\n", 4), 8);
+        assert_eq!(indent("odin", "    if x > 3 {\n", 4), 8);
+    }
+
+    /// The closing brace comes back out to the construct that opened it.
+    #[test]
+    fn odin_dedents_a_closing_brace() {
+        assert_eq!(indent("odin", "main :: proc() {\n    x := 1\n}\n", 4), 0);
+    }
+
+    /// A brace inside a string or a comment is not a block opener. Odin's
+    /// line comment is `//`, and the masking that makes this work is the
+    /// caller's — here it is stated directly.
+    #[test]
+    fn odin_ignores_a_brace_in_a_comment_or_string() {
+        let line = "x := 1 // opens nothing {\n";
+        let comment = line.find("//").unwrap();
+        assert_eq!(indent_masked("odin", line, 4, &[(comment, line.len())]), 0);
+
+        let line = "s := \"{\"\n";
+        let quote = line.find('"').unwrap();
+        let end = line.rfind('"').unwrap() + 1;
+        assert_eq!(indent_masked("odin", line, 4, &[(quote, end)]), 0);
     }
 
     // ---- PascalLike -------------------------------------------------------
