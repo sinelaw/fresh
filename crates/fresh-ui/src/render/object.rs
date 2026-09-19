@@ -93,11 +93,15 @@ pub trait LayoutCx {
     fn place(&mut self, child: RenderId, at: Point);
     /// Fill in the window of the nearest enclosing `Viewport`, if any.
     fn enclosing_window(&self, info: LayoutInfo) -> LayoutInfo;
-    /// This node's scroll offset. Framework-owned: neither the application nor
-    /// the component declares it.
+    /// This node's scroll offset, as the framework holds it: where the wheel,
+    /// the bar and the anchor commands last put it — or, for a window whose
+    /// owner holds the offset ([`Scroll::At`](crate::desc::Scroll::At)),
+    /// where the description last said it is.
     fn scroll(&self) -> Point;
-    /// Move the offset. The one caller is a scrolling node applying the initial
-    /// value its description carried, once, at its first layout.
+    /// Move the offset. Called by a scrolling node applying the value its
+    /// description carries: once, at its first layout, for a framework-owned
+    /// offset; at every layout for one the owner holds; and to clamp a
+    /// framework-owned offset into its ceiling before the window is published.
     fn set_offset(&mut self, at: Point);
     /// Declare the window this node shows onto its content. The framework
     /// clamps the offset against it, chains the wheel off it, and a
@@ -152,6 +156,10 @@ pub struct ScrollInfo {
     /// The band, for a window whose offset counts items. `None` for one whose
     /// offset counts cells, where an item is not a thing.
     pub band: Option<Band>,
+    /// How many of the node's declared pinned items sit above `window` — the
+    /// ones it honoured, which is at most one fewer than fit. Zero for a
+    /// window that pins nothing. See [`Node::pinned`](crate::Node::pinned).
+    pub pinned: u16,
 }
 
 /// What a constraint-dependent builder is told.
@@ -163,6 +171,10 @@ pub struct LayoutInfo {
     pub scroll_window: Option<Rect>,
     /// That same viewport's band, when its offset counts items. See [`Band`].
     pub band: Option<Band>,
+    /// How many pinned items that viewport holds above `scroll_window`: the
+    /// builder draws that many of the indices it declared, in order, and then
+    /// the run the window names. See [`Node::pinned`](crate::Node::pinned).
+    pub pinned: u16,
 }
 
 /// How a node that sits outside its parent's flow places itself, and what it
@@ -405,6 +417,8 @@ pub(crate) struct RenderData {
     /// Published alongside `window`, and read by the same walk: a builder that
     /// asks which items it holds asks in the same breath how tall one is.
     pub band: Option<Band>,
+    /// Published with `window` too: the pinned items held above it.
+    pub pinned: u16,
     pub scroll_max: Point,
     pub translate: bool,
 

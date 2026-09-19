@@ -46,7 +46,7 @@ pub use desc::{
     node_type, resolve, row, shared_rc, stack, text, text_runs, viewport, Align, Anchor, BoxProps,
     ComponentExt, Desc, Dir, Dismiss, ElemType, Elide, Fit, FocusProps, GestureProps, Handler,
     HostId, HostSpec, ItemHeight, Justify, LayerProps, LayoutReaderProps, Listener, Modality, Node,
-    Pad, Place, PointerMode, Run, Scrim, ScrollMode, Sizing, TextProps, ViewportProps,
+    Pad, Place, PointerMode, Run, Scrim, Scroll, ScrollMode, Sizing, TextProps, ViewportProps,
 };
 pub use element::ElementId;
 pub use event::{

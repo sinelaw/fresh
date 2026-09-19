@@ -88,6 +88,11 @@ pub struct Node<M> {
     pub classes: Option<Rc<str>>,
     /// An owner's handle to this element, bound when it mounts.
     pub anchor: Option<Rc<crate::behavior::Anchor>>,
+    /// Told where the framework put a viewport's window — the reporting half
+    /// of a controlled offset. See [`Node::on_scroll`]. Carried on the node,
+    /// beside `anchor`, for the same reason: a handler is typed by the
+    /// message, and [`ViewportProps`] is not.
+    pub on_scroll: Option<Rc<dyn Fn(u32) -> M>>,
     pub desc: Desc<M>,
     pub children: Vec<Node<M>>,
 }
@@ -424,10 +429,52 @@ pub enum ScrollMode {
     Items { count: u32, height: ItemHeight },
 }
 
+/// Who owns a viewport's offset.
+///
+/// **The same two facts a list's selection has** — see `Sel` in
+/// `widgets/list.rs`: the element keeps its own, or the owner holds it and is
+/// told when it should change. A window is always somewhere, so there is no
+/// third state the way a selection can be empty; what there is instead is the
+/// distinction between "the owner has no opinion" ([`Scroll::Own`], which
+/// starts at zero) and "the owner says zero" ([`Scroll::At`]`(0)`), which
+/// `(0, 0)` as a bare initial value could never make.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Scroll {
+    /// The framework's. The window starts here and is thereafter wherever the
+    /// wheel, the bar and the anchor commands put it; the description's value
+    /// is read once, at the first layout. The default, at `(0, 0)`.
+    Own { x: u16, y: u16 },
+    /// The owner's. The window is this far down — rows for a cell-scrolled
+    /// window, items for an index-scrolled one — at *every* layout. The
+    /// framework still moves its window for a wheel, a bar drag or an anchor
+    /// command, so that a run of notches between frames composes, but it
+    /// reports each move through [`Node::on_scroll`] and the owner's value
+    /// replaces its own at the next layout: the same value, if the owner took
+    /// the report, or wherever the owner clamped it to.
+    ///
+    /// **The owner's offset is never clamped.** Where the ceiling depends on
+    /// something only the owner can evaluate — which rows are pinned at an
+    /// offset the window is not at — the framework cannot know that an offset
+    /// past its own ceiling is wrong, and pulling it back would hide the last
+    /// rows of a tree whose pinned ancestors make room for them. So the
+    /// ceiling the bar and the wheel read is never below where the owner put
+    /// the window, and clamping is the owner's job.
+    At(u32),
+}
+
+impl Default for Scroll {
+    fn default() -> Self {
+        Scroll::Own { x: 0, y: 0 }
+    }
+}
+
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub struct ViewportProps {
-    /// Framework-owned once mounted; this is the initial value only.
-    pub scroll: (u16, u16),
+    /// Where the window is, and whose that fact is. See [`Scroll`].
+    pub scroll: Scroll,
+    /// Items drawn at the top of the window whatever the offset, in order —
+    /// an index-scrolled window only. See [`Node::pinned`].
+    pub pinned: Rc<[u32]>,
     /// Mark the region as text-selectable in the display list. The library
     /// never interprets it — a backend that supports selection reads it, the
     /// same way it reads a theme name.
@@ -1000,6 +1047,7 @@ impl<M> Clone for Node<M> {
             theme: self.theme.clone(),
             classes: self.classes.clone(),
             anchor: self.anchor.clone(),
+            on_scroll: self.on_scroll.clone(),
             desc: self.desc.clone(),
             children: self.children.clone(),
         }
@@ -1109,6 +1157,7 @@ impl<M> Node<M> {
             theme: None,
             classes: None,
             anchor: None,
+            on_scroll: None,
             desc,
             children: Vec::new(),
         }
@@ -1127,6 +1176,7 @@ impl<M> Node<M> {
             theme: None,
             classes: None,
             anchor: None,
+            on_scroll: None,
             desc: Desc::Box(BoxProps::default()),
             children: Vec::new(),
         }
@@ -1451,11 +1501,78 @@ impl<M> Node<M> {
     }
 
     /// Where the window starts. The initial value only: from the first layout
-    /// on, the offset is framework-owned.
+    /// on, the offset is framework-owned. See [`Scroll::Own`].
     pub fn scroll_at(mut self, x: u16, y: u16) -> Self {
         match &mut self.desc {
-            Desc::Viewport(p) => p.scroll = (x, y),
+            Desc::Viewport(p) => p.scroll = Scroll::Own { x, y },
             _ => panic!("scroll_at() applies to Viewport nodes only"),
+        }
+        self
+    }
+
+    /// Controlled offset: the owner holds it and is told, through
+    /// [`Node::on_scroll`], when it should change. Omit this and the element
+    /// keeps its own. The same pattern as a list's `selected` / `on_select`;
+    /// see [`Scroll::At`] for what the framework does with a wheel meanwhile,
+    /// and for why the owner's value is never clamped.
+    ///
+    /// `offset` is in the unit the window counts: rows for a cell-scrolled
+    /// window, items for an index-scrolled one.
+    pub fn scroll(mut self, offset: u32) -> Self {
+        match &mut self.desc {
+            Desc::Viewport(p) => p.scroll = Scroll::At(offset),
+            _ => panic!("scroll() applies to Viewport nodes only"),
+        }
+        self
+    }
+
+    /// Be told where the framework put the window: after a wheel, a press or
+    /// drag on the bar, or an anchor command, with the new offset in the
+    /// window's unit. The reporting half of [`Node::scroll`], and useful
+    /// without it — an owner that only wants to know may listen without
+    /// holding the offset.
+    ///
+    /// The report is the move the framework made, before any clamp of the
+    /// owner's. For a controlled window the owner clamps and passes the value
+    /// back through [`Node::scroll`]; for a framework-owned one the offset is
+    /// already inside the window's own ceiling.
+    pub fn on_scroll(mut self, f: impl Fn(u32) -> M + 'static) -> Self {
+        match &self.desc {
+            Desc::Viewport(_) => self.on_scroll = Some(Rc::new(f)),
+            _ => panic!("on_scroll() applies to Viewport nodes only"),
+        }
+        self
+    }
+
+    /// Items held at the top of the window whatever the offset — sticky
+    /// group headers, a scrolled tree's expanded ancestors. An index-scrolled
+    /// window only; a cell-scrolled one has no items to pin.
+    ///
+    /// **The owner names them; the window makes room.** Only the application
+    /// knows what "the header of the group the first row is in" means, so the
+    /// indices come from it, and they are a function of the offset — the
+    /// owner recomputes them whenever it is told the window moved. What the
+    /// window does with them is arithmetic it can own: the pinned rows come
+    /// off the top of the window, the contiguous run starts under them, the
+    /// window it publishes to a [`layout_reader`] inside it is that run alone,
+    /// and the ceiling is the smallest offset that fills what is left —
+    /// `count - (rows - pinned)`, not `count - rows`. A bar that assumed the
+    /// naive ceiling parked its thumb at the end of the track while the tree
+    /// still had rows below.
+    ///
+    /// The builder inside draws the pinned rows itself, above the run the
+    /// window hands it, because it is the one that knows what they look like;
+    /// [`List`](crate::List) does exactly that for its own `pinned`. A pinned
+    /// row is an ordinary row for the pointer: it is where layout put it, and
+    /// its own handlers answer.
+    ///
+    /// Never the whole window: at most `rows - 1` are honoured, so that one
+    /// row of the run is always on screen and the offset still means
+    /// something.
+    pub fn pinned(mut self, indices: &[u32]) -> Self {
+        match &mut self.desc {
+            Desc::Viewport(p) => p.pinned = Rc::from(indices),
+            _ => panic!("pinned() applies to Viewport nodes only"),
         }
         self
     }

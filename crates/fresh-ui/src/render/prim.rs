@@ -1402,8 +1402,14 @@ pub struct ViewportRender {
     pub window: Rect,
     pub content: Size,
     pub items: u32,
-    /// Whether the description's initial offset has been applied. It is the
-    /// initial value only: after that the offset is framework-owned.
+    /// The furthest the offset may travel, in the window's unit — what the
+    /// bar is drawn against. Not `items - window.h`: pinned rows shorten the
+    /// window, and a controlled offset is never below it (see
+    /// [`Scroll::At`](crate::desc::Scroll::At)).
+    ceiling: u32,
+    /// Whether the description's initial offset has been applied, for a
+    /// framework-owned offset ([`Scroll::Own`](crate::desc::Scroll::Own)):
+    /// it is the initial value only.
     placed: bool,
     /// Whether the last layout gave the bar a gutter. Read only by a measured
     /// band, as the assumption its first measurement starts from.
@@ -1429,6 +1435,7 @@ impl ViewportRender {
             window: Rect::ZERO,
             content: Size::ZERO,
             items: 0,
+            ceiling: 0,
             placed: false,
             gutter: false,
             band: None,
@@ -1473,6 +1480,7 @@ impl ViewportRender {
             max: Point::new(0, count.saturating_sub(self.window.h as u32) as i32),
             translate: false,
             band: Some(crate::render::object::Band::Measuring),
+            pinned: 0,
         });
         let probe = Constraints::new(w, w, 0, u16::MAX);
         let mut cells = 0u16;
@@ -1505,15 +1513,30 @@ impl RenderObject for ViewportRender {
         // A viewport takes the space it is given; its content does not affect
         // it, which is what makes it a relayout boundary.
         let own = c.constrain(c.max());
-        if !self.placed {
-            // The description states where the window starts; from here on the
-            // offset belongs to the framework and survives rebuilds.
-            self.placed = true;
-            let (x, y) = self.props.scroll;
-            if x != 0 || y != 0 {
-                cx.set_offset(Point::new(x as i32, y as i32));
+        // Whose the offset is — see `Scroll`. Framework-owned: the
+        // description states where the window starts, once, and from then on
+        // the offset belongs to the framework and survives rebuilds.
+        // Owner-held: the description states where the window *is*, at every
+        // layout, over whatever the wheel moved between frames.
+        let held = match self.props.scroll {
+            crate::desc::Scroll::Own { x, y } => {
+                if !self.placed {
+                    self.placed = true;
+                    if x != 0 || y != 0 {
+                        cx.set_offset(Point::new(x as i32, y as i32));
+                    }
+                }
+                None
             }
-        }
+            crate::desc::Scroll::At(y) => {
+                let at = cx.scroll();
+                let want = Point::new(at.x, y.min(i32::MAX as u32) as i32);
+                if want != at {
+                    cx.set_offset(want);
+                }
+                Some(want.y)
+            }
+        };
         let scroll = cx.scroll();
 
         let mut own = own;
@@ -1526,11 +1549,13 @@ impl RenderObject for ViewportRender {
                     content: self.content,
                     max: Point::new(
                         self.content.w.saturating_sub(w) as i32,
-                        self.content.h.saturating_sub(own.h) as i32,
+                        (self.content.h.saturating_sub(own.h) as i32).max(held.unwrap_or(0)),
                     ),
                     translate: true,
-                    // An offset in cells has no items, so no band.
+                    // An offset in cells has no items, so no band, and
+                    // nothing to pin.
                     band: None,
+                    pinned: 0,
                 });
                 let inner = if c.min_w == c.max_w {
                     Constraints::new(w, w, 0, u16::MAX)
@@ -1580,16 +1605,19 @@ impl RenderObject for ViewportRender {
                 }
                 let view_w = own.w.saturating_sub(gutter);
                 self.window = Rect::at(scroll, Size::new(view_w, own.h));
+                // A held offset is never clamped, so the ceiling is never
+                // below it — see `Scroll::At`.
+                let max_y = (content.h.saturating_sub(own.h) as i32).max(held.unwrap_or(0));
+                self.ceiling = max_y as u32;
                 cx.set_scroll(ScrollInfo {
                     window: self.window,
                     content,
-                    max: Point::new(
-                        content.w.saturating_sub(view_w) as i32,
-                        content.h.saturating_sub(own.h) as i32,
-                    ),
+                    max: Point::new(content.w.saturating_sub(view_w) as i32, max_y),
                     translate: true,
-                    // An offset in cells has no items, so no band.
+                    // An offset in cells has no items, so no band, and
+                    // nothing to pin.
                     band: None,
+                    pinned: 0,
                 });
             }
             ScrollMode::Items {
@@ -1598,6 +1626,11 @@ impl RenderObject for ViewportRender {
             } => {
                 use crate::desc::ItemHeight;
                 let measured = matches!(item_h, ItemHeight::Measured);
+                // How many of the pinned rows a window of `rows` honours:
+                // never all of them, so one row of the run stays on screen
+                // and the offset still names something.
+                let pinned_n = self.props.pinned.len() as u32;
+                let pinned_of = |rows: u32| pinned_n.min(rows.saturating_sub(1));
                 // The child renders only the window, so nothing is translated
                 // and the offset is an index. A cell extent over a million rows
                 // would not fit a coordinate; an index does.
@@ -1664,7 +1697,11 @@ impl RenderObject for ViewportRender {
                     // it either way, and is the only thing that reserves one
                     // for an overlay bar — which otherwise asks for none and
                     // floats over the rows — see [`RenderObject::paint_over`].
-                    let need = u16::from(reserved || (bar && n > rows));
+                    //
+                    // "Overflows" is measured against the run, not the box:
+                    // pinned rows come off the top, so a count that fits the
+                    // box may not fit under them.
+                    let need = u16::from(reserved || (bar && n > rows - pinned_of(rows)));
                     if !measured {
                         gutter = need;
                         break;
@@ -1678,17 +1715,36 @@ impl RenderObject for ViewportRender {
                 self.gutter = gutter == 1;
                 self.items = n;
                 let inner_w = own.w.saturating_sub(gutter);
-                self.window = Rect::new(0, scroll.y, inner_w, rows.min(u16::MAX as u32) as u16);
+                // **The window is the run under the pinned rows.** The pinned
+                // rows take the top of the box; what is published — to the
+                // builder inside, to the bar, to the wheel and to a reveal —
+                // is the contiguous run that starts at the offset, `rows -
+                // pinned` tall. So the ceiling is the smallest offset whose
+                // run reaches the end: `n - (rows - pinned)`, which is past
+                // `n - rows` by exactly the rows the pins took. A held offset
+                // is never clamped (`Scroll::At`), so the ceiling is never
+                // below it; a framework-owned one is clamped to it here,
+                // before the window is published, so the builder never sees
+                // a window the clamp is about to move.
+                let run = rows - pinned_of(rows);
+                let ceiling = n.saturating_sub(run).max(held.map_or(0, |y| y as u32));
+                let y = (scroll.y.max(0) as u32).min(ceiling);
+                if y as i32 != scroll.y {
+                    cx.set_offset(Point::new(scroll.x, y as i32));
+                }
+                self.ceiling = ceiling;
+                self.window = Rect::new(0, y as i32, inner_w, run.min(u16::MAX as u32) as u16);
                 cx.set_scroll(ScrollInfo {
                     window: self.window,
-                    content: Size::new(inner_w, rows.min(u16::MAX as u32) as u16),
-                    max: Point::new(0, n.saturating_sub(rows) as i32),
+                    content: Size::new(inner_w, run.min(u16::MAX as u32) as u16),
+                    max: Point::new(0, ceiling.min(i32::MAX as u32) as i32),
                     translate: false,
                     // The band the rows are about to be built against. Telling
                     // the builder is the other half of asking it: a measured
                     // band is known only here, and a row built at the wrong
                     // height puts every index below it on the wrong cell.
                     band: Some(crate::render::object::Band::Cells(height)),
+                    pinned: pinned_of(rows) as u16,
                 });
                 let inner = Constraints::new(inner_w, inner_w, 0, own.h);
                 for k in cx.children() {
@@ -1712,22 +1768,27 @@ impl RenderObject for ViewportRender {
     /// overlay bar — it is the difference between a bar and no bar, because a
     /// node's own paint is under its children and the rows would cover it.
     fn paint_over(&self, g: Geom, out: &mut DrawList) {
-        use crate::desc::ScrollMode;
         // A revealed bar that is not being revealed draws nothing. Its
         // gutter, when it has one, is still reserved.
         if !self.props.scrollbar || self.props.bar_hidden {
             return;
         }
-        let (offset, content) = match self.props.mode {
-            ScrollMode::Cells => (self.window.y.max(0) as u32, self.content.h as u32),
-            ScrollMode::Items { count, .. } => (self.window.y.max(0) as u32, count),
-        };
         // The window is in the same unit the offset and the content are: cells
         // for `Cells`, items for `Items`. They differ once an item is more than
         // one cell tall, and taking the rectangle's height for both is what
         // made a card list's thumb read as a line list's.
+        //
+        // The content is the ceiling plus the window, not the count. For a
+        // plain window that is the count; for a pinned one it still is — the
+        // window is the run and the ceiling grew by what the pins took — and
+        // for a held offset past the count it is more, so the thumb says "at
+        // the end" for a window the owner put there (see `Scroll::At`).
+        // `hit.rs` reads the bar's extents the same way, so a press on the
+        // track and the thumb it lands on agree by construction.
+        let offset = self.window.y.max(0) as u32;
         let window = self.window.h;
-        if content <= window as u32 {
+        let content = self.ceiling.saturating_add(window as u32);
+        if self.ceiling == 0 {
             return;
         }
         let bar = Draw::scrollbar(offset, content, window);
@@ -1905,6 +1966,7 @@ impl RenderObject for ReaderRender {
         let info = LayoutInfo {
             constraints: c,
             scroll_window: None,
+            pinned: 0,
             band: None,
         };
         let info = cx.enclosing_window(info);
