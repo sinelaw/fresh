@@ -1172,6 +1172,15 @@ type PreparingWindowResult = {
 	* The new workspace's durable identity (`ws-…`), stable across restarts.
 	*/
 	stableId: string;
+	/**
+	* The placeholder's seed buffer. Mount a widget panel here
+	* (`mountWidgetPanel`) to describe the page yourself: the plugin
+	* building the workspace knows what it is waiting on, what failed and
+	* what the user can do about it, so the page is its to write. The
+	* editor's own page — name, state, one line of explanation — is only
+	* the fallback for a window nothing has described.
+	*/
+	bufferId: number;
 };
 type CreateTerminalOptions = {
 	/**
@@ -1427,6 +1436,8 @@ type HintEntry = {
 	label: string;
 };
 type ButtonKind = "normal" | "primary" | "danger";
+type LabelAlign = "left" | "right";
+type Elide = "none" | "tail" | "head";
 type TreeNode = {
 	/**
 	* The pre-rendered row content (text + per-row overlays).
@@ -1515,6 +1526,17 @@ type WidgetSpec = {
 	* Ignored when the row contains multi-line (block) children.
 	*/
 	wrap: boolean;
+	/**
+	* Settle a wrapping row's lines against its right edge: buttons
+	* flush right while they fit, wrapping from the left when they do
+	* not. Read only when `wrap` is set.
+	*
+	* The point is that the plugin does not have to know which of those
+	* two layouts it is getting — the host lays the row out at a width
+	* the plugin cannot see, and a guess made here is a guess about a
+	* frame that has not happened yet.
+	*/
+	justifyEnd: boolean;
 } | {
 	"kind": "col";
 	children: Array<WidgetSpec>;
@@ -1543,9 +1565,18 @@ type WidgetSpec = {
 	*/
 	labelFirst: boolean;
 	/**
-	* Pad the label to this display width in `label_first`
-	* layout so a column of controls aligns their chips. `0` =
-	* no padding. Defaults to `0`.
+	* The label column a form's controls share, in display cells.
+	* `0` = no column alignment. Defaults to `0`.
+	*
+	* **It means something in both layouts, and not the same thing.**
+	* With `label_first`, it pads this toggle's own label so its chip
+	* lines up with its siblings' value cells. Chip-first, the toggle
+	* has no label in that column at all, so it indents the *chip*
+	* there instead — which is how `[v] Remember this machine` sits
+	* under the fields above it rather than at the panel's edge. A
+	* chip-first toggle in a panel that sets a `label_width` therefore
+	* moves right by that much plus the `: ` its siblings spend;
+	* before this field was read on that path it stayed flush left.
 	*/
 	labelWidth: number;
 	key?: string | null;
@@ -1635,6 +1666,33 @@ type WidgetSpec = {
 	* taller than its window. Defaults to `0`.
 	*/
 	scrollOffset: number;
+	key?: string | null;
+} | {
+	"kind": "radio";
+	/**
+	* The selectable options, in display order.
+	*/
+	options: Array<string>;
+	/**
+	* Initial selected index into `options`. Read at first render
+	* only; instance state takes over thereafter. Clamped to
+	* `[0, options.len())`.
+	*/
+	selectedIndex: number;
+	/**
+	* Optional label rendered before the options. Empty = omitted.
+	*/
+	label?: string;
+	/**
+	* Whether this widget has visual focus. Initial-only once the
+	* host owns focus.
+	*/
+	focused: boolean;
+	/**
+	* Pad the label to this display width so a column of controls
+	* aligns their option cells. `0` = no padding.
+	*/
+	labelWidth: number;
 	key?: string | null;
 } | {
 	"kind": "dualList";
@@ -1731,10 +1789,9 @@ type WidgetSpec = {
 	*/
 	bare: boolean;
 	/**
-	* Stretch the button across the full width it is laid out in
-	* (the panel's content width, or its share of an enclosing
-	* `Row`), padding the label with spaces — and truncating it
-	* with an `…` when the width can't hold it.
+	* Stretch the button across the full width it is laid out in:
+	* the panel's content width, its share of an enclosing `Row`,
+	* or the width an anchored popup settled on.
 	*
 	* This exists because focus / hover paint the button's *own*
 	* cells: a natural-width button leaves the rest of its row
@@ -1742,14 +1799,23 @@ type WidgetSpec = {
 	* row out (a `LabeledSection` pads every child to its inner
 	* width). Dropdown and context-menu entries are rows of a
 	* menu, not free-standing actions, so their highlight has to
-	* span the row — set this on them and the host fills the row
-	* at the width it actually rendered, with no plugin-side
-	* width guess to drift on a resize or a dock drag.
+	* span the row.
 	*
-	* Leave it off for a free-standing action, and off for
-	* anything inside an anchored popup that sizes itself to its
-	* content — filling there stretches the popup to the whole
-	* panel width.
+	* **It is a width, not a longer label.** The host sizes the
+	* button's box to its content and lets the enclosing column
+	* stretch it, so the label stays the label and how wide the
+	* row is stays layout's answer — including an answer nobody
+	* can predict, like a dock the user just dragged. It used to
+	* be spelled by padding the label with spaces out to a width
+	* the caller had to supply, which is why it once carried a
+	* warning against using it inside an anchored popup that hugs
+	* its content: a box sized by its own padded text cannot hug.
+	* A box sized by its content can, and the stretch is then what
+	* widens every row to the widest one — so a menu no longer
+	* pads its labels to align them.
+	*
+	* A label too long for the width it is given is truncated at
+	* the tail with an `…`.
 	*/
 	fullWidth: boolean;
 	/**
@@ -2111,6 +2177,41 @@ type WidgetSpec = {
 	*/
 	rows: number;
 	key?: string | null;
+} | {
+	"kind": "label";
+	text: string;
+	style?: Partial<OverlayOptions>;
+	/**
+	* Indent into the field column of a form whose controls share
+	* this label width. `0` = flush left.
+	*/
+	labelWidth: number;
+	/**
+	* Two or more styled runs on the one row — a state glyph in the
+	* state's colour, then the name it belongs to. When non-empty
+	* these replace `text`, exactly as they do on a
+	* `TextPropertyEntry`; `style` still covers the whole row.
+	* Without this a plugin needing two inks on a line has to drop
+	* to `Raw`, which is a list of whole rows and no longer a label.
+	*/
+	segments?: Array<StyledSegment>;
+	/**
+	* Break the text across rows instead of clipping it, at the width
+	* layout settles on. Continuation rows start at the line's own
+	* leading indent — the marker gutter and `label_width` count, so a
+	* wrapped field hint stays inside the field column — and a word too
+	* long for a row of its own is broken rather than run off the edge.
+	*
+	* The alternative is the plugin wrapping the prose itself, which
+	* means deciding the width, which is layout's answer and not the
+	* plugin's: see `fresh_ui::desc::Wrap`.
+	*/
+	wrap: boolean;
+	/**
+	* How the row marks itself when it does not fit. See [`Elide`].
+	* Ignored when `wrap` is set.
+	*/
+	elide: Elide;
 } | {
 	"kind": "raw";
 	entries: Array<TextPropertyEntry>;
@@ -2774,15 +2875,25 @@ type RemoteAgentSpec = {
 	base_env?: [string, string][];
 	/**
 	* When true, attach as a NEW window (born-attached, coexisting with the
-	* existing windows) instead of the default global restart that replaces the
-	* whole editor's authority. The Orchestrator sets this so a cloud session is
-	* a real session row beside local ones.
+	* existing windows) rather than re-pointing the window showing the current
+	* project. The Orchestrator sets this so a cloud session is a real session
+	* row beside local ones.
 	*/
 	window?: boolean;
 	/** Window label (window mode only). Omit to use the transport's display. */
 	label?: string;
 	/** Optional agent argv for the new window's seed terminal (window mode). */
 	command?: string[];
+	/**
+	* Grow this *preparing* window (from `createPreparingWindow`) into the
+	* session instead of minting a new one — window mode only. The
+	* Orchestrator opens a placeholder the user lands in while the connect
+	* runs, so a remote workspace is somewhere to be from the moment it is
+	* asked for, and a connect that fails reports on that page rather than
+	* only in the dock. Ignored if the window is gone by the time the connect
+	* lands.
+	*/
+	adopt_window?: number;
 };
 type RemoteIndicatorStatePayload = {
 	kind: "local";
@@ -3335,6 +3446,27 @@ interface EditorAPI {
 	*/
 	envActive(): boolean;
 	/**
+	* Launched by a bare `fresh` in Orchestrator mode. Exposed to JS as
+	* `editor.orchestratorMode()`. The launch, not the `orchestrator_mode`
+	* preference, which stays on for `fresh FILE`. Plugins in the mode use
+	* it to override their own settings.
+	*/
+	orchestratorMode(): boolean;
+	/**
+	* Whether the left dock slot is open: a panel is in it, or the host is
+	* holding the column for one its manifest declared. Exposed to JS as
+	* `editor.dockOpen()`. The plugin that fills the dock mounts it at
+	* `ready` iff this is true.
+	*/
+	dockOpen(): boolean;
+	/**
+	* The dock column's width in cells, open or not; `0` when the terminal
+	* is too narrow for a dock. Exposed to JS as `editor.dockCols()`. Lay
+	* dock content out to this: the host owns the width and re-fits it on
+	* resize.
+	*/
+	dockCols(): number;
+	/**
 	* The environment core detected in the workspace, as a JSON string
 	* (`{name, kind, snippet}`) or empty when none. Exposed to JS as
 	* `editor.detectedEnv()`. Detection lives only in core; the env-manager
@@ -3569,6 +3701,25 @@ interface EditorAPI {
 	*/
 	setSetting(path: string, value: unknown): boolean;
 	/**
+	* Persist a single core config setting to the user's config file.
+	* 
+	* The durable counterpart to `setSetting`: `setSetting` patches the
+	* running editor and is gone at exit, this writes `config.json` the way
+	* the Settings UI does (same layer resolution, same comment-preserving
+	* rewrite) *and* applies the value immediately, so a checkbox a plugin
+	* draws can own a real setting.
+	* 
+	* `path` is dot-separated (e.g. `"orchestrator_mode"`,
+	* `"editor.tab_size"`). The host refuses a path that is not a real
+	* config setting rather than writing a key that would be silently
+	* dropped on the next load, and says so in the status bar.
+	* 
+	* Returns `true` if the write was queued; it is applied asynchronously,
+	* so a following `getConfig()` reflects it only after the editor
+	* processes the command.
+	*/
+	saveSetting(path: string, value: unknown): boolean;
+	/**
 	* Reload theme registry from disk
 	* Call this after installing theme packages or saving new themes
 	*/
@@ -3611,6 +3762,12 @@ interface EditorAPI {
 	* review-diff comments keyed off git state.
 	*/
 	getDataDir(): string;
+	/**
+	* The user's home directory as the editor resolved it, or `""` when it
+	* has none. A plugin reading a dotfile asks here rather than reading
+	* `$HOME`, which no test can redirect per-editor.
+	*/
+	getHomeDir(): string;
 	/**
 	* Directory holding terminal scrollback backing files for the current
 	* working directory. Each project root / worktree has its own subdir, so
@@ -4034,6 +4191,15 @@ interface EditorAPI {
 	* be RGB arrays or theme-key strings, plus `bold`/`italic`. Theme
 	* keys are resolved at render time so the label follows theme
 	* changes live.
+	* 
+	* `options.padToColumn` (number) pads the text so it *ends* at that
+	* column of the row, instead of the usual single space of inlay
+	* padding — use it for decoration that has to hold a column, such as
+	* the right edge of a box drawn around a block. The padding is
+	* measured as the row is laid out, so it holds the column even for
+	* the frames between an edit and the `lines_changed` that reports it;
+	* a width you compute here cannot, since your view of the buffer
+	* always trails the one being drawn.
 	*/
 	addVirtualTextStyled(bufferId: number, virtualTextId: string, position: number, text: string, options: Record<string, unknown>, before: boolean): boolean;
 	/**
@@ -4436,18 +4602,15 @@ interface EditorAPI {
 	setBufferShowCursors(bufferId: number, show: boolean): boolean;
 	/**
 	* Choose the grammar a virtual buffer is highlighted with.
-	*
-	* Panel buffers are named `*<panel id>*`, which resolves to no grammar.
-	* A plugin composing a known text shape into one calls this so the host
-	* highlights it instead of the plugin painting per-row overlays. `name`
-	* is resolved like a virtual buffer's own name, so an extension in it
-	* (`"stream.diff"`) selects the grammar.
+	* 
+	* Panel buffers are named `*<panel id>*`, which resolves to no
+	* grammar; a plugin composing a known text shape into one calls this
+	* so the host highlights it instead of the plugin painting overlays.
 	*/
 	setBufferLanguage(bufferId: number, name: string): boolean;
 	/**
-	* Show old/new diff line numbers in a composed diff stream's gutter. The
-	* host derives them from the stream's `@@` headers when the content is
-	* set, so the plugin never numbers a row itself.
+	* Show old/new diff line numbers in a composed diff stream's gutter,
+	* derived by the host from the stream's `@@` headers.
 	*/
 	setBufferDiffGutter(bufferId: number, enabled: boolean): boolean;
 	/**
@@ -4815,7 +4978,7 @@ interface EditorAPI {
 	* Mount a declarative widget panel as a centered floating
 	* overlay (not bound to any virtual buffer).
 	*/
-	mountFloatingWidget(panelId: number, specObj: unknown, widthPct: number, heightPct: number, asDock?: boolean, focusMarker?: boolean, title?: string, closable?: boolean, startBlurred?: boolean, mode?: string): boolean;
+	mountFloatingWidget(panelId: number, specObj: unknown, widthPct: number, heightPct: number, asDock?: boolean, focusMarker?: boolean, title?: string, closable?: boolean, startBlurred?: boolean, mode?: string, labelAlign?: string): boolean;
 	/**
 	* Mount a declarative widget panel as a **sidebar section**: a titled,
 	* collapsible section of the file explorer's column, appended after
@@ -4853,9 +5016,11 @@ interface EditorAPI {
 	unmountFloatingWidget(panelId: number): boolean;
 	/**
 	* Control a mounted floating panel's placement / focus without
-	* re-sending its spec. `op`: "dock" (`arg` = width in columns),
-	* "center", "focus", "blur", "fullscreen" (`arg != 0` makes a
-	* centered panel cover the whole frame over the dock), "sidebar"
+	* re-sending its spec. `op`: "dock" (re-anchor as the left dock and
+	* focus; `arg` unused — the width is the editor's), "dock_width"
+	* (`arg` = width in columns; sticks like a drag, across resizes and
+	* launches), "center", "focus", "blur", "fullscreen" (`arg != 0` makes
+	* a centered panel cover the whole frame over the dock), "sidebar"
 	* (`arg` = requested rows; re-anchors the panel as a sidebar section
 	* under the file explorer — "dock" / "center" re-anchor it back out),
 	* "sidebar_rows" (`arg` = requested rows for a section; a divider the
@@ -4906,13 +5071,13 @@ interface EditorAPI {
 	* The payload is a JS object describing filesystem + spawner +
 	* terminal wrapper + display label. The canonical schema lives in
 	* the `AuthorityPayload` type in `fresh-editor`; plugins should
-	* hand-build objects that match it. Fire-and-forget: the editor
-	* restarts as part of the transition, so the plugin is reloaded
-	* before any follow-up work can run on this call's return value.
+	* hand-build objects that match it. Fire-and-forget: returns before the
+	* authority is live and reloads nothing, so follow-up work belongs in an
+	* `authority_changed` handler.
 	*/
 	setAuthority(payload: AuthorityPayload): boolean;
 	/**
-	* Restore the default local authority. Same restart semantics as
+	* Restore the default local authority on this window. Same semantics as
 	* `setAuthority`.
 	*/
 	clearAuthority(): void;
@@ -4966,9 +5131,8 @@ interface EditorAPI {
 	* ```
 	* 
 	* The override sticks until replaced or cleared via
-	* `clearRemoteIndicatorState`. Editor restart (e.g. on
-	* `setAuthority`) resets it — plugins must reassert after a
-	* post-restart init if they want the override to persist.
+	* `clearRemoteIndicatorState`. It survives an authority change but not a
+	* relaunch.
 	*/
 	setRemoteIndicatorState(state: RemoteIndicatorStatePayload): boolean;
 	/**
@@ -5310,6 +5474,81 @@ interface EditorAPI {
 		source: string;
 		plugin: string;
 	}>>;
+}
+/** A machine opened with `editor.openMachine`. Closed on `close()` or plugin unload. */
+interface FreshMachine {
+	id: number;
+	/** "linux" | "macos" | "windows" | "other", as the machine reports. */
+	platform: string;
+	home: string;
+	/** The authority's own label, empty for a plain local one. */
+	label: string;
+	walkTree(root: string, options?: WalkTreeOptions): Promise<WalkTreeResult>;
+	readFilePrefixes(requests: {
+		path: string;
+		maxBytes: number;
+	}[]): Promise<FilePrefix[]>;
+	run(program: string, args?: string[], cwd?: string): Promise<CommandResult>;
+	/** Environment variables, for the names that are set. A remote machine is
+	*  asked with `printenv`; never this computer's values for another machine. */
+	env(names: string[]): Promise<Record<string, string>>;
+	/** Idempotent: closing twice is not an error. */
+	close(): Promise<boolean>;
+}
+interface WalkTreeOptions {
+	/** Directory basenames skipped at every depth. */
+	skipDirs?: string[];
+	includeHidden?: boolean;
+	includeDirs?: boolean;
+	/** Depth below the root; 1 is a direct child. Omitted means unbounded. */
+	maxDepth?: number;
+	maxEntries?: number;
+}
+interface WalkTreeEntry {
+	path: string;
+	/** Path relative to the walk root, "/"-separated on every platform. */
+	rel: string;
+	kind: "file" | "dir" | "symlink";
+	/** Unix timestamp. */
+	mtime: number;
+	size: number;
+}
+interface WalkTreeResult {
+	entries: WalkTreeEntry[];
+	/** True when `maxEntries` stopped the walk early. */
+	truncated: boolean;
+}
+/** One result from `readFilePrefixes`: `text` on success, else `error`. */
+interface FilePrefix {
+	path: string;
+	text?: string;
+	error?: string;
+}
+/** A non-zero `code` resolves rather than rejecting. */
+interface CommandResult {
+	code: number;
+	stdout: string;
+	stderr: string;
+}
+/** Bare shapes bound to machine 0, the active window's own authority. */
+interface EditorAPI {
+	/** Open a machine to read without attaching it to a window.
+	*  `{ kind: "window", window?: number }` borrows a window's own authority.
+	*  `{ kind: "ssh" | "kubectl-exec", ... }` connects to a machine nothing is
+	*  attached to; it is read-only, so `run` rejects. Anything else is an
+	*  `AuthorityPayload`, as `setAuthority` takes. */
+	openMachine(spec: {
+		kind: "window";
+		window?: number;
+	} | RemoteAgentTransport | AuthorityPayload): Promise<FreshMachine>;
+	walkTree(root: string, options?: WalkTreeOptions): Promise<WalkTreeResult>;
+	readFilePrefixes(requests: {
+		path: string;
+		maxBytes: number;
+	}[]): Promise<FilePrefix[]>;
+	/** Unlike `spawnHostProcess`, a remote authority runs the command there. */
+	runOnTarget(program: string, args?: string[], cwd?: string): Promise<CommandResult>;
+	machineEnv(names: string[]): Promise<Record<string, string>>;
 }
 /**
 * Typed overload of `editor.getPluginApi`. When the caller passes a

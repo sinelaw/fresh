@@ -12,7 +12,7 @@
 //! which is what the settings buy; `orchestrator_dock.rs` already covers
 //! the toggles themselves.
 
-use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness};
+use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness, HarnessOptions};
 use crate::common::tracing::init_tracing_from_env;
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::{Config, PluginConfig};
@@ -52,6 +52,21 @@ fn setup(settings: serde_json::Value) -> (tempfile::TempDir, PathBuf, Config) {
     (temp_dir, root, config)
 }
 
+/// A harness with the host's startup chrome kept, so the `ready` the test
+/// fires opens the dock the way `main` would.
+fn launch(config: Config, root: PathBuf) -> EditorTestHarness {
+    EditorTestHarness::create(
+        120,
+        32,
+        HarnessOptions::new()
+            .with_config(config)
+            .with_working_dir(root)
+            .without_empty_plugins_dir()
+            .with_startup_chrome(),
+    )
+    .unwrap()
+}
+
 /// Toggle the dock open via the command palette and wait for it to render
 /// *and* take keyboard focus (mirrors `orchestrator_dock::open_dock`).
 fn open_dock(h: &mut EditorTestHarness) {
@@ -62,20 +77,18 @@ fn open_dock(h: &mut EditorTestHarness) {
     h.wait_until(|h| h.screen_to_string().contains("Toggle Dock"))
         .unwrap();
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("Orchestrator") && h.editor().is_dock_focused())
+    h.wait_until(|h| h.screen_to_string().contains("+ New") && h.editor().is_dock_focused())
         .unwrap();
 }
 
-/// Expand the dock's collapsible "Filters" section, which holds the
-/// density button and the two checkboxes.
-fn expand_filters(h: &mut EditorTestHarness) {
-    let screen = h.screen_to_string();
-    let frow = screen
-        .lines()
-        .position(|l| l.contains("Filters"))
-        .unwrap_or_else(|| panic!("screen missing 'Filters':\n{screen}")) as u16;
-    h.mouse_click(3, frow).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("Manage"))
+/// Open the dock header's `⋯` menu, which holds the density rows and the
+/// two show switches (the applied ones wear a `●`).
+fn open_dock_menu(h: &mut EditorTestHarness) {
+    let (mcol, mrow) = h
+        .find_text_on_screen("⋯")
+        .unwrap_or_else(|| panic!("screen missing '⋯':\n{}", h.screen_to_string()));
+    h.mouse_click(mcol, mrow).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Manage workspaces"))
         .unwrap();
 }
 
@@ -88,9 +101,10 @@ fn default_view_setting_opens_dock_compact() {
     let mut h = EditorTestHarness::with_config_and_working_dir(120, 32, config, root).unwrap();
     h.render().unwrap();
     open_dock(&mut h);
-    h.wait_until(|h| h.screen_to_string().contains("view: compact"))
+    open_dock_menu(&mut h);
+    h.wait_until(|h| h.screen_to_string().contains("● compact view"))
         .unwrap();
-    h.assert_screen_not_contains("view: card");
+    h.assert_screen_not_contains("● card view");
 }
 
 /// No setting ⇒ compact density. The dock is a switcher first, and one line
@@ -103,9 +117,10 @@ fn default_view_setting_absent_opens_dock_compact() {
     let mut h = EditorTestHarness::with_config_and_working_dir(120, 32, config, root).unwrap();
     h.render().unwrap();
     open_dock(&mut h);
-    h.wait_until(|h| h.screen_to_string().contains("view: compact"))
+    open_dock_menu(&mut h);
+    h.wait_until(|h| h.screen_to_string().contains("● compact view"))
         .unwrap();
-    h.assert_screen_not_contains("view: card");
+    h.assert_screen_not_contains("● card view");
 }
 
 #[test]
@@ -114,13 +129,14 @@ fn default_view_setting_card_opens_dock_card() {
     let mut h = EditorTestHarness::with_config_and_working_dir(120, 32, config, root).unwrap();
     h.render().unwrap();
     open_dock(&mut h);
-    h.wait_until(|h| h.screen_to_string().contains("view: card"))
+    open_dock_menu(&mut h);
+    h.wait_until(|h| h.screen_to_string().contains("● card view"))
         .unwrap();
 }
 
-/// The two Filters checkboxes start where the settings say: "all
-/// worktrees" checked, "show empty" unchecked — the inverse of both
-/// shipped defaults, so a stuck default would fail this.
+/// The two show switches start where the settings say: "all worktrees"
+/// on, "show empty" off — the inverse of both shipped defaults, so a
+/// stuck default would fail this.
 #[test]
 fn filter_checkbox_settings_seed_the_dock() {
     let (_tmp, root, config) = setup(serde_json::json!({
@@ -130,10 +146,10 @@ fn filter_checkbox_settings_seed_the_dock() {
     let mut h = EditorTestHarness::with_config_and_working_dir(120, 32, config, root).unwrap();
     h.render().unwrap();
     open_dock(&mut h);
-    expand_filters(&mut h);
+    open_dock_menu(&mut h);
     h.wait_until(|h| {
         let s = h.screen_to_string();
-        s.contains("[v] all worktrees") && s.contains("[ ] show empty")
+        s.contains("● all worktrees") && s.contains("show empty") && !s.contains("● show empty")
     })
     .unwrap();
 }
@@ -144,10 +160,10 @@ fn filter_checkbox_settings_seed_the_dock() {
 #[test]
 fn auto_open_setting_shows_dock_unfocused_at_startup() {
     let (_tmp, root, config) = setup(serde_json::json!({ "autoOpenDock": true }));
-    let mut h = EditorTestHarness::with_config_and_working_dir(120, 32, config, root).unwrap();
+    let mut h = launch(config, root);
     h.render().unwrap();
     h.editor_mut().fire_ready_hook();
-    h.wait_until(|h| h.screen_to_string().contains("Filters"))
+    h.wait_until(|h| h.screen_to_string().contains("+ New"))
         .unwrap();
     assert!(
         !h.editor().is_dock_focused(),
@@ -155,16 +171,50 @@ fn auto_open_setting_shows_dock_unfocused_at_startup() {
     );
 }
 
-/// Auto-open is opt-in: the ready hook alone leaves the dock closed.
+/// Auto-open is the default: the ready hook alone brings the dock up,
+/// unfocused — a switcher nobody knows to open is not one.
 #[test]
-fn auto_open_defaults_off() {
+fn auto_open_defaults_on() {
     let (_tmp, root, config) = setup(serde_json::json!({}));
-    let mut h = EditorTestHarness::with_config_and_working_dir(120, 32, config, root).unwrap();
+    let mut h = launch(config, root);
     h.render().unwrap();
     h.editor_mut().fire_ready_hook();
-    // Let the ready hook round-trip through the plugin thread: open the
-    // dock the normal way and close it again, which can only complete
-    // after the plugin has processed everything queued before it.
+    h.wait_until(|h| h.screen_to_string().contains("+ New"))
+        .unwrap();
+    assert!(
+        !h.editor().is_dock_focused(),
+        "the auto-opened dock must not steal keyboard focus"
+    );
+}
+
+/// `autoOpenDock: false` keeps the dock closed until it is toggled.
+#[test]
+fn auto_open_can_be_switched_off() {
+    let (_tmp, root, config) = setup(serde_json::json!({ "autoOpenDock": false }));
+    let mut h = launch(config, root);
+    h.render().unwrap();
+    h.editor_mut().fire_ready_hook();
+    // Let the ready hook round-trip through the plugin thread with a
+    // command that does not touch the dock — the Machines dialog — and
+    // only then look: a dock that wrongly auto-opened is on screen now,
+    // and the assertion fails instead of the toggle below closing it and
+    // the wait after it hanging.
+    h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.wait_for_prompt().unwrap();
+    h.type_text("Orchestrator: Machines").unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Orchestrator: Machines"))
+        .unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    // The dialog's own button, not the palette row that also says
+    // "Machines".
+    h.wait_until(|h| h.screen_to_string().contains("Add machine"))
+        .unwrap();
+    h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| !h.screen_to_string().contains("Add machine"))
+        .unwrap();
+    h.assert_screen_not_contains("+ New");
+    // Then the dock the normal way, and closed again.
     open_dock(&mut h);
     h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
         .unwrap();
@@ -175,6 +225,6 @@ fn auto_open_defaults_off() {
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
     // A dock auto-opened at ready would have stayed mounted behind the
     // toggle; with auto-open off there is nothing left on screen.
-    h.wait_until(|h| !h.screen_to_string().contains("Filters"))
+    h.wait_until(|h| !h.screen_to_string().contains("+ New"))
         .unwrap();
 }

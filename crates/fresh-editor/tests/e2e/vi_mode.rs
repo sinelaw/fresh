@@ -1416,7 +1416,18 @@ fn test_vi_linewise_changes_respect_read_only_buffers() {
             .mark_buffer_read_only(buffer_id, true);
         enable_vi_mode(&mut harness);
 
-        send_vi_operator_motion(&mut harness, 'c', 'c');
+        // Not `send_vi_operator_motion`: that waits for insert mode after a
+        // `c`, and Vim does not enter it here. `cc` on a non-modifiable buffer
+        // reports E21 and stays in normal mode (checked against Vim 9.1) —
+        // entering insert would leave the caret in a mode that cannot type.
+        send_vi_key(&mut harness, 'c');
+        harness
+            .wait_until(|h| h.editor().editor_mode() == Some("vi-operator-pending".to_string()))
+            .unwrap();
+        send_vi_key(&mut harness, 'c');
+        harness
+            .wait_until(|h| h.editor().editor_mode() == Some("vi-normal".to_string()))
+            .unwrap();
 
         harness.assert_buffer_content("AAA\nBBB\n");
     }
@@ -1564,21 +1575,26 @@ fn test_vi_delete_char_paste_uses_deleted_char() {
 fn test_vi_empty_characterwise_delete_does_not_cut_line() {
     let (mut harness, _temp_dir) = vi_mode_harness(80, 24);
 
-    let fixture = TestFixture::new("test.txt", "abc\n").unwrap();
+    // Two lines, the second empty: `G` lands on a line that genuinely has no
+    // character to delete. The fixture used to be "abc\n", where `G` reached
+    // an empty line only because it overshot past the trailing newline — so
+    // once `G` was corrected to stop on the last line with content, `x` there
+    // had a character under it and this case stopped testing what it says.
+    let fixture = TestFixture::new("test.txt", "abc\n\n").unwrap();
     harness.open_file(&fixture.path).unwrap();
     harness.render().unwrap();
 
     enable_vi_mode(&mut harness);
 
     send_vi_key(&mut harness, 'X');
-    harness.assert_buffer_content("abc\n");
+    harness.assert_buffer_content("abc\n\n");
 
     send_vi_operator_motion(&mut harness, 'd', '0');
-    harness.assert_buffer_content("abc\n");
+    harness.assert_buffer_content("abc\n\n");
 
     send_vi_key(&mut harness, 'G');
     send_vi_key(&mut harness, 'x');
-    harness.assert_buffer_content("abc\n");
+    harness.assert_buffer_content("abc\n\n");
 }
 
 /// Test 'dw' updates the unnamed register for characterwise paste
@@ -1730,8 +1746,14 @@ fn test_vi_visual_delete() {
         .unwrap();
     harness.render().unwrap();
 
-    // "hello " should be deleted, leaving "world" (semantic waiting)
-    harness.wait_for_buffer_content("world\n").unwrap();
+    // A visual selection includes the character under its head, so `vw` covers
+    // `hello w` and `d` leaves `orld` — one character more than `dw` would
+    // remove. Checked against Vim 9.1.
+    //
+    // This asserted "world\n" while `vW` (test_vi_visual_word_forward_yanks_
+    // selected_text) asserted the inclusive form, so the two were inconsistent
+    // with each other as well as with Vim; `vi_vis_word` was the odd one out.
+    harness.wait_for_buffer_content("orld\n").unwrap();
 }
 
 /// Test 'V' enters visual line mode and 'd' deletes line
@@ -2525,4 +2547,117 @@ fn test_vi_escape_from_insert_moves_cursor_left() {
     harness.wait_until(|h| h.cursor_position() == 1).unwrap();
 
     harness.assert_buffer_content("ABhello\n");
+}
+
+// ============================================================================
+// Confirmation dialogs under vi mode
+// ============================================================================
+
+/// A confirmation dialog has to survive a modal-editing plugin.
+///
+/// Vi mode installs its own key handler and reads bare letters as motions and
+/// operators — `d` is an operator, `c` changes, `s` substitutes. The dialog's
+/// layer owns the keyboard while it is up, so those letters have to reach the
+/// dialog as accelerators and *not* also edit the buffer behind it.
+#[test]
+fn a_confirmation_dialog_takes_the_keyboard_from_vi_mode() {
+    let (mut harness, _tmp) = vi_mode_harness(100, 30);
+    // A file-backed buffer: hot exit leaves unnamed buffers out of the quit
+    // prompt entirely, and it is the quit prompt this is about.
+    let file = harness.editor().working_dir().join("notes.txt");
+    std::fs::write(&file, "alpha\n").unwrap();
+    harness.open_file(&file).unwrap();
+    enable_vi_mode(&mut harness);
+
+    // Something unsaved, typed in vi's own insert mode.
+    send_vi_key(&mut harness, 'i');
+    harness
+        .wait_until(|h| h.editor().editor_mode() == Some("vi-insert".to_string()))
+        .unwrap();
+    harness.type_text("EDITED").unwrap();
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness
+        .wait_until(|h| h.editor().editor_mode() == Some("vi-normal".to_string()))
+        .unwrap();
+    let before = harness.get_buffer_content();
+
+    harness
+        .send_key(KeyCode::Char('q'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Unsaved Changes");
+    harness.assert_screen_contains("Save and Quit");
+
+    // `l` is vi's "move right" and is nobody's accelerator here: the modal
+    // must swallow it rather than let it move the caret behind the card.
+    harness
+        .send_key(KeyCode::Char('l'), KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Unsaved Changes");
+
+    // The buttons still move and the buffer is untouched.
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    let row = (0..30)
+        .find(|r| harness.screen_row_text(*r).contains("Save and Quit"))
+        .expect("the button row is on screen");
+    assert!(
+        harness
+            .screen_row_text(row)
+            .contains("[ Discard and Quit ]"),
+        "arrows must move the armed button under vi mode; row was {:?}",
+        harness.screen_row_text(row)
+    );
+    assert_eq!(
+        harness.get_buffer_content(),
+        before,
+        "no keystroke may reach the buffer while the dialog is up"
+    );
+
+    // Esc is vi's "back to normal mode" *and* the dialog's retreat. The
+    // dialog has it while it is up.
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    assert!(!harness.should_quit());
+    assert!(!harness.screen_to_string().contains("Unsaved Changes"));
+}
+
+/// And the letters a button marks answer it, even though vi mode binds the
+/// same bare letters to operators.
+#[test]
+fn a_dialog_accelerator_beats_a_vi_operator() {
+    let (mut harness, _tmp) = vi_mode_harness(100, 30);
+    let file = harness.editor().working_dir().join("notes.txt");
+    std::fs::write(&file, "alpha\n").unwrap();
+    harness.open_file(&file).unwrap();
+    enable_vi_mode(&mut harness);
+
+    send_vi_key(&mut harness, 'i');
+    harness
+        .wait_until(|h| h.editor().editor_mode() == Some("vi-insert".to_string()))
+        .unwrap();
+    harness.type_text("EDITED").unwrap();
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness
+        .wait_until(|h| h.editor().editor_mode() == Some("vi-normal".to_string()))
+        .unwrap();
+
+    harness
+        .send_key(KeyCode::Char('q'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.assert_screen_contains("Discard and Quit");
+
+    // `d` is vi's delete operator and the D of "Discard and Quit".
+    harness
+        .send_key(KeyCode::Char('d'), KeyModifiers::NONE)
+        .unwrap();
+    harness.render().unwrap();
+    assert!(
+        harness.should_quit(),
+        "the dialog's accelerator must win over vi's operator"
+    );
 }

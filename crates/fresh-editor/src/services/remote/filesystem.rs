@@ -679,57 +679,109 @@ impl FileSystem for RemoteFileSystem {
         Ok(())
     }
 
-    fn walk_files(
+    fn walk(
         &self,
         root: &Path,
-        skip_dirs: &[&str],
+        opts: &fresh_editor_core::model::filesystem::WalkOptions<'_>,
         cancel: &std::sync::atomic::AtomicBool,
-        on_file: &mut dyn FnMut(&Path, &str) -> bool,
+        on_entry: &mut dyn FnMut(fresh_editor_core::model::filesystem::WalkEntry<'_>) -> bool,
     ) -> io::Result<()> {
+        use fresh_editor_core::model::filesystem::{EntryType, FileMetadata, WalkEntry};
+
         let path_str = root.to_string_lossy();
         let params = serde_json::json!({
             "path": path_str,
-            "skip_dirs": skip_dirs,
+            "skip_dirs": opts.skip_dirs,
+            "include_hidden": opts.include_hidden,
+            "include_dirs": opts.include_dirs,
+            "max_depth": opts.max_depth,
+            "max_files": opts.max_entries,
         });
 
-        // Server-side walk: the remote agent walks the tree and streams
-        // back batches of relative paths.  We process each batch as it
-        // arrives, keeping memory bounded.
-        let (mut data_rx, result_rx) = self
+        // The agent walks server-side and streams batches with the metadata it
+        // already stat'd. A new `walk_entries` method rather than new params
+        // on `walk_files`: an old agent would ignore them and stream an empty
+        // result, whereas an unknown method fails loudly. The id lets a
+        // consumer that stops reading cancel the producer.
+        let (request_id, mut data_rx, result_rx) = self
             .channel
-            .request_streaming_blocking("walk_files", params)
+            .request_streaming_id_blocking("walk_entries", params)
             .map_err(Self::to_io_error)?;
 
-        // Process streaming batches
-        while let Some(data) = data_rx.blocking_recv() {
-            if cancel.load(std::sync::atomic::Ordering::Relaxed) {
-                // Drop receivers — server sees send fail and stops
-                drop(data_rx);
-                drop(result_rx);
-                return Ok(());
-            }
+        // `recv_chunk_blocking` also notices a gone caller and a quiet machine.
+        loop {
+            let data = match crate::services::remote::channel::recv_chunk_blocking(
+                &mut data_rx,
+                cancel,
+                crate::services::remote::channel::STREAM_IDLE_TIMEOUT,
+            ) {
+                crate::services::remote::channel::ChunkWait::Data(data) => data,
+                crate::services::remote::channel::ChunkWait::Closed => break,
+                crate::services::remote::channel::ChunkWait::Cancelled => {
+                    self.channel.cancel_detached(request_id);
+                    drop(data_rx);
+                    drop(result_rx);
+                    return Ok(());
+                }
+                crate::services::remote::channel::ChunkWait::Idle => {
+                    self.channel.cancel_detached(request_id);
+                    drop(data_rx);
+                    drop(result_rx);
+                    // An error, not a short answer: a truncated walk must not look complete.
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        format!(
+                            "{}: the machine stopped sending entries",
+                            root.to_string_lossy()
+                        ),
+                    ));
+                }
+            };
 
-            if let Some(files) = data.get("files").and_then(|v| v.as_array()) {
-                for file in files {
-                    if cancel.load(std::sync::atomic::Ordering::Relaxed) {
-                        drop(result_rx);
-                        return Ok(());
-                    }
-                    if let Some(rel) = file.as_str() {
-                        let abs = root.join(rel);
-                        if !on_file(&abs, rel) {
-                            // Caller limit reached — drop receivers to signal
-                            // cancellation to the server
-                            drop(result_rx);
-                            return Ok(());
-                        }
-                    }
+            let Some(entries) = data.get("entries").and_then(|v| v.as_array()) else {
+                continue;
+            };
+            for entry in entries {
+                if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+                    self.channel.cancel_detached(request_id);
+                    drop(data_rx);
+                    drop(result_rx);
+                    return Ok(());
+                }
+                let Some(rel) = entry.get("rel").and_then(|v| v.as_str()) else {
+                    continue;
+                };
+                let abs = root.join(rel);
+                let entry_type = match entry.get("kind").and_then(|v| v.as_str()) {
+                    Some("dir") => EntryType::Directory,
+                    Some("symlink") => EntryType::Symlink,
+                    _ => EntryType::File,
+                };
+                let mut metadata =
+                    FileMetadata::new(entry.get("size").and_then(|v| v.as_u64()).unwrap_or(0));
+                metadata.modified = entry
+                    .get("mtime")
+                    .and_then(|v| v.as_f64())
+                    .and_then(|mtime| {
+                        std::time::UNIX_EPOCH
+                            .checked_add(std::time::Duration::from_secs_f64(mtime.max(0.0)))
+                    });
+
+                if !on_entry(WalkEntry {
+                    path: &abs,
+                    rel,
+                    entry_type,
+                    metadata,
+                }) {
+                    self.channel.cancel_detached(request_id);
+                    drop(data_rx);
+                    drop(result_rx);
+                    return Ok(());
                 }
             }
         }
 
-        // Drain the final result — channel may already be closed if the
-        // server finished before we read this, which is fine.
+        // Drain the final result; the channel may already be closed, which is fine.
         drop(result_rx.blocking_recv());
         Ok(())
     }

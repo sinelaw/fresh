@@ -628,9 +628,14 @@ impl Editor {
                 .to_string_lossy()
                 .to_string();
             let type_str = if is_dir { "directory" } else { "file" };
-            self.start_prompt(
+            let confirm = crate::app::confirm_dialog::delete(
                 t!("explorer.delete_confirm", "type" = type_str, name = &name).to_string(),
+            )
+            .detail(path.display().to_string());
+            self.start_confirm_prompt(
+                confirm.body.clone(),
                 PromptType::ConfirmDeleteFile { path, is_dir },
+                confirm,
             );
         } else {
             let count = paths.len();
@@ -639,14 +644,18 @@ impl Editor {
             // about to be deleted. Include '…' when there are more than
             // fit in the minibuffer budget.
             let names = format_path_preview_for_prompt(&all_paths, 3);
-            self.start_prompt(
+            let confirm = crate::app::confirm_dialog::delete(
                 t!(
                     "explorer.delete_multi_confirm",
                     count = count,
                     names = &names
                 )
                 .to_string(),
+            );
+            self.start_confirm_prompt(
+                confirm.body.clone(),
                 PromptType::ConfirmMultiDelete { paths: all_paths },
+                confirm,
             );
         }
     }
@@ -1086,13 +1095,15 @@ impl Editor {
 
             if self.authority().filesystem.exists(&dst_path) {
                 let name = truncate_name_for_prompt(&file_name.to_string_lossy(), 40);
-                self.start_prompt(
-                    t!("explorer.paste_conflict", name = &name).to_string(),
+                let confirm = crate::app::confirm_dialog::paste_conflict(&name);
+                self.start_confirm_prompt(
+                    confirm.body.clone(),
                     crate::view::prompt::PromptType::ConfirmPasteConflict {
                         src,
                         dst: dst_path,
                         is_cut,
                     },
+                    confirm,
                 );
             } else {
                 self.perform_file_explorer_paste(src, dst_path, is_cut);
@@ -1152,14 +1163,16 @@ impl Editor {
                         .to_string_lossy(),
                     40,
                 );
-                self.start_prompt(
-                    t!("explorer.paste_conflict_multi", name = &name).to_string(),
+                let confirm = crate::app::confirm_dialog::multi_paste_conflict(&name);
+                self.start_confirm_prompt(
+                    confirm.body.clone(),
                     crate::view::prompt::PromptType::ConfirmMultiPasteConflict {
                         safe,
                         confirmed: Vec::new(),
                         pending: conflicts,
                         is_cut,
                     },
+                    confirm,
                 );
             }
         }
@@ -1890,21 +1903,20 @@ impl crate::app::window::Window {
         decorations: Vec<crate::view::file_tree::FileExplorerDecoration>,
     ) {
         let root = self.root.clone();
+        // One root for the whole batch: its canonical spelling is the same
+        // answer for every path, and resolving it per path was two
+        // `canonicalize` syscalls per decoration.
+        let explorer_root = crate::app::ExplorerRoot::new(&root);
         let normalized: Vec<crate::view::file_tree::FileExplorerDecoration> = decorations
             .into_iter()
             .filter_map(|mut decoration| {
                 let path = if decoration.path.is_absolute() {
-                    decoration.path
+                    std::mem::take(&mut decoration.path)
                 } else {
                     root.join(&decoration.path)
                 };
-                let path = crate::app::normalize_path(&path);
-                if crate::app::explorer_path_under_root(&path, &root) {
-                    decoration.path = crate::app::normalize_explorer_plugin_path(&path, &root);
-                    Some(decoration)
-                } else {
-                    None
-                }
+                decoration.path = explorer_root.admit(&path)?;
+                Some(decoration)
             })
             .collect();
 
@@ -1928,21 +1940,18 @@ impl crate::app::window::Window {
         slots: Vec<fresh_core::file_explorer::FileExplorerSlotEntry>,
     ) {
         let root = self.root.clone();
+        // One root for the whole batch, as in the decoration handler above.
+        let explorer_root = crate::app::ExplorerRoot::new(&root);
         let normalized: Vec<fresh_core::file_explorer::FileExplorerSlotEntry> = slots
             .into_iter()
             .filter_map(|mut slot| {
                 let path = if slot.path.is_absolute() {
-                    slot.path
+                    std::mem::take(&mut slot.path)
                 } else {
                     root.join(&slot.path)
                 };
-                let path = crate::app::normalize_path(&path);
-                if crate::app::explorer_path_under_root(&path, &root) {
-                    slot.path = crate::app::normalize_explorer_plugin_path(&path, &root);
-                    Some(slot)
-                } else {
-                    None
-                }
+                slot.path = explorer_root.admit(&path)?;
+                Some(slot)
             })
             .collect();
 
@@ -2197,14 +2206,10 @@ impl crate::app::window::Window {
             "expand_file_explorer_to_path: taking file_explorer for async expand to {:?}",
             target_path
         );
-        let runtime_handle = self
-            .resources
-            .tokio_runtime
-            .as_ref()
-            .map(|r| r.handle().clone());
+        let runtime = self.resources.tokio_runtime.clone();
         let sender = self.resources.async_bridge.as_ref().map(|b| b.sender());
         let window_id = self.id;
-        if let (Some(runtime), Some(sender)) = (runtime_handle, sender) {
+        if let (Some(runtime), Some(sender)) = (runtime, sender) {
             // Mark sync as in progress so render knows to keep the layout
             self.file_explorer_sync_in_progress = true;
 

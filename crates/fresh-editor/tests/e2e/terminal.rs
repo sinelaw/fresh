@@ -417,8 +417,8 @@ fn menu_item_fg(
 /// A terminal is a real buffer, so it satisfied the menu's `has_buffer`
 /// condition and Save ran on it: the terminal's own scrollback transcript was
 /// written back over its backing file, reporting "Saved" — and once the
-/// terminal had appended to that file since the last sync, a "File changed on
-/// disk. (o)verwrite, (C)ancel?" prompt for a file the user never edited.
+/// terminal had appended to that file since the last sync, a "File Changed on
+/// Disk" confirmation for a file the user never edited.
 #[test]
 fn test_file_menu_disables_save_for_a_terminal_buffer() {
     let mut harness = harness_or_return!(120, 30);

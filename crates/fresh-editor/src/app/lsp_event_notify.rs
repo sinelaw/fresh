@@ -14,6 +14,28 @@ use super::window::Window;
 impl Window {
     /// Collect all LSP text document changes from an event (recursively for batches)
     pub(super) fn collect_lsp_changes(&self, event: &Event) -> Vec<TextDocumentContentChangeEvent> {
+        self.collect_lsp_changes_for_buffer(self.active_buffer(), event)
+    }
+
+    /// Collect LSP changes for a specific buffer. Plugin commands may edit a
+    /// background buffer, so they cannot use the active-buffer-only wrapper.
+    pub(super) fn collect_lsp_changes_for_buffer(
+        &self,
+        buffer_id: BufferId,
+        event: &Event,
+    ) -> Vec<TextDocumentContentChangeEvent> {
+        let Some(state) = self.buffers.get(&buffer_id) else {
+            debug_assert!(
+                false,
+                "collect_lsp_changes_for_buffer: {buffer_id:?} is not in this window; \
+                 its edit would go unreported to the server"
+            );
+            tracing::warn!(
+                "collect_lsp_changes_for_buffer: no state for {:?}",
+                buffer_id
+            );
+            return Vec::new();
+        };
         match event {
             Event::Insert { position, text, .. } => {
                 tracing::trace!(
@@ -21,10 +43,7 @@ impl Window {
                     position
                 );
                 // For insert: create a zero-width range at the insertion point
-                let (line, character) = self
-                    .active_state()
-                    .buffer
-                    .position_to_lsp_position(*position);
+                let (line, character) = state.buffer.position_to_lsp_position(*position);
                 let lsp_pos = Position::new(line as u32, character as u32);
                 let lsp_range = LspRange::new(lsp_pos, lsp_pos);
                 vec![TextDocumentContentChangeEvent {
@@ -36,14 +55,8 @@ impl Window {
             Event::Delete { range, .. } => {
                 tracing::trace!("collect_lsp_changes: processing Delete range {:?}", range);
                 // For delete: create a range from start to end, send empty string
-                let (start_line, start_char) = self
-                    .active_state()
-                    .buffer
-                    .position_to_lsp_position(range.start);
-                let (end_line, end_char) = self
-                    .active_state()
-                    .buffer
-                    .position_to_lsp_position(range.end);
+                let (start_line, start_char) = state.buffer.position_to_lsp_position(range.start);
+                let (end_line, end_char) = state.buffer.position_to_lsp_position(range.end);
                 let lsp_range = LspRange::new(
                     Position::new(start_line as u32, start_char as u32),
                     Position::new(end_line as u32, end_char as u32),
@@ -63,7 +76,7 @@ impl Window {
                 );
                 let mut all_changes = Vec::new();
                 for sub_event in events {
-                    all_changes.extend(self.collect_lsp_changes(sub_event));
+                    all_changes.extend(self.collect_lsp_changes_for_buffer(buffer_id, sub_event));
                 }
                 all_changes
             }
@@ -200,22 +213,18 @@ impl crate::app::window::Window {
             }
         };
 
-        // Get the file path for language detection
-        // Use buffer's stored language
-        let language = match self
-            .buffers
-            .get(&self.active_buffer())
-            .map(|s| s.language.clone())
-        {
-            Some(l) => l,
-            None => {
-                tracing::debug!("notify_lsp_save: no buffer state");
-                return;
-            }
+        // From `buffer_id`, not the active buffer: Save All saves every modified
+        // buffer, and taking the text from whichever one happens to be focused
+        // hands each server another file's contents under this file's URI
+        // (#3258).
+        let Some(state) = self.buffers.get(&buffer_id) else {
+            tracing::debug!("notify_lsp_save: no buffer state for {:?}", buffer_id);
+            return;
         };
+        let language = state.language.clone();
 
         // Get the full text to send with didSave
-        let full_text = match self.active_state().buffer.to_string() {
+        let full_text = match state.buffer.to_string() {
             Some(t) => t,
             None => {
                 tracing::debug!("notify_lsp_save: buffer not fully loaded");

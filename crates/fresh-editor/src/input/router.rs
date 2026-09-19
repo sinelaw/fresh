@@ -16,7 +16,7 @@
 //! builds a `Layer` list; pure functions decide precedence); this module
 //! extends the pattern to key routing.
 
-use crate::input::keybindings::{Action, KeyContext, KeybindingResolver};
+use crate::input::keybindings::{Action, Key, KeyContext, KeySeq, KeybindingResolver};
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 /// Convert a crossterm `KeyEvent` into the `KeyEventPayload` shape
@@ -187,13 +187,7 @@ pub enum WidgetKeyOutcome {
     /// Esc default: fire a `cancel` widget_event at the focused widget,
     /// then unmount the panel.
     CancelAndUnmount,
-    /// Route a named smart key ("Enter", "Tab", "S-Right", "C-S-Left", …)
-    /// through the widget command dispatcher. The name carries the
-    /// modifiers the kinds' vocabulary distinguishes: `C-` and `S-` on the
-    /// caret keys, so a field extends its selection on Shift+arrow and
-    /// steps a word on Ctrl+arrow (`Text::on_key`); "Shift+Tab" keeps its
-    /// historical spelling.
-    SmartKey(String),
+    SmartKey(KeySeq),
     /// Feed a printable character to the focused TextInput.
     TextChar(char),
     /// Clipboard / selection chord for the focused Text widget.
@@ -240,38 +234,16 @@ pub fn widget_panel_key(
     // the editor there. See [`WidgetPanelView::page`].
     let reader = view.page && !view.focused_widget_is_text;
 
-    let key_name: Option<String> = match code {
-        KeyCode::Tab => Some(
-            if modifiers.contains(KeyModifiers::SHIFT) {
-                "Shift+Tab"
-            } else {
-                "Tab"
-            }
-            .to_string(),
-        ),
-        KeyCode::BackTab => Some("Shift+Tab".to_string()),
-        KeyCode::Enter => Some("Enter".to_string()),
+    // A modifier the vocabulary has no meaning for is masked off: the kinds
+    // decline what they do not recognise, and the key would be swallowed.
+    // `view::settings::live::key_name` masks the same way.
+    const CARET: KeyModifiers = KeyModifiers::CONTROL.union(KeyModifiers::SHIFT);
+    let widget_key = match code {
+        KeyCode::Tab => Some(modifiers & KeyModifiers::SHIFT),
+        KeyCode::BackTab | KeyCode::Enter => Some(KeyModifiers::NONE),
         // Ctrl deletes a word rather than a character (`Text::on_key`).
-        KeyCode::Backspace | KeyCode::Delete => {
-            let base = if code == KeyCode::Backspace {
-                "Backspace"
-            } else {
-                "Delete"
-            };
-            let ctrl = modifiers.contains(KeyModifiers::CONTROL);
-            Some(format!("{}{base}", if ctrl { "C-" } else { "" }))
-        }
-        KeyCode::PageUp | KeyCode::PageDown if !reader => Some(
-            if code == KeyCode::PageUp {
-                "PageUp"
-            } else {
-                "PageDown"
-            }
-            .to_string(),
-        ),
-        // The caret keys carry their modifiers: a field's selection is
-        // extended by Shift and its words are stepped by Ctrl, and the
-        // kinds name those `S-Left`, `C-Right`, `C-S-Left` (`Text::on_key`).
+        KeyCode::Backspace | KeyCode::Delete => Some(modifiers & KeyModifiers::CONTROL),
+        KeyCode::PageUp | KeyCode::PageDown if !reader => Some(KeyModifiers::NONE),
         KeyCode::Home
         | KeyCode::End
         | KeyCode::Left
@@ -280,29 +252,12 @@ pub fn widget_panel_key(
         | KeyCode::Down
             if !reader =>
         {
-            let base = match code {
-                KeyCode::Home => "Home",
-                KeyCode::End => "End",
-                KeyCode::Left => "Left",
-                KeyCode::Right => "Right",
-                KeyCode::Up => "Up",
-                _ => "Down",
-            };
-            let ctrl = modifiers.contains(KeyModifiers::CONTROL);
-            let shift = modifiers.contains(KeyModifiers::SHIFT);
-            Some(format!(
-                "{}{}{base}",
-                if ctrl { "C-" } else { "" },
-                if shift { "S-" } else { "" }
-            ))
+            Some(modifiers & CARET)
         }
         _ => None,
     };
-    // **A key the panel's mode binds never gets here.** The panel's keymap
-    // rides on its node (`view::shell::panel::Keymap`) and takes such a key
-    // on the tree's capture leg, so the router sees only what the mode left.
-    if let Some(name) = key_name {
-        return SmartKey(name);
+    if let Some(mods) = widget_key {
+        return SmartKey(KeySeq::one(Key::new(code, mods)));
     }
 
     if let KeyCode::Char(c) = code {
@@ -346,7 +301,10 @@ pub fn widget_panel_key(
         // inserts " " as a char for a focused Text widget, so typing
         // spaces into text fields keeps working.
         if ch == ' ' {
-            return SmartKey("Space".to_string());
+            return SmartKey(KeySeq::one(Key::new(
+                KeyCode::Char(' '),
+                KeyModifiers::NONE,
+            )));
         }
         return TextChar(ch);
     }
@@ -743,6 +701,61 @@ mod tests {
         );
     }
 
+    /// A modifier the vocabulary has no meaning for is masked off.
+    #[test]
+    fn a_key_carries_only_the_modifiers_its_vocabulary_distinguishes() {
+        let kb = resolver();
+        let view = WidgetPanelView {
+            non_modal: true,
+            pane: true,
+            focus_key: Some("lst".to_string()),
+            focused_widget_is_text: false,
+            page: false,
+        };
+        let press = |code, mods| match widget_panel_key(&view, &kb, code, mods) {
+            WidgetKeyOutcome::SmartKey(seq) => seq.single().expect("one press"),
+            other => panic!("{code:?} + {mods:?} was {other:?}"),
+        };
+        for code in [
+            KeyCode::Left,
+            KeyCode::Right,
+            KeyCode::Up,
+            KeyCode::Down,
+            KeyCode::Home,
+            KeyCode::End,
+            KeyCode::Enter,
+            KeyCode::PageUp,
+            KeyCode::PageDown,
+            KeyCode::Backspace,
+            KeyCode::Delete,
+        ] {
+            assert_eq!(
+                press(code, KeyModifiers::ALT),
+                Key::new(code, KeyModifiers::NONE),
+                "Alt+{code:?} should reach the kinds unmodified"
+            );
+        }
+        assert_eq!(
+            press(KeyCode::PageUp, KeyModifiers::SHIFT),
+            Key::new(KeyCode::PageUp, KeyModifiers::NONE)
+        );
+        assert_eq!(
+            press(KeyCode::Enter, KeyModifiers::CONTROL | KeyModifiers::SHIFT),
+            Key::new(KeyCode::Enter, KeyModifiers::NONE)
+        );
+        assert_eq!(
+            press(
+                KeyCode::Backspace,
+                KeyModifiers::CONTROL | KeyModifiers::ALT
+            ),
+            Key::new(KeyCode::Backspace, KeyModifiers::CONTROL)
+        );
+        assert_eq!(
+            press(KeyCode::Left, KeyModifiers::CONTROL | KeyModifiers::ALT),
+            Key::new(KeyCode::Left, KeyModifiers::CONTROL)
+        );
+    }
+
     /// A pane-mounted panel's widgets answer their keys like the dock's;
     /// what they decline is the buffer's own route, with nothing to blur,
     /// cancel or swallow.
@@ -758,11 +771,11 @@ mod tests {
         };
         assert_eq!(
             widget_panel_key(&view, &kb, KeyCode::Down, KeyModifiers::NONE),
-            WidgetKeyOutcome::SmartKey("Down".to_string())
+            WidgetKeyOutcome::SmartKey(KeySeq::one(Key::new(KeyCode::Down, KeyModifiers::NONE)))
         );
         assert_eq!(
             widget_panel_key(&view, &kb, KeyCode::Right, KeyModifiers::SHIFT),
-            WidgetKeyOutcome::SmartKey("S-Right".to_string()),
+            WidgetKeyOutcome::SmartKey(KeySeq::one(Key::new(KeyCode::Right, KeyModifiers::SHIFT))),
             "a caret key carries its modifiers to the kind"
         );
         assert_eq!(
@@ -772,7 +785,10 @@ mod tests {
                 KeyCode::Left,
                 KeyModifiers::CONTROL | KeyModifiers::SHIFT
             ),
-            WidgetKeyOutcome::SmartKey("C-S-Left".to_string())
+            WidgetKeyOutcome::SmartKey(KeySeq::one(Key::new(
+                KeyCode::Left,
+                KeyModifiers::CONTROL | KeyModifiers::SHIFT
+            )))
         );
         assert_eq!(
             widget_panel_key(&view, &kb, KeyCode::Esc, KeyModifiers::NONE),
@@ -907,11 +923,14 @@ mod tests {
         };
         assert_eq!(
             widget_panel_key(&view, &kb, KeyCode::Left, KeyModifiers::CONTROL),
-            WidgetKeyOutcome::SmartKey("C-Left".to_string())
+            WidgetKeyOutcome::SmartKey(KeySeq::one(Key::new(KeyCode::Left, KeyModifiers::CONTROL)))
         );
         assert_eq!(
             widget_panel_key(&view, &kb, KeyCode::Right, KeyModifiers::CONTROL),
-            WidgetKeyOutcome::SmartKey("C-Right".to_string())
+            WidgetKeyOutcome::SmartKey(KeySeq::one(Key::new(
+                KeyCode::Right,
+                KeyModifiers::CONTROL
+            )))
         );
     }
 
@@ -944,6 +963,7 @@ mod tests {
             key: "enter".to_string(),
             modifiers: Vec::new(),
             keys: Vec::new(),
+            chord: String::new(),
             action: "save".to_string(),
             args: std::collections::HashMap::new(),
             when: Some("mode:form".to_string()),
@@ -976,6 +996,7 @@ mod tests {
                     modifiers: vec!["ctrl".to_string()],
                 },
             ],
+            chord: String::new(),
             action: "save".to_string(),
             args: std::collections::HashMap::new(),
             when: Some("normal".to_string()),

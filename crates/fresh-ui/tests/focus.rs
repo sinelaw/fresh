@@ -1221,6 +1221,117 @@ fn a_layer_that_stops_confining_releases_focus_to_the_enclosing_mark() {
     assert_eq!(ui.focused(), Some(pane));
 }
 
+/// **A modal that opened over a confinement does not restore focus into it
+/// once that confinement is gone.**
+///
+/// The editor's case: a centred modal blurs the dock as it mounts, so the
+/// dock's keyboard layer is gone for as long as the modal is up — and is
+/// still gone when it closes. Coming back is a memory of where focus *was*,
+/// and it is only good while the surface it names still holds the keyboard;
+/// restoring into the blurred dock left every key resolving in the dock's
+/// context, which is how a workspace created from the dock's New-Workspace
+/// form could not be typed into.
+#[test]
+fn a_restore_into_a_confinement_that_has_gone_lands_on_the_mark_instead() {
+    let build = |dock_keys: bool, modal: bool| {
+        let pane = focusable(text("pane"))
+            .key("pane")
+            .skip_traversal()
+            .h(Sizing::Cells(1));
+        let pane = match dock_keys {
+            true => pane,
+            false => pane.autofocus(),
+        };
+        let widget = focusable(text("w")).key("w").h(Sizing::Cells(1));
+        let widget = match dock_keys {
+            true => widget.autofocus(),
+            false => widget,
+        };
+        let dock = col().key("dock").children([widget, field("x")]);
+        let root = col().children([dock, pane]);
+        let root = match dock_keys {
+            true => root.child(
+                layer()
+                    .anchor(Anchor::Screen(Align::Start))
+                    .modality(Modality::Focus)
+                    .scope_at("dock".into()),
+            ),
+            false => root,
+        };
+        // Declared last, so it is the topmost keyboard layer while it is up.
+        match modal {
+            true => root.child(
+                layer()
+                    .anchor(Anchor::Screen(Align::Center))
+                    .modality(Modality::Exclusive)
+                    .child(col().child(field("modal"))),
+            ),
+            false => root,
+        }
+    };
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(build(true, false), FRAME);
+    assert_eq!(ui.focused(), ui.find_by_key(&"w".into()), "the dock's mark");
+
+    // The modal opens, and the host blurs the dock in the same breath: its
+    // keyboard layer goes with it, and the mark moves to the pane.
+    ui.frame(build(false, true), FRAME);
+    assert_eq!(
+        ui.focused(),
+        ui.find_by_key(&"modal".into()),
+        "the modal takes the keyboard"
+    );
+
+    // It closes onto a dock that never got the keyboard back.
+    ui.frame(build(false, false), FRAME);
+    assert_eq!(
+        ui.focused(),
+        ui.find_by_key(&"pane".into()),
+        "focus lands on the mark, not back in the blurred dock"
+    );
+}
+
+/// The other half of the rule: a restore taken from the **unconfined base**
+/// is unconditional. Nothing was holding focus where it was — the ring put it
+/// there, by a Tab off the mark — so a modal that comes and goes leaves it
+/// exactly where the user left it, and the mark it is not on does not claim
+/// it back.
+#[test]
+fn a_restore_from_the_unconfined_base_still_comes_back_to_the_ring() {
+    let build = |modal: bool| {
+        let root = col().children([field("one").autofocus(), field("two")]);
+        match modal {
+            true => root.child(
+                layer()
+                    .anchor(Anchor::Screen(Align::Center))
+                    .modality(Modality::Exclusive)
+                    .child(col().child(field("modal"))),
+            ),
+            false => root,
+        }
+    };
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(build(false), FRAME);
+    assert_eq!(ui.focused(), ui.find_by_key(&"one".into()), "the mark");
+    // The ring's own move, off the mark.
+    ui.dispatch(Input::Key(KeyPress::new(KeyCode::Tab)));
+    let landed = ui.find_by_key(&"two".into()).expect("two");
+    assert_eq!(ui.focused(), Some(landed));
+
+    ui.frame(build(true), FRAME);
+    assert_eq!(
+        ui.focused(),
+        ui.find_by_key(&"modal".into()),
+        "the modal takes the keyboard"
+    );
+    ui.frame(build(false), FRAME);
+    assert_eq!(
+        ui.focused(),
+        Some(landed),
+        "nothing confined that focus, so it comes back where the ring left it"
+    );
+}
+
 /// Outside every confinement the whole tree is the scope: a mark moving from
 /// one subtree to another at the root is followed the same way a mark moving
 /// inside a dialog is.

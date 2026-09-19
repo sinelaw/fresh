@@ -25,23 +25,31 @@ use fresh_core::BufferId;
 use crate::model::buffer::HybridSearchPlan;
 use crate::model::filesystem::{FileSearchCursor, FileSearchOptions, FileSystem};
 use crate::services::async_bridge::AsyncMessage;
+use crate::services::runtime::LiveRuntime;
 
 /// Capability handle for plugin work that must not run on the editor thread.
 ///
-/// Holds exactly the authority a handler needs — a filesystem, a runtime to
-/// run on, and the return path to the main loop. Notably absent: anything
-/// that can read or mutate editor state.
+/// Holds exactly the authority a handler needs — a filesystem and the return
+/// path to the main loop. Notably absent: anything that can read or mutate
+/// editor state, and — deliberately — the runtime.
+///
+/// The capability is moved *into* the spawned task, and an owning
+/// [`LiveRuntime`] in here would therefore keep the runtime up for as long as
+/// the task runs. Nothing cancels off-loop work at teardown (there is no
+/// `Drop for Editor`, and nobody trips `grep_project_cancel`), so the editor's
+/// runtime being dropped is the only thing that stops an in-flight
+/// `grepProject`: keep it here and a project-wide grep would carry on against
+/// a filesystem and an `async_bridge` nobody is reading, one request timeout
+/// per file, holding a dropped runtime's threads alive.
+/// The runtime is passed to the entry points below instead, which is all that
+/// is needed to prove it is alive at the moment of spawning.
 pub(crate) struct OffLoop {
     pub filesystem: Arc<dyn FileSystem + Send + Sync>,
-    /// A *borrow* of the runtime, never an owning `Arc<Runtime>`. The handle
-    /// travels into the spawned task, so an owning reference here would be
-    /// dropped on a runtime worker whenever a task outlived the editor's own
-    /// reference — which is exactly what quitting does. Dropping the last
-    /// `Arc<Runtime>` from inside the runtime panics ("Cannot drop a runtime
-    /// in a context where blocking is not allowed"), so ownership stays with
-    /// the editor and this side only ever holds a handle.
-    pub handle: tokio::runtime::Handle,
     pub sender: std::sync::mpsc::Sender<AsyncMessage>,
+    /// Set when nobody is waiting for the work any more. It is the machine
+    /// handle's flag (`OpenMachine::cancel`), so closing the handle stops the
+    /// work. Work with no handle gets a flag nothing ever sets.
+    pub cancel: Arc<AtomicBool>,
 }
 
 impl OffLoop {
@@ -61,6 +69,230 @@ impl OffLoop {
             tracing::debug!("off-loop callback dropped: editor gone");
         }
     }
+}
+
+/// One `walkTree` request.
+pub(crate) struct WalkTreeRequest {
+    pub root: PathBuf,
+    pub skip_dirs: Vec<String>,
+    pub include_hidden: bool,
+    pub include_dirs: bool,
+    pub max_depth: usize,
+    pub max_entries: usize,
+    pub callback_id: JsCallbackId,
+}
+
+/// Walk a subtree in one call and hand the entries back as JSON. Uses
+/// `spawn_blocking` because `FileSystem` is synchronous and a remote one
+/// blocks on its transport.
+pub(crate) fn walk_tree(runtime: &LiveRuntime, cap: OffLoop, req: WalkTreeRequest) {
+    runtime.spawn_blocking(move || {
+        let WalkTreeRequest {
+            root,
+            skip_dirs,
+            include_hidden,
+            include_dirs,
+            max_depth,
+            max_entries,
+            callback_id,
+        } = req;
+
+        let skip: Vec<&str> = skip_dirs.iter().map(String::as_str).collect();
+        // One over the cap, so truncation is observed rather than inferred.
+        let probe = max_entries.saturating_add(1);
+        let opts = crate::model::filesystem::WalkOptions {
+            skip_dirs: &skip,
+            include_hidden,
+            include_dirs,
+            max_depth,
+            max_entries: probe,
+        };
+
+        let cancel = Arc::clone(&cap.cancel);
+        let mut entries: Vec<serde_json::Value> = Vec::new();
+        let walked = cap.filesystem.walk(&root, &opts, &cancel, &mut |entry| {
+            entries.push(serde_json::json!({
+                "path": entry.path.to_string_lossy(),
+                "rel": entry.rel,
+                "kind": match entry.entry_type {
+                    crate::model::filesystem::EntryType::Directory => "dir",
+                    crate::model::filesystem::EntryType::Symlink => "symlink",
+                    crate::model::filesystem::EntryType::File => "file",
+                },
+                "mtime": entry
+                    .metadata
+                    .modified
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map_or(0, |d| d.as_secs()),
+                "size": entry.metadata.size,
+            }));
+            true
+        });
+
+        let result = match walked {
+            Ok(()) => {
+                let truncated = entries.len() > max_entries;
+                entries.truncate(max_entries);
+                serde_json::to_string(&serde_json::json!({
+                    "entries": entries,
+                    "truncated": truncated,
+                }))
+                .map_err(|err| format!("could not serialise walk: {err}"))
+            }
+            Err(err) => Err(format!("{}: {err}", root.display())),
+        };
+        cap.settle(callback_id, result);
+    });
+}
+
+/// One `readFilePrefixes` request: many bounded reads in a single call.
+pub(crate) struct ReadPrefixesRequest {
+    /// `(path, max_bytes)` pairs.
+    pub requests: Vec<(PathBuf, usize)>,
+    pub callback_id: JsCallbackId,
+}
+
+/// Read the first `max_bytes` of each path in one call. A failure is reported
+/// per path, so one unreadable file does not lose the batch.
+pub(crate) fn read_file_prefixes(runtime: &LiveRuntime, cap: OffLoop, req: ReadPrefixesRequest) {
+    runtime.spawn_blocking(move || {
+        let ReadPrefixesRequest {
+            requests,
+            callback_id,
+        } = req;
+
+        // Checked between files: each one may be a round trip on a remote machine.
+        let results: Vec<serde_json::Value> = requests
+            .into_iter()
+            .take_while(|_| !cap.cancel.load(Ordering::Relaxed))
+            .map(|(path, max_bytes)| {
+                // Never ask for more than the file holds: a ranged read may use
+                // `read_exact`, which fails on a short file.
+                let wanted = cap
+                    .filesystem
+                    .metadata(&path)
+                    .map(|meta| max_bytes.min(meta.size as usize))
+                    .unwrap_or(max_bytes);
+                let read = if wanted == 0 {
+                    Ok(Vec::new())
+                } else {
+                    cap.filesystem.read_range(&path, 0, wanted)
+                };
+                match read {
+                    Ok(bytes) => serde_json::json!({
+                        "path": path.to_string_lossy(),
+                        "text": String::from_utf8_lossy(&bytes),
+                    }),
+                    Err(err) => serde_json::json!({
+                        "path": path.to_string_lossy(),
+                        "error": err.to_string(),
+                    }),
+                }
+            })
+            .collect();
+
+        cap.settle(
+            callback_id,
+            serde_json::to_string(&results)
+                .map_err(|err| format!("could not serialise reads: {err}")),
+        );
+    });
+}
+
+/// One `runOnTarget` request.
+pub(crate) struct RunOnTargetRequest {
+    pub program: String,
+    pub args: Vec<String>,
+    pub cwd: Option<String>,
+    pub spawner: Arc<dyn crate::services::remote::ProcessSpawner>,
+    pub callback_id: JsCallbackId,
+}
+
+/// Run a command through the authority's spawner, so a remote machine runs it
+/// there. A non-zero exit is data, not an error.
+pub(crate) fn run_on_target(runtime: &LiveRuntime, cap: OffLoop, req: RunOnTargetRequest) {
+    runtime.spawn(async move {
+        let RunOnTargetRequest {
+            program,
+            args,
+            cwd,
+            spawner,
+            callback_id,
+        } = req;
+
+        let result = match spawner.spawn(program.clone(), args, cwd).await {
+            Ok(out) => serde_json::to_string(&serde_json::json!({
+                "code": out.exit_code,
+                "stdout": out.stdout,
+                "stderr": out.stderr,
+            }))
+            .map_err(|err| format!("could not serialise command result: {err}")),
+            Err(err) => Err(format!("{program}: {err}")),
+        };
+        cap.settle(callback_id, result);
+    });
+}
+
+/// One `machineEnv` request for a machine that has to be asked.
+pub(crate) struct RemoteEnvRequest {
+    pub names: Vec<String>,
+    pub spawner: Arc<dyn crate::services::remote::ProcessSpawner>,
+    pub callback_id: JsCallbackId,
+}
+
+/// Read environment variables from a remote machine with one `printenv`.
+/// A machine without `printenv` reports nothing, the same as an unset name.
+pub(crate) fn remote_env(runtime: &LiveRuntime, cap: OffLoop, req: RemoteEnvRequest) {
+    runtime.spawn(async move {
+        let RemoteEnvRequest {
+            names,
+            spawner,
+            callback_id,
+        } = req;
+
+        let result = match spawner
+            .spawn("printenv".to_string(), Vec::new(), None)
+            .await
+        {
+            Ok(out) if out.exit_code == 0 => {
+                Ok(serde_json::Value::Object(parse_printenv(&out.stdout, &names)).to_string())
+            }
+            // No `printenv`, or it failed: report nothing rather than guessing.
+            Ok(_) | Err(_) => Ok(serde_json::Value::Object(serde_json::Map::new()).to_string()),
+        };
+        cap.settle(callback_id, result);
+    });
+}
+
+/// Pick `names` out of `printenv` output. A line without `=` is a newline
+/// inside the previous value: `printenv` writes values verbatim.
+fn parse_printenv(stdout: &str, names: &[String]) -> serde_json::Map<String, serde_json::Value> {
+    let wanted: std::collections::HashSet<&str> = names.iter().map(String::as_str).collect();
+    let mut found = serde_json::Map::new();
+    // The variable a continuation line belongs to, if we kept it.
+    let mut open: Option<String> = None;
+    for line in stdout.lines() {
+        match line.split_once('=') {
+            Some((name, value)) if wanted.contains(name) => {
+                found.insert(
+                    name.to_string(),
+                    serde_json::Value::String(value.to_string()),
+                );
+                open = Some(name.to_string());
+            }
+            // Not asked about: its continuation lines are not ours either.
+            Some(_) => open = None,
+            None => {
+                if let Some(name) = open.as_ref() {
+                    if let Some(serde_json::Value::String(v)) = found.get_mut(name) {
+                        v.push('\n');
+                        v.push_str(line);
+                    }
+                }
+            }
+        }
+    }
+    found
 }
 
 /// Editor-thread-collected inputs for a project grep. Everything here is a
@@ -91,9 +323,8 @@ pub(crate) struct GrepProjectRequest {
 /// Concurrency is capped so a plugin looping on `grepProject` cannot saturate
 /// the runtime, and every stage re-checks `cancel` so a superseded request
 /// stops doing work instead of running to completion.
-pub(crate) fn grep_project(cap: OffLoop, req: GrepProjectRequest) {
-    let handle = cap.handle.clone();
-    handle.spawn(async move {
+pub(crate) fn grep_project(runtime: &LiveRuntime, cap: OffLoop, req: GrepProjectRequest) {
+    runtime.spawn(async move {
         let GrepProjectRequest {
             pattern,
             opts,
@@ -317,11 +548,10 @@ pub(crate) struct BaselineLoadRequest {
 /// Load a baseline's reference content (filesystem read or `git show` on
 /// the window's authority), install it in the shared store, and settle the
 /// plugin's promise. Runs on the tokio runtime.
-pub(crate) fn load_diff_baseline(cap: OffLoop, req: BaselineLoadRequest) {
+pub(crate) fn load_diff_baseline(runtime: &LiveRuntime, cap: OffLoop, req: BaselineLoadRequest) {
     use crate::app::diff_baselines::{BaselineContent, BaselineSpec};
 
-    let handle = cap.handle.clone();
-    handle.spawn(async move {
+    runtime.spawn(async move {
         let text: Result<String, String> = match &req.spec {
             // Saved baselines never load content; the editor thread
             // resolves them synchronously and never sends them here.
@@ -454,13 +684,14 @@ mod tests {
     }
 
     fn run_grep(root: PathBuf, cancel: Arc<AtomicBool>) -> Result<String, String> {
-        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let runtime = LiveRuntime::multi_thread("offloop-test", 2).unwrap();
         let (tx, rx) = std::sync::mpsc::channel();
         grep_project(
+            &runtime,
             OffLoop {
                 filesystem: Arc::new(StdFileSystem),
-                handle: runtime.handle().clone(),
                 sender: tx,
+                cancel: Arc::clone(&cancel),
             },
             GrepProjectRequest {
                 pattern: "NEEDLE".to_string(),
@@ -495,15 +726,18 @@ mod tests {
         );
     }
 
-    /// A baseline load runs on a runtime the capability only *borrows*: the
-    /// editor keeps ownership, so the task settling on a worker thread (which
-    /// is what quitting under load looks like — the editor releases its
-    /// reference while the load is still in flight) never drops the runtime
-    /// itself. Dropping a runtime from inside one panics with "Cannot drop a
-    /// runtime in a context where blocking is not allowed", which is why
-    /// [`OffLoop`] holds a `Handle` and not an `Arc<Runtime>`.
+    /// A baseline load settles, and the work it spawned holds no owning
+    /// reference to the runtime it spawned onto.
+    ///
+    /// That second half is the load-bearing one: off-loop work is never
+    /// cancelled explicitly — there is no `Drop for Editor` and nothing trips
+    /// `grep_project_cancel` at teardown — so the editor's runtime being
+    /// dropped is the only thing that stops an in-flight `grepProject`. A
+    /// capability that owned its runtime would keep that grep running against
+    /// an `async_bridge` nobody is reading, and keep the old runtime's threads
+    /// alive across an editor rebuild.
     #[test]
-    fn baseline_load_settles_on_a_borrowed_runtime_handle() {
+    fn baseline_load_settles_and_leaves_the_runtime_unowned() {
         use crate::app::diff_baselines::{BaselineEntry, BaselineSpec, BaselineStore};
         use crate::services::env_provider::EnvProvider;
         use crate::services::remote::LocalProcessSpawner;
@@ -513,9 +747,7 @@ mod tests {
         let path = dir.path().join("baseline.txt");
         std::fs::write(&path, "reference\n").unwrap();
 
-        // The editor owns the runtime; the capability only borrows a handle.
-        // Held as an `Arc` here so the count below can prove that.
-        let runtime = Arc::new(tokio::runtime::Runtime::new().unwrap());
+        let runtime = LiveRuntime::multi_thread("offloop-test", 2).unwrap();
         let (tx, rx) = std::sync::mpsc::channel();
         let store = BaselineStore::default();
         store.inner.lock().unwrap().entries.insert(
@@ -529,10 +761,11 @@ mod tests {
         );
 
         load_diff_baseline(
+            &runtime,
             OffLoop {
                 filesystem: Arc::new(StdFileSystem),
-                handle: runtime.handle().clone(),
                 sender: tx,
+                cancel: Arc::default(),
             },
             BaselineLoadRequest {
                 baseline_id: 7,
@@ -548,11 +781,11 @@ mod tests {
         );
 
         assert_eq!(
-            Arc::strong_count(&runtime),
+            runtime.live_clones(),
             1,
-            "off-loop work must not hold an owning reference to the runtime: \
-             a task outliving the editor's own reference would drop the runtime \
-             on a worker thread, which panics"
+            "off-loop work must not hold an owning reference to the runtime: a \
+             task outliving the editor's own reference would keep the runtime \
+             up and keep working into a bridge nobody is reading"
         );
 
         let result = match rx.recv().expect("the load must settle exactly once") {
@@ -575,10 +808,6 @@ mod tests {
             "the loaded content should be installed in the store"
         );
         drop(inner);
-
-        // The editor owns the runtime, so shutting it down happens here, on a
-        // thread where blocking is allowed.
-        drop(runtime);
     }
 
     /// A superseded grep stopped partway, so the matches it happened to collect
@@ -596,5 +825,50 @@ mod tests {
             err.contains("superseded"),
             "the error should say why: {err}"
         );
+    }
+
+    use super::parse_printenv;
+
+    fn names(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn only_the_names_asked_for_come_back() {
+        let out = parse_printenv(
+            "HOME=/root\nCODEX_HOME=/srv/codex\nPATH=/usr/bin\n",
+            &names(&["CODEX_HOME", "HOME"]),
+        );
+        assert_eq!(out.len(), 2);
+        assert_eq!(out["CODEX_HOME"], "/srv/codex");
+        assert_eq!(out["HOME"], "/root");
+    }
+
+    #[test]
+    fn a_name_that_is_not_set_is_absent_rather_than_empty() {
+        let out = parse_printenv("HOME=/root\n", &names(&["CODEX_HOME"]));
+        assert!(out.is_empty(), "an unset variable is not reported at all");
+    }
+
+    #[test]
+    fn a_value_with_an_equals_sign_keeps_it() {
+        let out = parse_printenv("FLAGS=-Dfoo=bar\n", &names(&["FLAGS"]));
+        assert_eq!(out["FLAGS"], "-Dfoo=bar", "only the first `=` separates");
+    }
+
+    #[test]
+    fn a_newline_inside_a_value_is_part_of_it() {
+        let out = parse_printenv(
+            "SCRIPT=line one\nline two\nHOME=/root\n",
+            &names(&["SCRIPT", "HOME"]),
+        );
+        assert_eq!(out["SCRIPT"], "line one\nline two");
+        assert_eq!(out["HOME"], "/root");
+    }
+
+    #[test]
+    fn a_continuation_of_a_variable_we_skipped_is_not_attached_to_the_last_kept_one() {
+        let out = parse_printenv("HOME=/root\nOTHER=first\nstray\n", &names(&["HOME"]));
+        assert_eq!(out["HOME"], "/root", "the stray line belongs to OTHER");
     }
 }

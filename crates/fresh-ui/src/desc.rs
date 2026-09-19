@@ -182,6 +182,17 @@ pub enum Align {
     End,
 }
 
+/// Which end of the main axis a wrapping box's lines settle against.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Justify {
+    /// Lines start at the main-axis origin. What every box did before.
+    #[default]
+    Start,
+    /// Lines end at the box's main extent — a footer whose buttons sit
+    /// flush right while it fits, and wrap from the left when it does not.
+    End,
+}
+
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub struct BoxProps {
     pub dir: Dir,
@@ -202,9 +213,24 @@ pub struct BoxProps {
     /// Break onto a new line when the next child would not fit, instead of
     /// letting the row overflow. See [`Node::wrap_children`].
     pub wrap: bool,
+    /// Which end of the **main** axis a wrapping box's lines settle against.
+    ///
+    /// `Align` is the cross axis and `Flex` is how a non-wrapping box fills
+    /// the main one — neither answers "push these to the right, and wrap them
+    /// when they do not fit", because `Flex` is deliberately `Auto` inside a
+    /// wrapping box (one flexible child would fill every line and leave
+    /// nothing to wrap). This does, and it is the reason a caller never has to
+    /// measure the row to find out which of the two it wanted.
+    ///
+    /// Only read when [`BoxProps::wrap`] is set; `Start` is what every box did
+    /// before it existed.
+    pub justify: Justify,
     /// The box's ground is a wash: it recolours what is already painted
     /// under it and keeps the text. See [`Node::wash`].
     pub wash: bool,
+    /// The box's ground is this cluster, tiled across its rect, rather than a
+    /// blank fill. See [`Node::rule`].
+    pub rule: Option<std::rc::Rc<str>>,
 }
 
 /// How a run gives up cells it was not given.
@@ -297,6 +323,21 @@ pub struct TextProps {
     /// text stays and takes the theme's background — so a styled run keeps its
     /// colours under a selection instead of being repainted in one.
     pub selection: Option<(std::ops::Range<usize>, crate::render::spec::ThemeKey)>,
+    /// A caret drawn as a washed *cell* rather than as the terminal's own
+    /// cursor: the byte it sits on, and the theme its cell takes.
+    ///
+    /// The companion of [`cursor`](Self::cursor) for a surface that cannot
+    /// use the hardware cursor — a panel whose caret must not move the
+    /// terminal's one, or one drawn inside a viewport the cursor would drag
+    /// along with it.
+    ///
+    /// **Not expressible as a one-byte [`selection`](Self::selection).** A
+    /// selection is the cells its bytes are *drawn* in, so a range covering a
+    /// byte no row shows — the `\n` a wrap dropped, or the end of the text —
+    /// covers no cells and paints nothing: a caret at the end of a line
+    /// simply disappeared. A caret is a point between cells, which is what
+    /// [`cell_of`](crate::render::prim::cell_of) answers and a range cannot.
+    pub block_caret: Option<(usize, crate::render::spec::ThemeKey)>,
 }
 
 /// One piece of a text run, and the theme it paints in.
@@ -1140,6 +1181,7 @@ pub fn text<M>(s: impl AsRef<str>) -> Node<M> {
         elide: Elide::None,
         cursor: None,
         selection: None,
+        block_caret: None,
     }))
 }
 
@@ -1161,6 +1203,7 @@ pub fn text_runs<M>(runs: impl IntoIterator<Item = Run>) -> Node<M> {
         elide: Elide::None,
         cursor: None,
         selection: None,
+        block_caret: None,
     }))
 }
 
@@ -1581,6 +1624,16 @@ impl<M> Node<M> {
         self
     }
 
+    /// Settle a wrapping box's lines against the end of the main axis.
+    ///
+    /// The answer to "flush right while they fit, wrapped from the left when
+    /// they do not" — which is otherwise two layouts a caller has to choose
+    /// between by measuring. Only read when the box wraps.
+    pub fn justify_end(mut self) -> Self {
+        self.box_props().justify = Justify::End;
+        self
+    }
+
     /// Bound what descendants may paint and hit to this box's content rect.
     ///
     /// Implied by [`border`](Node::border); set it explicitly for an unbordered
@@ -1606,6 +1659,34 @@ impl<M> Node<M> {
         self
     }
 
+    /// Paint this box's ground by **tiling `glyph` across its rectangle**,
+    /// instead of filling it blank.
+    ///
+    /// A rule is as wide as the space it is given, and it must not be the
+    /// thing that decides how wide that is. Stated as text of a computed
+    /// length — `"─".repeat(n)` — it is both: it needs `n` from the caller,
+    /// and once built it measures `n` wide, so under an [`Sizing::Auto`]
+    /// parent it sets the very width it was asked about. That is what kept
+    /// an anchored panel's box measuring to the frame rather than to its
+    /// content.
+    ///
+    /// Stated as a ground, it is neither. Leave its extent along the rule
+    /// [`Sizing::Auto`]: a box with no children measures nothing there, so it
+    /// contributes nothing to its container's intrinsic measure, and the
+    /// container's [`Align::Stretch`] then widens it to whatever the
+    /// container settled on. (Not [`Sizing::Flex`] — on a container's cross
+    /// axis a flexible child is measured at the whole extent whether or not
+    /// that extent is definite, which is the loop again.) The backend decides
+    /// what "tiled" means: the terminal repeats the cluster, and a DOM
+    /// backend is free to draw a line and ignore the glyph entirely.
+    ///
+    /// Naming a rule makes the box paint, the way naming a theme or a class
+    /// does.
+    pub fn rule(mut self, glyph: impl Into<std::rc::Rc<str>>) -> Self {
+        self.box_props().rule = Some(glyph.into());
+        self
+    }
+
     /// Place the text cursor at this byte of the run's logical string.
     ///
     /// The row and column it lands on are the wrap's to decide; see
@@ -1628,6 +1709,24 @@ impl<M> Node<M> {
     /// The theme is named here rather than inherited because a wash in the
     /// run's own theme is a wash in the ground already under it, which is no
     /// selection at all.
+    /// Draw the caret at this byte as a washed cell in `theme`, instead of as
+    /// the terminal's cursor.
+    ///
+    /// See [`TextProps::block_caret`] for why this is not a one-byte
+    /// selection.
+    pub fn block_caret_byte(mut self, byte: usize, theme: impl AsRef<str>) -> Self {
+        match &mut self.desc {
+            Desc::TextRun(p) => {
+                p.block_caret = Some((
+                    byte,
+                    crate::render::spec::ThemeKey(Some(Rc::from(theme.as_ref()))),
+                ))
+            }
+            _ => panic!("block_caret_byte() applies to TextRun nodes only"),
+        }
+        self
+    }
+
     pub fn selection_bytes(
         mut self,
         bytes: std::ops::Range<usize>,

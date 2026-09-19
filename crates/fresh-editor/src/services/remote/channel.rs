@@ -13,7 +13,58 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt};
 use tokio::sync::{mpsc, oneshot};
-use tracing::warn;
+use tracing::{debug, warn};
+
+/// How long a stream may deliver nothing before its consumer gives up. An idle
+/// bound, not a total one: every chunk resets it. Must exceed the agent's
+/// `EXEC_KEEPALIVE_SECS` (`agent.py`), which keeps a quiet `exec` talking.
+pub const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(45);
+
+/// What ended a wait for the next streamed chunk.
+#[derive(Debug)]
+pub enum ChunkWait {
+    Data(serde_json::Value),
+    /// The stream finished, or the connection went away under it.
+    Closed,
+    /// Nothing arrived for [`STREAM_IDLE_TIMEOUT`].
+    Idle,
+    /// The caller's cancellation flag was set.
+    Cancelled,
+}
+
+/// Wait for the next streamed chunk, or for a reason to stop waiting.
+///
+/// `blocking_recv` wakes only on data, so it cannot see a caller that has gone
+/// or a machine gone quiet. Polled rather than timed: this runs under
+/// `spawn_blocking`, where a timer would cost a scratch thread per chunk.
+pub fn recv_chunk_blocking(
+    rx: &mut mpsc::Receiver<serde_json::Value>,
+    cancel: &std::sync::atomic::AtomicBool,
+    idle: Duration,
+) -> ChunkWait {
+    use std::sync::atomic::Ordering as AtomicOrdering;
+    use tokio::sync::mpsc::error::TryRecvError;
+
+    const MAX_NAP: Duration = Duration::from_millis(8);
+    let start = std::time::Instant::now();
+    let mut nap = Duration::from_micros(50);
+    loop {
+        match rx.try_recv() {
+            Ok(value) => return ChunkWait::Data(value),
+            Err(TryRecvError::Disconnected) => return ChunkWait::Closed,
+            Err(TryRecvError::Empty) => {}
+        }
+        // Cancellation first: a gone caller should not wait out the idle bound.
+        if cancel.load(AtomicOrdering::Relaxed) {
+            return ChunkWait::Cancelled;
+        }
+        if start.elapsed() >= idle {
+            return ChunkWait::Idle;
+        }
+        std::thread::sleep(nap);
+        nap = (nap * 2).min(MAX_NAP);
+    }
+}
 
 /// Default capacity for the per-request streaming data channel.
 const DEFAULT_DATA_CHANNEL_CAPACITY: usize = 64;
@@ -89,8 +140,6 @@ pub struct AgentChannel {
     next_id: AtomicU64,
     /// Whether the channel is connected
     connected: Arc<std::sync::atomic::AtomicBool>,
-    /// Runtime handle for blocking operations
-    runtime_handle: tokio::runtime::Handle,
     /// Capacity for per-request streaming data channels
     data_channel_capacity: usize,
     /// Timeout for individual requests (stored as milliseconds for atomic access)
@@ -139,7 +188,6 @@ impl AgentChannel {
         let pending: Arc<Mutex<HashMap<u64, PendingRequest>>> =
             Arc::new(Mutex::new(HashMap::new()));
         let connected = Arc::new(std::sync::atomic::AtomicBool::new(true));
-        let runtime_handle = tokio::runtime::Handle::current();
 
         // Channel for outgoing requests (lives for the lifetime of the AgentChannel)
         let (write_tx, write_rx) = mpsc::channel::<String>(64);
@@ -175,7 +223,6 @@ impl AgentChannel {
             pending,
             next_id: AtomicU64::new(1),
             connected,
-            runtime_handle,
             data_channel_capacity,
             request_timeout_ms: AtomicU64::new(DEFAULT_REQUEST_TIMEOUT.as_millis() as u64),
             new_reader_tx,
@@ -230,6 +277,20 @@ impl AgentChannel {
         pending: Arc<Mutex<HashMap<u64, PendingRequest>>>,
         connected: Arc<std::sync::atomic::AtomicBool>,
     ) {
+        // The `pending` map is owned by the `AgentChannel`, not by this task,
+        // so nobody releases the callers parked on those results if this task
+        // simply goes away — which is exactly what runtime shutdown does: it
+        // drops the task mid-await when the session keepalive that owns the
+        // runtime is dropped (#3299). Failing them from a drop guard covers
+        // that, and every other way out of the loop below, in one place.
+        struct DrainOnDrop(Arc<Mutex<HashMap<u64, PendingRequest>>>);
+        impl Drop for DrainOnDrop {
+            fn drop(&mut self) {
+                AgentChannel::drain_pending(&self.0);
+            }
+        }
+        let _drain_on_drop = DrainOnDrop(Arc::clone(&pending));
+
         let mut line = String::new();
 
         loop {
@@ -343,9 +404,16 @@ impl AgentChannel {
         }
     }
 
-    /// Check if the channel is connected
+    /// Check if the channel is connected.
+    ///
+    /// Also false once the read/write tasks are gone. They ride on a runtime
+    /// owned by the session keepalive, so closing or deleting a remote
+    /// workspace drops that runtime and takes the tasks — and with them the
+    /// receiving end of `write_tx` — along with it. Nothing can be serviced
+    /// after that, so requests must fail fast rather than be submitted into a
+    /// carrier that no longer has anyone at the other end.
     pub fn is_connected(&self) -> bool {
-        self.connected.load(Ordering::SeqCst)
+        self.connected.load(Ordering::SeqCst) && !self.write_tx.is_closed()
     }
 
     /// Replace the underlying transport with a new reader/writer pair.
@@ -411,12 +479,26 @@ impl AgentChannel {
         R: AsyncBufRead + Unpin + Send + 'static,
         W: AsyncWrite + Unpin + Send + 'static,
     {
-        self.block_on_request(self.replace_transport(reader, writer));
+        if self
+            .block_on_request(self.replace_transport(reader, writer))
+            .is_err()
+        {
+            warn!("replace_transport_blocking: no runtime to drive the swap");
+            return;
+        }
 
         // Yield until the read task has processed the new reader.
         // This is typically immediate since the channel send above wakes
         // the read task's select!, which drains pending and sets connected.
+        // `is_connected` also covers the tasks having gone away with their
+        // runtime (a closed or deleted remote session), so a swap onto a
+        // torn-down carrier leaves this loop instead of spinning forever
+        // waiting for a `connected` flag nobody is left to set.
         while !self.is_connected() {
+            if self.write_tx.is_closed() {
+                warn!("replace_transport_blocking: transport tasks are gone");
+                return;
+            }
             std::thread::yield_now();
         }
     }
@@ -478,6 +560,25 @@ impl AgentChannel {
         ),
         ChannelError,
     > {
+        let (_id, data_rx, result_rx) = self.request_streaming_id(method, params).await?;
+        Ok((data_rx, result_rx))
+    }
+
+    /// [`Self::request_streaming`], plus the request's id, so a consumer that
+    /// stops reading can cancel the producer. Dropping the receivers only works
+    /// as backpressure, which a quiet remote never feels.
+    pub async fn request_streaming_id(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+    ) -> Result<
+        (
+            u64,
+            mpsc::Receiver<serde_json::Value>,
+            oneshot::Receiver<Result<serde_json::Value, String>>,
+        ),
+        ChannelError,
+    > {
         if !self.is_connected() {
             return Err(ChannelError::ChannelClosed);
         }
@@ -501,36 +602,95 @@ impl AgentChannel {
             .await
             .map_err(|_| ChannelError::ChannelClosed)?;
 
-        Ok((data_rx, result_rx))
+        Ok((id, data_rx, result_rx))
     }
 
-    /// Block on `fut` using the channel's runtime, safe to call whether or
-    /// not the caller is already inside a Tokio runtime.
+    /// Tell the agent to stop producing for `request_id`, without waiting for
+    /// an answer. [`Self::cancel`] waits ten seconds for an ack, which is wrong
+    /// when the machine is the one not answering. Best-effort.
+    pub fn cancel_detached(&self, request_id: u64) {
+        use crate::services::remote::protocol::cancel_params;
+        let id = self.next_id.fetch_add(1, Ordering::SeqCst);
+        let req = AgentRequest::new(id, "cancel", cancel_params(request_id));
+        if self.write_tx.try_send(req.to_json_line()).is_err() {
+            debug!("remote channel: could not post a cancel for request {request_id}");
+        }
+    }
+
+    /// Block on `fut` from a synchronous context, safe to call whether or not
+    /// the caller is already inside a Tokio runtime.
     ///
-    /// The blocking wrappers (`request_blocking`, …) are reached from the
-    /// plugin thread, which drives its own `current_thread` runtime while
-    /// servicing a synchronous plugin call (e.g. a remote `read_dir` from the
-    /// Orchestrator dock). A plain `Handle::block_on` there panics with
-    /// "Cannot start a runtime from within a runtime" — the crash reported
-    /// when arrowing onto an unreachable SSH workspace. When an ambient
-    /// runtime is detected, drive the future on a scratch OS thread that
-    /// carries no runtime context of its own; the channel's runtime (where
-    /// the read/write tasks live) still services the I/O, and the caller's
-    /// thread simply waits on the join. Outside any runtime, block directly.
-    fn block_on_request<F, T>(&self, fut: F) -> T
+    /// The future is driven on a private, single-use `current_thread` runtime
+    /// rather than the runtime the channel's read/write tasks ride on. Two
+    /// separate hazards force that shape:
+    ///
+    /// * The blocking wrappers (`request_blocking`, …) are reached from the
+    ///   plugin thread, which drives its own `current_thread` runtime while
+    ///   servicing a synchronous plugin call (e.g. a remote `read_dir` from
+    ///   the Orchestrator dock). Blocking there panics with "Cannot start a
+    ///   runtime from within a runtime" — the crash reported when arrowing
+    ///   onto an unreachable SSH workspace. When an ambient runtime is
+    ///   detected, the work moves to a scratch OS thread that carries no
+    ///   runtime context of its own and the caller just waits on the join.
+    /// * The transport runtime belongs to the session keepalive, which is
+    ///   dropped the instant the session goes away — closing a remote window,
+    ///   or deleting an SSH workspace from the Orchestrator dock. A blocking
+    ///   request still in flight on a background thread (the git-index
+    ///   resolver, say) would then poll its timeout `Sleep` on a runtime that
+    ///   is mid-shutdown, and tokio answers that with a panic: "A Tokio 1.x
+    ///   context was found, but it is being shutdown." (#3299). A timer of
+    ///   our own cannot be pulled out from under us that way.
+    ///
+    /// Only the read/write tasks actually need the transport runtime. The
+    /// `tokio::sync` channels these futures wait on are runtime-agnostic, so
+    /// a torn-down transport runtime surfaces as `ChannelError::ChannelClosed`
+    /// — its tasks, and with them both ends of every pending request, are
+    /// gone — instead of taking the calling thread down with a panic.
+    fn block_on_request<F, T>(&self, fut: F) -> Result<T, ChannelError>
     where
         F: std::future::Future<Output = T> + Send,
         T: Send,
     {
-        if tokio::runtime::Handle::try_current().is_ok() {
+        // Naming `Handle` only to ask whether this thread is inside a
+        // runtime at all — a question about the caller, not a runtime we
+        // intend to put work on, so there is nothing here to keep alive.
+        #[allow(clippy::disallowed_types)]
+        let inside_a_runtime = tokio::runtime::Handle::try_current().is_ok();
+        if inside_a_runtime {
             std::thread::scope(|scope| {
                 scope
-                    .spawn(|| self.runtime_handle.block_on(fut))
+                    .spawn(|| Self::block_on_private_runtime(fut))
                     .join()
                     .expect("remote channel block_on scratch thread panicked")
             })
         } else {
-            self.runtime_handle.block_on(fut)
+            Self::block_on_private_runtime(fut)
+        }
+    }
+
+    /// Drive `fut` on a throwaway `current_thread` runtime owned by this call.
+    ///
+    /// Timers are the only driver enabled: the blocking-path futures hold no
+    /// I/O resources of their own, they only wait on `tokio::sync` channels
+    /// and their own timeout, so there is no reactor to set up and building
+    /// the runtime costs about a microsecond — nothing against a round trip
+    /// to the remote host.
+    ///
+    /// Must not be called from a thread that already carries a runtime
+    /// context; `block_on_request` is what guarantees that.
+    fn block_on_private_runtime<F, T>(fut: F) -> Result<T, ChannelError>
+    where
+        F: std::future::Future<Output = T>,
+    {
+        match tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+        {
+            Ok(runtime) => Ok(runtime.block_on(fut)),
+            Err(e) => {
+                warn!("remote channel: could not build a runtime to block on: {e}");
+                Err(ChannelError::Io(e))
+            }
         }
     }
 
@@ -543,7 +703,7 @@ impl AgentChannel {
         method: &str,
         params: serde_json::Value,
     ) -> Result<serde_json::Value, ChannelError> {
-        self.block_on_request(self.request(method, params))
+        self.block_on_request(self.request(method, params))?
     }
 
     /// Send a request and collect all streaming data along with the final result
@@ -616,7 +776,7 @@ impl AgentChannel {
         method: &str,
         params: serde_json::Value,
     ) -> Result<(Vec<serde_json::Value>, serde_json::Value), ChannelError> {
-        self.block_on_request(self.request_with_data(method, params))
+        self.block_on_request(self.request_with_data(method, params))?
     }
 
     /// Send a streaming request synchronously, returning receivers for
@@ -640,7 +800,23 @@ impl AgentChannel {
         ),
         ChannelError,
     > {
-        self.block_on_request(self.request_streaming(method, params))
+        self.block_on_request(self.request_streaming(method, params))?
+    }
+
+    /// [`Self::request_streaming_blocking`], with the request's id.
+    pub fn request_streaming_id_blocking(
+        &self,
+        method: &str,
+        params: serde_json::Value,
+    ) -> Result<
+        (
+            u64,
+            mpsc::Receiver<serde_json::Value>,
+            oneshot::Receiver<Result<serde_json::Value, String>>,
+        ),
+        ChannelError,
+    > {
+        self.block_on_request(self.request_streaming_id(method, params))?
     }
 
     /// Cancel a request

@@ -707,6 +707,8 @@ pub struct PluginTrackedState {
     /// unload, so a hot-reload during plugin development doesn't leave the
     /// previous copy's timers ticking against the new one.
     pub timer_ids: Vec<u64>,
+    /// Machine handles from `editor.openMachine`, each holding a connection. Closed on unload.
+    pub machine_ids: Vec<u64>,
 }
 
 /// Type alias for the shared async resource owner map.
@@ -801,7 +803,8 @@ pub struct JsEditorApi {
     /// the `lines_changed` epoch belongs to, and that buffer's version. `None`
     /// when no epoch-bearing hook is on the stack. Set by `emit_to` around
     /// handler invocation and read by the coordinate-bearing command senders
-    /// (conceals, soft-breaks, virtual lines) via [`Self::hook_epoch_for`], which
+    /// (conceals, soft-breaks, virtual lines, inline hints) via
+    /// [`Self::hook_epoch_for`], which
     /// returns the epoch only for commands targeting that same buffer — versions
     /// are per-buffer, so stamping buffer A's version on a command for buffer B
     /// would remap against unrelated deltas. The plugin never threads the epoch
@@ -1140,6 +1143,26 @@ impl JsEditorApi {
             bold: obj.get("bold").unwrap_or(false),
             italic: obj.get("italic").unwrap_or(false),
         })
+    }
+}
+
+/// `labelAlign` from the mount options.
+///
+/// **An unrecognised value warns instead of quietly meaning `left`.** The
+/// option is a bare string at the end of a positional argument list, so
+/// `"Right"` or `"end"` is a plausible typo, and its only symptom would be
+/// a form that silently keeps the default gutter — the hardest kind of
+/// bug to attribute to the call that caused it.
+fn parse_label_align(v: Option<&str>) -> fresh_core::api::LabelAlign {
+    match v {
+        Some("right") => fresh_core::api::LabelAlign::Right,
+        Some("left") | None => fresh_core::api::LabelAlign::Left,
+        Some(other) => {
+            tracing::warn!(
+                "mountFloatingWidget: labelAlign {other:?} is not \"left\" or \"right\"; using \"left\""
+            );
+            fresh_core::api::LabelAlign::Left
+        }
     }
 }
 
@@ -1800,6 +1823,236 @@ impl JsEditorApi {
             .unwrap_or(0) as u32
     }
 
+    /// Open a machine without attaching it to a window. `spec` is the same
+    /// payload `setAuthority` takes. Resolves with `{id, platform, home, label}`.
+    /// The handle is closed when the plugin is unloaded.
+    #[plugin_api(
+        async_promise,
+        js_name = "_openMachineRaw",
+        ts_return = "{ id: number; platform: string; home: string; label: string }"
+    )]
+    #[qjs(rename = "_openMachineStart")]
+    pub fn open_machine_start<'js>(
+        &self,
+        ctx: rquickjs::Ctx<'js>,
+        #[plugin_api(ts_type = "unknown")] spec: rquickjs::Value<'js>,
+    ) -> rquickjs::Result<u64> {
+        let payload: serde_json::Value = rquickjs_serde::from_value(spec)
+            .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))?;
+        if !payload.is_object() {
+            return Err(throw_js(&ctx, "openMachine: spec must be an object"));
+        }
+        let id = self.alloc_request_id();
+        // Attributed to this plugin so the handle is closed on unload.
+        if let Ok(mut owners) = self.async_resource_owners.lock() {
+            owners.insert(id, self.plugin_name.clone());
+        }
+        let _ = self.command_sender.send(PluginCommand::OpenMachine {
+            payload,
+            callback_id: JsCallbackId::new(id),
+        });
+        Ok(id)
+    }
+
+    /// Close a machine opened by `openMachine`. Idempotent.
+    #[plugin_api(async_promise, js_name = "_closeMachineRaw", ts_return = "boolean")]
+    #[qjs(rename = "_closeMachineStart")]
+    pub fn close_machine_start(&self, _ctx: rquickjs::Ctx<'_>, machine: i64) -> u64 {
+        let id = self.alloc_request_id();
+        let _ = self.command_sender.send(PluginCommand::CloseMachine {
+            machine: machine.max(0) as u64,
+            callback_id: Some(JsCallbackId::new(id)),
+        });
+        id
+    }
+
+    /// Read environment variables from a machine; only set names come back.
+    /// A remote machine is asked with `printenv`; never this computer's values
+    /// for another machine. No `printenv` reports nothing.
+    #[plugin_api(
+        async_promise,
+        js_name = "_machineEnvOn",
+        ts_return = "Record<string, string>"
+    )]
+    #[qjs(rename = "_machineEnvStart")]
+    pub fn machine_env_start<'js>(
+        &self,
+        ctx: rquickjs::Ctx<'js>,
+        machine: i64,
+        #[plugin_api(ts_type = "string[]")] names: rquickjs::Value<'js>,
+    ) -> rquickjs::Result<u64> {
+        let parsed: serde_json::Value = rquickjs_serde::from_value(names)
+            .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))?;
+        let serde_json::Value::Array(items) = parsed else {
+            return Err(throw_js(&ctx, "machineEnv: `names` must be an array"));
+        };
+        let names = items
+            .iter()
+            .filter_map(|v| v.as_str().map(str::to_string))
+            .collect();
+
+        let id = self.alloc_request_id();
+        let _ = self.command_sender.send(PluginCommand::MachineEnv {
+            machine: (machine > 0).then_some(machine as u64),
+            names,
+            callback_id: JsCallbackId::new(id),
+        });
+        Ok(id)
+    }
+
+    /// Walk a directory tree on the machine. Resolves with `{entries, truncated}`;
+    /// each entry is `{path, rel, kind, mtime, size}`, `kind` one of `"file"`,
+    /// `"dir"`, `"symlink"`, `mtime` a unix timestamp. A missing root resolves
+    /// empty. `includeHidden` is off by default.
+    #[plugin_api(
+        async_promise,
+        js_name = "_walkTreeOn",
+        ts_return = "{ entries: { path: string; rel: string; kind: 'file' | 'dir' | 'symlink'; mtime: number; size: number }[]; truncated: boolean }"
+    )]
+    #[qjs(rename = "_walkTreeStart")]
+    pub fn walk_tree_start<'js>(
+        &self,
+        ctx: rquickjs::Ctx<'js>,
+        machine: i64,
+        root: String,
+        #[plugin_api(
+            ts_type = "{ skipDirs?: string[]; includeHidden?: boolean; includeDirs?: boolean; maxDepth?: number; maxEntries?: number }"
+        )]
+        options: rquickjs::Object<'js>,
+    ) -> rquickjs::Result<u64> {
+        let opts = parse_options(&ctx, "walkTree", &root, options)?;
+        validate_allowed_keys(
+            &ctx,
+            "walkTree",
+            &root,
+            &opts,
+            &[
+                "skipDirs",
+                "includeHidden",
+                "includeDirs",
+                "maxDepth",
+                "maxEntries",
+            ],
+        )?;
+        let skip_dirs = match opts.get("skipDirs") {
+            Some(serde_json::Value::Array(items)) => items
+                .iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect(),
+            _ => Vec::new(),
+        };
+        let flag = |key: &str| matches!(opts.get(key), Some(serde_json::Value::Bool(true)));
+        let count = |key: &str| {
+            opts.get(key)
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0) as usize
+        };
+
+        let id = self.alloc_request_id();
+        let _ = self.command_sender.send(PluginCommand::WalkTree {
+            machine: (machine > 0).then_some(machine as u64),
+            root,
+            skip_dirs,
+            include_hidden: flag("includeHidden"),
+            include_dirs: flag("includeDirs"),
+            // 0 reads as "no limit" on the editor side.
+            max_depth: count("maxDepth"),
+            max_entries: count("maxEntries"),
+            callback_id: JsCallbackId::new(id),
+        });
+        Ok(id)
+    }
+
+    /// Read the first bytes of many files in one call. Takes
+    /// `[{path, maxBytes}, …]` and resolves with one result per request, in
+    /// order: `{path, text}` on success, `{path, error}` on failure.
+    #[plugin_api(
+        async_promise,
+        js_name = "_readFilePrefixesOn",
+        ts_return = "{ path: string; text?: string; error?: string }[]"
+    )]
+    #[qjs(rename = "_readFilePrefixesStart")]
+    pub fn read_file_prefixes_start<'js>(
+        &self,
+        ctx: rquickjs::Ctx<'js>,
+        machine: i64,
+        #[plugin_api(ts_type = "{ path: string; maxBytes: number }[]")] requests: rquickjs::Value<
+            'js,
+        >,
+    ) -> rquickjs::Result<u64> {
+        let parsed: serde_json::Value = rquickjs_serde::from_value(requests)
+            .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))?;
+        let serde_json::Value::Array(items) = parsed else {
+            return Err(throw_js(
+                &ctx,
+                "readFilePrefixes: expected an array of { path, maxBytes }",
+            ));
+        };
+        let mut requests = Vec::with_capacity(items.len());
+        for item in items {
+            let Some(path) = item.get("path").and_then(serde_json::Value::as_str) else {
+                return Err(throw_js(
+                    &ctx,
+                    "readFilePrefixes: every entry needs a `path` string",
+                ));
+            };
+            let max_bytes = item
+                .get("maxBytes")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0) as usize;
+            requests.push((path.to_string(), max_bytes));
+        }
+
+        let id = self.alloc_request_id();
+        let _ = self.command_sender.send(PluginCommand::ReadFilePrefixes {
+            machine: (machine > 0).then_some(machine as u64),
+            requests,
+            callback_id: JsCallbackId::new(id),
+        });
+        Ok(id)
+    }
+
+    /// Run a command on the machine. Resolves with `{code, stdout, stderr}`; a
+    /// non-zero `code` resolves rather than rejecting. Unlike `spawnHostProcess`,
+    /// a remote machine runs it there. Rejects on a machine opened read-only.
+    #[plugin_api(
+        async_promise,
+        js_name = "_runOnTargetOn",
+        ts_return = "{ code: number; stdout: string; stderr: string }"
+    )]
+    #[qjs(rename = "_runOnTargetStart")]
+    pub fn run_on_target_start<'js>(
+        &self,
+        ctx: rquickjs::Ctx<'js>,
+        machine: i64,
+        program: String,
+        #[plugin_api(ts_type = "string[]")] args: rquickjs::Value<'js>,
+        cwd: String,
+    ) -> rquickjs::Result<u64> {
+        let parsed: serde_json::Value = rquickjs_serde::from_value(args)
+            .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))?;
+        let serde_json::Value::Array(items) = parsed else {
+            return Err(throw_js(&ctx, "runOnTarget: `args` must be an array"));
+        };
+        let args = items
+            .iter()
+            .map(|v| match v {
+                serde_json::Value::String(s) => s.clone(),
+                other => other.to_string(),
+            })
+            .collect();
+
+        let id = self.alloc_request_id();
+        let _ = self.command_sender.send(PluginCommand::RunOnTarget {
+            machine: (machine > 0).then_some(machine as u64),
+            program,
+            args,
+            cwd: (!cwd.is_empty()).then_some(cwd),
+            callback_id: JsCallbackId::new(id),
+        });
+        Ok(id)
+    }
+
     /// Get the byte offset of the start of a line (0-indexed line number)
     /// Returns null if the line number is out of range
     #[plugin_api(
@@ -2390,6 +2643,39 @@ impl JsEditorApi {
             .read()
             .map(|s| s.env_active)
             .unwrap_or(false)
+    }
+
+    /// Launched by a bare `fresh` in Orchestrator mode. Exposed to JS as
+    /// `editor.orchestratorMode()`. The launch, not the `orchestrator_mode`
+    /// preference, which stays on for `fresh FILE`. Plugins in the mode use
+    /// it to override their own settings.
+    pub fn orchestrator_mode(&self) -> bool {
+        self.state_snapshot
+            .read()
+            .map(|s| s.orchestrator_mode)
+            .unwrap_or(false)
+    }
+
+    /// Whether the left dock slot is open: a panel is in it, or the host is
+    /// holding the column for one its manifest declared. Exposed to JS as
+    /// `editor.dockOpen()`. The plugin that fills the dock mounts it at
+    /// `ready` iff this is true.
+    pub fn dock_open(&self) -> bool {
+        self.state_snapshot
+            .read()
+            .map(|s| s.dock_open)
+            .unwrap_or(false)
+    }
+
+    /// The dock column's width in cells, open or not; `0` when the terminal
+    /// is too narrow for a dock. Exposed to JS as `editor.dockCols()`. Lay
+    /// dock content out to this: the host owns the width and re-fits it on
+    /// resize.
+    pub fn dock_cols(&self) -> u32 {
+        self.state_snapshot
+            .read()
+            .map(|s| u32::from(s.dock_cols))
+            .unwrap_or(0)
     }
 
     /// The environment core detected in the workspace, as a JSON string
@@ -3223,6 +3509,40 @@ impl JsEditorApi {
             .is_ok())
     }
 
+    /// Persist a single core config setting to the user's config file.
+    ///
+    /// The durable counterpart to `setSetting`: `setSetting` patches the
+    /// running editor and is gone at exit, this writes `config.json` the way
+    /// the Settings UI does (same layer resolution, same comment-preserving
+    /// rewrite) *and* applies the value immediately, so a checkbox a plugin
+    /// draws can own a real setting.
+    ///
+    /// `path` is dot-separated (e.g. `"orchestrator_mode"`,
+    /// `"editor.tab_size"`). The host refuses a path that is not a real
+    /// config setting rather than writing a key that would be silently
+    /// dropped on the next load, and says so in the status bar.
+    ///
+    /// Returns `true` if the write was queued; it is applied asynchronously,
+    /// so a following `getConfig()` reflects it only after the editor
+    /// processes the command.
+    pub fn save_setting<'js>(
+        &self,
+        _ctx: rquickjs::Ctx<'js>,
+        path: String,
+        value: Value<'js>,
+    ) -> rquickjs::Result<bool> {
+        let json: serde_json::Value = rquickjs_serde::from_value(value)
+            .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))?;
+        Ok(self
+            .command_sender
+            .send(PluginCommand::SaveSetting {
+                plugin_name: self.plugin_name.clone(),
+                path,
+                value: json,
+            })
+            .is_ok())
+    }
+
     /// Reload theme registry from disk
     /// Call this after installing theme packages or saving new themes
     pub fn reload_themes(&self) {
@@ -3377,6 +3697,16 @@ impl JsEditorApi {
     /// review-diff comments keyed off git state.
     pub fn get_data_dir(&self) -> String {
         self.services.data_dir().to_string_lossy().to_string()
+    }
+
+    /// The user's home directory as the editor resolved it, or `""` when it
+    /// has none. A plugin reading a dotfile asks here rather than reading
+    /// `$HOME`, which no test can redirect per-editor.
+    pub fn get_home_dir(&self) -> String {
+        self.services
+            .home_dir()
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default()
     }
 
     /// Directory holding terminal scrollback backing files for the current
@@ -4616,6 +4946,7 @@ impl JsEditorApi {
                 color: (r, g, b),
                 use_bg,
                 before,
+                epoch: self.hook_epoch_for(buffer_id),
             })
             .is_ok()
     }
@@ -4635,6 +4966,15 @@ impl JsEditorApi {
     /// be RGB arrays or theme-key strings, plus `bold`/`italic`. Theme
     /// keys are resolved at render time so the label follows theme
     /// changes live.
+    ///
+    /// `options.padToColumn` (number) pads the text so it *ends* at that
+    /// column of the row, instead of the usual single space of inlay
+    /// padding — use it for decoration that has to hold a column, such as
+    /// the right edge of a box drawn around a block. The padding is
+    /// measured as the row is laid out, so it holds the column even for
+    /// the frames between an edit and the `lines_changed` that reports it;
+    /// a width you compute here cannot, since your view of the buffer
+    /// always trails the one being drawn.
     #[allow(clippy::too_many_arguments)]
     pub fn add_virtual_text_styled<'js>(
         &self,
@@ -4668,6 +5008,7 @@ impl JsEditorApi {
         let bg = parse_color_spec("bg", &options);
         let bold: bool = options.get("bold").unwrap_or(false);
         let italic: bool = options.get("italic").unwrap_or(false);
+        let pad_to_column: Option<u32> = options.get("padToColumn").ok();
 
         // Track virtual text ID for cleanup on unload.
         self.plugin_tracked_state
@@ -4689,6 +5030,8 @@ impl JsEditorApi {
                 bold,
                 italic,
                 before,
+                epoch: self.hook_epoch_for(buffer_id),
+                pad_to_column,
             });
         Ok(true)
     }
@@ -7029,6 +7372,9 @@ impl JsEditorApi {
         // The panel's own keymap: a `defineMode` name whose bindings its
         // keys resolve against first. Optional trailing arg, default none.
         mode: rquickjs::function::Opt<String>,
+        // How the panel's form controls align their labels in the shared
+        // column: `"right"` or `"left"` (default). Optional trailing arg.
+        label_align: rquickjs::function::Opt<String>,
     ) -> rquickjs::Result<bool> {
         let json = js_to_json(&ctx, spec_obj);
         let spec: fresh_core::api::WidgetSpec = match serde_json::from_value(json) {
@@ -7054,6 +7400,7 @@ impl JsEditorApi {
                 closable: closable.0.unwrap_or(false),
                 start_blurred: start_blurred.0.unwrap_or(false),
                 mode: mode.0.filter(|s| !s.is_empty()),
+                label_align: parse_label_align(label_align.0.as_deref()),
             })
             .is_ok())
     }
@@ -7156,9 +7503,11 @@ impl JsEditorApi {
     }
 
     /// Control a mounted floating panel's placement / focus without
-    /// re-sending its spec. `op`: "dock" (`arg` = width in columns),
-    /// "center", "focus", "blur", "fullscreen" (`arg != 0` makes a
-    /// centered panel cover the whole frame over the dock), "sidebar"
+    /// re-sending its spec. `op`: "dock" (re-anchor as the left dock and
+    /// focus; `arg` unused — the width is the editor's), "dock_width"
+    /// (`arg` = width in columns; sticks like a drag, across resizes and
+    /// launches), "center", "focus", "blur", "fullscreen" (`arg != 0` makes
+    /// a centered panel cover the whole frame over the dock), "sidebar"
     /// (`arg` = requested rows; re-anchors the panel as a sidebar section
     /// under the file explorer — "dock" / "center" re-anchor it back out),
     /// "sidebar_rows" (`arg` = requested rows for a section; a divider the
@@ -7304,9 +7653,9 @@ impl JsEditorApi {
     /// The payload is a JS object describing filesystem + spawner +
     /// terminal wrapper + display label. The canonical schema lives in
     /// the `AuthorityPayload` type in `fresh-editor`; plugins should
-    /// hand-build objects that match it. Fire-and-forget: the editor
-    /// restarts as part of the transition, so the plugin is reloaded
-    /// before any follow-up work can run on this call's return value.
+    /// hand-build objects that match it. Fire-and-forget: returns before the
+    /// authority is live and reloads nothing, so follow-up work belongs in an
+    /// `authority_changed` handler.
     #[plugin_api(js_name = "setAuthority")]
     pub fn set_authority(
         &self,
@@ -7320,7 +7669,7 @@ impl JsEditorApi {
         true
     }
 
-    /// Restore the default local authority. Same restart semantics as
+    /// Restore the default local authority on this window. Same semantics as
     /// `setAuthority`.
     #[plugin_api(js_name = "clearAuthority")]
     pub fn clear_authority(&self) {
@@ -7397,9 +7746,8 @@ impl JsEditorApi {
     /// ```
     ///
     /// The override sticks until replaced or cleared via
-    /// `clearRemoteIndicatorState`. Editor restart (e.g. on
-    /// `setAuthority`) resets it — plugins must reassert after a
-    /// post-restart init if they want the override to persist.
+    /// `clearRemoteIndicatorState`. It survives an authority change but not a
+    /// relaunch.
     #[plugin_api(js_name = "setRemoteIndicatorState")]
     pub fn set_remote_indicator_state(
         &self,
@@ -8711,6 +9059,52 @@ const EDITOR_PROMISE_BOOTSTRAP: &str = r#"
                 editor.listCommands = _wrapAsync("_listCommandsStart", "listCommands");
                 editor.prompt = _wrapAsync("_promptStart", "prompt");
                 editor.getNextKey = _wrapAsync("_getNextKeyStart", "getNextKey");
+                editor._walkTreeOn = _wrapAsync("_walkTreeStart", "walkTree");
+                editor._readFilePrefixesOn = _wrapAsync("_readFilePrefixesStart", "readFilePrefixes");
+                editor._runOnTargetOn = _wrapAsync("_runOnTargetStart", "runOnTarget");
+                editor._machineEnvOn = _wrapAsync("_machineEnvStart", "machineEnv");
+                editor._openMachineRaw = _wrapAsync("_openMachineStart", "openMachine");
+                editor._closeMachineRaw = _wrapAsync("_closeMachineStart", "closeMachine");
+
+                // Machine id 0 means the active window's authority.
+                editor.walkTree = function(root, options) {
+                    return editor._walkTreeOn(0, root, options || {});
+                };
+                editor.readFilePrefixes = function(requests) {
+                    return editor._readFilePrefixesOn(0, requests);
+                };
+                editor.runOnTarget = function(program, args, cwd) {
+                    return editor._runOnTargetOn(0, program, args || [], cwd || "");
+                };
+                editor.machineEnv = function(names) {
+                    return editor._machineEnvOn(0, names || []);
+                };
+                editor.openMachine = function(spec) {
+                    return editor._openMachineRaw(spec).then(function(info) {
+                        var id = info.id;
+                        return {
+                            id: id,
+                            platform: info.platform,
+                            home: info.home,
+                            label: info.label,
+                            walkTree: function(root, options) {
+                                return editor._walkTreeOn(id, root, options || {});
+                            },
+                            readFilePrefixes: function(requests) {
+                                return editor._readFilePrefixesOn(id, requests);
+                            },
+                            run: function(program, args, cwd) {
+                                return editor._runOnTargetOn(id, program, args || [], cwd || "");
+                            },
+                            env: function(names) {
+                                return editor._machineEnvOn(id, names || []);
+                            },
+                            close: function() {
+                                return editor._closeMachineRaw(id);
+                            },
+                        };
+                    });
+                };
                 editor.getLineStartPosition = _wrapAsync("_getLineStartPositionStart", "getLineStartPosition");
                 editor.getLineEndPosition = _wrapAsync("_getLineEndPositionStart", "getLineEndPosition");
                 editor.createTerminal = _wrapAsync("_createTerminalStart", "createTerminal");
@@ -9394,6 +9788,15 @@ impl QuickJsBackend {
             for timer_id in &tracked.timer_ids {
                 let _ = self.command_sender.send(PluginCommand::ClearPluginTimer {
                     timer_id: *timer_id,
+                });
+            }
+
+            // Close the machines this plugin opened. No callback: the promise is
+            // in the heap being discarded. Closing twice is a no-op editor-side.
+            for machine in &tracked.machine_ids {
+                let _ = self.command_sender.send(PluginCommand::CloseMachine {
+                    machine: *machine,
+                    callback_id: None,
                 });
             }
         }

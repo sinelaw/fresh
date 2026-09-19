@@ -77,12 +77,9 @@ fn confirm_quit_setting_quits_after_user_confirms() {
         .unwrap();
     assert!(!harness.editor().should_quit());
 
-    // Confirm. The default English binding is "y" (yes).
+    // Confirm with the Quit button's own letter.
     harness
-        .send_key(KeyCode::Char('y'), KeyModifiers::NONE)
-        .unwrap();
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .send_key(KeyCode::Char('q'), KeyModifiers::NONE)
         .unwrap();
     assert!(
         harness.editor().should_quit(),
@@ -100,6 +97,7 @@ fn custom_noop_keybinding_disables_ctrl_q() {
         key: "Q".to_string(),
         modifiers: vec!["Ctrl".to_string()],
         keys: Vec::new(),
+        chord: String::new(),
         action: "noop".to_string(),
         args: HashMap::new(),
         when: None,
@@ -127,6 +125,7 @@ fn custom_none_keybinding_disables_ctrl_q() {
         key: "Q".to_string(),
         modifiers: vec!["Ctrl".to_string()],
         keys: Vec::new(),
+        chord: String::new(),
         action: "none".to_string(),
         args: HashMap::new(),
         when: None,
@@ -159,6 +158,7 @@ fn keybinding_editor_delete_of_default_ctrl_q_disables_quit() {
         key: "q".to_string(),
         modifiers: vec!["ctrl".to_string()],
         keys: Vec::new(),
+        chord: String::new(),
         action: "noop".to_string(),
         args: HashMap::new(),
         when: Some("normal".to_string()),

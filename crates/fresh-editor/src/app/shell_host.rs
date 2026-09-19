@@ -1888,6 +1888,21 @@ impl Editor {
         }
     }
 
+    /// The widget the *tree* holds the keyboard on right now, as the panel's
+    /// own key — `None` when focus is outside any described widget, or when
+    /// there is no tree yet.
+    ///
+    /// Read by [`UiFact::WidgetFocus`] to tell a live landing from one a later
+    /// settle has already replaced; see the note there.
+    pub(super) fn tree_focused_widget_key(&self) -> Option<String> {
+        let ui = self.shell_ui.as_ref()?;
+        let id = ui.focused()?;
+        ui.key_of(id)
+            .as_ref()
+            .and_then(crate::view::shell::widgets::widget_key_of)
+            .map(str::to_string)
+    }
+
     /// Apply what the tree decided on its own since the last input: the
     /// facts `apply_autofocus` leaves in `Ui::pending_messages` when a frame
     /// settles focus.
@@ -1948,6 +1963,9 @@ impl Editor {
             let stales = !msg.is_pointer_transient();
             match msg {
                 crate::view::shell::msg::UiMsg::Action(action) => {
+                    // A key the tree answered never reaches the buffer route
+                    // that would clear the prefix.
+                    self.active_window_mut().chord_state.clear();
                     // Straight into the pipeline that has always applied
                     // actions; nothing about it changes.
                     if let Err(e) = self.handle_action(action.clone()) {
@@ -1982,11 +2000,95 @@ impl Editor {
         }
     }
 
+    /// The panel a widget fact's `Slot` names — the same resolution the
+    /// `WidgetFocus` applier makes, with the pane-mounted case added: a
+    /// pane's panel is the one mounted on the buffer that pane shows.
+    pub(crate) fn panel_key_of_slot(
+        &self,
+        slot: &crate::view::shell::widgets::Slot,
+    ) -> Option<crate::widgets::PanelKey> {
+        use crate::view::shell::widgets::Slot;
+        match slot {
+            Slot::Dock => self.panel(crate::app::PanelSlot::Dock),
+            Slot::Floating => self.panel(crate::app::PanelSlot::Floating),
+            Slot::Sidebar(i) => self.panel(crate::app::PanelSlot::Sidebar(*i)),
+            _ => None,
+        }
+        .map(|p| p.panel_key.clone())
+        .or_else(|| match slot {
+            Slot::PromptToolbar => self.prompt_toolbar_key(),
+            Slot::Pane(leaf) => {
+                let buffer = self
+                    .window_panes()
+                    .into_iter()
+                    .find(|(l, _)| l == leaf)
+                    .map(|(_, b)| b)?;
+                self.widget_registry
+                    .panels_for_buffer(buffer)
+                    .into_iter()
+                    .next()
+            }
+            _ => None,
+        })
+    }
+
+    /// Put a markdown document's caret on `byte`, extending the selection
+    /// from its anchor when `extend`, and ask the run's viewport to bring the
+    /// row holding that byte into its window. The row is layout's answer —
+    /// the tree wrapped the text — which is why the reveal goes through the
+    /// anchor rather than through a scroll the host computes.
+    pub(crate) fn move_prose_caret(
+        &mut self,
+        panel_key: &crate::widgets::PanelKey,
+        widget: &str,
+        byte: usize,
+        extend: bool,
+    ) {
+        let moved = match self
+            .widget_registry
+            .get_mut(panel_key)
+            .and_then(|p| p.instance_states.get_mut(widget))
+        {
+            Some(crate::widgets::WidgetInstanceState::Text { editor, .. }) => {
+                match extend {
+                    true => editor.set_cursor_from_flat_selecting(byte),
+                    false => editor.set_cursor_from_flat(byte),
+                }
+                true
+            }
+            _ => false,
+        };
+        if !moved {
+            return;
+        }
+        self.prose_reveal_for(panel_key)
+            .reveal_byte(crate::view::shell::widgets::prose_run_key(widget), byte);
+        self.shell_description_stale = true;
+    }
+
+    /// The length of a markdown document's text, for a drag past its end.
+    fn prose_len(&self, panel_key: &crate::widgets::PanelKey, widget: &str) -> usize {
+        match self
+            .widget_registry
+            .get(panel_key)
+            .and_then(|p| p.instance_states.get(widget))
+        {
+            Some(crate::widgets::WidgetInstanceState::Text { editor, .. }) => editor.value().len(),
+            _ => 0,
+        }
+    }
+
     /// Apply a positional fact — the half of a message that never becomes a
     /// keybinding.
     fn apply_ui_fact(&mut self, fact: crate::view::shell::msg::UiFact, ev: EventFacts) {
         use crate::view::shell::msg::UiFact;
         match fact {
+            UiFact::ChordPending { code, modifiers } => {
+                self.active_window_mut().chord_state.push((code, modifiers));
+            }
+            UiFact::ChordAbandoned => {
+                self.active_window_mut().chord_state.clear();
+            }
             // The tree found the widget; the dispatch behind this is the one
             // all three frontends already share, and it does not change.
             // `None` for the clicked byte: the byte range in the hit is a
@@ -2090,6 +2192,35 @@ impl Editor {
             UiFact::SettingsItem(idx) => {
                 self.dispatch_settings_hit(crate::view::settings::SettingsHit::Item(idx), false);
             }
+            // A plugin-drawn overlay (the dock's `⋯` menu) had a press land
+            // outside it: the plugin hears `dismiss` on the overlay's key
+            // and closes what it drew. Same delivery as every widget event.
+            // Only a panel slot can carry one: the others have no plugin to
+            // tell, so the layer's dismissal is theirs to ignore.
+            UiFact::WidgetOverlayDismiss { slot, key } => {
+                use crate::view::shell::widgets::Slot;
+                let panel = match slot {
+                    Slot::Dock => Some(crate::app::PanelSlot::Dock),
+                    Slot::Sidebar(i) => Some(crate::app::PanelSlot::Sidebar(i)),
+                    Slot::Floating => Some(crate::app::PanelSlot::Floating),
+                    Slot::Pane(_) | Slot::PromptToolbar | Slot::Settings | Slot::SettingsEntry => {
+                        None
+                    }
+                };
+                let panel_key = panel.and_then(|p| self.panel(p).map(|p| p.panel_key.clone()));
+                if let Some(panel_key) = panel_key {
+                    let ev = crate::widgets::WidgetEvent {
+                        row_target: false,
+                        context_click: false,
+                        widget_key: key,
+                        widget_kind: "overlay",
+                        payload: serde_json::json!({}),
+                        event_type: "dismiss",
+                        owner_key: None,
+                    };
+                    self.deliver_widget_hit(&panel_key, &ev, None);
+                }
+            }
             // The pop-over's rows report their own hover, because nothing else
             // can: `update_widget_hover` probes the runtime's panel entries
             // and a pop-over is not among them. Stored on the panel beside the
@@ -2171,25 +2302,103 @@ impl Editor {
             // The plugin is told, exactly as `deliver_widget_hit`'s
             // click-to-focus told it, because a plugin that mirrors focus
             // cannot tell a click from a Tab and should not have to.
-            UiFact::WidgetFocus { slot, widget } => {
-                use crate::view::shell::widgets::Slot;
-                let key = match slot {
-                    Slot::Dock => self.panel(crate::app::PanelSlot::Dock),
-                    Slot::Floating => self.panel(crate::app::PanelSlot::Floating),
-                    Slot::Sidebar(i) => self.panel(crate::app::PanelSlot::Sidebar(i)),
-                    _ => None,
+            // **A press on a markdown document's prose, as a byte of the
+            // document.** The run answered `Event::text_byte` from the rows
+            // layout shaped, so there is no line and no arena to resolve
+            // against: focus the widget if the press did not land on the
+            // focused one, put the caret on the byte (extending from the
+            // anchor when Shift was held), and remember that the press is
+            // live so the run's captured moves extend from here.
+            UiFact::WidgetProsePress {
+                slot,
+                widget,
+                byte,
+                mods,
+            } => {
+                // **The pane half of the press, as the `WidgetHit` arm above
+                // makes it.** The prose run calls `e.stop()` like any other
+                // `hit_node`, so the pane's own pointer surface never sees
+                // this press and nothing else moves the *editor's* focus to
+                // the split the panel is mounted in. Only the widget focus
+                // key moved, so a click on the code tour's description while
+                // the file beside it held the keyboard put a caret in the
+                // prose and left every keystroke going to the file.
+                if let crate::view::shell::widgets::Slot::Pane(pane) = slot {
+                    self.focus_pane(pane);
                 }
-                .map(|p| p.panel_key.clone())
-                // The prompt toolbar's landing, the same fact: a control on
-                // the prompt's ring took the keyboard from the query input.
-                .or_else(|| match slot {
-                    Slot::PromptToolbar => self.prompt_toolbar_key(),
-                    _ => None,
-                });
-                let Some(key) = key else {
+                let Some(pk) = self.panel_key_of_slot(&slot) else {
+                    return;
+                };
+                if self.widget_registry.focus_key(&pk) != Some(widget.as_str()) {
+                    self.apply_ui_fact(
+                        UiFact::WidgetFocus {
+                            slot,
+                            widget: widget.clone(),
+                        },
+                        ev,
+                    );
+                }
+                self.move_prose_caret(&pk, &widget, byte, mods.shift);
+                self.prose_drag = Some((pk, widget));
+            }
+            UiFact::WidgetProseDrag {
+                widget,
+                byte,
+                above,
+                ..
+            } => {
+                let Some((pk, w)) = self.prose_drag.clone() else {
+                    return;
+                };
+                if w != widget {
+                    return;
+                }
+                // Off the run is one of its two ends, and the fact says which:
+                // a drag that leaves the last row selects to the document's
+                // end, one that leaves the first selects back to its start, as
+                // both did in the buffer. Reading `None` as "the end" alone
+                // made a drag upward past the top select forward to it.
+                let target = match byte {
+                    Some(b) => b,
+                    None if above => 0,
+                    None => self.prose_len(&pk, &w),
+                };
+                self.move_prose_caret(&pk, &w, target, true);
+            }
+            UiFact::WidgetProseRelease { .. } => {
+                self.prose_drag = None;
+            }
+            UiFact::WidgetFocus { slot, widget } => {
+                // **The one slot→panel resolver.** This match was a copy of
+                // [`Self::panel_key_of_slot`] with its `Pane` leg missing, so
+                // a press that focused a widget in a *pane-mounted* panel —
+                // the code tour's prose is one — resolved to no panel and the
+                // focus never moved: no caret was painted, and the key
+                // handlers that ask what is focused all declined.
+                let Some(key) = self.panel_key_of_slot(&slot) else {
                     return;
                 };
                 if self.widget_registry.focus_key(&key) == Some(widget.as_str()) {
+                    return;
+                }
+                // **Only while it is still true.**
+                //
+                // This fact is a *gain* the tree fired at some past settle, and
+                // gains are queued (`Ui::pending_messages`) until the next
+                // input drains them — so a batch can carry two, and the first
+                // is a landing the second already superseded. The tree itself
+                // is the authority on where focus is *now*: a gain it no longer
+                // agrees with describes a frame that has been laid out over,
+                // and applying it walks the panel's focus backwards.
+                //
+                // The dock's `⋯` was that walk. Its press focused the button
+                // (click-to-focus), the menu opened and took the keyboard, and
+                // the two frames in between queued `dock-menu` and then
+                // `menu-pick`. Both landed on the release: `dock-menu` first,
+                // which the plugin reads as focus leaving its menu — so the
+                // menu closed on the release of the very click that opened it,
+                // and only a click fast enough to beat the frames left it up.
+                if self.tree_focused_widget_key().is_some_and(|k| k != widget) {
                     return;
                 }
                 // **Through the same door every other focus move uses.** This
@@ -2877,15 +3086,13 @@ impl Editor {
             UiFact::GripRelease { which } => {
                 use crate::view::shell::msg::Grip;
                 match which {
-                    // End a dock-resize drag and persist the chosen width so
-                    // it survives toggling the dock off and on.
+                    // End a dock-resize drag. The width itself landed in
+                    // `dock_width` with every step of the drag (so the
+                    // responsive re-fit never snapped it back); the release
+                    // is when it is worth a write to disk.
                     Grip::DockWidth => {
                         self.dock_resizing = false;
-                        if let Some(crate::app::PanelPlacement::LeftDock { width_cols }) =
-                            self.dock.as_ref().map(|f| f.placement)
-                        {
-                            self.dock_width = Some(width_cols);
-                        }
+                        self.persist_dock_width();
                     }
                     // A finished separator drag changed the ratios, so the
                     // frame reflows through the one layout funnel.
@@ -3193,6 +3400,9 @@ impl Editor {
                     KeySlot::WorkspaceTrust => {
                         let _ = self.handle_workspace_trust_key(&ev);
                     }
+                    KeySlot::Confirm => {
+                        self.handle_confirm_dialog_key(&ev);
+                    }
                 }
             }
             // **The prompt: the same seam, and the claim it completes.**
@@ -3371,6 +3581,10 @@ impl Editor {
                     self.should_quit = true;
                 }
             }
+            // A button on the confirmation modal. One press is the answer —
+            // see `UiFact::ConfirmChoose`.
+            UiFact::ConfirmChoose(i) => self.confirm_dialog_choose(i),
+            UiFact::ConfirmHover(i) => self.confirm_dialog_hover(i),
             // The inspector. Dismissing it is the same statement three
             // places used to make: an outside-press guard returning
             // `PassAfter`, an `on_key` that cleared the field and returned

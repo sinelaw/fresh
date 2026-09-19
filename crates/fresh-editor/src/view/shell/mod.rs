@@ -23,6 +23,7 @@
 
 pub mod buffer_host;
 pub mod calibration;
+pub mod confirm;
 pub mod context_menu;
 pub mod dock;
 pub mod entry;

@@ -1,0 +1,108 @@
+{
+  "name": "memory-live-data",
+  "render": {
+    "size": [
+      1080,
+      1080
+    ],
+    "fps": 60,
+    "title": "fresh \u2014 96 MB, every piece",
+    "intro_caption": [
+      "Fresh memory breakdown (musl)",
+      "96 MB: the heap opened up, plus the binary itself"
+    ],
+    "outro_caption": [
+      "Fresh memory breakdown (musl)",
+      "12% a terminal buffer nothing uses, 23% the binary"
+    ],
+    "timing": {
+      "grow": 0.8,
+      "intro": 1.2,
+      "move": 0.4,
+      "hold": 1.8,
+      "regroup": 0.35,
+      "outro": 1.2
+    },
+    "donut": {
+      "style": "ansi",
+      "charset": "unicode",
+      "unit": "MB",
+      "total": "96 MB",
+      "total_label": "held",
+      "thickness": 0.4,
+      "items": [
+        {
+          "label": "Files on screen",
+          "value": 27.7,
+          "note": "Open files, plus indexes and caches"
+        },
+        {
+          "label": "Program code",
+          "value": 13.8,
+          "note": "Machine code from the fresh binary"
+        },
+        {
+          "label": "Terminals",
+          "value": 13.8,
+          "note": "Terminal grids and parser buffers"
+        },
+        {
+          "label": "JavaScript engine",
+          "value": 12.7,
+          "note": "QuickJS heap, for running plug-ins"
+        },
+        {
+          "label": "Untraced",
+          "value": 8.1,
+          "visit": false,
+          "note": "Allocations the profiler couldn't attribute"
+        },
+        {
+          "label": "Built-in data",
+          "value": 7.0,
+          "note": "Plugins, grammars, themes, translations"
+        },
+        {
+          "label": "Everything else",
+          "value": 4.3,
+          "visit": false,
+          "note": "Widgets, settings, screen buffers"
+        },
+        {
+          "label": "Plug-in wiring",
+          "value": 3.0,
+          "visit": false,
+          "note": "Plug-in commands and hooks"
+        },
+        {
+          "label": "Syntax rules",
+          "value": 2.2,
+          "visit": false,
+          "note": "Syntect grammars, per open language"
+        },
+        {
+          "label": "Translations",
+          "value": 1.8,
+          "visit": false,
+          "note": "Interface text, fifteen languages"
+        },
+        {
+          "label": "Startup fixups",
+          "value": 1.0,
+          "visit": false,
+          "note": "Address fixups applied at load"
+        },
+        {
+          "label": "Thread space",
+          "value": 0.25,
+          "visit": false,
+          "note": "The main thread's stack"
+        }
+      ]
+    }
+  },
+  "encode": {
+    "crf": 18,
+    "preset": "slow"
+  }
+}

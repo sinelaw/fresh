@@ -22,7 +22,7 @@
 //! ## Usage Example
 //!
 //! ```
-//! use fresh::input_history::InputHistory;
+//! use fresh::input::input_history::InputHistory;
 //!
 //! let mut history = InputHistory::new();
 //!
@@ -116,7 +116,7 @@ impl InputHistory {
     ///
     /// # Example
     /// ```
-    /// # use fresh::input_history::InputHistory;
+    /// # use fresh::input::input_history::InputHistory;
     /// let mut history = InputHistory::new();
     /// history.push("first".to_string());
     /// history.push("second".to_string());
@@ -161,7 +161,7 @@ impl InputHistory {
     ///
     /// # Example
     /// ```
-    /// # use fresh::input_history::InputHistory;
+    /// # use fresh::input::input_history::InputHistory;
     /// let mut history = InputHistory::new();
     /// history.push("first".to_string());
     /// history.push("second".to_string());
@@ -211,7 +211,7 @@ impl InputHistory {
     ///
     /// # Example
     /// ```
-    /// # use fresh::input_history::InputHistory;
+    /// # use fresh::input::input_history::InputHistory;
     /// let mut history = InputHistory::new();
     /// history.push("first".to_string());
     /// history.push("second".to_string());
@@ -267,7 +267,7 @@ impl InputHistory {
     ///
     /// # Example
     /// ```
-    /// # use fresh::input_history::InputHistory;
+    /// # use fresh::input::input_history::InputHistory;
     /// let mut history = InputHistory::new();
     /// history.push("last search".to_string());
     /// assert_eq!(history.last(), Some("last search"));
@@ -284,7 +284,7 @@ impl InputHistory {
     ///
     /// # Example
     /// ```
-    /// # use fresh::input_history::InputHistory;
+    /// # use fresh::input::input_history::InputHistory;
     /// let mut history = InputHistory::new();
     /// history.push("first".to_string());
     /// history.push("second".to_string());

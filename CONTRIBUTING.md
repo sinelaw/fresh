@@ -202,6 +202,15 @@ Two rules follow from the boundary:
   the dependency graph between `cargo build` and `cargo test`, which is the
   exact trap the `vte` entry in `crates/fresh-editor/Cargo.toml` documents.
 
+## Profiling
+
+Measuring Fresh — memory, startup time, per-keystroke terminal traffic — is
+documented in [docs/internal/profiling.md](docs/internal/profiling.md), which
+indexes the tools and says which question each one answers. Profile against
+the `profiling` cargo profile (`cargo build --profile profiling --bin fresh`),
+never `dev`: `[profile.dev]` has no line tables, and unoptimized code
+allocates differently enough to mislead.
+
 ## Commit Hygiene
 
 - Commit messages must describe the **motivation / goal** of each commit, not just what changed

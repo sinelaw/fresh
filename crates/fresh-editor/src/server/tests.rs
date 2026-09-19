@@ -603,6 +603,7 @@ mod integration_tests {
             dir_context,
             plugins_enabled: false,
             init_enabled: false,
+            orchestrator_mode: false,
             startup_authority: None,
             workspace_trust: std::sync::Arc::new(
                 crate::services::workspace_trust::WorkspaceTrust::permissive(),
@@ -780,6 +781,7 @@ mod integration_tests {
             dir_context,
             plugins_enabled: false,
             init_enabled: false,
+            orchestrator_mode: false,
             startup_authority: None,
             workspace_trust: std::sync::Arc::new(
                 crate::services::workspace_trust::WorkspaceTrust::permissive(),
@@ -964,6 +966,7 @@ mod integration_tests {
             dir_context,
             plugins_enabled: false,
             init_enabled: false,
+            orchestrator_mode: false,
             startup_authority: None,
             workspace_trust: std::sync::Arc::new(
                 crate::services::workspace_trust::WorkspaceTrust::permissive(),
@@ -1291,226 +1294,6 @@ mod integration_tests {
         teardown_editor_server_e2e(conn, shutdown_handle, server_handle, socket_paths, temp_dir);
     }
 
-    /// Authority transitions in session mode must rebuild the editor in
-    /// place (not shut the daemon down).  This test drives the rebuild
-    /// path directly against an `EditorServer`, without running the
-    /// full event loop — it's enough to assert the public contract: the
-    /// Editor instance is replaced, `current_authority` tracks the new
-    /// authority, and `should_quit` is cleared so the main loop
-    /// wouldn't shut down on the next tick.
-    #[test]
-    fn test_session_rebuild_swaps_editor_and_authority() {
-        use crate::config::Config;
-        use crate::config_io::DirectoryContext;
-        use crate::server::editor_server::{EditorServer, EditorServerConfig};
-        use crate::services::authority::{
-            Authority, AuthorityPayload, FilesystemSpec, SpawnerSpec, TerminalWrapperSpec,
-        };
-
-        let temp_dir =
-            std::env::temp_dir().join(format!("fresh-rebuild-test-{}", std::process::id()));
-        std::fs::create_dir_all(&temp_dir).unwrap();
-
-        let dir_context = DirectoryContext::for_testing(&temp_dir);
-        let server_config = EditorServerConfig {
-            working_dir: temp_dir.clone(),
-            session_name: Some(unique_session_name("rebuild")),
-            idle_timeout: Some(Duration::from_secs(30)),
-            editor_config: Config::default(),
-            dir_context,
-            plugins_enabled: false,
-            init_enabled: false,
-            startup_authority: None,
-            workspace_trust: std::sync::Arc::new(
-                crate::services::workspace_trust::WorkspaceTrust::permissive(),
-            ),
-            env_provider: std::sync::Arc::new(
-                crate::services::env_provider::EnvProvider::inactive(),
-            ),
-            session_keepalive: None,
-            startup_files: Vec::new(),
-            #[cfg(feature = "web")]
-            web_addr: None,
-        };
-
-        // `Editor` isn't `Send`, so construction + rebuild must happen
-        // on the same thread.  Wrap the whole assertion block in a
-        // spawned thread to avoid smuggling the server across `await`
-        // points; use a channel to propagate the test result out.
-        let handle = thread::spawn(move || -> Result<(), String> {
-            let mut server =
-                EditorServer::new(server_config).map_err(|e| format!("EditorServer::new: {e}"))?;
-
-            // Pretend a client has connected — `initialize_editor`
-            // doesn't actually need one, it only needs the term_size
-            // to have been written.
-            server
-                .initialize_editor()
-                .map_err(|e| format!("initialize_editor: {e}"))?;
-
-            // Sanity: we booted with a local authority.
-            let label_before = server
-                .editor()
-                .expect("editor after init")
-                .authority()
-                .display_label
-                .clone();
-            if !label_before.is_empty() {
-                return Err(format!("expected empty label, got {:?}", label_before));
-            }
-
-            // Build a container-style authority via the plugin payload
-            // path, to exercise the same code plugins hit.
-            let payload = AuthorityPayload {
-                filesystem: FilesystemSpec::Local,
-                spawner: SpawnerSpec::DockerExec {
-                    container_id: "deadbeef".into(),
-                    user: Some("vscode".into()),
-                    workspace: Some("/workspaces/proj".into()),
-                    env: Vec::new(),
-                },
-                terminal_wrapper: TerminalWrapperSpec::Explicit {
-                    command: "docker".into(),
-                    args: vec![
-                        "exec".into(),
-                        "-it".into(),
-                        "deadbeef".into(),
-                        "bash".into(),
-                    ],
-                    manages_cwd: true,
-                },
-                display_label: "Container:deadbeef".into(),
-                path_translation: None,
-            };
-            let new_auth = Authority::from_plugin_payload(
-                payload,
-                std::sync::Arc::new(crate::services::workspace_trust::WorkspaceTrust::permissive()),
-                std::sync::Arc::new(crate::services::env_provider::EnvProvider::inactive()),
-            )
-            .map_err(|e| format!("from_plugin_payload: {e}"))?;
-
-            // Capture the pre-rebuild editor's address.  We can't
-            // compare `Editor` by identity directly (it moves), but the
-            // `authority()` pointer is a Arc so it should change.
-            // Snapshot the filesystem Arc via strong_count parity:
-            // after rebuild the old editor is gone, so any Arc it
-            // uniquely held is dropped. We keep a clone to compare.
-            let before_filesystem = server
-                .editor()
-                .expect("editor before rebuild")
-                .authority()
-                .filesystem
-                .clone();
-
-            server
-                .rebuild_editor(None, Some(new_auth), None)
-                .map_err(|e| format!("rebuild_editor: {e}"))?;
-
-            // After rebuild: new editor exists, carries the new label.
-            let editor = server.editor().expect("editor after rebuild");
-            if editor.authority().display_label != "Container:deadbeef" {
-                return Err(format!(
-                    "expected Container:deadbeef label, got {:?}",
-                    editor.authority().display_label
-                ));
-            }
-            if editor.should_quit() {
-                return Err("rebuilt editor still has should_quit=true".into());
-            }
-            // The pre-rebuild filesystem Arc should now only be held
-            // by our local clone (strong_count == 1) because the old
-            // editor was dropped. If it were still referenced by the
-            // new editor, the count would be >= 2.
-            let remaining = std::sync::Arc::strong_count(&before_filesystem);
-            if remaining != 1 {
-                return Err(format!(
-                    "expected pre-rebuild filesystem Arc to be unique after rebuild; strong_count={}",
-                    remaining
-                ));
-            }
-
-            Ok(())
-        });
-
-        let result = handle.join().expect("rebuild test thread panicked");
-        std::fs::remove_dir_all(&temp_dir).ok();
-        result.expect("rebuild test failed");
-    }
-
-    /// Working-directory changes (the "switch project root" flow) must
-    /// also rebuild in place under session mode.  Mirrors the authority
-    /// test above but with the working_dir slot instead.
-    #[test]
-    fn test_session_rebuild_switches_working_dir() {
-        use crate::config::Config;
-        use crate::config_io::DirectoryContext;
-        use crate::server::editor_server::{EditorServer, EditorServerConfig};
-
-        let parent = std::env::temp_dir().join(format!("fresh-rebuild-cwd-{}", std::process::id()));
-        let dir_a = parent.join("project_a");
-        let dir_b = parent.join("project_b");
-        std::fs::create_dir_all(&dir_a).unwrap();
-        std::fs::create_dir_all(&dir_b).unwrap();
-
-        let dir_context = DirectoryContext::for_testing(&parent);
-        let server_config = EditorServerConfig {
-            working_dir: dir_a.clone(),
-            session_name: Some(unique_session_name("rebuild-cwd")),
-            idle_timeout: Some(Duration::from_secs(30)),
-            editor_config: Config::default(),
-            dir_context,
-            plugins_enabled: false,
-            init_enabled: false,
-            startup_authority: None,
-            workspace_trust: std::sync::Arc::new(
-                crate::services::workspace_trust::WorkspaceTrust::permissive(),
-            ),
-            env_provider: std::sync::Arc::new(
-                crate::services::env_provider::EnvProvider::inactive(),
-            ),
-            session_keepalive: None,
-            startup_files: Vec::new(),
-            #[cfg(feature = "web")]
-            web_addr: None,
-        };
-
-        let dir_b_clone = dir_b.clone();
-        let handle = thread::spawn(move || -> Result<(), String> {
-            let mut server =
-                EditorServer::new(server_config).map_err(|e| format!("EditorServer::new: {e}"))?;
-
-            server
-                .initialize_editor()
-                .map_err(|e| format!("initialize_editor: {e}"))?;
-
-            server
-                .rebuild_editor(Some(dir_b_clone.clone()), None, None)
-                .map_err(|e| format!("rebuild_editor: {e}"))?;
-
-            let editor = server.editor().expect("editor after rebuild");
-            if editor.should_quit() {
-                return Err("rebuilt editor still has should_quit=true".into());
-            }
-            let current = editor.working_dir();
-            // working_dir may canonicalize — compare via canonical form.
-            let want = dir_b_clone
-                .canonicalize()
-                .unwrap_or_else(|_| dir_b_clone.clone());
-            if current != want {
-                return Err(format!(
-                    "expected working_dir {}, got {}",
-                    want.display(),
-                    current.display()
-                ));
-            }
-            Ok(())
-        });
-
-        let result = handle.join().expect("cwd-rebuild thread panicked");
-        std::fs::remove_dir_all(&parent).ok();
-        result.expect("cwd-rebuild test failed");
-    }
-
     /// `EditorServerConfig.startup_authority` lets a caller (notably
     /// the `ssh://` / `user@host:path` CLI forms) hand the daemon a
     /// non-local authority to boot into.  The paired
@@ -1584,7 +1367,10 @@ mod integration_tests {
             dir_context,
             plugins_enabled: false,
             init_enabled: false,
-            startup_authority: Some(startup_auth),
+            orchestrator_mode: false,
+            startup_authority: Some(std::sync::Arc::new(
+                crate::services::authority::Connection::plain(startup_auth),
+            )),
             workspace_trust: std::sync::Arc::new(
                 crate::services::workspace_trust::WorkspaceTrust::permissive(),
             ),
@@ -1740,6 +1526,7 @@ mod integration_tests {
             dir_context,
             plugins_enabled: false,
             init_enabled: false,
+            orchestrator_mode: false,
             startup_authority: None,
             workspace_trust: std::sync::Arc::new(
                 crate::services::workspace_trust::WorkspaceTrust::permissive(),

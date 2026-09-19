@@ -280,6 +280,18 @@ pub struct Prompt {
     /// `selected / total` count (e.g. "Searching…", "No matches"). Plugin-
     /// controlled via `editor.setPromptStatus(text)`; overlay-only.
     pub status: String,
+    /// The question this prompt is, when it is a confirmation rather than
+    /// something to type into.
+    ///
+    /// **`Some` moves the prompt off the bottom row entirely.** The renderer
+    /// draws a centred modal over a dimmed frame instead of the minibuffer
+    /// line (`view::shell::confirm`), and `dispatch_prompt_key` hands every
+    /// key to the dialog's own dispatcher rather than to the text editor
+    /// below. Confirming feeds the selected choice's `input` to
+    /// `Editor::confirm_prompt`, so the prompt type's existing handler is
+    /// reached by exactly the string the single-letter answer used to
+    /// produce. See [`crate::view::confirm`] for why.
+    pub confirm: Option<crate::view::confirm::Confirm>,
 }
 
 /// Maximum number of suggestion rows a bottom-anchored dropdown shows at once.
@@ -314,6 +326,7 @@ impl Prompt {
             footer: Vec::new(),
             toolbar: None,
             status: String::new(),
+            confirm: None,
         }
     }
 
@@ -347,6 +360,7 @@ impl Prompt {
             footer: Vec::new(),
             toolbar: None,
             status: String::new(),
+            confirm: None,
         }
     }
 
@@ -399,7 +413,15 @@ impl Prompt {
             footer: Vec::new(),
             toolbar: None,
             status: String::new(),
+            confirm: None,
         }
+    }
+
+    /// Whether this prompt is drawn as a modal dialog instead of the
+    /// bottom row. The one question three separate places have to agree on —
+    /// the frame's row budget, the row's content, and the keyboard.
+    pub fn is_confirm_dialog(&self) -> bool {
+        self.confirm.is_some()
     }
 
     /// Move cursor left (to previous grapheme cluster boundary)
@@ -517,7 +539,7 @@ impl Prompt {
     ///
     /// # Example
     /// ```
-    /// # use fresh::prompt::{Prompt, PromptType};
+    /// # use fresh::view::prompt::{Prompt, PromptType};
     /// let mut prompt = Prompt::new("Search: ".to_string(), PromptType::Search);
     /// prompt.set_input_plain("current".to_string());
     /// prompt.set_cursor_byte(7);
@@ -744,7 +766,7 @@ impl Prompt {
     ///
     /// # Example
     /// ```
-    /// # use fresh::prompt::{Prompt, PromptType};
+    /// # use fresh::view::prompt::{Prompt, PromptType};
     /// let mut prompt = Prompt::new("Find: ".to_string(), PromptType::OpenFile);
     /// prompt.set_input_plain("hello world".to_string());
     /// prompt.set_cursor_byte(0); // At start of "hello"
@@ -766,7 +788,7 @@ impl Prompt {
     ///
     /// # Example
     /// ```
-    /// # use fresh::prompt::{Prompt, PromptType};
+    /// # use fresh::view::prompt::{Prompt, PromptType};
     /// let mut prompt = Prompt::new("Find: ".to_string(), PromptType::OpenFile);
     /// prompt.set_input_plain("hello world".to_string());
     /// prompt.set_cursor_byte(5); // After "hello"
@@ -788,7 +810,7 @@ impl Prompt {
     ///
     /// # Example
     /// ```
-    /// # use fresh::prompt::{Prompt, PromptType};
+    /// # use fresh::view::prompt::{Prompt, PromptType};
     /// let mut prompt = Prompt::new("Find: ".to_string(), PromptType::OpenFile);
     /// prompt.set_input_plain("hello world".to_string());
     /// prompt.set_cursor_byte(5); // After "hello"
@@ -819,7 +841,7 @@ impl Prompt {
     ///
     /// # Example
     /// ```
-    /// # use fresh::prompt::{Prompt, PromptType};
+    /// # use fresh::view::prompt::{Prompt, PromptType};
     /// let mut prompt = Prompt::new("Search: ".to_string(), PromptType::Search);
     /// prompt.set_input_plain("test query".to_string());
     /// assert_eq!(prompt.get_text(), "test query");
@@ -834,7 +856,7 @@ impl Prompt {
     ///
     /// # Example
     /// ```
-    /// # use fresh::prompt::{Prompt, PromptType};
+    /// # use fresh::view::prompt::{Prompt, PromptType};
     /// let mut prompt = Prompt::new("Find: ".to_string(), PromptType::OpenFile);
     /// prompt.set_input_plain("some text".to_string());
     /// prompt.set_cursor_byte(9);
@@ -855,7 +877,7 @@ impl Prompt {
     ///
     /// # Example
     /// ```
-    /// # use fresh::prompt::{Prompt, PromptType};
+    /// # use fresh::view::prompt::{Prompt, PromptType};
     /// let mut prompt = Prompt::new("Command: ".to_string(), PromptType::QuickOpen);
     /// prompt.set_input_plain("save".to_string());
     /// prompt.set_cursor_byte(4);

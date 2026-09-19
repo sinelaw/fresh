@@ -190,12 +190,33 @@ is no single enum.
 
 ### 4.1 Lazy materialization (inert → warm)
 
-At boot only the **foreground** window is restored eagerly. Which one that is, is
-decided by the launch cwd, not by "last used globally":
+At boot only the **foreground** window is restored eagerly. Which one that is
+depends on how the editor was launched.
+
+**Ordinary launch** — decided by the launch cwd, not by "last used globally":
 
 1. If the globally-last-used session belongs to this cwd, reopen it.
 2. Else the most-recently-created session whose `root == cwd` (highest id).
 3. Else none → boot a clean base window at cwd.
+
+> Step 1 is currently unreachable. `PersistedWindows::active` is the field it
+> reads, and `read_persisted_windows_env` synthesises it as `0` — there is no
+> on-disk "active session" index, only the set of workspace files (§3.1). So an
+> ordinary launch resolves by step 2 or 3. Kept as written because the intent
+> is right and `active` is still in the serialized shape; Orchestrator mode
+> below is what actually implements "where I was last", on a per-workspace
+> stamp rather than a single pointer.
+
+**Orchestrator mode** (`pick_active_window_globally`, used when the daemon was
+started by a bare `fresh` — see §4.5): the most recently *focused* workspace
+wins regardless of the launch cwd. Recency is each `Workspace`'s own
+`last_focused_at` (epoch ms), stamped by `set_active_window` and at window
+creation, persisted by `capture_workspace` and re-adopted by
+`apply_workspace_layout`. A per-workspace stamp rather than a global pointer:
+it cannot dangle, and deleting the most recent workspace promotes the next one
+for free. Falls back to the cwd rule when no workspace carries a stamp (every
+file predates the field), and to a clean base window at cwd when there are no
+workspaces at all — which is the mode's first-run path.
 
 Matching is on **`root`, not `project_path`** — a worktree session carries
 `project_path == <parent repo>` but `root == <worktree>`, and matching on
@@ -288,9 +309,101 @@ when the ids differ — an unguarded close would kill the terminal just spawned.
 
 ### 4.4 Plugin-level agent state
 
-The dock additionally shows a coarse agent state inferred from terminal output
-(e.g. working/idle, plus richer running/awaiting/ready/errored glyphs derived in
-the plugin). This is display-only and not part of the persistence model.
+The dock additionally shows a coarse agent state inferred from terminal output:
+`working` (recent output, or an OSC "running" marker), `blocked` (quiet, and
+the last screen lines read as a question for the user), `done` (quiet after a
+burst of work that happened while the window was not active — cleared on
+activation), `idle`, `unknown` (no output yet, or the terminal exited). Rows
+show `*` / `●` / `✓` / `·` / `?`, folder rows roll up `●n ✓n`, and the dock
+header carries `● N need you · ✓ N done` while either is non-zero. A
+transition into `blocked`/`done` in a non-active window is announced in the
+status bar (`● name needs you (F8 jumps)`, optional bell — see 5.0), and
+`Orchestrator: Jump to Attention` walks the pending workspaces (blocked first)
+and then returns; `Orchestrator: Jump Back` returns at once. Bind a key to
+`orchestrator_jump` / `orchestrator_jump_back` to use them without the palette.
+`blocked`/`done` are heuristics over the output stream, display-only, and not
+part of the persistence model.
+
+The "question on screen" rules are data, not code: the built-in set (v1) can
+be replaced by `<data dir>/orchestrator/detection-rules.json` — `{ "version":
+N, "blocked": ["regex", …], "workMinMs"?, "idleAfterMs"?, "recentLines"? }` —
+and, when `detectionRulesUrl` is set, by a published file fetched at startup
+(and by `Orchestrator: Reload Detection Rules`) whenever its version is newer
+than the local one. `Orchestrator: Explain State` (and `fresh --cmd agent
+explain <ID>`) prints the decision chain — which line matched which rule,
+output age, OSC marker, unseen-work flag, rule-set version and source — so a
+wrong badge is a bug report with evidence. The CLI verbs (`fresh --cmd
+workspace list`, `agent list|get|explain|wait|start`) are documented in
+agent-fresh-cli-exposure-plan.md.
+
+### 4.5 Orchestrator mode (the bare-`fresh` launch)
+
+`config.orchestrator_mode` (top-level boolean, default **true**) makes a
+command line with *nothing on it* open the workspace switcher rather than an
+editor on the current directory. It is consulted for that one shape of
+invocation and no other: `fresh FILE`, `fresh --cmd …`, `fresh -a …` all behave
+identically whether it is on or off. The gate is literally
+`std::env::args_os().count() == 1` plus "stdin is a terminal"
+(`wants_orchestrator_launch` in `main.rs`) — reading argv rather than parsed
+arguments is deliberate, since *any* flag means "just this, here".
+
+What the mode is, end to end:
+
+- **One shared daemon.** The client attaches to a daemon named
+  `ORCHESTRATOR_DAEMON` (`"orchestrator"`), starting it if it is not up. Named
+  rather than keyed on the working directory, which is the whole point: `fresh`
+  typed anywhere joins the editor you already have. When the daemon is already
+  running the launch does nothing else at all — no files, no cwd, no
+  reconfiguration; the terminal becomes another view onto the session as it
+  stands.
+- **The mode crosses the spawn as a flag.** The daemon is a separate process
+  and cannot see the client's command line, so `DaemonSpawn::orchestrator_mode`
+  forwards `--orchestrator-mode`, which becomes
+  `EditorServerConfig::orchestrator_mode` and then the `orchestrator_mode`
+  parameter of `Editor::with_options`. It is a *parameter*, not a read of
+  `config.orchestrator_mode`: the config field is the user's preference, which
+  can be on while this particular launch named a file.
+- **The last-focused workspace comes back**, regardless of cwd (§4.1).
+- **No empty buffer.** `Editor::fills_an_empty_workspace()` returns `false`,
+  which overrides — not consults — both
+  `editor.auto_create_empty_buffer_on_last_buffer_close` and
+  `file_explorer.auto_open_on_last_buffer_close`; and the boot seed buffer is
+  marked `hidden_from_tabs` + `synthetic_placeholder`, the same state the close
+  path already synthesizes for the blank-workspace settings. An untitled buffer
+  answers "you have nothing open, here is somewhere to type", which is the
+  wrong question when the dock is showing your workspaces.
+- **The dock opens** — regardless of the plugin's own `autoOpenDock` setting
+  and of whether the user last closed it: the mode overrides both, since a
+  bare `fresh` is a request for the switcher. The host makes that call at
+  construction (`Editor::apply_startup_dock_chrome`, from the launch mode it
+  was built with), and the plugin mounts at `ready` because
+  `editor.dockOpen()` says so.
+- **The column is carved before the dock exists.** The dock's content is
+  this plugin's, mounted from `ready` after every plugin has loaded; the
+  column is the host's. The plugin declares it in
+  `orchestrator.manifest.json`, the host remembers what the user left in
+  `<data>/chrome.json`, and `Editor::apply_startup_dock_chrome` decides at
+  construction whether the slot is open and how wide. The plugin mounts at
+  `ready` iff `editor.dockOpen()`, laid out to `editor.dockCols()`; a column
+  nothing mounted into is handed back when the hook's sentinel lands. See
+  `docs/internal/plugins.md` §6.2a.
+- **First run** — no workspaces at all — boots a clean base window at the cwd
+  and lands on the welcome screen. Nothing special-cases the welcome screen to
+  get there: it opens itself as a background tab as always, and a background
+  buffer takes the pane when the pane holds a synthetic placeholder (there is
+  nothing to displace).
+
+The switch is user-visible in two places: **Orchestrator Mode** in Settings
+(schema-driven, no UI code), and the checkbox at the top of the welcome screen,
+which writes the core setting through the `saveSetting` plugin API.
+
+> **The daemon's startup hooks.** Orchestrator mode depends on `ready` firing,
+> and until this landed `EditorServer` fired neither `plugins_loaded` nor
+> `ready` — only the in-process path in `main.rs` did. Plugins loaded and their
+> commands worked, but nothing that keys off "startup finished" ever ran in a
+> daemon: no dock, no welcome screen, in *every* `fresh -a` session.
+> `initialize_editor` and the authority-swap rebuild now fire both, in the
+> in-process path's order.
 
 ---
 
@@ -321,10 +434,13 @@ the generated settings widgets.
 
 | Setting               | Default  | Effect                                              |
 | --------------------- | -------- | --------------------------------------------------- |
-| `autoOpenDock`        | `false`  | Open the dock (unfocused) on the `ready` event.      |
+| `autoOpenDock`        | `true`   | Open the dock (unfocused) on the `ready` event.      |
 | `defaultView`         | `"card"` | Density the dock opens at: `card` or `compact`.      |
 | `showAllWorktrees`    | `false`  | Initial state of the "all worktrees" checkbox.       |
 | `showEmptyWorkspaces` | `true`   | Initial state of the "show empty" checkbox (i.e. `hideTrivial = !showEmptyWorkspaces`). |
+| `notifications`       | `"all"`  | Status-bar notice when a background workspace turns `blocked` (`needs-you`) or also `done` (`all`); `off` leaves only the dock's attention line. |
+| `notifySound`         | `false`  | Ring the terminal bell with each notice.             |
+| `detectionRulesUrl`   | `""`     | URL of a published detection-rules JSON; adopted when newer than the local file. |
 
 Each is a *default*, not a lock: the dock's own "view" button and the two
 Filters checkboxes still override it for the rest of the session

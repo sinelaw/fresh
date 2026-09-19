@@ -3059,6 +3059,152 @@ impl Drop for FakeLspServer {
     }
 }
 
+// ===================================================================
+// Document-tracking server
+//
+// Keeps its own copy of each document by applying the changes it is
+// sent, exactly as a real server does, and logs that copy. Lets a test
+// assert "the server holds what the buffer holds" directly, instead of
+// inferring it from the diagnostics on screen (#3258).
+// ===================================================================
+
+/// A fake LSP server that keeps its own copy of the document and logs it as
+/// `DOC <json-encoded text>` after each notification it applies.
+///
+/// Arguments: `<log>`.
+pub fn write_document_tracking_server(dir: &std::path::Path) -> std::path::PathBuf {
+    let script = r#"#!/usr/bin/env python3
+import sys, os, json
+
+LOG = sys.argv[1]
+fin = os.fdopen(sys.stdin.fileno(), "rb", 0)
+fout = os.fdopen(sys.stdout.fileno(), "wb", 0)
+
+docs = {}
+
+
+def log(msg):
+    with open(LOG, "a") as f:
+        f.write(msg + "\n")
+
+
+def send(payload):
+    body = json.dumps(payload).encode()
+    fout.write(b"Content-Length: %d\r\n\r\n" % len(body) + body)
+
+
+def read_message():
+    length = 0
+    while True:
+        line = fin.readline()
+        if not line:
+            return None
+        line = line.strip()
+        if not line:
+            break
+        key, _, value = line.decode().partition(":")
+        if key.strip().lower() == "content-length":
+            length = int(value.strip())
+    if length <= 0:
+        return None
+    body = b""
+    while len(body) < length:
+        chunk = fin.read(length - len(body))
+        if not chunk:
+            return None
+        body += chunk
+    return json.loads(body.decode())
+
+
+def apply_change(text, change):
+    # A change with no range replaces the whole document.
+    if change.get("range") is None:
+        return change["text"]
+    lines = text.split("\n")
+
+    def offset(pos):
+        line = max(0, min(pos["line"], len(lines) - 1))
+        base = sum(len(l) + 1 for l in lines[:line])
+        return base + min(pos["character"], len(lines[line]))
+
+    start = max(0, min(offset(change["range"]["start"]), len(text)))
+    end = max(start, min(offset(change["range"]["end"]), len(text)))
+    return text[:start] + change["text"] + text[end:]
+
+
+while True:
+    msg = read_message()
+    if msg is None:
+        break
+    method = msg.get("method")
+    params = msg.get("params") or {}
+
+    if method == "initialize":
+        send({"jsonrpc": "2.0", "id": msg.get("id"),
+              "result": {"capabilities": {"textDocumentSync": 2}}})
+    elif method == "shutdown":
+        send({"jsonrpc": "2.0", "id": msg.get("id"), "result": None})
+    elif method == "exit":
+        break
+    elif method == "textDocument/didOpen":
+        doc = params["textDocument"]
+        docs[doc["uri"]] = doc["text"]
+        log("DOC " + json.dumps(docs[doc["uri"]]))
+    elif method == "textDocument/didChange":
+        doc = params["textDocument"]
+        uri = doc["uri"]
+        text = docs.get(uri, "")
+        for change in params.get("contentChanges", []):
+            text = apply_change(text, change)
+        docs[uri] = text
+        log("DOC " + json.dumps(text))
+    elif method == "textDocument/didSave":
+        doc = params["textDocument"]
+        log("DIDSAVE %s %s" % (doc["uri"], json.dumps(params.get("text"))))
+    elif msg.get("id") is not None:
+        send({"jsonrpc": "2.0", "id": msg["id"], "result": None})
+"#;
+
+    let script_path = dir.join("document_tracking_lsp.py");
+    std::fs::write(&script_path, script).expect("write fake server");
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut perms = std::fs::metadata(&script_path)
+            .expect("script metadata")
+            .permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&script_path, perms).expect("chmod script");
+    }
+
+    script_path
+}
+
+/// The document the server currently holds, read fresh: it appends as it works.
+pub fn server_document(log_file: &std::path::Path) -> Option<String> {
+    let log = std::fs::read_to_string(log_file).ok()?;
+    let last = log.lines().rev().find_map(|l| l.strip_prefix("DOC "))?;
+    serde_json::from_str::<String>(last).ok()
+}
+
+/// The text the server was handed by the `didSave` for the file named
+/// `basename`, or `None` if it has had no such save.
+pub fn saved_text(log_file: &std::path::Path, basename: &str) -> Option<String> {
+    let log = std::fs::read_to_string(log_file).ok()?;
+    let line = log
+        .lines()
+        .rev()
+        .filter_map(|l| l.strip_prefix("DIDSAVE "))
+        .find(|rest| {
+            rest.split(' ')
+                .next()
+                .is_some_and(|uri| uri.ends_with(basename))
+        })?;
+    let (_uri, text) = line.split_once(' ')?;
+    serde_json::from_str::<Option<String>>(text).ok().flatten()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

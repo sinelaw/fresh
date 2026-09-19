@@ -18,7 +18,7 @@
 use crate::view::overlay::Overlay;
 use crate::view::theme::{Theme, TokenColorExt};
 use crate::view::ui::view_pipeline::{LineStart, ViewLine};
-use ratatui::style::Style;
+use ratatui::style::{Color, Style};
 
 pub(super) struct TailFillInput<'a> {
     pub current_view_line: &'a ViewLine,
@@ -83,11 +83,9 @@ pub(super) fn resolve_tail_fill(input: TailFillInput<'_>) -> Option<TailFillResu
     };
 
     // Diff-syntax row-bg wash — slots between the overlay layer (so
-    // plugin overlays still win) and the virtual-line fallback. Set
-    // fg = bg so terminals that suppress empty-bg ANSI sequences
-    // still emit the colour, mirroring `overlay_bg_style`.
+    // plugin overlays still win) and the virtual-line fallback.
     let syntax_style = if row_had_source_bytes {
-        syntax_extend_bg.map(|bg| Style::default().fg(bg).bg(bg))
+        syntax_extend_bg.map(|bg| fill_style(bg, theme))
     } else {
         None
     };
@@ -116,8 +114,6 @@ pub(super) fn resolve_tail_fill(input: TailFillInput<'_>) -> Option<TailFillResu
 pub(super) fn overlay_bg_style(overlay: &Overlay, theme: &Theme) -> Option<Style> {
     use crate::view::overlay::OverlayFace;
 
-    // Set fg = bg so terminals that suppress empty-bg ANSI sequences
-    // still emit the colour for the fill cells.
     let bg = match &overlay.face {
         OverlayFace::Background { color } => Some(*color),
         OverlayFace::Style { style } => style.bg,
@@ -131,7 +127,16 @@ pub(super) fn overlay_bg_style(overlay: &Overlay, theme: &Theme) -> Option<Style
             .or(fallback_style.bg),
         _ => None,
     }?;
-    Some(Style::default().fg(bg).bg(bg))
+    Some(fill_style(bg, theme))
+}
+
+/// The style a row's trailing fill paints with. Both halves are stated, like
+/// the ground's (`BufferLayoutOutput::effective_editor_fg`): the terminal's
+/// block cursor paints the caret by inverting the cell it sits on, and the
+/// old `fg = bg` inverted to itself — an invisible cursor at the end of every
+/// banded line.
+fn fill_style(bg: Color, theme: &Theme) -> Style {
+    Style::default().fg(theme.editor_fg).bg(bg)
 }
 
 fn virtual_line_fallback_style(view_line: &ViewLine, theme: &Theme) -> Option<Style> {
@@ -147,5 +152,5 @@ fn virtual_line_fallback_style(view_line: &ViewLine, theme: &Theme) -> Option<St
         .as_ref()
         .or_else(|| view_line.char_styles.first().and_then(|s| s.as_ref()))?;
     let bg = token_style.bg.as_ref()?.to_ratatui(theme);
-    Some(Style::default().fg(bg).bg(bg))
+    Some(fill_style(bg, theme))
 }

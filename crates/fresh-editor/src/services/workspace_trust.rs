@@ -101,7 +101,7 @@ pub enum SpawnDecision {
 
 /// Shared, interior-mutable trust state for one workspace.
 ///
-/// Held behind an `Arc` by the server (so the level survives editor rebuilds)
+/// Held behind an `Arc` by the server (so the daemon owns the level)
 /// and by the guarding spawners (so they read the current level on every
 /// spawn). The workspace root is mutable because a session can change its
 /// working directory in place.

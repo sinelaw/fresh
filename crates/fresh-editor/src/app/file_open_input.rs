@@ -375,24 +375,17 @@ impl Editor {
                 e.downcast_ref::<crate::model::buffer::LargeFileEncodingConfirmation>()
             {
                 // Show confirmation prompt for large file with non-resynchronizable encoding
-                let size_mb = confirmation.file_size as f64 / (1024.0 * 1024.0);
-                let load_key = t!("file.large_encoding.key.load").to_string();
-                let encoding_key = t!("file.large_encoding.key.encoding").to_string();
-                let cancel_key = t!("file.large_encoding.key.cancel").to_string();
-                let prompt_msg = t!(
-                    "file.large_encoding_prompt",
-                    encoding = confirmation.encoding.display_name(),
-                    size = format!("{:.0}", size_mb),
-                    load_key = load_key,
-                    encoding_key = encoding_key,
-                    cancel_key = cancel_key
-                )
-                .to_string();
-                self.start_prompt(
-                    prompt_msg,
+                let confirm = crate::app::confirm_dialog::large_file_encoding(
+                    confirmation.encoding.display_name(),
+                    confirmation.file_size,
+                    &confirmation.path,
+                );
+                self.start_confirm_prompt(
+                    confirm.body.clone(),
                     PromptType::ConfirmLargeFileEncoding {
                         path: confirmation.path.clone(),
                     },
+                    confirm,
                 );
             } else {
                 self.set_status_message(
@@ -418,24 +411,17 @@ impl Editor {
         &mut self,
         confirmation: &crate::model::buffer::LargeFileEncodingConfirmation,
     ) {
-        let size_mb = confirmation.file_size as f64 / (1024.0 * 1024.0);
-        let load_key = t!("file.large_encoding.key.load").to_string();
-        let encoding_key = t!("file.large_encoding.key.encoding").to_string();
-        let cancel_key = t!("file.large_encoding.key.cancel").to_string();
-        let prompt_msg = t!(
-            "file.large_encoding_prompt",
-            encoding = confirmation.encoding.display_name(),
-            size = format!("{:.0}", size_mb),
-            load_key = load_key,
-            encoding_key = encoding_key,
-            cancel_key = cancel_key
-        )
-        .to_string();
-        self.start_prompt(
-            prompt_msg,
+        let confirm = crate::app::confirm_dialog::large_file_encoding(
+            confirmation.encoding.display_name(),
+            confirmation.file_size,
+            &confirmation.path,
+        );
+        self.start_confirm_prompt(
+            confirm.body.clone(),
             PromptType::ConfirmLargeFileEncoding {
                 path: confirmation.path.clone(),
             },
+            confirm,
         );
     }
 

@@ -52,7 +52,7 @@ const BEFORE_HELP_EN: &str =
 #[command(before_help = BEFORE_HELP_EN)]
 struct Cli {
     /// Run a command instead of opening files
-    /// Commands: daemon (list|attach|new|kill|open-file), config (show|paths), grammar (list), init, update, script (api|check|run|types), help (tour|script)
+    /// Commands: daemon (list|attach|new|kill|open-file), config (show|paths), grammar (list), init, update, script (api|check|run|types), workspace (list), agent (list|get|explain|wait|start), help (tour|script)
     #[arg(long, num_args = 1.., value_name = "COMMAND", allow_hyphen_values = true)]
     cmd: Vec<String>,
 
@@ -136,6 +136,12 @@ struct Cli {
     #[arg(long, hide = true, value_name = "NAME")]
     session_name: Option<String>,
 
+    /// Boot the daemon in Orchestrator mode (internal, used by
+    /// spawn_server_detached). The client knows the launch was a bare
+    /// `fresh`; the daemon is a different process and cannot see that.
+    #[arg(long, hide = true)]
+    orchestrator_mode: bool,
+
     /// Remote SSH URL for server mode (internal, used by spawn_server_detached
     /// when the client was launched with `ssh://…` or `user@host:path`).  The
     /// server parses this, connects, and installs the result as
@@ -172,6 +178,15 @@ struct Cli {
     /// editor.
     #[cfg(feature = "web")]
     #[arg(long, value_name = "ADDR", num_args = 0..=1, default_missing_value = "127.0.0.1:8137")]
+    web: Option<String>,
+
+    /// Accepted but unavailable: this build was compiled without the `web`
+    /// feature. Hidden from `--help` (advertising a flag that cannot work
+    /// would be worse than not listing it) and taken only so `--web` fails
+    /// with `web_unavailable()`'s explanation of what is missing instead of
+    /// clap's bare "unexpected argument '--web' found".
+    #[cfg(not(feature = "web"))]
+    #[arg(long, value_name = "ADDR", num_args = 0..=1, default_missing_value = "127.0.0.1:8137", hide = true)]
     web: Option<String>,
 }
 
@@ -215,6 +230,10 @@ struct Args {
     /// when the client saw an `ssh://` / scp-style remote in
     /// `files`.  Populated only for the daemon side.
     ssh_url: Option<String>,
+    /// Forwarded to the detached daemon by `spawn_server_detached` when the
+    /// client was a bare `fresh` and `orchestrator_mode` was on.  Populated
+    /// only for the daemon side.
+    orchestrator_mode: bool,
     // Daemon-related fields (set via subcommands or -a shortcut)
     attach: bool,
     list_sessions: bool,
@@ -227,6 +246,10 @@ struct Args {
     gui: bool,
     /// Serve the web UI on this bind address (`--web [ADDR]`)
     #[cfg(feature = "web")]
+    web: Option<String>,
+    /// `--web [ADDR]` on a build without the web UI — carried only so the
+    /// failure can explain itself.
+    #[cfg(not(feature = "web"))]
     web: Option<String>,
 }
 
@@ -491,7 +514,7 @@ impl From<Cli> for Args {
                 // Unknown command
                 _ => {
                     eprintln!("Unknown command: {}", cli.cmd.join(" "));
-                    eprintln!("Available commands: daemon (list|attach|new|kill|info|open-file), config (show|paths), grammar (list), init, update");
+                    eprintln!("Available commands: daemon (list|attach|new|kill|info|open-file), config (show|paths), grammar (list), init, update, script, command, workspace, agent");
                     std::process::exit(1);
                 }
             }
@@ -559,6 +582,7 @@ impl From<Cli> for Args {
             init,
             server: cli.server,
             ssh_url: cli.ssh_url,
+            orchestrator_mode: cli.orchestrator_mode,
             attach,
             list_sessions,
             session_name,
@@ -567,6 +591,8 @@ impl From<Cli> for Args {
             #[cfg(feature = "gui")]
             gui: cli.gui,
             #[cfg(feature = "web")]
+            web: cli.web,
+            #[cfg(not(feature = "web"))]
             web: cli.web,
         }
     }
@@ -615,7 +641,6 @@ enum ParsedLocation {
 struct IterationOutcome {
     loop_result: AnyhowResult<()>,
     update_result: Option<release_checker::ReleaseCheckResult>,
-    restart_dir: Option<PathBuf>,
 }
 
 struct SetupState {
@@ -861,9 +886,7 @@ fn handle_first_run_setup(
             .active_window_mut()
             .enable_event_streaming(log_path)?;
     }
-    // The warning-log channel and status-log path used to be wired up
-    // here from `tracing_handles`; that wiring now lives in the main
-    // loop so it survives editor restarts (e.g. devcontainer attach).
+    // The warning-log channel and status-log path are wired up in main.
 
     // If the user passed any file argument on the command line and the
     // `skip_session_restore_when_files_passed` option is on (default), treat
@@ -2029,12 +2052,10 @@ fn run_editor_iteration(
     }
 
     let update_result = editor.get_update_result().cloned();
-    let restart_dir = editor.take_restart_dir();
 
     Ok(IterationOutcome {
         loop_result,
         update_result,
-        restart_dir,
     })
 }
 
@@ -3077,7 +3098,9 @@ fn run_server_command(args: &Args, web_addr: Option<String>) -> AnyhowResult<()>
     let session_keepalive: Option<Box<dyn std::any::Any + Send>> =
         remote_session.map(|rs| Box::new(rs) as Box<dyn std::any::Any + Send>);
     let startup_authority = if remote_info.is_some() {
-        Some(authority)
+        Some(std::sync::Arc::new(
+            fresh::services::authority::Connection::plain(authority),
+        ))
     } else {
         None
     };
@@ -3090,6 +3113,7 @@ fn run_server_command(args: &Args, web_addr: Option<String>) -> AnyhowResult<()>
         dir_context,
         plugins_enabled: !args.no_plugins,
         init_enabled: !args.no_init,
+        orchestrator_mode: args.orchestrator_mode,
         startup_authority,
         workspace_trust,
         env_provider,
@@ -3134,6 +3158,22 @@ fn run_server_command(args: &Args, web_addr: Option<String>) -> AnyhowResult<()>
 
     boot!("[server] Server shutting down");
     Ok(())
+}
+
+/// `fresh --web [ADDR]` on a build compiled without the `web` feature.
+///
+/// The web UI is opt-in at compile time (see the `web` feature in Cargo.toml),
+/// so a default build has no bridge to serve. Say that, and say how to get
+/// one, rather than letting clap reject `--web` as an unknown argument —
+/// nothing in that message hints a build feature is missing. Printed and
+/// exited like the "session already running" case in `run_web_command`: a
+/// user error deserves a clean line, not `real_main`'s backtrace.
+#[cfg(not(feature = "web"))]
+fn web_unavailable() -> ! {
+    eprintln!("this build of fresh was compiled without the web UI");
+    eprintln!("rebuild with: cargo build --release --features web");
+    eprintln!("(or install a package that ships it)");
+    std::process::exit(1);
 }
 
 /// `fresh --web [ADDR] [FILES…]` — run the session daemon in the foreground
@@ -3249,7 +3289,13 @@ fn run_open_files_command(
 
     // Start server if not running (like nvr does by default)
     let server_was_started = if !socket_paths.is_server_alive() {
-        let _pid = spawn_server_detached(session_name, ssh_url.as_deref(), locale, config)?;
+        let _pid = spawn_server_detached(&fresh::server::DaemonSpawn {
+            session_name,
+            ssh_url: ssh_url.as_deref(),
+            locale,
+            config,
+            ..Default::default()
+        })?;
 
         // Wait for server to be ready
         loop {
@@ -3288,7 +3334,7 @@ fn run_open_files_command(
         // the files have been queued.
         drop(conn);
         if std::io::IsTerminal::is_terminal(&std::io::stdin()) {
-            return run_attach(session_name, &[], locale, config);
+            return run_attach(session_name, &[], locale, config, false);
         } else {
             eprintln!(
                 "Started a new daemon and opened {} file(s). Attach with: fresh -a{}",
@@ -3739,14 +3785,312 @@ fn run_cmd_command(tokens: &[&str]) -> AnyhowResult<()> {
                 std::process::exit(2);
             }
         },
+        Some("workspace") => {
+            match &rest[1..] {
+                ["list", flags @ ..] => orchestrator_list_command(session, flags, false),
+                _ => {
+                    eprintln!("usage: fresh --cmd workspace list [--json]   every workspace the dock tracks");
+                    std::process::exit(2);
+                }
+            }
+        }
+        Some("agent") => match &rest[1..] {
+            ["list", flags @ ..] => orchestrator_list_command(session, flags, true),
+            ["get", id, flags @ ..] => orchestrator_get_command(session, id, flags),
+            ["explain", id, flags @ ..] => orchestrator_explain_command(session, id, flags),
+            ["wait", id, flags @ ..] => orchestrator_wait_command(session, id, flags),
+            ["start", cmd, flags @ ..] => orchestrator_start_command(session, cmd, flags),
+            _ => {
+                eprintln!("usage: fresh --cmd agent list [--json]                          live workspaces and their agent state");
+                eprintln!("       fresh --cmd agent get <ID> [--json]                      one workspace (ID: workspaceId, window number, or dock name)");
+                eprintln!("       fresh --cmd agent explain <ID> [--json]                  why it shows that state: rule, evidence, timing");
+                eprintln!("       fresh --cmd agent wait <ID> [--until STATE[,STATE]] [--timeout SECS] [--json]");
+                eprintln!("                                                                block until the agent is quiet (or in STATE); exit 3 on timeout");
+                eprintln!("       fresh --cmd agent start <CMD> [--prompt TEXT] [--auto] [--no-teach] [--no-wait] [--timeout SECS] [--json]");
+                eprintln!("                                                                launch CMD in this workspace and confirm it came up; exit 1 if not");
+                std::process::exit(2);
+            }
+        },
         _ => {
             eprintln!("Unknown command: {}", rest.join(" "));
             eprintln!("usage: fresh --cmd script <api|check|run|types> ...");
             eprintln!("       fresh --cmd command <run|list> ...");
+            eprintln!("       fresh --cmd workspace list");
+            eprintln!("       fresh --cmd agent <list|get|explain|wait|start> ...");
             eprintln!("       fresh --cmd init reload");
             std::process::exit(2);
         }
     }
+}
+
+// ===========================================================================
+// `fresh --cmd workspace ...` / `fresh --cmd agent ...` — the orchestrator
+// over the control socket.
+//
+// Each verb is a script evaluated against the running editor through the
+// same channel as `script run`, so it carries the same authorization (the
+// workspace's capability token) and the same targeting (`$FRESH_SESSION`
+// or `--session`). The scripts only call the orchestrator plugin's published
+// API (`editor.getPluginApi("orchestrator")`), so what the CLI prints is
+// exactly what a script could see — stable `workspaceId`s included.
+// ===========================================================================
+
+/// `--name VALUE` or `--name=VALUE`; `None` when the flag is absent. A flag
+/// written with nothing usable after it exits 2 rather than falling back to
+/// the default — for a CLI an agent drives, a silently dropped value is the
+/// worst failure it could have.
+///
+/// **"Nothing usable" includes the next flag.** `--prompt --timeout 30` used
+/// to set the prompt to the literal `--timeout` and then read `30` as a stray
+/// argument, which is precisely the silent drop the paragraph above promises
+/// not to do: the agent asked for a prompt and a timeout and got neither,
+/// with a zero exit. A value that begins with `-` is therefore a usage error,
+/// and `--name=-x` is how you pass one on purpose.
+fn flag_value<'a>(flags: &[&'a str], name: &str) -> Option<&'a str> {
+    match flag_value_checked(flags, name) {
+        Ok(v) => v,
+        Err(msg) => {
+            eprintln!("{msg}");
+            std::process::exit(2);
+        }
+    }
+}
+
+/// [`flag_value`] without the exit, so the rule above can be tested.
+fn flag_value_checked<'a>(flags: &[&'a str], name: &str) -> Result<Option<&'a str>, String> {
+    if let Some(i) = flags.iter().position(|f| *f == name) {
+        return match flags.get(i + 1).copied().filter(|v| !v.starts_with('-')) {
+            Some(v) => Ok(Some(v)),
+            None => Err(format!(
+                "{name} wants a value (use {name}=VALUE for one starting with `-`)"
+            )),
+        };
+    }
+    let prefix = format!("{name}=");
+    Ok(flags.iter().find_map(|f| f.strip_prefix(prefix.as_str())))
+}
+
+/// How a verb's script says "and the outcome was exceptional" through a
+/// channel that only carries the script's return value.
+///
+/// **Record Separator, not a word.** These were `\nTIMED_OUT` and
+/// `\nSTART_FAILED`, matched with `ends_with` and removed with
+/// `trim_end_matches` — so output whose own last line was one of those tokens
+/// set the exit code, and `trim_end_matches` stripped every repetition rather
+/// than the one the script appended. `\x1e` cannot occur in a workspace name,
+/// an agent's error text or a JSON document, and [`strip_sentinel`] removes
+/// exactly one.
+const SENTINEL_TIMED_OUT: &str = "\u{1e}TIMED_OUT";
+const SENTINEL_START_FAILED: &str = "\u{1e}START_FAILED";
+
+/// `(what to print, whether the sentinel was there)`.
+fn strip_sentinel<'a>(text: &'a str, sentinel: &str) -> (&'a str, bool) {
+    match text.strip_suffix(sentinel) {
+        Some(rest) => (rest.trim_end(), true),
+        None => (text.trim_end(), false),
+    }
+}
+
+fn has_flag(flags: &[&str], name: &str) -> bool {
+    flags.iter().any(|f| *f == name)
+}
+
+/// `--timeout SECS`, or `default` when absent. A value that is not a number
+/// is a usage error (exit 2), like any other malformed flag.
+fn parse_timeout_flag(flags: &[&str], default: u64) -> u64 {
+    match flag_value(flags, "--timeout") {
+        Some(v) => match v.parse::<u64>() {
+            Ok(n) if n > 0 => n,
+            _ => {
+                eprintln!(
+                    "--timeout wants a whole number of seconds, at least 1, got '{}'",
+                    v
+                );
+                std::process::exit(2);
+            }
+        },
+        None => default,
+    }
+}
+
+fn orchestrator_api_prelude() -> &'static str {
+    r#"
+    const api = editor.getPluginApi("orchestrator");
+    if (!api) throw new Error("the orchestrator plugin is not loaded in this editor");
+    "#
+}
+
+fn orchestrator_list_command(
+    session: Option<&str>,
+    flags: &[&str],
+    agents_only: bool,
+) -> AnyhowResult<()> {
+    let json = has_flag(flags, "--json");
+    let script = format!(
+        r#"{prelude}
+        const rows = api.listWorkspaces().filter(function (w) {{ return {agents_only} ? w.kind === "live" : true; }});
+        if ({json}) return JSON.stringify(rows, null, 2);
+        if (rows.length === 0) return "no workspaces";
+        const id = function (w) {{ return w.workspaceId || String(w.windowId); }};
+        const cols = [["ID", id], ["STATE", function (w) {{ return w.agentState; }}], ["NAME", function (w) {{ return (w.active ? "* " : "  ") + w.name; }}], ["BRANCH", function (w) {{ return w.branch || ""; }}], ["ROOT", function (w) {{ return w.root; }}]];
+        const wide = function (v) {{ return editor.stringWidth(String(v)); }};
+        const widths = cols.map(function (c) {{ return rows.reduce(function (m, w) {{ return Math.max(m, wide(c[1](w))); }}, wide(c[0])); }});
+        const pad = function (v, n) {{ const s = String(v); return s + " ".repeat(Math.max(0, n - wide(s))); }};
+        const line = function (cells) {{ return cells.map(function (v, i) {{ return i === cols.length - 1 ? String(v) : pad(v, widths[i]); }}).join("  "); }};
+        return [line(cols.map(function (c) {{ return c[0]; }}))].concat(rows.map(function (w) {{ return line(cols.map(function (c) {{ return c[1](w); }})); }})).join("\n");
+        "#,
+        prelude = orchestrator_api_prelude(),
+    );
+    submit_orchestrator_script(session, script)
+}
+
+fn orchestrator_get_command(session: Option<&str>, id: &str, flags: &[&str]) -> AnyhowResult<()> {
+    let json = has_flag(flags, "--json");
+    let target = serde_json::to_string(id)?;
+    let script = format!(
+        r#"{prelude}
+        const w = api.getWorkspace({target});
+        if (!w) throw new Error("no such workspace: " + {target});
+        if ({json}) return JSON.stringify(w, null, 2);
+        const out = [];
+        const put = function (k, v) {{ if (v !== undefined && v !== null && v !== "") out.push(k.padEnd(12) + String(v)); }};
+        put("id", w.workspaceId || w.windowId); put("window", w.windowId); put("name", w.name); put("kind", w.kind);
+        put("active", w.active); put("state", w.agentState); put("branch", w.branch); put("root", w.root);
+        put("project", w.projectPath); put("folder", w.folderId); put("title", w.title); put("backend", w.backend);
+        if (w.git) put("git", "dirty " + (w.git.dirty || 0) + "  ahead " + (w.git.ahead || 0) + "  behind " + (w.git.behind || 0));
+        put("why", w.explain.reasons.join("; "));
+        return out.join("\n");
+        "#,
+        prelude = orchestrator_api_prelude(),
+    );
+    submit_orchestrator_script(session, script)
+}
+
+fn orchestrator_explain_command(
+    session: Option<&str>,
+    id: &str,
+    flags: &[&str],
+) -> AnyhowResult<()> {
+    let json = has_flag(flags, "--json");
+    let target = serde_json::to_string(id)?;
+    let script = format!(
+        r#"{prelude}
+        const w = api.getWorkspace({target});
+        if (!w) throw new Error("no such workspace: " + {target});
+        const ex = w.explain;
+        if ({json}) return JSON.stringify(ex, null, 2);
+        const out = [w.name + ": " + ex.state];
+        ex.reasons.forEach(function (r) {{ out.push("  - " + r); }});
+        if (ex.question !== null) out.push("  question: " + JSON.stringify(ex.question));
+        if (ex.rule !== null) out.push("  rule:     /" + ex.rule + "/i");
+        out.push("  rules:    v" + ex.rules.version + " (" + ex.rules.source + ")");
+        if (ex.recentLines.length) out.push("  recent:   " + JSON.stringify(ex.recentLines));
+        return out.join("\n");
+        "#,
+        prelude = orchestrator_api_prelude(),
+    );
+    submit_orchestrator_script(session, script)
+}
+
+fn orchestrator_wait_command(session: Option<&str>, id: &str, flags: &[&str]) -> AnyhowResult<()> {
+    let json = has_flag(flags, "--json");
+    let target = serde_json::to_string(id)?;
+    let until_flag = flag_value(flags, "--until");
+    let until: Vec<String> = until_flag
+        .map(|v| {
+            v.split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
+    if until_flag.is_some() && until.is_empty() {
+        eprintln!("--until wants at least one state");
+        std::process::exit(2);
+    }
+    for st in &until {
+        if !matches!(
+            st.as_str(),
+            "working" | "blocked" | "done" | "idle" | "unknown"
+        ) {
+            eprintln!(
+                "unknown state '{}': expected working, blocked, done, idle or unknown",
+                st
+            );
+            std::process::exit(2);
+        }
+    }
+    let timeout_secs = parse_timeout_flag(flags, 300);
+    let until_js = if until.is_empty() {
+        "undefined".to_string()
+    } else {
+        serde_json::to_string(&until)?
+    };
+    let script = format!(
+        r#"{prelude}
+        const r = await api.waitForState({target}, {{ until: {until_js}, timeoutMs: {timeout_ms} }});
+        const body = ({json}) ? JSON.stringify(r, null, 2)
+            : (r.workspaceId || r.windowId) + " " + r.state + (r.timedOut ? " (timed out after " : " (after ") + (r.elapsedMs / 1000).toFixed(1) + "s)";
+        return body + (r.timedOut ? {sentinel} : "");
+        "#,
+        sentinel = serde_json::to_string(SENTINEL_TIMED_OUT)?,
+        prelude = orchestrator_api_prelude(),
+        timeout_ms = timeout_secs.saturating_mul(1000),
+    );
+    // The editor holds the reply until the wait settles, so read for as long
+    // as the wait may take (plus slack), not the usual build timeout.
+    let read_timeout = std::time::Duration::from_secs(timeout_secs.saturating_add(15));
+    let text = submit_script_capture(session, script, true, read_timeout, true)?;
+    let (shown, timed_out) = strip_sentinel(&text, SENTINEL_TIMED_OUT);
+    if !shown.is_empty() {
+        println!("{}", shown);
+    }
+    if timed_out {
+        std::process::exit(3);
+    }
+    Ok(())
+}
+
+fn orchestrator_start_command(
+    session: Option<&str>,
+    cmd: &str,
+    flags: &[&str],
+) -> AnyhowResult<()> {
+    let json = has_flag(flags, "--json");
+    let timeout_secs = parse_timeout_flag(flags, 15);
+    let script = format!(
+        r#"{prelude}
+        const r = await api.runAgent({{
+            agent: {cmd},
+            prompt: {prompt},
+            auto: {auto},
+            teach: {teach},
+            wait: {wait},
+            readyTimeoutMs: {timeout_ms},
+        }});
+        const body = ({json}) ? JSON.stringify(r, null, 2)
+            : (r.workspaceId || r.windowId) + " " + r.agent + " " + (r.ready ? "ready" : r.error ? "FAILED: " + r.error : "started (not waited for)") + " state=" + r.state;
+        return body + (r.ready || !r.error ? "" : {sentinel});
+        "#,
+        sentinel = serde_json::to_string(SENTINEL_START_FAILED)?,
+        prelude = orchestrator_api_prelude(),
+        cmd = serde_json::to_string(cmd)?,
+        prompt = serde_json::to_string(flag_value(flags, "--prompt").unwrap_or(""))?,
+        auto = has_flag(flags, "--auto"),
+        teach = !has_flag(flags, "--no-teach"),
+        wait = !has_flag(flags, "--no-wait"),
+        timeout_ms = timeout_secs.saturating_mul(1000),
+    );
+    let read_timeout = std::time::Duration::from_secs(timeout_secs.saturating_add(30));
+    let text = submit_script_capture(session, script, true, read_timeout, true)?;
+    let (shown, failed) = strip_sentinel(&text, SENTINEL_START_FAILED);
+    if !shown.is_empty() {
+        println!("{}", shown);
+    }
+    if failed {
+        std::process::exit(1);
+    }
+    Ok(())
 }
 
 // ===========================================================================
@@ -4262,31 +4606,69 @@ fn script_run(session: Option<&str>, from: &[&str]) -> AnyhowResult<()> {
 /// caller asked for JSON); the convenience verbs return prose meant to be
 /// read, where the surrounding quotes and `\n` escapes would be noise.
 fn submit_script(session: Option<&str>, source: String, unwrap_string: bool) -> AnyhowResult<()> {
+    let text = submit_script_capture(session, source, unwrap_string, cmd_build_timeout(), false)?;
+    if !text.is_empty() {
+        println!("{}", text);
+    }
+    Ok(())
+}
+
+/// `submit_script` for the orchestrator verbs: same channel, plain error
+/// messages.
+fn submit_orchestrator_script(session: Option<&str>, source: String) -> AnyhowResult<()> {
+    let text = submit_script_capture(session, source, true, cmd_build_timeout(), true)?;
+    if !text.is_empty() {
+        println!("{}", text);
+    }
+    Ok(())
+}
+
+/// Run `source` against the editor and return what it returned as text
+/// (a returned string is unwrapped when `unwrap_string`; anything else is
+/// its JSON). A script that throws prints its error and exits 1 here, the
+/// way every `--cmd` verb reports failure.
+fn submit_script_capture(
+    session: Option<&str>,
+    source: String,
+    unwrap_string: bool,
+    read_timeout: std::time::Duration,
+    terse_errors: bool,
+) -> AnyhowResult<String> {
     use fresh::server::protocol::ClientControl;
 
     let socket = resolve_cmd_socket(session)?;
     let mut conn = connect_cmd(&socket)?;
     conn.send(&ClientControl::RunScript { source })?;
 
-    // A script gets the long wait: it can create a workspace (a git worktree
-    // plus an agent process) before it answers, and timing that out would
-    // report a failure about something that is merely still running.
-    let (ok, error, output) = read_script_result(&mut conn, cmd_build_timeout())?;
-    if let Some(out) = output {
-        let text = if unwrap_string {
-            serde_json::from_str::<String>(&out).unwrap_or(out)
-        } else {
-            out
-        };
+    let (ok, error, output) = read_script_result(&mut conn, read_timeout)?;
+    let text = match output {
+        Some(out) if unwrap_string => serde_json::from_str::<String>(&out).unwrap_or(out),
+        Some(out) => out,
+        None => String::new(),
+    };
+    if !ok {
         if !text.is_empty() {
             println!("{}", text);
         }
-    }
-    if !ok {
-        eprintln!("{}", error.unwrap_or_else(|| "script failed".to_string()));
+        let error = error.unwrap_or_else(|| "script failed".to_string());
+        // The orchestrator verbs throw plain messages ("no such workspace");
+        // the QuickJS stack behind them is noise to a shell user, so print
+        // the message alone. A `script run` author keeps the whole thing.
+        let shown = if terse_errors {
+            error
+                .split("    at ")
+                .next()
+                .unwrap_or(&error)
+                .trim_end()
+                .trim_end_matches(':')
+                .to_string()
+        } else {
+            error
+        };
+        eprintln!("{}", shown);
         std::process::exit(1);
     }
-    Ok(())
+    Ok(text)
 }
 
 /// `fresh --cmd init reload` — re-read and run `~/.config/fresh/init.ts` in
@@ -4690,7 +5072,77 @@ fn run_attach_command(args: &Args) -> AnyhowResult<()> {
         &args.files,
         args.locale.as_deref(),
         args.config.as_deref(),
+        false,
     )
+}
+
+/// A bare `fresh` — no files, no flags, nothing — with
+/// `orchestrator_mode` left on.
+///
+/// The whole launch is "attach to the shared daemon, starting it if it isn't
+/// up". That is deliberately the *entire* behaviour when the daemon already
+/// runs: no files to open, no working directory to impose, nothing to
+/// reconfigure — this terminal simply becomes another view onto the editor
+/// that is already there, showing whatever workspace it was left in.
+///
+/// The daemon it starts is told `--orchestrator-mode` because it is a
+/// separate process: the shape of *this* command line is the only evidence
+/// that orchestrator mode was chosen, and it does not survive the spawn on
+/// its own (see [`fresh::server::DaemonSpawn`]).
+fn run_orchestrator_launch() -> AnyhowResult<()> {
+    run_attach(
+        Some(fresh::server::ORCHESTRATOR_DAEMON),
+        &[],
+        None,
+        None,
+        true,
+    )
+}
+
+/// Whether a bare `fresh` should launch into Orchestrator mode.
+///
+/// Three conditions, and all of them are about *this* invocation rather than
+/// about the editor:
+///
+///   * the command line is empty (`argv.len() == 1`) — a file or a flag,
+///     any flag, means "just this, here", and is left alone;
+///   * stdin is a terminal — `fresh` under `$GIT_EDITOR`, in a pipe, or as
+///     a subprocess is not someone sitting down to work; and
+///   * we are not already *inside* a Fresh editor's embedded terminal.
+///
+/// That last one is not a nicety. Orchestrator mode attaches to the shared
+/// daemon, and a terminal buffer inside that very daemon is exactly where
+/// this can be typed: the daemon then renders one shared screen into a
+/// client that lives inside its own output, which is not a second editor
+/// but a feedback loop — the pane fills with shredded frames. Falling
+/// through here launches an ordinary inline editor in the terminal, which
+/// is what a nested `fresh` did before Orchestrator mode existed and which
+/// renders perfectly well. `FRESH_SESSION` is the signal because it is what
+/// every local embedded terminal advertises (see
+/// `server::local_control`); a stale or unreachable value costs nothing,
+/// since the fallback is the ordinary launch either way.
+///
+/// Only then is the config consulted, which is why this loads it rather than
+/// taking the one `initialize_app` builds: on this path we hand off to the
+/// daemon and never build an editor here at all, and on every other path
+/// this function has already answered `false` without reading anything. A
+/// config that cannot be read is not an error — it means the ordinary
+/// launch, which will report the problem properly.
+fn wants_orchestrator_launch() -> bool {
+    if std::env::args_os().count() != 1 {
+        return false;
+    }
+    if !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+        return false;
+    }
+    if std::env::var("FRESH_SESSION").is_ok_and(|s| !s.trim().is_empty()) {
+        return false;
+    }
+    let Ok(dir_context) = fresh::config_io::DirectoryContext::from_system() else {
+        return false;
+    };
+    let working_dir = std::env::current_dir().unwrap_or_default();
+    config::Config::load_with_layers(&dir_context, &working_dir).orchestrator_mode
 }
 
 /// `locale` and `config` are the client's own `--locale` and `--config`,
@@ -4704,6 +5156,7 @@ fn run_attach(
     files: &[String],
     locale: Option<&str>,
     config: Option<&Path>,
+    orchestrator_mode: bool,
 ) -> AnyhowResult<()> {
     use crossterm::terminal::enable_raw_mode;
     use fresh::server::protocol::{
@@ -4749,7 +5202,13 @@ fn run_attach(
         eprintln!("Starting daemon...");
 
         // Spawn server in background
-        let _pid = spawn_server_detached(session_name, ssh_url.as_deref(), locale, config)?;
+        let _pid = spawn_server_detached(&fresh::server::DaemonSpawn {
+            session_name,
+            ssh_url: ssh_url.as_deref(),
+            locale,
+            config,
+            orchestrator_mode,
+        })?;
         true
     } else {
         false
@@ -5126,6 +5585,10 @@ fn run_if_subcommand(
     if let Some(addr) = &args.web {
         return Some(run_web_command(args, addr));
     }
+    #[cfg(not(feature = "web"))]
+    if args.web.is_some() {
+        web_unavailable();
+    }
     #[cfg(feature = "gui")]
     if !console_available || args.gui {
         return Some(fresh::gui::run_gui(
@@ -5139,38 +5602,6 @@ fn run_if_subcommand(
         ));
     }
     None
-}
-
-/// Attempt workspace or hot-exit restore when the editor restarts into a new project.
-fn restore_editor_workspace(editor: &mut Editor, args: &Args) {
-    if args.force_restore || editor.config().editor.restore_previous_session {
-        // Shared restore flow (same as startup / the dock's
-        // `materialize_window`): applies the new project's persisted
-        // explorer visibility, or the fresh-session default when there is
-        // nothing to restore — so a project whose explorer was closed
-        // does not spring back open on a Switch Project restart.
-        match editor.restore_active_window_on_launch(false) {
-            Ok(true) => tracing::info!("Workspace restored successfully"),
-            Ok(false) => tracing::debug!("No previous workspace found"),
-            Err(e) => tracing::warn!("Failed to restore workspace: {}", e),
-        }
-    } else {
-        tracing::info!(
-            "Skipping workspace restore on restart: editor.restore_previous_session is disabled"
-        );
-        // Session restore opted out, but hot-exit content for the newly-switched
-        // project is still restored so in-progress work is not lost.
-        match editor.try_restore_hot_exit_buffers() {
-            Ok(n) if n > 0 => tracing::info!(
-                "Restored {} hot-exit buffer(s) on restart despite skipping session restore",
-                n
-            ),
-            Ok(_) => {}
-            Err(e) => tracing::warn!("Failed to restore hot-exit buffers on restart: {}", e),
-        }
-        // Nothing restored — apply the bare-directory explorer default.
-        editor.apply_active_window_explorer_default(false, false);
-    }
 }
 
 fn main() -> AnyhowResult<()> {
@@ -5447,6 +5878,14 @@ fn real_main() -> AnyhowResult<()> {
     // Print deprecation warnings for old flags
     print_deprecation_warnings(&cli);
 
+    // A bare `fresh` on a terminal, with `orchestrator_mode` on: hand the
+    // whole launch to the shared daemon and relay it. Checked here, after
+    // clap, so `--help` and `--version` still answer for themselves — both
+    // put something on the command line, so neither reaches this.
+    if wants_orchestrator_launch() {
+        return run_orchestrator_launch();
+    }
+
     // `--skill` is the shortcut an agent is told to run first: one short,
     // stable flag that resolves to whichever guide is currently the best
     // introduction, so the injected contract never has to name a topic.
@@ -5465,7 +5904,7 @@ fn real_main() -> AnyhowResult<()> {
     if !cli.cmd.is_empty() {
         let cmd_args: Vec<&str> = cli.cmd.iter().map(|s| s.as_str()).collect();
         match cmd_args.as_slice() {
-            ["script", ..] | ["command", ..] => {
+            ["script", ..] | ["command", ..] | ["workspace", ..] | ["agent", ..] => {
                 run_cmd_command(&cmd_args)?;
                 return Ok(());
             }
@@ -5551,26 +5990,19 @@ fn real_main() -> AnyhowResult<()> {
     let (terminal_width, terminal_height) = terminal_size;
 
     // Track whether this is the first run (for session restore, file open, etc.)
-    let mut is_first_run = true;
-
-    // Track whether we should restore workspace on restart (for project switching)
-    let mut restore_workspace_on_restart = false;
 
     // Authority that will drive the next `Editor` constructed in the
     // loop. Starts from the startup authority (local or SSH); when a
     // plugin calls `editor.setAuthority(...)` the previous Editor
     // stashes the new authority in its `pending_authority` slot, which
     // we consume right before dropping it below.
-    let mut current_authority = startup_authority;
-
-    // Process-lifetime keepalive for a connection-backed authority.
-    // Seeded from the SSH startup session (if any); replaced when a
-    // plugin attaches a remote agent (K8s) mid-session via
-    // `attachRemoteAgent`. Held purely for its `Drop` — replacing it
-    // tears the previous connection down. Boxed opaquely so this loop
-    // never names a backend.
-    let mut current_keepalive: Option<Box<dyn std::any::Any + Send>> =
-        remote_session.map(|rs| Box::new(rs) as Box<dyn std::any::Any + Send>);
+    // The startup session's keepalive travels with its connection.
+    let mut current_authority = std::sync::Arc::new(fresh::services::authority::Connection {
+        authority: startup_authority,
+        keepalive: std::sync::Mutex::new(
+            remote_session.map(|rs| Box::new(rs) as Box<dyn std::any::Any + Send>),
+        ),
+    });
 
     // Status-message log path is just a clone-able path — capture it
     // once and re-bind to every restarted editor instance. Without
@@ -5599,10 +6031,9 @@ fn real_main() -> AnyhowResult<()> {
         tracing::warn!("Local control socket unavailable: {}", e);
     }
 
-    // Main editor loop - supports restarting with a new working directory
+    // One editor, built once; nothing rebuilds it.
     // Returns (loop_result, last_update_result) tuple
-    let (result, last_update_result) = loop {
-        let first_run = is_first_run;
+    let (result, last_update_result) = {
         let workspace_enabled = !args.no_session;
 
         // Detect terminal color capability
@@ -5628,16 +6059,18 @@ fn real_main() -> AnyhowResult<()> {
             // is what resolves a linked worktree to the repo that owns its
             // trust decision.
             let trust_owner = fresh::services::workspace_trust::trust_owner_root(
-                current_authority.filesystem.as_ref(),
+                current_authority.authority.filesystem.as_ref(),
                 &placeholder_root,
             );
-            let placeholder = fresh::services::authority::Authority::local_scoped(
-                fresh::services::authority::SessionScope::for_root(
-                    &placeholder_root,
-                    &dir_context.project_state_dir(&placeholder_root),
-                    &dir_context.project_state_dir(&trust_owner),
+            let placeholder = std::sync::Arc::new(fresh::services::authority::Connection::plain(
+                fresh::services::authority::Authority::local_scoped(
+                    fresh::services::authority::SessionScope::for_root(
+                        &placeholder_root,
+                        &dir_context.project_state_dir(&placeholder_root),
+                        &dir_context.project_state_dir(&trust_owner),
+                    ),
                 ),
-            );
+            ));
             std::mem::replace(&mut current_authority, placeholder)
         };
         let mut editor = Editor::with_working_dir_opts(
@@ -5650,7 +6083,12 @@ fn real_main() -> AnyhowResult<()> {
             color_capability,
             boot_authority,
             true, // defer_plugin_load: TUI startup; plugin loads run on the
-                  // plugin thread and arrive via AsyncBridge each tick.
+            // plugin thread and arrive via AsyncBridge each tick.
+            //
+            // Never orchestrator mode: a bare `fresh` with the setting on
+            // hands off to the daemon long before this loop, so an editor
+            // built here is by construction an ordinary in-terminal launch.
+            false,
         )
         .context("Failed to create editor instance")?;
         tracing::info!("Editor instance created");
@@ -5706,37 +6144,17 @@ fn real_main() -> AnyhowResult<()> {
             editor.set_warning_log(rx, p);
         }
 
-        if first_run {
-            tracing::info!("Running first-run setup...");
-            handle_first_run_setup(
-                &mut editor,
-                &args,
-                &file_locations,
-                show_file_explorer,
-                &mut stdin_stream,
-                workspace_enabled,
-            )
-            .context("Failed first run setup")?;
-            tracing::info!("First-run setup complete");
-        } else {
-            if restore_workspace_on_restart {
-                restore_editor_workspace(&mut editor, &args);
-            } else {
-                // Not restoring on this restart at all — still default the
-                // explorer for the freshly-entered directory.
-                editor.apply_active_window_explorer_default(false, false);
-            }
-            // Mid-session restart: reflow so the (possibly toggled) sidebar
-            // and the split/terminal viewports match the new visibility.
-            editor.relayout();
-            let path = current_working_dir
-                .as_ref()
-                .map(|p| p.display().to_string())
-                .unwrap_or_else(|| ".".to_string());
-            editor.set_status_message(
-                fresh_i18n::t!("file.switched_to_project", path = path).to_string(),
-            );
-        }
+        tracing::info!("Running first-run setup...");
+        handle_first_run_setup(
+            &mut editor,
+            &args,
+            &file_locations,
+            show_file_explorer,
+            &mut stdin_stream,
+            workspace_enabled,
+        )
+        .context("Failed first run setup")?;
+        tracing::info!("First-run setup complete");
 
         if let Err(e) = editor.start_recovery_session() {
             tracing::warn!("Failed to start recovery session: {}", e);
@@ -5774,7 +6192,6 @@ fn real_main() -> AnyhowResult<()> {
         .context("Editor iteration failed")?;
 
         let update_result = iteration.update_result;
-        let restart_dir = iteration.restart_dir;
         let loop_result = iteration.loop_result;
 
         // If a plugin called `editor.setAuthority(...)` (or cleared it)
@@ -5782,68 +6199,12 @@ fn real_main() -> AnyhowResult<()> {
         // `pending_authority` and triggered a restart. Move it into
         // the loop-local var *before* dropping the editor so the next
         // iteration builds against the new backend.
-        if let Some(new_authority) = editor.take_pending_authority() {
-            tracing::info!("Authority transition queued; restarting editor");
-            current_authority = new_authority;
-            // A connection-backed authority (remote agent / K8s) queues
-            // its keepalive alongside the authority. Adopt it here so the
-            // live carrier + reconnect/heartbeat tasks survive into the
-            // next iteration; the previous keepalive drops (tearing down
-            // the old connection). A plain local/docker transition
-            // carries no keepalive, leaving the slot — and any current
-            // remote session — untouched.
-            if let Some(new_keepalive) = editor.take_pending_keepalive() {
-                // Swap in the new session and drop the previous one,
-                // explicitly tearing the old connection down before the
-                // next iteration builds against the new backend.
-                let previous = current_keepalive.replace(new_keepalive);
-                drop(previous);
-            }
-        } else if restart_dir.is_some() {
-            // Non-transition restart (e.g. change-working-dir, config reload):
-            // carry the *active session's own backend* forward by moving it out
-            // of the editor we're about to drop, rather than booting the next
-            // iteration on the local placeholder. Without this a `fresh
-            // user@host` (or other CLI-remote) session would silently drop to
-            // local on restart — `Authority` is non-`Clone`, so it must be
-            // moved, not copied. Its `current_keepalive` (the carrier) is a
-            // loop-local and already survives the rebuild.
-            current_authority = editor.take_active_authority();
-        }
-
-        // Pluck the warning-log channel back out of the soon-to-be-
-        // dropped editor so the next iteration can re-bind it.
+        // Pluck the warning-log channel back out so the shutdown path can reach it.
         warning_log_slot = editor.take_warning_log();
-
-        // Persist every session before a restart rebuilds the editor from
-        // disk. Quit already saves (after the loop); the restart branch did
-        // not, so a session's per-window state — notably its backend
-        // `authority_spec` — would be lost across an `install_authority`
-        // restart and the session would come back local. Only needed when we
-        // are actually restarting; a real quit saves below.
-        if restart_dir.is_some() {
-            if let Err(e) = editor.save_all_windows_workspaces() {
-                tracing::warn!("Failed to save sessions before restart: {e}");
-            }
-        }
 
         drop(editor);
 
-        if let Some(new_dir) = restart_dir {
-            tracing::info!(
-                "Restarting editor with new working directory: {}",
-                new_dir.display()
-            );
-            current_working_dir = Some(new_dir);
-            is_first_run = false;
-            restore_workspace_on_restart = true; // Restore workspace for the new project
-            terminal
-                .clear()
-                .context("Failed to clear terminal for restart")?;
-            continue;
-        }
-
-        break (loop_result, update_result);
+        (loop_result, update_result)
     };
 
     // Restore terminal state
@@ -6189,6 +6550,7 @@ where
             // data dir (see `orchestrator_persistence`). Best-effort;
             // failures are logged inside, never block quit.
             editor.save_orchestrator_state();
+            editor.save_dock_chrome();
             break;
         }
 
@@ -6485,6 +6847,74 @@ fn coalesce_mouse_moves(event: InputEvent) -> AnyhowResult<(InputEvent, Option<I
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// **A flag with nothing usable after it is a usage error, not a
+    /// default.** The CLI is driven by agents, and `--prompt --timeout 30`
+    /// used to set the prompt to the literal `--timeout` and read `30` as a
+    /// stray argument: the caller asked for two things, got neither, and saw
+    /// a zero exit. `--name=-x` is how a value that really starts with `-` is
+    /// passed.
+    #[test]
+    fn a_flag_swallowing_the_next_flag_is_a_usage_error() {
+        assert_eq!(
+            flag_value_checked(&["--prompt", "hello"], "--prompt"),
+            Ok(Some("hello"))
+        );
+        assert_eq!(
+            flag_value_checked(&["--prompt=hello"], "--prompt"),
+            Ok(Some("hello"))
+        );
+        assert_eq!(flag_value_checked(&["--auto"], "--prompt"), Ok(None));
+
+        assert!(flag_value_checked(&["--prompt"], "--prompt").is_err());
+        assert!(flag_value_checked(&["--prompt", "--timeout", "30"], "--prompt").is_err());
+        assert!(flag_value_checked(&["--prompt", "-x"], "--prompt").is_err());
+
+        // …and the escape hatch still works, so a prompt may begin with a dash.
+        assert_eq!(
+            flag_value_checked(&["--prompt=--not-a-flag"], "--prompt"),
+            Ok(Some("--not-a-flag"))
+        );
+    }
+
+    /// `--timeout` takes a number; anything else is a usage error, and an
+    /// absent flag takes the verb's default.
+    #[test]
+    fn timeout_parses_or_is_a_usage_error() {
+        assert_eq!(parse_timeout_flag(&["--timeout", "30"], 9), 30);
+        assert_eq!(parse_timeout_flag(&["--timeout=30"], 9), 30);
+        assert_eq!(parse_timeout_flag(&[], 9), 9);
+    }
+
+    /// **The sentinel a verb's script appends must not be confusable with the
+    /// output it is appended to.** The tokens were bare words matched with
+    /// `ends_with` and removed with `trim_end_matches`, so a workspace name or
+    /// an agent error ending in one set the exit code, and a body that ended
+    /// in several had them all stripped. The Record Separator cannot occur in
+    /// any of those.
+    #[test]
+    fn a_sentinel_is_stripped_once_and_only_when_the_script_sent_it() {
+        let timed_out = format!("ws-1 idle{SENTINEL_TIMED_OUT}");
+        assert_eq!(
+            strip_sentinel(&timed_out, SENTINEL_TIMED_OUT),
+            ("ws-1 idle", true)
+        );
+
+        // Output that merely *says* the word is output, not a signal.
+        let (shown, hit) = strip_sentinel("ws-1 FAILED: TIMED_OUT", SENTINEL_TIMED_OUT);
+        assert_eq!((shown, hit), ("ws-1 FAILED: TIMED_OUT", false));
+
+        // Exactly one, so a body ending in the token keeps it.
+        let doubled = format!("ws-1 {SENTINEL_TIMED_OUT}{SENTINEL_TIMED_OUT}");
+        let once = format!("ws-1 {SENTINEL_TIMED_OUT}");
+        assert_eq!(
+            strip_sentinel(&doubled, SENTINEL_TIMED_OUT),
+            (once.trim_end(), true)
+        );
+
+        let (shown, hit) = strip_sentinel("{\n  \"ready\": false\n}", SENTINEL_START_FAILED);
+        assert_eq!((shown, hit), ("{\n  \"ready\": false\n}", false));
+    }
 
     /// The scripts the convenience verbs submit must parse, and must call
     /// only API members this build actually has.

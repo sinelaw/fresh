@@ -15,7 +15,7 @@ use std::rc::Rc;
 use crate::ambient::{Ambient, AmbientNode};
 use crate::behavior::Behavior;
 use crate::desc::{Event, Handler, Node};
-use crate::element::{Arena, ElementId, Txn};
+use crate::element::{Arena, ElementId, Txn, Undo};
 use crate::render::geom::{Point, Rect, Size};
 use crate::render::spec::LayoutSpec;
 
@@ -438,6 +438,16 @@ pub struct Ui<M> {
     pub(crate) renderer: Box<dyn Renderer>,
     pub(crate) pending_dispose: Vec<ElementId>,
     pub(crate) txn: Option<Txn<M>>,
+    /// The last transaction's journal, emptied and kept for the next one.
+    ///
+    /// A journal is per-transaction and dropped at commit, so it used to grow
+    /// from nothing on every reconcile: a dhat profile put 22 MB of a
+    /// two-minute session in 318 reallocations of this vector, averaging 71 KB
+    /// each, which is a `Vec` repeatedly doubling its way back to the size it
+    /// had last frame. Handing the emptied allocation to the next transaction
+    /// keeps the capacity and drops the regrowth; the entries themselves are
+    /// still dropped at commit, as before.
+    pub(crate) spare_undo: Vec<Undo<M>>,
     pub(crate) trace: bool,
     pub(crate) build_log: Vec<ElementId>,
 
@@ -498,6 +508,10 @@ pub struct Ui<M> {
     pub(crate) focus_selection: crate::event::SelectionOnFocus,
     /// Where focus was before a modal took it.
     pub(crate) focus_restore: Option<ElementId>,
+    /// The confinement that held [`Self::focus_restore`] when it was saved.
+    /// A restore into a subtree a layer confined is void once that layer is
+    /// gone — see [`Ui::apply_autofocus`].
+    pub(crate) focus_restore_scope: Option<ElementId>,
     /// Per scope, what its `autofocus` mark named the last time a settle
     /// looked. See [`Ui::apply_autofocus`]: a mark that *moved* since then is
     /// a decision the description made, and focus follows it; a mark that
@@ -553,6 +567,7 @@ impl<M: 'static> Ui<M> {
             renderer,
             pending_dispose: Vec::new(),
             txn: None,
+            spare_undo: Vec::new(),
             trace: false,
             build_log: Vec::new(),
             render: Default::default(),
@@ -573,6 +588,7 @@ impl<M: 'static> Ui<M> {
             focus: None,
             focus_selection: crate::event::SelectionOnFocus::None,
             focus_restore: None,
+            focus_restore_scope: None,
             settled_marks: std::collections::HashMap::new(),
             settled_scope: None,
             traversal: Box::new(crate::focus::ReadingOrder),
@@ -937,11 +953,29 @@ impl<M: 'static> Ui<M> {
     ///
     /// Takes `&mut self` because a render object is owned by its node: it is
     /// taken out to be asked and put straight back, exactly as layout takes it.
+    /// [`Self::text_rows`], searched from `root` rather than the frame — the
+    /// same standing as [`Self::item_window_in`]. A widget's key is unique
+    /// only inside the panel that owns it, so a host asking on behalf of one
+    /// panel names that panel's subtree, and two panels holding a run under
+    /// the same key each get their own rows.
+    pub fn text_rows_in(
+        &mut self,
+        root: ElementId,
+        key: &crate::key::Key,
+    ) -> Option<(String, Vec<crate::render::prim::Row>)> {
+        let el = self.find_by_key_in(root, key)?;
+        self.text_rows_of(el)
+    }
+
     pub fn text_rows(
         &mut self,
         key: &crate::key::Key,
     ) -> Option<(String, Vec<crate::render::prim::Row>)> {
         let el = self.find_by_key(key)?;
+        self.text_rows_of(el)
+    }
+
+    fn text_rows_of(&mut self, el: ElementId) -> Option<(String, Vec<crate::render::prim::Row>)> {
         let r = self.render_for(el)?;
         let mut obj = self.render.get_mut(r)?.obj.take()?;
         let out = obj

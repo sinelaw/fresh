@@ -1,0 +1,72 @@
+# Supply-chain gate. CI runs exactly:
+#
+#     cargo deny --all-features check advisories sources licenses
+
+[graph]
+# Every platform we publish for: an advisory in a Windows- or macOS-only
+# dependency is invisible to a Linux runner otherwise.
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "x86_64-unknown-linux-musl",
+    "aarch64-unknown-linux-musl",
+    "aarch64-apple-darwin",
+    "x86_64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+]
+all-features = true
+
+[advisories]
+db-urls = ["https://github.com/rustsec/advisory-db"]
+yanked = "deny"
+# Every entry carries why it does not reach a user, so an exception is not
+# indistinguishable from a silenced finding. Re-check on dependency bumps.
+ignore = [
+    # Fix is in quick-xml 0.40 — a semver bump wayland-scanner has to make first.
+    { id = "RUSTSEC-2026-0194", reason = "quick-xml is build-time only, via wayland-scanner's proc-macro" },
+    { id = "RUSTSEC-2026-0195", reason = "quick-xml is build-time only, via wayland-scanner's proc-macro" },
+
+    # Unmaintained, not vulnerable; each waits on the crate that pulls it in.
+    { id = "RUSTSEC-2024-0320", reason = "yaml-rust, via syntect; blocked on syntect moving to yaml-rust2" },
+    { id = "RUSTSEC-2024-0370", reason = "proc-macro-error, build-time only, transitive" },
+    { id = "RUSTSEC-2024-0436", reason = "paste, build-time only, transitive" },
+    { id = "RUSTSEC-2025-0141", reason = "bincode, transitive; no defect, only maintenance" },
+    { id = "RUSTSEC-2026-0192", reason = "ttf-parser, via winit's sctk-adwaita and ratatui-wgpu (GUI build only)" },
+    { id = "RUSTSEC-2026-0206", reason = "rustybuzz, via ratatui-wgpu (GUI build only)" },
+]
+
+[sources]
+# Catches the shapes dependency-confusion needs to reach a build: a git
+# dependency on a moving branch, a vendored fork, an alternative registry.
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
+
+[licenses]
+# Fresh is GPL-2.0, so permissive and weak-copyleft dependencies are compatible.
+version = 2
+allow = [
+    "0BSD",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CC0-1.0",
+    "CDLA-Permissive-2.0",
+    "GPL-2.0",
+    "ISC",
+    "MIT",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "Unlicense",
+    "Zlib",
+]
+confidence-threshold = 0.8
+
+[bans]
+# Deliberately not in the CI command above: duplicate versions in a tree this
+# size are a maintenance question, not a security one. Here for local use.
+multiple-versions = "allow"
+wildcards = "deny"

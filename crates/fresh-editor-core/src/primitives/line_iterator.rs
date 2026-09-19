@@ -43,13 +43,24 @@ pub const MAX_LINE_BYTES: usize = 100_000;
 /// search for the same reason on the row-walking path.
 pub const LINE_START_SEARCH_BYTES: usize = 64 * 1024;
 
-/// Bytes read per step of the backward search.
+/// Bytes read per step of the backward search, widening as the search goes.
 ///
 /// The search used to step by the caller's `estimated_line_length` — 80 bytes
 /// at every call site — so reaching a line start 64 KB up took 800 piece-tree
 /// range queries and 800 allocations. Reading a page at a time costs the same
 /// bytes in 16 queries.
-const LINE_START_SEARCH_CHUNK: usize = 4096;
+///
+/// A flat page is the wrong size for the *first* step, though. `get_text_range_mut`
+/// copies whatever range it is handed, and the newline that ends the previous
+/// line is usually a few bytes back: a dhat profile of a two-minute editing
+/// session put 22 MB of copying in this call — 5,901 calls averaging 3.8 KB
+/// each — to read 5,901 bytes in total, one byte per call, because `rposition`
+/// found its newline at the very end of the window almost every time.
+///
+/// So step small first and widen. The common case copies a line's worth
+/// instead of a page; a line long enough to need the whole 64 KB budget still
+/// gets there in ~18 queries rather than 16, which is the same order.
+const LINE_START_SEARCH_STEPS: [usize; 3] = [128, 1024, 4096];
 
 pub struct LineIterator<'a> {
     buffer: &'a mut TextBuffer,
@@ -92,11 +103,15 @@ impl<'a> LineIterator<'a> {
 
         let floor = byte_pos.saturating_sub(LINE_START_SEARCH_BYTES);
         let mut search_end = byte_pos;
+        let mut step = 0usize;
 
         while search_end > floor {
-            let scan_start = search_end
-                .saturating_sub(LINE_START_SEARCH_CHUNK)
-                .max(floor);
+            // Each step scans the window immediately before the last, so the
+            // nearest newline is still the one found first however the windows
+            // are sized; only how much is copied to find it changes.
+            let width = LINE_START_SEARCH_STEPS[step.min(LINE_START_SEARCH_STEPS.len() - 1)];
+            step += 1;
+            let scan_start = search_end.saturating_sub(width).max(floor);
             let scan_len = search_end - scan_start;
 
             if let Ok(chunk) = buffer.get_text_range_mut(scan_start, scan_len) {

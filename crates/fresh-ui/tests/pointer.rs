@@ -1204,6 +1204,79 @@ fn a_press_on_the_node_a_layer_is_anchored_to_does_not_dismiss_it() {
     );
 }
 
+/// **The exemption is the trigger, not the row it sits in.** The editor's
+/// dropdown names its whole row as the anchor — label, `[value ▼]` button and
+/// the blank run after it — and only the button answers a press. A press on
+/// the label or the blank run reaches no handler, so if the dismissal stood
+/// aside for the whole row the list would stay up for a click right beside
+/// its trigger. It stands aside only for a press something in the anchor
+/// will act on.
+#[test]
+fn a_press_on_the_anchored_row_beside_its_trigger_dismisses() {
+    let log: Log = Rc::new(RefCell::new(Vec::new()));
+    let anchor = fresh_ui::Key::Str("trigger-row".into());
+    let build = |log: &Log, anchor: &fresh_ui::Key| -> Node<()> {
+        let l = log.clone();
+        let t = log.clone();
+        stack().children([
+            col().theme("doc"),
+            row().key(anchor.clone()).h(Sizing::Cells(1)).children([
+                // The label: no handler.
+                text("Host:  ").w(Sizing::Cells(7)),
+                // The trigger: the one piece that acts on a press.
+                gesture(text("[value]")).on(
+                    GestureKind::Press,
+                    Rc::new(move |_: &Event| note(&t, "trigger".into())),
+                ),
+                fresh_ui::layer()
+                    .anchor(fresh_ui::Anchor::Node(anchor.clone()))
+                    .place(fresh_ui::Place::Below)
+                    .dismiss(fresh_ui::Dismiss::OUTSIDE_POINTER)
+                    .on_dismiss_handler(Rc::new(move |_: &Event| note(&l, "dismissed".into())))
+                    .child(col().w(Sizing::Cells(6)).h(Sizing::Cells(3)).theme("pop")),
+            ]),
+        ])
+    };
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(build(&log, &anchor), FRAME);
+
+    // On the label, in the anchored row but off the trigger: dismissed.
+    ui.dispatch(Input::press(
+        Point::new(1, 0),
+        MouseButton::Left,
+        Mods::NONE,
+    ));
+    assert!(
+        log.borrow().contains(&"dismissed".to_string()),
+        "a press on the row beside the trigger closes the list: {:?}",
+        log.borrow()
+    );
+    assert!(
+        !log.borrow().contains(&"trigger".to_string()),
+        "and the trigger did not see it: {:?}",
+        log.borrow()
+    );
+
+    // On the trigger itself: its own press, and no dismissal.
+    log.borrow_mut().clear();
+    ui.frame(build(&log, &anchor), FRAME);
+    ui.dispatch(Input::press(
+        Point::new(8, 0),
+        MouseButton::Left,
+        Mods::NONE,
+    ));
+    assert!(
+        log.borrow().contains(&"trigger".to_string()),
+        "the trigger saw its own press: {:?}",
+        log.borrow()
+    );
+    assert!(
+        !log.borrow().contains(&"dismissed".to_string()),
+        "and the layer did not also dismiss itself: {:?}",
+        log.borrow()
+    );
+}
+
 // -- Event::text_byte ---------------------------------------------------------
 
 /// A press on text reports the byte, not the column.
@@ -1403,4 +1476,59 @@ fn a_pointer_modal_claims_what_it_lets_nothing_answer() {
     ));
     assert!(got.claimed);
     assert_eq!(pressed.get(), 0);
+}
+
+/// **A captured move still reports the byte under the pointer.** The gesture
+/// that took the press is the capturer, and it has no text — the run inside
+/// it does. A drag across a wrapped run extends by byte the way its press
+/// placed by byte, or a selection could start but never grow.
+#[test]
+fn a_captured_move_reports_the_byte_under_it() {
+    use fresh_ui::{
+        gesture, text, viewport, Event, GestureKind, Input, Mods, MouseButton, Point, Size, Ui,
+    };
+    use std::cell::RefCell;
+    use std::rc::Rc;
+    let seen: Rc<RefCell<Vec<Option<usize>>>> = Rc::new(RefCell::new(Vec::new()));
+    let (s1, s2) = (seen.clone(), seen.clone());
+    let doc = "alpha bravo charlie delta echo foxtrot golf";
+    let tree = viewport(
+        gesture(text(doc).wrap())
+            .on(
+                GestureKind::Press,
+                Rc::new(move |e: &Event| {
+                    s1.borrow_mut().push(e.text_byte);
+                    e.capture_pointer();
+                    e.stop();
+                    None
+                }),
+            )
+            .on(
+                GestureKind::Move,
+                Rc::new(move |e: &Event| {
+                    s2.borrow_mut().push(e.text_byte);
+                    None
+                }),
+            ),
+    )
+    .h(fresh_ui::Sizing::Cells(4));
+    let mut ui: Ui<()> = Ui::new();
+    ui.frame(tree, Size::new(12, 4));
+    ui.dispatch(Input::press(
+        Point::new(1, 0),
+        MouseButton::Left,
+        Mods::NONE,
+    ));
+    ui.dispatch(Input::Move {
+        pos: Point::new(3, 1),
+        mods: Mods::NONE,
+    });
+    let got = seen.borrow().clone();
+    assert_eq!(got.len(), 2);
+    assert_eq!(got[0], Some(1), "the press: byte 1 of the first row");
+    assert!(
+        matches!(got[1], Some(b) if b > 1),
+        "the captured move: a byte on the second row, not None: {:?}",
+        got[1]
+    );
 }

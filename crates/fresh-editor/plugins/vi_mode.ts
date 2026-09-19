@@ -27,57 +27,157 @@ type WORDMotionKind = "forward" | "backward" | "end";
 type WordSearchDirection = "forward" | "backward";
 type WordSearchTarget = { start: number; end: number; text: string; wholeWord: boolean };
 
-// Types for tracking repeatable changes
-type ChangeType = "simple" | "operator-motion" | "operator-textobj" | "operator-find-char" | "insert" | "line-op";
-
-interface LastChange {
-  type: ChangeType;
-  action?: string;           // For simple actions like "delete_forward", "delete_line"
-  operator?: string;         // For operator+motion/textobj: "d", "c", "y"
-  motion?: string;           // For operator+motion: the motion action
-  textObject?: { modifier: TextObjectType; object: string }; // For operator+textobj
-  findType?: FindCharType;   // For operator+find-char (df/dt/cf/ct): the f/t/F/T variant
-  findCharTarget?: string;   // For operator+find-char: the target character
-  count?: number;            // Count used with the command
-  insertedText?: string;     // Text inserted during insert mode
-  insertCommand?: string;    // For type "insert": the command that entered insert mode (i/a/I/A/o/O)
+// What `.` replays.
+//
+// Every variant can carry a count and the text typed into the insert that
+// followed it, so those two stay common. The rest is per-variant: as a single
+// interface with everything optional, each branch of the replay had to
+// re-check the fields its own variant already guarantees, and any variant
+// could be built missing the fields it needs.
+interface ChangeCommon {
+  count?: number; // Count used with the command
+  insertedText?: string; // Text typed into the insert that followed, if any
 }
 
+type LastChange =
+  // x, X, s
+  | (ChangeCommon & { type: "simple"; action: string })
+  // dd, cc, >>, <<
+  | (ChangeCommon & { type: "line-op"; action: string })
+  // dw, ce, d}, D, C
+  | (ChangeCommon & { type: "operator-motion"; operator: string; motion: string })
+  // diw, ci"
+  | (ChangeCommon & {
+      type: "operator-textobj";
+      operator: string;
+      textObject: { modifier: TextObjectType; object: string };
+    })
+  // dfx, dtx, cfx
+  | (ChangeCommon & {
+      type: "operator-find-char";
+      operator: string;
+      findType: FindCharType;
+      findCharTarget: string;
+    })
+  // rx
+  | (ChangeCommon & { type: "replace-char"; replacement: string })
+  // i/a/I/A/o/O, and a bare insert with no entering command recorded
+  | (ChangeCommon & { type: "insert"; insertCommand?: string });
+
+// One insert session: where the insert began and which command opened it.
+// The two are written at different moments — the entering command stages
+// itself in `pendingInsertCommand`, the position is sampled inside
+// `switchMode` — but they are only ever *read* together, by the capture at
+// Escape time. As one value the pairing is in the type: a session cannot be
+// built with a start and no command, and the capture takes both or neither.
+interface InsertSession {
+  startPos: number; // Cursor position when insert mode was entered
+  command: string | null; // i/a/I/A/o/O, or null when entered via c/s
+}
+
+// The active visual selection, or null outside the visual modes. `anchor` is
+// the fixed end and `head` the moving one; `range` is the byte range computed
+// by motions that resolve their own target (for the rest, the host's own
+// selection is the range). `head` goes null when a computed range is dropped,
+// which makes the motion origin fall back to the anchor.
+//
+// These four were separate nullable fields, but they are established
+// together on entering a visual mode and cleared together on leaving it —
+// there is no state in which some are meaningful and others are not. As one
+// value that invariant is in the type instead of in four call sites.
+interface VisualState {
+  anchor: number;
+  head: number | null;
+  range: { start: number; end: number } | null;
+  // The line-wise span, as the anchor's and the moving end's line numbers.
+  //
+  // `V` has to be able to grow its selection *upward* from a fixed anchor, and
+  // the host's `select_*` actions cannot express that: `select_up` from a
+  // selection that already ends at a line start shrinks it to nothing, which
+  // is why `Vk` used to select no lines at all. So the line-wise mode keeps
+  // its span here and redraws the whole selection on every motion. `anchor` is
+  // sampled on entering a visual mode (the caret is on it at that moment), so
+  // `v` carries it too and `v` -> `V` can pick it up.
+  lines: { anchor: number; head: number } | null;
+}
+
+// An operator waiting for the range it will consume. `d`, `c`, `y`, `>` and
+// `<` establish one; a following `i`/`a` fills in `textObject`. The two were
+// separate fields with the same lifetime — both cleared by the same
+// `switchMode` transitions — so an operator with a modifier but no operator,
+// or the reverse, was representable but meaningless.
+interface PendingOperator {
+  operator: string; // d, c, y, >, <
+  textObject: TextObjectType; // set once i/a is typed
+}
+
+// What the *next* command will replay: `.`, `;`/`,`, `n`/`N` after `*`, and
+// the shape `p` pastes in. None of it belongs to a mode — it is written by
+// one command and read by another, arbitrarily later — so it is deliberately
+// not part of `ViState` below, which is the state the current mode owns and
+// `switchMode` is free to clear.
+interface ViMemory {
+  lastChange: LastChange | null; // For '.' repeat
+  lastFindChar: { type: FindCharType; char: string } | null; // For ; and , repeat
+  lastWordSearch: { text: string; direction: WordSearchDirection; wholeWord: boolean } | null; // For n/N after * or #
+  lastYankWasLinewise: boolean; // Track if last yank was line-wise for proper paste
+}
+
+// The state the current mode owns: established on entering a mode and cleared
+// on leaving it. `switchMode` is where that happens for every ordinary
+// transition; the few sites that set `state.mode` directly each say why they
+// cannot use it. `pendingFindChar` is the exception to the clearing — it is
+// staged by the handler that awaits the key, not by a transition.
 interface ViState {
   mode: ViMode;
-  pendingOperator: string | null;
+  pending: PendingOperator | null; // The operator awaiting a range; null when none
   pendingFindChar: FindCharType; // For f/t/F/T motions
-  pendingTextObject: TextObjectType; // For i/a text objects
-  lastFindChar: { type: FindCharType; char: string } | null; // For ; and , repeat
   count: number | null;
-  lastChange: LastChange | null; // For '.' repeat
-  lastYankWasLinewise: boolean; // Track if last yank was line-wise for proper paste
-  visualAnchor: number | null; // Starting position for visual mode selection
-  visualHead: number | null; // Active end of computed visual selections
-  visualRange: { start: number; end: number } | null; // Characterwise visual range for computed motions
-  insertStartPos: number | null; // Cursor position when entering insert mode
-  pendingInsertCommand: string | null; // Insert-entering command (i/a/I/A/o/O) awaiting '.' recording
-  visualBlockAnchor: { line: number; col: number } | null; // For visual block mode
-  lastWordSearch: { text: string; direction: WordSearchDirection; wholeWord: boolean } | null; // For n/N after * or #
+  visual: VisualState | null; // The active visual selection; null outside the visual modes
+  insert: InsertSession | null; // The in-progress insert session; null outside insert mode
+  pendingInsertCommand: string | null; // Insert-entering command (i/a/I/A/o/O) staged for the next switchMode("insert")
+}
+
+const memory: ViMemory = {
+  lastChange: null,
+  lastFindChar: null,
+  lastWordSearch: null,
+  lastYankWasLinewise: false,
+};
+
+function recordChange(change: LastChange): void {
+  memory.lastChange = change;
 }
 
 const state: ViState = {
   mode: "normal",
-  pendingOperator: null,
+  pending: null,
   pendingFindChar: null,
-  pendingTextObject: null,
-  lastFindChar: null,
   count: null,
-  lastChange: null,
-  lastYankWasLinewise: false,
-  visualAnchor: null,
-  visualHead: null,
-  visualRange: null,
-  insertStartPos: null,
+  visual: null,
+  insert: null,
   pendingInsertCommand: null,
-  visualBlockAnchor: null,
-  lastWordSearch: null,
 };
+
+// Bumped every time the modal state is dropped out from under whatever was
+// using it. `f`/`t`/`F`/`T`, `d f` and `r` copy their operator and count into
+// locals and then await a keypress; if the state is reset during that await —
+// a buffer switch, vi being turned off — the awaiting handler must abandon
+// the command instead of applying the old buffer's operator to the new one.
+let modalGeneration = 0;
+
+// Return the modal state to what it is on a fresh normal mode. `memory` is
+// untouched: what `.` and `;` replay is not a property of any mode.
+function resetModalState(): void {
+  modalGeneration += 1;
+  state.mode = "normal";
+  state.pending = null;
+  state.pendingFindChar = null;
+  state.count = null;
+  state.visual = null;
+  state.insert = null;
+  state.pendingInsertCommand = null;
+}
 
 const autoStart = editor.defineConfigBoolean("autoStart", {
   default: false,
@@ -122,7 +222,7 @@ function getModeIndicator(mode: ViMode): string {
     case "insert":
       return `-- ${editor.t("mode.insert")} --`;
     case "operator-pending":
-      return `-- ${editor.t("mode.operator")} (${state.pendingOperator}) --${countPrefix ? ` (${state.count})` : ""}`;
+      return `-- ${editor.t("mode.operator")} (${state.pending?.operator ?? ""}) --${countPrefix ? ` (${state.count})` : ""}`;
     case "find-char":
       return `-- ${editor.t("mode.find")} (${state.pendingFindChar}) --`;
     case "visual":
@@ -132,7 +232,7 @@ function getModeIndicator(mode: ViMode): string {
     case "visual-block":
       return `-- ${editor.t("mode.visual_block")} --${countPrefix ? ` (${state.count})` : ""}`;
     case "text-object":
-      return `-- ${state.pendingOperator}${state.pendingTextObject === "inner" ? "i" : "a"}? --`;
+      return `-- ${state.pending?.operator ?? ""}${state.pending?.textObject === "inner" ? "i" : "a"}? --`;
     default:
       return "";
   }
@@ -143,14 +243,12 @@ function switchMode(newMode: ViMode): void {
   const oldMode = state.mode;
   state.mode = newMode;
 
-  // Only clear pendingOperator when leaving operator-pending and text-object modes
+  // The pending operator outlives only operator-pending and text-object mode;
+  // its text-object modifier outlives only text-object mode.
   if (newMode !== "operator-pending" && newMode !== "text-object") {
-    state.pendingOperator = null;
-  }
-
-  // Clear text object type when leaving text-object mode
-  if (newMode !== "text-object") {
-    state.pendingTextObject = null;
+    state.pending = null;
+  } else if (newMode !== "text-object" && state.pending !== null) {
+    state.pending.textObject = null;
   }
 
   // Preserve count when entering operator-pending or text-object mode (for 3dw = delete 3 words)
@@ -160,12 +258,9 @@ function switchMode(newMode: ViMode): void {
     state.count = null;
   }
 
-  // Clear visual anchor when leaving visual modes
+  // Drop the visual selection when leaving visual modes
   if (newMode !== "visual" && newMode !== "visual-line" && newMode !== "visual-block") {
-    state.visualAnchor = null;
-    state.visualHead = null;
-    state.visualRange = null;
-    state.visualBlockAnchor = null;
+    state.visual = null;
     // Clear any selection when leaving visual mode by moving cursor
     // (any non-select movement clears selection in Fresh)
     if (oldMode === "visual" || oldMode === "visual-line" || oldMode === "visual-block") {
@@ -174,13 +269,18 @@ function switchMode(newMode: ViMode): void {
     }
   }
 
-  // Track insert mode start position for '.' repeat
+  // Open the insert session for '.' repeat, pairing the start position with
+  // whichever command staged itself in `pendingInsertCommand`.
   if (newMode === "insert" && oldMode !== "insert") {
-    state.insertStartPos = editor.getCursorPosition();
+    state.insert = {
+      startPos: editor.getCursorPosition(),
+      command: state.pendingInsertCommand,
+    };
+    state.pendingInsertCommand = null;
   }
 
   // Capture inserted text when leaving insert mode (for '.' repeat)
-  if (oldMode === "insert" && newMode !== "insert" && state.insertStartPos !== null) {
+  if (oldMode === "insert" && newMode !== "insert" && state.insert !== null) {
     captureInsertedText();
   }
 
@@ -192,12 +292,15 @@ function switchMode(newMode: ViMode): void {
 
 // Capture text inserted during insert mode for '.' repeat
 async function captureInsertedText(): Promise<void> {
-  if (state.insertStartPos === null) return;
+  // Take the session up front, before the `await` below yields. Clearing it
+  // here is what makes a second capture a no-op rather than a second reading
+  // of the same span.
+  const session = state.insert;
+  if (session === null) return;
+  state.insert = null;
 
-  const startPos = state.insertStartPos;
-  state.insertStartPos = null;
-  const insertCommand = state.pendingInsertCommand;
-  state.pendingInsertCommand = null;
+  const startPos = session.startPos;
+  const insertCommand = session.command;
 
   const endPos = editor.getCursorPosition();
   let text = "";
@@ -212,25 +315,23 @@ async function captureInsertedText(): Promise<void> {
     // (Vim keeps the previous one for '.'), but o/O open a line even when
     // nothing is typed, which alone is repeatable.
     if (text.length > 0 || insertCommand === "o" || insertCommand === "O") {
-      state.lastChange = { type: "insert", insertCommand };
+      memory.lastChange = { type: "insert", insertCommand };
       if (text.length > 0) {
-        state.lastChange.insertedText = text;
+        memory.lastChange.insertedText = text;
       }
     }
     return;
   }
 
   if (text.length > 0) {
-    if (!state.lastChange || state.lastChange.type === "insert") {
-      state.lastChange = {
+    if (!memory.lastChange || memory.lastChange.type === "insert") {
+      memory.lastChange = {
         type: "insert",
         insertedText: text,
       };
-    } else if (state.lastChange.type === "simple" || state.lastChange.type === "operator-motion" ||
-               state.lastChange.type === "operator-textobj" || state.lastChange.type === "operator-find-char" ||
-               state.lastChange.type === "line-op") {
+    } else {
       // A change command (c, s, etc.) was used - append the inserted text
-      state.lastChange.insertedText = text;
+      memory.lastChange.insertedText = text;
     }
   }
 }
@@ -289,103 +390,10 @@ function selectWithCount(action: string, count: number): void {
   }
 }
 
-function cutCharacterwiseSelection(hasSelectedRange: boolean): boolean {
-  if (!hasSelectedRange) {
-    return false;
-  }
 
-  editor.executeAction("cut");
-  state.lastYankWasLinewise = false;
-  return true;
-}
 
-function copyCharacterwiseSelection(hasSelectedRange: boolean): boolean {
-  if (!hasSelectedRange) {
-    return false;
-  }
 
-  state.lastYankWasLinewise = false;
-  editor.executeAction("copy");
-  return true;
-}
 
-async function canSelectionActionSelect(action: string, count: number): Promise<boolean> {
-  if (count <= 0) {
-    return false;
-  }
-
-  const cursor = editor.getPrimaryCursor();
-  const position = cursor?.position ?? editor.getCursorPosition();
-  const line = cursor?.line ?? null;
-  const bufferId = editor.getActiveBufferId();
-
-  switch (action) {
-    case "select_left":
-    case "select_word_left":
-    case "select_document_start":
-      return position > 0;
-    case "select_right":
-    case "select_word_right":
-    case "vi_select_word_end":
-    case "select_document_end":
-      return position < editor.getBufferLength(bufferId);
-    case "select_to_paragraph_up":
-      return position > 0;
-    case "select_to_paragraph_down":
-      return position < editor.getBufferLength(bufferId);
-    case "select_line_start": {
-      if (line === null) {
-        return false;
-      }
-      const lineStart = await editor.getLineStartPosition(line);
-      return lineStart !== null && position > lineStart;
-    }
-    case "select_line_end": {
-      if (line === null) {
-        return false;
-      }
-      const lineEnd = await editor.getLineEndPosition(line);
-      return lineEnd !== null && position < lineEnd;
-    }
-    case "select_up":
-      return line !== null && line > 0;
-    case "select_down": {
-      if (line === null) {
-        return false;
-      }
-      const lineCount = await editor.getBufferLineCount();
-      return lineCount !== null && line < lineCount - 1;
-    }
-    default:
-      return true;
-  }
-}
-
-async function selectThenCutCharacterwise(action: string, count: number): Promise<boolean> {
-  const hasSelectedRange = await canSelectionActionSelect(action, count);
-  if (!hasSelectedRange) {
-    return false;
-  }
-
-  selectWithCount(action, count);
-  if (action === "vi_select_word_end") {
-    editor.executeAction("select_right");
-  }
-  return cutCharacterwiseSelection(true);
-}
-
-async function selectThenCopyCharacterwise(action: string, count: number): Promise<boolean> {
-  const hasSelectedRange = await canSelectionActionSelect(action, count);
-  if (!hasSelectedRange) {
-    return false;
-  }
-
-  selectWithCount(action, count);
-  if (action === "vi_select_word_end") {
-    editor.executeAction("select_right");
-  }
-  return copyCharacterwiseSelection(true);
-}
 
 function getLinewiseReplacementText(deletedText: string): string | null {
   const trailingTerminator = deletedText.match(/(\r\n|\n|\r)$/);
@@ -526,67 +534,137 @@ async function getLinewiseRange(count: number): Promise<LinewiseRange | null> {
   return { bufferId, start, end, text, lineTerminator };
 }
 
-async function yankLinewise(count: number): Promise<void> {
-  const range = await getLinewiseRange(count);
-  if (range === null) {
-    return;
-  }
+// The word motions, named once each.
+//
+// `w`, `b`, `e` and their WORD counterparts were previously written three
+// times over — once for normal mode, once for operator-pending, once for
+// visual — and the two families were written twice more on top of that, the
+// lowercase one by composing editor actions and the uppercase one by computing
+// byte offsets. Only the computing version knew Vim's awkward rules (that `dw`
+// on a line's last word stops at the line end rather than eating the newline,
+// that `cw` behaves like `ce`), so the lowercase motions quietly got them
+// wrong.
+//
+// Here a family is a triple of pure index functions, a *kind* says how a
+// target becomes a range, and the three modes are adapters over both.
+type WordFamily = "word" | "WORD";
 
-  editor.setClipboard(ensureLinewiseRegisterText(range.text, range.lineTerminator));
-  state.lastYankWasLinewise = true;
+interface WordFamilyIndexes {
+  forward: (text: string, index: number) => number;
+  backward: (text: string, index: number) => number;
+  end: (text: string, index: number) => number;
+  // The end of the run the caret is already in, used by the `cw`-is-`ce` rule.
+  // Distinct from `end`, which advances to the next word when the caret is
+  // already on a word's last character.
+  runEnd: (text: string, index: number) => number;
 }
 
-async function cutLinewise(count: number): Promise<void> {
-  const bufferId = editor.getActiveBufferId();
-  if (isActiveBufferEditingDisabled(bufferId)) {
-    return;
-  }
-
-  const range = await getLinewiseRange(count);
-  if (range === null) {
-    return;
-  }
-
-  editor.setClipboard(ensureLinewiseRegisterText(range.text, range.lineTerminator));
-  editor.deleteRange(range.bufferId, range.start, range.end);
-  state.lastYankWasLinewise = true;
-  editor.setBufferCursor(range.bufferId, Math.min(range.start, editor.getBufferLength(range.bufferId)));
-}
-
-async function changeLinewise(count: number): Promise<void> {
-  const bufferId = editor.getActiveBufferId();
-  if (isActiveBufferEditingDisabled(bufferId)) {
-    return;
-  }
-
-  const range = await getLinewiseRange(count);
-  if (range === null) {
-    return;
-  }
-
-  editor.setClipboard(ensureLinewiseRegisterText(range.text, range.lineTerminator));
-  editor.deleteRange(range.bufferId, range.start, range.end);
-  editor.insertText(range.bufferId, range.start, getLinewiseReplacementText(range.text) ?? range.lineTerminator);
-  editor.setBufferCursor(range.bufferId, range.start);
-  state.lastYankWasLinewise = true;
-}
-
-// Map motion actions to their selection equivalents
-const motionToSelection: Record<string, string> = {
-  move_left: "select_left",
-  move_right: "select_right",
-  move_up: "select_up",
-  move_down: "select_down",
-  move_word_left: "select_word_left",
-  move_word_right: "select_word_right",
-  vi_move_word_end: "vi_select_word_end",
-  move_to_paragraph_up: "select_to_paragraph_up",
-  move_to_paragraph_down: "select_to_paragraph_down",
-  move_line_start: "select_line_start",
-  move_line_end: "select_line_end",
-  move_document_start: "select_document_start",
-  move_document_end: "select_document_end",
+const WORD_FAMILIES: Record<WordFamily, WordFamilyIndexes> = {
+  word: {
+    forward: nextWordIndex,
+    backward: previousWordIndex,
+    end: endWordIndex,
+    runEnd: tokenRunEnd,
+  },
+  WORD: {
+    forward: nextWORDIndex,
+    backward: previousWORDIndex,
+    end: endWORDIndex,
+    runEnd: endWORDIndex,
+  },
 };
+
+// `e`/`E` land *on* the last character they cover, so an operator's range runs
+// one character past the target; `w`/`W`/`b`/`B` land just after, which is
+// where the range ends anyway.
+const WORD_MOTION_KIND: Record<WORDMotionKind, MotionKind> = {
+  forward: "exclusive",
+  backward: "exclusive",
+  end: "inclusive",
+};
+
+// The range an operator takes when a motion starting at `origin` lands on
+// `target`. Used by the motion families that resolve a plain target; the word
+// motions go through `computeWordOperatorRange` below, which also carries
+// Vim's end-of-line special cases.
+async function rangeFromMotion(
+  origin: number,
+  target: number,
+  kind: MotionKind,
+): Promise<OperatorRange | null> {
+  const bufferId = editor.getActiveBufferId();
+  if (kind === "linewise") {
+    const span = await lineSpanOfRange(bufferId, Math.min(origin, target), Math.max(origin, target));
+    return linewiseRangeAt(bufferId, span.firstLineStart, span.lineCount);
+  }
+  if (kind === "inclusive" && target >= origin) {
+    return charwiseRange(origin, await charEndOffset(bufferId, target));
+  }
+  return charwiseRange(origin, target);
+}
+
+// The motions an operator can take, each resolving to a target byte offset,
+// each with the kind that turns that target into a range.
+//
+// This is the last of the three command paths to be folded in. The word
+// motions and the text objects already resolved their own ranges; these were
+// still composing the host's `select_*` actions and consuming whatever
+// selection came out, which is why `d%` silently did nothing (no selection
+// equivalent existed) and why the inclusive/exclusive distinction had to be
+// re-derived at each site that cared.
+interface OperatorMotion {
+  kind: MotionKind;
+  // Resolved against the *operator's* semantics, which are not always the
+  // caret's: `l` will not move the caret past a line's last character, but
+  // `dl` deletes that character.
+  resolve: (origin: number, count: number) => Promise<number | null>;
+}
+
+async function lineStartTarget(origin: number): Promise<number | null> {
+  return findLineStartAtPosition(editor.getActiveBufferId(), origin);
+}
+
+async function lineEndTarget(origin: number): Promise<number | null> {
+  const line = editor.getPrimaryCursor()?.line ?? null;
+  if (line === null) {
+    return null;
+  }
+  const end = await editor.getLineEndPosition(line);
+  return end === null ? null : Math.max(end, origin);
+}
+
+async function paragraphTarget(origin: number, count: number, forward: boolean): Promise<number | null> {
+  const bufferId = editor.getActiveBufferId();
+  const text = await editor.getBufferText(bufferId, 0, editor.getBufferLength(bufferId));
+  let index = byteOffsetToStringIndex(text, origin);
+  if (!forward) {
+    for (let i = 0; i < Math.max(1, count); i++) {
+      index = paragraphUpMotionTargetIndex(text, index);
+    }
+    return stringIndexToByteOffset(text, index);
+  }
+  let reachedEof = false;
+  for (let i = 0; i < Math.max(1, count); i++) {
+    const next = paragraphDownMotionTargetIndex(text, index);
+    index = next.index;
+    reachedEof = next.reachedEof;
+  }
+  // At the end of the buffer the motion stops *on* the last character rather
+  // than at a paragraph break, so the range has to reach past it.
+  return stringIndexToByteOffset(text, reachedEof ? nextStringIndex(text, index) : index);
+}
+
+const OPERATOR_MOTIONS: Record<string, OperatorMotion> = {
+  move_left: { kind: "exclusive", resolve: (o, c) => horizontalTarget(o, c, false, false) },
+  move_right: { kind: "exclusive", resolve: (o, c) => horizontalTarget(o, c, true, false) },
+  move_line_start: { kind: "exclusive", resolve: (o) => lineStartTarget(o) },
+  // `$` is inclusive in Vim's vocabulary, but the editor's line end already
+  // sits one past the last character, which is where an exclusive range ends.
+  move_line_end: { kind: "exclusive", resolve: (o) => lineEndTarget(o) },
+  move_to_paragraph_up: { kind: "exclusive", resolve: (o, c) => paragraphTarget(o, c, false) },
+  move_to_paragraph_down: { kind: "exclusive", resolve: (o, c) => paragraphTarget(o, c, true) },
+};
+
 
 function stringIndexToByteOffset(text: string, index: number): number {
   return editor.utf8ByteLength(text.slice(0, index));
@@ -742,6 +820,75 @@ function previousWORDIndex(text: string, startIndex: number): number {
   return index;
 }
 
+// Vim `w`: the start of the next word. Unlike `W`, a run of word characters
+// and a run of punctuation are separate words, so `w` stops between them.
+function nextWordIndex(text: string, startIndex: number): number {
+  let index = Math.min(startIndex, text.length);
+  if (index >= text.length) {
+    return text.length;
+  }
+
+  if (!isWhitespaceAt(text, index)) {
+    const startedOnWord = isWordChar(charAtStringIndex(text, index));
+    while (
+      index < text.length &&
+      !isWhitespaceAt(text, index) &&
+      isWordChar(charAtStringIndex(text, index)) === startedOnWord
+    ) {
+      index = nextStringIndex(text, index);
+    }
+  }
+
+  while (index < text.length && isWhitespaceAt(text, index)) {
+    // An empty line is a word of its own to Vim, so `w` stops on it.
+    if (isEmptyLineStart(text, index)) {
+      break;
+    }
+    index = nextStringIndex(text, index);
+  }
+  return index;
+}
+
+// Vim `e`: the last character of the current word, or of the next one when the
+// caret is already on it. `viWordEndAdvance` is that rule exactly — it was
+// written for the trailing words of a `cNw` and is reused rather than copied.
+function endWordIndex(text: string, startIndex: number): number {
+  return viWordEndAdvance(text, startIndex);
+}
+
+// Vim `b`: the start of the word before `startIndex`. Unlike `B` above, a run
+// of word characters and a run of punctuation are separate words.
+function previousWordIndex(text: string, startIndex: number): number {
+  if (startIndex <= 0) {
+    return 0;
+  }
+
+  let index = previousStringIndex(text, Math.min(startIndex, text.length));
+  while (index > 0 && isWhitespaceAt(text, index)) {
+    if (isEmptyLineStart(text, index)) {
+      return index;
+    }
+    index = previousStringIndex(text, index);
+  }
+  if (isWhitespaceAt(text, index)) {
+    return index;
+  }
+
+  const startedOnWord = isWordChar(charAtStringIndex(text, index));
+  while (index > 0) {
+    const previous = previousStringIndex(text, index);
+    if (isWhitespaceAt(text, previous)) {
+      break;
+    }
+    if (isWordChar(charAtStringIndex(text, previous)) !== startedOnWord) {
+      break;
+    }
+    index = previous;
+  }
+  return index;
+}
+
+
 function endWORDIndex(text: string, startIndex: number): number {
   let index = Math.min(startIndex, text.length);
   if (index >= text.length) {
@@ -812,21 +959,27 @@ function viWordEndAdvance(text: string, index: number): number {
   return tokenRunEnd(text, next);
 }
 
-function computeWORDMotionTargetIndex(text: string, startIndex: number, kind: WORDMotionKind, count: number): number {
+function computeWordMotionTargetIndex(
+  family: WordFamily,
+  text: string,
+  startIndex: number,
+  kind: WORDMotionKind,
+  count: number,
+): number {
+  const step = WORD_FAMILIES[family][kind];
   let index = startIndex;
   for (let i = 0; i < Math.max(1, count); i++) {
-    if (kind === "forward") {
-      index = nextWORDIndex(text, index);
-    } else if (kind === "backward") {
-      index = previousWORDIndex(text, index);
-    } else {
-      index = endWORDIndex(text, index);
-    }
+    index = step(text, index);
   }
   return index;
 }
 
-async function computeWORDMotionTarget(kind: WORDMotionKind, count: number, origin: number | null = null): Promise<number | null> {
+async function computeWordMotionTarget(
+  family: WordFamily,
+  kind: WORDMotionKind,
+  count: number,
+  origin: number | null = null,
+): Promise<number | null> {
   const bufferId = editor.getActiveBufferId();
   const cursorPos = origin ?? editor.getCursorPosition();
   if (cursorPos === null) {
@@ -835,7 +988,7 @@ async function computeWORDMotionTarget(kind: WORDMotionKind, count: number, orig
 
   const bufferLength = editor.getBufferLength(bufferId);
   const text = await editor.getBufferText(bufferId, 0, bufferLength);
-  const index = computeWORDMotionTargetIndex(text, byteOffsetToStringIndex(text, cursorPos), kind, count);
+  const index = computeWordMotionTargetIndex(family, text, byteOffsetToStringIndex(text, cursorPos), kind, count);
 
   return stringIndexToByteOffset(text, index);
 }
@@ -876,6 +1029,21 @@ function paragraphDownEofIndex(text: string): number {
   return contentEnd === 0 ? 0 : previousStringIndex(text, contentEnd);
 }
 
+// `{`: the previous empty line, or the start of the buffer. Mirrors
+// `paragraphDownMotionTargetIndex` below.
+function paragraphUpMotionTargetIndex(text: string, startIndex: number): number {
+  let lineStart = lineStartIndex(text, Math.min(startIndex, text.length));
+  while (lineStart > 0) {
+    lineStart = lineStartIndex(text, previousStringIndex(text, lineStart));
+    const nextLineStart = nextLineStartIndex(text, lineStart);
+    const lineContent = text.slice(lineStart, nextLineStart);
+    if (lineContent.replace(/[\r\n]+$/, "") === "") {
+      return lineStart;
+    }
+  }
+  return 0;
+}
+
 function paragraphDownMotionTargetIndex(text: string, startIndex: number): { index: number; reachedEof: boolean } {
   let lineStart = nextLineStartIndex(text, startIndex);
   while (lineStart < text.length) {
@@ -890,28 +1058,6 @@ function paragraphDownMotionTargetIndex(text: string, startIndex: number): { ind
   return { index: paragraphDownEofIndex(text), reachedEof: true };
 }
 
-async function computeParagraphDownOperatorRange(count: number): Promise<{ start: number; end: number } | null> {
-  const start = editor.getCursorPosition();
-  if (start === null) {
-    return null;
-  }
-
-  const bufferId = editor.getActiveBufferId();
-  const bufferText = await editor.getBufferText(bufferId, 0, editor.getBufferLength(bufferId));
-  let target = byteOffsetToStringIndex(bufferText, start);
-  let reachedEof = false;
-  for (let i = 0; i < Math.max(1, count); i++) {
-    const next = paragraphDownMotionTargetIndex(bufferText, target);
-    target = next.index;
-    reachedEof = next.reachedEof;
-  }
-
-  const endIndex = reachedEof ? nextStringIndex(bufferText, target) : target;
-  return {
-    start,
-    end: stringIndexToByteOffset(bufferText, endIndex),
-  };
-}
 
 function byteLengthOfCharAt(text: string, index: number): number {
   if (index < 0 || index >= text.length) {
@@ -921,53 +1067,261 @@ function byteLengthOfCharAt(text: string, index: number): number {
   return editor.utf8ByteLength(String.fromCodePoint(codePoint ?? text.charCodeAt(index)));
 }
 
-async function applyOperatorWithRange(operator: string, start: number, end: number): Promise<void> {
-  const rangeStart = Math.min(start, end);
-  const rangeEnd = Math.max(start, end);
-  if (rangeEnd <= rangeStart) {
+// Index of the last line that has content. A file ending in a newline has no
+// line after it in Vim's model, but the editor still places a caret there.
+async function lastContentLine(bufferId: number): Promise<number | null> {
+  const lineCount = editor.getBufferInfo(bufferId)?.line_count ?? null;
+  if (lineCount === null || lineCount <= 0) {
+    return null;
+  }
+  const length = editor.getBufferLength(bufferId);
+  let last = lineCount - 1;
+  const start = await editor.getLineStartPosition(last);
+  if (start !== null && start >= length && last > 0) {
+    last -= 1;
+  }
+  return last;
+}
+
+// Motions Vim treats as *linewise*: an operator over one of these takes whole
+// lines, newline included, not the byte span between the two carets. Without
+// this, `dj` deleted the tail of one line and the head of the next, and `dG`
+// deleted to the end of the buffer charwise.
+const LINEWISE_MOTIONS: Record<string, true> = {
+  move_down: true,
+  move_up: true,
+  move_document_start: true,
+  move_document_end: true,
+};
+
+// The line span an operator+linewise-motion covers, as [firstLine, lineCount].
+// `explicitCount` is the count the user actually typed, or null when there was
+// none. The document motions need the difference: bare `dG` deletes to the end
+// of the file, `d3G` deletes to line 3, and a count defaulted to 1 makes those
+// two indistinguishable.
+async function linewiseSpanForMotion(
+  motionAction: string,
+  count: number,
+  explicitCount: number | null = null,
+): Promise<{ firstLine: number; lineCount: number } | null> {
+  const bufferId = editor.getActiveBufferId();
+  const line = editor.getPrimaryCursor()?.line ?? null;
+  if (line === null) {
+    return null;
+  }
+  // Vim fails the whole operator when the motion cannot move: `dk` on the
+  // first line and `dj` on the last change nothing at all. Clamping the span
+  // instead would delete the current line, which is the opposite of a no-op.
+  switch (motionAction) {
+    case "move_down": {
+      const last = await lastContentLine(bufferId);
+      if (last === null || line + count > last) {
+        return null;
+      }
+      return { firstLine: line, lineCount: count + 1 };
+    }
+    case "move_up": {
+      if (line - count < 0) {
+        return null;
+      }
+      return { firstLine: line - count, lineCount: count + 1 };
+    }
+    case "move_document_start": {
+      // `dgg` goes to the first line, `d3gg` to line 3 (1-based).
+      const target = Math.max(0, (explicitCount ?? 1) - 1);
+      const first = Math.min(target, line);
+      return { firstLine: first, lineCount: Math.abs(line - target) + 1 };
+    }
+    case "move_document_end": {
+      const last = await lastContentLine(bufferId);
+      if (last === null) {
+        return null;
+      }
+      // Bare `dG` goes to the last line with content; `d3G` to line 3.
+      const target = explicitCount === null ? last : Math.min(Math.max(0, explicitCount - 1), last);
+      const first = Math.min(target, line);
+      return { firstLine: first, lineCount: Math.abs(line - target) + 1 };
+    }
+    default:
+      return null;
+  }
+}
+
+// Apply an operator to whole lines. The linewise helpers all count forward
+// from the caret's line, so a span that starts above the caret is handled by
+// seating the caret on its first line first.
+async function applyOperatorLinewise(
+  operator: string,
+  firstLine: number,
+  lineCount: number,
+): Promise<void> {
+  const bufferId = editor.getActiveBufferId();
+  const start = await editor.getLineStartPosition(firstLine);
+  if (start === null) {
+    switchMode("normal");
+    return;
+  }
+  await applyOperator(operator, await linewiseRangeAt(bufferId, start, lineCount));
+}
+
+// ============================================================================
+// Motions, ranges and operators
+// ============================================================================
+//
+// Vim's model, which this plugin follows: a *motion* resolves to a target and
+// a *kind*; the kind decides how the span between the caret and that target
+// becomes a *range*; an *operator* consumes the range. The kind is the whole
+// of the difference between `dw` and `de` (exclusive vs inclusive) and between
+// `dw` and `dj` (charwise vs linewise).
+//
+// Keeping that as data rather than as code at each call site is the point.
+// Before, "this motion is inclusive" was open-coded five separate times — a
+// trailing `select_right` after `vi_select_word_end` in two helpers, another
+// after `select_word_right` in visual `w`, another after `select_line_end` in
+// visual `$`, and a `+ charLength` inside the find-char operator — and "this
+// motion is line-wise" a sixth. Each site could disagree with the others, and
+// several did.
+
+type MotionKind = "exclusive" | "inclusive" | "linewise";
+
+// The one distinction that outlives resolution. A line-wise range covers whole
+// lines, registers as line-wise (so `p` puts it on its own lines rather than
+// inline) and leaves an empty line behind under `c`.
+type RangeShape = "charwise" | "linewise";
+
+interface OperatorRange {
+  start: number; // byte offset, inclusive
+  end: number; // byte offset, exclusive
+  shape: RangeShape;
+  // Where to leave the caret afterwards. Defaults to `start`, which is right
+  // for every operator except `yy` and friends, where Vim does not move it.
+  cursorAfter?: number;
+}
+
+function charwiseRange(start: number, end: number, cursorAfter?: number): OperatorRange {
+  return { start: Math.min(start, end), end: Math.max(start, end), shape: "charwise", cursorAfter };
+}
+
+// The line-wise range covering `lineCount` lines from the line `position` is on.
+async function linewiseRangeAt(
+  bufferId: number,
+  position: number,
+  lineCount: number,
+  cursorAfter?: number,
+): Promise<OperatorRange | null> {
+  if (lineCount <= 0) {
+    return null;
+  }
+  const start = await findLineStartAtPosition(bufferId, position);
+  const end = await findLinewiseEndFromStart(bufferId, start, lineCount);
+  if (end <= start) {
+    return null;
+  }
+  return { start, end, shape: "linewise", cursorAfter };
+}
+
+// The single place `d`, `c`, `y`, `>` and `<` act on a range.
+//
+// Every entry point — operator + motion, operator + text object, operator +
+// find-char, the doubled line operators, and the visual modes — resolves its
+// own range and hands it here. That is what keeps the register shape, the
+// caret's landing place and the `c`-before-insert flush from drifting apart
+// between them, which they did when there were four copies of this switch.
+async function applyOperator(
+  operator: string,
+  range: OperatorRange | null,
+  options: { enterInsert?: boolean } = {},
+): Promise<void> {
+  if (range === null || range.end <= range.start) {
     switchMode("normal");
     return;
   }
 
   const bufferId = editor.getActiveBufferId();
-
-  // Indent/dedent are line-wise: resolve the byte range to the whole lines it
-  // touches and shift them, rather than operating on the exact byte span.
-  if (operator === ">" || operator === "<") {
-    const span = await lineSpanOfRange(bufferId, rangeStart, rangeEnd);
-    await applyIndentToLineRange(operator, span.firstLineStart, span.lineCount);
-    return;
-  }
-
-  if ((operator === "d" || operator === "c") && isActiveBufferEditingDisabled(bufferId)) {
+  if (operator !== "y" && isActiveBufferEditingDisabled(bufferId)) {
     switchMode("normal");
     return;
   }
 
-  const text = await editor.getBufferText(bufferId, rangeStart, rangeEnd);
-  if (text) {
-    editor.setClipboard(text);
+  // Indent and dedent are line-wise whatever the range's shape: they resolve it
+  // to the whole lines it touches and shift those.
+  if (operator === ">" || operator === "<") {
+    const span = await lineSpanOfRange(bufferId, range.start, range.end);
+    await applyIndentToLineRange(operator, span.firstLineStart, span.lineCount);
+    return;
   }
 
+  const linewise = range.shape === "linewise";
+  const text = (await editor.getBufferText(bufferId, range.start, range.end)) ?? "";
+  const terminator = linewise ? await getLinewiseTerminator(bufferId, range.start, text) : "";
+  if (text) {
+    editor.setClipboard(linewise ? ensureLinewiseRegisterText(text, terminator) : text);
+  }
+  memory.lastYankWasLinewise = linewise;
+
+  // The caret is placed *after* the mode switch throughout: leaving a visual
+  // mode, `switchMode` drops the host selection by nudging the caret left then
+  // right, which is a net move at offset 0. Placing afterwards makes the
+  // landing position below the authoritative one for every caller.
   switch (operator) {
-    case "d":
-      editor.deleteRange(bufferId, rangeStart, rangeEnd);
-      editor.setBufferCursor(bufferId, Math.min(rangeStart, editor.getBufferLength(bufferId)));
-      state.lastYankWasLinewise = false;
-      break;
-    case "c":
-      editor.deleteRange(bufferId, rangeStart, rangeEnd);
-      editor.setBufferCursor(bufferId, Math.min(rangeStart, editor.getBufferLength(bufferId)));
-      state.lastYankWasLinewise = false;
-      switchMode("insert");
+    case "y": {
+      // Vim leaves the caret at the start of the yanked text (`yb` from the
+      // middle of a line lands where the yank began). `yy` and `Vy` are the
+      // exceptions and pass their own `cursorAfter`.
+      const landing = range.cursorAfter ?? range.start;
+      switchMode("normal");
+      editor.setBufferCursor(bufferId, landing);
       return;
-    case "y":
-      editor.setBufferCursor(bufferId, rangeStart);
-      state.lastYankWasLinewise = false;
-      break;
+    }
+
+    case "d": {
+      editor.deleteRange(bufferId, range.start, range.end);
+      const landing = Math.min(range.cursorAfter ?? range.start, editor.getBufferLength(bufferId));
+      switchMode("normal");
+      editor.setBufferCursor(bufferId, landing);
+      return;
+    }
+
+    case "c": {
+      editor.deleteRange(bufferId, range.start, range.end);
+      if (linewise) {
+        // Vim's `cc`/`cj`/`Vc` leave an empty line to type into, rather than
+        // closing the gap the way `d` does.
+        editor.insertText(bufferId, range.start, getLinewiseReplacementText(text) ?? terminator);
+      }
+      editor.setBufferCursor(bufferId, range.start);
+      // `.` replays a change as the delete half plus the recorded keystrokes,
+      // so it wants the range consumed with `c` semantics — the empty line a
+      // line-wise change leaves behind — without the mode switch.
+      if (options.enterInsert === false) {
+        await editor.flush();
+        switchMode("normal");
+        editor.setBufferCursor(bufferId, range.start);
+        return;
+      }
+      // Flush before entering insert: `deleteRange` and `setBufferCursor` are
+      // queued to the editor thread, so without this `switchMode("insert")`
+      // samples the *pre-command* cursor as the session start. The Escape-time
+      // capture then measures from there and records surrounding buffer text as
+      // if it had been typed, which `.` replays into the next line (issue
+      // #2443, the `c`-operator half).
+      await editor.flush();
+      switchMode("insert");
+      editor.setBufferCursor(bufferId, range.start);
+      if (state.insert !== null) {
+        state.insert.startPos = range.start;
+      }
+      return;
+    }
   }
 
   switchMode("normal");
+}
+
+// Charwise convenience wrapper: the many callers that already know both byte
+// offsets and have nothing else to say about the range.
+async function applyOperatorWithRange(operator: string, start: number, end: number): Promise<void> {
+  await applyOperator(operator, charwiseRange(start, end));
 }
 
 // ============================================================================
@@ -1014,7 +1368,7 @@ async function lineSpanOfRange(
 
 // Move the cursor to the first non-blank character of the line starting at
 // `lineStart` (Vim leaves the cursor there after >>/<<).
-async function placeCursorAtFirstNonBlank(bufferId: number, lineStart: number): Promise<void> {
+async function firstNonBlankOffset(bufferId: number, lineStart: number): Promise<number> {
   const bufferLength = editor.getBufferLength(bufferId);
   const sampleEnd = Math.min(bufferLength, lineStart + 4096);
   const sample = await editor.getBufferText(bufferId, lineStart, sampleEnd);
@@ -1023,7 +1377,11 @@ async function placeCursorAtFirstNonBlank(bufferId: number, lineStart: number): 
     index++;
   }
   const offset = lineStart + editor.utf8ByteLength(sample.slice(0, index));
-  editor.setBufferCursor(bufferId, Math.min(offset, bufferLength));
+  return Math.min(offset, bufferLength);
+}
+
+async function placeCursorAtFirstNonBlank(bufferId: number, lineStart: number): Promise<void> {
+  editor.setBufferCursor(bufferId, await firstNonBlankOffset(bufferId, lineStart));
 }
 
 // Indent (">") or dedent ("<") `lineCount` whole lines starting at
@@ -1051,7 +1409,7 @@ async function applyIndentToLineRange(
 
   editor.executeAction(operator === ">" ? "insert_tab" : "dedent_selection");
 
-  state.lastYankWasLinewise = false;
+  memory.lastYankWasLinewise = false;
   await placeCursorAtFirstNonBlank(bufferId, firstLineStart);
   switchMode("normal");
 }
@@ -1072,46 +1430,9 @@ async function applyLineOpIndent(operator: string, count: number): Promise<void>
   await applyIndentToLineRange(operator, firstLineStart, Math.max(1, count));
 }
 
-// >motion / <motion: indent the whole lines the motion spans. Built entirely
-// from ordered editor actions (select-by-motion, then indent the selection) so
-// it never relies on reading a position back mid-handler — the plugin's cursor
-// snapshot is not refreshed until the handler yields. Extending the active end
-// to its line end makes a forward/downward motion include the destination line
-// even when it stops at column 0, matching Vim's line-wise `>`.
-async function applyIndentViaMotion(
-  operator: string,
-  selectAction: string,
-  motionAction: string,
-  count: number,
-): Promise<void> {
-  const bufferId = editor.getActiveBufferId();
-  if (isActiveBufferEditingDisabled(bufferId)) {
-    switchMode("normal");
-    return;
-  }
-  const startPos = editor.getCursorPosition();
-  state.lastChange = { type: "operator-motion", operator, motion: motionAction, count };
 
-  for (let i = 0; i < Math.max(1, count); i++) {
-    editor.executeAction(selectAction);
-  }
-  editor.executeAction("select_line_end");
-  editor.executeAction(operator === ">" ? "insert_tab" : "dedent_selection");
-  state.lastYankWasLinewise = false;
-
-  // Leave the cursor on the first non-blank of the line the motion started on
-  // (its byte offset is unchanged by indenting at line starts).
-  if (startPos !== null) {
-    const firstLineStart = await findLineStartAtPosition(bufferId, startPos);
-    await placeCursorAtFirstNonBlank(bufferId, firstLineStart);
-  } else {
-    switchMode("normal");
-    return;
-  }
-  switchMode("normal");
-}
-
-async function computeWORDOperatorRange(
+async function computeWordOperatorRange(
+  family: WordFamily,
   kind: WORDMotionKind,
   count: number,
   useChangeForwardSemantics: boolean,
@@ -1125,10 +1446,14 @@ async function computeWORDOperatorRange(
   const bufferText = await editor.getBufferText(bufferId, 0, editor.getBufferLength(bufferId));
   const startIndex = byteOffsetToStringIndex(bufferText, start);
 
+  // Vim's `cw` is `ce` (`:help cw`): on a non-blank, a change stops at the end
+  // of the word instead of eating the whitespace after it. The first word uses
+  // the family's `runEnd` so a caret already on a word's last character changes
+  // only that character; each further count is an ordinary `e`.
   if (useChangeForwardSemantics && kind === "forward" && !isWhitespaceAt(bufferText, startIndex)) {
-    let endIndex = startIndex;
-    for (let i = 0; i < Math.max(1, count); i++) {
-      endIndex = endWORDIndex(bufferText, endIndex);
+    let endIndex = WORD_FAMILIES[family].runEnd(bufferText, startIndex);
+    for (let i = 1; i < Math.max(1, count); i++) {
+      endIndex = WORD_FAMILIES[family].end(bufferText, endIndex);
     }
     const endTarget = stringIndexToByteOffset(bufferText, endIndex);
     return {
@@ -1137,7 +1462,7 @@ async function computeWORDOperatorRange(
     };
   }
 
-  const targetIndex = computeWORDMotionTargetIndex(bufferText, startIndex, kind, count);
+  const targetIndex = computeWordMotionTargetIndex(family, bufferText, startIndex, kind, count);
   const target = stringIndexToByteOffset(bufferText, targetIndex);
   let end = target;
   let cursorAfter: number | undefined;
@@ -1157,43 +1482,15 @@ async function computeWORDOperatorRange(
   return { start, end, cursorAfter };
 }
 
-// Compute the change range for `cw` / `cNw`. Vim treats `cw` like `ce` when the
-// cursor is on a non-blank: it changes only up to the end of the word and does
-// NOT consume the trailing whitespace (`:help cw`). Returns null when the cursor
-// is on a blank (or past EOF), in which case the caller falls back to plain `w`
-// (i.e. `dw`-style) semantics.
-async function computeWordChangeRange(count: number): Promise<{ start: number; end: number } | null> {
-  const start = editor.getCursorPosition();
-  if (start === null) {
-    return null;
-  }
 
-  const bufferId = editor.getActiveBufferId();
-  const bufferText = await editor.getBufferText(bufferId, 0, editor.getBufferLength(bufferId));
-  const startIndex = byteOffsetToStringIndex(bufferText, start);
-  if (startIndex >= bufferText.length || isWhitespaceAt(bufferText, startIndex)) {
-    return null;
-  }
-
-  // First word: stop at the end of the current word (no forward advance, so the
-  // cursor sitting on a word's last character changes only that character).
-  // Each additional count behaves like Vim's `e` motion.
-  let endIndex = tokenRunEnd(bufferText, startIndex);
-  for (let i = 1; i < Math.max(1, count); i++) {
-    endIndex = viWordEndAdvance(bufferText, endIndex);
-  }
-
-  const endTarget = stringIndexToByteOffset(bufferText, endIndex);
-  return { start, end: endTarget + byteLengthOfCharAt(bufferText, endIndex) };
-}
-
-async function applyWORDOperatorMotion(
+async function applyWordOperatorMotion(
+  family: WordFamily,
   operator: string,
   kind: WORDMotionKind,
   count: number,
   useChangeForwardSemantics: boolean = operator === "c",
 ): Promise<void> {
-  const range = await computeWORDOperatorRange(kind, count, useChangeForwardSemantics);
+  const range = await computeWordOperatorRange(family, kind, count, useChangeForwardSemantics);
   if (range === null) {
     switchMode("normal");
     return;
@@ -1205,32 +1502,59 @@ async function applyWORDOperatorMotion(
   }
 }
 
-function WORDMotionKindFromRepeatMotion(motion: string): WORDMotionKind | null {
-  switch (motion) {
-    case "vi_WORD_forward":
-      return "forward";
-    case "vi_WORD_backward":
-      return "backward";
-    case "vi_WORD_end":
-      return "end";
-    default:
-      return null;
+
+// Normal mode: the motion just moves the caret.
+async function moveByWordMotion(family: WordFamily, kind: WORDMotionKind): Promise<void> {
+  const target = await computeWordMotionTarget(family, kind, consumeCount());
+  if (target !== null) {
+    editor.setBufferCursor(editor.getActiveBufferId(), target);
   }
 }
 
-async function handleWORDMotionWithOperator(kind: WORDMotionKind): Promise<void> {
-  if (!state.pendingOperator) {
+// Visual mode: the head moves to the target, and the selection covers it.
+//
+// A visual selection always includes the character under its head, so the kind
+// never enters into it here — which is why `vw` and `ve` each used to need a
+// hand-written `select_right`/`select_left` to undo the adjustment the
+// operator path had made for them.
+async function extendVisualByWordMotion(family: WordFamily, kind: WORDMotionKind): Promise<void> {
+  const target = await computeWordMotionTarget(family, kind, consumeCount(), visualWORDMotionOrigin());
+  if (target !== null) {
+    await selectVisualRangeToTarget(target);
+  }
+}
+
+// Operator-pending mode: the target becomes a range, which the operator takes.
+async function handleWordMotionWithOperator(family: WordFamily, kind: WORDMotionKind): Promise<void> {
+  if (!state.pending) {
     switchMode("normal");
     return;
   }
 
-  const operator = state.pendingOperator;
+  const operator = state.pending.operator;
   const count = consumeCount();
   if (operator === "d" || operator === "c" || operator === ">" || operator === "<") {
-    state.lastChange = { type: "operator-motion", operator, motion: `vi_WORD_${kind}`, count };
+    recordChange({ type: "operator-motion", operator, motion: wordRepeatMotionName(family, kind), count });
   }
 
-  await applyWORDOperatorMotion(operator, kind, count);
+  await applyWordOperatorMotion(family, operator, kind, count);
+}
+
+// `.` records a word motion by name and decodes it back on replay, so the
+// repeat re-resolves the motion at the new caret instead of replaying a range.
+function wordRepeatMotionName(family: WordFamily, kind: WORDMotionKind): string {
+  return `vi_word_motion_${family}_${kind}`;
+}
+
+function wordMotionFromRepeatMotion(motion: string): { family: WordFamily; kind: WORDMotionKind } | null {
+  for (const family of ["word", "WORD"] as WordFamily[]) {
+    for (const kind of ["forward", "backward", "end"] as WORDMotionKind[]) {
+      if (motion === wordRepeatMotionName(family, kind)) {
+        return { family, kind };
+      }
+    }
+  }
+  return null;
 }
 
 async function selectToPosition(target: number, includeTarget: boolean = false): Promise<void> {
@@ -1264,55 +1588,77 @@ async function selectToPosition(target: number, includeTarget: boolean = false):
 // Apply an operator by turning the motion into a selection, then applying the
 // operator to that selected range.
 // The count parameter specifies how many times to apply the motion (e.g., d3w = delete 3 words)
-async function applyOperatorWithMotion(operator: string, motionAction: string, count: number = 1): Promise<void> {
-  // Record last change for '.' repeat (only for delete and change, not yank)
-  if (operator === "d" || operator === "c") {
-    state.lastChange = { type: "operator-motion", operator, motion: motionAction, count };
+// `record` is false when `.` is driving this.
+//
+// A recorded `c` replays as its *delete* half followed by the captured text,
+// so the commands the replay drives are handed `"d"`; letting them re-record
+// would overwrite `ci"` with `di"`, and the next `.` would delete without
+// inserting. This was a module-level flag held across the replay's `await`s,
+// which silently swallowed the recording of anything that ran in one of those
+// windows. Only three functions record on a replay path, so each is told
+// directly instead.
+async function applyOperatorWithMotion(
+  operator: string,
+  motionAction: string,
+  count: number = 1,
+  explicitCount: number | null = null,
+  record: boolean = true,
+): Promise<void> {
+  const records = record && (operator === "d" || operator === "c");
+
+  if (LINEWISE_MOTIONS[motionAction]) {
+    const span = await linewiseSpanForMotion(motionAction, count, explicitCount);
+    if (span === null) {
+      // The motion could not move — `dk` on the first line, `dj` on the last —
+      // so the whole operator fails and `.` keeps whatever it was holding.
+      // Recording before this point overwrote it with a change that never
+      // happened.
+      switchMode("normal");
+      return;
+    }
+    if (records) {
+      recordChange({ type: "operator-motion", operator, motion: motionAction, count: explicitCount ?? undefined });
+    }
+    await applyOperatorLinewise(operator, span.firstLine, span.lineCount);
+    return;
   }
 
-  const selectAction = motionToSelection[motionAction];
-  if (!selectAction) {
-    editor.debug(`No selection equivalent for motion: ${motionAction}`);
+  const motion = OPERATOR_MOTIONS[motionAction];
+  if (motion === undefined) {
+    editor.debug(`No operator motion for: ${motionAction}`);
     switchMode("normal");
     return;
   }
 
-  if (operator === ">" || operator === "<") {
-    await applyIndentViaMotion(operator, selectAction, motionAction, count);
+  const origin = editor.getCursorPosition();
+  const target = origin === null ? null : await motion.resolve(origin, count);
+  if (origin === null || target === null) {
+    switchMode("normal");
     return;
   }
 
-  switch (operator) {
-    case "d": // delete
-      await selectThenCutCharacterwise(selectAction, count);
-      break;
-    case "c": // change (delete and enter insert mode)
-      if (await selectThenCutCharacterwise(selectAction, count)) {
-        switchMode("insert");
-        return; // Don't switch back to normal mode
-      }
-      break;
-    case "y": // yank
-      if (await selectThenCopyCharacterwise(selectAction, count)) {
-        // Move cursor back to start of selection (left side)
-        editor.executeAction("move_left");
-      }
-      break;
+  // Record last change for '.' repeat (only for delete and change, not yank),
+  // and only once the motion has resolved: a motion that cannot move fails the
+  // whole operator, and must not overwrite what `.` is holding on its way out.
+  if (records) {
+    recordChange({ type: "operator-motion", operator, motion: motionAction, count });
   }
 
-  switchMode("normal");
+  await applyOperator(operator, await rangeFromMotion(origin, target, motion.kind));
 }
 
 // Handle motion in operator-pending mode
 // Consumes any pending count and applies it to the motion
 async function handleMotionWithOperator(motionAction: string): Promise<void> {
-  if (!state.pendingOperator) {
+  if (!state.pending) {
     switchMode("normal");
     return;
   }
 
+  const operator = state.pending.operator;
+  const explicitCount = state.count;
   const count = consumeCount();
-  await applyOperatorWithMotion(state.pendingOperator, motionAction, count);
+  await applyOperatorWithMotion(operator, motionAction, count, explicitCount);
 }
 
 // ============================================================================
@@ -1345,43 +1691,33 @@ function vi_right() : void {
 }
 registerHandler("vi_right", vi_right);
 
-function vi_word() : void {
-  executeWithCount("move_word_right");
+async function vi_word() : Promise<void> {
+  await moveByWordMotion("word", "forward");
 }
 registerHandler("vi_word", vi_word);
 
-function vi_word_back() : void {
-  executeWithCount("move_word_left");
+async function vi_word_back() : Promise<void> {
+  await moveByWordMotion("word", "backward");
 }
 registerHandler("vi_word_back", vi_word_back);
 
-function vi_word_end() : void {
-  // Vim 'e' motion — uses native vi_move_word_end action
-  executeWithCount("vi_move_word_end");
+async function vi_word_end() : Promise<void> {
+  await moveByWordMotion("word", "end");
 }
 registerHandler("vi_word_end", vi_word_end);
 
 async function vi_WORD() : Promise<void> {
-  const target = await computeWORDMotionTarget("forward", consumeCount());
-  if (target !== null) {
-    editor.setBufferCursor(editor.getActiveBufferId(), target);
-  }
+  await moveByWordMotion("WORD", "forward");
 }
 registerHandler("vi_WORD", vi_WORD);
 
 async function vi_WORD_back() : Promise<void> {
-  const target = await computeWORDMotionTarget("backward", consumeCount());
-  if (target !== null) {
-    editor.setBufferCursor(editor.getActiveBufferId(), target);
-  }
+  await moveByWordMotion("WORD", "backward");
 }
 registerHandler("vi_WORD_back", vi_WORD_back);
 
 async function vi_WORD_end() : Promise<void> {
-  const target = await computeWORDMotionTarget("end", consumeCount());
-  if (target !== null) {
-    editor.setBufferCursor(editor.getActiveBufferId(), target);
-  }
+  await moveByWordMotion("WORD", "end");
 }
 registerHandler("vi_WORD_end", vi_WORD_end);
 
@@ -1402,6 +1738,11 @@ registerHandler("vi_line_end", vi_line_end);
 
 async function vi_first_non_blank() : Promise<void> {
   consumeCount(); // Count doesn't apply
+  await moveToFirstNonBlank();
+}
+registerHandler("vi_first_non_blank", vi_first_non_blank);
+
+async function moveToFirstNonBlank() : Promise<void> {
   // Get line start position directly (avoids stale snapshot from executeAction)
   const line = editor.getPrimaryCursor()?.line ?? 0;
   const bufferId = editor.getActiveBufferId();
@@ -1425,7 +1766,6 @@ async function vi_first_non_blank() : Promise<void> {
     editor.executeAction("move_line_start");
   }
 }
-registerHandler("vi_first_non_blank", vi_first_non_blank);
 
 function vi_doc_start() : void {
   consumeCount(); // Count doesn't apply
@@ -1433,23 +1773,28 @@ function vi_doc_start() : void {
 }
 registerHandler("vi_doc_start", vi_doc_start);
 
-function vi_doc_end() : void {
-  const count = state.count;
+async function vi_doc_end() : Promise<void> {
+  const explicitCount = state.count;
   consumeCount();
-  if (count !== null) {
-    // nG = go to line n (1-indexed; goto_line expects 0-indexed internally)
-    // Use setBufferCursor to move to line start via getLineStartPosition
-    const line = count - 1; // Convert to 0-indexed
-    editor.getLineStartPosition(line).then((pos) => {
-      if (pos !== null) {
-        editor.setBufferCursor(editor.getActiveBufferId(), pos);
-      }
-    });
-  } else {
+  const bufferId = editor.getActiveBufferId();
+  const lastLine = await lastContentLine(bufferId);
+  if (lastLine === null) {
     editor.executeAction("move_document_end");
+    return;
   }
-  // Update status to clear any count display
-  editor.setStatus(getModeIndicator(state.mode));
+  // Vim's bare `G` goes to the *last line with content*: a file ending in a
+  // newline has no line after it in Vim's model, but the editor does place a
+  // caret there, and `move_document_end` lands on it — where `x`, `dd` and the
+  // rest then have nothing to act on. `nG` goes to line n instead.
+  const target = explicitCount === null
+    ? lastLine
+    : Math.min(Math.max(0, explicitCount - 1), lastLine);
+  const lineStart = await editor.getLineStartPosition(target);
+  if (lineStart === null) {
+    editor.executeAction("move_document_end");
+    return;
+  }
+  editor.setBufferCursor(bufferId, lineStart);
 }
 registerHandler("vi_doc_end", vi_doc_end);
 
@@ -1701,7 +2046,7 @@ async function executeWordUnderCursorSearch(direction: WordSearchDirection, coun
     return;
   }
 
-  state.lastWordSearch = { text: currentTarget.text, direction, wholeWord: currentTarget.wholeWord };
+  memory.lastWordSearch = { text: currentTarget.text, direction, wholeWord: currentTarget.wholeWord };
   editor.setBufferCursor(bufferId, stringIndexToByteOffset(text, currentTarget.start));
   await executeStoredWordSearch(currentTarget.text, direction, count, currentTarget.wholeWord, currentTarget);
 }
@@ -1725,7 +2070,7 @@ registerHandler("vi_search_word_backward", vi_search_word_backward);
 // reposition the cursor before inserting must also flush the editor's
 // command queue first: `executeAction` is queued and applied on the editor
 // thread, so without the flush `switchMode("insert")` would record the
-// PRE-reposition cursor position as `insertStartPos`, and the '.' capture
+// PRE-reposition cursor position as the session's start, and the '.' capture
 // would span intervening buffer text instead of just the typed keystrokes
 // (issue #2443: `o`/`a`/`A` + `.` injected unrelated line content).
 async function enterInsertRepositioned(command: string): Promise<void> {
@@ -1750,7 +2095,9 @@ async function vi_insert_after() : Promise<void> {
 registerHandler("vi_insert_after", vi_insert_after);
 
 async function vi_insert_line_start() : Promise<void> {
-  editor.executeAction("move_line_start");
+  // Vim's `I` inserts before the first non-blank, not in column 0 — that is
+  // `gI`. `.` replays the same motion below.
+  await moveToFirstNonBlank();
   await enterInsertRepositioned("I");
 }
 registerHandler("vi_insert_line_start", vi_insert_line_start);
@@ -1818,58 +2165,70 @@ registerHandler("vi_escape", vi_escape);
 
 // Operators
 function vi_delete_operator() : void {
-  state.pendingOperator = "d";
+  state.pending = { operator: "d", textObject: null };
   switchMode("operator-pending");
 }
 registerHandler("vi_delete_operator", vi_delete_operator);
 
 function vi_change_operator() : void {
-  state.pendingOperator = "c";
+  state.pending = { operator: "c", textObject: null };
   switchMode("operator-pending");
 }
 registerHandler("vi_change_operator", vi_change_operator);
 
 function vi_yank_operator() : void {
-  state.pendingOperator = "y";
+  state.pending = { operator: "y", textObject: null };
   switchMode("operator-pending");
 }
 registerHandler("vi_yank_operator", vi_yank_operator);
 
 // Line operations (dd, cc, yy) - support count prefix (3dd = delete 3 lines)
+
+// The line-wise range `dd`/`cc`/`yy` act on: `count` whole lines from the
+// caret's own line. `yy` names its own `cursorAfter` because Vim leaves the
+// caret where it was, unlike `yj`, which moves it to the start of the yank.
+async function lineOperatorRange(count: number, cursorAfter?: number): Promise<OperatorRange | null> {
+  const bufferId = editor.getActiveBufferId();
+  const position = editor.getPrimaryCursor()?.position ?? editor.getCursorPosition();
+  if (position === null) {
+    return null;
+  }
+  return linewiseRangeAt(bufferId, position, count, cursorAfter);
+}
+
 async function vi_delete_line() : Promise<void> {
   const count = consumeCount();
-  state.lastChange = { type: "line-op", action: "delete_line", count };
-  await cutLinewise(count);
-  switchMode("normal");
+  recordChange({ type: "line-op", action: "delete_line", count });
+  await applyOperator("d", await lineOperatorRange(count));
 }
 registerHandler("vi_delete_line", vi_delete_line);
 
 async function vi_change_line() : Promise<void> {
   const count = consumeCount();
-  state.lastChange = { type: "line-op", action: "change_line", count };
-  await changeLinewise(count);
-  switchMode("insert");
+  recordChange({ type: "line-op", action: "change_line", count });
+  await applyOperator("c", await lineOperatorRange(count));
 }
 registerHandler("vi_change_line", vi_change_line);
 
 async function vi_yank_line() : Promise<void> {
   const count = consumeCount();
-  await yankLinewise(count);
+  const position = editor.getPrimaryCursor()?.position ?? editor.getCursorPosition();
+  await applyOperator("y", await lineOperatorRange(count, position ?? undefined));
   editor.setStatus(editor.t("status.yanked_lines", { count: String(count) }));
-  switchMode("normal");
 }
 registerHandler("vi_yank_line", vi_yank_line);
+
 
 // `>` / `<` operators: enter operator-pending so a motion or a doubled
 // operator (>>/<<) can follow, mirroring d/c/y.
 function vi_indent_operator() : void {
-  state.pendingOperator = ">";
+  state.pending = { operator: ">", textObject: null };
   switchMode("operator-pending");
 }
 registerHandler("vi_indent_operator", vi_indent_operator);
 
 function vi_dedent_operator() : void {
-  state.pendingOperator = "<";
+  state.pending = { operator: "<", textObject: null };
   switchMode("operator-pending");
 }
 registerHandler("vi_dedent_operator", vi_dedent_operator);
@@ -1877,39 +2236,100 @@ registerHandler("vi_dedent_operator", vi_dedent_operator);
 // Doubled operators >> and <<. Only fire when the matching operator is
 // pending, so invalid combos like `d>` cancel instead of indenting.
 async function vi_indent_line() : Promise<void> {
-  if (state.pendingOperator !== ">") {
+  if (state.pending?.operator !== ">") {
     switchMode("normal");
     return;
   }
   const count = consumeCount();
-  state.lastChange = { type: "line-op", action: "indent_line", count };
+  recordChange({ type: "line-op", action: "indent_line", count });
   await applyLineOpIndent(">", count);
 }
 registerHandler("vi_indent_line", vi_indent_line);
 
 async function vi_dedent_line() : Promise<void> {
-  if (state.pendingOperator !== "<") {
+  if (state.pending?.operator !== "<") {
     switchMode("normal");
     return;
   }
   const count = consumeCount();
-  state.lastChange = { type: "line-op", action: "dedent_line", count };
+  recordChange({ type: "line-op", action: "dedent_line", count });
   await applyLineOpIndent("<", count);
 }
 registerHandler("vi_dedent_line", vi_dedent_line);
 
 // Single character operations - support count prefix (3x = delete 3 chars)
+// How many characters `x`/`X` may take without leaving the line.
+//
+// Neither ever deletes a line break in Vim: `x` on an empty line does
+// nothing, and `X` in column 1 does nothing. The generic guard only asks
+// whether the caret is inside the *buffer*, so both used to select across the
+// newline and silently join two lines — a file-corrupting edit the user did
+// not ask for and would not see.
+// How many *characters* the caret can move within its own line.
+//
+// `x`, `X` and `r` take their counts in characters, so a byte distance is the
+// wrong thing to clamp them with: on a line of two multi-byte characters it
+// reads as six, and `5x` runs past the line end and joins the next line — the
+// very thing the clamp exists to prevent.
+async function charsAvailableOnLine(forward: boolean): Promise<number> {
+  const bufferId = editor.getActiveBufferId();
+  const cursor = editor.getPrimaryCursor();
+  const position = cursor?.position ?? editor.getCursorPosition();
+  const line = cursor?.line ?? null;
+  if (line === null || position === null) {
+    return 0;
+  }
+  const bound = forward
+    ? await editor.getLineEndPosition(line)
+    : await editor.getLineStartPosition(line);
+  if (bound === null) {
+    return 0;
+  }
+  const start = Math.min(position, bound);
+  const end = Math.max(position, bound);
+  if (end <= start) {
+    return 0;
+  }
+  const text = (await editor.getBufferText(bufferId, start, end)) ?? "";
+  // Spread, not `.length`: a character outside the BMP is two UTF-16 units and
+  // one keystroke.
+  return [...text].length;
+}
+
+// The range `x`/`X`/`s` take: `count` characters from the caret, stopping at
+// the line's own end. `horizontalTarget` does the bounding, which is why these
+// no longer clamp against `charsAvailableOnLine` first — Vim's `5x` on a
+// two-character line deletes both rather than refusing, unlike `5r`.
+async function charwiseCountRange(count: number, forward: boolean): Promise<OperatorRange | null> {
+  const origin = editor.getCursorPosition();
+  if (origin === null) {
+    return null;
+  }
+  const target = await horizontalTarget(origin, count, forward, false);
+  return target === null ? null : charwiseRange(origin, target);
+}
+
+// The range `D`/`C` take: the caret to the end of its line.
+async function toLineEndRange(): Promise<OperatorRange | null> {
+  const origin = editor.getCursorPosition();
+  if (origin === null) {
+    return null;
+  }
+  const target = await lineEndTarget(origin);
+  return target === null ? null : charwiseRange(origin, target);
+}
+
 async function vi_delete_char() : Promise<void> {
   const count = consumeCount();
-  state.lastChange = { type: "simple", action: "delete_forward", count };
-  await selectThenCutCharacterwise("select_right", count);
+  recordChange({ type: "simple", action: "delete_forward", count });
+  await applyOperator("d", await charwiseCountRange(count, true));
 }
 registerHandler("vi_delete_char", vi_delete_char);
 
 async function vi_delete_char_before() : Promise<void> {
   const count = consumeCount();
-  state.lastChange = { type: "simple", action: "delete_backward", count };
-  await selectThenCutCharacterwise("select_left", count);
+  recordChange({ type: "simple", action: "delete_backward", count });
+  await applyOperator("d", await charwiseCountRange(count, false));
 }
 registerHandler("vi_delete_char_before", vi_delete_char_before);
 
@@ -1917,17 +2337,25 @@ registerHandler("vi_delete_char_before", vi_delete_char_before);
 // character(s) under the cursor with it.  Uses `editor.getNextKey()`
 // (plugin API #1) — same pattern as find-char above.
 async function vi_replace_char(): Promise<void> {
+  // Set directly rather than through `switchMode`, which can only emit
+  // `vi-<mode>` and so cannot produce the `vi-replace-char` editor mode this
+  // needs. The vi-side mode is borrowed purely for the status indicator.
   state.mode = "find-char"; // reuse find-char state slot for status
   editor.setEditorMode("vi-replace-char");
   editor.setStatus("-- REPLACE CHAR --");
 
   editor.beginKeyCapture();
+  const generation = modalGeneration;
   let ev;
   try {
     ev = await editor.getNextKey();
   } finally {
     editor.endKeyCapture();
   }
+
+  // The state was reset while the key was awaited — the buffer this `r` was
+  // aimed at is no longer the one in front of us.
+  if (generation !== modalGeneration) return;
 
   // Escape / non-character keys cancel the replacement.
   if (ev.key.length !== 1) {
@@ -1936,44 +2364,52 @@ async function vi_replace_char(): Promise<void> {
   }
 
   const count = consumeCount();
-  for (let i = 0; i < count; i++) {
-    editor.executeAction("delete_forward");
-    editor.insertAtCursor(ev.key);
-  }
-  // Move cursor back to stay on the replaced char (vim behavior).
-  editor.executeAction("move_left");
+  recordChange({ type: "replace-char", replacement: ev.key, count });
+  await replaceCharsUnderCursor(ev.key, count);
   switchMode("normal");
 }
 registerHandler("vi_replace_char", vi_replace_char);
 
+// `r` replaces characters on the caret's own line and nowhere else: Vim
+// refuses `5rz` outright when fewer than five characters remain, rather than
+// running over the line break the way an unclamped loop would.
+async function replaceCharsUnderCursor(replacement: string, count: number): Promise<void> {
+  if (count > (await charsAvailableOnLine(true))) {
+    return;
+  }
+  for (let i = 0; i < count; i++) {
+    editor.executeAction("delete_forward");
+    editor.insertAtCursor(replacement);
+  }
+  // Move cursor back to stay on the replaced char (vim behavior).
+  editor.executeAction("move_left");
+}
+
 // Substitute (delete char and enter insert mode)
 async function vi_substitute() : Promise<void> {
   const count = consumeCount();
-  state.lastChange = { type: "simple", action: "substitute", count };
-  if (await selectThenCutCharacterwise("select_right", count)) {
-    switchMode("insert");
-  }
+  recordChange({ type: "simple", action: "substitute", count });
+  await applyOperator("c", await charwiseCountRange(count, true));
 }
 registerHandler("vi_substitute", vi_substitute);
 
 // Delete to end of line (D)
 async function vi_delete_to_end() : Promise<void> {
-  state.lastChange = { type: "operator-motion", operator: "d", motion: "move_line_end" };
-  await selectThenCutCharacterwise("select_line_end", 1);
+  recordChange({ type: "operator-motion", operator: "d", motion: "move_line_end" });
+  await applyOperator("d", await toLineEndRange());
 }
 registerHandler("vi_delete_to_end", vi_delete_to_end);
 
 // Change to end of line (C)
 async function vi_change_to_end() : Promise<void> {
-  state.lastChange = { type: "operator-motion", operator: "c", motion: "move_line_end" };
-  await selectThenCutCharacterwise("select_line_end", 1);
-  switchMode("insert");
+  recordChange({ type: "operator-motion", operator: "c", motion: "move_line_end" });
+  await applyOperator("c", await toLineEndRange());
 }
 registerHandler("vi_change_to_end", vi_change_to_end);
 
 // Clipboard
 function vi_paste_after() : void {
-  if (state.lastYankWasLinewise) {
+  if (memory.lastYankWasLinewise) {
     // Line-wise paste: go to next line start and paste there
     // The yanked text includes trailing \n which pushes subsequent lines down
     editor.executeAction("move_down");
@@ -1990,7 +2426,7 @@ function vi_paste_after() : void {
 registerHandler("vi_paste_after", vi_paste_after);
 
 function vi_paste_before() : void {
-  if (state.lastYankWasLinewise) {
+  if (memory.lastYankWasLinewise) {
     // Line-wise paste: paste at current line start
     // The yanked text includes trailing \n which pushes current line down
     editor.executeAction("move_line_start");
@@ -2017,28 +2453,34 @@ registerHandler("vi_redo", vi_redo);
 
 // Repeat last change (. command)
 async function vi_repeat() : Promise<void> {
-  if (!state.lastChange) {
+  if (!memory.lastChange) {
     editor.setStatus(editor.t("status.no_change_to_repeat"));
     return;
   }
 
-  const change = state.lastChange;
+  const change = memory.lastChange;
   const count = consumeCountOrDefault(change.count ?? 1);
+  await replayChange(change, count);
+}
 
+async function replayChange(change: LastChange, count: number): Promise<void> {
   switch (change.type) {
     case "simple": {
       // Simple actions like x, X, s
       if (change.action === "substitute") {
         // Substitute: delete chars and insert text
-        if ((await selectThenCutCharacterwise("select_right", count)) && change.insertedText) {
+        await applyOperator("c", await charwiseCountRange(count, true), { enterInsert: false });
+        if (change.insertedText) {
           editor.insertAtCursor(change.insertedText);
         }
       } else if (change.action) {
         // Simple action like delete_forward, delete_backward
         if (change.action === "delete_forward") {
-          await selectThenCutCharacterwise("select_right", count);
+          await applyOperator("d", await charwiseCountRange(count, true));
+        } else if (change.action === "join_lines") {
+          await joinLines(Math.max(1, count - 1));
         } else if (change.action === "delete_backward") {
-          await selectThenCutCharacterwise("select_left", count);
+          await applyOperator("d", await charwiseCountRange(count, false));
         } else {
           executeWithCount(change.action, count);
         }
@@ -2049,9 +2491,12 @@ async function vi_repeat() : Promise<void> {
     case "line-op": {
       // Line operations like dd, cc
       if (change.action === "delete_line") {
-        await cutLinewise(count);
+        await applyOperator("d", await lineOperatorRange(count));
       } else if (change.action === "change_line") {
-        await changeLinewise(count);
+        // `enterInsert: false`: the replay supplies the recorded keystrokes
+        // itself and must come back to normal mode, not leave the user in
+        // insert after a `.`.
+        await applyOperator("c", await lineOperatorRange(count), { enterInsert: false });
         if (change.insertedText) {
           editor.insertAtCursor(change.insertedText);
         }
@@ -2065,68 +2510,84 @@ async function vi_repeat() : Promise<void> {
 
     case "operator-motion": {
       // Operator + motion like dw, cw, d$
-      if (change.operator && change.motion) {
-        if (change.motion === "vi_word_change") {
-          // `cw`/`cNw` special case — recompute the change range at the current
-          // cursor position (mirrors the WORD `cW` repeat path).
-          const range = await computeWordChangeRange(count);
-          if (range !== null) {
-            await applyOperatorWithRange("d", range.start, range.end);
-          } else {
-            await applyOperatorWithMotion("d", "move_word_right", count);
-          }
-          if (change.insertedText) {
-            editor.insertAtCursor(change.insertedText);
-          }
+      if (LINEWISE_MOTIONS[change.motion]) {
+        // A line-wise change leaves an empty line to type into; replaying it
+        // as a plain delete closed the gap instead, and the recorded text
+        // landed on the following line.
+        const span = await linewiseSpanForMotion(change.motion, count, change.count ?? null);
+        if (span === null) {
           break;
         }
-        const WORDKind = WORDMotionKindFromRepeatMotion(change.motion);
-        if (change.operator === "c") {
-          if (WORDKind) {
-            await applyWORDOperatorMotion("d", WORDKind, count, true);
-          } else {
-            // For change: do the delete part, then insert the text
-            await applyOperatorWithMotion("d", change.motion, count);
-          }
-          if (change.insertedText) {
-            editor.insertAtCursor(change.insertedText);
-          }
-        } else if (WORDKind) {
-          await applyWORDOperatorMotion(change.operator, WORDKind, count);
-        } else {
-          await applyOperatorWithMotion(change.operator, change.motion, count);
+        const bufferId = editor.getActiveBufferId();
+        const spanStart = await editor.getLineStartPosition(span.firstLine);
+        if (spanStart === null) {
+          break;
         }
+        await applyOperator(
+          change.operator === "c" ? "c" : change.operator,
+          await linewiseRangeAt(bufferId, spanStart, span.lineCount),
+          { enterInsert: false },
+        );
+        if (change.operator === "c" && change.insertedText) {
+          editor.insertAtCursor(change.insertedText);
+        }
+        break;
+      }
+
+      const wordMotion = wordMotionFromRepeatMotion(change.motion);
+      if (change.operator === "c") {
+        // A recorded `c` replays as its delete half; the insert follows. The
+        // `true` keeps Vim's `cw`-is-`ce` rule on the replay, which is what the
+        // original `c` used to pick its range.
+        if (wordMotion) {
+          await applyWordOperatorMotion(wordMotion.family, "d", wordMotion.kind, count, true);
+        } else {
+          await applyOperatorWithMotion("d", change.motion, count, null, false);
+        }
+        if (change.insertedText) {
+          editor.insertAtCursor(change.insertedText);
+        }
+      } else if (wordMotion) {
+        await applyWordOperatorMotion(wordMotion.family, change.operator, wordMotion.kind, count);
+      } else {
+        await applyOperatorWithMotion(change.operator, change.motion, count, null, false);
       }
       break;
     }
 
     case "operator-textobj": {
       // Operator + text object like diw, ci"
-      if (change.operator && change.textObject) {
-        // Set up the pending state and call applyTextObject
-        state.pendingOperator = change.operator === "c" ? "d" : change.operator;
-        state.pendingTextObject = change.textObject.modifier;
-        await applyTextObject(change.textObject.object);
-        if (change.operator === "c" && change.insertedText) {
-          editor.insertAtCursor(change.insertedText);
-        }
+      // A recorded `c` replays as its delete half; the insert follows below.
+      await applyTextObject(
+        change.textObject.object,
+        change.operator === "c" ? "d" : change.operator,
+        change.textObject.modifier,
+        false,
+      );
+      if (change.operator === "c" && change.insertedText) {
+        editor.insertAtCursor(change.insertedText);
       }
       break;
     }
 
     case "operator-find-char": {
       // Operator + find-char like dfx, dtx, cfx
-      if (change.operator && change.findType && change.findCharTarget) {
+      if (change.findType) {
         if (change.operator === "c") {
           // Replay change as delete-then-insert so '.' doesn't block on input.
-          await executeFindCharOperator("d", change.findType, change.findCharTarget, count);
+          await executeFindCharOperator("d", change.findType, change.findCharTarget, count, false);
           if (change.insertedText) {
             editor.insertAtCursor(change.insertedText);
           }
         } else {
-          await executeFindCharOperator(change.operator, change.findType, change.findCharTarget, count);
+          await executeFindCharOperator(change.operator, change.findType, change.findCharTarget, count, false);
         }
       }
+      break;
+    }
+
+    case "replace-char": {
+      await replaceCharsUnderCursor(change.replacement, count);
       break;
     }
 
@@ -2140,7 +2601,8 @@ async function vi_repeat() : Promise<void> {
           editor.executeAction("move_right");
           break;
         case "I":
-          editor.executeAction("move_line_start");
+          await moveToFirstNonBlank();
+          await editor.flush();
           break;
         case "A":
           editor.executeAction("move_line_end");
@@ -2167,13 +2629,34 @@ async function vi_repeat() : Promise<void> {
 }
 registerHandler("vi_repeat", vi_repeat);
 
+// Pull the next `joins` lines onto the caret's, a space between each.
+//
+// Bounded by the buffer: an unbounded loop at the end of the file deletes the
+// trailing newline and appends a space to the last line, where Vim joins what
+// it can and stops (and `J` on the last line does nothing at all).
+async function joinLines(joins: number): Promise<void> {
+  const bufferId = editor.getActiveBufferId();
+  const line = editor.getPrimaryCursor()?.line ?? null;
+  const lastLine = await lastContentLine(bufferId);
+  if (line === null || lastLine === null) {
+    return;
+  }
+  for (let i = 0; i < Math.min(joins, lastLine - line); i++) {
+    editor.executeAction("move_line_end");
+    // Delete the newline character
+    editor.executeAction("delete_forward");
+    // Insert a space between the joined content
+    editor.insertAtCursor(" ");
+  }
+}
+
 // Join lines — delete newline at end of current line and insert a space
-function vi_join() : void {
-  editor.executeAction("move_line_end");
-  // Delete the newline character
-  editor.executeAction("delete_forward");
-  // Insert a space between the joined content
-  editor.insertAtCursor(" ");
+async function vi_join() : Promise<void> {
+  // Vim's `[count]J` joins `count` lines, so it performs count-1 joins, and a
+  // count below 2 still joins one pair.
+  const count = Math.max(2, consumeCount());
+  recordChange({ type: "simple", action: "join_lines", count });
+  await joinLines(count - 1);
 }
 registerHandler("vi_join", vi_join);
 
@@ -2185,25 +2668,25 @@ registerHandler("vi_toggle_case", vi_toggle_case);
 
 // Search
 function vi_search_forward() : void {
-  state.lastWordSearch = null;
+  memory.lastWordSearch = null;
   editor.executeAction("search");
 }
 registerHandler("vi_search_forward", vi_search_forward);
 
 function vi_search_backward() : void {
-  state.lastWordSearch = null;
+  memory.lastWordSearch = null;
   // Use same search dialog, user can search backward manually
   editor.executeAction("search");
 }
 registerHandler("vi_search_backward", vi_search_backward);
 
 async function vi_find_next() : Promise<void> {
-  if (state.lastWordSearch) {
+  if (memory.lastWordSearch) {
     await executeStoredWordSearch(
-      state.lastWordSearch.text,
-      state.lastWordSearch.direction,
+      memory.lastWordSearch.text,
+      memory.lastWordSearch.direction,
       consumeCount(),
-      state.lastWordSearch.wholeWord,
+      memory.lastWordSearch.wholeWord,
     );
     return;
   }
@@ -2212,13 +2695,13 @@ async function vi_find_next() : Promise<void> {
 registerHandler("vi_find_next", vi_find_next);
 
 async function vi_find_prev() : Promise<void> {
-  if (state.lastWordSearch) {
-    const direction = state.lastWordSearch.direction === "forward" ? "backward" : "forward";
+  if (memory.lastWordSearch) {
+    const direction = memory.lastWordSearch.direction === "forward" ? "backward" : "forward";
     await executeStoredWordSearch(
-      state.lastWordSearch.text,
+      memory.lastWordSearch.text,
       direction,
       consumeCount(),
-      state.lastWordSearch.wholeWord,
+      memory.lastWordSearch.wholeWord,
     );
     return;
   }
@@ -2295,15 +2778,26 @@ registerHandler("vi_op_digit_0_or_line_start", vi_op_digit_0_or_line_start);
 // ============================================================================
 
 function clearComputedVisualRange(): void {
-  state.visualHead = null;
-  state.visualRange = null;
+  if (state.visual === null) return;
+  state.visual.head = null;
+  state.visual.range = null;
+}
+
+// Start a visual selection anchored at the cursor.
+function beginVisualSelection(): void {
+  const anchor = editor.getCursorPosition();
+  const anchorLine = editor.getPrimaryCursor()?.line ?? null;
+  state.visual = {
+    anchor,
+    head: anchor,
+    range: null,
+    lines: anchorLine === null ? null : { anchor: anchorLine, head: anchorLine },
+  };
 }
 
 // Enter character-wise visual mode
 function vi_visual_char() : void {
-  state.visualAnchor = editor.getCursorPosition();
-  state.visualHead = state.visualAnchor;
-  state.visualRange = null;
+  beginVisualSelection();
   // Select the character under cursor to establish the anchor.
   // This moves cursor one position right (the selection end), which is
   // standard visual mode behavior — the first char is part of the selection.
@@ -2313,49 +2807,46 @@ function vi_visual_char() : void {
 registerHandler("vi_visual_char", vi_visual_char);
 
 // Enter line-wise visual mode
-function vi_visual_line() : void {
-  state.visualAnchor = editor.getCursorPosition();
-  state.visualHead = state.visualAnchor;
-  state.visualRange = null;
-  // Select full line including newline (select_line selects and moves to next line)
-  editor.executeAction("select_line");
+async function vi_visual_line() : Promise<void> {
+  beginVisualSelection();
   switchMode("visual-line");
+  // Establish the one-line span the mode starts on, so every line-wise
+  // command reads the same computed range whether or not a motion followed.
+  const anchorLine = state.visual?.lines?.anchor ?? null;
+  if (anchorLine === null) {
+    editor.executeAction("select_line");
+    return;
+  }
+  await setVisualLineHead(anchorLine);
 }
 registerHandler("vi_visual_line", vi_visual_line);
 
 // Toggle between visual and visual-line modes
-function vi_visual_toggle_line() : void {
-  clearComputedVisualRange();
+async function vi_visual_toggle_line() : Promise<void> {
   if (state.mode === "visual") {
-    // Switch to line mode - extend selection to full lines
-    editor.executeAction("select_line");
-    state.mode = "visual-line";
-    editor.setEditorMode("vi-visual-line");
-    editor.setStatus(getModeIndicator("visual-line"));
+    const head = editor.getPrimaryCursor()?.line ?? null;
+    clearComputedVisualRange();
+    switchMode("visual-line");
+    if (head === null || state.visual?.lines == null) {
+      editor.executeAction("select_line");
+      return;
+    }
+    await setVisualLineHead(head);
   } else if (state.mode === "visual-line") {
     // Switch to char mode (keep selection but change mode)
-    state.mode = "visual";
-    editor.setEditorMode("vi-visual");
-    editor.setStatus(getModeIndicator("visual"));
+    clearComputedVisualRange();
+    switchMode("visual");
   }
 }
 registerHandler("vi_visual_toggle_line", vi_visual_toggle_line);
 
 // Enter visual block mode (Ctrl-v)
-async function vi_visual_block() : Promise<void> {
-  // Store anchor position for block selection
-  state.visualAnchor = editor.getCursorPosition();
-  state.visualHead = state.visualAnchor;
-  state.visualRange = null;
-
-  // Calculate line and column for block anchor
-  const cursorPos = editor.getCursorPosition();
-  if (cursorPos !== null) {
-    const line = editor.getPrimaryCursor()?.line ?? 1;
-    const lineStart = await editor.getLineStartPosition(line);
-    const col = lineStart !== null ? cursorPos - lineStart : 0;
-    state.visualBlockAnchor = { line, col };
-  }
+// The (line, col) origin a rectangular selection would need is not computed
+// here: block motions extend the host's own selection, and nothing read the
+// stored anchor. It comes back when block-wise `I`/`A` land, which are the
+// commands that actually need a column.
+function vi_visual_block() : void {
+  beginVisualSelection();
 
   // Select current character to start
   editor.executeAction("select_right");
@@ -2399,7 +2890,7 @@ registerHandler("vi_vblock_line_end", vi_vblock_line_end);
 // Visual block delete - delete the selected block
 function vi_vblock_delete() : void {
   editor.executeAction("cut");
-  state.lastYankWasLinewise = false;
+  memory.lastYankWasLinewise = false;
   switchMode("normal");
 }
 registerHandler("vi_vblock_delete", vi_vblock_delete);
@@ -2414,7 +2905,7 @@ registerHandler("vi_vblock_change", vi_vblock_change);
 // Visual block yank
 function vi_vblock_yank() : void {
   editor.executeAction("copy");
-  state.lastYankWasLinewise = false;
+  memory.lastYankWasLinewise = false;
   // Move cursor to start of selection
   editor.executeAction("move_left");
   switchMode("normal");
@@ -2430,18 +2921,14 @@ registerHandler("vi_vblock_escape", vi_vblock_escape);
 // Toggle from visual block to other visual modes
 function vi_vblock_toggle_char() : void {
   // Switch to character visual mode
-  state.mode = "visual";
-  editor.setEditorMode("vi-visual");
-  editor.setStatus(getModeIndicator("visual"));
+  switchMode("visual");
 }
 registerHandler("vi_vblock_toggle_char", vi_vblock_toggle_char);
 
 function vi_vblock_toggle_line() : void {
   // Switch to line visual mode
   editor.executeAction("select_line");
-  state.mode = "visual-line";
-  editor.setEditorMode("vi-visual-line");
-  editor.setStatus(getModeIndicator("visual-line"));
+  switchMode("visual-line");
 }
 registerHandler("vi_vblock_toggle_line", vi_vblock_toggle_line);
 
@@ -2461,85 +2948,196 @@ async function vi_vblock_dedent() : Promise<void> {
 registerHandler("vi_vblock_dedent", vi_vblock_dedent);
 
 // Visual mode motions - these extend the selection
-function vi_vis_left() : void {
-  clearComputedVisualRange();
-  executeWithCount("select_left");
+// The charwise visual motions all compute a head and let
+// `selectVisualRangeToTarget` build the range around the anchor. Driving the
+// host's `select_*` instead lost the character `v` started on whenever the head
+// crossed behind the anchor: the host's selection has no anchor character, so
+// `vhd` and `vkd` shrank the selection to nothing instead of growing it the
+// other way.
+async function vi_vis_left() : Promise<void> {
+  const head = visualHead();
+  if (head === null) return;
+  const target = await horizontalTarget(head, consumeCount(), false);
+  if (target !== null) {
+    await selectVisualRangeToTarget(target);
+  }
 }
 registerHandler("vi_vis_left", vi_vis_left);
 
-function vi_vis_down() : void {
-  clearComputedVisualRange();
-  executeWithCount("select_down");
+async function vi_vis_down() : Promise<void> {
+  const head = visualHead();
+  if (head === null) return;
+  const target = await verticalTarget(head, consumeCount());
+  if (target !== null) {
+    await selectVisualRangeToTarget(target);
+  }
 }
 registerHandler("vi_vis_down", vi_vis_down);
 
-function vi_vis_up() : void {
-  clearComputedVisualRange();
-  executeWithCount("select_up");
+async function vi_vis_up() : Promise<void> {
+  const head = visualHead();
+  if (head === null) return;
+  const target = await verticalTarget(head, -consumeCount());
+  if (target !== null) {
+    await selectVisualRangeToTarget(target);
+  }
 }
 registerHandler("vi_vis_up", vi_vis_up);
 
-function vi_vis_right() : void {
-  clearComputedVisualRange();
-  executeWithCount("select_right");
+async function vi_vis_right() : Promise<void> {
+  const head = visualHead();
+  if (head === null) return;
+  const target = await horizontalTarget(head, consumeCount(), true);
+  if (target !== null) {
+    await selectVisualRangeToTarget(target);
+  }
 }
 registerHandler("vi_vis_right", vi_vis_right);
 
-function vi_vis_word() : void {
-  clearComputedVisualRange();
-  executeWithCount("select_word_right");
+async function vi_vis_word() : Promise<void> {
+  await extendVisualByWordMotion("word", "forward");
 }
 registerHandler("vi_vis_word", vi_vis_word);
 
-function vi_vis_word_back() : void {
-  clearComputedVisualRange();
-  executeWithCount("select_word_left");
+// Byte offset just past the character starting at `offset`.
+async function charEndOffset(bufferId: number, offset: number): Promise<number> {
+  const length = editor.getBufferLength(bufferId);
+  if (offset >= length) {
+    return length;
+  }
+  const sample = (await editor.getBufferText(bufferId, offset, Math.min(offset + 4, length))) ?? "";
+  if (sample.length === 0) {
+    return Math.min(offset + 1, length);
+  }
+  const codePoint = sample.codePointAt(0);
+  const char = String.fromCodePoint(codePoint ?? sample.charCodeAt(0));
+  return Math.min(offset + editor.utf8ByteLength(char), length);
+}
+
+// Vim's head: the character the caret sits *on*, not the exclusive end of the
+// host's selection. `selectVisualRangeToTarget` writes it, so every motion that
+// goes through that stays consistent with the next one.
+function visualHead(): number | null {
+  return state.visual?.head ?? state.visual?.anchor ?? editor.getCursorPosition();
+}
+
+// The offset `count` characters left or right of `from`, stopping at the
+// caret's own line — Vim's `h` and `l` do not wrap.
+//
+// `clampToLastCharacter` is the difference between the caret's `l`, which will
+// not step past a line's last character, and `dl`'s, which must reach one past
+// it to delete that character.
+async function horizontalTarget(
+  from: number,
+  count: number,
+  forward: boolean,
+  clampToLastCharacter: boolean = true,
+): Promise<number | null> {
+  const bufferId = editor.getActiveBufferId();
+  const lineStart = await findLineStartAtPosition(bufferId, from);
+  const lineText = (await safeGetBufferText(bufferId, lineStart, lineStart + 4096)) ?? "";
+  const bounded = lineText.split(/\r?\n/, 1)[0] ?? "";
+  let index = byteOffsetToStringIndex(bounded, from - lineStart);
+  for (let i = 0; i < Math.max(1, count); i++) {
+    const next = forward ? nextStringIndex(bounded, index) : previousStringIndex(bounded, index);
+    if (next === index || next < 0 || next > bounded.length) {
+      break;
+    }
+    index = next;
+  }
+  if (clampToLastCharacter && forward && index >= bounded.length && bounded.length > 0) {
+    index = previousStringIndex(bounded, bounded.length);
+  }
+  return lineStart + stringIndexToByteOffset(bounded, index);
+}
+
+// The offset on the line `delta` away, at the same column as `from` — the
+// character boundary at or before it, so a multi-byte line cannot split.
+async function verticalTarget(from: number, delta: number): Promise<number | null> {
+  const bufferId = editor.getActiveBufferId();
+  const cursorLine = editor.getPrimaryCursor()?.line ?? null;
+  const lastLine = await lastContentLine(bufferId);
+  if (cursorLine === null || lastLine === null) {
+    return null;
+  }
+  const fromLineStart = await findLineStartAtPosition(bufferId, from);
+  const column = from - fromLineStart;
+
+  const targetLine = Math.max(0, Math.min(cursorLine + delta, lastLine));
+  const targetStart = await editor.getLineStartPosition(targetLine);
+  const targetEnd = await editor.getLineEndPosition(targetLine);
+  if (targetStart === null) {
+    return null;
+  }
+  const limit = targetEnd === null ? targetStart : Math.max(targetStart, targetEnd);
+  const lineText = (await safeGetBufferText(bufferId, targetStart, limit)) ?? "";
+  const index = byteOffsetToStringIndex(lineText, Math.min(column, limit - targetStart));
+  return targetStart + stringIndexToByteOffset(lineText, index);
+}
+
+// Extend a visual selection backwards.
+//
+// `v` leaves the anchor on the character under the caret and the head one past
+// it, which is what makes a forward selection inclusive. A head moving *behind*
+// the anchor has to take that character with it — Vim's `v0d` and `vbd` both
+// remove the character `v` started on — so the anchor is re-seated one
+// character forward before the backward selection is built.
+//
+// Only when the head is actually at or behind the anchor: re-seating while the
+// head is still forward of it (`v w w b`) would teleport the head instead of
+// shrinking the selection.
+async function extendVisualBackward(selectAction: string, count: number): Promise<void> {
+  const visual = state.visual;
+  if (visual !== null) {
+    const bufferId = editor.getActiveBufferId();
+    const anchorEnd = await charEndOffset(bufferId, visual.anchor);
+    const head = editor.getPrimaryCursor()?.position ?? anchorEnd;
+    if (head <= anchorEnd) {
+      editor.setBufferCursor(bufferId, anchorEnd);
+      await editor.flush();
+    }
+  }
+  selectWithCount(selectAction, count);
+}
+
+// Not routed through `extendVisualBackward`: re-seating the caret before a
+// *word* motion changes what that motion means — `b` from the first character
+// of a word goes to the previous word, but from one character later it goes to
+// the start of the current one. The shared resolver computes the target from
+// the real head, and the range is built around it.
+async function vi_vis_word_back() : Promise<void> {
+  await extendVisualByWordMotion("word", "backward");
 }
 registerHandler("vi_vis_word_back", vi_vis_word_back);
 
-function vi_vis_word_end() : void {
-  clearComputedVisualRange();
-  // Extend selection to end of word
-  const count = consumeCount();
-  for (let i = 0; i < count; i++) {
-    editor.executeAction("select_word_right");
-    editor.executeAction("select_left");
-  }
+async function vi_vis_word_end() : Promise<void> {
+  await extendVisualByWordMotion("word", "end");
 }
 registerHandler("vi_vis_word_end", vi_vis_word_end);
 
 function visualWORDMotionOrigin(): number | null {
-  return state.visualHead ?? state.visualAnchor ?? editor.getCursorPosition();
+  return state.visual?.head ?? state.visual?.anchor ?? editor.getCursorPosition();
 }
 
 async function vi_vis_WORD() : Promise<void> {
-  const target = await computeWORDMotionTarget("forward", consumeCount(), visualWORDMotionOrigin());
-  if (target !== null) {
-    await selectVisualRangeToTarget(target);
-  }
+  await extendVisualByWordMotion("WORD", "forward");
 }
 registerHandler("vi_vis_WORD", vi_vis_WORD);
 
 async function vi_vis_WORD_back() : Promise<void> {
-  const target = await computeWORDMotionTarget("backward", consumeCount(), visualWORDMotionOrigin());
-  if (target !== null) {
-    await selectVisualRangeToTarget(target, false);
-  }
+  await extendVisualByWordMotion("WORD", "backward");
 }
 registerHandler("vi_vis_WORD_back", vi_vis_WORD_back);
 
 async function vi_vis_WORD_end() : Promise<void> {
-  const target = await computeWORDMotionTarget("end", consumeCount(), visualWORDMotionOrigin());
-  if (target !== null) {
-    await selectVisualRangeToTarget(target);
-  }
+  await extendVisualByWordMotion("WORD", "end");
 }
 registerHandler("vi_vis_WORD_end", vi_vis_WORD_end);
 
-function vi_vis_line_start() : void {
+function vi_vis_line_start() : Promise<void> {
   clearComputedVisualRange();
   consumeCount();
-  editor.executeAction("select_line_start");
+  return extendVisualBackward("select_line_start", 1);
 }
 registerHandler("vi_vis_line_start", vi_vis_line_start);
 
@@ -2547,20 +3145,36 @@ function vi_vis_line_end() : void {
   clearComputedVisualRange();
   consumeCount();
   editor.executeAction("select_line_end");
+  // Vim's `$` in visual mode lands *on* the end-of-line position, so the
+  // inclusive selection takes the line break with it and `v$d` joins the next
+  // line up. That differs from `d$`, which stops at the last character.
+  editor.executeAction("select_right");
 }
 registerHandler("vi_vis_line_end", vi_vis_line_end);
 
-function vi_vis_doc_start() : void {
-  clearComputedVisualRange();
+async function vi_vis_doc_start() : Promise<void> {
   consumeCount();
-  editor.executeAction("select_document_start");
+  await selectVisualRangeToTarget(0);
 }
 registerHandler("vi_vis_doc_start", vi_vis_doc_start);
 
-function vi_vis_doc_end() : void {
-  clearComputedVisualRange();
+async function vi_vis_doc_end() : Promise<void> {
+  const explicitCount = state.count;
   consumeCount();
-  editor.executeAction("select_document_end");
+  const bufferId = editor.getActiveBufferId();
+  const lastLine = await lastContentLine(bufferId);
+  if (lastLine === null) {
+    return;
+  }
+  // Like normal-mode `G`: the last line with content, or the counted line, and
+  // on its first non-blank — not the buffer's last byte, which would take the
+  // whole final line with it.
+  const target = explicitCount === null ? lastLine : Math.min(Math.max(0, explicitCount - 1), lastLine);
+  const lineStart = await editor.getLineStartPosition(target);
+  if (lineStart === null) {
+    return;
+  }
+  await selectVisualRangeToTarget(await firstNonBlankOffset(bufferId, lineStart));
 }
 registerHandler("vi_vis_doc_end", vi_vis_doc_end);
 
@@ -2577,29 +3191,83 @@ function vi_vis_paragraph_down() : void {
 registerHandler("vi_vis_paragraph_down", vi_vis_paragraph_down);
 
 // Visual line mode motions - extend selection by whole lines
-function vi_vline_down() : void {
-  clearComputedVisualRange();
-  executeWithCount("select_down");
-  // Ensure full line selection
-  editor.executeAction("select_line_end");
+// Redraw a line-wise visual selection so it covers whole lines from its
+// anchor's line to `headLine`, in both directions. The computed range is what
+// `d`/`c`/`y` consume; the host selection is redrawn alongside it because the
+// indent operators drive the editor's own selection-aware actions.
+async function setVisualLineHead(headLine: number): Promise<void> {
+  const visual = state.visual;
+  if (visual === null || visual.lines === null) {
+    return;
+  }
+  const bufferId = editor.getActiveBufferId();
+  const lastLine = await lastContentLine(bufferId);
+  if (lastLine === null) {
+    return;
+  }
+  const head = Math.max(0, Math.min(headLine, lastLine));
+  visual.lines.head = head;
+
+  const firstLine = Math.min(visual.lines.anchor, head);
+  const lastSelected = Math.max(visual.lines.anchor, head);
+  const lineCount = lastSelected - firstLine + 1;
+  const start = await editor.getLineStartPosition(firstLine);
+  const headStart = await editor.getLineStartPosition(head);
+  if (start === null) {
+    return;
+  }
+  // The line-wise end is where the line after the last selected one begins,
+  // or the buffer end when there is no such line. Asking directly beats
+  // scanning the span for its line breaks on every keystroke.
+  const afterLast = await editor.getLineStartPosition(lastSelected + 1);
+  const end = afterLast ?? editor.getBufferLength(bufferId);
+  visual.range = { start, end };
+  visual.head = headStart;
+
+  editor.setBufferCursor(bufferId, start);
+  await editor.flush();
+  // One batched action rather than `lineCount` dispatched ones: this runs on
+  // every keystroke, so a loop here makes holding `j` quadratic.
+  selectWithCount("select_down", lineCount);
+}
+
+// The tracked head, falling back to the caret's line before a span has been
+// established. The caret alone will not do: a redrawn selection leaves it at
+// the far end, not on the moving one.
+function visualLineHead(): number | null {
+  return state.visual?.lines?.head ?? editor.getPrimaryCursor()?.line ?? null;
+}
+
+async function vi_vline_down() : Promise<void> {
+  const head = visualLineHead();
+  if (head === null) {
+    executeWithCount("select_down");
+    return;
+  }
+  await setVisualLineHead(head + consumeCount());
 }
 registerHandler("vi_vline_down", vi_vline_down);
 
-function vi_vline_up() : void {
-  clearComputedVisualRange();
-  executeWithCount("select_up");
-  // Ensure full line selection
-  editor.executeAction("select_line_start");
+async function vi_vline_up() : Promise<void> {
+  const head = visualLineHead();
+  if (head === null) {
+    executeWithCount("select_up");
+    return;
+  }
+  await setVisualLineHead(head - consumeCount());
 }
 registerHandler("vi_vline_up", vi_vline_up);
 
 async function selectVisualRangeToTarget(target: number, includeDisplayTarget: boolean = true): Promise<void> {
-  const anchor = state.visualAnchor;
-  if (anchor === null) {
-    state.visualHead = target;
+  const visual = state.visual;
+  if (visual === null) {
+    // Not in a visual mode, so there is no selection to record against.
+    // `selectToPosition` leaves the cursor on the target, which is what the
+    // motion origin would have read back out of `head` anyway.
     await selectToPosition(target, includeDisplayTarget);
     return;
   }
+  const anchor = visual.anchor;
 
   const bufferId = editor.getActiveBufferId();
   const bufferText = await editor.getBufferText(bufferId, 0, editor.getBufferLength(bufferId));
@@ -2608,76 +3276,53 @@ async function selectVisualRangeToTarget(target: number, includeDisplayTarget: b
   const anchorEnd = anchor + byteLengthOfCharAt(bufferText, anchorIndex);
   const targetEnd = target + byteLengthOfCharAt(bufferText, targetIndex);
 
-  state.visualRange = target >= anchor
+  visual.range = target >= anchor
     ? { start: anchor, end: targetEnd }
     : { start: target, end: anchorEnd };
-  state.visualHead = target;
+  visual.head = target;
 
   await selectToPosition(target, includeDisplayTarget && target >= anchor);
 }
 
-async function takeVisualRangeText(): Promise<{ bufferId: number; start: number; end: number; text: string } | null> {
-  const range = state.visualRange;
-  if (range === null || range.end <= range.start) {
+// The visual selection, as a range the one applier can take.
+//
+// A visual mode has one selection, but it had two representations: the range a
+// motion computed for itself, and the host's own selection for the motions
+// that only drive `select_*`. Reading the host's back when there is no
+// computed range leaves one representation at the point of use, which is what
+// lets `d`, `c` and `y` here stop being three hand-rolled copies of the
+// operator switch — copies that had already drifted over the register's shape.
+async function visualOperatorRange(): Promise<OperatorRange | null> {
+  const shape: RangeShape = state.mode === "visual-line" ? "linewise" : "charwise";
+
+  const computed = state.visual?.range ?? null;
+  if (computed !== null && computed.end > computed.start) {
+    return { start: computed.start, end: computed.end, shape };
+  }
+
+  await editor.flush();
+  const selection = editor.getPrimaryCursor()?.selection ?? null;
+  if (selection === null) {
     return null;
   }
-
-  const bufferId = editor.getActiveBufferId();
-  const text = await editor.getBufferText(bufferId, range.start, range.end);
-  return { bufferId, start: range.start, end: range.end, text };
+  const start = Math.min(selection.start, selection.end);
+  const end = Math.max(selection.start, selection.end);
+  return end > start ? { start, end, shape } : null;
 }
-// Visual mode operators - act on selection
-async function vi_vis_delete() : Promise<void> {
-  const directRange = await takeVisualRangeText();
-  if (directRange !== null) {
-    editor.setClipboard(directRange.text);
-    editor.deleteRange(directRange.bufferId, directRange.start, directRange.end);
-    state.lastYankWasLinewise = false;
-    switchMode("normal");
-    editor.setBufferCursor(directRange.bufferId, Math.min(directRange.start, editor.getBufferLength(directRange.bufferId)));
-    return;
-  }
 
-  const wasLinewise = state.mode === "visual-line";
-  editor.executeAction("cut");
-  state.lastYankWasLinewise = wasLinewise;
-  switchMode("normal");
+// Visual mode operators - act on the selection
+async function vi_vis_delete() : Promise<void> {
+  await applyOperator("d", await visualOperatorRange());
 }
 registerHandler("vi_vis_delete", vi_vis_delete);
 
 async function vi_vis_change() : Promise<void> {
-  const directRange = await takeVisualRangeText();
-  if (directRange !== null) {
-    editor.setClipboard(directRange.text);
-    editor.deleteRange(directRange.bufferId, directRange.start, directRange.end);
-    switchMode("insert");
-    editor.setBufferCursor(directRange.bufferId, directRange.start);
-    state.insertStartPos = directRange.start;
-    state.lastYankWasLinewise = false;
-    return;
-  }
-
-  editor.executeAction("cut");
-  switchMode("insert");
+  await applyOperator("c", await visualOperatorRange());
 }
 registerHandler("vi_vis_change", vi_vis_change);
 
 async function vi_vis_yank() : Promise<void> {
-  const directRange = await takeVisualRangeText();
-  if (directRange !== null) {
-    editor.setClipboard(directRange.text);
-    state.lastYankWasLinewise = false;
-    switchMode("normal");
-    editor.setBufferCursor(directRange.bufferId, directRange.start);
-    return;
-  }
-
-  const wasLinewise = state.mode === "visual-line";
-  editor.executeAction("copy");
-  state.lastYankWasLinewise = wasLinewise;
-  // Move cursor to start of selection (vim behavior)
-  editor.executeAction("move_left");
-  switchMode("normal");
+  await applyOperator("y", await visualOperatorRange());
 }
 registerHandler("vi_vis_yank", vi_vis_yank);
 
@@ -2693,13 +3338,13 @@ async function applyVisualIndent(operator: string): Promise<void> {
     return;
   }
   // Remember the first selected line so the cursor can land there afterwards.
-  const range = state.visualRange ?? editor.getPrimaryCursor()?.selection ?? null;
+  const range = state.visual?.range ?? editor.getPrimaryCursor()?.selection ?? null;
   const firstByte = range
     ? Math.min(range.start, range.end)
     : editor.getCursorPosition();
 
   editor.executeAction(operator === ">" ? "insert_tab" : "dedent_selection");
-  state.lastYankWasLinewise = false;
+  memory.lastYankWasLinewise = false;
 
   if (firstByte !== null && firstByte !== undefined) {
     const firstLineStart = await findLineStartAtPosition(bufferId, firstByte);
@@ -2709,14 +3354,139 @@ async function applyVisualIndent(operator: string): Promise<void> {
 }
 
 async function vi_vis_indent() : Promise<void> {
-  await applyVisualIndent(">");
+  await applyOperator(">", await visualOperatorRange());
 }
 registerHandler("vi_vis_indent", vi_vis_indent);
 
 async function vi_vis_dedent() : Promise<void> {
-  await applyVisualIndent("<");
+  await applyOperator("<", await visualOperatorRange());
 }
 registerHandler("vi_vis_dedent", vi_vis_dedent);
+
+// The text object each key names, shared by the operator-pending bindings and
+// the visual-mode `i`/`a` capture below.
+// The text object each key names, and the operator-pending bindings that reach
+// it. One table: a second copy meant adding an object in two places and having
+// them disagree in between.
+const TEXT_OBJECT_KEYS: Array<{ key: string; object: string; handler: string }> = [
+  { key: "w", object: "word", handler: "vi_to_word" },
+  { key: "W", object: "WORD", handler: "vi_to_WORD" },
+  { key: '"', object: '"', handler: "vi_to_dquote" },
+  { key: "'", object: "'", handler: "vi_to_squote" },
+  { key: "`", object: "`", handler: "vi_to_backtick" },
+  { key: "(", object: "(", handler: "vi_to_paren" },
+  { key: ")", object: "(", handler: "vi_to_paren" },
+  { key: "b", object: "(", handler: "vi_to_paren" },
+  { key: "{", object: "{", handler: "vi_to_brace" },
+  { key: "}", object: "{", handler: "vi_to_brace" },
+  { key: "B", object: "{", handler: "vi_to_brace" },
+  { key: "[", object: "[", handler: "vi_to_bracket" },
+  { key: "]", object: "[", handler: "vi_to_bracket" },
+  { key: "<", object: "<", handler: "vi_to_angle" },
+  { key: ">", object: "<", handler: "vi_to_angle" },
+];
+
+function textObjectForKey(key: string): string | undefined {
+  return TEXT_OBJECT_KEYS.find((entry) => entry.key === key)?.object;
+}
+
+// Re-seat the character-wise visual selection onto an exact byte range.
+async function setVisualRange(start: number, end: number): Promise<void> {
+  const visual = state.visual;
+  if (visual === null) {
+    return;
+  }
+  const bufferId = editor.getActiveBufferId();
+  visual.anchor = start;
+  // The head is the character the caret sits *on*, which is the last one in
+  // the range — not `end`, which is one past it. A motion typed after `viw`
+  // resolves from the head, so an exclusive one sent it off by a character.
+  visual.head = await charStartBefore(bufferId, end);
+  visual.range = { start, end };
+  editor.setBufferCursor(bufferId, start);
+  await editor.flush();
+  await selectToPosition(end);
+}
+
+// The byte offset of the character ending at `offset`.
+async function charStartBefore(bufferId: number, offset: number): Promise<number> {
+  if (offset <= 0) {
+    return 0;
+  }
+  const sampleStart = Math.max(0, offset - 4);
+  const sample = (await editor.getBufferText(bufferId, sampleStart, offset)) ?? "";
+  if (sample.length === 0) {
+    return Math.max(0, offset - 1);
+  }
+  const index = previousStringIndex(sample, sample.length);
+  return sampleStart + stringIndexToByteOffset(sample, index);
+}
+
+// Visual-mode `i`/`a`: the next key names a text object, and the selection
+// becomes that object. Driven by `getNextKey` rather than by its own editor
+// mode — the operator-pending path needs a mode because an operator is already
+// staged and waiting, while here there is nothing to stage.
+async function enterVisualTextObject(modifier: TextObjectType): Promise<void> {
+  editor.setStatus(`-- ${editor.t("mode.visual")} (${modifier === "inner" ? "i" : "a"}) --`);
+
+  editor.beginKeyCapture();
+  const generation = modalGeneration;
+  let ev;
+  try {
+    ev = await editor.getNextKey();
+  } finally {
+    editor.endKeyCapture();
+  }
+
+  // The state was reset while the key was awaited — the selection this was
+  // aimed at is gone.
+  if (generation !== modalGeneration) return;
+
+  const objectType = ev.key.length === 1 ? textObjectForKey(ev.key) : undefined;
+  if (objectType === undefined) {
+    editor.setStatus(getModeIndicator(state.mode));
+    return;
+  }
+
+  const range = await computeTextObjectRange(objectType, modifier === "inner");
+  if (range !== null) {
+    await setVisualRange(range.start, range.end);
+  }
+  editor.setStatus(getModeIndicator(state.mode));
+}
+
+async function vi_vis_text_object_inner() : Promise<void> {
+  await enterVisualTextObject("inner");
+}
+registerHandler("vi_vis_text_object_inner", vi_vis_text_object_inner);
+
+async function vi_vis_text_object_around() : Promise<void> {
+  await enterVisualTextObject("around");
+}
+registerHandler("vi_vis_text_object_around", vi_vis_text_object_around);
+
+// Visual `J` — join every line the selection touches into one. Vim performs
+// one join fewer than the number of selected lines, and a single-line
+// selection still joins it with the line below.
+//
+// The line span comes from the same range every other visual operator takes:
+// reading `state.visual.lines` instead only worked in the line-wise mode,
+// where that field is maintained, so charwise `vjjJ` joined a single pair.
+async function vi_vis_join() : Promise<void> {
+  const bufferId = editor.getActiveBufferId();
+  const range = await visualOperatorRange();
+  switchMode("normal");
+
+  if (range === null) {
+    await joinLines(1);
+    return;
+  }
+  const span = await lineSpanOfRange(bufferId, range.start, range.end);
+  editor.setBufferCursor(bufferId, span.firstLineStart);
+  await editor.flush();
+  await joinLines(Math.max(1, span.lineCount - 1));
+}
+registerHandler("vi_vis_join", vi_vis_join);
 
 // Exit visual mode without doing anything
 function vi_vis_escape() : void {
@@ -2730,43 +3500,59 @@ registerHandler("vi_vis_escape", vi_vis_escape);
 
 // Enter text-object mode with "inner" modifier
 function vi_text_object_inner() : void {
-  state.pendingTextObject = "inner";
-  state.mode = "text-object";
-  editor.setEditorMode("vi-text-object");
-  editor.setStatus(getModeIndicator("text-object"));
+  if (state.pending !== null) state.pending.textObject = "inner";
+  switchMode("text-object");
 }
 registerHandler("vi_text_object_inner", vi_text_object_inner);
 
 // Enter text-object mode with "around" modifier
 function vi_text_object_around() : void {
-  state.pendingTextObject = "around";
-  state.mode = "text-object";
-  editor.setEditorMode("vi-text-object");
-  editor.setStatus(getModeIndicator("text-object"));
+  if (state.pending !== null) state.pending.textObject = "around";
+  switchMode("text-object");
 }
 registerHandler("vi_text_object_around", vi_text_object_around);
 
-// Apply text object selection and then the pending operator
-async function applyTextObject(objectType: string): Promise<void> {
-  const operator = state.pendingOperator;
-  const isInner = state.pendingTextObject === "inner";
-  const modifier = state.pendingTextObject;
-
+// Apply a text object and then the operator that is consuming it.
+//
+// The operator and modifier are arguments rather than reads of `state.pending`
+// so that '.' can replay a recorded `diw`/`ci"` by passing what it recorded,
+// instead of staging the pending state back up just to be read here.
+async function applyTextObject(
+  objectType: string,
+  operator: string | null,
+  modifier: TextObjectType,
+  record: boolean = true,
+): Promise<void> {
   if (!operator) {
     switchMode("normal");
     return;
   }
 
   // Record last change for '.' repeat (only for delete and change, not yank)
-  if ((operator === "d" || operator === "c") && modifier) {
-    state.lastChange = { type: "operator-textobj", operator, textObject: { modifier, object: objectType } };
+  if (record && (operator === "d" || operator === "c") && modifier) {
+    recordChange({ type: "operator-textobj", operator, textObject: { modifier, object: objectType } });
   }
 
   const bufferId = editor.getActiveBufferId();
-  const cursorPos = editor.getCursorPosition();
-  if (cursorPos === null) {
+  const range = await computeTextObjectRange(objectType, modifier === "inner");
+  if (range === null) {
     switchMode("normal");
     return;
+  }
+  await applyOperator(operator, charwiseRange(range.start, range.end));
+}
+
+// The byte range a text object covers at the caret, or null when there is no
+// such object there. Split out of `applyTextObject` so visual mode can set the
+// selection to an object (`viw`, `va"`) without an operator to apply.
+async function computeTextObjectRange(
+  objectType: string,
+  isInner: boolean,
+): Promise<{ start: number; end: number } | null> {
+  const bufferId = editor.getActiveBufferId();
+  const cursorPos = editor.getCursorPosition();
+  if (cursorPos === null) {
+    return null;
   }
 
   // Get text around cursor to find the text object boundaries
@@ -2776,8 +3562,7 @@ async function applyTextObject(objectType: string): Promise<void> {
   const endOffset = Math.min(bufLen, cursorPos + windowSize);
   const text = await editor.getBufferText(bufferId, startOffset, endOffset);
   if (!text) {
-    switchMode("normal");
-    return;
+    return null;
   }
 
   const posInChunk = cursorPos - startOffset;
@@ -2952,57 +3737,17 @@ async function applyTextObject(objectType: string): Promise<void> {
   }
 
   if (selectStart === -1 || selectEnd === -1 || selectStart >= selectEnd) {
-    switchMode("normal");
-    return;
+    return null;
   }
-
-  // Apply the operator directly using deleteRange/copyRange
-  switch (operator) {
-    case "d": {
-      const deletedText = await editor.getBufferText(bufferId, selectStart, selectEnd);
-      if (deletedText) {
-        editor.setClipboard(deletedText);
-      }
-      editor.deleteRange(bufferId, selectStart, selectEnd);
-      // Land the cursor where the text object was, even if it was forward of the
-      // cursor on the line (e.g. di" from before the quotes).
-      editor.setBufferCursor(bufferId, selectStart);
-      state.lastYankWasLinewise = false;
-      break;
-    }
-    case "c": {
-      const deletedText = await editor.getBufferText(bufferId, selectStart, selectEnd);
-      if (deletedText) {
-        editor.setClipboard(deletedText);
-      }
-      editor.deleteRange(bufferId, selectStart, selectEnd);
-      // Insert at the deletion point so ci" works even when the quoted string
-      // was forward of the cursor on the line (not just when already inside it).
-      editor.setBufferCursor(bufferId, selectStart);
-      state.lastYankWasLinewise = false;
-      switchMode("insert");
-      return;
-    }
-    case "y": {
-      // For yank, we need to select the range and copy
-      // First move cursor to start
-      editor.setBufferCursor(bufferId, selectStart);
-      // Select the range
-      for (let i = 0; i < selectEnd - selectStart; i++) {
-        editor.executeAction("select_right");
-      }
-      editor.executeAction("copy");
-      state.lastYankWasLinewise = false;
-      // Move back to start
-      editor.setBufferCursor(bufferId, selectStart);
-      break;
-    }
-  }
-
-  switchMode("normal");
+  return { start: selectStart, end: selectEnd };
 }
 
-// Helper to find matching bracket pair containing the cursor
+// Helper to find matching bracket pair containing the cursor.
+//
+// When the caret is not inside a pair, Vim does not fail: `di(` from the start
+// of `foo(bar)` still empties the parentheses, and with nothing left on the
+// line it carries on into the lines below. So a failed backward search falls
+// forward to the next opening bracket in the window.
 function findMatchingPair(text: string, pos: number, openChar: string, closeChar: string): { start: number; end: number } | null {
   let depth = 0;
   let start = -1;
@@ -3016,6 +3761,15 @@ function findMatchingPair(text: string, pos: number, openChar: string, closeChar
         break;
       }
       depth--;
+    }
+  }
+
+  if (start === -1) {
+    for (let i = pos; i < text.length; i++) {
+      if (text[i] === openChar) {
+        start = i;
+        break;
+      }
     }
   }
 
@@ -3037,22 +3791,32 @@ function findMatchingPair(text: string, pos: number, openChar: string, closeChar
 }
 
 // Text object handlers
-async function vi_to_word() : Promise<void> { await applyTextObject("word"); }
+// The `vi_to_*` handlers run in text-object mode, where the operator and its
+// modifier are exactly what `state.pending` is holding.
+function applyPendingTextObject(objectType: string): Promise<void> {
+  return applyTextObject(
+    objectType,
+    state.pending?.operator ?? null,
+    state.pending?.textObject ?? null,
+  );
+}
+
+async function vi_to_word() : Promise<void> { await applyPendingTextObject("word"); }
 registerHandler("vi_to_word", vi_to_word);
-async function vi_to_WORD() : Promise<void> { await applyTextObject("WORD"); }
+async function vi_to_WORD() : Promise<void> { await applyPendingTextObject("WORD"); }
 registerHandler("vi_to_WORD", vi_to_WORD);
-async function vi_to_dquote() : Promise<void> { await applyTextObject("\""); }
+async function vi_to_dquote() : Promise<void> { await applyPendingTextObject("\""); }
 registerHandler("vi_to_dquote", vi_to_dquote);
-async function vi_to_squote() : Promise<void> { await applyTextObject("'"); }
+async function vi_to_squote() : Promise<void> { await applyPendingTextObject("'"); }
 registerHandler("vi_to_squote", vi_to_squote);
-async function vi_to_backtick() : Promise<void> { await applyTextObject("`"); }
+async function vi_to_backtick() : Promise<void> { await applyPendingTextObject("`"); }
 registerHandler("vi_to_backtick", vi_to_backtick);
-async function vi_to_paren() : Promise<void> { await applyTextObject("("); }
+async function vi_to_paren() : Promise<void> { await applyPendingTextObject("("); }
 registerHandler("vi_to_paren", vi_to_paren);
-async function vi_to_brace() : Promise<void> { await applyTextObject("{"); };
-async function vi_to_bracket(): Promise<void> { await applyTextObject("["); }
+async function vi_to_brace() : Promise<void> { await applyPendingTextObject("{"); };
+async function vi_to_bracket(): Promise<void> { await applyPendingTextObject("["); }
 registerHandler("vi_to_bracket", vi_to_bracket);
-async function vi_to_angle(): Promise<void> { await applyTextObject("<"); }
+async function vi_to_angle(): Promise<void> { await applyPendingTextObject("<"); }
 registerHandler("vi_to_angle", vi_to_angle);
 
 // Cancel text object mode
@@ -3074,6 +3838,8 @@ registerHandler("vi_to_cancel", vi_to_cancel);
 // await purely for the status-bar indicator.
 async function enterFindCharMode(findType: FindCharType): Promise<void> {
   state.pendingFindChar = findType;
+  // Set directly rather than through `switchMode`, which would clear the
+  // count that `3fx` must still be holding when the target key arrives.
   state.mode = "find-char";
   editor.setEditorMode("vi-find-char");
   editor.setStatus(getModeIndicator("find-char"));
@@ -3082,8 +3848,10 @@ async function enterFindCharMode(findType: FindCharType): Promise<void> {
   // target character very quickly after `f`/`t`/`F`/`T` could see the
   // key fall through to the buffer.
   editor.beginKeyCapture();
+  const generation = modalGeneration;
   try {
     const ev = await editor.getNextKey();
+    if (generation !== modalGeneration) return;
     state.pendingFindChar = null;
     // Escape (or any non-character key) cancels the motion.
     if (ev.key.length === 1) {
@@ -3092,6 +3860,7 @@ async function enterFindCharMode(findType: FindCharType): Promise<void> {
   } finally {
     editor.endKeyCapture();
   }
+  if (generation !== modalGeneration) return;
   switchMode("normal");
 }
 
@@ -3165,7 +3934,11 @@ function computeFindCharTargetCol(
 }
 
 // Execute find char motion (async because getBufferText is async)
-async function executeFindChar(findType: FindCharType, char: string): Promise<void> {
+//
+// `isRepeat` marks the `;`/`,` path. A `t` that already landed just before its
+// target would otherwise never move again, so Vim's `;` after `t` skips the
+// adjacent match and goes to the next one (`:help cpo-;`).
+async function executeFindChar(findType: FindCharType, char: string, isRepeat: boolean = false): Promise<void> {
   if (!findType) return;
 
   const bufferId = editor.getActiveBufferId();
@@ -3179,7 +3952,10 @@ async function executeFindChar(findType: FindCharType, char: string): Promise<vo
   if (!ctx) return;
   const { lineText, col } = ctx;
 
-  const targetCol = computeFindCharTargetCol(findType, char, lineText, col, 1);
+  let targetCol = computeFindCharTargetCol(findType, char, lineText, col, 1);
+  if (isRepeat && targetCol === col && (findType === "t" || findType === "T")) {
+    targetCol = computeFindCharTargetCol(findType, char, lineText, col, 2);
+  }
 
   if (targetCol >= 0 && targetCol !== col) {
     // Move to target column
@@ -3190,7 +3966,7 @@ async function executeFindChar(findType: FindCharType, char: string): Promise<vo
       editor.executeAction(moveAction);
     }
     // Save for ; and , repeat
-    state.lastFindChar = { type: findType, char };
+    memory.lastFindChar = { type: findType, char };
   }
 }
 
@@ -3204,6 +3980,7 @@ async function executeFindCharOperator(
   findType: FindCharType,
   char: string,
   count: number,
+  record: boolean = true,
 ): Promise<void> {
   if (!findType) {
     switchMode("normal");
@@ -3233,37 +4010,31 @@ async function executeFindCharOperator(
   }
 
   // Save for ; and , repeat (vim records the find even in operator form).
-  state.lastFindChar = { type: findType, char };
+  memory.lastFindChar = { type: findType, char };
 
-  // Convert the cursor→target column span into a byte range. Column indices are
-  // measured in the line string; byte offsets are derived from the live cursor
-  // byte offset plus the UTF-8 length of the intervening text.
-  let start: number;
-  let end: number;
-  if (targetCol > col) {
-    // Forward: include the landing character.
-    const between = editor.utf8ByteLength(lineText.substring(col, targetCol));
-    start = cursorPos;
-    end = cursorPos + between + byteLengthOfCharAt(lineText, targetCol);
-  } else {
-    // Backward: from the landing column up to the cursor.
-    const between = editor.utf8ByteLength(lineText.substring(targetCol, col));
-    start = cursorPos - between;
-    end = cursorPos;
-  }
+  // The landing column becomes a byte offset: column indices are measured in
+  // the line string, byte offsets from the live caret plus the UTF-8 length of
+  // the text between.
+  const target = targetCol > col
+    ? cursorPos + editor.utf8ByteLength(lineText.substring(col, targetCol))
+    : cursorPos - editor.utf8ByteLength(lineText.substring(targetCol, col));
 
   // Record for '.' repeat (delete/change only, matching operator-motion).
-  if (operator === "d" || operator === "c") {
-    state.lastChange = {
+  if (record && (operator === "d" || operator === "c")) {
+    recordChange({
       type: "operator-find-char",
       operator,
       findType,
       findCharTarget: char,
       count,
-    };
+    });
   }
 
-  await applyOperatorWithRange(operator, start, end);
+  // `f` and `t` are inclusive motions, `F` and `T` exclusive — the same
+  // distinction `rangeFromMotion` applies to every other motion, rather than
+  // the `+ byteLengthOfCharAt` this used to do by hand.
+  const kind: MotionKind = findType === "f" || findType === "t" ? "inclusive" : "exclusive";
+  await applyOperator(operator, await rangeFromMotion(cursorPos, target, kind));
 }
 
 // Commands to enter find-char mode (async; await getNextKey internally)
@@ -3281,20 +4052,20 @@ registerHandler("vi_find_char_T", vi_find_char_T);
 
 // Repeat last find char (async)
 async function vi_find_char_repeat(): Promise<void> {
-  if (state.lastFindChar) {
-    await executeFindChar(state.lastFindChar.type, state.lastFindChar.char);
+  if (memory.lastFindChar) {
+    await executeFindChar(memory.lastFindChar.type, memory.lastFindChar.char, true);
   }
 }
 registerHandler("vi_find_char_repeat", vi_find_char_repeat);
 
 // Repeat last find char in opposite direction (async)
 async function vi_find_char_repeat_reverse(): Promise<void> {
-  if (state.lastFindChar) {
+  if (memory.lastFindChar) {
     const reversedType: FindCharType =
-      state.lastFindChar.type === "f" ? "F" :
-      state.lastFindChar.type === "F" ? "f" :
-      state.lastFindChar.type === "t" ? "T" : "t";
-    await executeFindChar(reversedType, state.lastFindChar.char);
+      memory.lastFindChar.type === "f" ? "F" :
+      memory.lastFindChar.type === "F" ? "f" :
+      memory.lastFindChar.type === "t" ? "T" : "t";
+    await executeFindChar(reversedType, memory.lastFindChar.char, true);
   }
 }
 registerHandler("vi_find_char_repeat_reverse", vi_find_char_repeat_reverse);
@@ -3304,22 +4075,30 @@ registerHandler("vi_find_char_repeat_reverse", vi_find_char_repeat_reverse);
 // enterFindCharMode but preserves the pending operator across the await and
 // dispatches to the operator-aware executor.
 async function enterFindCharOperatorMode(findType: FindCharType): Promise<void> {
-  if (!state.pendingOperator) {
+  if (!state.pending) {
     switchMode("normal");
     return;
   }
-  const operator = state.pendingOperator;
+  const operator = state.pending.operator;
   // Consume any count now (e.g. d2fx); the find-char await must not lose it.
   const count = consumeCountOrDefault(1);
 
   state.pendingFindChar = findType;
+  // Set directly rather than through `switchMode`: the operator and count are
+  // already copied into locals above, but `switchMode` would also clear
+  // `state.pending` and so blank the operator out of the status indicator
+  // while the target key is awaited.
   state.mode = "find-char";
   editor.setEditorMode("vi-find-char");
   editor.setStatus(getModeIndicator("find-char"));
 
   editor.beginKeyCapture();
+  const generation = modalGeneration;
   try {
     const ev = await editor.getNextKey();
+    // The operator and count in the locals above belong to the state that has
+    // since been reset; applying them now would target the wrong buffer.
+    if (generation !== modalGeneration) return;
     state.pendingFindChar = null;
     if (ev.key.length === 1) {
       await executeFindCharOperator(operator, findType, ev.key, count);
@@ -3369,49 +4148,36 @@ async function vi_op_right(): Promise<void> {
 registerHandler("vi_op_right", vi_op_right);
 
 async function vi_op_word(): Promise<void> {
-  // Vim special case (`:help cw`): when changing (`c`) with the cursor on a
-  // non-blank character, `cw` behaves like `ce` — it changes only up to the end
-  // of the word and does NOT consume the trailing whitespace. Plain `dw`/`yw`
-  // and `cw` on a blank keep the regular word-forward semantics.
-  if (state.pendingOperator === "c") {
-    const count = consumeCount();
-    const range = await computeWordChangeRange(count);
-    if (range !== null) {
-      state.lastChange = { type: "operator-motion", operator: "c", motion: "vi_word_change", count };
-      await applyOperatorWithRange("c", range.start, range.end);
-      return;
-    }
-    await applyOperatorWithMotion("c", "move_word_right", count);
-    return;
-  }
-  await handleMotionWithOperator("move_word_right");
+  // Vim's `cw` is `ce` (`:help cw`) — that rule now lives in
+  // `computeWordOperatorRange`, keyed off the operator, for both families.
+  await handleWordMotionWithOperator("word", "forward");
 }
 registerHandler("vi_op_word", vi_op_word);
 
 async function vi_op_word_back(): Promise<void> {
-  await handleMotionWithOperator("move_word_left");
+  await handleWordMotionWithOperator("word", "backward");
 }
 registerHandler("vi_op_word_back", vi_op_word_back);
 
 // Operator-pending e (word end) - select to word end, then apply operator
 // Operator-pending e (word end) — uses native vi_move_word_end motion
 async function vi_op_word_end(): Promise<void> {
-  await handleMotionWithOperator("vi_move_word_end");
+  await handleWordMotionWithOperator("word", "end");
 }
 registerHandler("vi_op_word_end", vi_op_word_end);
 
 async function vi_op_WORD(): Promise<void> {
-  await handleWORDMotionWithOperator("forward");
+  await handleWordMotionWithOperator("WORD", "forward");
 }
 registerHandler("vi_op_WORD", vi_op_WORD);
 
 async function vi_op_WORD_back(): Promise<void> {
-  await handleWORDMotionWithOperator("backward");
+  await handleWordMotionWithOperator("WORD", "backward");
 }
 registerHandler("vi_op_WORD_back", vi_op_WORD_back);
 
 async function vi_op_WORD_end(): Promise<void> {
-  await handleWORDMotionWithOperator("end");
+  await handleWordMotionWithOperator("WORD", "end");
 }
 registerHandler("vi_op_WORD_end", vi_op_WORD_end);
 
@@ -3435,11 +4201,10 @@ async function vi_op_doc_end(): Promise<void> {
 }
 registerHandler("vi_op_doc_end", vi_op_doc_end);
 
-// NOTE: operator + `%` (d%/c%/y%) is currently a no-op. `applyOperatorWithMotion`
-// resolves a motion via `motionToSelection`, and `goto_matching_bracket` is not
-// in that map, so it bails without deleting. Making this work needs a
-// selection-extending action (e.g. `select_to_matching_bracket`) plus a
-// `motionToSelection` entry. See test_vi_bug_d_percent_ignored.
+// NOTE: operator + `%` (d%/c%/y%) is currently a no-op — `goto_matching_bracket`
+// has no entry in `OPERATOR_MOTIONS`, so the operator bails without deleting.
+// Making it work now needs only a resolver returning the matching bracket's
+// offset, with kind "inclusive". See test_vi_bug_d_percent_ignored.
 async function vi_op_matching_bracket(): Promise<void> {
   await handleMotionWithOperator("goto_matching_bracket");
 }
@@ -3451,24 +4216,7 @@ async function vi_op_paragraph_up(): Promise<void> {
 registerHandler("vi_op_paragraph_up", vi_op_paragraph_up);
 
 async function vi_op_paragraph_down(): Promise<void> {
-  if (!state.pendingOperator) {
-    switchMode("normal");
-    return;
-  }
-
-  const operator = state.pendingOperator;
-  const count = consumeCount();
-  if (operator === "d" || operator === "c") {
-    state.lastChange = { type: "operator-motion", operator, motion: "move_to_paragraph_down", count };
-  }
-
-  const range = await computeParagraphDownOperatorRange(count);
-  if (range === null) {
-    switchMode("normal");
-    return;
-  }
-
-  await applyOperatorWithRange(operator, range.start, range.end);
+  await handleMotionWithOperator("move_to_paragraph_down");
 }
 registerHandler("vi_op_paragraph_down", vi_op_paragraph_down);
 
@@ -3563,6 +4311,8 @@ function defineViModes(): void {
     ["d", "vi_delete_operator"],
     ["c", "vi_change_operator"],
     ["y", "vi_yank_operator"],
+    // Vim's `Y` is `yy`, not `y$`. It had no binding at all.
+    ["Y", "vi_yank_line"],
     [">", "vi_indent_operator"],
     ["<", "vi_dedent_operator"],
 
@@ -3683,26 +4433,7 @@ function defineViModes(): void {
 
   // Define vi-text-object mode (waiting for object type: w, ", (, etc.)
   editor.defineMode("vi-text-object", [
-    // Word objects
-    ["w", "vi_to_word"],
-    ["W", "vi_to_WORD"],
-
-    // Quote objects
-    ["\"", "vi_to_dquote"],
-    ["'", "vi_to_squote"],
-    ["`", "vi_to_backtick"],
-
-    // Bracket objects
-    ["(", "vi_to_paren"],
-    [")", "vi_to_paren"],
-    ["b", "vi_to_paren"],
-    ["{", "vi_to_brace"],
-    ["}", "vi_to_brace"],
-    ["B", "vi_to_brace"],
-    ["[", "vi_to_bracket"],
-    ["]", "vi_to_bracket"],
-    ["<", "vi_to_angle"],
-    [">", "vi_to_angle"],
+    ...TEXT_OBJECT_KEYS.map(({ key, handler }): ModeBinding => [key, handler]),
 
     // Cancel
     ["Escape", "vi_to_cancel"],
@@ -3750,12 +4481,17 @@ function defineViModes(): void {
     ["V", "vi_visual_toggle_line"],
     ["C-v", "vi_visual_block"],  // Switch to block mode
 
+    // Text objects (viw, vi", va(, …) — replace the selection with the object
+    ["i", "vi_vis_text_object_inner"],
+    ["a", "vi_vis_text_object_around"],
+
     // Operators
     ["d", "vi_vis_delete"],
     ["x", "vi_vis_delete"],
     ["c", "vi_vis_change"],
     ["s", "vi_vis_change"],
     ["y", "vi_vis_yank"],
+    ["J", "vi_vis_join"],
     [">", "vi_vis_indent"],
     ["<", "vi_vis_dedent"],
 
@@ -3801,6 +4537,7 @@ function defineViModes(): void {
     ["c", "vi_vis_change"],
     ["s", "vi_vis_change"],
     ["y", "vi_vis_yank"],
+    ["J", "vi_vis_join"],
     [">", "vi_vis_indent"],
     ["<", "vi_vis_dedent"],
 
@@ -4788,8 +5525,7 @@ function disableVi(): void {
   if (!viModeEnabled) return;
   viModeEnabled = false;
   editor.setEditorMode(null);
-  state.mode = "normal";
-  state.pendingOperator = null;
+  resetModalState();
   editor.setStatus(editor.t("status.disabled"));
 }
 
@@ -4858,3 +5594,89 @@ editor.on("config_changed", () => {
 });
 
 registerHandler("vi_to_brace", vi_to_brace);
+
+// Vi's modal state belongs to the buffer it was entered in. A pending
+// operator, a visual anchor and an insert session are all byte offsets into
+// one buffer's text, so carrying them across a buffer switch would apply
+// them to another buffer's bytes. Vim agrees: leaving a window drops the
+// operator, the visual selection and insert mode.
+//
+// `memory` deliberately survives. What `.`, `;` and `n` replay is global in
+// Vim too, and is stored as commands rather than offsets, so it stays valid.
+//
+// The hook does NOT mean "the active buffer changed". `set_active_buffer`
+// early-returns when it did not, but `switch_split`, window activation and
+// the in-place load of the initial empty buffer all fire it unconditionally —
+// `switch_split` deliberately so, because focus moving between two splits on
+// the same buffer never reaches `set_active_buffer` at all. Moving focus
+// between two views of one file must not drop the selection being made in
+// it, so the id is tracked here and an unchanged one is ignored.
+let lastActiveBuffer: number | null = null;
+
+// Buffers left holding a visual selection vi has since abandoned.
+//
+// Vi's modal state is global but the host's selection is per-buffer
+// (`TextEdit::selection_anchor`), so returning to normal mode here cannot
+// reach the selection in the buffer being left — and the plugin API has no
+// way to address another buffer's selection. Left alone, coming back to that
+// buffer would find normal mode over a live selection, where `x` extends it
+// and cuts the lot. Instead, note the buffer and collapse it on the way back
+// in. `setBufferCursor` is the collapse: the host treats a seated caret as a
+// placement, and a placement drops the anchor.
+const buffersWithAbandonedSelection = new Set<number>();
+
+function isVisualMode(mode: ViMode): boolean {
+  return mode === "visual" || mode === "visual-line" || mode === "visual-block";
+}
+
+// A closed buffer's id can be handed to the next buffer opened, and the note
+// below outlives the buffer it was about — so the next occupant of that id
+// would get its caret reseated on activation for no reason.
+editor.on("buffer_closed", (args) => {
+  buffersWithAbandonedSelection.delete(args.buffer_id);
+});
+
+editor.on("buffer_activated", (args) => {
+  // Outside the `viModeEnabled` guard below: the buffer vi is later asked to
+  // leave is usually opened before vi is turned on, and this is the only
+  // place its id can be learned. `enableVi` cannot ask for it — `autoStart`
+  // calls that from the top-level body, before any buffer exists.
+  const bufferId = args.buffer_id;
+  const previous = lastActiveBuffer;
+  const changed = previous !== null && previous !== bufferId;
+  lastActiveBuffer = bufferId;
+
+  if (!viModeEnabled) return;
+
+  if (changed && buffersWithAbandonedSelection.delete(bufferId)) {
+    // Re-entering a buffer vi left mid-selection: collapse it before any
+    // normal-mode command can extend it.
+    editor.setBufferCursor(bufferId, editor.getCursorPosition());
+  }
+
+  if (!changed) return;
+
+  const leaving = state.mode;
+  if (isVisualMode(leaving) && previous !== null) {
+    // The selection is in the buffer being *left*, not the one arriving.
+    buffersWithAbandonedSelection.add(previous);
+  }
+
+  // Dropping the insert session rather than closing it through `switchMode`
+  // is deliberate: the Escape-time capture measures the typed text from its
+  // start offset to the cursor, and the cursor is already in the new buffer.
+  // There is nothing left to record, and reading it would splice in
+  // unrelated text — the failure #2443 was filed for.
+  resetModalState();
+
+  // Not `switchMode("normal")`, for a related reason: leaving a visual mode
+  // there clears the selection with a `move_left`/`move_right` pair, which
+  // would land on — and at offset 0 actually move — the cursor in the buffer
+  // just opened.
+  if (leaving !== "normal") {
+    editor.setEditorMode("vi-normal");
+  }
+  // Unconditional: `resetModalState` also drops a half-typed count, which the
+  // indicator is showing.
+  editor.setStatus(getModeIndicator("normal"));
+});

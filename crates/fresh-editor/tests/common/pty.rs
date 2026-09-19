@@ -24,6 +24,7 @@ use std::os::unix::io::{AsRawFd, FromRawFd};
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
+use std::time::{Duration, Instant};
 
 /// A pty pair plus the child attached to its slave.
 pub struct PtyChild {
@@ -152,6 +153,72 @@ impl PtyChild {
         }
         Err(format!(
             "child ended without the expected screen; last screen was:\n{}",
+            self.screen()
+        ))
+    }
+
+    /// As [`wait_for_screen`](Self::wait_for_screen), but reading the parsed
+    /// *grid* and giving up after `budget` instead of blocking until the
+    /// child closes the pty.
+    ///
+    /// **For a predicate whose failure is silence, over what a terminal
+    /// would show.** The grid rather than the text because a frame can change
+    /// only colour — an occurrence highlight appearing changes no character.
+    /// `wait_for_screen` only
+    /// returns when the child writes or exits, so a test asserting that a
+    /// frame *arrives on its own* — nothing typed, nothing to provoke output
+    /// — has no failure mode short of the outer test timeout. This one turns
+    /// that into an ordinary assertion with the last screen in the message.
+    ///
+    /// The budget is a ceiling, not a sleep: the predicate is re-checked
+    /// after every read, so a passing case returns as soon as the frame lands.
+    pub fn wait_for_cells_within<F>(&mut self, budget: Duration, predicate: F) -> Result<(), String>
+    where
+        F: Fn(&vt100::Screen) -> bool,
+    {
+        let deadline = Instant::now() + budget;
+        let mut buf = [0u8; 8192];
+        loop {
+            if predicate(self.parser.screen()) {
+                return Ok(());
+            }
+            let left = deadline.saturating_duration_since(Instant::now());
+            if left.is_zero() {
+                break;
+            }
+            // Wait for readability rather than blocking in `read`, so the
+            // budget is honoured even when the child says nothing at all.
+            let mut fds = libc::pollfd {
+                fd: self.master.as_raw_fd(),
+                events: libc::POLLIN,
+                revents: 0,
+            };
+            // SAFETY: one initialized `pollfd` over our own live master fd.
+            let ready = unsafe {
+                libc::poll(
+                    &mut fds,
+                    1,
+                    left.as_millis().min(i32::MAX as u128) as libc::c_int,
+                )
+            };
+            if ready <= 0 {
+                continue;
+            }
+            match self.master.read(&mut buf) {
+                Ok(0) => break,
+                Ok(n) => self.parser.process(&buf[..n]),
+                // The pty reports the last slave closing as EIO, not EOF.
+                Err(e) if e.raw_os_error() == Some(libc::EIO) => break,
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(e) => return Err(format!("reading from pty: {e}")),
+            }
+        }
+
+        if predicate(self.parser.screen()) {
+            return Ok(());
+        }
+        Err(format!(
+            "the expected screen never arrived; last screen was:\n{}",
             self.screen()
         ))
     }

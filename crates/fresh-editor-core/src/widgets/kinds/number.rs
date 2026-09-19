@@ -14,15 +14,11 @@
 use std::collections::HashMap;
 
 use fresh_core::api::WidgetSpec;
-use serde_json::json;
 
 use super::WidgetImpl;
 use crate::primitives::text_edit::TextEdit;
-use crate::widgets::registry::{HitArea, WidgetInstanceState};
-use crate::widgets::render::{
-    clamp_number, ensure_trailing_newline, render_number, CollectedOutput, NumberEdit,
-    RenderContext, RenderedNumber,
-};
+use crate::widgets::registry::WidgetInstanceState;
+use crate::widgets::render::{clamp_number, NumberEdit};
 
 pub struct Number;
 
@@ -33,54 +29,68 @@ impl WidgetImpl for Number {
         widget_key: &str,
         panel: &mut crate::widgets::WidgetPanelState,
         _viewport: super::Viewport,
-        key: &str,
+        key: &crate::keys::KeySeq,
         fx: &mut super::KeyFx,
     ) -> super::KeyDisposition {
         use super::KeyDisposition::{Consumed, Pass, PassAfter};
+        use crossterm::event::KeyCode;
+        let Some(key) = key.single() else {
+            return Pass;
+        };
+        let bare = key.mods().is_empty();
         if editing(widget_key, panel) {
-            return match key {
-                "Enter" => {
+            return match key.code() {
+                KeyCode::Enter if bare => {
                     commit(spec, widget_key, panel, fx);
                     Consumed
                 }
-                "Escape" => {
+                KeyCode::Esc if bare => {
                     cancel(widget_key, panel);
                     Consumed
                 }
                 // The commit is the field's; the advance is the surface's.
-                "Tab" | "Shift+Tab" => {
+                KeyCode::Tab | KeyCode::BackTab if bare => {
                     commit(spec, widget_key, panel, fx);
                     PassAfter
                 }
-                "C-a" => {
+                _ if super::ctrl_char(key, 'a') => {
                     with_draft(widget_key, panel, |e| e.select_all());
                     Consumed
                 }
                 // A draft has no vertical axis and no words to type; these
                 // keys are swallowed rather than handed to the surface, so a
                 // half-typed value is never left behind by a page move.
-                "Space" | "Up" | "Down" | "PageUp" | "PageDown" => Consumed,
-                _ => match super::text::key_name_to_event(key) {
-                    Some(event) => {
-                        with_draft(widget_key, panel, |e| {
-                            crate::primitives::text_key::apply_text_key(
-                                e,
-                                &event,
-                                crate::primitives::text_key::TextKeyContext::single_line(),
-                            );
-                        });
-                        Consumed
-                    }
-                    None => Pass,
-                },
+                KeyCode::Char(' ')
+                | KeyCode::Up
+                | KeyCode::Down
+                | KeyCode::PageUp
+                | KeyCode::PageDown
+                    if bare =>
+                {
+                    Consumed
+                }
+                _ if super::text_caret(key) => {
+                    with_draft(widget_key, panel, |e| {
+                        crate::primitives::text_key::apply_text_key(
+                            e,
+                            &key.to_key_event(),
+                            crate::primitives::text_key::TextKeyContext::single_line(),
+                        );
+                    });
+                    Consumed
+                }
+                _ => Pass,
             };
         }
         // Up/Right increment, Down/Left decrement — matching the
         // ◂/▸ glyphs (the reverse of a list's Up = select-previous).
-        let steps = match key {
-            "Up" | "Right" => 1,
-            "Down" | "Left" => -1,
-            "Enter" => {
+        if !bare {
+            return Pass;
+        }
+        let steps = match key.code() {
+            KeyCode::Up | KeyCode::Right => 1,
+            KeyCode::Down | KeyCode::Left => -1,
+            KeyCode::Enter => {
                 begin_edit(spec, widget_key, panel, None);
                 return Consumed;
             }
@@ -161,117 +171,6 @@ impl WidgetImpl for Number {
         }
         m
     }
-    fn collect(
-        &self,
-        spec: &WidgetSpec,
-        prev: &HashMap<String, WidgetInstanceState>,
-        next_state: &mut HashMap<String, WidgetInstanceState>,
-        ctx: RenderContext<'_>,
-        _panel_width: u32,
-    ) -> CollectedOutput {
-        let WidgetSpec::Number {
-            value,
-            min,
-            max,
-            integer,
-            percent,
-            label,
-            focused,
-            label_width,
-            key,
-            ..
-        } = spec
-        else {
-            return CollectedOutput::default();
-        };
-        collect_number(
-            *value,
-            *min,
-            *max,
-            *integer,
-            *percent,
-            label,
-            *focused,
-            *label_width,
-            key.as_deref(),
-            prev,
-            next_state,
-            ctx,
-        )
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn collect_number(
-    spec_value: f64,
-    min: Option<f64>,
-    max: Option<f64>,
-    integer: bool,
-    percent: bool,
-    label: &str,
-    focused: bool,
-    label_width: u32,
-    key: Option<&str>,
-    prev: &HashMap<String, WidgetInstanceState>,
-    next_state: &mut HashMap<String, WidgetInstanceState>,
-    ctx: RenderContext<'_>,
-) -> CollectedOutput {
-    let mut out = CollectedOutput::default();
-    // A keyed widget takes focus from the host's resolved focus key; an
-    // unkeyed one falls back to the spec's initial-only `focused` hint.
-    let is_focused = if key.is_some_and(|k| !k.is_empty()) {
-        ctx.is_focused(key)
-    } else {
-        focused
-    };
-    let Resolved { value: cur, draft } = resolve(spec_value, min, max, key, prev);
-    // **The walk carries this widget's state; it does not decide it.** The
-    // clamp above is a derivation, applied on every read, so writing it back
-    // stored nothing a reader could not work out — while making the render
-    // walk a second writer of a field `on_key` and `on_pointer` also own. The
-    // pass-through is what keeps the entry alive across the whole-map replace
-    // in `update_side_effects`; an absent one stays absent, so a number nobody
-    // has touched still reads its value from the spec. Same rule as
-    // `kinds::dropdown`, and for the same reason.
-    if let Some(k) = key.filter(|k| !k.is_empty()) {
-        if let Some(stored) = prev.get(k) {
-            next_state.insert(k.to_string(), stored.clone());
-        }
-    }
-
-    let rendered = render_number(
-        cur,
-        integer,
-        percent,
-        label,
-        is_focused,
-        label_width,
-        draft.as_ref().map(NumberEdit::from),
-        ctx.marker_gutter,
-    );
-    let RenderedNumber {
-        mut entry,
-        value_range,
-    } = rendered;
-    // A click on the value cell begins in-place editing (`on_pointer`).
-    out.hits.push(HitArea {
-        overlay: false,
-        buffer_row: 0,
-        byte_start: value_range.0,
-        byte_end: value_range.1,
-        event: crate::widgets::WidgetEvent {
-            row_target: false,
-            context_click: false,
-            widget_key: key.unwrap_or("").to_string(),
-            widget_kind: "number",
-            payload: json!({}),
-            event_type: "number_value",
-            owner_key: None,
-        },
-    });
-    ensure_trailing_newline(&mut entry);
-    out.entries.push(entry);
-    out
 }
 
 /// A `Number`'s two pieces of state, once the spec and the instance map
@@ -536,7 +435,8 @@ mod tests {
 
     fn key(spec: &WidgetSpec, panel: &mut WidgetPanelState, k: &str) -> (KeyDisposition, KeyFx) {
         let mut fx = KeyFx::default();
-        let d = behavior(spec).on_key(spec, "n", panel, Default::default(), k, &mut fx);
+        let seq: crate::keys::KeySeq = k.parse().expect("test key name parses");
+        let d = behavior(spec).on_key(spec, "n", panel, Default::default(), &seq, &mut fx);
         (d, fx)
     }
 

@@ -62,13 +62,17 @@ jobs:
     needs: plan
     if: ${{ needs.plan.outputs.publishing == 'true' }}
     runs-on: ubuntu-22.04
+    # Narrower than the workflow default: this job only builds, so it does not
+    # get the release-publishing grants the jobs below it need.
+    permissions:
+      contents: read
     steps:
       - uses: actions/checkout@v6
         with:
           submodules: recursive
 
       - name: Install Nix
-        uses: cachix/install-nix-action@v31
+        uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31
         with:
           nix_path: nixpkgs=channel:nixos-unstable
 
@@ -120,7 +124,7 @@ jobs:
           submodules: recursive
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch
         with:
           targets: ${{ matrix.target }}
 
@@ -158,7 +162,11 @@ jobs:
           fi
           # Default features include embed-plugins; plugins (and themes via build.rs)
           # are compiled into the binary, so we ship a single self-contained executable.
-          cargo build --release --target ${{ matrix.target }}
+          # `web` is NOT default (it embeds the browser UI and the sha1
+          # WebSocket-handshake dep), so name it: these archives are what the
+          # AUR -bin package, the Homebrew formula and the npm package install,
+          # and without it every one of them rejects `--web` (#3316).
+          cargo build --release --features web --target ${{ matrix.target }}
 
       # Checks the artifact rather than trusting the build flag above: a
       # released binary must load nothing but the OS's own libraries, or it

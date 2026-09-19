@@ -20,7 +20,7 @@ use crate::event::{
     Axis, Ctl, Event, Flow, GestureKind, Input, KeyPress, Mods, MouseButton, Phase,
     SelectionOnFocus,
 };
-use crate::render::geom::Point;
+use crate::render::geom::{Point, Rect};
 use crate::render::object::{Hit, RenderId};
 use crate::schedule::Ui;
 
@@ -534,7 +534,15 @@ impl<M: 'static> Ui<M> {
         // gesture wrapped around it. Computing it here means a listener reads
         // the byte without knowing which leaf under it holds the text, and
         // means it is computed once rather than per handler.
-        let text_byte = self.text_byte_at(target, pos);
+        // **A captured pointer still reports the byte under it.** While a
+        // gesture holds the pointer the path ends at that gesture, which has
+        // no text; the run inside it does. Ask the target first, then the
+        // deepest descendant under the pointer that answers — so a drag
+        // across a wrapped run extends a selection by byte exactly as its
+        // press placed the caret by byte.
+        let text_byte = self
+            .text_byte_at(target, pos)
+            .or_else(|| self.text_byte_under(target, pos));
         // Routed by capture: the path is the captor's, not the pointer's.
         let captured = self
             .captured
@@ -636,6 +644,27 @@ impl<M: 'static> Ui<M> {
         }
     }
 
+    /// Whether `id` answers a bubbling press — `listeners` clones every
+    /// handler, which a press-path scan does not need.
+    ///
+    /// Press alone, because that is the only thing that asks: the
+    /// anchored-trigger exemption wants to know which node under an anchor
+    /// is the pressable piece. A `kind`/`capture` pair would have to answer
+    /// for `Key` too, which resolves through `focus_config` rather than the
+    /// gesture's listeners — a second rule with no caller to keep it honest.
+    fn has_press_listener(&self, id: ElementId) -> bool {
+        let Some(el) = self.arena.get(id) else {
+            return false;
+        };
+        match &resolve(&el.desc).desc {
+            Desc::Gesture(g) => g
+                .listeners
+                .iter()
+                .any(|l| l.kind == GestureKind::Press && !l.capture),
+            _ => false,
+        }
+    }
+
     // -- hover ---------------------------------------------------------------
 
     fn update_hover(&mut self, paths: &[Vec<ElementId>], pos: Point, mods: Mods, out: &mut Vec<M>) {
@@ -682,7 +711,15 @@ impl<M: 'static> Ui<M> {
             mods,
             delta: 0,
             axis: Axis::Vertical,
-            text_byte: self.text_byte_at(n, pos),
+            // **A captured pointer still reports the byte under it.** The
+            // capturer is the gesture that took the press, and a gesture has
+            // no text; the run inside it does. Ask the capturer first, then
+            // the deepest descendant under the pointer that answers — so a
+            // drag across a wrapped run extends a selection by byte exactly
+            // as its press placed the caret by byte.
+            text_byte: self
+                .text_byte_at(n, pos)
+                .or_else(|| self.text_byte_under(n, pos)),
             captured: false,
             key: None,
             clicks: 1,
@@ -912,6 +949,25 @@ impl<M: 'static> Ui<M> {
     /// One hop: element to its render object, which answers for itself. The
     /// object is asked because it is the only thing that knows where its
     /// shaping put each character; see `Event::text_byte`.
+    /// The byte under `pos` answered by the deepest descendant of `root`
+    /// whose rectangle holds the point — what a captured event asks when the
+    /// capturer itself has no text. Depth-first, first answer wins.
+    fn text_byte_under(&self, root: ElementId, pos: Point) -> Option<usize> {
+        let kids = self.arena.get(root)?.children.clone();
+        for k in kids {
+            if !self.rect_of(k).contains(pos) {
+                continue;
+            }
+            if let Some(b) = self.text_byte_under(k, pos) {
+                return Some(b);
+            }
+            if let Some(b) = self.text_byte_at(k, pos) {
+                return Some(b);
+            }
+        }
+        None
+    }
+
     fn text_byte_at(&self, id: ElementId, pos: Point) -> Option<usize> {
         let r = self.arena.get(id)?.render?;
         let obj = self.render.get(r)?.obj.as_ref()?;
@@ -969,11 +1025,38 @@ impl<M: 'static> Ui<M> {
             // often a whole panel body as a single row, and suppressing the
             // dismissal over a body would leave no outside at all. A caller
             // that wants this says which node it means.
+            //
+            // Only the part of it that answers a press, though: an anchor is
+            // often a whole row, and a press on its label or the blank run
+            // after it toggles nothing, so exempting those would leave the
+            // layer up with nowhere to click to be rid of it.
             let anchored_on = match &geom.anchor {
                 crate::desc::Anchor::Node(k) => self.find_by_key(k),
                 _ => None,
             };
-            if anchored_on.is_some_and(|a| paths.iter().any(|p| p.contains(&a))) {
+            // Containment is geometric, not structural: a `gesture()` wrapper
+            // can hold the handler for the keyed node *inside* it — the menu
+            // bar's labels are built that way.
+            let on_trigger = anchored_on.is_some_and(|a| {
+                let ar = self.rect_of(a);
+                // A node with no render entry reports `Rect::default()`, which
+                // an anchor at the origin would otherwise contain — so an
+                // unlaid-out node never counts.
+                let within = |r: Rect| {
+                    r.w > 0
+                        && r.h > 0
+                        && r.x >= ar.x
+                        && r.y >= ar.y
+                        && r.x + i32::from(r.w) <= ar.x + i32::from(ar.w)
+                        && r.y + i32::from(r.h) <= ar.y + i32::from(ar.h)
+                };
+                paths.iter().any(|p| {
+                    p.contains(&a)
+                        && p.iter()
+                            .any(|&n| within(self.rect_of(n)) && self.has_press_listener(n))
+                })
+            });
+            if on_trigger {
                 continue;
             }
             if let Some(h) = self.dismiss_handler(lid) {

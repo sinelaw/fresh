@@ -352,7 +352,7 @@ impl Editor {
         // combination and terminal size — `tests/ui_shell_frame_parity.rs` is
         // the standing proof, and it keeps both derivations honest now that
         // only one of them runs here.
-        // See `docs/internal/retained-mode-ui.md` §3.1.
+        // See `docs/internal/retained-mode-ui.md` "The shape".
         // The settings search list's window, from the band the tree placed
         // last frame. This is the one mutation the description needs made
         // *before* it is built: the row it describes says "(1-3 of 298)", and
@@ -1304,7 +1304,7 @@ impl Editor {
         // above): every described surface files its items' rects and keys as
         // it folds. What is still blank is a *tier*, not a surface: an item
         // whose ink resolved to literal colours files nothing — defect
-        // `Paint::Lit` in `docs/internal/retained-mode-ui.md` §3.3.
+        // `Paint::Lit` in `docs/internal/retained-mode-ui.md` "Smaller residue".
 
         // Software mouse cursor (GPM) and keyboard-capture dimming — both
         // read already-painted cells, so they run after the main draw.
@@ -1513,7 +1513,11 @@ impl Editor {
     fn prompt_row_description(&self) -> Option<crate::view::shell::prompt_line::PromptRow> {
         let win = self.active_window();
         let p = win.prompt.as_ref()?;
-        if p.overlay {
+        // An overlay prompt draws its own card; a confirmation draws its own
+        // modal. Either way the row has nothing to say — and for the
+        // confirmation that is the entire point of the change: the question
+        // used to be *only* here.
+        if p.overlay || p.is_confirm_dialog() {
             return None;
         }
         let dir = matches!(
@@ -3129,6 +3133,46 @@ impl Editor {
         None
     }
 
+    /// The confirmation modal's description, when the active prompt is a
+    /// question with buttons.
+    ///
+    /// The card's extent is app logic keyed on the frame — the same shape as
+    /// the trust prompt's, resolved before the description is built.
+    pub(crate) fn confirm_description(
+        &self,
+        size: ratatui::layout::Rect,
+    ) -> Option<crate::view::shell::confirm::Confirm> {
+        use crate::view::shell::confirm::{Button, Confirm};
+        let c = self.active_window().prompt.as_ref()?.confirm.as_ref()?;
+        Some(Confirm {
+            title: c.title.clone(),
+            body: c.body.clone(),
+            detail: c.detail.clone(),
+            buttons: c
+                .choices
+                .iter()
+                .enumerate()
+                .map(|(i, ch)| Button {
+                    label: ch.label.clone(),
+                    // Asked of the dialog: whether the loose match is safe
+                    // depends on the other choices' letters.
+                    mnemonic: c.mnemonic_span(i),
+                    destructive: ch.tone == crate::view::confirm::Tone::Destructive,
+                    hovered: c.hovered == Some(i),
+                })
+                .collect(),
+            selected: c.selected,
+            width: crate::view::shell::confirm::width_for(
+                &c.choices
+                    .iter()
+                    .map(|ch| ch.label.clone())
+                    .collect::<Vec<_>>(),
+                size.width,
+            ),
+            max_height: size.height.saturating_sub(2),
+        })
+    }
+
     pub(crate) fn trust_description(
         &self,
         size: ratatui::layout::Rect,
@@ -3817,8 +3861,14 @@ impl Editor {
                 PromptType::OpenFile | PromptType::SwitchProject | PromptType::SaveFileAs
             )
         }) && win.file_open_state.is_some();
-        let prompt_row_visible =
-            (win.prompt_line_visible || win.prompt.is_some()) && !prompt_is_overlay;
+        // A confirmation does not *claim* the row — it has a card of its own —
+        // but it must not take one away either: a user who configured
+        // `show_prompt_line` keeps their row, empty, so the layout does not
+        // jump by a line each time a dialog opens.
+        let prompt_is_confirm = win.prompt.as_ref().is_some_and(|p| p.is_confirm_dialog());
+        let prompt_row_visible = (win.prompt_line_visible
+            || (win.prompt.is_some() && !prompt_is_confirm))
+            && !prompt_is_overlay;
         BottomRowFlags {
             prompt_is_overlay,
             has_suggestions,
@@ -3905,6 +3955,9 @@ impl Editor {
         );
         self.shell_ui = Some(ui);
         self.shell_description_stale = false;
+        // The pane panels' buffers are the rows this layout settled — see
+        // `app::pane_mirror`.
+        self.mirror_pane_panels();
     }
 
     /// The frame's second half: the display list of the tree as
@@ -4091,6 +4144,13 @@ impl Editor {
             width: self.active_chrome().last_frame.width,
             height: self.active_chrome().last_frame.height,
         });
+        let confirm = self.confirm_description(ratatui::layout::Rect {
+            x: 0,
+            y: 0,
+            width: self.active_chrome().last_frame.width,
+            height: self.active_chrome().last_frame.height,
+        });
+        let confirm_is_up = confirm.is_some();
         let splits = match placeholder.is_some() {
             true => None,
             false => splits,
@@ -4110,6 +4170,9 @@ impl Editor {
                 Some(crate::app::types::HoverTarget::DockBorder)
             ),
             dock_focused: self.dock.as_ref().is_some_and(|d| d.focused),
+            // A column with no panel in it that the layout carved anyway:
+            // the tree, not the painter, owns every cell of it.
+            dock_reserved: self.dock_slot_reserved(),
             // Which workspace the window-owned half of the frame belongs to.
             // One retained tree, N windows: without this the two match each
             // other and window B's first pane inherits window A's element
@@ -4118,6 +4181,7 @@ impl Editor {
             theme_info,
             browser,
             trust,
+            confirm,
             event_debug: self.event_debug_description(),
             settings: self.settings_chrome_description(),
             settings_dialog: self.settings_dialog_description(),
@@ -4137,7 +4201,14 @@ impl Editor {
             // row's: the overlay form of the prompt draws no prompt row and
             // still owns every key. `chrome::Prompt::layers` asked
             // `is_prompting()` for exactly this and so does the layer.
-            prompt_keys: self.is_prompting(),
+            //
+            // **Except for a confirmation**, whose card is an
+            // `Modality::Exclusive` layer with its own claim inside it
+            // (`confirm::layer`). Declaring the prompt's `Modality::Focus`
+            // layer as well would leave two surfaces asserting the keyboard
+            // for one prompt; the exclusive one is the whole point, so the
+            // prompt's stands down.
+            prompt_keys: self.is_prompting() && !confirm_is_up,
             search_prompt: self.active_prompt_has_search_options(),
             // A focused panel is the keyboard's owner, which is what
             // `chrome::Dock::layers` and `chrome::FloatingModal::layers` say
@@ -4719,6 +4790,22 @@ impl Editor {
     /// workspace isn't ready yet", and one look should mean one thing.
     fn placeholder_page(&self) -> Option<crate::view::shell::frame::Placeholder> {
         use crate::view::shell::frame::Placeholder;
+        // A plugin has described this page itself — it mounted a widget panel
+        // on the placeholder's seed buffer. Stand aside entirely: the panel
+        // renders through the ordinary pane path, with its own copy, its own
+        // controls and its own events, because the plugin building the
+        // workspace is the only thing that knows what it is waiting on and
+        // what the user can do about it. What is left here is the fallback
+        // for a window nothing has claimed — a dormant remote restored at
+        // boot, before any plugin has had a say.
+        let active_buffer = self.active_window().active_buffer();
+        if !self
+            .widget_registry
+            .panels_for_buffer(active_buffer)
+            .is_empty()
+        {
+            return None;
+        }
         let active_id = self.active_window;
         let window = self.windows.get(&active_id)?;
         let pane = window.buffers.splits().map(|(mgr, _)| {
@@ -4752,7 +4839,7 @@ impl Editor {
             } else {
                 (
                     "The workspace could not be loaded without its connection.",
-                    "Select it again in the dock (or use the status-bar indicator) to reconnect.",
+                    "Reconnect",
                 )
             };
             return Some(Placeholder {
@@ -4769,11 +4856,12 @@ impl Editor {
         } else {
             prep.label.clone()
         };
+        // `retry` is the button's label now, not an instruction pointing at
+        // the dock: this page is where the user is when it fails, so the
+        // thing to do about it is here. Nothing to press while it is still
+        // working.
         let (hint, retry) = if prep.failed {
-            (
-                "This workspace has not been created yet.",
-                "Select it again in the dock to retry, or delete it from the row menu.",
-            )
+            ("This workspace has not been created yet.", "Retry")
         } else {
             (
                 "The workspace will open as soon as it has been created.",
@@ -6048,10 +6136,17 @@ impl Editor {
         // `Frame::resolve_dock`, which is what the frame-parity test runs.
         // They were separate before, each with its own constants, so the test
         // could pass while this path disagreed with it.
-        let requested = match self.dock.as_ref().map(|f| f.placement) {
-            Some(super::PanelPlacement::LeftDock { width_cols }) => Some(width_cols),
-            _ => None,
-        };
+        // The slot is open with a panel in it, or held open for one on its
+        // way (`Editor::dock_reserved`); either way the column is the same
+        // width, from the same two facts: the explicit width if there is
+        // one, else the rule — re-read every frame, which is what makes the
+        // dock follow a resize.
+        let slot_open = self
+            .dock
+            .as_ref()
+            .is_some_and(|f| matches!(f.placement, super::PanelPlacement::LeftDock))
+            || self.dock_slot_reserved();
+        let requested = slot_open.then(|| self.requested_dock_width(size.width));
         let Some(width) = crate::view::shell::frame::dock_width(requested, size.width) else {
             return (None, size);
         };
@@ -6348,7 +6443,9 @@ impl Editor {
             },
             hovered_item_key: self.widget_registry.hover_keys(&key).1,
             hovered_popup_row: String::new(),
+            reveal: self.prose_reveal_for(&key),
             marker_gutter: false,
+            label_align: Default::default(),
             avail_height: None,
             scrollbar_reveal: None,
             // **The panel's keymap: its buffer's mode.** A pane-mounted
@@ -6362,6 +6459,7 @@ impl Editor {
                     mode: mode.to_string(),
                     resolver: self.keybindings.clone(),
                     text_focused: self.panel_focused_widget_is_text(&key),
+                    chord: self.active_window().chord_state.clone(),
                 }),
             markdown: Some(self.markdown_ink()),
         })
@@ -6392,8 +6490,8 @@ impl Editor {
     /// **All of it is host state the spec does not carry** — the focused
     /// widget, the widget and row under the pointer, whether the focus-marker
     /// gutter is reserved, the auto-size row budget, and the instance state
-    /// the stateful kinds are authoritative for. The runtime read the same
-    /// list off a `RenderContext`; here it is resolved once, where the
+    /// the stateful kinds are authoritative for. The text projection read
+    /// the same list off its own context; here it is resolved once, where the
     /// description is built, and handed down.
     ///
     /// `None` means there is no panel in the slot, or none mounted in the
@@ -6403,6 +6501,20 @@ impl Editor {
     /// is the same question without the clone, and the surfaces that route a
     /// press by it (`view::shell::dock::column`,
     /// `render_floating_widget_panel`) must keep asking the same one.
+    /// The reveal anchor a panel's markdown document is scrolled through —
+    /// the same one every frame, because an anchor binds to its element on
+    /// mount and a new one each frame would bind to nothing.
+    pub(crate) fn prose_reveal_for(
+        &self,
+        key: &crate::widgets::PanelKey,
+    ) -> std::rc::Rc<fresh_ui::behavior::anchor::Anchor> {
+        self.prose_reveal
+            .borrow_mut()
+            .entry(key.clone())
+            .or_insert_with(fresh_ui::behavior::anchor::Anchor::new)
+            .clone()
+    }
+
     pub(crate) fn panel_interior(
         &self,
         slot: crate::app::PanelSlot,
@@ -6439,7 +6551,9 @@ impl Editor {
             hovered_key: Some(panel.hovered_widget_key.clone()).filter(|k| !k.is_empty()),
             hovered_item_key: panel.hovered_item_key.clone(),
             hovered_popup_row: panel.hovered_popup_row.clone(),
+            reveal: self.prose_reveal_for(&key),
             marker_gutter: panel.focus_marker,
+            label_align: panel.label_align,
             avail_height: self.floating_panel_inner_height(slot),
             // **The dock's bars are overlay bars.** Every other panel draws
             // one whenever its content overflows; the dock's appears while
@@ -6447,13 +6561,14 @@ impl Editor {
             // it, and is gone otherwise — see `widgets::Ctx::scrollbar_reveal`
             // for why that is a fact handed down rather than a rule the tree
             // could apply itself.
-            scrollbar_reveal: matches!(panel.placement, super::PanelPlacement::LeftDock { .. })
-                .then(|| {
+            scrollbar_reveal: matches!(panel.placement, super::PanelPlacement::LeftDock).then(
+                || {
                     panel.scrollbar_zone_hovered
                         || panel
                             .scrollbar_flash_until
                             .is_some_and(|until| self.time_source().now() < until)
-                }),
+                },
+            ),
             // **The panel's keymap: the mode its plugin defined.** The one
             // it declared at mount, or else the active window's editor mode,
             // which is how a plugin that mounts a centred form declares one;
@@ -6468,6 +6583,7 @@ impl Editor {
                         mode,
                         resolver: self.keybindings.clone(),
                         text_focused: self.panel_focused_widget_is_text(&key),
+                        chord: self.active_window().chord_state.clone(),
                     }),
                 crate::app::PanelSlot::Sidebar(_) => None,
             },
@@ -6490,55 +6606,31 @@ impl Editor {
     }
 
     pub(crate) fn panel_description(&self) -> Option<crate::view::shell::panel::Panel> {
-        use crate::primitives::display_width::str_width;
         use crate::view::shell::panel::{Panel, Spot};
 
         let p = self.panel(crate::app::PanelSlot::Floating)?;
-        // Every row the spec produced, borders excluded — `WindowEmbed`
-        // reservations included, since each contributes its blank entries and
-        // an `EmbedRect` painted over them. This is the count the painter's
-        // `entries.len() + 2` used, kept as the one measurement the tree needs
-        // from the runtime.
-        //
-        // **Only one of the two is still read.** A described box measures its
-        // own height (`Panel::height` answers `Sizing::Auto`), so
-        // `content_rows` survives for a panel whose interior is a `Host` —
-        // which today means no panel at all. `content_cols` is live: an
-        // anchored popup hugs its content horizontally and the interior is
-        // built by a `layout_reader` that needs a width as a number, so the
-        // mirror answers for it. See `Panel::anchored_width`, which is where
-        // that exception is argued and what retires it.
-        let content_rows = p.entries.len() as u16;
+        // Neither axis is measured here: a described box is as tall as its
+        // rows and as wide as its widest one, and the interior states both.
         let spot = match p.placement {
             super::PanelPlacement::Centered => Spot::Centered {
                 width_pct: p.width_pct,
-                content_rows,
             },
-            super::PanelPlacement::Anchored { x, y } => Spot::Anchored {
-                x,
-                y,
-                content_cols: p
-                    .entries
-                    .iter()
-                    .map(|e| str_width(&e.text) as u16)
-                    .max()
-                    .unwrap_or(0),
-                content_rows,
-            },
+            super::PanelPlacement::Anchored { x, y } => Spot::Anchored { x, y },
             // The dock panel's frame is the dock column's, not this box's —
             // and a sidebar section's is its column's.
-            super::PanelPlacement::LeftDock { .. }
-            | super::PanelPlacement::SidebarSection { .. } => return None,
+            super::PanelPlacement::LeftDock | super::PanelPlacement::SidebarSection { .. } => {
+                return None
+            }
         };
         Some(Panel {
-            // **`None` means there is no panel mounted in the slot**, and
-            // nothing else. This used to say "described when every variant of
-            // the spec is one the tree describes, and painted whole
-            // otherwise" — the `covered` gate, which ran out of `false` arms
-            // and was deleted in 2.4. `panel_interior` asks one question, and
-            // it is the same one `panel_is_described` asks; `WindowEmbed` is
-            // described like everything else, as a `Host` leaf.
-            interior: self.panel_interior(crate::app::PanelSlot::Floating),
+            // **No interior means no panel**: a slot whose panel the registry
+            // does not hold has nothing to describe, and there is no frame.
+            // This used to say "described when every variant of the spec is
+            // one the tree describes, and painted whole otherwise" — the
+            // `covered` gate, which ran out of `false` arms and was deleted;
+            // `WindowEmbed` is described like everything else, as a `Host`
+            // leaf.
+            interior: self.panel_interior(crate::app::PanelSlot::Floating)?,
             spot,
             title: p.title.clone(),
             closable: p.closable,
@@ -6746,5 +6838,214 @@ impl Editor {
                 ),
             }
         })
+    }
+}
+
+// The startup decision needs plugin manifests and a plugin command, neither
+// of which exists in a plugin-less build.
+#[cfg(all(test, feature = "plugins"))]
+mod dock_reservation_tests {
+    //! The dock column held open at startup for the plugin that will fill
+    //! it — see [`Editor::dock_reserved`] and [`Editor::apply_startup_dock_chrome`].
+    use super::*;
+    use crate::config::{Config, PluginConfig};
+    use crate::config_io::DirectoryContext;
+    use crate::view::shell::frame::DockWidthRule;
+    use fresh_core::api::PluginCommand;
+    use std::sync::Arc;
+
+    const COLS: u16 = 120;
+    const ROWS: u16 = 40;
+    const DECLARES_DOCK: &str = r#"{"chrome":{"dock":{"open_setting":"autoOpenDock"}}}"#;
+
+    /// A home with `plugins/orchestrator.manifest.json` planted, so discovery
+    /// finds a declaration with no plugin code to run. Leaked for the
+    /// editor's lifetime, like the neighbouring test editors.
+    fn home(manifest: Option<&str>) -> DirectoryContext {
+        let temp = tempfile::tempdir().unwrap();
+        let dir_context = DirectoryContext::for_testing(temp.path());
+        if let Some(body) = manifest {
+            let plugins = dir_context.config_dir.join("plugins");
+            std::fs::create_dir_all(&plugins).unwrap();
+            std::fs::write(plugins.join("orchestrator.manifest.json"), body).unwrap();
+        }
+        std::mem::forget(temp);
+        dir_context
+    }
+
+    fn orchestrator_config(enabled: bool, settings: serde_json::Value) -> Config {
+        let mut config = Config::default();
+        config.plugins.insert(
+            "orchestrator".into(),
+            PluginConfig {
+                enabled,
+                path: None,
+                settings,
+            },
+        );
+        config
+    }
+
+    fn editor(dir_context: DirectoryContext, config: Config, orchestrator_mode: bool) -> Editor {
+        Editor::for_test(
+            config,
+            COLS,
+            ROWS,
+            None,
+            dir_context,
+            crate::view::color_support::ColorCapability::TrueColor,
+            Arc::new(crate::model::filesystem::StdFileSystem),
+            None,
+            None,
+            true,
+            false,
+            orchestrator_mode,
+        )
+        .unwrap()
+    }
+
+    fn frame() -> ratatui::layout::Rect {
+        ratatui::layout::Rect::new(0, 0, COLS, ROWS)
+    }
+
+    fn dock_width_of(editor: &Editor) -> Option<u16> {
+        editor.compute_dock_split(frame()).0.map(|d| d.width)
+    }
+
+    fn mount(editor: &mut Editor) {
+        editor
+            .handle_plugin_command(PluginCommand::MountFloatingWidget {
+                plugin: "orchestrator".into(),
+                panel_id: 7,
+                spec: fresh_core::api::WidgetSpec::Raw {
+                    entries: Vec::new(),
+                    key: None,
+                },
+                width_pct: 100,
+                height_pct: 100,
+                as_dock: true,
+                focus_marker: false,
+                title: None,
+                closable: false,
+                start_blurred: true,
+                mode: None,
+                label_align: fresh_core::api::LabelAlign::Left,
+            })
+            .unwrap();
+    }
+
+    fn unmount(editor: &mut Editor) {
+        editor
+            .handle_plugin_command(PluginCommand::UnmountFloatingWidget {
+                plugin: "orchestrator".into(),
+                panel_id: 7,
+            })
+            .unwrap();
+    }
+
+    fn hook_completed(editor: &mut Editor, hook_name: &str) {
+        editor
+            .handle_plugin_command(PluginCommand::HookCompleted {
+                hook_name: hook_name.to_string(),
+            })
+            .unwrap();
+    }
+
+    /// The startup decision: manifest, config and launch mode in, the width
+    /// carved on the first frame out — before any plugin has run.
+    #[test]
+    fn what_the_first_frame_carves() {
+        let rule = DockWidthRule::default().width(COLS);
+        let switched_off = orchestrator_config(true, serde_json::json!({ "autoOpenDock": false }));
+        let disabled = orchestrator_config(false, serde_json::Value::Null);
+        #[rustfmt::skip]
+        let cases: [(&str, Option<&str>, Config, bool, Option<u16>); 7] = [
+            ("a declared dock, at the rule's width", Some(DECLARES_DOCK), Config::default(), false, Some(rule)),
+            ("no manifest", None, Config::default(), false, None),
+            ("a manifest with no dock", Some(r#"{"chrome":{}}"#), Config::default(), false, None),
+            ("a declared width rule", Some(r#"{"chrome":{"dock":{"width":{"min":30,"max":30}}}}"#), Config::default(), false, Some(30)),
+            ("the named setting off", Some(DECLARES_DOCK), switched_off.clone(), false, None),
+            ("...except for a bare `fresh`", Some(DECLARES_DOCK), switched_off, true, Some(rule)),
+            ("a disabled plugin declares nothing", Some(DECLARES_DOCK), disabled, false, None),
+        ];
+        for (case, manifest, config, orchestrator_mode, want) in cases {
+            let editor = editor(home(manifest), config, orchestrator_mode);
+            assert_eq!(dock_width_of(&editor), want, "{case}");
+            let (_, chrome) = editor.compute_dock_split(frame());
+            let carved = want.unwrap_or(0);
+            assert_eq!((chrome.x, chrome.width), (carved, COLS - carved), "{case}");
+            if let Some(w) = want {
+                assert_eq!(
+                    editor.dock_cols_if_open(),
+                    w,
+                    "{case}: what the plugin is told"
+                );
+            }
+        }
+    }
+
+    /// What is remembered is the slot at quit: mounted comes back, closed
+    /// stays away (except for a bare `fresh`), a dragged width comes back
+    /// with it, and a plugin's transient close-and-reopen is not a decision.
+    #[test]
+    fn what_the_user_leaves_is_what_comes_back() {
+        let home = home(Some(DECLARES_DOCK));
+        let launch = |orchestrator_mode| editor(home.clone(), Config::default(), orchestrator_mode);
+
+        let mut e = launch(false);
+        assert!(e.dock_reserved, "held open on a first launch");
+        mount(&mut e);
+        assert!(!e.dock_reserved, "the mount fills the column");
+        assert!(dock_width_of(&e).is_some(), "...and the column stays");
+
+        // A transient: closed and reopened before the quit.
+        unmount(&mut e);
+        assert_eq!(dock_width_of(&e), None);
+        mount(&mut e);
+        e.save_dock_chrome();
+        assert!(
+            launch(false).dock_reserved,
+            "a close the plugin undid is not a decision"
+        );
+
+        // Closed at quit.
+        let mut e = launch(false);
+        mount(&mut e);
+        unmount(&mut e);
+        e.save_dock_chrome();
+        let e = launch(false);
+        assert!(!e.dock_reserved, "the user closed it");
+        assert_eq!(dock_width_of(&e), None);
+        assert!(launch(true).dock_reserved, "...unless it is a bare `fresh`");
+
+        // Open and dragged at quit: the width is written as the drag ends.
+        let mut e = launch(false);
+        mount(&mut e);
+        e.handle_dock_resize_drag(37); // the wall lands on column 37: width 38
+        e.persist_dock_width();
+        e.save_dock_chrome();
+        assert_eq!(
+            dock_width_of(&launch(false)),
+            Some(38),
+            "open, at the dragged width"
+        );
+    }
+
+    /// The `ready` hook's own sentinel releases a column nothing mounted
+    /// into (a manifest with no plugin behind it, here); another hook's
+    /// does not; and nothing is remembered, since it was not the user's doing.
+    #[test]
+    fn the_hooks_own_sentinel_releases_a_column_nothing_mounted_into() {
+        let mut e = editor(home(Some(DECLARES_DOCK)), Config::default(), false);
+        hook_completed(&mut e, "plugins_loaded");
+        assert!(
+            dock_width_of(&e).is_some(),
+            "another hook's sentinel is not `ready`'s"
+        );
+        hook_completed(&mut e, "ready");
+        let (dock, chrome) = e.compute_dock_split(frame());
+        assert!(dock.is_none(), "the column goes back to the editor");
+        assert_eq!(chrome.width, COLS);
+        assert!(editor(e.dir_context.clone(), Config::default(), false).dock_reserved);
     }
 }

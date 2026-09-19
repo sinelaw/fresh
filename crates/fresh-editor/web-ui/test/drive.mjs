@@ -132,6 +132,42 @@ const s2 = await scene(page);
 check('typed text appears in the real pipeline-rendered cells', paneText(s2).includes('QWZX'), `head="${paneText(s2).slice(0, 40)}"`);
 await page.screenshot({ path: `${SHOTS}/21-real-pipeline-typed.png` });
 
+console.log('\n[unicode: the grid walks GRAPHEME CLUSTERS, not UTF-16 units]');
+// Every cell gets one x in the SVG. A ZWJ sequence, a flag, a skin tone or a
+// base+combining pair is ONE cell made of several UTF-16 units, so counting
+// `.length` used to hand each piece its own column: the emoji broke into
+// fragments and the rest of the line drifted right. The rendered row must stay
+// exactly as wide (in cells) as a plain ASCII row of the same pane.
+const UNI = 'UNI[\u{1F468}\u200D\u{1F469}\u200D\u{1F467}\u200D\u{1F466}|\u{1F1EE}\u{1F1F1}|\u{1F44D}\u{1F3FD}|a\u0301e\u0300o\u0302]';
+await page.keyboard.press('Home');
+await page.keyboard.insertText(UNI + '\n');
+await page.waitForFunction(t => window.fresh.scene.regions.panes[0].cells
+  .some(r => r.map(x => x.t).join('').includes(t)), 'UNI[', { timeout: 5000 }).catch(() => {});
+const uni = await page.evaluate(() => {
+  const texts = [...document.querySelectorAll('.region.pane-content svg.cells text')];
+  const xs = t => [...t.querySelectorAll('tspan')]
+    .reduce((n, sp) => n + (sp.getAttribute('x') || '').trim().split(/\s+/).filter(Boolean).length, 0);
+  const row = texts.find(t => t.textContent.includes('UNI['));
+  if (!row) return null;
+  const plain = texts.find(t => t !== row && /^[\x20-\x7E]*$/.test(t.textContent));
+  const cluster = [...row.querySelectorAll('tspan')].find(sp => sp.textContent === '\u{1F44D}\u{1F3FD}');
+  return {
+    cells: xs(row),
+    plainCells: plain ? xs(plain) : null,
+    clusterXs: cluster ? (cluster.getAttribute('x') || '').trim().split(/\s+/).filter(Boolean).length : null,
+  };
+});
+check('the unicode row rendered', !!uni, 'row not found');
+check('a multi-unit cluster is ONE positioned cell', uni && uni.clusterXs === 1, JSON.stringify(uni));
+check('the unicode row is exactly as wide (in cells) as an ASCII row',
+  !!uni && uni.plainCells != null && uni.cells === uni.plainCells, JSON.stringify(uni));
+await page.screenshot({ path: `${SHOTS}/21-unicode-graphemes.png` });
+// Undo the probe line so the rest of the suite sees the file it expected.
+for (let i = 0; i < 8 && (await scene(page)).regions.panes[0].cells
+  .some(r => r.map(x => x.t).join('').includes('UNI[')); i++) {
+  await page.keyboard.press('Control+z'); await page.waitForTimeout(120);
+}
+
 console.log('\n[file explorer = native tree, NOT cells]');
 await page.locator('body').click();
 // Open the sidebar if it isn't already (Ctrl+B toggles; the live editor may
@@ -330,9 +366,18 @@ if (webDockPanels) {
   }
 
   console.log('\n[dock clicks are cells routed over the tree]');
-  // The "empty" toggle (hide trivial): its row's text changes state when
-  // clicked, and again when clicked once more.
+  // The "show empty" toggle: its row's marker changes state when clicked, and
+  // again when clicked once more. It lives behind the header's `⋯` since the
+  // dock collapsed four header controls to two (`+ New` and `⋯`), so each
+  // click needs the menu opened first — the menu closes on activation, which
+  // is itself the plugin reacting to a cell click.
+  const openDockMenu = async () => {
+    const dots = findLine(await treeOf(), 'dock', /⋯/);
+    if (dots) await clickLine(dots);
+    await waitTree((t, lines) => lines('dock').some(l => /empty/i.test(l)), null, 5000);
+  };
   const toggleText = async () => { const it = findLine(await treeOf(), 'dock', /empty/i); return it ? it.text : null; };
+  await openDockMenu();
   const t0 = await toggleText();
   let tg = findLine(await treeOf(), 'dock', /empty/i); if (tg) await clickLine(tg);
   await waitTree((t, lines, v0) => lines('dock').some(l => /empty/i.test(l) && l !== v0), t0, 5000);
@@ -342,6 +387,10 @@ if (webDockPanels) {
   await waitTree((t, lines, v1) => lines('dock').some(l => /empty/i.test(l) && l !== v1), t1, 5000);
   const t2 = await toggleText();
   check('a second click flips it back (the frame the click landed on was rebuilt)', t2 === t0, `${JSON.stringify(t1)} -> ${JSON.stringify(t2)}`);
+  // A settings row leaves the menu open (unlike an action row, which closes
+  // it); Esc puts the dock back to its plain state for what follows.
+  await page.keyboard.press('Escape');
+  await waitTree((t, lines) => !lines('dock').some(l => /Manage workspaces/i.test(l)), null, 5000);
 
   console.log('\n[dock right-click = plugin context menu (anchored popup, like the TUI)]');
   // Right-click on a session row fires the plugin's `context` event exactly as
@@ -396,14 +445,23 @@ if (webDockPanels) {
   }
 
   console.log('\n[dock dropdowns are layers over the column]');
-  // "New Task… ▾" opens a create dropdown as a layer inside the dock's
-  // subtree; its rows are display-list items below the trigger.
-  const newTask = findLine(await treeOf(), 'dock', /New Task/);
-  if (newTask) await clickLine(newTask);
-  await waitTree((t, lines, before) => lines('dock').length > before, treeLines(await treeOf(), 'dock').length, 5000);
+  // The header's `⋯` opens the dock's menu as a layer inside the dock's own
+  // subtree; its rows are display-list items below the trigger. (It replaced
+  // the old "New Task… ▾" dropdown when the header collapsed to two controls:
+  // `+ New` now goes straight to the dialog, and every setting moved here.)
+  const dotsTrigger = findLine(await treeOf(), 'dock', /⋯/);
+  if (dotsTrigger) await clickLine(dotsTrigger);
+  await waitTree((t, lines) => lines('dock').some(l => /Manage workspaces/i.test(l)), null, 5000);
   const opened = await treeOf();
-  const option = treeLines(opened, 'dock').find(i => /^\s*New Task…\s*$/.test(i.text));
-  check('New Task dropdown rows are items below the trigger', !!option && !!newTask && option.y > newTask.y, JSON.stringify({ trigger: newTask && newTask.y, option: option && option.y }));
+  const option = treeLines(opened, 'dock').find(i => /Manage workspaces/i.test(i.text));
+  check('dock menu rows are items below the trigger', !!option && !!dotsTrigger && option.y > dotsTrigger.y, JSON.stringify({ trigger: dotsTrigger && dotsTrigger.y, option: option && option.y }));
+  // One row is checked for the clipping a `list` inside a narrow column
+  // silently does: it came back as "Discover agent ses" until the rows were
+  // padded to the widest, which is what makes the list ask for the width it
+  // needs. "Manage workspaces…" because it is long enough to have been
+  // clipped at the ~20 columns the dock gave, and its wording is not in play.
+  check('⋯ menu rows are not clipped by the dock column',
+    !!option && /Manage workspaces…/.test(option.text), JSON.stringify(option && option.text));
   await page.keyboard.press('Escape');
   await waitTree((t, lines, n) => lines('dock').length <= n, treeLines(opened, 'dock').length - 1, 5000);
   await page.keyboard.press('Escape'); await page.waitForTimeout(150);
@@ -956,12 +1014,11 @@ if (webDockPanels) {
   }
   await page.waitForTimeout(200);
   check('dock alone (no modal) has no scrim item', !(await treeOf()).items.some(i => i.kind === 'scrim'));
-  // "New Task… ▾" opens a create dropdown first; pick the "New Task…" option.
-  const nt = findLine(await treeOf(), 'dock', /New Task/);
+  // `+ New` goes straight to the dialog — one click since the dock's header
+  // collapsed to two controls (it used to be "New Task… ▾" and then an option
+  // row in the dropdown it opened).
+  const nt = findLine(await treeOf(), 'dock', /\+ New/);
   if (nt) await clickLine(nt);
-  await waitTree((t, lines) => lines('dock').some(l => /^\s*New Task…\s*$/.test(l)), null, 5000);
-  const opt = treeLines(await treeOf(), 'dock').find(i => /^\s*New Task…\s*$/.test(i.text));
-  if (opt) await clickLine(opt);
   await waitTree((t) => t.surfaces.some(s => s.kind === 'floating' && !s.anchored));
   await page.waitForTimeout(200);
   const modal = (await treeOf()).surfaces.find(s => s.kind === 'floating' && !s.anchored);
@@ -978,7 +1035,8 @@ if (webDockPanels) {
   const rowAfter = treeLines(await treeOf(), 'dock').find(i => /fresh/.test(i.text));
   check('a click over the dock is eaten by the modal (row unchanged, modal still open)',
     stillModal && !!rowIt && !!rowAfter && rowAfter.text === rowIt.text && rowAfter.bg === rowIt.bg,
-    JSON.stringify({ stillModal, before: rowIt && rowIt.text, after: rowAfter && rowAfter.text }));
+    JSON.stringify({ stillModal, before: rowIt && { t: rowIt.text, bg: rowIt.bg, fg: rowIt.fg },
+      after: rowAfter && { t: rowAfter.text, bg: rowAfter.bg, fg: rowAfter.fg } }));
   await page.screenshot({ path: `${SHOTS}/34-new-workspace-modal.png` });
   await page.keyboard.press('Escape');
   await waitTree((t) => !t.surfaces.some(s => s.kind === 'floating'));

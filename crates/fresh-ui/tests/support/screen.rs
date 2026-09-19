@@ -153,6 +153,19 @@ fn draw(s: &mut Screen, item: &Item, frame: Rect, fill_char: &impl Fn(&str) -> O
         // A wash keeps the text under it; the screen model has no ground to
         // recolour, so it paints nothing.
         Draw::Wash => {}
+        // A rule is a ground made of a cluster: as many as fit the rect the
+        // library settled on. A cluster is laid whole or not at all.
+        Draw::Rule(g) => {
+            let clip = clip.intersect(r);
+            let w = fresh_ui::glyph::width(g).max(1);
+            for y in r.y..r.y + r.h as i32 {
+                let mut x = r.x;
+                while x + w as i32 <= r.right() {
+                    s.put_symbol(x, y, g, w, clip);
+                    x += w as i32;
+                }
+            }
+        }
         Draw::Scrim(Scrim::Opaque) => fill(s, frame, ' ', frame),
         Draw::Scrim(Scrim::Dim) => fill(s, frame, '·', frame),
         Draw::Border(bs) => border(s, r, clip, *bs),

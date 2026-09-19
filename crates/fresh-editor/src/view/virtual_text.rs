@@ -128,6 +128,9 @@ pub struct VirtualText {
     pub fg_theme_key: Option<String>,
     /// Optional theme key for the background colour.
     pub bg_theme_key: Option<String>,
+    /// Left-pad this hint so it ends at this column of its rendered row,
+    /// measured while the row is spliced. `None` = the usual inlay padding.
+    pub pad_to_column: Option<u32>,
     /// Where to render relative to the marker position
     pub position: VirtualTextPosition,
     /// Priority for ordering multiple items at same position (higher = later)
@@ -263,6 +266,7 @@ impl VirtualTextManager {
                 style,
                 fg_theme_key: None,
                 bg_theme_key: None,
+                pad_to_column: None,
                 position: vtext_position,
                 priority,
                 string_id: None,
@@ -324,6 +328,7 @@ impl VirtualTextManager {
                 style,
                 fg_theme_key,
                 bg_theme_key,
+                pad_to_column: None,
                 position: vtext_position,
                 priority,
                 string_id: None,
@@ -366,6 +371,7 @@ impl VirtualTextManager {
                 style,
                 fg_theme_key: None,
                 bg_theme_key: None,
+                pad_to_column: None,
                 position: vtext_position,
                 priority,
                 string_id: Some(string_id),
@@ -394,6 +400,7 @@ impl VirtualTextManager {
         vtext_position: VirtualTextPosition,
         priority: i32,
         string_id: String,
+        pad_to_column: Option<u32>,
     ) -> VirtualTextId {
         debug_assert!(
             vtext_position.is_inline(),
@@ -414,6 +421,7 @@ impl VirtualTextManager {
                 style,
                 fg_theme_key,
                 bg_theme_key,
+                pad_to_column,
                 position: vtext_position,
                 priority,
                 string_id: Some(string_id),
@@ -508,6 +516,7 @@ impl VirtualTextManager {
                 style,
                 fg_theme_key,
                 bg_theme_key,
+                pad_to_column: None,
                 position: placement,
                 priority,
                 string_id: None,

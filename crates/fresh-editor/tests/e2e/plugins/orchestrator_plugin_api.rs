@@ -142,6 +142,46 @@ registerHandler("probe_ssh_no_host", async function () {
     }
 });
 
+// `getWorkspace` answers by durable id, by window number, and by dock name,
+// and carries the decision chain behind the state badge. The launch
+// workspace has no agent terminal, so it reads `idle` under the built-in
+// rules with a reason that says so.
+registerHandler("probe_get_workspace", function () {
+    const o = orch();
+    const w = o.getWorkspace(me().workspaceId);
+    const byNumber = o.getWorkspace(me().windowId);
+    const byName = o.getWorkspace(me().name);
+    const missing = o.getWorkspace("ws-does-not-exist");
+    report(
+        "PROBE_GET " + w.agentState + " " + w.explain.state + " rules=" + w.explain.rules.source +
+        " reasons=" + w.explain.reasons.length +
+        " number=" + (byNumber && byNumber.workspaceId === w.workspaceId) +
+        " name=" + (byName && byName.workspaceId === w.workspaceId) +
+        " missing=" + (missing === null),
+    );
+});
+
+// `waitForState` returns as soon as the state is one of `until`, reports a
+// timeout without throwing, and throws only for a workspace that does not
+// exist.
+registerHandler("probe_wait", async function () {
+    const o = orch();
+    const now = await o.waitForState(me().windowId, { until: "idle", timeoutMs: 2000 });
+    const late = await o.waitForState(me().windowId, { until: ["working"], timeoutMs: 300 });
+    let threw = "no";
+    try {
+        await o.waitForState("ws-does-not-exist", { timeoutMs: 100 });
+    } catch (e: any) {
+        threw = "yes";
+    }
+    report(
+        "PROBE_WAIT " + now.state + " " + now.timedOut + " then " + late.state + " " + late.timedOut +
+        " unknown_threw=" + threw,
+    );
+});
+
+editor.registerCommand("Probe Get Workspace", "", "probe_get_workspace", null);
+editor.registerCommand("Probe Wait For State", "", "probe_wait", null);
 editor.registerCommand("Probe File Under Folder", "", "probe_file_under_folder", null);
 editor.registerCommand("Probe Rename Workspace", "", "probe_rename", null);
 editor.registerCommand("Probe List Folders", "", "probe_list_folders", null);
@@ -152,7 +192,23 @@ editor.registerCommand("Probe Unknown Target", "", "probe_unknown_target", null)
 editor.registerCommand("Probe Unknown Folder", "", "probe_unknown_folder", null);
 editor.registerCommand("Probe List Archived", "", "probe_list_archived", null);
 editor.registerCommand("Probe Unarchive Missing", "", "probe_unarchive_missing", null);
+// A bare IPv6 literal is a host, not a host with a port. The pending row's
+// name is `ssh:<destination>`, which is the only place the parsed
+// destination is observable without a host that answers.
+registerHandler("probe_ssh_ipv6", async function () {
+    const o = orch();
+    // Never awaited: the attach will not reach `2001:db8::1` (a reserved
+    // documentation prefix), and the row this reads exists as soon as the
+    // spec is built. Caught so the eventual rejection is not unhandled,
+    // which under `set_panic_on_js_errors` would kill the plugin host.
+    o.newWorkspace({ backend: "ssh", host: "2001:db8::1" }).catch(function () {});
+    await editor.delay(50);
+    const row = o.listWorkspaces().find(function (w: any) { return w.kind === "pending"; });
+    report("PROBE_V6 " + (row ? row.name : "none"));
+});
+
 editor.registerCommand("Probe Ssh No Host", "", "probe_ssh_no_host", null);
+editor.registerCommand("Probe Ssh IPv6", "", "probe_ssh_ipv6", null);
 "#;
 
 /// A git project with the orchestrator plugin and the API probe installed.
@@ -191,7 +247,7 @@ fn harness() -> (tempfile::TempDir, EditorTestHarness) {
 /// on render alone can land before the dock is listening).
 fn open_dock(h: &mut EditorTestHarness) {
     run_command(h, "Orchestrator: Toggle Dock");
-    h.wait_until(|h| h.screen_to_string().contains("Orchestrator") && h.editor().is_dock_focused())
+    h.wait_until(|h| h.screen_to_string().contains("+ New") && h.editor().is_dock_focused())
         .unwrap();
 }
 
@@ -219,35 +275,29 @@ fn dock_column(screen: &str) -> String {
         .join("\n")
 }
 
-/// Click the toolbar's density button, which sits beside "Filters" rather
-/// than inside it. Used to put the dock in card density — the opposite of
-/// the compact default — so a probe that switches it *to* compact has
-/// somewhere to switch from.
-fn click_view_button(h: &mut EditorTestHarness) {
-    let screen = h.screen_to_string();
-    // Click the button itself, not the start of its row — the density button
-    // shares the toolbar row with "Filters", which owns the left edge.
-    let (vrow, vcol) = screen
-        .lines()
-        .enumerate()
-        .find_map(|(r, l)| {
-            l.find("view:")
-                .map(|b| (r as u16, l[..b].chars().count() as u16))
-        })
-        .unwrap_or_else(|| panic!("screen missing 'view:':\n{screen}"));
+/// Put the dock in card density through the `⋯` menu's "card view" row, so
+/// the probe has a density to change from. The menu is closed again after.
+fn set_card_view(h: &mut EditorTestHarness) {
+    open_dock_menu(h);
+    let (vcol, vrow) = h
+        .find_text_on_screen("card view")
+        .unwrap_or_else(|| panic!("screen missing 'card view':\n{}", h.screen_to_string()));
     h.mouse_click(vcol + 1, vrow).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("● card view"))
+        .unwrap();
+    h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| !h.screen_to_string().contains("Manage workspaces"))
+        .unwrap();
 }
 
-/// Expand the dock's collapsible "Filters" section, which holds the project
-/// control and the two checkboxes.
-fn expand_filters(h: &mut EditorTestHarness) {
-    let screen = h.screen_to_string();
-    let frow = screen
-        .lines()
-        .position(|l| l.contains("Filters"))
-        .unwrap_or_else(|| panic!("screen missing 'Filters':\n{screen}")) as u16;
-    h.mouse_click(3, frow).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("Manage"))
+/// Open the dock header's `⋯` menu, which holds the density rows (the
+/// applied one wears a `●`), the show switches and the project scope.
+fn open_dock_menu(h: &mut EditorTestHarness) {
+    let (mcol, mrow) = h
+        .find_text_on_screen("⋯")
+        .unwrap_or_else(|| panic!("screen missing '⋯':\n{}", h.screen_to_string()));
+    h.mouse_click(mcol, mrow).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("Manage workspaces"))
         .unwrap();
 }
 
@@ -308,6 +358,110 @@ fn rename_workspace_relabels_the_row_on_the_dock() {
         .unwrap();
 }
 
+/// `getWorkspace` resolves the same workspace by durable id, window number
+/// and dock name, returns `null` for an id that matches nothing, and
+/// explains the badge: the launch workspace has no agent terminal, so it is
+/// `idle` under the built-in rules with at least one reason.
+#[test]
+fn get_workspace_resolves_by_id_number_and_name_and_explains_the_state() {
+    let (_tmp, mut h) = harness();
+
+    run_command(&mut h, "Probe Get Workspace");
+
+    h.wait_until(|h| h.screen_to_string().contains("PROBE_GET "))
+        .unwrap();
+    // The report lands in the buffer, so the screen row carries the
+    // line-number gutter before it; read from the marker on.
+    let screen = h.screen_to_string();
+    let row = screen.lines().find(|l| l.contains("PROBE_GET ")).unwrap();
+    let line = row[row.find("PROBE_GET ").unwrap()..].trim().to_string();
+    assert!(
+        line.starts_with("PROBE_GET idle idle rules=built-in reasons=")
+            && line.contains(" number=true name=true missing=true"),
+        "unexpected probe line: {line}"
+    );
+}
+
+/// Which rule set `getWorkspace().explain` reports, with `rules` planted on
+/// disk. Fires the `ready` hook, which is what loads them and which only the
+/// real binary fires.
+fn reported_rule_source(rules: &str) -> String {
+    let (_tmp, root) = setup_project();
+    let data_home = tempfile::tempdir().unwrap();
+    let rules_dir = data_home.path().join("data").join("orchestrator");
+    fs::create_dir_all(&rules_dir).unwrap();
+    fs::write(rules_dir.join("detection-rules.json"), rules).unwrap();
+
+    let dir_context = fresh::config_io::DirectoryContext::for_testing(data_home.path());
+    let mut h = EditorTestHarness::create(
+        120,
+        32,
+        crate::common::harness::HarnessOptions::new()
+            .with_working_dir(root)
+            .with_shared_dir_context(dir_context),
+    )
+    .unwrap();
+    h.render().unwrap();
+    h.editor_mut().fire_ready_hook();
+
+    run_command(&mut h, "Probe Get Workspace");
+    h.wait_until(|h| h.screen_to_string().contains("PROBE_GET "))
+        .unwrap();
+    let screen = h.screen_to_string();
+    let row = screen.lines().find(|l| l.contains("PROBE_GET ")).unwrap();
+    let line = row[row.find("PROBE_GET ").unwrap()..].trim().to_string();
+    let at = line.find("rules=").expect("probe reports a rule source");
+    line[at + "rules=".len()..]
+        .split_whitespace()
+        .next()
+        .unwrap()
+        .to_string()
+}
+
+/// **A rules file cannot hand the plugin a pattern that never finishes.**
+/// `detectionRulesUrl` makes the rule set remote, mutable data that runs on
+/// the plugin thread against every terminal line, and JavaScript gives a regex
+/// no deadline — so `(x+x+)+y`, six characters, would hang the editor on a
+/// line of thirty `x`s. The plugin refuses a quantified group that contains a
+/// quantifier before compiling it, and falls back to the built-ins.
+///
+/// **The benign case is half the test, not a courtesy.** Without it the
+/// catastrophic assertion passes whenever the file is not read at all — which
+/// is exactly what happened on the first draft of this test, because the
+/// `ready` hook that loads the rules is fired only by the real binary. A test
+/// that cannot tell "refused" from "never looked" is not testing anything.
+#[test]
+fn a_catastrophic_detection_rule_is_refused_and_the_built_ins_stand_in() {
+    assert_eq!(
+        reported_rule_source(r#"{"version": 99, "blocked": ["press enter to continue"]}"#),
+        "file",
+        "a usable planted file must be read and reported — if this fails, the \
+         plant never arrived and the refusal case below proves nothing",
+    );
+
+    assert_eq!(
+        reported_rule_source(r#"{"version": 99, "blocked": ["(x+x+)+y"]}"#),
+        "built-in",
+        "the file's only rule can backtrack catastrophically, so the built-ins \
+         must be in force *and* be what the plugin reports — reporting the \
+         file's own version while the built-ins detect is how this hid",
+    );
+}
+
+/// `waitForState` returns at once when the state already matches, reports a
+/// timeout (rather than throwing) when it never does, and throws for a
+/// workspace that does not exist.
+#[test]
+fn wait_for_state_returns_times_out_and_refuses_unknown_targets() {
+    let (_tmp, mut h) = harness();
+
+    run_command(&mut h, "Probe Wait For State");
+
+    h.wait_until(|h| h.screen_to_string().contains("PROBE_WAIT "))
+        .unwrap();
+    h.assert_screen_contains("PROBE_WAIT idle false then idle true unknown_threw=yes");
+}
+
 /// `listFolders` reports what the dock shows, parents before children, with
 /// the nesting depth a caller needs to render the tree.
 #[test]
@@ -328,21 +482,20 @@ fn list_folders_reports_the_tree_the_dock_renders() {
     .unwrap();
 }
 
-/// `setDockView` flips the density the dock's own "view" button flips.
+/// `setDockView` flips the density the dock's own `⋯` menu rows flip.
 #[test]
 fn set_dock_view_switches_the_dock_to_compact() {
     let (_tmp, mut h) = harness();
     open_dock(&mut h);
     // Start from card, so the probe has a density to change.
-    click_view_button(&mut h);
-    h.wait_until(|h| h.screen_to_string().contains("view: card"))
-        .unwrap();
+    set_card_view(&mut h);
 
     run_command(&mut h, "Probe Compact View");
 
-    h.wait_until(|h| h.screen_to_string().contains("view: compact"))
+    open_dock_menu(&mut h);
+    h.wait_until(|h| h.screen_to_string().contains("● compact view"))
         .unwrap();
-    h.assert_screen_not_contains("view: card");
+    h.assert_screen_not_contains("● card view");
 }
 
 /// `setDockFilter` drives the dock's search box: a needle nothing matches
@@ -483,4 +636,27 @@ fn an_ssh_create_without_a_host_is_refused_without_killing_the_plugin_host() {
     run_command(&mut h, "Probe List Archived");
     h.wait_until(|h| h.screen_to_string().contains("PROBE_ARCHIVED"))
         .unwrap();
+}
+
+/// **An IPv6 literal is all colons, so a bare `host:port` split is a guess.**
+/// `buildSshSpec` kept its own copy of the parse — `/^(.+):(\d+)$/`, greedy —
+/// which reads `2001:db8::1` as the host `2001:db8:` on port 1. The dialog's
+/// own parser had already been taught the bracketed form; the copy had not, so
+/// the same address was right in the resolved-target note and wrong in the
+/// transport built from it, and the connection failure named a host the user
+/// never typed.
+///
+/// The pending row is where the parsed destination surfaces: it is labelled
+/// `ssh:<destination>`, and it exists as soon as the spec is built, before
+/// anything has tried to connect.
+#[test]
+fn a_bare_ipv6_host_is_not_split_into_a_host_and_a_port() {
+    let (_tmp, mut h) = harness();
+    open_dock(&mut h);
+
+    run_command(&mut h, "Probe Ssh IPv6");
+
+    h.wait_until(|h| h.screen_to_string().contains("PROBE_V6 "))
+        .unwrap();
+    h.assert_screen_contains("PROBE_V6 ssh:2001:db8::1");
 }

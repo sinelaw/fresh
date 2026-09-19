@@ -2,6 +2,9 @@
 
 name: Linux Packages
 
+permissions:
+  contents: read
+
 on:
   workflow_call:
   workflow_dispatch:
@@ -50,7 +53,7 @@ jobs:
           submodules: recursive
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch
         with:
           targets: ${{ matrix.target }}
 
@@ -98,7 +101,11 @@ jobs:
             export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc
             export BINDGEN_EXTRA_CLANG_ARGS="--sysroot=/usr/aarch64-linux-gnu"
           fi
-          cargo build --release --target ${{ matrix.target }}
+          # `--features web`: the browser UI is opt-in in Cargo.toml, so the
+          # .deb/.rpm would otherwise ship a `fresh` that rejects `--web`
+          # (#3316). Kept in step with debian/rules, which names the same
+          # feature when it has to build the binary itself.
+          cargo build --release --features web --target ${{ matrix.target }}
 
       - name: Strip binary to reduce size
         run: |
@@ -569,7 +576,7 @@ jobs:
           submodules: recursive
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable branch
 
       - name: Sync debian/changelog with Cargo.toml version
         run: ./scripts/update-debian-changelog.sh

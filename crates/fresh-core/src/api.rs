@@ -293,6 +293,14 @@ pub enum PluginResponse {
         request_id: u64,
         result: Result<u64, String>,
     },
+    /// `openMachine` resolved with `{id, platform, home, label}`. A response,
+    /// not a bare callback, so the runtime can record the handle against its
+    /// plugin and close it on unload.
+    MachineOpened {
+        request_id: u64,
+        #[ts(type = "unknown")]
+        info: JsonValue,
+    },
 }
 
 impl PluginResponse {
@@ -310,6 +318,7 @@ impl PluginResponse {
             | Self::SplitByLabel { request_id, .. }
             | Self::SplitWindowCreated { request_id, .. }
             | Self::SnapshotSynced { request_id }
+            | Self::MachineOpened { request_id, .. }
             | Self::WatchPathRegistered { request_id, .. } => *request_id,
         }
     }
@@ -1623,6 +1632,19 @@ pub struct EditorStateSnapshot {
     /// after the restart that activation triggers.
     #[serde(default)]
     pub env_active: bool,
+    /// Launched by a bare `fresh` in Orchestrator mode. The launch, not the
+    /// `orchestrator_mode` preference, which stays on for `fresh FILE`.
+    #[serde(default)]
+    pub orchestrator_mode: bool,
+    /// The left dock slot is open: a panel is in it, or the host is holding
+    /// the column for one its manifest declared. The plugin mounts at
+    /// `ready` iff this is set. Read via `editor.dockOpen()`.
+    #[serde(default)]
+    pub dock_open: bool,
+    /// The dock column's width in cells, open or not; `0` when the terminal
+    /// is too narrow for a dock. Read via `editor.dockCols()`.
+    #[serde(default)]
+    pub dock_cols: u16,
     /// The environment core detected in the workspace, as a JSON string
     /// (`{"name","kind","snippet"}`) or empty when none is detected. The
     /// env-manager plugin reads this via `editor.detectedEnv()` instead of
@@ -1800,6 +1822,9 @@ impl EditorStateSnapshot {
             authority_label: String::new(),
             workspace_trust_level: String::new(),
             env_active: false,
+            orchestrator_mode: false,
+            dock_open: false,
+            dock_cols: 0,
             detected_env: String::new(),
             diagnostics: Arc::new(HashMap::new()),
             folding_ranges: Arc::new(HashMap::new()),
@@ -2189,6 +2214,47 @@ pub enum ButtonKind {
     Danger,
 }
 
+/// Which way a form control's label sits in its `label_width` column.
+///
+/// A panel-wide property, set at mount (`MountFloatingWidget.label_align`)
+/// and read by every `Text` / `Dropdown` / `Toggle` / `Number` / `Radio`
+/// that pads its label to a column — alignment only means something relative to
+/// the siblings sharing that column, so it is not a per-control field.
+/// `Left` is what every panel rendered before the option existed.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, rename_all = "camelCase")]
+pub enum LabelAlign {
+    /// `Name      : [ … ]` — the label starts the column, padding after.
+    #[default]
+    Left,
+    /// `     Name : [ … ]` — padding first, so the colons form one edge.
+    Right,
+}
+
+/// How text that does not fit the width layout gave it gives up the cells.
+///
+/// **The cut is the run's to mark, for the same reason the width is the
+/// box's**: only measurement knows whether the text fit, so a plugin that
+/// appended its own ellipsis had to be told a width first — which is the
+/// duplication this removes. Mirrors `fresh_ui::desc::Elide`; ignored by
+/// wrapping text, which has no overflow to mark.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, TS, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+#[ts(export, rename_all = "camelCase")]
+pub enum Elide {
+    /// Clip, silently — right where the enclosing box already explains the
+    /// overflow. What every row did before the option existed.
+    #[default]
+    None,
+    /// Keep the head, mark the cut at the end: a message, a label, a line of
+    /// output.
+    Tail,
+    /// Keep the tail, mark the cut at the start: a path, whose last component
+    /// is the part worth seeing.
+    Head,
+}
+
 /// Declarative widget tree. Each variant is one node; nested
 /// composition is via `Row { children }` / `Col { children }`.
 ///
@@ -2220,6 +2286,16 @@ pub enum WidgetSpec {
         /// Ignored when the row contains multi-line (block) children.
         #[serde(default)]
         wrap: bool,
+        /// Settle a wrapping row's lines against its right edge: buttons
+        /// flush right while they fit, wrapping from the left when they do
+        /// not. Read only when `wrap` is set.
+        ///
+        /// The point is that the plugin does not have to know which of those
+        /// two layouts it is getting — the host lays the row out at a width
+        /// the plugin cannot see, and a guess made here is a guess about a
+        /// frame that has not happened yet.
+        #[serde(default)]
+        justify_end: bool,
     },
     /// Vertical layout: children stacked top-to-bottom.
     Col {
@@ -2254,9 +2330,18 @@ pub enum WidgetSpec {
         /// the label don't flip the value. Defaults to `false`.
         #[serde(default)]
         label_first: bool,
-        /// Pad the label to this display width in `label_first`
-        /// layout so a column of controls aligns their chips. `0` =
-        /// no padding. Defaults to `0`.
+        /// The label column a form's controls share, in display cells.
+        /// `0` = no column alignment. Defaults to `0`.
+        ///
+        /// **It means something in both layouts, and not the same thing.**
+        /// With `label_first`, it pads this toggle's own label so its chip
+        /// lines up with its siblings' value cells. Chip-first, the toggle
+        /// has no label in that column at all, so it indents the *chip*
+        /// there instead — which is how `[v] Remember this machine` sits
+        /// under the fields above it rather than at the panel's edge. A
+        /// chip-first toggle in a panel that sets a `label_width` therefore
+        /// moves right by that much plus the `: ` its siblings spend;
+        /// before this field was read on that path it stayed flush left.
         #[serde(default)]
         label_width: u32,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -2355,6 +2440,40 @@ pub enum WidgetSpec {
         /// taller than its window. Defaults to `0`.
         #[serde(default)]
         scroll_offset: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        key: Option<String>,
+    },
+    /// Inline single-select option group, rendered as
+    /// `label: (•) A   ( ) B   ( ) C` — every option visible in the
+    /// row, the selected one filled. The right shape for a short, fixed
+    /// choice a form asks about (a backend, a scope); a longer or
+    /// open-ended set is a `Dropdown`. Left/Right cycle the selection,
+    /// Home/End jump it, a click on an option selects it; Up/Down walk
+    /// the surrounding form like Tab.
+    ///
+    /// Like `Dropdown`, the *selected index* is host-owned instance
+    /// state after first render; the spec's `selected_index` is a seed
+    /// only. Every change fires `widget_event { event_type: "change",
+    /// payload: { index, value } }`.
+    Radio {
+        /// The selectable options, in display order.
+        options: Vec<String>,
+        /// Initial selected index into `options`. Read at first render
+        /// only; instance state takes over thereafter. Clamped to
+        /// `[0, options.len())`.
+        #[serde(default)]
+        selected_index: i32,
+        /// Optional label rendered before the options. Empty = omitted.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        label: String,
+        /// Whether this widget has visual focus. Initial-only once the
+        /// host owns focus.
+        #[serde(default)]
+        focused: bool,
+        /// Pad the label to this display width so a column of controls
+        /// aligns their option cells. `0` = no padding.
+        #[serde(default)]
+        label_width: u32,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
     },
@@ -2465,10 +2584,9 @@ pub enum WidgetSpec {
         /// button looks under the pointer.
         #[serde(default)]
         bare: bool,
-        /// Stretch the button across the full width it is laid out in
-        /// (the panel's content width, or its share of an enclosing
-        /// `Row`), padding the label with spaces — and truncating it
-        /// with an `…` when the width can't hold it.
+        /// Stretch the button across the full width it is laid out in:
+        /// the panel's content width, its share of an enclosing `Row`,
+        /// or the width an anchored popup settled on.
         ///
         /// This exists because focus / hover paint the button's *own*
         /// cells: a natural-width button leaves the rest of its row
@@ -2476,14 +2594,23 @@ pub enum WidgetSpec {
         /// row out (a `LabeledSection` pads every child to its inner
         /// width). Dropdown and context-menu entries are rows of a
         /// menu, not free-standing actions, so their highlight has to
-        /// span the row — set this on them and the host fills the row
-        /// at the width it actually rendered, with no plugin-side
-        /// width guess to drift on a resize or a dock drag.
+        /// span the row.
         ///
-        /// Leave it off for a free-standing action, and off for
-        /// anything inside an anchored popup that sizes itself to its
-        /// content — filling there stretches the popup to the whole
-        /// panel width.
+        /// **It is a width, not a longer label.** The host sizes the
+        /// button's box to its content and lets the enclosing column
+        /// stretch it, so the label stays the label and how wide the
+        /// row is stays layout's answer — including an answer nobody
+        /// can predict, like a dock the user just dragged. It used to
+        /// be spelled by padding the label with spaces out to a width
+        /// the caller had to supply, which is why it once carried a
+        /// warning against using it inside an anchored popup that hugs
+        /// its content: a box sized by its own padded text cannot hug.
+        /// A box sized by its content can, and the stretch is then what
+        /// widens every row to the widest one — so a menu no longer
+        /// pads its labels to align them.
+        ///
+        /// A label too long for the width it is given is truncated at
+        /// the tail with an `…`.
         #[serde(default)]
         full_width: bool,
         /// Style applied while the pointer is over this button. `None`
@@ -2974,6 +3101,45 @@ pub enum WidgetSpec {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
     },
+    /// One row of static text — the hint under a field, a status line,
+    /// a read-only summary. Not focusable, never a hit. `style` colours
+    /// the text (a dim `fg`, italic); `label_width` indents it into a
+    /// form's field column (the column a sibling control's `[` opens
+    /// at for the same `label_width`), so a field's hint sits under its
+    /// value with no column arithmetic in the plugin.
+    Label {
+        text: String,
+        #[ts(type = "Partial<OverlayOptions>")]
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        style: Option<OverlayOptions>,
+        /// Indent into the field column of a form whose controls share
+        /// this label width. `0` = flush left.
+        #[serde(default)]
+        label_width: u32,
+        /// Two or more styled runs on the one row — a state glyph in the
+        /// state's colour, then the name it belongs to. When non-empty
+        /// these replace `text`, exactly as they do on a
+        /// `TextPropertyEntry`; `style` still covers the whole row.
+        /// Without this a plugin needing two inks on a line has to drop
+        /// to `Raw`, which is a list of whole rows and no longer a label.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        segments: Vec<crate::text_property::StyledSegment>,
+        /// Break the text across rows instead of clipping it, at the width
+        /// layout settles on. Continuation rows start at the line's own
+        /// leading indent — the marker gutter and `label_width` count, so a
+        /// wrapped field hint stays inside the field column — and a word too
+        /// long for a row of its own is broken rather than run off the edge.
+        ///
+        /// The alternative is the plugin wrapping the prose itself, which
+        /// means deciding the width, which is layout's answer and not the
+        /// plugin's: see `fresh_ui::desc::Wrap`.
+        #[serde(default)]
+        wrap: bool,
+        /// How the row marks itself when it does not fit. See [`Elide`].
+        /// Ignored when `wrap` is set.
+        #[serde(default)]
+        elide: Elide,
+    },
     /// Imperative-virtual-buffer escape hatch. The plugin supplies
     /// `TextPropertyEntry[]` exactly as it would for
     /// `setVirtualBufferContent`; the host inlines those entries into
@@ -3090,6 +3256,7 @@ impl WidgetSpec {
             | WidgetSpec::Number { key, .. }
             | WidgetSpec::Overlay { key, .. }
             | WidgetSpec::Popup { key, .. }
+            | WidgetSpec::Radio { key, .. }
             | WidgetSpec::Raw { key, .. }
             | WidgetSpec::Row { key, .. }
             | WidgetSpec::Spacer { key, .. }
@@ -3420,6 +3587,17 @@ pub enum PluginCommand {
     /// Write a single setting to the runtime overlay for this session.
     /// `path` is dot-separated (e.g. "editor.tab_size"). Last write wins.
     SetSetting {
+        plugin_name: String,
+        path: String,
+        #[ts(type = "unknown")]
+        value: JsonValue,
+    },
+
+    /// Write a single setting to the user's config file, the way the
+    /// Settings UI does — the same shape as [`Self::SetSetting`], but it
+    /// outlives the session. The host validates the path before writing;
+    /// see `Editor::handle_save_setting`.
+    SaveSetting {
         plugin_name: String,
         path: String,
         #[ts(type = "unknown")]
@@ -3841,6 +4019,9 @@ pub enum PluginCommand {
         color: (u8, u8, u8),
         use_bg: bool, // true = use color as background, false = use as foreground
         before: bool, // true = before char, false = after char
+        /// See [`Self::AddVirtualTextStyled::epoch`].
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        epoch: Option<u64>,
     },
 
     /// Add virtual text with full styling — fg/bg can be RGB or theme
@@ -3858,6 +4039,18 @@ pub enum PluginCommand {
         bold: bool,
         italic: bool,
         before: bool,
+        /// Buffer version `position` was computed against, auto-stamped from the
+        /// hook epoch; the editor remaps it forward so a lagged hook's coordinate
+        /// still anchors where it meant. `None` = anchor verbatim.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        epoch: Option<u64>,
+        /// Left-pad the hint so it *ends* at this column of its rendered row,
+        /// measured at paint time. The emitter cannot size that padding itself:
+        /// it computes against a hook epoch the buffer has already moved past,
+        /// so a width from there lags the row being drawn. `None` = the usual
+        /// one-space inlay padding.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pad_to_column: Option<u32>,
     },
 
     /// Remove a virtual text by ID
@@ -5476,6 +5669,72 @@ pub enum PluginCommand {
     /// automatically when their buffer closes.
     ReleaseDiffBaseline { baseline_id: u64 },
 
+    /// Open a machine from a `setAuthority` payload, without attaching it to
+    /// a window. Resolves with `{id, platform, home, label}`. The handle stays
+    /// open until `closeMachine` or the plugin is unloaded.
+    OpenMachine {
+        #[ts(type = "unknown")]
+        payload: JsonValue,
+        callback_id: JsCallbackId,
+    },
+
+    /// Close a machine opened by `openMachine`. Idempotent. `callback_id` is
+    /// `None` when the runtime closes handles an unloaded plugin left behind.
+    CloseMachine {
+        machine: u64,
+        callback_id: Option<JsCallbackId>,
+    },
+
+    /// Read environment variables from the machine; only set names come back.
+    /// A remote machine is asked with `printenv` and is never answered from
+    /// this computer's environment. No `printenv` reports nothing.
+    MachineEnv {
+        machine: Option<u64>,
+        names: Vec<String>,
+        callback_id: JsCallbackId,
+    },
+
+    /// Walk a subtree in one call, off the editor thread. A remote machine
+    /// walks server-side.
+    WalkTree {
+        /// Which open machine to act on. `None` means the active window's.
+        machine: Option<u64>,
+        /// Directory to walk. A missing path is an empty walk, not an error.
+        root: String,
+        /// Directory basenames skipped at every depth.
+        skip_dirs: Vec<String>,
+        /// Report dot-prefixed entries. Off by default.
+        include_hidden: bool,
+        include_dirs: bool,
+        /// Maximum depth below `root`; depth 1 is a direct child.
+        max_depth: usize,
+        /// Stop after this many entries, reporting the walk as truncated.
+        max_entries: usize,
+        callback_id: JsCallbackId,
+    },
+
+    /// Read the first bytes of many files in one call. A failure is reported
+    /// per path, so one unreadable file does not lose the rest.
+    ReadFilePrefixes {
+        /// Which open machine to act on. `None` means the active window's.
+        machine: Option<u64>,
+        /// `(path, max_bytes)` pairs.
+        requests: Vec<(String, usize)>,
+        callback_id: JsCallbackId,
+    },
+
+    /// Run a command on the machine. Unlike `spawnHostProcess`, a remote
+    /// machine runs it there. A non-zero exit resolves with the code instead
+    /// of rejecting. Rejects on a machine opened read-only.
+    RunOnTarget {
+        /// Which open machine to act on. `None` means the active window's.
+        machine: Option<u64>,
+        program: String,
+        args: Vec<String>,
+        cwd: Option<String>,
+        callback_id: JsCallbackId,
+    },
+
     /// Project-wide grep search (async)
     /// Searches all project files via FileSystem trait, respecting .gitignore.
     /// For open buffers with dirty edits, searches the buffer's piece tree.
@@ -5556,11 +5815,9 @@ pub enum PluginCommand {
     /// `crates/fresh-editor/src/services/authority/mod.rs` for the
     /// canonical schema.
     ///
-    /// Fire-and-forget: the transition piggy-backs on the existing
-    /// editor restart flow, so the plugin that sent this command will
-    /// be re-loaded as part of the restart. Any follow-up work the
-    /// plugin wants to do after the switch belongs in its post-restart
-    /// init code, not in a callback here.
+    /// Fire-and-forget: returns before the backend is live. The sending
+    /// plugin is not reloaded, so follow-up work belongs in an
+    /// `authority_changed` handler.
     SetAuthority {
         #[ts(type = "unknown")]
         payload: JsonValue,
@@ -5752,6 +6009,10 @@ pub enum PluginCommand {
         /// false) so existing panels render unchanged.
         #[serde(default)]
         focus_marker: bool,
+        /// How this panel's form controls align their labels within the
+        /// shared `label_width` column. See [`LabelAlign`].
+        #[serde(default)]
+        label_align: LabelAlign,
         /// Native modal-frame title. When `Some`, a centered panel draws a
         /// title bar into its top border (the declarative dialog's shell,
         /// drawn by the host — not faked with a `labeledSection` inside the
@@ -6796,6 +7057,15 @@ pub struct PreparingWindowResult {
     /// The new workspace's durable identity (`ws-…`), stable across restarts.
     #[serde(default)]
     pub stable_id: String,
+    /// The placeholder's seed buffer. Mount a widget panel here
+    /// (`mountWidgetPanel`) to describe the page yourself: the plugin
+    /// building the workspace knows what it is waiting on, what failed and
+    /// what the user can do about it, so the page is its to write. The
+    /// editor's own page — name, state, one line of explanation — is only
+    /// the fallback for a window nothing has described.
+    #[serde(default)]
+    #[ts(type = "number")]
+    pub buffer_id: u64,
 }
 
 /// Result of `createWindowWithTerminal` — the ids of the new

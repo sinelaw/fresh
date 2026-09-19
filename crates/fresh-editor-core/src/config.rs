@@ -475,6 +475,23 @@ pub struct Config {
     #[serde(default = "default_true")]
     pub self_update: bool,
 
+    /// Master switch for Orchestrator mode (default: true).
+    ///
+    /// Orchestrator mode is what a bare `fresh` — no files, no flags —
+    /// launches into: the editor runs as a background daemon this terminal
+    /// attaches to, the workspace dock is on screen, and the workspace you
+    /// were last in comes back regardless of which directory you typed
+    /// `fresh` in. A second bare `fresh`, anywhere, reattaches to that same
+    /// editor rather than starting a second one.
+    ///
+    /// Turning it off makes a bare `fresh` what it always was: an editor in
+    /// this terminal, in this directory, with no daemon. Every other
+    /// invocation (`fresh FILE`, `fresh --cmd …`, `fresh -a …`) is unaffected
+    /// either way — the mode is only ever chosen when the command line is
+    /// empty, so a named file or flag always means "just this, here".
+    #[serde(default = "default_true")]
+    pub orchestrator_mode: bool,
+
     /// Editor behavior settings (indentation, line numbers, wrapping, etc.)
     #[serde(default)]
     pub editor: EditorConfig,
@@ -2691,6 +2708,12 @@ pub struct Keybinding {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub keys: Vec<KeyPress>,
 
+    /// The whole binding as one string — `"C-x"`, `"C-S-Left"`, `"C-x C-s"`.
+    /// An alternative to `key` + `modifiers` and `keys`, which take
+    /// precedence when present.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub chord: String,
+
     /// Action to perform (e.g., "insert_char", "move_left"), or "unbind" to
     /// remove the built-in binding for this key instead of binding anything.
     pub action: String,
@@ -3309,6 +3332,7 @@ impl Default for Config {
             locale: LocaleName::default(),
             check_for_updates: true,
             self_update: true,
+            orchestrator_mode: true,
             editor: EditorConfig::default(),
             file_explorer: FileExplorerConfig::default(),
             sidebar: SidebarConfig::default(),

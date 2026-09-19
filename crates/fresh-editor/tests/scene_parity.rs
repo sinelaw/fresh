@@ -38,8 +38,8 @@ fn first_item_label(menu: &Value) -> Option<String> {
 
 #[test]
 fn web_scene_and_tui_cells_agree() {
-    let mut ed =
-        build_editor(COLS, ROWS, &[manifest_file("src/view/scene.rs")]).expect("build editor");
+    let mut ed = build_editor(COLS, ROWS, &[manifest_file("src/view/scene.rs")], false)
+        .expect("build editor");
     settle(&mut ed);
 
     // ── tab parity: the opened file's tab label is in the scene AND the cells ──

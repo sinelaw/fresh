@@ -7,9 +7,36 @@
 > alias, and this page keeps its `/features/session-persistence` URL so
 > existing links and bookmarks continue to work.
 
-> **Palette:** `Detach`. **CLI:** `fresh -a`, `fresh --cmd daemon list|new|kill`, `fresh --restore`, `fresh --no-restore`. **Config:** `hot_exit`, `editor.restore_previous_session`, `editor.ephemeral_file_patterns`.
+> **Palette:** `Detach`. **CLI:** `fresh`, `fresh -a`, `fresh --cmd daemon list|new|kill`, `fresh --restore`, `fresh --no-restore`. **Config:** `orchestrator_mode`, `hot_exit`, `editor.restore_previous_session`, `editor.ephemeral_file_patterns`.
 
 Detach from Fresh and reattach later, similar to tmux. The Fresh daemon keeps running in the background, so your editor state survives even after you close the terminal.
+
+## Orchestrator mode (a bare `fresh`)
+
+Typing `fresh` with nothing after it opens the workspace you were last in —
+whichever directory you typed it in — with the workspace dock already on
+screen. It runs as a daemon, so the session outlives the terminal, and a
+second bare `fresh` anywhere reattaches to that same editor instead of
+starting a second one.
+
+```bash
+fresh            # your last workspace, wherever you are
+fresh notes.md   # unaffected: an editor here, on this file
+```
+
+The rule is exactly "the command line is empty". A file, or any flag, means
+*just this, here*, and behaves as it always has. A first run — no saved
+workspaces — sets up a workspace for the current directory and opens the
+welcome screen; there is no untitled buffer in the way.
+
+Turn it off with **Orchestrator Mode** in the Settings UI, the checkbox at the
+top of the welcome screen, or `"orchestrator_mode": false` in `config.json`.
+With it off, a bare `fresh` is a plain editor in this terminal, in this
+directory, with no daemon.
+
+Under the hood this is one shared daemon named `orchestrator`, so it shows up
+in `fresh --cmd daemon list` and `fresh -a orchestrator` attaches to it
+explicitly.
 
 See also: [Remote Editing (SSH)](./ssh.md) for pairing daemon mode with remote backends, and [Devcontainers](./devcontainer.md) for routing through a container.
 
@@ -54,7 +81,8 @@ The `daemon` subcommand is an alias for the older `session` subcommand; both for
 | Command | Mode | Description |
 |---------|------|-------------|
 | `fresh myfile.txt` | Direct | No background process. Closing quits everything. |
-| `fresh -a` | Daemon | Background daemon. Supports detach/reattach. |
+| `fresh` | Daemon | Orchestrator mode: the shared `orchestrator` daemon, your last workspace, the dock. Direct when `orchestrator_mode` is off. |
+| `fresh -a` | Daemon | Background daemon for this directory. Supports detach/reattach. |
 | `fresh --web [ADDR]` | Daemon | Foreground daemon that also serves the browser UI. |
 
 Use daemon mode for long-running tasks or remote work where the connection may drop.

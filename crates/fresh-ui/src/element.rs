@@ -243,9 +243,13 @@ pub(crate) struct Txn<M> {
 }
 
 impl<M> Txn<M> {
-    fn new() -> Self {
+    /// Start a transaction on a recycled journal. `undo` is expected empty;
+    /// what it carries is capacity, so the reconcile does not rebuild it entry
+    /// by entry the way the previous one did.
+    fn with_journal(undo: Vec<Undo<M>>) -> Self {
+        debug_assert!(undo.is_empty(), "a recycled journal must be empty");
         Txn {
-            undo: Vec::new(),
+            undo,
             detached: Vec::new(),
         }
     }
@@ -258,11 +262,24 @@ impl<M> Txn<M> {
 impl<M: 'static> Ui<M> {
     pub(crate) fn begin_txn(&mut self) {
         debug_assert!(self.txn.is_none(), "reconcile transactions do not nest");
-        self.txn = Some(Txn::new());
+        let journal = std::mem::take(&mut self.spare_undo);
+        self.txn = Some(Txn::with_journal(journal));
+    }
+
+    /// Empty a finished journal and keep its allocation for the next
+    /// transaction. The entries are dropped here exactly as they were when the
+    /// whole vector was dropped; only the buffer survives.
+    fn recycle_journal(&mut self, mut undo: Vec<Undo<M>>) {
+        undo.clear();
+        if undo.capacity() > self.spare_undo.capacity() {
+            self.spare_undo = undo;
+        }
     }
 
     pub(crate) fn commit_txn(&mut self) {
-        let txn = self.txn.take().expect("commit without an open transaction");
+        let mut txn = self.txn.take().expect("commit without an open transaction");
+        let journal = std::mem::take(&mut txn.undo);
+        self.recycle_journal(journal);
         for c in txn.detached {
             self.mark_disposed(c);
             self.pending_dispose.push(c);
@@ -270,8 +287,9 @@ impl<M: 'static> Ui<M> {
     }
 
     pub(crate) fn abort_txn(&mut self) {
-        let txn = self.txn.take().expect("abort without an open transaction");
-        for u in txn.undo.into_iter().rev() {
+        let mut txn = self.txn.take().expect("abort without an open transaction");
+        let mut journal = std::mem::take(&mut txn.undo);
+        for u in journal.drain(..).rev() {
             match u {
                 Undo::Created(id) => {
                     if let Some(el) = self.arena.release(id) {
@@ -303,6 +321,7 @@ impl<M: 'static> Ui<M> {
             }
         }
         // Detached elements were never marked, so they are already intact.
+        self.recycle_journal(journal);
         self.sched.borrow_mut().clear_building();
     }
 
@@ -782,6 +801,7 @@ impl<M: 'static> Ui<M> {
         }
         if self.focus_restore == Some(id) {
             self.focus_restore = None;
+            self.focus_restore_scope = None;
         }
         self.hover.retain(|h| *h != id);
         if let Some((targets, _, _)) = &mut self.press {

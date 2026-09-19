@@ -3,7 +3,7 @@
 > _Design note. Status: **SHIPPED** — the section model, dividers, accordion,
 > persistence, `Slot::Sidebar`, `mountSidebarSection` and the Markdown
 > contents section are all in the tree; the host asks it leaves open are
-> recorded in `retained-mode-ui.md` §9. Written before any of it existed, it answers
+> recorded in `retained-mode-ui.md`, "Residue that belongs to other work". Written before any of it existed, it answers
 > sinelaw/fresh#3045 ("Make the file explorer sidebar vertically splittable"):
 > whether the request duplicates something Fresh already has, what the feature
 > looks like, and how a plugin uses it — worked through on a first consumer, a
@@ -406,8 +406,10 @@ the cursor. `GripRelease` clears the snapshot and persists.
 
 ### 4.4 Focus and keys
 
-The merge left the keyboard half-migrated (`KeyContext` is A.5 in the migration
-doc, still open), and the design has to work on both sides of that line.
+The merge left the keyboard half-migrated when this was written, and the design
+had to work on both sides of that line. It has since landed: `KeyContext` is a
+read of the focus chain (`retained-mode-ui.md`, "The shape"), which dissolves the
+explorer section's special case below — the sidebar is one scope.
 
 *Today's shape, which already has the answer.* The explorer takes keys through
 `KeyContext::FileExplorer`. The dock takes keys through
@@ -421,7 +423,7 @@ explorer section keeps its context. One new action, *focus next sidebar
 section*, cycles the explorer and the panel sections in order; the existing
 `FocusFileExplorer` keeps meaning what it means.
 
-*After A.5.* `KeyContext` dissolves into focus scopes and the sidebar column is
+*After the keyboard landed.* `KeyContext` is a focus-chain read and the sidebar column is
 one scope with the sections as children in tree order. The design does not
 change; the special case for the explorer section goes.
 
@@ -468,7 +470,7 @@ panel's `(plugin, id)` and not by where it is drawn.
 The section model is app state and the web consumes the display list, so the
 explorer section reaches the web the way the explorer does today. Plugin
 panels on the web were deliberately deleted with the retained-mode work and
-return by consuming the display list (`retained-mode-ui.md` §3.9); a
+return by consuming the display list (`retained-mode-ui.md`, "The web"); a
 plugin section is TUI-only until that lands, which is the same gap the dock has.
 
 ---
@@ -648,7 +650,7 @@ a different scan.
 | `shell::widgets` | `Slot::Sidebar(usize)`; `panel::keys_layer` raised per focused section |
 | `app::PanelSlot` / `PanelPlacement` | `Sidebar(usize)` / `SidebarSection { rows }`; `panel_interior` unchanged |
 | Applier (`shell_host`) | Arms for the four facts and the grip; bottom-up collapse in the `Frame` builder next to `resolve_dock` |
-| Focus | One action, *focus next sidebar section*; the explorer keeps `KeyContext::FileExplorer` until A.5 |
+| Focus | One action, *focus next sidebar section*; the explorer keeps `KeyContext::FileExplorer` until the keyboard migration lands |
 | Persistence | `FileExplorerState.sections`, defaulted |
 | Config | Optional default section list; `toc.follow`, `toc.fold_buffer` on the plugin side |
 | Plugin API | `asSidebar` at mount; `sidebar` / `sidebar_rows` ops |
@@ -667,16 +669,10 @@ The first revision of this note argued for waiting until the migration moved
 the explorer onto the tree, because everything the feature needed was either
 about to be provided (pointer capture, flex sizing, described panels) or about
 to be deleted (the chrome registry's boxes, the pointer-grab ladder). That has
-happened. **There is no prerequisite left**; what remains open in the
-migration changes internals, not the design:
-
-| Migration item | Effect on this design |
-|---|---|
-| 0.1 memoised subtrees | Per-section `memo`, as the explorer already does |
-| 0.3 components own state | A section's `collapsed` is persisted, so it stays app state by the migration's own rule; nothing here moves |
-| A.5 `KeyContext` → scopes | Dissolves the explorer section's special case (§4.4); the sidebar becomes one scope |
-| C.2 `WidgetInstanceState` → element state | Invisible to the TOC: its expansion is plugin-owned by the spec's contract |
-| Web plugin panels return | Plugin sections appear on the web with the dock |
+happened, and the feature shipped on top of it. **There is no prerequisite
+left**, and what remains open in the retained-mode work changes internals
+rather than this design — see `retained-mode-ui.md`, "What is open". The one item that is
+visible here is the web: plugin sections appear there when panels do (§6.4).
 
 Four changes, each shippable alone:
 

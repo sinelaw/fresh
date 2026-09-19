@@ -244,7 +244,7 @@
   .mitem.hi .accel,.palette .prow.sel .pdesc,.popup .popup-row.sel .pdetail,
   .palette .fbrow.sel .fbsize,.palette .fbrow.sel .fbmod,
   .trustdialog .td-opt.sel .td-odesc,.kbedit .kb-field.focus .kb-field-l{
-    color:color-mix(in srgb,var(--on-sel) 62%,transparent)}
+    color:var(--on-sel-dim)}
   .palette .prow.sel .pkey{border-color:color-mix(in srgb,var(--on-sel) 45%,transparent)}
   /* Text on accent-filled controls the base still leaves white but the earlier
      polish block didn't cover. */

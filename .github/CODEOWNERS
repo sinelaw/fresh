@@ -1,0 +1,21 @@
+# Inert until branch protection is set to require review from Code Owners.
+
+*                                   @sinelaw
+
+# Release automation and the publishing secrets it carries.
+/.github/                           @sinelaw
+/scripts/install.sh                 @sinelaw
+/scripts/verify-release-assets.sh   @sinelaw
+/scripts/verify-staged-artifacts.sh @sinelaw
+/dist-workspace.toml                @sinelaw
+
+/Cargo.lock                         @sinelaw
+/Cargo.toml                         @sinelaw
+/deny.toml                          @sinelaw
+
+# The security boundaries: the updater, the trust gate, the agent capability
+# channel, and the unauthenticated web bridge.
+/crates/fresh-update/               @sinelaw
+/crates/fresh-editor/src/services/workspace_trust.rs @sinelaw
+/crates/fresh-editor/src/server/command_access.rs    @sinelaw
+/crates/fresh-editor/src/webui/                      @sinelaw

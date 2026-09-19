@@ -3051,27 +3051,9 @@ impl Editor {
 
         // IMPORTANT: Calculate LSP changes BEFORE applying to buffer!
         // The byte positions in the events are relative to the ORIGINAL buffer.
-        //
-        // The tree-only swap below violates the pane-buffer invariant
-        // transiently (see active_focus.rs for the invariant's contract)
-        // but `collect_lsp_changes` does not route any input, call
-        // `apply_event_to_active_buffer`, or otherwise read
-        // `active_buffer()` while the invariant is broken, so the drift
-        // is contained within this synchronous section. If that changes,
-        // switch to a read-only accessor that takes `buffer_id` directly
-        // rather than mutating tree state.
-        let original_active = self.active_buffer();
-        self.windows
-            .get_mut(&self.active_window)
-            .and_then(|w| w.split_manager_mut())
-            .expect("active window must have a populated split layout")
-            .set_active_buffer_id(buffer_id);
-        let lsp_changes = self.active_window().collect_lsp_changes(&batch_for_lsp);
-        self.windows
-            .get_mut(&self.active_window)
-            .and_then(|w| w.split_manager_mut())
-            .expect("active window must have a populated split layout")
-            .set_active_buffer_id(original_active);
+        let lsp_changes = self
+            .active_window()
+            .collect_lsp_changes_for_buffer(buffer_id, &batch_for_lsp);
 
         // Capture old cursor states from split view state
         // Find a split that has this buffer in its keyed_states
@@ -4435,6 +4417,7 @@ mod tests {
             Arc::new(StdFileSystem),
             None,
             None,
+            false,
             false,
             false,
         )

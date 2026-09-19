@@ -959,6 +959,7 @@ impl KeybindingEditor {
                 modifiers_to_config_names(binding.modifiers)
             },
             keys: binding.chord_keys.clone(),
+            chord: String::new(),
             action: action.to_string(),
             args: HashMap::new(),
             when: if binding.context.is_empty() {
@@ -1056,6 +1057,7 @@ impl KeybindingEditor {
                 modifiers_to_config_names(binding.modifiers)
             },
             keys: binding.chord_keys.clone(),
+            chord: String::new(),
             action,
             args,
             when: if binding.context.is_empty() {
@@ -1129,6 +1131,7 @@ impl KeybindingEditor {
             key: key_name,
             modifiers: modifier_names,
             keys: chord_keys.clone(),
+            chord: String::new(),
             action: bare_action.clone(),
             args: args.clone(),
             when: Some(dialog.context.clone()),

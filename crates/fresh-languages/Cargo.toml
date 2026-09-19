@@ -33,3 +33,6 @@ bundled-languages = [
     "tree-sitter-javascript", "tree-sitter-typescript",
     "tree-sitter-json", "tree-sitter-go", "tree-sitter-templ",
 ]
+
+[lints]
+workspace = true

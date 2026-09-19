@@ -20,7 +20,7 @@
 use std::process::Stdio;
 use std::sync::Arc;
 
-use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 
 use crate::services::process_hidden::HideWindow;
@@ -198,6 +198,9 @@ pub async fn bootstrap_agent(
     stderr: StderrMode,
 ) -> Result<(BufReader<ChildStdout>, ChildStdin, Child), TransportError> {
     let mut cmd = transport.build_command(stderr);
+    // Kill-on-drop so an abandoned bootstrap takes its `kubectl exec` with it.
+    // A successful child is held by `KubeConnection` or the reconnect `Carrier`.
+    cmd.kill_on_drop(true);
     let mut child = cmd.spawn()?;
 
     let mut stdin = child
@@ -323,12 +326,14 @@ pub fn spawn_kube_reconnect_task(
         async move {
             let transport = KubectlExecTransport::new(target);
             // Non-interactive on reconnect (no terminal to prompt on).
-            let (reader, writer, _child) = bootstrap_agent(&transport, StderrMode::Null)
+            let (reader, writer, child) = bootstrap_agent(&transport, StderrMode::Null)
                 .await
                 .map_err(|e| crate::services::remote::SshError::AgentStartFailed(e.to_string()))?;
-            let reader: Box<dyn AsyncBufRead + Unpin + Send> = Box::new(reader);
-            let writer: Box<dyn AsyncWrite + Unpin + Send> = Box::new(writer);
-            Ok::<_, crate::services::remote::SshError>((reader, writer))
+            Ok::<_, crate::services::remote::SshError>(crate::services::remote::Carrier {
+                reader: Box::new(reader),
+                writer: Box::new(writer),
+                process: Some(child),
+            })
         }
     };
     crate::services::remote::spawn_reconnect_task_with(

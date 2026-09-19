@@ -351,6 +351,7 @@ impl Editor {
         color: (u8, u8, u8),
         use_bg: bool,
         before: bool,
+        epoch: Option<u64>,
     ) {
         if let Some(state) = self
             .windows
@@ -380,6 +381,11 @@ impl Editor {
                 .virtual_texts
                 .remove_by_id(&mut state.marker_list, &virtual_text_id);
 
+            let position = match state.map_plugin_coord(position, epoch) {
+                Some(p) => p,
+                None => return,
+            };
+
             // Add the new virtual text
             state.virtual_texts.add_with_id(
                 &mut state.marker_list,
@@ -408,6 +414,8 @@ impl Editor {
         bold: bool,
         italic: bool,
         before: bool,
+        epoch: Option<u64>,
+        pad_to_column: Option<u32>,
     ) {
         if let Some(state) = self
             .windows
@@ -461,6 +469,14 @@ impl Editor {
                 .virtual_texts
                 .remove_by_id(&mut state.marker_list, &virtual_text_id);
 
+            // After the removal: an unmappable epoch drops the hint rather than
+            // guessing a byte, and returning earlier would strand the stale one
+            // under this id.
+            let position = match state.map_plugin_coord(position, epoch) {
+                Some(p) => p,
+                None => return,
+            };
+
             state.virtual_texts.add_with_id_and_theme_keys(
                 &mut state.marker_list,
                 position,
@@ -471,6 +487,7 @@ impl Editor {
                 vtext_position,
                 0, // priority
                 virtual_text_id,
+                pad_to_column,
             );
         }
     }
@@ -1441,23 +1458,36 @@ impl Editor {
         text: String,
     ) {
         let text_len = text.len();
-        if let Some(state) = self
+        let event = Event::Insert {
+            position,
+            text,
+            cursor_id: CursorId(0),
+        };
+        // Deriving the change reads the line up to the edit to convert byte
+        // offsets into UTF-16 positions; on a one-long-line file that is
+        // megabytes per edit, and it is wasted when the buffer has no server
+        // to receive it.
+        let lsp_changes = if self.active_window().lsp_change_could_be_sent(buffer_id) {
+            self.active_window()
+                .collect_lsp_changes_for_buffer(buffer_id, &event)
+        } else {
+            Vec::new()
+        };
+        let edited = if let Some(state) = self
             .windows
             .get_mut(&self.active_window)
             .expect("active window present")
             .buffer_state_mut(buffer_id)
         {
-            let event = Event::Insert {
-                position,
-                text,
-                cursor_id: CursorId(0),
-            };
             // Apply to buffer with dummy cursors (real cursors adjusted below)
             state.apply(&mut Cursors::default(), &event);
             if let Some(log) = self.active_window_mut().event_logs.get_mut(&buffer_id) {
                 log.append(event);
             }
-        }
+            true
+        } else {
+            false
+        };
         // Adjust cursors in all splits that display this buffer
         for leaf_id in self
             .windows
@@ -1484,6 +1514,10 @@ impl Editor {
         // decorations (e.g. markdown table borders) keep stale coordinates.
         #[cfg(feature = "plugins")]
         self.shift_plugin_markers_for_edit(buffer_id, position, 0, text_len);
+        if edited {
+            self.active_window_mut()
+                .send_lsp_changes_for_buffer(buffer_id, lsp_changes);
+        }
     }
 
     /// Handle DeleteRange command
@@ -1494,24 +1528,41 @@ impl Editor {
     ) {
         let delete_start = range.start;
         let delete_len = range.end.saturating_sub(range.start);
-        if let Some(state) = self
+        let deleted_text = self
+            .windows
+            .get_mut(&self.active_window)
+            .expect("active window present")
+            .buffer_state_mut(buffer_id)
+            .map(|state| state.get_text_range(range.start, range.end))
+            .unwrap_or_default();
+        let removed_newline = deleted_text.contains('\n');
+        let event = Event::Delete {
+            range,
+            deleted_text,
+            cursor_id: CursorId(0),
+        };
+        // Gated as in `handle_insert_text`.
+        let lsp_changes = if self.active_window().lsp_change_could_be_sent(buffer_id) {
+            self.active_window()
+                .collect_lsp_changes_for_buffer(buffer_id, &event)
+        } else {
+            Vec::new()
+        };
+        let edited = if let Some(state) = self
             .windows
             .get_mut(&self.active_window)
             .expect("active window present")
             .buffer_state_mut(buffer_id)
         {
-            let deleted_text = state.get_text_range(range.start, range.end);
-            let event = Event::Delete {
-                range,
-                deleted_text,
-                cursor_id: CursorId(0),
-            };
             // Apply to buffer with dummy cursors (real cursors adjusted below)
             state.apply(&mut Cursors::default(), &event);
             if let Some(log) = self.active_window_mut().event_logs.get_mut(&buffer_id) {
                 log.append(event);
             }
-        }
+            true
+        } else {
+            false
+        };
         // Adjust cursors in all splits that display this buffer
         for leaf_id in self
             .windows
@@ -1536,9 +1587,19 @@ impl Editor {
         // Keep search-match highlights consistent with the edit (issue #2414).
         self.reevaluate_plugin_edit_search_overlays(buffer_id, delete_start, 0);
         // Plugin edits bypass apply_event_to_active_buffer; shift plugin interval
-        // markers here too so plugin-tracked decorations ride the deletion.
+        // markers here too so plugin-tracked decorations ride the deletion, and
+        // bring the plugin line-offer set across it for the same reason.
         #[cfg(feature = "plugins")]
         self.shift_plugin_markers_for_edit(buffer_id, delete_start, delete_len, 0);
+        if edited {
+            self.active_window_mut()
+                .send_lsp_changes_for_buffer(buffer_id, lsp_changes);
+        }
+        if removed_newline {
+            self.handle_refresh_lines(buffer_id);
+        } else {
+            self.adjust_seen_byte_ranges_for_edit(buffer_id, delete_start, delete_len, 0);
+        }
     }
 
     /// Re-evaluate the active window's search-match overlays around a region a
@@ -1586,6 +1647,7 @@ impl Editor {
         // Read cursor position first to avoid borrow conflicts
         let cursor_pos = self.active_cursors().primary().position;
         let text_len = text.len();
+        let inserted_newline = text.contains('\n');
         let event = Event::Insert {
             position: cursor_pos,
             text,
@@ -1593,15 +1655,38 @@ impl Editor {
         };
         let split_id = self.split_manager().active_split();
         let active_buf = self.active_buffer();
-        self.active_window_mut()
+        // Gated as in `handle_insert_text`.
+        let lsp_changes = if self.active_window().lsp_change_could_be_sent(active_buf) {
+            self.active_window()
+                .collect_lsp_changes_for_buffer(active_buf, &event)
+        } else {
+            Vec::new()
+        };
+        let edited = self
+            .active_window_mut()
             .apply_event_to_buffer(active_buf, split_id, &event);
         self.active_event_log_mut().append(event);
-        // This path bypasses apply_event_to_active_buffer (it's how the markdown
-        // plugins insert a newline on Enter, etc.), so shift plugin interval
-        // markers here or plugin-tracked decorations (markdown table borders)
-        // keep stale coordinates and corrupt.
+        // Bypasses apply_event_to_active_buffer (this is how the markdown plugins
+        // insert a newline on Enter), so the cross-cutting work it does happens
+        // here: markers, or plugin-tracked decorations keep stale coordinates and
+        // corrupt, and the line-offer set below.
         #[cfg(feature = "plugins")]
         self.shift_plugin_markers_for_edit(active_buf, cursor_pos, 0, text_len);
+        // Only for an edit that landed, as in the two handlers above: a change
+        // sent for one that did not diverges the server with no path back.
+        if edited {
+            self.active_window_mut()
+                .send_lsp_changes_for_buffer(active_buf, lsp_changes);
+        }
+        if inserted_newline {
+            // Shifting the ranges is not enough when the line count changes: the
+            // rows below only shift, so they stay "seen" and never re-fire, while
+            // a new line landing on an old byte offset re-uses the decoration id
+            // derived from it and evicts the decoration of the line that moved.
+            self.handle_refresh_lines(active_buf);
+        } else {
+            self.adjust_seen_byte_ranges_for_edit(active_buf, cursor_pos, 0, text_len);
+        }
     }
 
     /// Handle DeleteSelection command
@@ -2713,8 +2798,8 @@ impl Editor {
         inherit_normal_bindings: bool,
         plugin_name: Option<String>,
     ) {
-        use super::parse_key_string;
         use crate::input::buffer_mode::BufferMode;
+        use crate::input::keybindings::parse_key_seq;
         use crate::input::keybindings::{Action, KeyContext};
 
         let mode = BufferMode::new(name.clone())
@@ -2732,49 +2817,22 @@ impl Editor {
 
         let mode_context = KeyContext::Mode(name.clone());
 
-        // Parse key bindings from strings
-        // Key strings can be single keys ("g", "C-f") or chord sequences ("g g", "z z")
         for (key_str, command) in &bindings {
-            let parts: Vec<&str> = key_str.split_whitespace().collect();
-
-            if parts.len() == 1 {
-                // Single key binding
-                if let Some((code, modifiers)) = parse_key_string(key_str) {
-                    let action = Action::from_str(command, &std::collections::HashMap::new())
-                        .unwrap_or_else(|| Action::PluginAction(command.clone()));
-                    self.keybindings.write().unwrap().load_plugin_default(
-                        mode_context.clone(),
-                        code,
-                        modifiers,
-                        action,
-                    );
-                } else {
-                    tracing::warn!("Failed to parse key binding: {}", key_str);
+            let Some(seq) = parse_key_seq(key_str) else {
+                tracing::warn!("Failed to parse key binding: {}", key_str);
+                continue;
+            };
+            let action = Action::from_str(command, &std::collections::HashMap::new())
+                .unwrap_or_else(|| Action::PluginAction(command.clone()));
+            let mut kb = self.keybindings.write().unwrap();
+            match seq.single() {
+                Some(key) => {
+                    kb.load_plugin_default(mode_context.clone(), key.code(), key.mods(), action)
                 }
-            } else {
-                // Chord sequence (multiple keys separated by space)
-                let mut sequence = Vec::new();
-                let mut parse_failed = false;
-
-                for part in &parts {
-                    if let Some((code, modifiers)) = parse_key_string(part) {
-                        sequence.push((code, modifiers));
-                    } else {
-                        tracing::warn!("Failed to parse key in chord: {} (in {})", part, key_str);
-                        parse_failed = true;
-                        break;
-                    }
-                }
-
-                if !parse_failed && !sequence.is_empty() {
-                    tracing::debug!("Adding chord binding: {:?} -> {}", sequence, command);
-                    let action = Action::from_str(command, &std::collections::HashMap::new())
-                        .unwrap_or_else(|| Action::PluginAction(command.clone()));
-                    self.keybindings.write().unwrap().load_plugin_chord_default(
-                        mode_context.clone(),
-                        sequence,
-                        action,
-                    );
+                None => {
+                    tracing::debug!("Adding chord binding: {} -> {}", seq, command);
+                    let sequence = seq.keys().iter().map(|k| (k.code(), k.mods())).collect();
+                    kb.load_plugin_chord_default(mode_context.clone(), sequence, action)
                 }
             }
         }
@@ -2800,10 +2858,12 @@ impl Editor {
                         for (key_code, modifiers) in mode_bindings.keys() {
                             let label =
                                 crate::input::keybindings::format_keybinding(key_code, modifiers);
-                            if let Some((_key_str, cmd)) = bindings
-                                .iter()
-                                .find(|(k, _)| parse_key_string(k) == Some((*key_code, *modifiers)))
-                            {
+                            if let Some((_key_str, cmd)) = bindings.iter().find(|(k, _)| {
+                                parse_key_seq(k).and_then(|s| s.single())
+                                    == Some(crate::input::keybindings::Key::new(
+                                        *key_code, *modifiers,
+                                    ))
+                            }) {
                                 let key = format!("{}\0{}", cmd, name);
                                 snapshot.keybinding_labels.insert(key, label);
                             }
@@ -3081,10 +3141,10 @@ impl Editor {
         callback_id: JsCallbackId,
         is_registration: bool,
     ) {
-        // A handle, not the owning `Arc` — see `OffLoop::handle`: the capability
-        // rides into the spawned task, and an owning reference dropped there at
-        // shutdown would panic the worker.
-        let Some(handle) = self.tokio_runtime.as_ref().map(|rt| rt.handle().clone()) else {
+        // Held here, not inside the capability — see `OffLoop`: the capability
+        // rides into the spawned task, and an owning runtime in there would
+        // keep the work running after the editor has gone.
+        let Some(runtime) = self.tokio_runtime.clone() else {
             self.plugin_manager
                 .read()
                 .unwrap()
@@ -3099,10 +3159,11 @@ impl Editor {
             return;
         };
         super::plugin_offloop::load_diff_baseline(
+            &runtime,
             super::plugin_offloop::OffLoop {
                 filesystem: self.authority().filesystem.clone(),
-                handle,
                 sender,
+                cancel: Arc::default(),
             },
             super::plugin_offloop::BaselineLoadRequest {
                 baseline_id,
@@ -3331,6 +3392,389 @@ impl Editor {
         }
     }
 
+    /// The runtime and bridge sender, or `None` after rejecting the callback.
+    fn off_loop_parts(
+        &self,
+        callback_id: fresh_core::api::JsCallbackId,
+    ) -> Option<(
+        crate::services::runtime::LiveRuntime,
+        std::sync::mpsc::Sender<crate::services::async_bridge::AsyncMessage>,
+    )> {
+        let Some(runtime) = self.tokio_runtime.clone() else {
+            self.plugin_manager
+                .read()
+                .unwrap()
+                .reject_callback(callback_id, "No tokio runtime available".to_string());
+            return None;
+        };
+        let Some(sender) = self.async_bridge.as_ref().map(|b| b.sender()) else {
+            self.plugin_manager
+                .read()
+                .unwrap()
+                .reject_callback(callback_id, "No async bridge available".to_string());
+            return None;
+        };
+        Some((runtime, sender))
+    }
+
+    /// The `{id, platform, home, label}` a plugin gets back for a machine.
+    pub(super) fn machine_info(
+        authority: &crate::services::authority::Authority,
+        id: u64,
+    ) -> serde_json::Value {
+        let platform = crate::services::authority::platform_label(authority);
+        serde_json::json!({
+            "id": id,
+            "platform": platform,
+            "home": authority
+                .filesystem
+                .home_dir()
+                .unwrap_or_default()
+                .to_string_lossy(),
+            "label": authority.display_label,
+        })
+    }
+
+    /// Open a machine without attaching it to a window.
+    pub(super) fn handle_open_machine(
+        &mut self,
+        payload: serde_json::Value,
+        callback_id: fresh_core::api::JsCallbackId,
+    ) {
+        // Borrow a window's own authority instead of building one from a spec.
+        if payload.get("kind").and_then(serde_json::Value::as_str) == Some("window") {
+            let window = payload
+                .get("window")
+                .and_then(serde_json::Value::as_u64)
+                .map(fresh_core::WindowId)
+                .unwrap_or(self.active_window);
+            let window_id = window;
+            let Some(window) = self.windows.get(&window_id) else {
+                self.plugin_manager
+                    .read()
+                    .unwrap()
+                    .reject_callback(callback_id, format!("openMachine: no window {window_id:?}"));
+                return;
+            };
+            let id = self.next_machine_id;
+            self.next_machine_id += 1;
+            let info = Self::machine_info(&window.authority(), id);
+            self.open_machines.insert(
+                id,
+                super::OpenMachine::new(super::OpenMachineKind::Window(window_id)),
+            );
+            self.send_plugin_response(fresh_core::api::PluginResponse::MachineOpened {
+                request_id: callback_id.into(),
+                info,
+            });
+            return;
+        }
+
+        // A transport spec: connect with no window to hang it on. The connect
+        // runs on the runtime and settles this same callback.
+        if matches!(
+            payload.get("kind").and_then(serde_json::Value::as_str),
+            Some("ssh") | Some("kubectl-exec")
+        ) {
+            let transport = match serde_json::from_value::<
+                crate::services::authority::RemoteTransportSpec,
+            >(payload)
+            {
+                Ok(transport) => transport,
+                Err(err) => {
+                    self.plugin_manager
+                        .read()
+                        .unwrap()
+                        .reject_callback(callback_id, format!("openMachine: {err}"));
+                    return;
+                }
+            };
+            let spec = crate::services::authority::RemoteAgentSpec {
+                transport,
+                base_env: Vec::new(),
+                window: false,
+                label: None,
+                command: None,
+                adopt_window: None,
+            };
+            // The callback id doubles as the connect's request id, so the
+            // connect's reject path settles this promise on failure.
+            self.start_remote_connect(spec, None, callback_id.into(), true);
+            return;
+        }
+
+        let parsed =
+            match serde_json::from_value::<crate::services::authority::AuthorityPayload>(payload) {
+                Ok(parsed) => parsed,
+                Err(err) => {
+                    self.plugin_manager
+                        .read()
+                        .unwrap()
+                        .reject_callback(callback_id, format!("openMachine: {err}"));
+                    return;
+                }
+            };
+        // Shares the editor's trust and env handles, so spawners are gated like
+        // the active window's.
+        let trust = Arc::clone(&self.authority().workspace_trust);
+        let env = Arc::clone(&self.authority().env_provider);
+        let authority =
+            match crate::services::authority::Authority::from_plugin_payload(parsed, trust, env) {
+                Ok(authority) => authority,
+                Err(err) => {
+                    self.plugin_manager
+                        .read()
+                        .unwrap()
+                        .reject_callback(callback_id, format!("openMachine: {err}"));
+                    return;
+                }
+            };
+
+        let id = self.next_machine_id;
+        self.next_machine_id += 1;
+        let info = Self::machine_info(&authority, id);
+        let connection =
+            self.open_connection(crate::services::authority::Connection::plain(authority));
+        self.open_machines.insert(
+            id,
+            super::OpenMachine::new(super::OpenMachineKind::Owned(connection)),
+        );
+        // A response, not a bare resolve: the runtime records the handle
+        // against the plugin that asked, so an unload closes it.
+        self.send_plugin_response(fresh_core::api::PluginResponse::MachineOpened {
+            request_id: callback_id.into(),
+            info,
+        });
+    }
+
+    /// Close a machine opened by `openMachine`. Idempotent.
+    pub(super) fn handle_close_machine(
+        &mut self,
+        machine: u64,
+        callback_id: Option<fresh_core::api::JsCallbackId>,
+    ) {
+        // Set the handle's cancel flag so a walk in flight stops, and drop the
+        // handle before pruning: pruning is by reference count, so a handle
+        // still held in a local would keep the carrier alive.
+        let closed = self.open_machines.remove(&machine);
+        let was_open = closed.is_some();
+        if let Some(open) = closed {
+            open.cancel
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        self.prune_connections();
+        if let Some(callback_id) = callback_id {
+            self.plugin_manager
+                .read()
+                .unwrap()
+                .resolve_callback(callback_id, was_open.to_string());
+        }
+    }
+
+    /// The cancel flag of `machine`'s handle, so closing the handle stops its
+    /// work. Work with no machine gets a flag nothing ever sets.
+    fn cancel_for(&self, machine: Option<u64>) -> Arc<std::sync::atomic::AtomicBool> {
+        machine
+            .and_then(|id| self.open_machines.get(&id))
+            .map_or_else(Arc::default, |open| Arc::clone(&open.cancel))
+    }
+
+    /// The filesystem for `machine`, or the active window's when `None`.
+    fn filesystem_for(
+        &self,
+        machine: Option<u64>,
+        callback_id: fresh_core::api::JsCallbackId,
+    ) -> Option<Arc<dyn crate::model::filesystem::FileSystem + Send + Sync>> {
+        self.authority_for(machine, callback_id)
+            .map(|authority| authority.filesystem.clone())
+    }
+
+    /// The authority `machine` names, or the active window's when `None`.
+    /// Returns `None` after rejecting the callback: a closed handle or window
+    /// is an error, never a silent fall back to this machine.
+    fn authority_for(
+        &self,
+        machine: Option<u64>,
+        callback_id: fresh_core::api::JsCallbackId,
+    ) -> Option<&crate::services::authority::Authority> {
+        let Some(id) = machine else {
+            return Some(self.authority());
+        };
+        let reject = |msg: String| {
+            self.plugin_manager
+                .read()
+                .unwrap()
+                .reject_callback(callback_id, msg);
+            None
+        };
+        match self.open_machines.get(&id).map(|m| &m.kind) {
+            Some(super::OpenMachineKind::Owned(connection)) => Some(&connection.authority),
+            Some(super::OpenMachineKind::Window(window)) => match self.windows.get(window) {
+                Some(window) => Some(&window.authority()),
+                None => reject(format!("machine {id}'s window has closed")),
+            },
+            None => reject(format!("machine {id} is not open")),
+        }
+    }
+
+    /// Read environment variables from a machine. See `PluginCommand::MachineEnv`.
+    pub(super) fn handle_machine_env(
+        &mut self,
+        machine: Option<u64>,
+        names: Vec<String>,
+        callback_id: fresh_core::api::JsCallbackId,
+    ) {
+        let Some(authority) = self.authority_for(machine, callback_id) else {
+            return;
+        };
+
+        // Not `session_spec() == Local`: a docker-exec container is Local too,
+        // but its environment is the container's.
+        if authority.env_is_this_process() {
+            let mut found = serde_json::Map::new();
+            for name in names {
+                if let Ok(value) = std::env::var(&name) {
+                    found.insert(name, serde_json::Value::String(value));
+                }
+            }
+            self.plugin_manager
+                .read()
+                .unwrap()
+                .resolve_callback(callback_id, serde_json::Value::Object(found).to_string());
+            return;
+        }
+
+        // Anything else is asked with `printenv` through its spawner, off the
+        // editor thread.
+        let filesystem = authority.filesystem.clone();
+        let spawner = authority.process_spawner.clone();
+        let Some((runtime, sender)) = self.off_loop_parts(callback_id) else {
+            return;
+        };
+        super::plugin_offloop::remote_env(
+            &runtime,
+            super::plugin_offloop::OffLoop {
+                filesystem,
+                sender,
+                cancel: self.cancel_for(machine),
+            },
+            super::plugin_offloop::RemoteEnvRequest {
+                names,
+                spawner,
+                callback_id,
+            },
+        );
+    }
+
+    /// Hand a subtree walk to the off-loop worker.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn handle_walk_tree(
+        &mut self,
+        machine: Option<u64>,
+        root: String,
+        skip_dirs: Vec<String>,
+        include_hidden: bool,
+        include_dirs: bool,
+        max_depth: usize,
+        max_entries: usize,
+        callback_id: fresh_core::api::JsCallbackId,
+    ) {
+        let Some((runtime, sender)) = self.off_loop_parts(callback_id) else {
+            return;
+        };
+        let Some(filesystem) = self.filesystem_for(machine, callback_id) else {
+            return;
+        };
+        super::plugin_offloop::walk_tree(
+            &runtime,
+            super::plugin_offloop::OffLoop {
+                filesystem,
+                sender,
+                cancel: self.cancel_for(machine),
+            },
+            super::plugin_offloop::WalkTreeRequest {
+                root: std::path::PathBuf::from(root),
+                skip_dirs,
+                include_hidden,
+                include_dirs,
+                // 0 means no limit.
+                max_depth: if max_depth == 0 {
+                    usize::MAX
+                } else {
+                    max_depth
+                },
+                max_entries: if max_entries == 0 {
+                    usize::MAX
+                } else {
+                    max_entries
+                },
+                callback_id,
+            },
+        );
+    }
+
+    /// Hand a batch of bounded reads to the off-loop worker.
+    pub(super) fn handle_read_file_prefixes(
+        &mut self,
+        machine: Option<u64>,
+        requests: Vec<(String, usize)>,
+        callback_id: fresh_core::api::JsCallbackId,
+    ) {
+        let Some((runtime, sender)) = self.off_loop_parts(callback_id) else {
+            return;
+        };
+        let Some(filesystem) = self.filesystem_for(machine, callback_id) else {
+            return;
+        };
+        super::plugin_offloop::read_file_prefixes(
+            &runtime,
+            super::plugin_offloop::OffLoop {
+                filesystem,
+                sender,
+                cancel: self.cancel_for(machine),
+            },
+            super::plugin_offloop::ReadPrefixesRequest {
+                requests: requests
+                    .into_iter()
+                    .map(|(path, max_bytes)| (std::path::PathBuf::from(path), max_bytes))
+                    .collect(),
+                callback_id,
+            },
+        );
+    }
+
+    /// Hand a command on the authority's machine to the off-loop worker.
+    pub(super) fn handle_run_on_target(
+        &mut self,
+        machine: Option<u64>,
+        program: String,
+        args: Vec<String>,
+        cwd: Option<String>,
+        callback_id: fresh_core::api::JsCallbackId,
+    ) {
+        let Some((runtime, sender)) = self.off_loop_parts(callback_id) else {
+            return;
+        };
+        let Some(authority) = self.authority_for(machine, callback_id) else {
+            return;
+        };
+        super::plugin_offloop::run_on_target(
+            &runtime,
+            super::plugin_offloop::OffLoop {
+                filesystem: authority.filesystem.clone(),
+                sender,
+                cancel: self.cancel_for(machine),
+            },
+            super::plugin_offloop::RunOnTargetRequest {
+                program,
+                args,
+                cwd,
+                spawner: authority.process_spawner.clone(),
+                callback_id,
+            },
+        );
+    }
+
     /// Handle GrepProject: snapshot what only the editor thread can see, then
     /// hand the walk-and-search to [`plugin_offloop::grep_project`].
     ///
@@ -3401,10 +3845,10 @@ impl Editor {
             clean_buffers.insert(path, *bid);
         }
 
-        // A handle, not the owning `Arc` — see `OffLoop::handle`: the capability
-        // rides into the spawned task, and an owning reference dropped there at
-        // shutdown would panic the worker.
-        let Some(handle) = self.tokio_runtime.as_ref().map(|rt| rt.handle().clone()) else {
+        // Held here, not inside the capability — see `OffLoop`: the capability
+        // rides into the spawned task, and an owning runtime in there would
+        // keep the work running after the editor has gone.
+        let Some(runtime) = self.tokio_runtime.clone() else {
             self.plugin_manager
                 .read()
                 .unwrap()
@@ -3435,10 +3879,13 @@ impl Editor {
             .insert(plugin_name, Arc::clone(&cancel));
 
         super::plugin_offloop::grep_project(
+            &runtime,
             super::plugin_offloop::OffLoop {
                 filesystem: self.authority().filesystem.clone(),
-                handle,
                 sender,
+                // Grep's own supersession flag; a newer grep from the same
+                // plugin trips it.
+                cancel: Arc::clone(&cancel),
             },
             super::plugin_offloop::GrepProjectRequest {
                 pattern,

@@ -207,7 +207,7 @@ impl Editor {
             )> = self
                 .windows
                 .iter()
-                .map(|(id, w)| (*id, std::sync::Arc::clone(&w.authority.filesystem)))
+                .map(|(id, w)| (*id, std::sync::Arc::clone(&w.authority().filesystem)))
                 .collect();
             registry.rebuild(active, entries);
         }
@@ -252,6 +252,11 @@ impl Editor {
             .as_str()
             .to_string();
         snapshot.env_active = self.authority().env_provider.is_active();
+        snapshot.orchestrator_mode = self.orchestrator_mode();
+        // The dock slot as the host sees it: the plugin mounts at `ready`
+        // iff `dock_open`, and lays its content out to `dock_cols`.
+        snapshot.dock_open = self.dock.is_some() || self.dock_slot_reserved();
+        snapshot.dock_cols = self.dock_cols_if_open();
 
         // Core is the *only* place that detects which environment a workspace
         // has. The env-manager plugin reads this resolved result via
@@ -332,11 +337,11 @@ impl Editor {
                     root: normalize_plugin_path(s.root.clone()),
                     project_path: normalize_plugin_path(project_path),
                     shared_worktree,
-                    // A parked keepalive is what distinguishes a live remote
+                    // A live connection is what distinguishes a live remote
                     // window from a dormant one's disconnected shell.
                     remote: s
                         .authority_spec
-                        .remote_backend_info(self.session_keepalives.contains_key(&s.id)),
+                        .remote_backend_info(self.window_connection_is_live(s.id)),
                 }
             })
             .collect();
@@ -488,6 +493,7 @@ impl Editor {
                 color,
                 use_bg,
                 before,
+                epoch,
             } => {
                 self.handle_add_virtual_text(
                     buffer_id,
@@ -497,6 +503,7 @@ impl Editor {
                     color,
                     use_bg,
                     before,
+                    epoch,
                 );
             }
             PluginCommand::AddVirtualTextStyled {
@@ -509,6 +516,8 @@ impl Editor {
                 bold,
                 italic,
                 before,
+                epoch,
+                pad_to_column,
             } => {
                 self.handle_add_virtual_text_styled(
                     buffer_id,
@@ -520,6 +529,8 @@ impl Editor {
                     bold,
                     italic,
                     before,
+                    epoch,
+                    pad_to_column,
                 );
             }
             PluginCommand::RemoveVirtualText {
@@ -824,8 +835,16 @@ impl Editor {
             PluginCommand::RefreshAllLines => {
                 self.handle_refresh_all_lines();
             }
-            PluginCommand::HookCompleted { .. } => {
-                // Sentinel processed in render loop; no-op if encountered elsewhere.
+            PluginCommand::HookCompleted { hook_name } => {
+                // Sentinel processed in render loop; no-op if encountered
+                // elsewhere — except `ready`'s, which releases the dock
+                // column held open at startup if nothing mounted into it
+                // (every mount the hook sent is ahead of it in the channel).
+                // Frames were painted with the column in them, so the
+                // reclaimed strip gets the full repaint hiding the dock gets.
+                if hook_name == "ready" && self.release_startup_dock_reservation() {
+                    self.request_full_redraw();
+                }
             }
             PluginCommand::SetLineIndicator {
                 buffer_id,
@@ -914,6 +933,9 @@ impl Editor {
             }
             PluginCommand::SetSetting { path, value, .. } => {
                 self.handle_set_setting(path, value);
+            }
+            PluginCommand::SaveSetting { path, value, .. } => {
+                self.handle_save_setting(path, value);
             }
             PluginCommand::AddPluginConfigField {
                 plugin_name,
@@ -1112,6 +1134,21 @@ impl Editor {
                         "DeleteWorkspace: could not forget workspace for {:?}: {e}",
                         root
                     );
+                }
+                // The terminal state for that root dies with it. It is keyed
+                // by the same path (`terminals/<encoded-root>/`) and holds
+                // scrollback for terminals that no longer exist, so leaving it
+                // accumulates one dead directory per deleted workspace — the
+                // user finds them later with no way to tell which are live.
+                // Best-effort for the same reason as the record above.
+                let terminals = self.dir_context().terminal_dir_for(&root);
+                if terminals.is_dir() {
+                    if let Err(e) = std::fs::remove_dir_all(&terminals) {
+                        tracing::warn!(
+                            "DeleteWorkspace: could not remove terminal state {:?}: {e}",
+                            terminals
+                        );
+                    }
                 }
             }
             PluginCommand::PrewarmWindow { id } => {
@@ -1895,6 +1932,68 @@ impl Editor {
                 self.handle_release_diff_baseline(baseline_id);
             }
 
+            PluginCommand::OpenMachine {
+                payload,
+                callback_id,
+            } => {
+                self.handle_open_machine(payload, callback_id);
+            }
+
+            PluginCommand::CloseMachine {
+                machine,
+                callback_id,
+            } => {
+                self.handle_close_machine(machine, callback_id);
+            }
+
+            PluginCommand::MachineEnv {
+                machine,
+                names,
+                callback_id,
+            } => {
+                self.handle_machine_env(machine, names, callback_id);
+            }
+
+            PluginCommand::WalkTree {
+                machine,
+                root,
+                skip_dirs,
+                include_hidden,
+                include_dirs,
+                max_depth,
+                max_entries,
+                callback_id,
+            } => {
+                self.handle_walk_tree(
+                    machine,
+                    root,
+                    skip_dirs,
+                    include_hidden,
+                    include_dirs,
+                    max_depth,
+                    max_entries,
+                    callback_id,
+                );
+            }
+
+            PluginCommand::ReadFilePrefixes {
+                machine,
+                requests,
+                callback_id,
+            } => {
+                self.handle_read_file_prefixes(machine, requests, callback_id);
+            }
+
+            PluginCommand::RunOnTarget {
+                machine,
+                program,
+                args,
+                cwd,
+                callback_id,
+            } => {
+                self.handle_run_on_target(machine, program, args, cwd, callback_id);
+            }
+
             PluginCommand::GrepProject {
                 plugin_name,
                 pattern,
@@ -2004,6 +2103,7 @@ impl Editor {
                 height_pct,
                 as_dock,
                 focus_marker,
+                label_align,
                 title,
                 closable,
                 start_blurred,
@@ -2017,6 +2117,7 @@ impl Editor {
                     height_pct,
                     as_dock,
                     focus_marker,
+                    label_align,
                     title,
                     closable,
                     start_blurred,
@@ -3227,7 +3328,15 @@ impl Editor {
             }
         };
 
-        let new_total = if let Some(state) = self
+        // Growing the buffer is an edit like any other, so a server holding
+        // this document has to be told. The append is described as an
+        // insertion at the old end of file, which has to be converted to an
+        // LSP position before the bytes land (#3258).
+        let lsp_wanted = self
+            .active_window()
+            .lsp_change_could_be_sent(actual_buffer_id);
+
+        let (new_total, appended) = if let Some(state) = self
             .windows
             .get_mut(&self.active_window)
             .map(|w| &mut w.buffers)
@@ -3235,14 +3344,32 @@ impl Editor {
             .get_mut(&actual_buffer_id)
         {
             let old = state.buffer.total_bytes();
+            let append_at = (lsp_wanted && new_size > old)
+                .then(|| state.buffer.position_to_lsp_position(old))
+                .map(|(line, character)| lsp_types::Position::new(line as u32, character as u32));
             if new_size > old {
                 state.buffer.extend_streaming(&path, new_size);
             }
-            state.buffer.total_bytes()
+            let new_total = state.buffer.total_bytes();
+            let appended = append_at
+                .filter(|_| new_total > old)
+                .map(|at| (at, state.get_text_range(old, new_total)));
+            (new_total, appended)
         } else {
             self.resolve_json_callback::<Option<usize>>(request_id, None);
             return;
         };
+
+        if let Some((at, text)) = appended {
+            self.active_window_mut().send_lsp_changes_for_buffer(
+                actual_buffer_id,
+                vec![lsp_types::TextDocumentContentChangeEvent {
+                    range: Some(lsp_types::Range::new(at, at)),
+                    range_length: None,
+                    text,
+                }],
+            );
+        }
 
         self.resolve_json_callback(request_id, Some(new_total));
     }
@@ -3722,7 +3849,23 @@ impl Editor {
                 // `background` buffer is already in the tab bar by now:
                 // `create_virtual_buffer` adds it and seeds its view state,
                 // and only this line makes it the one on screen.
-                if !hidden_from_tabs && !background {
+                //
+                // "Behind whatever is already there" has nothing to stand
+                // behind when the pane holds a synthetic placeholder: that
+                // buffer is the editor's "I must own at least one buffer"
+                // bookkeeping, hidden from the tab bar and painted as a bare
+                // hint. A background tab parked behind it leaves the reader
+                // looking at the hint with their page one keystroke away and
+                // no sign of it — which is what Orchestrator mode's empty
+                // workspace would show the welcome screen doing on a first
+                // run. Taking the pane here displaces nothing, because there
+                // was nothing to displace.
+                let pane_is_empty = self
+                    .active_window()
+                    .buffer_metadata
+                    .get(&self.active_buffer_id())
+                    .is_some_and(|m| m.synthetic_placeholder);
+                if !hidden_from_tabs && (!background || pane_is_empty) {
                     self.set_active_buffer(buffer_id);
                     tracing::debug!("Switched to virtual buffer {:?}", buffer_id);
                 }
@@ -4396,9 +4539,16 @@ impl Editor {
         self.relayout();
         #[cfg(feature = "plugins")]
         self.update_plugin_state_snapshot();
+        // The seed buffer, so the caller can describe the page itself.
+        let buffer_id = self
+            .windows
+            .get(&id)
+            .map(|w| w.active_buffer().0 as u64)
+            .unwrap_or_default();
         let api_result = fresh_core::api::PreparingWindowResult {
             window_id: id.0,
             stable_id,
+            buffer_id,
         };
         self.plugin_manager.read().unwrap().resolve_callback(
             callback_id,
@@ -4463,7 +4613,9 @@ impl Editor {
         // passes its connected authority. `resume` is the agent-resume argv
         // carried through to the new session's terminal. The new local
         // session gets its own per-session trust scoped to its root.
-        let new_authority = self.local_session_authority(&root);
+        let new_connection = std::sync::Arc::new(crate::services::authority::Connection::plain(
+            self.local_session_authority(&root),
+        ));
         // Only adopt an id that really is a placeholder: anything else would
         // mean silently tearing down a live workspace to reuse its number.
         let adopt = adopt_window.filter(|id| self.preparing_windows.contains_key(id));
@@ -4473,7 +4625,7 @@ impl Editor {
             cwd_buf,
             command,
             title,
-            new_authority,
+            new_connection,
             resume,
             env,
             allow_script,
@@ -4845,8 +4997,10 @@ impl Editor {
                 {
                     Ok(auth) => {
                         tracing::info!("Plugin installed new authority");
-                        self.active_window_mut().authority_spec = spec;
-                        self.install_authority(auth);
+                        let landed = self.install_authority(auth);
+                        if let Some(w) = self.windows.get_mut(&landed) {
+                            w.authority_spec = spec;
+                        }
                     }
                     Err(e) => {
                         tracing::warn!("setAuthority: invalid payload: {}", e);
@@ -4870,10 +5024,10 @@ impl Editor {
     /// Idempotent: a reconnect already in flight for this window is a no-op.
     pub(crate) fn reconnect_dormant_session_if_needed(&mut self, window_id: fresh_core::WindowId) {
         // The *activate* path (diving into a session). A live session already
-        // holds its connection (keepalive), so leave it alone here — switching
-        // to an already-connected window must not tear down and rebuild it. A
-        // local session has nothing to reconnect.
-        if self.session_keepalives.contains_key(&window_id) {
+        // holds its connection, so leave it alone here — switching to an
+        // already-connected window must not tear down and rebuild it. A local
+        // session has nothing to reconnect.
+        if self.window_connection_is_live(window_id) {
             return;
         }
         // A session still descriptor-backed in `dormant_remote` (its window,
@@ -4927,7 +5081,7 @@ impl Editor {
                 if let Some(w) = self.windows.get_mut(&window_id) {
                     w.remote_reconnect_error = None;
                 }
-                self.start_remote_connect(agent_spec, Some(window_id), request_id);
+                self.start_remote_connect(agent_spec, Some(window_id), request_id, false);
             }
             crate::services::authority::SessionAuthoritySpec::Plugin(_) => {
                 // Container: only the owning plugin can rebuild the backend
@@ -4952,7 +5106,7 @@ impl Editor {
             };
         // A plugin attach: spawn a born-attached window or restart (per
         // `spec.window`), not a reconnect of an existing one.
-        self.start_remote_connect(spec, None, request_id);
+        self.start_remote_connect(spec, None, request_id, false);
     }
 
     /// Spawn the async remote connect (carrier + agent bootstrap) for `spec`
@@ -4961,11 +5115,15 @@ impl Editor {
     /// `reconnect_window = Some(id)` re-points *that dormant window's*
     /// authority on success (no new window / no restart); `None` follows
     /// `spec.window` (born-attached window vs. global restart).
+    ///
+    /// `for_machine` connects for a plugin's `openMachine` handle instead of a
+    /// window. Its authority gets `TrustLevel::Blocked`, so it cannot run anything.
     pub(crate) fn start_remote_connect(
         &mut self,
         spec: crate::services::authority::RemoteAgentSpec,
         reconnect_window: Option<fresh_core::WindowId>,
         request_id: u64,
+        for_machine: bool,
     ) {
         // Take owned handles up front so the immutable borrows of `self`
         // end before the mutable `set_status_message` / spawn below.
@@ -4988,6 +5146,8 @@ impl Editor {
         // is set the main loop spawns a born-attached new window instead of
         // restarting the whole editor.
         let window_mode = spec.window;
+        // The placeholder the Orchestrator already put the user in, if any.
+        let window_adopt = spec.adopt_window.map(fresh_core::WindowId);
         let window_label = spec.label.clone();
         let window_command = spec.command.clone();
         // A remote session gets its **own** fresh trust + env handles — never
@@ -4998,7 +5158,11 @@ impl Editor {
         // inactive (the remote's env rides the spawner's captured probe).
         let trust = std::sync::Arc::new(crate::services::workspace_trust::WorkspaceTrust::new(
             None,
-            self.authority().workspace_trust.level(),
+            if for_machine {
+                crate::services::workspace_trust::TrustLevel::Blocked
+            } else {
+                self.authority().workspace_trust.level()
+            },
         ));
         let env = std::sync::Arc::new(crate::services::env_provider::EnvProvider::inactive());
 
@@ -5015,12 +5179,15 @@ impl Editor {
         let session_spec =
             crate::services::authority::SessionAuthoritySpec::RemoteAgent(spec.clone());
         let mode_for = |label: &str| {
-            if let Some(window_id) = reconnect_window {
+            if for_machine {
+                crate::services::async_bridge::RemoteAttachMode::Machine
+            } else if let Some(window_id) = reconnect_window {
                 crate::services::async_bridge::RemoteAttachMode::Reconnect { window_id }
             } else if window_mode {
                 crate::services::async_bridge::RemoteAttachMode::Window {
                     label: window_label.clone().unwrap_or_else(|| label.to_string()),
                     command: window_command.clone(),
+                    adopt: window_adopt,
                 }
             } else {
                 crate::services::async_bridge::RemoteAttachMode::Restart
@@ -5271,44 +5438,22 @@ impl Editor {
         // so a plugin that re-mounts (e.g. reopening a panel with
         // a fresh prefill) sees its spec values take effect. To
         // *preserve* state across renders, the plugin uses Update.
-        let prev = std::collections::HashMap::new();
-        // A mount paints from scratch: no previous window either, so
-        // every list starts at the top.
-        let prev_painted = std::collections::HashMap::new();
-        let prev_focus = String::new();
-        let panel_width = self.widget_panel_width(buffer_id);
         let avail_height = self.widget_panel_height(buffer_id);
-        // A mount has nothing panned yet.
-        let h_pan = std::collections::HashMap::new();
-        let out = self.render_panel_spec(
+        let ink = self.markdown_ink();
+        let out = crate::widgets::resolve_panel(
             &spec,
-            &prev,
-            &prev_painted,
-            &prev_focus,
-            panel_width,
-            avail_height,
+            &std::collections::HashMap::new(),
+            "",
             options.auto_focus_first(),
-            &h_pan,
+            Some(ink.ctx()),
         );
         self.record_widget_panel_render_height(&panel_key, avail_height);
-        // KNOWN LIMITATION (deliberate; retired by `docs/internal/retained-mode-ui.md` §3.5):
-        // buffer-mounted panels consume only the base rows + hits —
-        // `out.overlays` and `out.popup` are DROPPED, and the click
-        // path resolves with `on_overlay=false`. The popup/overlay
-        // channels (Overlay children, open Dropdown pop-overs, Text
-        // completions) work only in the floating/dock slots today;
-        // wiring them for mounted panels needs paint-time compositing
-        // over split content — a renderer arc of its own. A mounted
-        // panel using those channels will neither paint nor click them:
-        // prefer a floating slot for popup-bearing UI until that lands.
         self.widget_registry.mount(
             panel_key.clone(),
             buffer_id,
             spec,
             out.instance_states,
             out.focus_key,
-            out.painted,
-            out.boxes,
             options.auto_focus_first(),
             options.page(),
             options.focus_follows_cursor(),
@@ -5330,22 +5475,13 @@ impl Editor {
         {
             state.interactive_widget_panel = true;
         }
-        let entries = out.entries;
-        if let Err(e) = self.set_virtual_buffer_content(buffer_id, entries.clone()) {
-            tracing::error!(
-                "Failed to render mounted widget panel {} into {:?}: {}",
-                panel_key,
-                buffer_id,
-                e
-            );
-        } else {
-            tracing::debug!(
-                "Mounted widget panel {} into buffer {:?}",
-                panel_key,
-                buffer_id
-            );
-        }
-        self.apply_widget_focus_cursor(buffer_id, &entries, out.focus_cursor);
+        // The buffer's rows are the tree's, written once the frame lays the
+        // panel out — see `app::pane_mirror`.
+        tracing::debug!(
+            "Mounted widget panel {} into buffer {:?}",
+            panel_key,
+            buffer_id
+        );
     }
 
     fn handle_update_widget_panel(
@@ -5366,23 +5502,17 @@ impl Editor {
                 return;
             }
         };
-        let prev_painted = self
-            .widget_registry
-            .get(panel_key)
-            .map(|p| p.painted.clone())
-            .unwrap_or_default();
         let prev_focus = self
             .widget_registry
             .focus_key(panel_key)
             .map(|s| s.to_string())
             .unwrap_or_default();
-        let buffer_id_for_width = self
+        let buffer_id = self
             .widget_registry
             .buffer_and_spec(panel_key)
             .map(|(b, _)| b)
             .unwrap_or(BufferId(0));
-        let panel_width = self.widget_panel_width(buffer_id_for_width);
-        let avail_height = self.widget_panel_height(buffer_id_for_width);
+        let avail_height = self.widget_panel_height(buffer_id);
         // The policy the mount set, not a fresh default: a repaint that
         // resolved focus differently from the mount is exactly the drift
         // `auto_focus_first` exists to prevent.
@@ -5391,39 +5521,22 @@ impl Editor {
             .get(panel_key)
             .map(|p| p.auto_focus_first)
             .unwrap_or(true);
-        // The reader's sideways fold: a repaint that dropped it would slide
-        // every row back to its resting window under a reader who panned.
-        let h_pan = self
-            .widget_registry
-            .get(panel_key)
-            .map(|p| p.h_pan.clone())
-            .unwrap_or_default();
-        let out = self.render_panel_spec(
+        let ink = self.markdown_ink();
+        let out = crate::widgets::resolve_panel(
             &spec,
             &prev,
-            &prev_painted,
             &prev_focus,
-            panel_width,
-            avail_height,
             auto_focus_first,
-            &h_pan,
+            Some(ink.ctx()),
         );
         self.record_widget_panel_render_height(panel_key, avail_height);
-        let entries = out.entries;
-        match self.widget_registry.update(
-            panel_key,
-            spec,
-            out.instance_states,
-            out.focus_key,
-            out.painted,
-            out.boxes,
-        ) {
-            Ok(buffer_id) => {
-                if let Err(e) = self.set_virtual_buffer_content(buffer_id, entries.clone()) {
-                    tracing::error!("Failed to render updated widget panel {}: {}", panel_key, e);
-                }
-                self.apply_widget_focus_cursor(buffer_id, &entries, out.focus_cursor);
-            }
+        match self
+            .widget_registry
+            .update(panel_key, spec, out.instance_states, out.focus_key)
+        {
+            // The buffer's rows are the tree's, written once the frame lays
+            // the new spec out — see `app::pane_mirror`.
+            Ok(_) => {}
             Err(()) => {
                 tracing::debug!(
                     "UpdateWidgetPanel for unknown panel {} ignored (not mounted)",
@@ -5596,12 +5709,16 @@ impl Editor {
                 // Update completion popup state on a Text widget.
                 // Non-empty `items` opens the popup and resets the
                 // host-managed selection to the top candidate;
-                // empty closes it. The instance state has to
-                // exist first (a SetCompletions arriving before
-                // any render is dropped on the floor — Text
-                // instance state is seeded on first render of
-                // the spec).
+                // empty closes it. The candidates are host state a
+                // field nobody has typed in does not have yet, so this
+                // is one of the handlers that seeds it
+                // (`text::ensure_text_state`).
                 if let Some(panel) = self.widget_registry.get_mut(panel_key) {
+                    if let Some(widget) =
+                        crate::widgets::find_widget_by_key(&panel.spec, &widget_key).cloned()
+                    {
+                        crate::widgets::kinds::text::ensure_text_state(&widget, &widget_key, panel);
+                    }
                     if let Some(crate::widgets::WidgetInstanceState::Text {
                         completions,
                         completion_selected_index,
@@ -5740,6 +5857,8 @@ impl Editor {
 
     fn handle_unmount_widget_panel(&mut self, panel_key: &crate::widgets::PanelKey) {
         self.page_anchors.remove(panel_key);
+        self.pane_mirrors.remove(panel_key);
+        self.prose_reveal.borrow_mut().remove(panel_key);
         match self.widget_registry.unmount(panel_key) {
             Some(buffer_id) => {
                 tracing::debug!(
@@ -5767,6 +5886,7 @@ impl Editor {
         height_pct: u8,
         as_dock: bool,
         focus_marker: bool,
+        label_align: fresh_core::api::LabelAlign,
         // Native modal-frame chrome for a centered panel (ignored for the
         // dock / anchored). See `FloatingWidgetState::{title,closable}`.
         title: Option<String>,
@@ -5801,12 +5921,10 @@ impl Editor {
         if !as_dock && self.dock.as_ref().is_some_and(|f| f.focused) {
             self.blur_floating_panel(super::PanelSlot::Dock);
         }
+        // A dock's width is the editor's (`dock_width` / `dock_width_rule`),
+        // not the panel's.
         let placement = if as_dock {
-            let width = self
-                .dock_width
-                .unwrap_or(32)
-                .clamp(10, self.terminal_width.max(20).saturating_sub(20).max(10));
-            super::PanelPlacement::LeftDock { width_cols: width }
+            super::PanelPlacement::LeftDock
         } else {
             super::PanelPlacement::Centered
         };
@@ -5830,11 +5948,11 @@ impl Editor {
             placement,
             focused: !start_blurred,
             mode,
-            entries: Vec::new(),
             scrollbar_zone_hovered: false,
             scrollbar_flash_until: None,
             fullscreen: false,
             focus_marker,
+            label_align,
             // The native modal frame is a centered-modal affordance; the dock
             // (left companion) and anchored (context-menu) placements never
             // draw a title bar or close button, so drop the chrome there.
@@ -5844,59 +5962,33 @@ impl Editor {
             hovered_item_key: String::new(),
             hovered_popup_row: String::new(),
         });
-        let prev = std::collections::HashMap::new();
-        // A mount paints from scratch — no previous window either.
-        let prev_painted = std::collections::HashMap::new();
-        let prev_focus = String::new();
-        let panel_width = self.floating_panel_inner_width(slot);
-        // A fresh mount has nothing hovered: the pointer hasn't been
-        // resolved against this panel's hit areas yet, and the next
-        // `Moved` event will do so.
-        let out = {
-            let theme_guard = self.theme.read().unwrap();
-            super::widget_runtime::render_floating_spec(
-                focus_marker,
-                &spec,
-                &prev,
-                &prev_painted,
-                &prev_focus,
-                panel_width,
-                self.floating_panel_inner_height(slot),
-                "",
-                "",
-                "",
-                Some(crate::widgets::MarkdownCtx {
-                    theme: &theme_guard,
-                    grammars: Some(self.grammar_registry.as_ref()),
-                }),
-                // Floating and dock slots keep the historical seeding;
-                // only a panel that declared otherwise at mount opts out.
-                true,
-                // A mount has nothing panned yet.
-                None,
-            )
-        };
-        let entries = out.entries;
+        // A mount is a clean slate: no state and no focus yet. The tree lays
+        // the panel out on the next frame; what the registry needs now is the
+        // spec resolved against nothing — the focus clamp, and the state the
+        // description reads.
+        let ink = self.markdown_ink();
+        let out = crate::widgets::resolve_panel(
+            &spec,
+            &std::collections::HashMap::new(),
+            "",
+            // Floating and dock slots keep the historical seeding;
+            // only a panel that declared otherwise at mount opts out.
+            true,
+            Some(ink.ctx()),
+        );
         self.widget_registry.mount(
             panel_key.clone(),
             buffer_id,
             spec,
             out.instance_states,
             out.focus_key,
-            out.painted,
-            out.boxes,
-            // Floating and dock panels render through
-            // `render_floating_spec`, which seeds focus unconditionally;
-            // record what they actually rendered under rather than a
-            // policy they do not read.
+            // Floating and dock panels seed focus unconditionally; record
+            // what they resolved under rather than a policy they do not read.
             true,
             // Not a page, and with no buffer caret to track.
             false,
             false,
         );
-        if let Some(fwp) = self.panel_mut(slot) {
-            fwp.entries = entries;
-        }
         tracing::debug!(
             "Mounted floating widget panel {} ({}%x{}%)",
             panel_key,
@@ -5909,6 +6001,7 @@ impl Editor {
         // viewports reflow to the post-dock width right away (a centered
         // panel leaves `dock_cols` at 0, so this is a cheap no-op there).
         if as_dock {
+            self.dock_reserved = false;
             self.relayout();
         }
     }
@@ -5944,11 +6037,11 @@ impl Editor {
             placement: super::PanelPlacement::SidebarSection { rows },
             focused: false,
             mode: None,
-            entries: Vec::new(),
             scrollbar_zone_hovered: false,
             scrollbar_flash_until: None,
             fullscreen: false,
             focus_marker: false,
+            label_align: Default::default(),
             title: None,
             closable: false,
             hovered_widget_key: String::new(),
@@ -5960,53 +6053,30 @@ impl Editor {
         if let Some(p) = self.panel_mut(slot) {
             p.focused = false;
         }
-        let prev = std::collections::HashMap::new();
-        let prev_painted = std::collections::HashMap::new();
-        let prev_focus = String::new();
-        let panel_width = self.floating_panel_inner_width(slot);
-        let out = {
-            let theme_guard = self.theme.read().unwrap();
-            super::widget_runtime::render_floating_spec(
-                false,
-                &spec,
-                &prev,
-                &prev_painted,
-                &prev_focus,
-                panel_width,
-                self.floating_panel_inner_height(slot),
-                "",
-                "",
-                "",
-                Some(crate::widgets::MarkdownCtx {
-                    theme: &theme_guard,
-                    grammars: Some(self.grammar_registry.as_ref()),
-                }),
-                // As the dock: keep the historical focus seeding.
-                true,
-                // A mount has nothing panned yet.
-                None,
-            )
-        };
-        let entries = out.entries;
+        // As the dock: a clean slate, resolved against nothing.
+        let ink = self.markdown_ink();
+        let out = crate::widgets::resolve_panel(
+            &spec,
+            &std::collections::HashMap::new(),
+            "",
+            // As the dock: keep the historical focus seeding.
+            true,
+            Some(ink.ctx()),
+        );
         self.widget_registry.mount(
             panel_key.clone(),
             slot.buffer_id(),
             spec,
             out.instance_states,
             out.focus_key,
-            out.painted,
-            out.boxes,
-            // As the dock: `render_floating_spec` seeds focus
-            // unconditionally, so record what was rendered under.
+            // As the dock: focus is seeded unconditionally, so record what
+            // was resolved under.
             true,
             // Not a page, and — as the dock — with no buffer caret of its
             // own to track.
             false,
             false,
         );
-        if let Some(fwp) = self.panel_mut(slot) {
-            fwp.entries = entries;
-        }
         if !start_blurred {
             self.focus_sidebar_section(index);
         }
@@ -6026,79 +6096,31 @@ impl Editor {
         // The description reads what this writes; see
         // `Editor::shell_description_stale`.
         self.shell_description_stale = true;
-        let Some(slot) = self.slot_of_panel(panel_key) else {
+        if self.slot_of_panel(panel_key).is_none() {
             tracing::debug!(
                 "UpdateFloatingWidget for unknown / mismatched panel {} ignored",
                 panel_key
             );
             return;
-        };
+        }
         let prev = self
             .widget_registry
             .instance_states(panel_key)
             .cloned()
-            .unwrap_or_default();
-        let prev_painted = self
-            .widget_registry
-            .get(panel_key)
-            .map(|p| p.painted.clone())
             .unwrap_or_default();
         let prev_focus = self
             .widget_registry
             .focus_key(panel_key)
             .map(|s| s.to_string())
             .unwrap_or_default();
-        let panel_width = self.floating_panel_inner_width(slot);
-        let focus_marker = self.panel(slot).map(|f| f.focus_marker).unwrap_or(false);
-        // Carry the live hover through a plugin-driven update, so a spec
-        // refresh under a stationary pointer doesn't drop the highlight.
-        let hover_key = self
-            .panel(slot)
-            .map(|f| f.hovered_widget_key.clone())
-            .unwrap_or_default();
-        let hover_item_key = self
-            .panel(slot)
-            .map(|f| f.hovered_item_key.clone())
-            .unwrap_or_default();
-        let hover_popup_row = self
-            .panel(slot)
-            .map(|f| f.hovered_popup_row.clone())
-            .unwrap_or_default();
-        let out = {
-            let theme_guard = self.theme.read().unwrap();
-            super::widget_runtime::render_floating_spec(
-                focus_marker,
-                &spec,
-                &prev,
-                &prev_painted,
-                &prev_focus,
-                panel_width,
-                self.floating_panel_inner_height(slot),
-                &hover_key,
-                &hover_item_key,
-                &hover_popup_row,
-                Some(crate::widgets::MarkdownCtx {
-                    theme: &theme_guard,
-                    grammars: Some(self.grammar_registry.as_ref()),
-                }),
-                // Floating and dock slots keep the historical seeding;
-                // only a panel that declared otherwise at mount opts out.
-                true,
-                // A mount has nothing panned yet.
-                None,
-            )
-        };
-        let entries = out.entries;
+        // The state carried, the focus re-clamped onto the new spec; the tree
+        // lays the new spec out on the next frame. Hover is the panel's own
+        // and survives a spec refresh on it untouched.
+        let ink = self.markdown_ink();
+        let out = crate::widgets::resolve_panel(&spec, &prev, &prev_focus, true, Some(ink.ctx()));
         if self
             .widget_registry
-            .update(
-                panel_key,
-                spec,
-                out.instance_states,
-                out.focus_key,
-                out.painted,
-                out.boxes,
-            )
+            .update(panel_key, spec, out.instance_states, out.focus_key)
             .is_err()
         {
             tracing::debug!(
@@ -6106,9 +6128,6 @@ impl Editor {
                 panel_key
             );
             return;
-        }
-        if let Some(fwp) = self.panel_mut(slot) {
-            fwp.entries = entries;
         }
     }
 
@@ -6181,6 +6200,17 @@ impl Editor {
             self.blur_floating_panel(slot);
             return;
         }
+        // `dock_width` sets the editor's dock width, not the panel's, so it
+        // is answered before the panel is borrowed. It sticks like a drag:
+        // across resizes and launches, until the next one.
+        if op == "dock_width" {
+            if slot == super::PanelSlot::Dock {
+                self.dock_width = Some(self.clamp_dock_width(arg.max(0.0) as u16));
+                self.persist_dock_width();
+                self.relayout();
+            }
+            return;
+        }
         // **The ops that move a panel between slots**, resolved before the
         // in-place ones below: a section is a different slot, so "sidebar"
         // on a dock or centred panel and "dock" / "center" on a section each
@@ -6248,43 +6278,24 @@ impl Editor {
                 if let Some(o) = self.panel_opt_mut(to) {
                     *o = Some(panel);
                 }
+                if to == super::PanelSlot::Dock {
+                    self.dock_reserved = false;
+                }
                 to
             }
             _ => slot,
         };
-        // Clamp the dock width relative to the terminal so it can never
-        // swallow the whole chrome. Read before the &mut borrow below.
-        // A user-dragged width (`dock_width`) overrides the plugin's
-        // default so the resize survives toggling the dock off/on.
-        let max_cols = self.terminal_width.max(20).saturating_sub(20).max(10);
-        let persisted = self.dock_width;
         let Some(fwp) = self.panel_mut(slot) else {
             return;
         };
         // Whether this op changed the chrome geometry (dock width/placement),
         // so we know to re-derive the layout once the `fwp` borrow ends.
         let geometry_changed = match op {
+            // `arg` is ignored: the width is the editor's; see `dock_width`.
             "dock" => {
-                let requested = persisted.unwrap_or(arg as u16);
-                let width_cols = requested.clamp(10, max_cols);
-                fwp.placement = super::PanelPlacement::LeftDock { width_cols };
+                fwp.placement = super::PanelPlacement::LeftDock;
                 fwp.focused = true;
                 true
-            }
-            // Update the dock's width WITHOUT touching focus — used by the
-            // plugin to make the dock responsive (re-issued on terminal
-            // resize). Unlike "dock" this never steals keyboard focus back
-            // from the editor, and it's a no-op unless the panel is already
-            // docked. A user-dragged width still wins (persisted override).
-            "dock_width" => {
-                if let super::PanelPlacement::LeftDock { .. } = fwp.placement {
-                    let requested = persisted.unwrap_or(arg as u16);
-                    let width_cols = requested.clamp(10, max_cols);
-                    fwp.placement = super::PanelPlacement::LeftDock { width_cols };
-                    true
-                } else {
-                    false
-                }
             }
             "center" => {
                 fwp.placement = super::PanelPlacement::Centered;

@@ -199,7 +199,9 @@ fn new_session_atomic_api_seeds_terminal_as_only_tab() {
                 format!("printf {}; sleep 60", MARKER),
             ]),
             Some("agent".into()),
-            born_authority,
+            std::sync::Arc::new(fresh::services::authority::Connection::plain(
+                born_authority,
+            )),
             None,
             None,
             false,

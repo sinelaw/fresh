@@ -28,7 +28,10 @@ build() {
     export CC=clang
     # Bake the install channel into the binary (compile-time provenance).
     export FRESH_BUILD_CHANNEL=aur
-    cargo build --locked --release
+    # `web` is opt-in in Cargo.toml (it embeds the browser UI and pulls in the
+    # sha1 WebSocket-handshake dep), so it has to be named here or the package
+    # ships a `fresh` that rejects `--web` (#3316).
+    cargo build --locked --release --features web
 }
 
 package() {

@@ -43,8 +43,13 @@
     background:color-mix(in srgb, var(--bg2) 74%, transparent);
     -webkit-backdrop-filter:blur(22px) saturate(1.15);
     backdrop-filter:blur(22px) saturate(1.15)}
+  /* An editor-ink popup body is part of the same pane of glass, so it takes
+     the editor's ground at the card's own alpha rather than a solid slab. */
+  :root{--ed-popup-ground:color-mix(in srgb, var(--ed-popup-bg,var(--bg2)) 74%, transparent)}
   @supports not ((backdrop-filter:blur(1px)) or (-webkit-backdrop-filter:blur(1px))){
-    .dropdown,.popup,.ctxmenu,.palette,.m-sheet{background:var(--bg2)}}
+    .dropdown,.popup,.ctxmenu,.palette,.m-sheet{background:var(--bg2)}
+    /* No blur to see through: the ground goes solid with the card. */
+    :root{--ed-popup-ground:var(--ed-popup-bg,var(--bg2))}}
 
   /* Palette card: bold title band, transparent input row, roomier rows, and
      key chips on the right of each row. */

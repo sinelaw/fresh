@@ -315,6 +315,38 @@ same-plugin re-registration (hot reload) is allowed.
 After discovery and the init plugin, the editor fires the plugins-loaded hook
 then the ready hook.
 
+### 6.2a Manifests: what a plugin declares before it runs
+
+Plugin code runs after every plugin has loaded, so anything the host needs
+**before the first frame** comes from the `<plugin>.manifest.json` sidecar,
+read synchronously at discovery (`services::plugins::manifest::read_manifests`)
+on both load paths, next to the `.i18n.json` and `.schema.json` sidecars.
+Only *enabled* plugins' manifests count; a file that does not parse is
+logged and skipped.
+
+Today a manifest declares one thing, chrome:
+
+```json
+{ "chrome": { "dock": {
+    "open": true,
+    "open_setting": "autoOpenDock",
+    "width": { "fraction": 0.28, "min": 24, "max": 40 } } } }
+```
+
+`chrome.dock` says the plugin fills the editor-global left dock. From it the
+host decides at construction whether the slot is open and how wide
+(`Editor::apply_startup_dock_chrome`): a bare `fresh` in Orchestrator mode
+always opens it; `open_setting` (a boolean in `plugins.<name>.settings`) set
+to `false` keeps it closed; otherwise it comes back as the user left it
+(`<data>/chrome.json`: open or closed, and the dragged width), or as `open`
+says on a first launch. The width rule is the host's from then on; the plugin
+reads it back with `editor.dockCols()`.
+
+A manifest is a declaration, not a command. The plugin still mounts its dock
+from `ready`, gated on `editor.dockOpen()`, into a column that is already
+there; a column held for a dock that never arrives is handed back when the
+hook's `HookCompleted` sentinel lands.
+
 ### 6.3 Unload cleanup
 
 Unload removes the JS context, event handlers, actions and callback contexts,
@@ -359,7 +391,7 @@ REVERSED caret cell for modal surfaces), `Number` (form value cell
 host-owned scroll/selection), `Tree` (disclosure + optional per-row
 checkboxes), and `Raw` (pre-rendered text-property escape hatch). The `Number`,
 `Dropdown`, and `DualList` kinds were added for the Settings↔widget unification
-(see `retained-mode-ui.md` §3.6), which maps every scalar Settings
+(see `retained-mode-ui.md`, "Where each surface lives"), which maps every scalar Settings
 control onto a widget kind. PLANNED per the design: `Table`, tabs/group, and a
 layer/prompt compositor for modals/tooltips — though the existing overlay-layer
 stack + floating-widget panels already cover most modal/popup needs (the

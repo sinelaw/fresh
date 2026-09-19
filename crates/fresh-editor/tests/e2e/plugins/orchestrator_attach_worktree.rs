@@ -774,9 +774,7 @@ fn open_dock(harness: &mut EditorTestHarness) {
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
     harness
-        .wait_until(|h| {
-            h.screen_to_string().contains("Orchestrator") && h.editor().is_dock_focused()
-        })
+        .wait_until(|h| h.screen_to_string().contains("+ New") && h.editor().is_dock_focused())
         .unwrap();
 }
 
@@ -1221,5 +1219,168 @@ fn deleting_worktree_session_from_dock_does_not_resurrect_it() {
         "the deleted worktree row reappeared in the dock after a refresh.\n\
          Screen:\n{}",
         harness.screen_to_string()
+    );
+}
+
+/// Like `set_up_repo_with_two_worktrees`, but the repo also has an `origin`: a
+/// bare repository on disk, empty, with nothing pushed to it yet. That
+/// emptiness is the whole assertion surface — anything Fresh sends to `origin`
+/// shows up there as a ref, and the study's fixture never had a remote, which
+/// is exactly why the push went unnoticed for so long.
+///
+/// Two worktrees rather than one because the bulk action bar — the delete path
+/// this test drives — appears at two or more checked rows.
+/// Returns (guard, repo, wt1, wt2, origin).
+fn set_up_repo_with_two_worktrees_and_origin(
+) -> (tempfile::TempDir, PathBuf, PathBuf, PathBuf, PathBuf) {
+    let (temp, repo, wt1, wt2) = set_up_repo_with_two_worktrees();
+    let origin = repo.parent().unwrap().join("origin.git");
+    git(&repo, &["init", "--bare", "-q", origin.to_str().unwrap()]);
+    git(
+        &repo,
+        &["remote", "add", "origin", origin.to_str().unwrap()],
+    );
+    (temp, repo, wt1, wt2, origin)
+}
+
+/// Every ref in a repository, as `refs/...` strings.
+fn refs_in(repo: &Path) -> Vec<String> {
+    let out = Command::new("git")
+        .args([
+            "-C",
+            repo.to_str().unwrap(),
+            "for-each-ref",
+            "--format=%(refname)",
+        ])
+        .output()
+        .expect("git for-each-ref");
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+/// Deleting workspaces leaves the user's repository and its `origin` alone.
+///
+/// Fresh used to keep a session list on a `<user>/fresh-sessions` branch,
+/// maintained through a `.sync-workspace` worktree inside the user's own
+/// repository, and push it to `origin` on every archive and delete — under the
+/// user's git identity, with no way to decline and no message when it failed.
+/// The whole mechanism is gone. A delete is a local operation on the
+/// workspace's own worktree and nothing else.
+///
+/// So the assertion is the absence of all of it: after deleting two
+/// workspaces, `origin` has no refs, the repository has gained no branch
+/// beyond the ones the fixture made, and no `.sync-workspace` worktree is
+/// registered. The fixture's bare `origin` is the part the original study
+/// lacked — with no remote configured, a push cannot be observed either way.
+#[test]
+fn deleting_a_workspace_touches_neither_the_repo_nor_its_origin() {
+    let (temp, repo, wt1, wt2, origin) = set_up_repo_with_two_worktrees_and_origin();
+    // Pin the data dir into the temp tree: a stray write under the real user
+    // data dir would outlive the test.
+    let (dir_context, _data_pin) = crate::common::global_state::isolated_dir_context(temp.path());
+    let mut config = fresh::config::Config::default();
+    config.editor.line_wrap = false;
+    let mut harness =
+        EditorTestHarness::with_shared_dir_context(160, 50, config, repo.clone(), dir_context)
+            .unwrap();
+    harness.tick_and_render().unwrap();
+    wait_for_command(&mut harness, "Orchestrator: Open");
+
+    let branches_before = refs_in(&repo);
+    assert!(
+        refs_in(&origin).is_empty(),
+        "fixture precondition: origin starts with no refs, got {:?}",
+        refs_in(&origin)
+    );
+
+    open_orchestrator_dialog(&mut harness);
+    ensure_worktrees_shown(&mut harness);
+    harness
+        .wait_until(|h| {
+            let s = h.screen_to_string();
+            s.contains("feature-x") && s.contains("feature-y") && s.contains("· on-disk")
+        })
+        .unwrap();
+
+    // Check both discovered rows, then Archive → Tab → Delete (2) → Enter.
+    navigate_to_discovered_row(&mut harness);
+    harness
+        .send_key(KeyCode::Char(' '), KeyModifiers::NONE)
+        .unwrap();
+    harness.tick_and_render().unwrap();
+    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Char(' '), KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Delete (2)"))
+        .unwrap();
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Confirm Delete"))
+        .unwrap_or_else(|_| {
+            panic!(
+                "Delete (2) should open the bulk Confirm Delete panel.\nScreen:\n{}",
+                harness.screen_to_string()
+            )
+        });
+
+    // The confirmation must not mention a session-list branch either: the
+    // dialog enumerates what the action does, and it no longer does this.
+    let confirm_screen = harness.screen_to_string();
+    assert!(
+        !confirm_screen.contains("fresh-sessions"),
+        "the delete confirmation still promises a session-list branch.\n\
+         Screen:\n{confirm_screen}"
+    );
+
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+
+    harness
+        .wait_until(|_| !wt1.exists() && !wt2.exists())
+        .unwrap_or_else(|_| {
+            panic!(
+                "delete should `git worktree remove` both worktrees.\n\
+                 wt1.exists()={} wt2.exists()={}\nScreen:\n{}",
+                wt1.exists(),
+                wt2.exists(),
+                harness.screen_to_string()
+            )
+        });
+
+    // Settle: the delete is async, so give the editor a beat past the last
+    // observable effect before concluding that nothing further happened.
+    harness.wait_until_stable(|_| true).unwrap();
+
+    assert!(
+        refs_in(&origin).is_empty(),
+        "deleting a workspace wrote to origin; refs there are now: {:?}",
+        refs_in(&origin)
+    );
+    let after: Vec<String> = refs_in(&repo)
+        .into_iter()
+        .filter(|r| !branches_before.contains(r))
+        .collect();
+    assert!(
+        after.is_empty(),
+        "deleting a workspace added refs to the user's repository: {after:?}"
+    );
+    let worktrees = Command::new("git")
+        .args(["-C", repo.to_str().unwrap(), "worktree", "list"])
+        .output()
+        .expect("git worktree list");
+    let worktrees = String::from_utf8_lossy(&worktrees.stdout);
+    assert!(
+        !worktrees.contains(".sync-workspace"),
+        "a `.sync-workspace` worktree was registered in the user's repository:\n{worktrees}"
     );
 }
