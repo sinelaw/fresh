@@ -1547,7 +1547,12 @@ impl Editor {
             return;
         };
         win.install_initialized_file_explorer(view, defaults);
-        if is_active {
+        // "Ready" replaces "initializing" and nothing more specific: a focus
+        // or a reveal that spoke since keeps its word.
+        let still_initializing = self
+            .get_status_message()
+            .is_none_or(|m| *m == t!("explorer.initializing"));
+        if is_active && still_initializing {
             self.set_status_message(t!("status.file_explorer_ready").to_string());
         }
     }
