@@ -357,6 +357,14 @@ editor.on("chrome_focus_changed", (a) => {
 let mountedTitle = "";
 /** The buffer the mounted section is scoped to — a remount follows it. */
 let mountedBufferId: number | null = null;
+/** The buffer a "Toggle Table of Contents" asked to *see*: the next mount
+ *  for that buffer reveals the section. Keyed by buffer so a mount for
+ *  another buffer — the user moved on before the scan came back — does not
+ *  pop the column open unasked. */
+let revealFor: number | null = null;
+/** As `revealFor`, for "Focus Contents": the next mount for that buffer
+ *  gives the section the keyboard. */
+let focusFor: number | null = null;
 let rescanTimer: number | null = null;
 /** Bumped per full scan so a stale `await` cannot publish over a newer one. */
 let scanGeneration = 0;
@@ -416,7 +424,8 @@ function mountSection(): void {
   } else {
     // First mount, the title changed (stale ↔ fresh), or the section is
     // about a different buffer now: title and scope are fixed at mount
-    // time, so this is a remount — in place, keeping the section's rows.
+    // time, so this is a remount. The host keeps the section in place —
+    // its rows, collapsed state and position — and swaps the panel.
     // Mounted blurred — the section is reference material, and taking the
     // keyboard from the editor on every buffer switch would be hostile.
     //
@@ -435,11 +444,25 @@ function mountSection(): void {
     mountedBufferId = toc.bufferId;
     sectionFocused = false;
   }
+  // What an explicit command asked for, once the section it asked about
+  // is there. An automatic mount stays quiet. The host answers both only
+  // for a section on screen, so a mount for a buffer that is not the
+  // active one (parked at once) opens nothing.
+  if (revealFor === toc.bufferId) {
+    editor.floatingPanelControl(PANEL_ID, "reveal", 0);
+  }
+  if (focusFor === toc.bufferId) {
+    editor.floatingPanelControl(PANEL_ID, "focus", 0);
+  }
+  revealFor = null;
+  focusFor = null;
   pushExpanded();
   pushSelected(toc.selected);
 }
 
 function unmountSection(): void {
+  revealFor = null;
+  focusFor = null;
   if (mounted) {
     editor.unmountFloatingWidget(PANEL_ID);
     mounted = false;
@@ -449,14 +472,32 @@ function unmountSection(): void {
   }
 }
 
-/** Show the section — column and all — and give it the keyboard. */
+/** Whether the mounted section is the active buffer's. With `autoOpen`
+ *  off the section stays mounted for the last Markdown buffer while the
+ *  host parks it behind whatever the user switched to, so "mounted" alone
+ *  does not mean "on screen for this buffer". */
+function mountedForActiveBuffer(): boolean {
+  return mounted && toc !== null && toc.bufferId === editor.getActiveBufferId();
+}
+
+/** Show the section — column and all — and give it the keyboard. For a
+ *  Markdown buffer that has no outline yet (`autoOpen` off, or the outline
+ *  is another buffer's) this mounts one first. */
 function markdownTocFocus(): void {
-  if (!toc || !mounted) {
+  if (mountedForActiveBuffer()) {
+    editor.floatingPanelControl(PANEL_ID, "reveal", 0);
+    editor.floatingPanelControl(PANEL_ID, "focus", 0);
+    return;
+  }
+  const bufferId = editor.getActiveBufferId();
+  const info = editor.getBufferInfo(bufferId);
+  if (!info || !isMarkdownFile(info.path)) {
     editor.setStatus(editor.t("status.not_markdown_file"));
     return;
   }
-  editor.floatingPanelControl(PANEL_ID, "reveal", 0);
-  editor.floatingPanelControl(PANEL_ID, "focus", 0);
+  revealFor = bufferId;
+  focusFor = bufferId;
+  track(bufferId, info.path);
 }
 registerHandler("markdownTocFocus", markdownTocFocus);
 
@@ -797,8 +838,9 @@ editor.on("buffer_activated", (data) => {
     onMarkdownBufferActive(data.buffer_id, info.path);
     return;
   }
-  // Not markdown: auto-open closes the section; a manually opened one keeps
-  // showing the last Markdown buffer until toggled.
+  // Not markdown: auto-open closes the section. A manually opened one stays
+  // mounted for its buffer — the host parks it while this buffer is on
+  // screen and brings it back with its own.
   if (autoOpenEnabled()) {
     unmountSection();
     toc = null;
@@ -834,7 +876,11 @@ editor.on("config_changed", () => {
 /** Toggle the section for the active Markdown buffer, regardless of
  *  `autoOpen`. */
 function markdownTocToggle(): void {
-  if (mounted) {
+  // Off only for the outline the user is looking at: with `autoOpen` off
+  // the mounted one may be another buffer's, parked out of sight, and
+  // "off" for something with no pixels on screen would need a second
+  // toggle to get the outline for this buffer.
+  if (mountedForActiveBuffer()) {
     unmountSection();
     editor.setStatus(editor.t("status.toc_off"));
     return;
@@ -845,6 +891,7 @@ function markdownTocToggle(): void {
     editor.setStatus(editor.t("status.not_markdown_file"));
     return;
   }
+  revealFor = bufferId;
   track(bufferId, info.path);
   editor.setStatus(editor.t("status.toc_on"));
 }
