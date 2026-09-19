@@ -502,6 +502,23 @@ pub struct RemoteBackendInfo {
     pub connected: bool,
 }
 
+/// A sidebar section's scope as a plugin asks for it. None set is the
+/// default: the window the mount came from. If more than one is set,
+/// `editor` wins over `buffer`, and `buffer` over `window`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct SectionScopeSpec {
+    /// Editor-wide: every window, always.
+    #[serde(default)]
+    pub editor: bool,
+    /// Scoped to this window.
+    #[serde(default)]
+    pub window: Option<u64>,
+    /// Scoped to this buffer, in whichever window owns it.
+    #[serde(default)]
+    pub buffer: Option<u64>,
+}
+
 /// Information about a buffer
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
@@ -509,6 +526,13 @@ pub struct BufferInfo {
     /// Buffer ID
     #[ts(type = "number")]
     pub id: BufferId,
+    /// The window this buffer belongs to. A buffer lives in exactly one
+    /// window — the same file open in two windows is two buffers with two
+    /// ids — so a plugin that keeps a buffer id keeps this with it, and
+    /// checks it against the window it is acting in.
+    #[ts(type = "number")]
+    #[serde(default)]
+    pub window_id: u64,
     /// File path (if any)
     #[serde(serialize_with = "serialize_path")]
     #[ts(type = "string")]
@@ -6084,6 +6108,12 @@ pub enum PluginCommand {
         /// section takes the keys, as a dock mount does.
         #[serde(default)]
         start_blurred: bool,
+        /// When the section is on screen. Nothing set: scoped to the window
+        /// the mount came from — the narrow default; editor-wide has to be
+        /// asked for. A buffer scope names the buffer; the host finds its
+        /// window.
+        #[serde(default)]
+        scope: SectionScopeSpec,
     },
 
     /// Replace the spec of the currently-mounted floating widget
@@ -8226,6 +8256,7 @@ mod tests {
             let mut snapshot = state_snapshot.write().unwrap();
             let buffer_info = BufferInfo {
                 id: BufferId(1),
+                window_id: 1,
                 path: Some(std::path::PathBuf::from("/test/file.txt")),
                 name: "file.txt".to_string(),
                 modified: true,
@@ -8276,6 +8307,7 @@ mod tests {
                 BufferId(1),
                 BufferInfo {
                     id: BufferId(1),
+                    window_id: 1,
                     path: Some(std::path::PathBuf::from("/file1.txt")),
                     name: "file1.txt".to_string(),
                     modified: false,
@@ -8296,6 +8328,7 @@ mod tests {
                 BufferId(2),
                 BufferInfo {
                     id: BufferId(2),
+                    window_id: 1,
                     path: Some(std::path::PathBuf::from("/file2.txt")),
                     name: "file2.txt".to_string(),
                     modified: true,
@@ -8316,6 +8349,7 @@ mod tests {
                 BufferId(3),
                 BufferInfo {
                     id: BufferId(3),
+                    window_id: 1,
                     path: None,
                     // A virtual buffer: no path, but it still has the name it
                     // was created with — which is the whole point of the field.

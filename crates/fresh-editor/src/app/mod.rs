@@ -33,6 +33,7 @@ mod file_open_input;
 mod file_open_orchestrators;
 mod file_open_queue;
 mod file_operations;
+mod focus_announcer;
 mod git_index;
 mod help;
 mod help_actions;
@@ -60,6 +61,8 @@ mod orchestrator_persistence;
 mod overlay;
 mod pane_mirror;
 mod path_utils;
+#[cfg(feature = "plugins")]
+mod plugin_buffer_guard;
 #[cfg(feature = "plugins")]
 mod plugin_commands;
 #[cfg(feature = "plugins")]
@@ -694,6 +697,12 @@ pub struct Editor {
     /// signature stops that re-firing once the geometry settles. `None`
     /// until the first relayout.
     last_layout_signature: Option<(u16, u16, u16, u16)>,
+
+    /// The `(window, pane, buffer)` the focus hooks last described — see
+    /// `app::focus_announcer`. `None` until the first announcement.
+    pub(crate) last_announced_focus: Option<focus_announcer::FocusTriple>,
+    /// The chrome region `chrome_focus_changed` last named.
+    pub(crate) last_announced_chrome: Option<focus_announcer::ChromeFocus>,
 
     // LSP manager moved onto `Window`. Access via
     // `Editor::lsp()` / `lsp_mut()` — each window has its own
@@ -1510,6 +1519,15 @@ pub struct Editor {
     /// The sidebar's sections, top to bottom; section 0 is the explorer.
     /// Editor-global for the same reason the dock is — see `app::sidebar`.
     pub(crate) sidebar_sections: Vec<sidebar::SidebarSection>,
+    /// Sections whose scope does not match the active window and buffer,
+    /// kept off screen until it does again (`reconcile_sidebar_scopes`).
+    pub(crate) parked_sidebar_sections: Vec<sidebar::SidebarSection>,
+    /// Frames left before restored placeholders no plugin claimed are
+    /// dropped; `None` when nothing is pending.
+    pub(crate) sidebar_placeholder_expiry: Option<u8>,
+    /// The `(rows, collapsed)` an expired placeholder had, by identity, so a
+    /// later mount lands where the user left it.
+    pub(crate) sidebar_layout_hints: HashMap<crate::widgets::PanelKey, (u16, bool)>,
     /// The divider drag in progress, if a section header holds the pointer.
     pub(crate) sidebar_drag: Option<sidebar::SidebarDrag>,
     /// A markdown document's press, while it is held: which panel and widget

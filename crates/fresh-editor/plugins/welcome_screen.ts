@@ -2007,12 +2007,20 @@ function publishContents(): void {
  *  collapsed, or buried under the explorer. */
 function mountContents(focus: boolean): void {
   if (!contentsMounted) {
+    // Scoped to the page's buffer: shown while the page is what the user
+    // is looking at, parked while it is not, dropped when it closes — so
+    // a restart that does not reopen the page never shows a dead
+    // "Welcome — Contents" (sinelaw/fresh#3326, F).
     editor.mountSidebarSection(
       CONTENTS_PANEL_ID,
       contentsSpec(),
       "Welcome — Contents",
       contentsRows(),
-      { closable: true, startBlurred: true },
+      {
+        closable: true,
+        startBlurred: true,
+        ...(bufferId !== null ? { scope: { buffer: bufferId } } : {}),
+      },
     );
     contentsMounted = true;
   } else {

@@ -483,7 +483,7 @@ impl Editor {
         let mut workspace = win.capture_workspace();
         // The sidebar's sections are editor state (see `app::sidebar`), so
         // the window's snapshot does not know them; they ride in its file.
-        workspace.file_explorer.sections = self.sidebar_section_states();
+        workspace.file_explorer.sections = self.sidebar_section_states(id);
 
         // Refuse to overwrite a non-empty on-disk workspace with an
         // all-virtual snapshot (issue #2027). The protection is for
@@ -620,12 +620,9 @@ impl Editor {
             self.windows.insert(id, built);
         }
 
-        // Active-window only, because the sections are editor-global (see
-        // `app::sidebar`): the active window's file is the one whose layout
-        // the column shows.
-        if id == self.active_window {
-            self.restore_sidebar_sections(&workspace.file_explorer.sections);
-        }
+        // The window's own sections come back scoped to it; the editor-wide
+        // ones to everyone (see `app::sidebar::SectionScope`).
+        self.restore_sidebar_sections(id, &workspace.file_explorer.sections);
 
         // Active-window only: the restored active buffer never went through a
         // focus path, so nothing has derived the terminal live/scrollback
@@ -651,16 +648,11 @@ impl Editor {
         if id == self.active_window {
             #[cfg(feature = "plugins")]
             {
-                let buffer_id = self.active_buffer();
-                self.update_plugin_state_snapshot();
                 tracing::debug!(
-                    "Firing buffer_activated for active buffer {:?} after workspace restore",
-                    buffer_id
+                    "Announcing focus for active buffer {:?} after workspace restore",
+                    self.active_buffer()
                 );
-                self.plugin_manager.read().unwrap().run_hook(
-                    "buffer_activated",
-                    crate::services::plugins::hooks::HookArgs::BufferActivated { buffer_id },
-                );
+                self.announce_focus();
             }
         }
 

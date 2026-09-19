@@ -503,6 +503,10 @@ impl Default for FileExplorerState {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SectionState {
     pub kind: SectionStateKind,
+    /// `window` (the default, and what every file written before scopes
+    /// existed means) or `editor`. Buffer-scoped sections are not written.
+    #[serde(default)]
+    pub scope: SectionScopeState,
     /// A plugin section's title, so a section whose plugin has not loaded
     /// can still show its header.
     #[serde(default)]
@@ -521,6 +525,15 @@ pub struct SectionState {
 pub enum SectionStateKind {
     Explorer,
     Panel { plugin: String, id: u64 },
+}
+
+/// The persisted half of `app::sidebar::SectionScope`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SectionScopeState {
+    #[default]
+    Window,
+    Editor,
 }
 
 /// Per-workspace input histories

@@ -3543,12 +3543,16 @@ impl Editor {
                 if let crate::app::PanelSlot::Sidebar(_) = slot {
                     let ctx = self.get_key_context();
                     let resolved = self.keybindings.read().ok().map(|kb| kb.resolve(&ev, ctx));
-                    if matches!(
-                        resolved,
-                        Some(crate::input::keybindings::Action::FocusNextSidebarSection)
-                    ) {
-                        self.focus_next_sidebar_section();
-                        return;
+                    match resolved {
+                        Some(crate::input::keybindings::Action::FocusNextSidebarSection) => {
+                            self.focus_next_sidebar_section();
+                            return;
+                        }
+                        Some(crate::input::keybindings::Action::FocusPrevSidebarSection) => {
+                            self.focus_prev_sidebar_section();
+                            return;
+                        }
+                        _ => {}
                     }
                 }
                 // A `false` here is the interior declining —

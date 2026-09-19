@@ -1900,6 +1900,77 @@
       "when": "dock"
     },
     {
+      "comment": "Sidebar sections — cycle keyboard focus through the sidebar column: the file explorer, then each plugin section under it (the Markdown Contents outline, say), then back to the editor. Alt+Shift+P runs the same cycle the other way. Bound per context, like toggle_dock_focus, so the cycle continues out of the explorer, a section, the dock and a terminal rather than restarting from the editor. A hidden sidebar is shown and its explorer focused first.",
+      "key": "n",
+      "modifiers": ["alt", "shift"],
+      "action": "focus_next_sidebar_section",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "p",
+      "modifiers": ["alt", "shift"],
+      "action": "focus_prev_sidebar_section",
+      "args": {},
+      "when": "normal"
+    },
+    {
+      "key": "n",
+      "modifiers": ["alt", "shift"],
+      "action": "focus_next_sidebar_section",
+      "args": {},
+      "when": "fileExplorer"
+    },
+    {
+      "key": "p",
+      "modifiers": ["alt", "shift"],
+      "action": "focus_prev_sidebar_section",
+      "args": {},
+      "when": "fileExplorer"
+    },
+    {
+      "key": "n",
+      "modifiers": ["alt", "shift"],
+      "action": "focus_next_sidebar_section",
+      "args": {},
+      "when": "dock"
+    },
+    {
+      "key": "p",
+      "modifiers": ["alt", "shift"],
+      "action": "focus_prev_sidebar_section",
+      "args": {},
+      "when": "dock"
+    },
+    {
+      "key": "n",
+      "modifiers": ["alt", "shift"],
+      "action": "focus_next_sidebar_section",
+      "args": {},
+      "when": "terminal"
+    },
+    {
+      "key": "p",
+      "modifiers": ["alt", "shift"],
+      "action": "focus_prev_sidebar_section",
+      "args": {},
+      "when": "terminal"
+    },
+    {
+      "key": "n",
+      "modifiers": ["alt", "shift"],
+      "action": "focus_next_sidebar_section",
+      "args": {},
+      "when": "compositeBuffer"
+    },
+    {
+      "key": "p",
+      "modifiers": ["alt", "shift"],
+      "action": "focus_prev_sidebar_section",
+      "args": {},
+      "when": "compositeBuffer"
+    },
+    {
       "comment": "Live Grep prompt — cycle to the next *available* search provider. Built-ins are git-grep → rg → ag → ack → grep (git-grep first when inside a repo, falls through otherwise); user plugins can register more via editor.getPluginApi(\"live-grep\")?.registerProvider(...). Skips providers whose isAvailable() returns false. Mnemonic: 'p' for Provider.",
       "key": "p",
       "modifiers": ["alt"],

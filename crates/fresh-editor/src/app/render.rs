@@ -259,6 +259,9 @@ impl Editor {
         // above the old late `render_menu_bar` call, which is where the
         // description was built from.
         self.update_menu_context();
+        // Once per frame, so every path that moved the keyboard between the
+        // pane and the chrome is announced (`app::focus_announcer`).
+        self.announce_chrome_focus();
 
         // Carve a full-height left column for a docked floating panel
         // (e.g. the orchestrator dock) out of the screen *before* the
@@ -1105,6 +1108,7 @@ impl Editor {
                             crate::services::plugins::hooks::HookArgs::ViewportChanged {
                                 split_id: (*split_id).into(),
                                 buffer_id,
+                                window_id: self.active_window.0,
                                 top_byte: view_state.viewport.top_byte(),
                                 top_line,
                                 width: view_state.viewport.width,
@@ -4973,6 +4977,10 @@ impl Editor {
                 self.update_plugin_state_snapshot();
             }
         }
+        // Every frame: the announcer's safety net (`app::focus_announcer`)
+        // and the placeholder grace count. Both return at once when idle.
+        self.announce_focus();
+        self.tick_sidebar_placeholders();
     }
 
     /// Ensure the active split's cursor is in view, then synchronise scroll-sync groups.

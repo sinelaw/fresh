@@ -79,6 +79,19 @@ fn get_parent_node_id(
     }
 }
 
+/// What `Window::sync_file_explorer_to_active_file` did, so the paths a user
+/// drives can say why the tree did not move.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RevealOutcome {
+    Revealed,
+    /// The sidebar is hidden; nothing to move.
+    Hidden,
+    /// The active buffer has no file behind it.
+    NoFile,
+    /// The active file is outside the window's root.
+    OutsideRoot(std::path::PathBuf),
+}
+
 impl Editor {
     pub fn file_explorer_visible(&self) -> bool {
         self.active_window().file_explorer_visible
@@ -120,8 +133,9 @@ impl Editor {
                 self.init_file_explorer();
             }
             self.take_focus_for_file_explorer();
-            self.set_status_message(t!("explorer.opened").to_string());
-            self.active_window_mut().sync_file_explorer_to_active_file();
+            self.set_status_message(t!("explorer.focused").to_string());
+            self.active_window_mut()
+                .sync_file_explorer_to_active_file_with_feedback();
         } else {
             self.active_window_mut().key_context = KeyContext::Normal;
             self.set_status_message(t!("explorer.closed").to_string());
@@ -153,7 +167,8 @@ impl Editor {
 
             self.take_focus_for_file_explorer();
             self.set_status_message(t!("explorer.focused").to_string());
-            self.active_window_mut().sync_file_explorer_to_active_file();
+            self.active_window_mut()
+                .sync_file_explorer_to_active_file_with_feedback();
         } else {
             self.toggle_file_explorer();
         }
@@ -1800,7 +1815,7 @@ impl crate::app::window::Window {
         // ungated, so running it on top would drag the selection off the file
         // the deferred request was sent to.
         if !self.file_explorer_sync_in_progress && self.file_explorer_visible {
-            self.sync_file_explorer_to_active_file();
+            let _ = self.sync_file_explorer_to_active_file();
         }
     }
 
@@ -2121,25 +2136,48 @@ impl crate::app::window::Window {
     ///
     /// No-op when the explorer isn't visible, the active buffer has no file
     /// behind it, or that file is outside the window's root.
-    pub fn sync_file_explorer_to_active_file(&mut self) {
+    pub fn sync_file_explorer_to_active_file(&mut self) -> RevealOutcome {
         if !self.file_explorer_visible {
-            return;
+            return RevealOutcome::Hidden;
         }
 
         let active_buf = self.active_buffer();
         let Some(metadata) = self.buffer_metadata.get(&active_buf) else {
-            return;
+            return RevealOutcome::NoFile;
         };
-        let Some(file_path) = metadata.file_path() else {
-            return;
+        // An unnamed buffer is file-backed with an empty path: no file yet.
+        let Some(file_path) = metadata.file_path().filter(|p| !p.as_os_str().is_empty()) else {
+            return RevealOutcome::NoFile;
         };
         let target_path = file_path.clone();
 
         if !target_path.starts_with(&self.root) {
-            return;
+            return RevealOutcome::OutsideRoot(target_path);
         }
 
         self.expand_file_explorer_to_path(target_path);
+        RevealOutcome::Revealed
+    }
+
+    /// The reveal a user asked for by opening or focusing the explorer, with
+    /// the reason said out loud when the tree cannot move: an unnamed buffer
+    /// has no file to find, and a file outside the project is not in the
+    /// tree. Before this the tree sat on its root row and the status said
+    /// only that the explorer was focused (sinelaw/fresh#3326, H).
+    pub fn sync_file_explorer_to_active_file_with_feedback(&mut self) {
+        match self.sync_file_explorer_to_active_file() {
+            RevealOutcome::NoFile => {
+                self.set_status_message(t!("explorer.nothing_to_reveal").to_string());
+            }
+            RevealOutcome::OutsideRoot(path) => {
+                let name = path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_else(|| path.display().to_string());
+                self.set_status_message(t!("explorer.outside_project", name = name).to_string());
+            }
+            RevealOutcome::Revealed | RevealOutcome::Hidden => {}
+        }
     }
 
     /// Spawn the async expand-to-path that reveals and selects `target_path`.

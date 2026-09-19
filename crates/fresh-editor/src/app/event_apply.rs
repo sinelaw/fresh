@@ -762,6 +762,7 @@ impl Editor {
                     "after_insert",
                     crate::services::plugins::hooks::HookArgs::AfterInsert {
                         buffer_id,
+                        window_id: self.active_window.0,
                         position: *position,
                         text: text.clone(),
                         // Byte range of the affected area
@@ -793,6 +794,7 @@ impl Editor {
                     "after_delete",
                     crate::services::plugins::hooks::HookArgs::AfterDelete {
                         buffer_id,
+                        window_id: self.active_window.0,
                         start: range.start,
                         end: range.end,
                         deleted_text: deleted_text.clone(),
@@ -837,6 +839,7 @@ impl Editor {
                     "cursor_moved",
                     crate::services::plugins::hooks::HookArgs::CursorMoved {
                         buffer_id,
+                        window_id: self.active_window.0,
                         cursor_id: *cursor_id,
                         old_position: *old_position,
                         new_position: *new_position,

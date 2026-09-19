@@ -347,8 +347,24 @@ let mounted = false;
 /** Whether the section holds the keyboard — mirrored from the host's
  *  `focus` / `blur` widget events (see "The host seam" above). */
 let sectionFocused = false;
+/** The chrome region holding the keyboard, from `chrome_focus_changed`:
+ *  "editor" | "explorer" | "dock" | "section". */
+let chromeRegion = "editor";
+editor.on("chrome_focus_changed", (a) => {
+  chromeRegion = a.region;
+});
 /** Title the section was mounted with; a change needs a remount. */
 let mountedTitle = "";
+/** The buffer the mounted section is scoped to — a remount follows it. */
+let mountedBufferId: number | null = null;
+/** The buffer a "Toggle Table of Contents" asked to *see*: the next mount
+ *  for that buffer reveals the section. Keyed by buffer so a mount for
+ *  another buffer — the user moved on before the scan came back — does not
+ *  pop the column open unasked. */
+let revealFor: number | null = null;
+/** As `revealFor`, for "Focus Contents": the next mount for that buffer
+ *  gives the section the keyboard. */
+let focusFor: number | null = null;
 let rescanTimer: number | null = null;
 /** Bumped per full scan so a stale `await` cannot publish over a newer one. */
 let scanGeneration = 0;
@@ -403,34 +419,87 @@ function sectionTitle(state: TocState | null): string {
 function mountSection(): void {
   if (!toc) return;
   const title = sectionTitle(toc);
-  if (mounted && title === mountedTitle) {
+  if (mounted && title === mountedTitle && mountedBufferId === toc.bufferId) {
     editor.updateFloatingWidget(PANEL_ID, buildSpec(toc));
   } else {
-    // First mount, or the title changed (stale ↔ fresh): the title is fixed
-    // at mount time, so this is a remount. Mounted blurred — the section is
-    // reference material, and taking the keyboard from the editor on every
-    // buffer switch would be hostile.
-    if (mounted) editor.unmountFloatingWidget(PANEL_ID);
+    // First mount, the title changed (stale ↔ fresh), or the section is
+    // about a different buffer now: title and scope are fixed at mount
+    // time, so this is a remount. The host keeps the section in place —
+    // its rows, collapsed state and position — and swaps the panel.
+    // Mounted blurred — the section is reference material, and taking the
+    // keyboard from the editor on every buffer switch would be hostile.
+    //
+    // The scope is the buffer: the host shows the section only while this
+    // buffer is the active buffer of the active window, parks it while
+    // another buffer or window is, and drops it (firing `cancel`) when the
+    // buffer closes. That is what keeps one window's outline out of
+    // another window's sidebar (sinelaw/fresh#3326).
     editor.mountSidebarSection(PANEL_ID, buildSpec(toc), title, requestedRows(), {
       closable: true,
       startBlurred: true,
+      scope: { buffer: toc.bufferId },
     });
     mounted = true;
     mountedTitle = title;
+    mountedBufferId = toc.bufferId;
     sectionFocused = false;
   }
+  // What an explicit command asked for, once the section it asked about
+  // is there. An automatic mount stays quiet. The host answers both only
+  // for a section on screen, so a mount for a buffer that is not the
+  // active one (parked at once) opens nothing.
+  if (revealFor === toc.bufferId) {
+    editor.floatingPanelControl(PANEL_ID, "reveal", 0);
+  }
+  if (focusFor === toc.bufferId) {
+    editor.floatingPanelControl(PANEL_ID, "focus", 0);
+  }
+  revealFor = null;
+  focusFor = null;
   pushExpanded();
   pushSelected(toc.selected);
 }
 
 function unmountSection(): void {
+  revealFor = null;
+  focusFor = null;
   if (mounted) {
     editor.unmountFloatingWidget(PANEL_ID);
     mounted = false;
     mountedTitle = "";
+    mountedBufferId = null;
     sectionFocused = false;
   }
 }
+
+/** Whether the mounted section is the active buffer's. With `autoOpen`
+ *  off the section stays mounted for the last Markdown buffer while the
+ *  host parks it behind whatever the user switched to, so "mounted" alone
+ *  does not mean "on screen for this buffer". */
+function mountedForActiveBuffer(): boolean {
+  return mounted && toc !== null && toc.bufferId === editor.getActiveBufferId();
+}
+
+/** Show the section — column and all — and give it the keyboard. For a
+ *  Markdown buffer that has no outline yet (`autoOpen` off, or the outline
+ *  is another buffer's) this mounts one first. */
+function markdownTocFocus(): void {
+  if (mountedForActiveBuffer()) {
+    editor.floatingPanelControl(PANEL_ID, "reveal", 0);
+    editor.floatingPanelControl(PANEL_ID, "focus", 0);
+    return;
+  }
+  const bufferId = editor.getActiveBufferId();
+  const info = editor.getBufferInfo(bufferId);
+  if (!info || !isMarkdownFile(info.path)) {
+    editor.setStatus(editor.t("status.not_markdown_file"));
+    return;
+  }
+  revealFor = bufferId;
+  focusFor = bufferId;
+  track(bufferId, info.path);
+}
+registerHandler("markdownTocFocus", markdownTocFocus);
 
 function pushSelected(index: number): void {
   if (!toc || !mounted) return;
@@ -653,9 +722,10 @@ editor.on("widget_event", (e) => {
     return;
   }
   if (e.event_type === "cancel") {
-    // The section's ×: the host already unmounted it.
+    // The section's ×, or its buffer closed: the host already unmounted it.
     mounted = false;
     mountedTitle = "";
+    mountedBufferId = null;
     sectionFocused = false;
     return;
   }
@@ -736,7 +806,10 @@ editor.on("viewport_changed", (data) => {
   // not have focus (they are in the sidebar, or reading in another split),
   // or whenever `follow` pins scroll mode. A focused section leaves the
   // active split alone, so its own focus is the plugin's to know.
-  const paneFocused = !sectionFocused && data.split_id === editor.getActiveSplitId();
+  // The host says which chrome region holds the keyboard (`chrome_focus_changed`),
+  // so "the pane has focus" is a fact, not a guess from this section's own
+  // focus events — the explorer holding the keys used to look like editing.
+  const paneFocused = chromeRegion === "editor" && data.split_id === editor.getActiveSplitId();
   if (paneFocused && followMode() !== "scroll") return;
   const index = headingIndexAtOrBefore(toc.headings, data.top_byte);
   if (index !== toc.selected) pushSelected(index);
@@ -765,8 +838,9 @@ editor.on("buffer_activated", (data) => {
     onMarkdownBufferActive(data.buffer_id, info.path);
     return;
   }
-  // Not markdown: auto-open closes the section; a manually opened one keeps
-  // showing the last Markdown buffer until toggled.
+  // Not markdown: auto-open closes the section. A manually opened one stays
+  // mounted for its buffer — the host parks it while this buffer is on
+  // screen and brings it back with its own.
   if (autoOpenEnabled()) {
     unmountSection();
     toc = null;
@@ -802,7 +876,11 @@ editor.on("config_changed", () => {
 /** Toggle the section for the active Markdown buffer, regardless of
  *  `autoOpen`. */
 function markdownTocToggle(): void {
-  if (mounted) {
+  // Off only for the outline the user is looking at: with `autoOpen` off
+  // the mounted one may be another buffer's, parked out of sight, and
+  // "off" for something with no pixels on screen would need a second
+  // toggle to get the outline for this buffer.
+  if (mountedForActiveBuffer()) {
     unmountSection();
     editor.setStatus(editor.t("status.toc_off"));
     return;
@@ -813,6 +891,7 @@ function markdownTocToggle(): void {
     editor.setStatus(editor.t("status.not_markdown_file"));
     return;
   }
+  revealFor = bufferId;
   track(bufferId, info.path);
   editor.setStatus(editor.t("status.toc_on"));
 }
@@ -846,6 +925,13 @@ editor.registerCommand(
   "%cmd.toggle_follow",
   "%cmd.toggle_follow_desc",
   "markdownTocToggleFollow",
+  null,
+);
+
+editor.registerCommand(
+  "%cmd.focus_toc",
+  "%cmd.focus_toc_desc",
+  "markdownTocFocus",
   null,
 );
 

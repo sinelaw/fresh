@@ -2016,6 +2016,8 @@ impl Editor {
     /// Handle SetViewMode command
     pub(super) fn handle_set_view_mode(&mut self, buffer_id: BufferId, mode: &str) {
         use crate::state::ViewMode;
+        // Says so when the id is another window's (see `plugin_buffer_guard`).
+        let _ = self.plugin_buffer_in_active_window(buffer_id, "setViewMode");
         let view_mode = match mode {
             "page_view" | "compose" => ViewMode::PageView,
             _ => ViewMode::Source,

@@ -48,6 +48,7 @@ pub mod explorer_bugs;
 pub mod explorer_context_menu;
 pub mod explorer_focus_terminal_keys;
 pub mod explorer_menu;
+pub mod explorer_reveal_feedback;
 pub mod external_file_save_as_tab;
 pub mod extract_tab_to_workspace;
 pub mod file_browser;
@@ -145,6 +146,8 @@ pub mod suspend_process;
 
 pub mod close_buffer_shared_split_cursor;
 pub mod finder_preview;
+#[cfg(feature = "plugins")]
+pub mod focus_announcer;
 pub mod keybinding_editor;
 pub mod language_features_e2e;
 pub mod large_file_edit_bounded;
@@ -225,6 +228,8 @@ pub mod markdown_compose_table_structure;
 pub mod markdown_fenced_code_highlighting;
 #[cfg(feature = "plugins")]
 pub mod markdown_toc;
+#[cfg(feature = "plugins")]
+pub mod markdown_toc_chrome_focus;
 pub mod memory_scroll_leak;
 pub mod menu_bar;
 pub mod menu_cursor_bleed;
@@ -317,7 +322,12 @@ pub mod settings_widget_controls;
 pub mod shell_command;
 pub mod shift_backspace;
 #[cfg(feature = "plugins")]
+#[cfg(feature = "plugins")]
+pub mod sidebar_focus_cycle;
+#[cfg(feature = "plugins")]
 pub mod sidebar_sections;
+#[cfg(feature = "plugins")]
+pub mod sidebar_window_scope;
 pub mod slow_filesystem;
 pub mod smart_editing;
 pub mod smart_home;

@@ -680,15 +680,15 @@ interface HookEventMap {
   config_changed: Record<string, never>;
 
   // ── buffer lifecycle ─────────────────────────────────────────────────────
-  buffer_activated: { buffer_id: number };
-  buffer_deactivated: { buffer_id: number };
-  buffer_closed: { buffer_id: number };
+  buffer_activated: { buffer_id: number; window_id: number };
+  buffer_deactivated: { buffer_id: number; window_id: number };
+  buffer_closed: { buffer_id: number; window_id: number };
 
   // ── file I/O ─────────────────────────────────────────────────────────────
   before_file_open: { path: string };
-  after_file_open: { path: string; buffer_id: number };
-  before_file_save: { path: string; buffer_id: number };
-  after_file_save: { path: string; buffer_id: number };
+  after_file_open: { path: string; buffer_id: number; window_id: number };
+  before_file_save: { path: string; buffer_id: number; window_id: number };
+  after_file_save: { path: string; buffer_id: number; window_id: number };
   /**
    * Fired after a buffer is reloaded from disk: auto-revert picked up an
    * external change (e.g. `git checkout <ref> -- <file>` in another
@@ -708,9 +708,10 @@ interface HookEventMap {
   after_file_explorer_change: { path: string };
 
   // ── text edits ───────────────────────────────────────────────────────────
-  before_insert: { buffer_id: number; position: number; text: string };
+  before_insert: { buffer_id: number; window_id: number; position: number; text: string };
   after_insert: {
     buffer_id: number;
+    window_id: number;
     position: number;
     text: string;
     affected_start: number;
@@ -719,9 +720,10 @@ interface HookEventMap {
     end_line: number;
     lines_added: number;
   };
-  before_delete: { buffer_id: number; start: number; end: number };
+  before_delete: { buffer_id: number; window_id: number; start: number; end: number };
   after_delete: {
     buffer_id: number;
+    window_id: number;
     start: number;
     end: number;
     deleted_text: string;
@@ -735,6 +737,7 @@ interface HookEventMap {
   // ── cursor & viewport ────────────────────────────────────────────────────
   cursor_moved: {
     buffer_id: number;
+    window_id: number;
     cursor_id: number;
     old_position: number;
     new_position: number;
@@ -744,6 +747,7 @@ interface HookEventMap {
   viewport_changed: {
     split_id: number;
     buffer_id: number;
+    window_id: number;
     top_byte: number;
     top_line: number | null;
     width: number;
@@ -904,6 +908,35 @@ interface HookEventMap {
   window_created: { id: number; label: string; root: string };
   window_closed: { id: number };
   active_window_changed: { previous_id: number | null; active_id: number };
+  /**
+   * What the user is looking at changed: the active buffer of the active
+   * window is a different `(window, buffer)` than before. The one hook to
+   * subscribe to for "the active buffer" — it fires for a tab switch, a
+   * split focus, an open, a window dive and a workspace restore alike,
+   * after `active_window_changed` / `buffer_activated` for the same change.
+   * `reason` is `"window"` (a window switch), `"buffer"` (a different
+   * buffer in the same window) or `"open"` (the same buffer re-pointed at
+   * another file in place).
+   */
+  active_buffer_changed: {
+    window_id: number;
+    buffer_id: number;
+    previous: { window_id: number; buffer_id: number } | null;
+    reason: string;
+  };
+  /**
+   * Which chrome region holds the keyboard changed: `"editor"` (a pane),
+   * `"explorer"` (the file tree), `"dock"`, or `"section"` (a sidebar
+   * section, named by `plugin` and `panel_id`). Fires once per change, so
+   * a plugin can answer "does the pane have the keyboard?" without
+   * inferring it from its own focus events.
+   */
+  chrome_focus_changed: {
+    window_id: number;
+    region: string;
+    plugin: string | null;
+    panel_id: number | null;
+  };
 
   // ── widget runtime ───────────────────────────────────────────────────────
   /**
@@ -924,6 +957,7 @@ interface HookEventMap {
    *   * Button: `event_type = "activate"`, `payload = {}`.
    */
   widget_event: {
+    window_id: number;
     panel_id: number;
     widget_key: string;
     event_type: string;

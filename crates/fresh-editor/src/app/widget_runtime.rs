@@ -252,6 +252,7 @@ impl Editor {
             &panel_key.plugin,
             "widget_event",
             fresh_core::hooks::HookArgs::WidgetEvent {
+                window_id: self.active_window.0,
                 panel_id: panel_key.id,
                 widget_key,
                 event_type,

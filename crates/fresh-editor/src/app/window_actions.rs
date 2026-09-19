@@ -641,22 +641,9 @@ impl crate::app::Editor {
                 root: root.to_string_lossy().into_owned(),
             },
         );
-        if previous_id != id {
-            self.plugin_manager.read().unwrap().run_hook(
-                "active_window_changed",
-                HookArgs::ActiveWindowChanged {
-                    previous_id: Some(previous_id.0),
-                    active_id: id.0,
-                },
-            );
-        }
-        #[cfg(feature = "plugins")]
-        self.update_plugin_state_snapshot();
-        #[cfg(feature = "plugins")]
-        self.plugin_manager.read().unwrap().run_hook(
-            "buffer_activated",
-            crate::services::plugins::hooks::HookArgs::BufferActivated { buffer_id },
-        );
+        // `active_window_changed` (when the dive changed windows) and
+        // `buffer_activated` for the seed buffer, from the announcer.
+        self.announce_focus();
 
         // Seeding the terminal dives into the new window. For an *adopted*
         // one that dive is only mechanical: focus was already settled when
@@ -824,16 +811,11 @@ impl crate::app::Editor {
         // this, plugins that read `editor.getCwd()` — Live Grep, file
         // finders, etc. — keep targeting the previous window's project
         // after a dive, surfacing the wrong project's files.
-        #[cfg(feature = "plugins")]
-        self.update_plugin_state_snapshot();
-
-        self.plugin_manager.read().unwrap().run_hook(
-            "active_window_changed",
-            HookArgs::ActiveWindowChanged {
-                previous_id: Some(previous_id.0),
-                active_id: id.0,
-            },
-        );
+        // The announcer fires `active_window_changed` and — the part this
+        // path used to forget (sinelaw/fresh#3326) — `buffer_deactivated` /
+        // `buffer_activated` for the incoming window's buffer, so plugins
+        // tracking "the active buffer" follow a dive like a tab switch.
+        self.announce_focus();
 
         // Bring `terminal_mode` in line with the incoming window's active
         // buffer, exactly as the tab-switch path (`set_active_buffer`) does.
@@ -1520,10 +1502,33 @@ impl crate::app::Editor {
             Ok(_) => {}
             Err(e) => tracing::warn!("close_window: recovery flush for window {id} failed: {e}"),
         }
-        if self.windows.remove(&id).is_none() {
+        let Some(closed) = self.windows.remove(&id) else {
             tracing::warn!("close_window: unknown session id {id}");
             return false;
+        };
+        // Its buffers go with it. A plugin that keyed state on one of them
+        // (an outline, a diagnostics panel) learns that the way it learns of
+        // any other close — before `window_closed`, so the buffer-level
+        // cleanup runs while the window id still means something.
+        {
+            let plugins = self.plugin_manager.read().unwrap();
+            for buffer_id in closed.buffers.ids() {
+                plugins.run_hook(
+                    "buffer_closed",
+                    HookArgs::BufferClosed {
+                        buffer_id,
+                        window_id: id.0,
+                    },
+                );
+            }
         }
+        // The sections about its buffers go with the buffers, the ones about
+        // the window with the window.
+        for buffer_id in closed.buffers.ids() {
+            self.drop_sidebar_sections_for_buffer(buffer_id);
+        }
+        drop(closed);
+        self.drop_sidebar_sections_for_window(id);
         // The window is gone, so its half of the shell tree is gone with it.
         self.forget_window_ui_state(id);
         // Closing a dormant session's disconnected shell drops the whole

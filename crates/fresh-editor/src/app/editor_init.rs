@@ -635,6 +635,8 @@ impl Editor {
             terminal_width: parts.terminal_width,
             terminal_height: parts.terminal_height,
             last_layout_signature: None,
+            last_announced_focus: None,
+            last_announced_chrome: None,
             connections: crate::services::authority::ConnectionRegistry::new(),
             open_machines: std::collections::HashMap::new(),
             next_machine_id: 1,
@@ -770,6 +772,9 @@ impl Editor {
             dock_width_rule: crate::view::shell::frame::DockWidthRule::default(),
             dock_resizing: false,
             sidebar_sections: vec![sidebar::SidebarSection::explorer()],
+            parked_sidebar_sections: Vec::new(),
+            sidebar_placeholder_expiry: None,
+            sidebar_layout_hints: std::collections::HashMap::new(),
             sidebar_drag: None,
             prose_drag: None,
             prose_reveal: std::cell::RefCell::new(HashMap::new()),
@@ -2201,7 +2206,7 @@ impl Editor {
     }
 
     /// Fire the `ready` hook (design M2, §3.3 phase 3).
-    pub fn fire_ready_hook(&self) {
+    pub fn fire_ready_hook(&mut self) {
         #[cfg(feature = "plugins")]
         if self.plugin_manager.read().unwrap().is_active() {
             self.plugin_manager
@@ -2209,6 +2214,11 @@ impl Editor {
                 .unwrap()
                 .run_hook("ready", crate::services::plugins::hooks::HookArgs::Ready {});
         }
+        // `chrome_focus_changed` fires on change, and the first change was
+        // announced before any plugin had loaded to hear it. Forgetting it
+        // makes the next frame say again which region holds the keyboard,
+        // so a plugin that starts with a guess ("editor") is corrected.
+        self.last_announced_chrome = None;
     }
 
     /// Fire the `config_changed` hook after the effective config has

@@ -7434,7 +7434,9 @@ impl JsEditorApi {
         spec_obj: rquickjs::Value<'js>,
         title: String,
         rows: f64,
-        #[plugin_api(ts_type = "{ closable?: boolean; startBlurred?: boolean }")]
+        #[plugin_api(
+            ts_type = "{ closable?: boolean; startBlurred?: boolean; scope?: { buffer: number } | { window: number } | 'editor' }"
+        )]
         opts: rquickjs::function::Opt<rquickjs::Value<'js>>,
     ) -> rquickjs::Result<bool> {
         let json = js_to_json(&ctx, spec_obj);
@@ -7451,6 +7453,22 @@ impl JsEditorApi {
             .unwrap_or(serde_json::Value::Null);
         let flag =
             |name: &str, default: bool| opts.get(name).and_then(|v| v.as_bool()).unwrap_or(default);
+        // `scope`: `"editor"`, `{ window }`, `{ buffer }`, or absent for the
+        // window the mount came from.
+        let scope = match opts.get("scope") {
+            Some(serde_json::Value::String(s)) if s == "editor" => {
+                fresh_core::api::SectionScopeSpec {
+                    editor: true,
+                    ..Default::default()
+                }
+            }
+            Some(serde_json::Value::Object(o)) => fresh_core::api::SectionScopeSpec {
+                editor: false,
+                window: o.get("window").and_then(|v| v.as_u64()),
+                buffer: o.get("buffer").and_then(|v| v.as_u64()),
+            },
+            _ => fresh_core::api::SectionScopeSpec::default(),
+        };
         Ok(self
             .command_sender
             .send(PluginCommand::MountSidebarSection {
@@ -7461,6 +7479,7 @@ impl JsEditorApi {
                 rows: rows.clamp(0.0, u16::MAX as f64) as u16,
                 closable: flag("closable", true),
                 start_blurred: flag("startBlurred", false),
+                scope,
             })
             .is_ok())
     }
@@ -12628,6 +12647,7 @@ mod tests {
                 BufferId(0),
                 BufferInfo {
                     id: BufferId(0),
+                    window_id: 1,
                     path: Some(PathBuf::from("/test1.txt")),
                     name: "test1.txt".to_string(),
                     modified: false,
@@ -12648,6 +12668,7 @@ mod tests {
                 BufferId(1),
                 BufferInfo {
                     id: BufferId(1),
+                    window_id: 1,
                     path: Some(PathBuf::from("/test2.txt")),
                     name: "test2.txt".to_string(),
                     modified: true,
