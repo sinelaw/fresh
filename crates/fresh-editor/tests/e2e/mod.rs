@@ -319,6 +319,9 @@ pub mod settings_widget_controls;
 pub mod shell_command;
 pub mod shift_backspace;
 #[cfg(feature = "plugins")]
+#[cfg(feature = "plugins")]
+pub mod sidebar_focus_cycle;
+#[cfg(feature = "plugins")]
 pub mod sidebar_sections;
 pub mod slow_filesystem;
 pub mod smart_editing;

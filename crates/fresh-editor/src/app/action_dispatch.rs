@@ -1243,6 +1243,7 @@ impl Editor {
             Action::FocusFileExplorer => self.focus_file_explorer(),
             Action::FocusEditor => self.active_window_mut().focus_editor(),
             Action::FocusNextSidebarSection => self.focus_next_sidebar_section(),
+            Action::FocusPrevSidebarSection => self.focus_prev_sidebar_section(),
             Action::ToggleDockFocus => {
                 // Bounce keyboard focus between the editor/explorer area and
                 // the orchestrator dock. `dock` is `Some` whenever the dock is
