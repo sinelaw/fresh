@@ -56,15 +56,10 @@ impl Editor {
         // the restored-terminal transition (re-enable editing, drop the
         // stale screen tail, resize the PTY) that only the Editor level can.
         self.complete_terminal_mode_side_effects();
-        // Plugin state snapshot reaches editor-wide state (clipboard,
-        // windows list, config cache) so it stays on Editor. Run it
-        // BEFORE the hook so the handler sees the new active buffer.
-        #[cfg(feature = "plugins")]
-        self.update_plugin_state_snapshot();
-        self.plugin_manager.read().unwrap().run_hook(
-            "buffer_activated",
-            crate::services::plugins::hooks::HookArgs::BufferActivated { buffer_id },
-        );
+        // The snapshot refresh and the `buffer_activated` hook are the
+        // announcer's (`app::focus_announcer`), which fires them off the
+        // change it observes rather than off this call.
+        self.announce_focus();
     }
 
     /// Focus a split and its buffer, handling all side effects including
