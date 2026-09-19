@@ -90,6 +90,7 @@ impl<M: 'static> LayoutCx for UiLayoutCx<'_, M> {
             if let Some(w) = n.data.window {
                 info.scroll_window = Some(w);
                 info.band = n.data.band;
+                info.pinned = n.data.pinned;
                 return info;
             }
             cur = n.parent;
@@ -117,9 +118,12 @@ impl<M: 'static> LayoutCx for UiLayoutCx<'_, M> {
             // build: asking an item-scrolled window for a band and then
             // telling it the answer is two publications at the same
             // constraints, and only this tells the reader below them apart.
-            let moved = n.data.window != Some(info.window) || n.data.band != info.band;
+            let moved = n.data.window != Some(info.window)
+                || n.data.band != info.band
+                || n.data.pinned != info.pinned;
             n.data.window = Some(info.window);
             n.data.band = info.band;
+            n.data.pinned = info.pinned;
             n.data.content = info.content;
             n.data.scroll_max = info.max;
             n.data.translate = info.translate;
@@ -906,6 +910,12 @@ impl<M: 'static> Ui<M> {
                     }
                     self.mark_render_dirty(r);
                     moved = true;
+                    // A window whose offset the owner holds snaps back to
+                    // the owner's value in the pass below; the report is
+                    // how the command reaches the owner at all.
+                    let mut told = Vec::new();
+                    self.report_scroll(r, next.y, &mut told);
+                    self.pending_messages.extend(told);
                 }
             }
         }
