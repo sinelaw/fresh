@@ -493,6 +493,19 @@ pub enum HookArgs {
         active_id: u64,
     },
 
+    /// Which chrome region holds the keyboard changed: `"editor"` (a pane),
+    /// `"explorer"` (the file tree), `"dock"`, or `"section"` (a sidebar
+    /// section — `plugin` and `panel_id` name it). The answer to "does the
+    /// pane have the keyboard?" a plugin used to have to guess from its own
+    /// focus events (sinelaw/fresh#3326, G).
+    ChromeFocusChanged {
+        /// The active window.
+        window_id: u64,
+        region: String,
+        plugin: Option<String>,
+        panel_id: Option<u64>,
+    },
+
     /// What the user is looking at changed: the active buffer of the active
     /// window is a different `(window, buffer)` than it was. One hook for
     /// the twelve plugins that want exactly this and used to approximate it

@@ -347,6 +347,12 @@ let mounted = false;
 /** Whether the section holds the keyboard — mirrored from the host's
  *  `focus` / `blur` widget events (see "The host seam" above). */
 let sectionFocused = false;
+/** The chrome region holding the keyboard, from `chrome_focus_changed`:
+ *  "editor" | "explorer" | "dock" | "section". */
+let chromeRegion = "editor";
+editor.on("chrome_focus_changed", (a) => {
+  chromeRegion = a.region;
+});
 /** Title the section was mounted with; a change needs a remount. */
 let mountedTitle = "";
 /** The buffer the mounted section is scoped to — a remount follows it. */
@@ -759,7 +765,10 @@ editor.on("viewport_changed", (data) => {
   // not have focus (they are in the sidebar, or reading in another split),
   // or whenever `follow` pins scroll mode. A focused section leaves the
   // active split alone, so its own focus is the plugin's to know.
-  const paneFocused = !sectionFocused && data.split_id === editor.getActiveSplitId();
+  // The host says which chrome region holds the keyboard (`chrome_focus_changed`),
+  // so "the pane has focus" is a fact, not a guess from this section's own
+  // focus events — the explorer holding the keys used to look like editing.
+  const paneFocused = chromeRegion === "editor" && data.split_id === editor.getActiveSplitId();
   if (paneFocused && followMode() !== "scroll") return;
   const index = headingIndexAtOrBefore(toc.headings, data.top_byte);
   if (index !== toc.selected) pushSelected(index);
