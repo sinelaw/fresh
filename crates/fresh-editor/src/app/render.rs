@@ -4971,6 +4971,10 @@ impl Editor {
             if processed {
                 let _s = tracing::info_span!("update_plugin_state_snapshot_post").entered();
                 self.update_plugin_state_snapshot();
+                // The safety net for `app::focus_announcer`: a command that
+                // moved focus down a path nobody wired to the announcer is
+                // announced here, one frame late rather than never.
+                self.announce_focus();
             }
         }
     }

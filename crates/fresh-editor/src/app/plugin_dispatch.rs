@@ -4753,15 +4753,7 @@ impl Editor {
                 if is_active_target {
                     let new_active = self.active_window().active_buffer();
                     if prev_active != Some(new_active) {
-                        #[cfg(feature = "plugins")]
-                        self.update_plugin_state_snapshot();
-                        #[cfg(feature = "plugins")]
-                        self.plugin_manager.read().unwrap().run_hook(
-                            "buffer_activated",
-                            crate::services::plugins::hooks::HookArgs::BufferActivated {
-                                buffer_id: new_active,
-                            },
-                        );
+                        self.announce_focus();
                     }
                 }
                 let api_result = fresh_core::api::TerminalResult {

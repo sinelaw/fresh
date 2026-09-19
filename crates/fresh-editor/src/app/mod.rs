@@ -33,6 +33,7 @@ mod file_open_input;
 mod file_open_orchestrators;
 mod file_open_queue;
 mod file_operations;
+mod focus_announcer;
 mod git_index;
 mod help;
 mod help_actions;
@@ -696,6 +697,10 @@ pub struct Editor {
     /// signature stops that re-firing once the geometry settles. `None`
     /// until the first relayout.
     last_layout_signature: Option<(u16, u16, u16, u16)>,
+
+    /// The `(window, pane, buffer)` the focus hooks last described — see
+    /// `app::focus_announcer`. `None` until the first announcement.
+    pub(crate) last_announced_focus: Option<focus_announcer::FocusTriple>,
 
     // LSP manager moved onto `Window`. Access via
     // `Editor::lsp()` / `lsp_mut()` — each window has its own

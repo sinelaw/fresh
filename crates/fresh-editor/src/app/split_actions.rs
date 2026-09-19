@@ -344,8 +344,6 @@ impl Editor {
         self.active_window_mut()
             .ensure_active_tab_visible(split_id, buffer, tabs_width);
 
-        let buffer_id = self.active_buffer();
-
         // Bring terminal mode in line with the newly focused split: a
         // terminal resumes the live/scrollback mode it remembers, a
         // non-terminal clears terminal mode. Single restore authority.
@@ -362,13 +360,7 @@ impl Editor {
         // landed on a *source* pane — which it then composed: gutter hidden,
         // wrap forced on, view mode flipped. Whether that happened at all came
         // down to which thread won the race.
-        #[cfg(feature = "plugins")]
-        self.update_plugin_state_snapshot();
-        // Emit buffer_activated hook for plugins
-        self.plugin_manager.read().unwrap().run_hook(
-            "buffer_activated",
-            crate::services::plugins::hooks::HookArgs::BufferActivated { buffer_id },
-        );
+        self.announce_focus();
     }
 
     /// Adjust the size of the active split
@@ -660,16 +652,10 @@ impl Editor {
 
         // Snapshot first, then the hook — see the note at the other
         // split-focus site above.
-        #[cfg(feature = "plugins")]
-        self.update_plugin_state_snapshot();
-        // Emit the buffer_activated hook for plugins, matching every other
-        // focus-changing command.
-        self.plugin_manager.read().unwrap().run_hook(
-            "buffer_activated",
-            crate::services::plugins::hooks::HookArgs::BufferActivated {
-                buffer_id: next_buf,
-            },
-        );
+        // Announce the focus change, matching every other focus-changing
+        // command.
+        let _ = next_buf;
+        self.announce_focus();
     }
 }
 

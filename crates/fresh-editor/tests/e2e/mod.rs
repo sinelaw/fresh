@@ -146,6 +146,8 @@ pub mod suspend_process;
 
 pub mod close_buffer_shared_split_cursor;
 pub mod finder_preview;
+#[cfg(feature = "plugins")]
+pub mod focus_announcer;
 pub mod keybinding_editor;
 pub mod language_features_e2e;
 pub mod large_file_edit_bounded;
