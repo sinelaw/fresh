@@ -141,6 +141,7 @@ pub mod language_dialog_esc_cancels_edit;
 pub mod language_dialog_tab_size;
 pub mod language_textmate_grammar;
 pub mod mouse_session_input;
+pub mod odin_language;
 #[cfg(feature = "plugins")]
 pub mod placeholder_window_embed;
 pub mod suspend_process;
