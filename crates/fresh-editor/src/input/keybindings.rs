@@ -695,6 +695,9 @@ pub enum Action {
     /// Cycle keyboard focus through the sidebar: the file explorer, then
     /// each plugin section under it in order, then back to the editor.
     FocusNextSidebarSection,
+    /// The same cycle the other way: the last plugin section first, then up
+    /// to the file explorer, then back to the editor.
+    FocusPrevSidebarSection,
     FileExplorerUp,
     FileExplorerDown,
     FileExplorerPageUp,
@@ -1207,6 +1210,7 @@ impl Action {
             "focus_editor" => FocusEditor,
             "toggle_dock_focus" => ToggleDockFocus,
             "focus_next_sidebar_section" => FocusNextSidebarSection,
+            "focus_prev_sidebar_section" => FocusPrevSidebarSection,
             "file_explorer_up" => FileExplorerUp,
             "file_explorer_down" => FileExplorerDown,
             "file_explorer_page_up" => FileExplorerPageUp,
@@ -2143,6 +2147,7 @@ impl KeybindingResolver {
                 | Action::OpenTerminalInDock
                 | Action::ToggleDockFocus
                 | Action::FocusNextSidebarSection
+                | Action::FocusPrevSidebarSection
                 | Action::OpenSettings
                 | Action::MenuActivate
                 | Action::MenuOpen(_)
@@ -3122,6 +3127,7 @@ impl KeybindingResolver {
             Action::FocusEditor => t!("action.focus_editor"),
             Action::ToggleDockFocus => t!("action.toggle_dock_focus"),
             Action::FocusNextSidebarSection => t!("action.focus_next_sidebar_section"),
+            Action::FocusPrevSidebarSection => t!("action.focus_prev_sidebar_section"),
             Action::FileExplorerUp => t!("action.file_explorer_up"),
             Action::FileExplorerDown => t!("action.file_explorer_down"),
             Action::FileExplorerPageUp => t!("action.file_explorer_page_up"),

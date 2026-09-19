@@ -973,6 +973,13 @@ static COMMAND_DEFS: &[CommandDef] = &[
         custom_contexts: &[],
     },
     CommandDef {
+        name_key: "cmd.focus_prev_sidebar_section",
+        desc_key: "cmd.focus_prev_sidebar_section_desc",
+        action: || Action::FocusPrevSidebarSection,
+        contexts: &[Normal, FileExplorer, Terminal, CompositeBuffer, Dock],
+        custom_contexts: &[],
+    },
+    CommandDef {
         name_key: "cmd.explorer_refresh",
         desc_key: "cmd.explorer_refresh_desc",
         action: || Action::FileExplorerRefresh,

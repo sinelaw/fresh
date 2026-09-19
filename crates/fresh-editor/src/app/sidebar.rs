@@ -510,6 +510,45 @@ impl super::Editor {
         }
     }
 
+    /// `Action::FocusPrevSidebarSection`: the cycle the other way — from the
+    /// editor to the last plugin section, up through the sections to the
+    /// explorer, and out to the editor again. A hidden sidebar is shown and
+    /// its explorer focused, as for the forward cycle.
+    pub(crate) fn focus_prev_sidebar_section(&mut self) {
+        use crate::input::keybindings::KeyContext;
+        if !self.file_explorer_visible() {
+            self.focus_file_explorer();
+            return;
+        }
+        let current = match self.focused_sidebar_panel() {
+            Some(i) => Some(i),
+            None if self.active_window().key_context == KeyContext::FileExplorer => {
+                self.explorer_section_index()
+            }
+            None => None,
+        };
+        let reachable = |i: usize| {
+            self.sidebar_sections[i].is_explorer() || self.sidebar_sections[i].panel.is_some()
+        };
+        let prev = match current {
+            Some(i) => (0..i).rev().find(|&j| reachable(j)),
+            None => (0..self.sidebar_sections.len())
+                .rev()
+                .find(|&j| reachable(j)),
+        };
+        match (current, prev) {
+            (_, Some(j)) if self.sidebar_sections[j].is_explorer() => self.focus_file_explorer(),
+            (_, Some(j)) => self.focus_sidebar_section(j),
+            // Above the first section: the editor.
+            (Some(_), None) => {
+                self.blur_sidebar_panels();
+                self.active_window_mut().focus_editor();
+            }
+            // From the editor with nothing to go to.
+            (None, None) => self.focus_file_explorer(),
+        }
+    }
+
     /// Every panel section's registry entry names the sentinel buffer of the
     /// slot it is *now* in. Sections move when one is removed, so this runs
     /// after every removal, insertion and restore.
