@@ -2134,7 +2134,6 @@ impl Editor {
                 closable,
                 start_blurred,
                 scope,
-                reveal,
             } => {
                 let key = crate::widgets::PanelKey::new(plugin, panel_id);
                 self.handle_mount_sidebar_section(
@@ -2145,7 +2144,6 @@ impl Editor {
                     closable,
                     start_blurred,
                     scope,
-                    reveal,
                 );
             }
 
@@ -6025,7 +6023,6 @@ impl Editor {
         closable: bool,
         start_blurred: bool,
         scope_spec: fresh_core::api::SectionScopeSpec,
-        reveal: bool,
     ) {
         use crate::app::sidebar::SectionScope;
         // The description reads what this writes; see
@@ -6106,32 +6103,19 @@ impl Editor {
             false,
         );
         // A section mounted for a buffer that is not on screen parks at
-        // once — before any reveal or focus, which are for a section that
-        // is on screen and would otherwise open the column for nothing.
+        // once — before any focus, which is for a section on screen.
         self.reconcile_sidebar_scopes();
         let live = self
             .sidebar_sections
             .iter()
             .position(|s| s.panel_key() == Some(&panel_key));
         if let Some(index) = live {
-            if reveal {
-                self.reveal_sidebar();
-                self.reveal_sidebar_section(index);
-            }
             if !start_blurred {
                 self.focus_sidebar_section(index);
             }
         }
         tracing::debug!(
-            "Mounted sidebar section for panel {} ({} rows, {:?}, {})",
-            panel_key,
-            rows,
-            scope,
-            if live.is_some() {
-                "on screen"
-            } else {
-                "parked"
-            }
+            "Mounted sidebar section {panel_key} ({rows} rows, {scope:?}, live: {live:?})"
         );
     }
 
@@ -6143,7 +6127,7 @@ impl Editor {
         // The description reads what this writes; see
         // `Editor::shell_description_stale`.
         self.shell_description_stale = true;
-        if self.slot_of_panel(panel_key).is_none() && !self.is_parked_panel(panel_key) {
+        if self.slot_of_panel(panel_key).is_none() && !self.section_exists(panel_key) {
             tracing::debug!(
                 "UpdateFloatingWidget for unknown / mismatched panel {} ignored",
                 panel_key

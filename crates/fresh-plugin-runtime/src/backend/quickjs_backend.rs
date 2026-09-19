@@ -7435,7 +7435,7 @@ impl JsEditorApi {
         title: String,
         rows: f64,
         #[plugin_api(
-            ts_type = "{ closable?: boolean; startBlurred?: boolean; scope?: { buffer: number } | { window: number } | 'editor'; reveal?: boolean }"
+            ts_type = "{ closable?: boolean; startBlurred?: boolean; scope?: { buffer: number } | { window: number } | 'editor' }"
         )]
         opts: rquickjs::function::Opt<rquickjs::Value<'js>>,
     ) -> rquickjs::Result<bool> {
@@ -7480,7 +7480,6 @@ impl JsEditorApi {
                 closable: flag("closable", true),
                 start_blurred: flag("startBlurred", false),
                 scope,
-                reveal: flag("reveal", false),
             })
             .is_ok())
     }

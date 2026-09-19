@@ -5017,7 +5017,6 @@ interface EditorAPI {
 		} | {
 			window: number;
 		} | "editor";
-		reveal?: boolean;
 	}): boolean;
 	/**
 	* Replace the spec of the currently-mounted floating widget panel.

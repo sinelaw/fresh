@@ -6100,11 +6100,6 @@ pub enum PluginCommand {
         /// window.
         #[serde(default)]
         scope: SectionScopeSpec,
-        /// Show the sidebar column and open the section, so "mounted"
-        /// means "visible". Default `false`: a quiet mount waits in a
-        /// hidden column.
-        #[serde(default)]
-        reveal: bool,
     },
 
     /// Replace the spec of the currently-mounted floating widget
