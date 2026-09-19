@@ -387,24 +387,28 @@ fn tree_rows(content: u32, visible: u32) -> u16 {
     content.min(visible).min(u16::MAX as u32) as u16
 }
 
-/// The column a panel's tree keeps for its scrollbar.
+/// The column a panel's scrollbar floats in.
 ///
-/// A revealed bar floats over its window's last column — deliberately, so a
-/// bar that comes and goes does not reflow the row under the pointer. That is
-/// right where the row's last cell is padding, and wrong where it is content:
-/// a tree row's tail carries the button the host draws at its edge, the `…`
-/// that says the row was cut, and a card's own right border. So a tree asks
-/// for the bar's column to be reserved (`scrollbar_gutter` beside
-/// `scrollbar_when`) and builds its rows one column narrower.
+/// A revealed bar takes no gutter: it is painted over its window's last
+/// column, deliberately, so a bar that comes and goes does not reflow the row
+/// under the pointer. That is right wherever the row's last cell is padding —
+/// which is every row a plugin builds to the panel's width, and why the rows
+/// are built to that width at all. Reserving the column instead takes one
+/// from every row, and a row that no longer fits the panel it was built for
+/// is a worse thing than a bar over a blank cell.
 ///
-/// Named once because the two halves have to agree: reserve without
-/// narrowing and every row is clipped by a column; narrow without reserving
-/// and the bar floats over the blank the narrowing left.
-const TREE_BAR_COLS: u16 = 1;
+/// It is wrong for one cell only: the action button the *host* draws at a
+/// row's edge, which is chrome and cannot be padding. So a row carrying one
+/// is built a column short — and nothing else changes.
+const PANEL_BAR_COLS: u16 = 1;
 
-/// The width a panel tree's rows may paint in.
-fn tree_row_width(panel: u16) -> u16 {
-    panel.saturating_sub(TREE_BAR_COLS)
+/// The width to build one tree row at: the panel's, less the column a
+/// floating bar would cut its button in half in.
+fn tree_row_width(panel: u16, node: &fresh_core::api::TreeNode) -> u16 {
+    match node.action.is_some() {
+        true => panel.saturating_sub(PANEL_BAR_COLS),
+        false => panel,
+    }
 }
 
 /// The description for a covered spec.
@@ -1757,7 +1761,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                     *checkable,
                     *item_height,
                     true,
-                    tree_row_width(width) as u32,
+                    tree_row_width(width, &n) as u32,
                     *indent_cols,
                     h_pan,
                 );
@@ -1949,7 +1953,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                         checkable,
                         1,
                         false,
-                        tree_row_width(width) as u32,
+                        tree_row_width(width, &node) as u32,
                         indent,
                         h_pan,
                     );
@@ -2061,10 +2065,6 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                 row_at,
             )
             .focusable(false)
-            // The bar gets a column of its own rather than the rows' last one:
-            // a tree row's tail is content — an action button, the `…` that says
-            // the row was cut — and an overlay bar would paint over it.
-            .scrollbar_gutter()
             .scrollbar_when(cx.scrollbar_reveal)
             .scrollbar_theme(bar_ink())
             .row_theme({
@@ -3106,10 +3106,6 @@ impl fresh_ui::Component<UiMsg> for Scrolled {
             });
         }
         let body = fresh_ui::viewport(content)
-            // A reserved column for the bar rather than one floated over the
-            // rows: a card's own right border lives in the last column, and an
-            // overlay bar painted over it cuts the box open.
-            .scrollbar_gutter()
             .scrollbar_when(self.reveal)
             .scrollbar_theme(bar_ink());
         match s.anchor.clone() {
