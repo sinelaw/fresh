@@ -865,6 +865,7 @@ impl Editor {
                     "after_file_save",
                     crate::services::plugins::hooks::HookArgs::AfterFileSave {
                         buffer_id: self.active_buffer(),
+                        window_id: self.active_window.0,
                         path: full_path.clone(),
                     },
                 );

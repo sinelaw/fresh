@@ -3070,6 +3070,8 @@ impl Editor {
         end: usize,
         request_id: u64,
     ) {
+        // Says so when the id is another window's (see `plugin_buffer_guard`).
+        let _ = self.plugin_buffer_in_active_window(buffer_id, "getBufferText");
         let result = if let Some(state) = self
             .windows
             .get_mut(&self.active_window)
@@ -6950,6 +6952,7 @@ impl Window {
                 .collect();
             let buffer_info = BufferInfo {
                 id: *buffer_id,
+                window_id: self.id.0,
                 path: state.buffer.file_path().map(|p| p.to_path_buf()),
                 // The tab label. For a virtual buffer this is the `name` the
                 // creating plugin chose, which is the only stable way for it

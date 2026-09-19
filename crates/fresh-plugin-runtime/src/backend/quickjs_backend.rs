@@ -12628,6 +12628,7 @@ mod tests {
                 BufferId(0),
                 BufferInfo {
                     id: BufferId(0),
+                    window_id: 1,
                     path: Some(PathBuf::from("/test1.txt")),
                     name: "test1.txt".to_string(),
                     modified: false,
@@ -12648,6 +12649,7 @@ mod tests {
                 BufferId(1),
                 BufferInfo {
                     id: BufferId(1),
+                    window_id: 1,
                     path: Some(PathBuf::from("/test2.txt")),
                     name: "test2.txt".to_string(),
                     modified: true,

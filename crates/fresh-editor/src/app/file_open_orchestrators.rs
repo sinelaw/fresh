@@ -1303,7 +1303,11 @@ impl crate::app::window::Window {
     pub(crate) fn run_after_file_open_hook(&self, buffer_id: BufferId, path: std::path::PathBuf) {
         self.resources.plugin_manager.read().unwrap().run_hook(
             "after_file_open",
-            crate::services::plugins::hooks::HookArgs::AfterFileOpen { buffer_id, path },
+            crate::services::plugins::hooks::HookArgs::AfterFileOpen {
+                buffer_id,
+                window_id: self.id.0,
+                path,
+            },
         );
     }
 

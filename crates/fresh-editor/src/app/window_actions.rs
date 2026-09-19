@@ -1514,7 +1514,13 @@ impl crate::app::Editor {
         {
             let plugins = self.plugin_manager.read().unwrap();
             for buffer_id in closed.buffers.ids() {
-                plugins.run_hook("buffer_closed", HookArgs::BufferClosed { buffer_id });
+                plugins.run_hook(
+                    "buffer_closed",
+                    HookArgs::BufferClosed {
+                        buffer_id,
+                        window_id: id.0,
+                    },
+                );
             }
         }
         drop(closed);
