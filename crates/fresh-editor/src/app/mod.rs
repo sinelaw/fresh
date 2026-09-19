@@ -1517,6 +1517,15 @@ pub struct Editor {
     /// The sidebar's sections, top to bottom; section 0 is the explorer.
     /// Editor-global for the same reason the dock is — see `app::sidebar`.
     pub(crate) sidebar_sections: Vec<sidebar::SidebarSection>,
+    /// Sections whose scope does not match the active window and buffer,
+    /// kept off screen until it does again (`reconcile_sidebar_scopes`).
+    pub(crate) parked_sidebar_sections: Vec<sidebar::SidebarSection>,
+    /// Frames left before restored placeholders no plugin claimed are
+    /// dropped; `None` when nothing is pending.
+    pub(crate) sidebar_placeholder_expiry: Option<u8>,
+    /// The `(rows, collapsed)` an expired placeholder had, by identity, so a
+    /// later mount lands where the user left it.
+    pub(crate) sidebar_layout_hints: HashMap<crate::widgets::PanelKey, (u16, bool)>,
     /// The divider drag in progress, if a section header holds the pointer.
     pub(crate) sidebar_drag: Option<sidebar::SidebarDrag>,
     /// A markdown document's press, while it is held: which panel and widget

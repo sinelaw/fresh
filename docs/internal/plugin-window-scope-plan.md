@@ -1,11 +1,18 @@
 # Window scope for plugin state and chrome
 
-> _Design note. Status: **PLANNED**. Answers sinelaw/fresh#3326 ("Sidebar
-> sections: unreachable by keyboard, editor-global across windows, and
-> stale/dead panels"): what was found, why the plugin API makes the mistake
-> easy, and a phased plan that fixes the reported defects and closes the class
-> they belong to. The defects were reproduced interactively; the analysis is
-> from the source. Where this note and the code disagree, the code wins._
+> _Design note. Status: phases 0–5 **IMPLEMENTED** (sinelaw/fresh#3327);
+> phase 6 is the open decision it always was. Answers sinelaw/fresh#3326
+> ("Sidebar sections: unreachable by keyboard, editor-global across windows,
+> and stale/dead panels"): what was found, why the plugin API makes the
+> mistake easy, and the phased plan that fixed the reported defects and
+> closed the class they belong to. The defects were reproduced
+> interactively; the analysis is from the source. Where this note and the
+> code disagree, the code wins. As built: the announcer is
+> `app::focus_announcer`, the scopes are `app::sidebar::SectionScope` with
+> out-of-scope sections *parked* rather than hidden (so the column, the focus
+> cycle and hit-testing never see them), restored placeholders expire after a
+> few frames' grace with their layout kept as a hint, and the foreign-id
+> check is `Editor::plugin_buffer_in_active_window`._
 
 ---
 

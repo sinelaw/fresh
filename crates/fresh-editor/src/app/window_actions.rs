@@ -1523,7 +1523,13 @@ impl crate::app::Editor {
                 );
             }
         }
+        // The sections about its buffers go with the buffers, the ones about
+        // the window with the window.
+        for buffer_id in closed.buffers.ids() {
+            self.drop_sidebar_sections_for_buffer(buffer_id);
+        }
         drop(closed);
+        self.drop_sidebar_sections_for_window(id);
         // The window is gone, so its half of the shell tree is gone with it.
         self.forget_window_ui_state(id);
         // Closing a dormant session's disconnected shell drops the whole

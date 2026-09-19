@@ -8,7 +8,7 @@
 //! `(window, split, buffer)` triple against the last one it announced and
 //! fires exactly the hooks the difference calls for. Calling it twice is free;
 //! forgetting it on a new path is caught by the frame's safety net, which
-//! calls it after every plugin-command drain.
+//! calls it once per frame after the plugin-command drain.
 //!
 //! Order within one announcement, when everything changed:
 //! `active_window_changed`, `buffer_deactivated` (the buffer the user left),
@@ -58,6 +58,10 @@ impl Editor {
         }
         self.last_announced_focus = Some(current);
         let (window, _split, buffer) = current;
+
+        // The column shows the sections that belong to this window and
+        // buffer, before any plugin is told about the change.
+        self.reconcile_sidebar_scopes();
 
         // Refresh before any hook so a handler reads the state it is told
         // about — `getActiveBufferId`, `getCwd`, the window list.

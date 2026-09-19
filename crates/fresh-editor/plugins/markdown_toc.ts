@@ -349,6 +349,8 @@ let mounted = false;
 let sectionFocused = false;
 /** Title the section was mounted with; a change needs a remount. */
 let mountedTitle = "";
+/** The buffer the mounted section is scoped to — a remount follows it. */
+let mountedBufferId: number | null = null;
 let rescanTimer: number | null = null;
 /** Bumped per full scan so a stale `await` cannot publish over a newer one. */
 let scanGeneration = 0;
@@ -403,20 +405,28 @@ function sectionTitle(state: TocState | null): string {
 function mountSection(): void {
   if (!toc) return;
   const title = sectionTitle(toc);
-  if (mounted && title === mountedTitle) {
+  if (mounted && title === mountedTitle && mountedBufferId === toc.bufferId) {
     editor.updateFloatingWidget(PANEL_ID, buildSpec(toc));
   } else {
-    // First mount, or the title changed (stale ↔ fresh): the title is fixed
-    // at mount time, so this is a remount. Mounted blurred — the section is
-    // reference material, and taking the keyboard from the editor on every
-    // buffer switch would be hostile.
-    if (mounted) editor.unmountFloatingWidget(PANEL_ID);
+    // First mount, the title changed (stale ↔ fresh), or the section is
+    // about a different buffer now: title and scope are fixed at mount
+    // time, so this is a remount — in place, keeping the section's rows.
+    // Mounted blurred — the section is reference material, and taking the
+    // keyboard from the editor on every buffer switch would be hostile.
+    //
+    // The scope is the buffer: the host shows the section only while this
+    // buffer is the active buffer of the active window, parks it while
+    // another buffer or window is, and drops it (firing `cancel`) when the
+    // buffer closes. That is what keeps one window's outline out of
+    // another window's sidebar (sinelaw/fresh#3326).
     editor.mountSidebarSection(PANEL_ID, buildSpec(toc), title, requestedRows(), {
       closable: true,
       startBlurred: true,
+      scope: { buffer: toc.bufferId },
     });
     mounted = true;
     mountedTitle = title;
+    mountedBufferId = toc.bufferId;
     sectionFocused = false;
   }
   pushExpanded();
@@ -428,9 +438,21 @@ function unmountSection(): void {
     editor.unmountFloatingWidget(PANEL_ID);
     mounted = false;
     mountedTitle = "";
+    mountedBufferId = null;
     sectionFocused = false;
   }
 }
+
+/** Show the section — column and all — and give it the keyboard. */
+function markdownTocFocus(): void {
+  if (!toc || !mounted) {
+    editor.setStatus(editor.t("status.not_markdown_file"));
+    return;
+  }
+  editor.floatingPanelControl(PANEL_ID, "reveal", 0);
+  editor.floatingPanelControl(PANEL_ID, "focus", 0);
+}
+registerHandler("markdownTocFocus", markdownTocFocus);
 
 function pushSelected(index: number): void {
   if (!toc || !mounted) return;
@@ -653,9 +675,10 @@ editor.on("widget_event", (e) => {
     return;
   }
   if (e.event_type === "cancel") {
-    // The section's ×: the host already unmounted it.
+    // The section's ×, or its buffer closed: the host already unmounted it.
     mounted = false;
     mountedTitle = "";
+    mountedBufferId = null;
     sectionFocused = false;
     return;
   }
@@ -846,6 +869,13 @@ editor.registerCommand(
   "%cmd.toggle_follow",
   "%cmd.toggle_follow_desc",
   "markdownTocToggleFollow",
+  null,
+);
+
+editor.registerCommand(
+  "%cmd.focus_toc",
+  "%cmd.focus_toc_desc",
+  "markdownTocFocus",
   null,
 );
 

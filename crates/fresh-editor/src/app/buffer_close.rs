@@ -221,6 +221,8 @@ impl Editor {
                 window_id: self.active_window.0,
             },
         );
+        // The sidebar sections scoped to this buffer go with it.
+        self.drop_sidebar_sections_for_buffer(id);
 
         Ok(())
     }
