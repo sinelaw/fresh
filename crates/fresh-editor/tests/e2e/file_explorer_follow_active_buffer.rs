@@ -16,7 +16,6 @@
 
 use crate::common::harness::EditorTestHarness;
 use crate::e2e::file_explorer::{explorer_highlighted_rows, explorer_row_highlighted};
-use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::Config;
 use std::fs;
 
@@ -25,12 +24,17 @@ use std::fs;
 const ALPHA: &str = "CONTENT_OF_THE_FIRST_FILE";
 const BETA: &str = "CONTENT_OF_THE_SECOND_FILE";
 
-/// A project with two files in separate directories, open in two tabs, the
-/// sidebar showing, and the keyboard back on the editor.
+/// A project with two files at its root, open in two tabs, the sidebar
+/// showing, and the keyboard back on the editor.
 ///
-/// The files sit in *different* directories, so following one has to expand a
-/// subtree the other does not live in — a follow that only moved the highlight
-/// inside an already-open directory would be a weaker thing to assert.
+/// **Both files are at the root on purpose.** A file in a subdirectory is not
+/// on screen until something expands that directory, and expanding it is
+/// precisely what the "off" case must *not* do — so a fixture that waited for
+/// a nested name to appear could only ever hang in the test that matters most.
+/// At the root both rows are present from the first frame, which is what makes
+/// "which row is highlighted" answerable in both directions. Revealing through
+/// a collapsed subtree is the deliberate-reveal path's job and is covered by
+/// its own tests.
 fn harness_with_two_tabs(follow: bool) -> EditorTestHarness {
     let mut config = Config::default();
     config.file_explorer.follow_active_buffer = follow;
@@ -39,10 +43,8 @@ fn harness_with_two_tabs(follow: bool) -> EditorTestHarness {
 
     let mut harness = EditorTestHarness::with_temp_project_and_config(120, 30, config).unwrap();
     let root = harness.project_dir().unwrap();
-    fs::create_dir_all(root.join("one")).unwrap();
-    fs::create_dir_all(root.join("two")).unwrap();
-    let alpha = root.join("one/alpha.txt");
-    let beta = root.join("two/beta.txt");
+    let alpha = root.join("alpha.txt");
+    let beta = root.join("beta.txt");
     fs::write(&alpha, format!("{ALPHA}\n")).unwrap();
     fs::write(&beta, format!("{BETA}\n")).unwrap();
 
@@ -63,23 +65,26 @@ fn harness_with_two_tabs(follow: bool) -> EditorTestHarness {
     harness
 }
 
-/// Cycle the focused pane's tab with the keyboard until the editor is showing
-/// `marker`. Observational on both ends: the only input is the next-buffer
-/// key, and the only thing consulted is the screen.
-fn switch_until_showing(harness: &mut EditorTestHarness, marker: &str) {
-    // One pass around a handful of open buffers is generous; a marker that
-    // never appears means the buffer is gone, which is a failure, not a wait.
-    for _ in 0..12 {
-        if harness.screen_to_string().contains(marker) {
-            return;
-        }
-        harness
-            .send_key(KeyCode::PageDown, KeyModifiers::CONTROL)
-            .unwrap();
-        harness.render().unwrap();
-    }
-    panic!(
-        "cycling the tabs never reached a buffer showing {marker:?}.\nScreen:\n{}",
+/// Make `file` the file the user is looking at, and confirm the editor is
+/// showing it.
+///
+/// **Opening rather than clicking its tab.** What the setting watches for is
+/// the pane's buffer changing — `Window::set_pane_buffer`, the one write
+/// allowed to change which buffer a pane shows — and a tab click, a
+/// jump-to-definition and an open all funnel through it, so any of them
+/// exercises the same fork. Opening is the one that does not also depend on
+/// hit-testing the tab strip, which is a second thing to get right and not the
+/// thing under test. (Driving it by tab click was tried: locating the tab in
+/// the rendered row needs screen columns rather than byte or char offsets —
+/// the panel border beside it is multi-byte box glyphs — and even with that
+/// right the click landed somewhere that reshaped the panes.)
+fn show_file(harness: &mut EditorTestHarness, name: &str, marker: &str) {
+    let path = harness.project_dir().unwrap().join(name);
+    harness.open_file(&path).unwrap();
+    harness.render().unwrap();
+    assert!(
+        harness.screen_to_string().contains(marker),
+        "the editor should be showing {name}.\nScreen:\n{}",
         harness.screen_to_string()
     );
 }
@@ -91,7 +96,7 @@ fn switch_until_showing(harness: &mut EditorTestHarness, marker: &str) {
 fn follow_on_moves_the_highlight_when_the_tab_changes() {
     let mut harness = harness_with_two_tabs(true);
 
-    switch_until_showing(&mut harness, ALPHA);
+    show_file(&mut harness, "alpha.txt", ALPHA);
     harness
         .wait_until(|h| explorer_row_highlighted(h, "alpha.txt"))
         .unwrap();
@@ -101,7 +106,7 @@ fn follow_on_moves_the_highlight_when_the_tab_changes() {
         harness.screen_to_string()
     );
 
-    switch_until_showing(&mut harness, BETA);
+    show_file(&mut harness, "beta.txt", BETA);
     harness
         .wait_until(|h| explorer_row_highlighted(h, "beta.txt"))
         .unwrap();
@@ -122,8 +127,15 @@ fn follow_off_leaves_the_highlight_where_it_was() {
     let mut harness = harness_with_two_tabs(false);
 
     let before = explorer_highlighted_rows(&harness);
+    // Without this the test could pass by there being no highlight at all:
+    // "unchanged" only means something if there was something to change.
+    assert!(
+        !before.is_empty(),
+        "fixture: some row should be highlighted to begin with.\nScreen:\n{}",
+        harness.screen_to_string()
+    );
 
-    switch_until_showing(&mut harness, ALPHA);
+    show_file(&mut harness, "alpha.txt", ALPHA);
     assert_eq!(
         explorer_highlighted_rows(&harness),
         before,
@@ -131,7 +143,7 @@ fn follow_off_leaves_the_highlight_where_it_was() {
         harness.screen_to_string()
     );
 
-    switch_until_showing(&mut harness, BETA);
+    show_file(&mut harness, "beta.txt", BETA);
     assert_eq!(
         explorer_highlighted_rows(&harness),
         before,
@@ -152,17 +164,22 @@ fn follow_off_leaves_the_highlight_where_it_was() {
 #[test]
 fn follow_is_suppressed_while_the_tree_holds_the_keyboard() {
     let mut harness = harness_with_two_tabs(true);
-    let alpha = harness.project_dir().unwrap().join("one/alpha.txt");
+    let alpha = harness.project_dir().unwrap().join("alpha.txt");
 
     // Park the selection where the follow would have to move it from, then
     // give the tree the keyboard. (Focusing the sidebar performs the explicit
     // "show me where I am" reveal, which is why `before` is read after it.)
-    switch_until_showing(&mut harness, BETA);
+    show_file(&mut harness, "beta.txt", BETA);
     harness
         .wait_until(|h| explorer_row_highlighted(h, "beta.txt"))
         .unwrap();
     harness.editor_mut().focus_file_explorer();
-    harness.render().unwrap();
+    // Focusing the sidebar performs the explicit reveal, which hands the tree
+    // to an async expand and paints the panel blank until it lands — so wait
+    // for the highlight to come back rather than sampling the empty frame.
+    harness
+        .wait_until(|h| explorer_row_highlighted(h, "beta.txt"))
+        .unwrap();
     let before = explorer_highlighted_rows(&harness);
     assert!(
         before.iter().any(|row| row.contains("beta.txt")),
