@@ -651,16 +651,11 @@ impl Editor {
         if id == self.active_window {
             #[cfg(feature = "plugins")]
             {
-                let buffer_id = self.active_buffer();
-                self.update_plugin_state_snapshot();
                 tracing::debug!(
-                    "Firing buffer_activated for active buffer {:?} after workspace restore",
-                    buffer_id
+                    "Announcing focus for active buffer {:?} after workspace restore",
+                    self.active_buffer()
                 );
-                self.plugin_manager.read().unwrap().run_hook(
-                    "buffer_activated",
-                    crate::services::plugins::hooks::HookArgs::BufferActivated { buffer_id },
-                );
+                self.announce_focus();
             }
         }
 

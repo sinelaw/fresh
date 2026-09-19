@@ -635,6 +635,7 @@ impl Editor {
             terminal_width: parts.terminal_width,
             terminal_height: parts.terminal_height,
             last_layout_signature: None,
+            last_announced_focus: None,
             connections: crate::services::authority::ConnectionRegistry::new(),
             open_machines: std::collections::HashMap::new(),
             next_machine_id: 1,

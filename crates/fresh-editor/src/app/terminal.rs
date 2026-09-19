@@ -1531,15 +1531,8 @@ impl Editor {
         };
         self.begin_self_update(terminal_id, window, buffer_id);
 
-        // Editor-wide: refresh the plugin-state snapshot and fire
-        // `buffer_activated`, matching `open_terminal`.
-        #[cfg(feature = "plugins")]
-        self.update_plugin_state_snapshot();
-        #[cfg(feature = "plugins")]
-        self.plugin_manager.read().unwrap().run_hook(
-            "buffer_activated",
-            crate::services::plugins::hooks::HookArgs::BufferActivated { buffer_id },
-        );
+        // Editor-wide: announce the focus change, matching `open_terminal`.
+        self.announce_focus();
     }
 
     /// Size the active window's visible terminal PTYs to their panes — as
@@ -1576,15 +1569,8 @@ impl Editor {
             return;
         };
 
-        // Editor-wide: refresh the plugin-state snapshot so plugin
-        // hooks see the new active buffer, then fire `buffer_activated`.
-        #[cfg(feature = "plugins")]
-        self.update_plugin_state_snapshot();
-        #[cfg(feature = "plugins")]
-        self.plugin_manager.read().unwrap().run_hook(
-            "buffer_activated",
-            crate::services::plugins::hooks::HookArgs::BufferActivated { buffer_id },
-        );
+        // Editor-wide: announce the focus change to plugins.
+        self.announce_focus();
 
         // Status bar with the terminal-mode exit key. Looked up here
         // (not in Window) because the keybinding resolver is shared
@@ -1691,15 +1677,8 @@ impl Editor {
         // single layout funnel so existing terminals fit their new panes.
         self.relayout();
 
-        // Editor-wide: refresh the plugin-state snapshot so plugin hooks see
-        // the new active buffer, then fire `buffer_activated`.
-        #[cfg(feature = "plugins")]
-        self.update_plugin_state_snapshot();
-        #[cfg(feature = "plugins")]
-        self.plugin_manager.read().unwrap().run_hook(
-            "buffer_activated",
-            crate::services::plugins::hooks::HookArgs::BufferActivated { buffer_id },
-        );
+        // Editor-wide: announce the focus change to plugins.
+        self.announce_focus();
 
         let exit_key = self
             .keybindings
