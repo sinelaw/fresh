@@ -9,6 +9,13 @@
 
 use ratatui::layout::Rect;
 
+/// Narrow a count to the width the library's geometry takes, saturating rather
+/// than wrapping: a list longer than `u32::MAX` has no meaningful thumb, and a
+/// wrapped total would give it a wrong one.
+fn saturating_u32(n: usize) -> u32 {
+    u32::try_from(n).unwrap_or(u32::MAX)
+}
+
 /// State needed to render and interact with a scrollbar
 #[derive(Debug, Clone, Copy)]
 pub struct ScrollbarState {
@@ -30,37 +37,50 @@ impl ScrollbarState {
         }
     }
 
-    /// Calculate thumb position and size for a given track height
+    /// Thumb position and size on a `track_height`-row track, as
+    /// `(thumb_start, thumb_size)` in rows.
     ///
-    /// Returns (thumb_start, thumb_size) in rows
+    /// **One arithmetic, in the library.** This is
+    /// [`fresh_ui::Draw::scrollbar_thumb`], the same function the fold uses to
+    /// paint every declared bar and the press path uses to decide what the
+    /// pointer landed on. It used to be re-derived here, and the sidebar's own
+    /// comments asserted the two agreed — a convention holding where a shared
+    /// function belongs, and one that only had to drift once to put a thumb
+    /// somewhere a click could not reach it.
+    ///
+    /// The library's version is the one whose documentation works through the
+    /// cases that are easy to get wrong: a fully-scrolled thumb sitting flush
+    /// against the end rather than a row short of it, a length that rounds
+    /// *up* so a small window still leaves something grabbable, and the
+    /// distinction between the window — in whatever unit the viewport counts
+    /// in — and the track, which is cells on screen. For this type the two
+    /// units coincide: `visible_items` is the window.
+    ///
+    /// **One place the two differed.** The copy here capped the thumb at 80%
+    /// of the track, so a viewport showing almost all of its content still
+    /// left the thumb somewhere to travel; the library's clamps only at the
+    /// full track, which is how the editor pane's own bar has always behaved.
+    /// Collapsing onto the library adopts that: a list one row taller than its
+    /// panel now shows a full-length thumb with no drag travel, the same as a
+    /// buffer one line taller than its pane, and scrolls by wheel or key as it
+    /// always did. The cap also had a sharp edge the library does not — on a
+    /// track under five rows `floor(track × 0.8)` reaches zero and the thumb
+    /// vanished entirely.
     pub fn thumb_geometry(&self, track_height: usize) -> (usize, usize) {
-        if track_height == 0 || self.total_items == 0 {
+        // `scrollbar_thumb` answers `(0, track)` for empty content — a bar with
+        // nothing to say fills itself — where this type answers "no thumb at
+        // all" and its callers skip drawing one.
+        if self.total_items == 0 {
             return (0, 0);
         }
-
-        // Calculate the maximum scroll position
-        let max_scroll = self.total_items.saturating_sub(self.visible_items);
-
-        // When content fits entirely in viewport, fill the entire scrollbar
-        if max_scroll == 0 {
-            return (0, track_height);
-        }
-
-        // Calculate thumb size based on viewport ratio
-        let thumb_size_raw = ((self.visible_items as f64 / self.total_items as f64)
-            * track_height as f64)
-            .ceil() as usize;
-
-        // Cap thumb size: minimum 1, maximum 80% of track height
-        let max_thumb_size = (track_height as f64 * 0.8).floor() as usize;
-        let thumb_size = thumb_size_raw.max(1).min(max_thumb_size).min(track_height);
-
-        // Calculate thumb position using linear mapping
-        let scroll_ratio = self.scroll_offset.min(max_scroll) as f64 / max_scroll as f64;
-        let max_thumb_start = track_height.saturating_sub(thumb_size);
-        let thumb_start = (scroll_ratio * max_thumb_start as f64) as usize;
-
-        (thumb_start, thumb_size)
+        let track = u16::try_from(track_height).unwrap_or(u16::MAX);
+        let (top, len) = fresh_ui::Draw::scrollbar_thumb(
+            saturating_u32(self.scroll_offset),
+            saturating_u32(self.total_items),
+            saturating_u32(self.visible_items),
+            track,
+        );
+        (usize::from(top), usize::from(len))
     }
 
     /// Check if a row is within the thumb area

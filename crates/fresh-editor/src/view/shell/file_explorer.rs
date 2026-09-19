@@ -206,9 +206,10 @@ fn build_rows(e: &Explorer) -> Node<UiMsg> {
 /// between rows in some terminals, and every test that finds a scrollbar on
 /// screen finds it by that background.
 ///
-/// The geometry is [`ScrollbarState::thumb_geometry`], the same one the
-/// settings panel's bar and the editor's use, so a thumb of a given size sits
-/// where the rest of the editor would put it.
+/// The geometry is [`ScrollbarState::thumb_geometry`], which is now literally
+/// `fresh_ui::Draw::scrollbar_thumb` — the one the fold paints every declared
+/// bar with. A thumb of a given size sits where the rest of the editor puts
+/// it because it is the same call, not because two copies agree.
 fn scrollbar(scroll: Scroll) -> Node<UiMsg> {
     use crate::view::ui::scrollbar::ScrollbarState;
     // `ScrollbarState`'s ceiling is `total_items - visible_items`, so the
