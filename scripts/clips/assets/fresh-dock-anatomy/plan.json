@@ -1,0 +1,30 @@
+[
+  {"key": "chrome_column", "label": "The window", "offset": [13, 2]},
+
+  {"key": "dock_column", "rows": [0, 10], "label": "Dock", "offset": [-9, -4],
+   "head": "The dock is an element, not a drawing",
+   "sub": "a retained tree the layout hands rects to",
+   "dive_head": "Two buttons, a filter, a list",
+   "dive_sub": "each one a node with a rect of its own",
+   "children": [
+     {"key": "widget:new-session", "label": "New task", "offset": [-6, -4],
+      "head": "New task",
+      "sub": "cuts a worktree and starts an agent in it"},
+     {"key": "filter", "label": "Filter", "offset": [14, -4],
+      "head": "Filter",
+      "sub": "narrows the list without leaving it"},
+     {"key": "widget:filters-toggle", "label": "Filters", "offset": [-10, 1.5],
+      "head": "Filters",
+      "sub": "which tasks the list is willing to show"},
+     {"key": "widget:view-toggle", "label": "View", "offset": [14, 1.5],
+      "head": "View",
+      "sub": "compact rows, or a card per task"},
+     {"key": "sessions", "label": "Sessions", "offset": [0, 6],
+      "head": "The session list",
+      "sub": "one row per worktree, one worktree per task",
+      "dive_head": "Five rows, five checkouts",
+      "dive_sub": "the one you review from, and four tasks under way",
+      "spread": [0, 0.9], "stagger": [1.6, 0.9],
+      "children": [{"key": "session:*", "label": "{n}"}]}
+   ]}
+]
