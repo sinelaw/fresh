@@ -136,6 +136,19 @@ interface ViState {
   visual: VisualState | null; // The active visual selection; null outside the visual modes
   insert: InsertSession | null; // The in-progress insert session; null outside insert mode
   pendingInsertCommand: string | null; // Insert-entering command (i/a/I/A/o/O) staged for the next switchMode("insert")
+  // The most recent `captureInsertedText`, settled or not.
+  //
+  // Leaving insert mode starts that capture, and it has to `await` a buffer
+  // read before it can put the typed text on `memory.lastChange`. Nothing used
+  // to wait for it, so a `.` arriving before the read resolved replayed a
+  // change whose `insertedText` was not filled in yet — the delete happened
+  // and the insert did not. `Esc j j .` is fast enough to lose that race on a
+  // loaded machine.
+  //
+  // Never cleared: awaiting a promise that already settled costs nothing, and
+  // clearing it from inside the capture would wipe the handle to a *newer*
+  // capture that started while this one was still awaiting its buffer read.
+  pendingCapture: Promise<void> | null;
 }
 
 const memory: ViMemory = {
@@ -157,6 +170,7 @@ const state: ViState = {
   visual: null,
   insert: null,
   pendingInsertCommand: null,
+  pendingCapture: null,
 };
 
 // Bumped every time the modal state is dropped out from under whatever was
@@ -281,7 +295,11 @@ function switchMode(newMode: ViMode): void {
 
   // Capture inserted text when leaving insert mode (for '.' repeat)
   if (oldMode === "insert" && newMode !== "insert" && state.insert !== null) {
-    captureInsertedText();
+    // Deliberately not awaited here — `switchMode` is called from
+    // synchronous paths and the mode must flip now. The promise is kept so
+    // that whoever *reads* what the capture produces can wait for it; see
+    // `state.pendingCapture`.
+    state.pendingCapture = captureInsertedText();
   }
 
   // All modes use vi-{mode} naming, including insert mode
@@ -2453,6 +2471,13 @@ registerHandler("vi_redo", vi_redo);
 
 // Repeat last change (. command)
 async function vi_repeat() : Promise<void> {
+  // Let a capture still in flight finish writing `insertedText` first.
+  // Without this, `.` immediately after Escape replays the change's motion
+  // and deletion but inserts nothing.
+  if (state.pendingCapture !== null) {
+    await state.pendingCapture;
+  }
+
   if (!memory.lastChange) {
     editor.setStatus(editor.t("status.no_change_to_repeat"));
     return;
