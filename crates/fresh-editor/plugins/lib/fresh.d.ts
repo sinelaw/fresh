@@ -1490,6 +1490,21 @@ type TreeNode = {
 	* Out-of-range values are harmless — they resolve to the end of the text.
 	*/
 	windowAnchor?: TextWindowAnchor | null;
+	/**
+	* A button drawn at the row's tail: what this row is *for*, said on
+	* the row itself rather than only in a footer the eye has to travel
+	* to. `Some(label)` renders `[ label ]` against the panel's right
+	* edge and emits a hit area over it that fires the `action` event
+	* with the row's `index` and `key`; the keyboard reaches the same
+	* thing through the tree's `activate`.
+	*
+	* The button is pinned like the indent is pinned: it sits outside the
+	* window the body is fitted into, so a row too wide for the panel
+	* slides *under* its button rather than pushing it off the edge.
+	* Ignored on a bordered card (`card_borders` with `item_height > 1`),
+	* whose chrome has nowhere to put one.
+	*/
+	action?: string | null;
 };
 type TextWindowAnchor = {
 	/**

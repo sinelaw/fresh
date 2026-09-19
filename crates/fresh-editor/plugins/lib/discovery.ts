@@ -13,7 +13,7 @@ import {
   type ProjectIdentity,
   type ScanResult,
 } from "./agent_scanner.ts";
-import { styledRow, type TextPropertyEntry } from "./widgets.ts";
+import { styledRow, type StyledSegment, type TextPropertyEntry } from "./widgets.ts";
 
 /** `editor.t`, handed in rather than reached for. */
 export type Translate = (key: string, params?: Record<string, string>) => string;
@@ -34,12 +34,27 @@ export interface DiscoveryHost {
   restoreDock(): void;
 }
 
+/** One column of a row, and which end of it survives a cut. A path keeps
+ *  its tail — the directory it ends in is what tells two checkouts of one
+ *  repository apart — and everything else keeps its head. */
+export interface DiscoverCell {
+  text: string;
+  /** Defaults to `"head"`. */
+  keep?: "head" | "tail";
+}
+
+/** Rows that line up with each other. Each family has its own column
+ *  widths: a tool name belongs under a tool name, not under a session's
+ *  branch, and a heading's columns are not a session's at all. */
+export type DiscoverFamily = "group" | "session" | "absent" | "problem";
+
 export interface DiscoverRow {
   key: string;
-  /** A heading rather than a session. */
-  group: boolean;
-  label: string;
-  detail: string;
+  family: DiscoverFamily;
+  /** The row's columns, left to right. What each one holds is the family's
+   *  business; that the second one is the same width on every row of that
+   *  family is this file's. */
+  cells: DiscoverCell[];
   /** Absent on a heading and on a problem line. */
   session?: CollectedSession;
   /** What Enter does to this row, resolved once so the renderer and the key
@@ -48,6 +63,11 @@ export interface DiscoverRow {
   /** The machine this row came from, by `DiscoverTarget.key`. A row is acted
    *  on through its machine, which under "All machines" is not the picker's. */
   machineKey?: string;
+}
+
+/** A heading rather than a row of the thing it heads. */
+export function discoverIsGroup(row: DiscoverRow): boolean {
+  return row.family === "group";
 }
 
 export type DiscoverGrouping = "tool" | "project" | "branch";
@@ -251,10 +271,12 @@ export function discoverRowsFrom(
     rows.push({
       // The key carries the grouping, so groupings never collide.
       key: `group:${key}`,
-      group: true,
-      label: group.label,
-      detail: group.detail
-        ?? t("discover.group_count", { count: String(sessions.length) }),
+      family: "group",
+      cells: [
+        { text: group.label },
+        { text: group.detail ?? "", keep: "tail" },
+        { text: t("discover.group_count", { count: String(sessions.length) }) },
+      ],
     });
     for (const { session, from } of sessions) {
       // `||`, not `??`: an empty title must not render as a blank row.
@@ -266,22 +288,29 @@ export function discoverRowsFrom(
           : "  ";
       // Whatever the heading already says is left off the row. The branch
       // stays on the row: one project's sessions sit on different branches.
+      // The same column holds the same kind of thing on every row of a
+      // grouping — that is what lets the eye read down one instead of along
+      // each row — so an empty one is left empty rather than closed up.
       const tool = displayName.get(session.tool ?? "") ?? session.tool ?? "";
       const branch = session.project?.branch ?? "";
-      const parts = opts.grouping === "project"
-        ? [tool, branch]
-        : opts.grouping === "branch"
-          ? [(session.project ?? discoverPathProject(session.cwd ?? ""))?.label ?? "", tool]
-          : [session.cwd ?? "", branch];
-      if (manyMachines && from.label) parts.push(from.label);
-      const detail = parts.filter((part) => part !== "").join("  ·  ");
+      const cells: DiscoverCell[] = [{ text: `${mark}${title}` }];
+      if (opts.grouping === "project") {
+        cells.push({ text: tool }, { text: branch });
+      } else if (opts.grouping === "branch") {
+        cells.push(
+          { text: (session.project ?? discoverPathProject(session.cwd ?? ""))?.label ?? "" },
+          { text: tool },
+        );
+      } else {
+        cells.push({ text: session.cwd ?? "", keep: "tail" }, { text: branch });
+      }
+      if (manyMachines) cells.push({ text: from.label });
       rows.push({
         // Keyed by machine too: two machines can hold the same tool and id,
         // and duplicate keys make the tree fold and select the wrong row.
         key: `session:${from.key}/${session.tool}/${session.id}`,
-        group: false,
-        label: `${mark}${title}`,
-        detail,
+        family: "session",
+        cells,
         session,
         verb: discoverVerbFor(session, resumeArgv, t),
         machineKey: from.key,
@@ -297,20 +326,20 @@ export function discoverRowsFrom(
       const why = tool.status === "unsupported" ? (tool.note ?? "") : t("discover.not_installed");
       absent.push({
         key: `absent:${from.key}/${tool.id}`,
-        group: false,
-        label: tool.displayName,
-        detail: manyMachines && from.label ? `${why}  ·  ${from.label}` : why,
+        family: "absent",
+        cells: manyMachines
+          ? [{ text: tool.displayName }, { text: why }, { text: from.label }]
+          : [{ text: tool.displayName }, { text: why }],
       });
     }
   }
   if (absent.length > 0) {
     rows.push({
       key: DISCOVER_ABSENT_KEY,
-      group: true,
-      label: t("discover.absent", { count: String(absent.length) }),
-      detail: "",
+      family: "group",
+      cells: [{ text: t("discover.absent", { count: String(absent.length) }) }],
     });
-    rows.push(...absent.sort((a, b) => byName(a.label, b.label)));
+    rows.push(...absent.sort((a, b) => byName(a.cells[0].text, b.cells[0].text)));
   }
 
   // Problems are not filtered: hiding one because it does not match the
@@ -327,12 +356,11 @@ export function discoverRowsFrom(
   if (problems.length > 0) {
     rows.push({
       key: DISCOVER_PROBLEMS_KEY,
-      group: true,
-      label: t("discover.problems", { count: String(problems.length) }),
-      detail: "",
+      family: "group",
+      cells: [{ text: t("discover.problems", { count: String(problems.length) }) }],
     });
     for (const p of problems) {
-      rows.push({ key: p.key, group: false, label: p.text, detail: "" });
+      rows.push({ key: p.key, family: "problem", cells: [{ text: p.text }] });
     }
   }
   return rows;
@@ -344,7 +372,7 @@ export function discoverVisibleRowCount(rows: DiscoverRow[], expanded: Set<strin
   let n = 0;
   let open = false;
   for (const r of rows) {
-    if (r.group) {
+    if (discoverIsGroup(r)) {
       open = expanded.has(r.key);
       n++;
     } else if (open) {
@@ -354,35 +382,128 @@ export function discoverVisibleRowCount(rows: DiscoverRow[], expanded: Set<strin
   return n;
 }
 
-/** The width every row is padded to. Without padding the column takes the
- *  button row's width and clips longer rows. Bounded so one long path cannot
- *  stretch the panel. */
-export function discoverRowWidth(rows: DiscoverRow[], width: (s: string) => number): number {
-  const natural = rows.reduce((w, r) => {
-    // The tree draws the child indent, but it still costs the row width.
-    const indent = r.group ? 0 : DISCOVER_INDENT_COLS;
-    return Math.max(w, indent + width(`${r.label}  ${r.detail}`));
-  }, 0);
-  return Math.max(48, Math.min(140, natural));
+/** Blank columns between one column and the next. */
+export const DISCOVER_COL_GAP = 2;
+
+/** The widest a single column may grow. A path long enough to fill the
+ *  panel on its own would push every column after it off the edge, so the
+ *  cell is cut instead — losing one cell's tail, not the table. */
+export const DISCOVER_COL_MAX = 44;
+
+/** What the rows in hand make the table: a width per column per family,
+ *  and the width every row is then padded to.
+ *
+ *  The widths are measured, not declared, because the dialog cannot know
+ *  before the scan whether it is showing one tmux pane or eighty
+ *  transcripts across four machines. */
+export interface DiscoverLayout {
+  /** Column widths, in display columns, per family. A family's last column
+   *  is measured like the rest — `total` needs its width — but nothing is
+   *  padded past it. */
+  widths: Map<DiscoverFamily, number[]>;
+  /** The width every row is padded to. Without it the tree column takes the
+   *  button row's width and clips longer rows. Bounded so one long row
+   *  cannot stretch the panel. */
+  total: number;
 }
 
-/** One row's styled text, padded to `width`. Inert rows are drawn dim. */
+/** Measure the table. */
+export function discoverLayout(
+  rows: DiscoverRow[],
+  measure: (s: string) => number,
+): DiscoverLayout {
+  const widths = new Map<DiscoverFamily, number[]>();
+  for (const r of rows) {
+    const w = widths.get(r.family) ?? [];
+    r.cells.forEach((cell, i) => {
+      w[i] = Math.max(w[i] ?? 0, Math.min(DISCOVER_COL_MAX, measure(cell.text)));
+    });
+    widths.set(r.family, w);
+  }
+  let natural = 0;
+  for (const [family, w] of widths) {
+    // The tree draws the child indent, but it still costs the row width.
+    const indent = family === "group" ? 0 : DISCOVER_INDENT_COLS;
+    const gaps = Math.max(0, w.length - 1) * DISCOVER_COL_GAP;
+    natural = Math.max(natural, indent + gaps + w.reduce((a, b) => a + b, 0));
+  }
+  return { widths, total: Math.max(48, Math.min(140, natural)) };
+}
+
+/** `text` cut to `width` columns, with `…` marking the cut. Which end goes
+ *  is the cell's: a path keeps its tail, a name its head. */
+export function discoverElide(
+  text: string,
+  width: number,
+  keep: "head" | "tail",
+  measure: (s: string) => number,
+): string {
+  if (measure(text) <= width) return text;
+  if (width <= 1) return "…";
+  const chars = [...text];
+  let out = "…";
+  if (keep === "head") {
+    let taken = "";
+    for (const ch of chars) {
+      if (measure(taken + ch) + 1 > width) break;
+      taken += ch;
+    }
+    out = `${taken}…`;
+  } else {
+    let taken = "";
+    for (let i = chars.length - 1; i >= 0; i--) {
+      if (measure(chars[i] + taken) + 1 > width) break;
+      taken = chars[i] + taken;
+    }
+    out = `…${taken}`;
+  }
+  return out;
+}
+
+/** One row's styled text: its cells, each in its column, padded to the
+ *  table's width. Inert rows are drawn dim. */
 export function discoverRowEntry(
   r: DiscoverRow,
-  width: number,
+  layout: DiscoverLayout,
   measure: (s: string) => number,
 ): TextPropertyEntry {
   const dim = { fg: "ui.menu_disabled_fg" };
-  const inert = !r.group && (!r.session || r.verb?.kind !== "attach" && r.verb?.kind !== "resume");
-  // The pad rides on the last segment so it is dim. The tree draws the indent.
-  const indent = r.group ? 0 : DISCOVER_INDENT_COLS;
-  const detail = r.detail ? `  ${r.detail}` : "";
-  const used = indent + measure(r.label) + measure(detail);
-  const filled = used >= width ? detail : detail + " ".repeat(width - used);
-  return styledRow([
-    { text: r.label, style: r.group ? { bold: true } : inert ? dim : {} },
-    { text: filled, style: dim },
-  ]);
+  const group = discoverIsGroup(r);
+  const inert = !group && (!r.session || r.verb?.kind !== "attach" && r.verb?.kind !== "resume");
+  const widths = layout.widths.get(r.family) ?? [];
+  const indent = group ? 0 : DISCOVER_INDENT_COLS;
+  const segments: StyledSegment[] = [];
+  let used = indent;
+  r.cells.forEach((cell, i) => {
+    const width = widths[i] ?? measure(cell.text);
+    const text = discoverElide(cell.text, width, cell.keep ?? "head", measure);
+    // Every column but the last is padded to its width; the last one is
+    // padded to the table's, below, so the pad it rides on is one segment.
+    const last = i === r.cells.length - 1;
+    const pad = last ? 0 : Math.max(0, width - measure(text)) + DISCOVER_COL_GAP;
+    segments.push({
+      text: text + " ".repeat(pad),
+      // The first column is the row's name, and it is what the reader is
+      // looking for; the rest is what tells two of them apart.
+      style: i === 0 ? (group ? { bold: true } : inert ? dim : {}) : dim,
+    });
+    used += measure(text) + pad;
+  });
+  // The trailing pad rides on the last segment so it is dim, and makes the
+  // tree column as wide as the widest row rather than as wide as the buttons.
+  if (used < layout.total) {
+    segments.push({ text: " ".repeat(layout.total - used), style: dim });
+  }
+  return styledRow(segments);
+}
+
+/** The button drawn at the end of a row, or null for a row with nothing to
+ *  do: the heading it is under, a tool that is not installed, a problem, or
+ *  a session with no way back. */
+export function discoverRowAction(r: DiscoverRow, t: Translate): string | null {
+  if (discoverIsGroup(r) || !r.session) return null;
+  const kind = r.verb?.kind;
+  return kind === "attach" || kind === "resume" ? t("discover.btn_import") : null;
 }
 
 /** Quote one argv element for the form's command field. `splitAgentCmd` has

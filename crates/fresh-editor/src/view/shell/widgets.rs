@@ -1815,6 +1815,11 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                     });
                     hits.push(((a, b), h));
                 }
+                if let Some((a, b)) = r.action_range {
+                    let mut h = select(false);
+                    h.event_type = "action";
+                    hits.push(((a, b), h));
+                }
                 // The body starts after whatever prefix the glyphs took —
                 // the collector's own rule, so a press on the glyph is the
                 // glyph's and the rest of the row is the card's.
@@ -1972,6 +1977,15 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                                 "key": item_key,
                                 "checked": !node.checked.unwrap_or(false),
                             }),
+                            false,
+                        ));
+                    }
+                    if let Some((a, b)) = r.action_range {
+                        hits.push(hit(
+                            "action",
+                            a,
+                            b,
+                            serde_json::json!({ "index": abs, "key": item_key }),
                             false,
                         ));
                     }
@@ -5071,6 +5085,7 @@ pub(crate) mod tests {
             checked: None,
             extra_lines: Vec::new(),
             window_anchor: None,
+            action: None,
         }
     }
 
@@ -6221,6 +6236,7 @@ pub(crate) mod tests {
                     checked: None,
                     extra_lines: vec![raw(&format!("branch-{i}")), raw("2 files")],
                     window_anchor: None,
+                    action: None,
                 })
                 .collect(),
             item_keys: (0..n).map(|i| format!("s{i}")).collect(),

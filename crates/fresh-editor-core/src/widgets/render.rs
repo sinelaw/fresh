@@ -2132,6 +2132,12 @@ pub struct RenderedTreeRow {
     /// `checkable`, or when this node has `checked: None`. The
     /// caller emits a `toggle` hit area over this range.
     pub checkbox_range: Option<(usize, usize)>,
+    /// Byte range within `entry.text` of the row's action button
+    /// (`[ label ]`), brackets included. `None` for a node with no
+    /// `action`. The caller emits an `action` hit area over this range,
+    /// and stops the row-wide `select` hit before it — a press on a
+    /// button is the button's.
+    pub action_range: Option<(usize, usize)>,
     /// Continuation rows below the primary entry when the parent Tree
     /// has `item_height > 1`. Already indented to align under the
     /// primary row's body and blank-padded so the card is exactly
@@ -2139,9 +2145,24 @@ pub struct RenderedTreeRow {
     pub extra_entries: Vec<TextPropertyEntry>,
 }
 
+/// Columns a row's action button takes, its leading gap included.
+///
+/// Measured in one place because three readers need the same number:
+/// the paint that draws it, the budget that keeps the body clear of it,
+/// and [`pan_bounds`], which says how far the body may travel.
+fn tree_row_action_cols(node: &TreeNode) -> usize {
+    node.action
+        .as_deref()
+        .map(|label| ACTION_GAP + crate::primitives::display_width::str_width(label) + 4)
+        .unwrap_or(0)
+}
+
+/// Blank columns between a tree row's body and its action button.
+const ACTION_GAP: usize = 2;
+
 /// Render a single `TreeNode` row.
 ///
-/// Layout: `<indent><disclosure><space>[<checkbox><space>]<node-text>`
+/// Layout: `<indent><disclosure><space>[<checkbox><space>]<node-text>[<action>]`
 /// where:
 /// * `indent` = `depth * 2` spaces.
 /// * `disclosure` = `▶` (collapsed) / `▼` (expanded) for internal
@@ -2152,10 +2173,14 @@ pub struct RenderedTreeRow {
 /// * `<node-text>` is the plugin's pre-rendered row content, with
 ///   its inline overlays byte-shifted by the prefix length.
 ///
+/// * `<action>` = `[ label ]` for a node carrying one, held against
+///   the panel's right edge and outside the body's window.
+///
 /// The disclosure glyph is colored with `ui.help_key_fg`; the
 /// checkbox glyph reuses `ui.tab_active_fg` (the same key the
 /// `Toggle` widget uses for its checked-state glyph) so it reads
-/// as a control surface against the row's text.
+/// as a control surface against the row's text. The action button
+/// wears `ui.help_key_fg` for the same reason.
 /// A row body fitted to the columns it has, and where the slice came from.
 ///
 /// The byte offsets are into the *original* body, so the caller can carry the
@@ -2465,7 +2490,9 @@ fn tree_row_pan_range(
     cols: u32,
 ) -> (i32, i32) {
     let gutter = tree_row_gutter_cols(node, checkable, indent_cols);
-    let budget = (cols as usize).saturating_sub(gutter);
+    let budget = (cols as usize)
+        .saturating_sub(gutter)
+        .saturating_sub(tree_row_action_cols(node));
     let w = node.window_anchor.unwrap_or_default();
     let text = row_text(&node.text);
     let pinned_bytes = byte_of_char(&text, w.pinned as usize);
@@ -2588,7 +2615,14 @@ pub fn render_tree_row(
     // and cut by the terminal, so there was nothing to pan and no marker to
     // say anything had been cut. See `window_row_body`.
     let prefix_cols = crate::primitives::display_width::str_width(&text);
-    let budget = (panel_width as usize).saturating_sub(prefix_cols);
+    // **The button is a gutter too, at the other end.** Taking its columns
+    // out of the body's budget is what makes the row slide under it: a body
+    // fitted to the full width would windowed itself right across the button
+    // and pushed it past the panel's edge.
+    let action_cols = tree_row_action_cols(node);
+    let budget = (panel_width as usize)
+        .saturating_sub(prefix_cols)
+        .saturating_sub(action_cols);
     // **The row's own pinned head.** A search result's `path:line` is its
     // identity, not its content: a window that slid it away left rows nobody
     // could tell apart. It stays with the prefix above and the rest of the row
@@ -2607,6 +2641,28 @@ pub fn render_tree_row(
     });
     let window = window_row_body(rest, budget.saturating_sub(pinned_cols), anchor, h_offset);
     text.push_str(&window.text);
+
+    // The action button, against the panel's right edge, so a column of
+    // buttons stands where the reader last left the pointer rather than
+    // wherever each row's text happened to stop.
+    let action_range = node.action.as_deref().map(|label| {
+        let drawn = crate::primitives::display_width::str_width(&text);
+        // The gap is a minimum, not part of the button: the pad reaches from
+        // where the body stopped to where the button starts, and is never
+        // less than the gap — a body fitted to the budget lands exactly there.
+        let pad = (panel_width as usize)
+            .saturating_sub(action_cols - ACTION_GAP)
+            .saturating_sub(drawn)
+            .max(ACTION_GAP);
+        for _ in 0..pad {
+            text.push(' ');
+        }
+        let start = text.len();
+        text.push_str("[ ");
+        text.push_str(label);
+        text.push_str(" ]");
+        (start, text.len())
+    });
 
     // Carry over the plugin's inline overlays. The pinned head keeps its
     // offsets (shifted by the prefix only); everything past it is rebased onto
@@ -2671,6 +2727,22 @@ pub fn render_tree_row(
         });
     }
 
+    // The button's ink is the one the panel already spends on "this is a
+    // control, not prose" — the same key the disclosure glyph and a checked
+    // box wear, so a row's button reads as part of the same family.
+    if let Some((a, b)) = action_range {
+        overlays.push(InlineOverlay {
+            start: a,
+            end: b,
+            style: OverlayOptions {
+                fg: Some(OverlayColorSpec::theme_key(KEY_HELP_KEY_FG)),
+                ..Default::default()
+            },
+            properties: Default::default(),
+            unit: OffsetUnit::Byte,
+        });
+    }
+
     let disclosure_range = if node.has_children {
         Some((disc_start, disc_end))
     } else {
@@ -2715,7 +2787,9 @@ pub fn render_tree_row(
                     // card's continuation lines slide with the line they
                     // continue. No anchor: only the primary row has a span it
                     // exists to show.
-                    let cont_budget = (panel_width as usize).saturating_sub(cont_indent_cols);
+                    let cont_budget = (panel_width as usize)
+                        .saturating_sub(cont_indent_cols)
+                        .saturating_sub(action_cols);
                     let cont = window_row_body(&src.text, cont_budget, None, h_offset);
                     let mut line_text = String::with_capacity(shift + cont.text.len());
                     line_text.push_str(&indent_str);
@@ -2747,6 +2821,7 @@ pub fn render_tree_row(
         entry,
         disclosure_range,
         checkbox_range,
+        action_range,
         extra_entries,
     }
 }
@@ -2873,6 +2948,9 @@ fn render_tree_card(node: &TreeNode, item_height: u32, panel_width: u32) -> Rend
         entry: border_row('╭', '╮'),
         disclosure_range: None,
         checkbox_range: None,
+        // A card's chrome has nowhere to put a button; `TreeNode::action`
+        // says so.
+        action_range: None,
         extra_entries,
     }
 }
@@ -3933,6 +4011,52 @@ pub mod tests {
         }
     }
 
+    /// A row's button is drawn at the panel's right edge, and the body is
+    /// fitted to what it leaves — a long row slides under its button rather
+    /// than pushing it off the panel.
+    #[test]
+    fn tree_row_draws_its_action_at_the_edge() {
+        let mut node = tnode("session-a", 0, false);
+        node.action = Some("Import".into());
+        let r = render_tree_row(&node, false, false, 1, false, 40, 2, 0);
+        let (a, b) = r.action_range.expect("a node with an action has a range");
+        assert_eq!(&r.entry.text[a..b], "[ Import ]", "the button is the range");
+        assert_eq!(
+            crate::primitives::display_width::str_width(&r.entry.text),
+            40,
+            "and it ends at the panel's right edge: {:?}",
+            r.entry.text
+        );
+
+        // The same row, too wide to fit: the body is windowed, the button is
+        // not — it is drawn after the cut, still at the edge.
+        let mut long = tnode(&"x".repeat(200), 0, false);
+        long.action = Some("Import".into());
+        let wide = render_tree_row(&long, false, false, 1, false, 40, 2, 0);
+        let (a, b) = wide.action_range.expect("still there");
+        assert_eq!(&wide.entry.text[a..b], "[ Import ]");
+        assert_eq!(
+            crate::primitives::display_width::str_width(&wide.entry.text),
+            40,
+            "a row that overflows still ends in its button: {:?}",
+            wide.entry.text
+        );
+
+        // No action, no range, and nothing taken off the body's budget.
+        let plain = render_tree_row(
+            &tnode("session-a", 0, false),
+            false,
+            false,
+            1,
+            false,
+            40,
+            2,
+            0,
+        );
+        assert!(plain.action_range.is_none());
+        assert!(!plain.entry.text.contains('['), "{:?}", plain.entry.text);
+    }
+
     #[test]
     fn fit_label_truncates_with_ellipsis() {
         // Too long → truncated to width with a trailing `…`.
@@ -4409,6 +4533,7 @@ pub mod tests {
             checked: None,
             extra_lines: Vec::new(),
             window_anchor: None,
+            action: None,
         }
     }
 
