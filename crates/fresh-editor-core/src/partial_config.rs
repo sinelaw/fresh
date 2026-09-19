@@ -402,6 +402,7 @@ pub struct PartialFileExplorerConfig {
     pub width: Option<crate::config::ExplorerWidth>,
     pub preview_tabs: Option<bool>,
     pub side: Option<crate::config::FileExplorerSide>,
+    pub follow_active_buffer: Option<bool>,
     pub auto_open_on_last_buffer_close: Option<bool>,
     pub compact_directories: Option<bool>,
     pub tree_indicator_collapsed: Option<String>,
@@ -418,6 +419,8 @@ impl Merge for PartialFileExplorerConfig {
         self.width.merge_from(&other.width);
         self.preview_tabs.merge_from(&other.preview_tabs);
         self.side.merge_from(&other.side);
+        self.follow_active_buffer
+            .merge_from(&other.follow_active_buffer);
         self.auto_open_on_last_buffer_close
             .merge_from(&other.auto_open_on_last_buffer_close);
         self.compact_directories
@@ -958,6 +961,7 @@ impl From<&FileExplorerConfig> for PartialFileExplorerConfig {
             width: Some(cfg.width),
             preview_tabs: Some(cfg.preview_tabs),
             side: Some(cfg.side),
+            follow_active_buffer: Some(cfg.follow_active_buffer),
             auto_open_on_last_buffer_close: Some(cfg.auto_open_on_last_buffer_close),
             compact_directories: Some(cfg.compact_directories),
             tree_indicator_collapsed: Some(cfg.tree_indicator_collapsed.clone()),
@@ -978,6 +982,9 @@ impl PartialFileExplorerConfig {
             width: self.width.unwrap_or(defaults.width),
             preview_tabs: self.preview_tabs.unwrap_or(defaults.preview_tabs),
             side: self.side.unwrap_or(defaults.side),
+            follow_active_buffer: self
+                .follow_active_buffer
+                .unwrap_or(defaults.follow_active_buffer),
             auto_open_on_last_buffer_close: self
                 .auto_open_on_last_buffer_close
                 .unwrap_or(defaults.auto_open_on_last_buffer_close),

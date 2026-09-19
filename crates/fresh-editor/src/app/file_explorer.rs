@@ -2,6 +2,7 @@ use anyhow::Result as AnyhowResult;
 use fresh_i18n::t;
 
 use super::*;
+use crate::app::path_utils::explorer_path_under_root;
 use crate::services::async_bridge::AsyncMessage;
 use crate::view::file_tree::TreeNode;
 use std::path::{Path, PathBuf};
@@ -2105,19 +2106,40 @@ impl crate::app::window::Window {
 
     /// The single fork the tree-following conditions are enforced at.
     ///
-    /// Everything that follows the user around the tree — currently the
-    /// deferred requests replayed by
+    /// Everything that follows the user around the tree — the active-buffer
+    /// change raised by [`Window::follow_file_explorer_to_active_file`], and
+    /// the deferred requests replayed by
     /// [`Window::resume_deferred_file_explorer_expand`] — passes its
     /// conditions here rather than re-deriving them, so a replay cannot slip
-    /// past a condition that has gone false since it was queued.
+    /// past a condition that has gone false since it was queued. An expand
+    /// takes seconds on a remote filesystem, and every one of the conditions
+    /// below is something the user can change while it runs: they can turn
+    /// the setting off, hide the sidebar, or take the keyboard into the tree.
+    /// The replay is therefore re-gated *here*, when it actually runs, not
+    /// only when it was raised.
     ///
-    /// Skipped while the explorer itself holds the keyboard: the user is
-    /// navigating the tree, and yanking the selection to the editor's file
-    /// under them would fight their own cursor.
+    /// The conditions, and why each one is a condition:
+    ///
+    /// - **`file_explorer.follow_active_buffer` is on.** Following is opt-in;
+    ///   off by default.
+    /// - **The sidebar is showing.** There is no tree to move a highlight on.
+    /// - **The keyboard is not inside the tree.** The user is navigating it,
+    ///   and yanking the selection to the editor's file under them would
+    ///   fight their own cursor.
+    /// - **The file is under the project root.** The tree is rooted there and
+    ///   cannot reveal what it does not contain. Asked through
+    ///   [`explorer_path_under_root`], which tolerates the separator and
+    ///   extended-prefix spellings a path can arrive in.
+    ///
+    /// The explicit "show me where I am" reveal that opening or focusing the
+    /// sidebar performs does *not* come through here — see
+    /// [`Window::sync_file_explorer_to_active_file`]. That one is deliberate
+    /// and runs regardless of the setting.
     fn follow_path_in_explorer(&mut self, target_path: PathBuf) {
-        if !self.file_explorer_visible
+        if !self.config().file_explorer.follow_active_buffer
+            || !self.file_explorer_visible
             || self.key_context == crate::input::keybindings::KeyContext::FileExplorer
-            || !target_path.starts_with(&self.root)
+            || !explorer_path_under_root(&target_path, &self.root)
         {
             tracing::trace!(
                 "follow_path_in_explorer: gate closed, not following {:?}",
@@ -2127,6 +2149,26 @@ impl crate::app::window::Window {
         }
 
         self.expand_file_explorer_to_path(target_path);
+    }
+
+    /// Follow the active buffer's file in the tree, if following is on.
+    ///
+    /// Raised where "which file the user is looking at" changes — see
+    /// [`Window::set_pane_buffer`]. Every condition, the setting included, is
+    /// checked in [`Window::follow_path_in_explorer`]; this only supplies the
+    /// path, and has none of its own to state beyond "the active buffer is a
+    /// file at all".
+    pub(crate) fn follow_file_explorer_to_active_file(&mut self) {
+        let active_buf = self.active_buffer();
+        let Some(file_path) = self
+            .buffer_metadata
+            .get(&active_buf)
+            .and_then(|metadata| metadata.file_path())
+            .cloned()
+        else {
+            return;
+        };
+        self.follow_path_in_explorer(file_path);
     }
 
     /// Expand this window's file-explorer tree to the active buffer's file,

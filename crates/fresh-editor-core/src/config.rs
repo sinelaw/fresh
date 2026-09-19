@@ -2198,6 +2198,22 @@ pub struct FileExplorerConfig {
     #[serde(default = "default_explorer_side")]
     pub side: FileExplorerSide,
 
+    /// Keep the file-explorer tree pointed at the file the user is
+    /// currently editing: switching tabs, or anything that opens a file
+    /// into the focused pane, reveals that file in the tree and moves the
+    /// selection highlight onto it.
+    ///
+    /// Left alone while the sidebar is hidden, while the keyboard is inside
+    /// the tree (the user is navigating it, and moving the selection under
+    /// them would fight their input), for a file outside the project root,
+    /// and for an active buffer that is not a file at all.
+    ///
+    /// Independent of the explicit "show me where I am" reveal that opening
+    /// or focusing the sidebar performs — that one runs either way.
+    /// Default: false
+    #[serde(default = "default_false")]
+    pub follow_active_buffer: bool,
+
     /// Automatically focus the file explorer when the last buffer is
     /// closed. Set to `false` for a "blank workspace" workflow where
     /// nothing opens automatically and the user explicitly invokes the
@@ -2656,6 +2672,7 @@ impl Default for FileExplorerConfig {
             width: default_explorer_width(),
             preview_tabs: true,
             side: default_explorer_side(),
+            follow_active_buffer: false,
             auto_open_on_last_buffer_close: true,
             compact_directories: true,
             tree_indicator_collapsed: default_tree_indicator_collapsed(),

@@ -5042,6 +5042,15 @@ impl Window {
     /// when the SVS is registered later), the tree is still updated and
     /// the SVS sync is skipped — the caller is responsible for ensuring
     /// the SVS exists by the time any input is routed.
+    ///
+    /// Because this is the one write, it is also where the file explorer
+    /// learns that the user is looking at a different file — a tab switch, a
+    /// jump-to-definition, a plugin opening a file into the pane, all of them
+    /// land here and none has to remember to say so. Only a write to the
+    /// *focused* pane counts: filling a background split, or a dock leaf,
+    /// changes nothing about where the user is. What happens next, the
+    /// `file_explorer.follow_active_buffer` setting included, is
+    /// [`Window::follow_path_in_explorer`]'s to decide.
     pub fn set_pane_buffer(&mut self, leaf: LeafId, buffer_id: BufferId) {
         let (mgr, vs_map) = self
             .buffers
@@ -5051,6 +5060,9 @@ impl Window {
         if let Some(view_state) = vs_map.get_mut(&leaf) {
             view_state.switch_buffer(buffer_id);
             view_state.add_buffer(buffer_id);
+        }
+        if leaf == self.effective_active_split() {
+            self.follow_file_explorer_to_active_file();
         }
     }
 }
