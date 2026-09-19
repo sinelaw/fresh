@@ -219,7 +219,6 @@ impl Editor {
             // never moves the explorer. Most visible when something opens that
             // first file for you: a code tour's opening step left the tree
             // parked at the root for the rest of the tour (issue #2988).
-            self.active_window_mut().follow_active_buffer_in_explorer();
         }
 
         // Use display_name from metadata for relative path display

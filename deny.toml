@@ -43,7 +43,8 @@ allow-registry = ["https://github.com/rust-lang/crates.io-index"]
 allow-git = []
 
 [licenses]
-# Fresh is GPL-2.0, so permissive and weak-copyleft dependencies are compatible.
+# Fresh is GPL-3.0-or-later, so permissive and weak-copyleft dependencies are
+# compatible.
 version = 2
 allow = [
     "0BSD",
@@ -54,7 +55,7 @@ allow = [
     "BSL-1.0",
     "CC0-1.0",
     "CDLA-Permissive-2.0",
-    "GPL-2.0",
+    "GPL-3.0-or-later",
     "ISC",
     "MIT",
     "MPL-2.0",

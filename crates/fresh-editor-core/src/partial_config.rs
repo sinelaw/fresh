@@ -403,7 +403,6 @@ pub struct PartialFileExplorerConfig {
     pub preview_tabs: Option<bool>,
     pub side: Option<crate::config::FileExplorerSide>,
     pub auto_open_on_last_buffer_close: Option<bool>,
-    pub follow_active_buffer: Option<bool>,
     pub compact_directories: Option<bool>,
     pub tree_indicator_collapsed: Option<String>,
     pub tree_indicator_expanded: Option<String>,
@@ -421,8 +420,6 @@ impl Merge for PartialFileExplorerConfig {
         self.side.merge_from(&other.side);
         self.auto_open_on_last_buffer_close
             .merge_from(&other.auto_open_on_last_buffer_close);
-        self.follow_active_buffer
-            .merge_from(&other.follow_active_buffer);
         self.compact_directories
             .merge_from(&other.compact_directories);
         self.tree_indicator_collapsed
@@ -962,7 +959,6 @@ impl From<&FileExplorerConfig> for PartialFileExplorerConfig {
             preview_tabs: Some(cfg.preview_tabs),
             side: Some(cfg.side),
             auto_open_on_last_buffer_close: Some(cfg.auto_open_on_last_buffer_close),
-            follow_active_buffer: Some(cfg.follow_active_buffer),
             compact_directories: Some(cfg.compact_directories),
             tree_indicator_collapsed: Some(cfg.tree_indicator_collapsed.clone()),
             tree_indicator_expanded: Some(cfg.tree_indicator_expanded.clone()),
@@ -985,9 +981,6 @@ impl PartialFileExplorerConfig {
             auto_open_on_last_buffer_close: self
                 .auto_open_on_last_buffer_close
                 .unwrap_or(defaults.auto_open_on_last_buffer_close),
-            follow_active_buffer: self
-                .follow_active_buffer
-                .unwrap_or(defaults.follow_active_buffer),
             compact_directories: self
                 .compact_directories
                 .unwrap_or(defaults.compact_directories),

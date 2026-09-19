@@ -226,9 +226,7 @@ pub fn editor_tick(
     Ok(needs_render)
 }
 
-pub(crate) use path_utils::{
-    explorer_path_under_root, normalize_explorer_plugin_path, normalize_path, ExplorerRoot,
-};
+pub(crate) use path_utils::{normalize_path, ExplorerRoot};
 
 use self::types::{
     LspMenuItem, LspMessageEntry, LspProgressInfo, SearchState, DEFAULT_BACKGROUND_FILE,
