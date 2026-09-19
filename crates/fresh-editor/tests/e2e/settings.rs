@@ -1979,6 +1979,60 @@ fn find_settings_explorer_border_col(harness: &EditorTestHarness) -> u16 {
     );
 }
 
+/// Whether the settings cursor is sitting on the row labelled `label`.
+///
+/// The dialog marks the row the keyboard is on with a `>` in the narrow
+/// gutter immediately left of its label — in the category tree while the tree
+/// has the keyboard, and in the body once the body does — so the marker is a
+/// rendered fact the test can read back, and the only one that says *which*
+/// row is current.
+///
+/// Only the cells just left of the label count. The dialog is drawn over the
+/// rest of the editor, so the same screen row can carry an unrelated `>` from
+/// behind it — a collapsed directory in the file explorer, for one. The window
+/// is wide enough for the widest gutter the dialog draws: the category tree
+/// puts four spaces and a category icon between its marker and the name.
+const SETTINGS_GUTTER_WIDTH: usize = 8;
+
+fn settings_cursor_is_on(harness: &EditorTestHarness, label: &str) -> bool {
+    (0..harness.buffer().area.height).any(|row| {
+        let text = harness.get_row_text(row);
+        match text.find(label) {
+            Some(at) => text[..at]
+                .chars()
+                .rev()
+                .take(SETTINGS_GUTTER_WIDTH)
+                .any(|c| c == '>'),
+            None => false,
+        }
+    })
+}
+
+/// Walk the settings cursor down until it is on the row labelled `label`.
+///
+/// **By name rather than by a count of Down presses.** The number of rows
+/// above a setting changes whenever a sibling setting is added, and a count
+/// left one short does not fail — it lands on the neighbouring row and
+/// toggles *that*, so the test goes on to assert about a setting it never
+/// touched. Reading the label back makes the navigation say what it means and
+/// fail loudly when the row is not there at all.
+fn select_settings_row(harness: &mut EditorTestHarness, label: &str) {
+    harness.render().unwrap();
+    // A bound rather than a loop: enough to cross any one page of settings,
+    // and a wrong label must end the test rather than spin.
+    for _ in 0..40 {
+        if settings_cursor_is_on(harness, label) {
+            return;
+        }
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        harness.render().unwrap();
+    }
+    panic!(
+        "the settings cursor never reached a row labelled {label:?}.\nScreen:\n{}",
+        harness.screen_to_string()
+    );
+}
+
 /// Regression: toggling File Explorer → Show Hidden in the Settings UI and
 /// saving must update the live file explorer's IgnorePatterns, not just the
 /// config on disk. Width must also be propagated to the live explorer width.
@@ -2005,27 +2059,19 @@ fn test_settings_file_explorer_toggles_propagate_to_runtime() {
 
     harness.open_settings().unwrap();
 
-    // Navigate to File Explorer category. Order (from test_settings_percentage):
-    // General, Clipboard, Editor, Env, File Browser, File Explorer.
-    for _ in 0..5 {
-        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-    }
+    // Into the File Explorer category, across to the body, and onto each
+    // toggle by name — see `select_settings_row` for why by name.
+    select_settings_row(&mut harness, "File Explorer");
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
-    // File Explorer items (alphabetical): Auto Open On Last Buffer Close,
-    // Compact Directories, Custom Ignore Patterns, Preview Tabs,
-    // Respect Gitignore, Show Gitignored, Show Hidden, Side, Tree Indicator
-    // Collapsed, Tree Indicator Expanded, Width.
-    // Land on Show Gitignored and toggle.
-    for _ in 0..5 {
-        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-    }
+    select_settings_row(&mut harness, "Show Gitignored");
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
-    // Move to Show Hidden and toggle.
-    harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    select_settings_row(&mut harness, "Show Hidden");
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
         .unwrap();
