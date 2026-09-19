@@ -166,6 +166,7 @@
         "width": "30%",
         "preview_tabs": true,
         "side": "left",
+        "follow_active_buffer": false,
         "auto_open_on_last_buffer_close": true,
         "compact_directories": true,
         "tree_indicator_collapsed": ">",
@@ -1226,6 +1227,11 @@
           "description": "Which side of the screen to show the file explorer on.\nDefault: left",
           "$ref": "#/$defs/FileExplorerSide",
           "default": "left"
+        },
+        "follow_active_buffer": {
+          "description": "Keep the file-explorer tree pointed at the file the user is\ncurrently editing: switching tabs, or anything that opens a file\ninto the focused pane, reveals that file in the tree and moves the\nselection highlight onto it.\n\nLeft alone while the sidebar is hidden, while the keyboard is inside\nthe tree (the user is navigating it, and moving the selection under\nthem would fight their input), for a file outside the project root,\nand for an active buffer that is not a file at all.\n\nIndependent of the explicit \"show me where I am\" reveal that opening\nor focusing the sidebar performs — that one runs either way.\nDefault: false",
+          "type": "boolean",
+          "default": false
         },
         "auto_open_on_last_buffer_close": {
           "description": "Automatically focus the file explorer when the last buffer is\nclosed. Set to `false` for a \"blank workspace\" workflow where\nnothing opens automatically and the user explicitly invokes the\nfile explorer (e.g. via keybinding or command palette).\nDefault: true",

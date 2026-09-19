@@ -25,6 +25,21 @@ Preview tabs are enabled by default. Turn them off in the Settings UI if you pre
 - **`Shift+Up` / `Shift+Down`** extend a multi-select range from the current anchor; all clipboard operations (and delete) act on the whole selection.
 - **Buffers follow files** — renaming or moving a file (via cut+paste) relocates any open buffers pointing at it; deleting a file closes its buffer. Renaming a directory relocates buffers for every file inside it.
 
+## Following the Active File
+
+`file_explorer.follow_active_buffer` (off by default) keeps the tree pointed at
+whatever file you are editing: switch tabs, or jump to a definition in another
+file, and the sidebar expands to that file and moves its selection onto it.
+
+It stays out of your way while you are using the tree yourself — with the
+keyboard inside the sidebar, the selection is yours and nothing moves it. It
+also does nothing while the sidebar is hidden, or for a file outside the
+project root.
+
+Toggling the sidebar on, or focusing it with `Ctrl+E`, reveals the active file
+either way; that is the explicit "show me where I am", and this setting does
+not govern it.
+
 ## Width
 
 The sidebar's width is configurable via `file_explorer.width` in settings. It accepts either form:
