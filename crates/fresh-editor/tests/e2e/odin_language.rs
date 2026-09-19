@@ -33,6 +33,11 @@ fn odin_buffer(content: &str) -> (EditorTestHarness, TempDir) {
         24,
         HarnessOptions::new()
             .with_config(config)
+            // As in `pascal_indent`: the indent tier is only reached when the
+            // buffer has a syntect grammar. Odin's block opener is `{`, so
+            // without this the generic bracket fallback indents anyway and
+            // the indent test passes for the wrong reason.
+            .with_full_grammar_registry()
             .without_empty_plugins_dir(),
     )
     .unwrap();

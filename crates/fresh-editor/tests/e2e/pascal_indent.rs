@@ -32,11 +32,18 @@ fn pascal(content: &str) -> (EditorTestHarness, TempDir) {
 
     let mut config = Config::default();
     config.editor.auto_indent = true;
+    // **The full registry is load-bearing.** The indent tier is reached
+    // through `highlighter.syntax_name()`; with the default test registry a
+    // `.pas` buffer has no syntect grammar, that returns `None`, and the
+    // editor falls all the way through to the language-agnostic heuristic —
+    // which copies the previous line's indent and knows nothing about
+    // `begin`. Every test here then measures the fallback instead of Pascal.
     let mut harness = EditorTestHarness::create(
         90,
         24,
         HarnessOptions::new()
             .with_config(config)
+            .with_full_grammar_registry()
             .without_empty_plugins_dir(),
     )
     .unwrap();
