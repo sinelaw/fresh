@@ -322,9 +322,8 @@ pub fn fold_band(
                     }
                 }
             }
-            // **A bar is two background colours, not two glyphs.** The
-            // editor's own scrollbar (`view::ui::scrollbar::render_scrollbar`)
-            // fills each track cell with a space and a background, because
+            // **A bar is two background colours, not two glyphs.** Each
+            // track cell is a space carrying a background, because
             // box-drawing glyphs leave gaps between rows in some terminals —
             // and every test that finds a scrollbar on screen finds it by that
             // background. So the pair the item names reads the way it does
