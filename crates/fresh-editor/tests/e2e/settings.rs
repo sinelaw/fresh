@@ -2014,11 +2014,11 @@ fn test_settings_file_explorer_toggles_propagate_to_runtime() {
     harness.render().unwrap();
 
     // File Explorer items (alphabetical): Auto Open On Last Buffer Close,
-    // Compact Directories, Custom Ignore Patterns, Follow Active Buffer,
-    // Preview Tabs, Respect Gitignore, Show Gitignored, Show Hidden,
-    // Side, Width.
+    // Compact Directories, Custom Ignore Patterns, Preview Tabs,
+    // Respect Gitignore, Show Gitignored, Show Hidden, Side, Tree Indicator
+    // Collapsed, Tree Indicator Expanded, Width.
     // Land on Show Gitignored and toggle.
-    for _ in 0..6 {
+    for _ in 0..5 {
         harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     }
     harness
