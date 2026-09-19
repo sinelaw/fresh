@@ -3631,14 +3631,18 @@ impl Editor {
             UiFact::ThemeInfoButtonHover(on) => {
                 self.shell_hover = on.then_some(crate::app::types::HoverTarget::ThemeInfoButton);
             }
-            UiFact::ExplorerScroll { delta, x, y } => {
-                // The surface's wheel, with the surface. Unchanged from the
-                // chrome component's `on_wheel`, including the plugin hook —
-                // the position it reports is the pointer's, which the tree
-                // carries on the event.
+            UiFact::ExplorerWheel { delta, x, y } => {
+                // The panel's own reactions to the wheel, unchanged from the
+                // chrome component's `on_wheel`: the plugin hook — the
+                // position it reports is the pointer's, which the tree
+                // carries on the event — and the popup dismissal. The window
+                // itself is moved by the library and arrives as the fact
+                // below.
                 self.dismiss_transient_popups();
                 self.active_window().wheel_plugin_hook(x, y, delta);
-                self.active_window_mut().scroll_file_explorer_view(delta);
+            }
+            UiFact::ExplorerScrollTo(offset) => {
+                self.active_window_mut().scroll_file_explorer_to(offset);
             }
 
             UiFact::MenuItemClick { depth, index } => {

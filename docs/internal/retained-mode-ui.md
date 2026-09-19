@@ -647,8 +647,10 @@ Named here so it is not rediscovered as a gap in this arc:
 - **Sidebar feature asks** (from `sidebar-sections-design.md`, *What it needs
   from the host*): reveal on `SetSelectedIndex`, so a selection the plugin sets
   scrolls into the tree's window the way a keyboard move does; sticky ancestors
-  in `Tree`, which is the explorer's `viewport_display_indices` logic moved one
-  level down into the widget; and tabs within a sidebar section.
+  in `Tree`, which is now the widget computing the indices the explorer
+  computes in `FileTreeView::sticky_display_indices` and handing them to its
+  `List` as `pinned` — the window's half (the room, the ceiling, the bar) is
+  the library's already; and tabs within a sidebar section.
 - `LspFeature::DocumentSymbols` exposed to plugins — the code-outline half of
   #1791, which turns the Markdown contents section into an outline section with
   a different scan.

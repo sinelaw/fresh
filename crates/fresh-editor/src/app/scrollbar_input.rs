@@ -76,23 +76,23 @@ impl crate::app::window::Window {
         );
     }
 
-    /// Scroll the file explorer's viewport. The wheel moves the view,
-    /// not the selection — moving the selected entry (and letting it
-    /// drag the viewport) is jumpy and surprising.
-    pub(super) fn scroll_file_explorer_view(&mut self, delta: i32) {
+    /// Put the file explorer's window at `offset` — where the library moved
+    /// it for a wheel or a bar drag, clamped to the model's own ceiling. The
+    /// wheel moves the view, not the selection: moving the selected entry
+    /// (and letting it drag the viewport) is jumpy and surprising.
+    ///
+    /// **The clamp is the model's, not the window's.** The window derives
+    /// its ceiling from the ancestors pinned at the offset it is *at*, and
+    /// only the model can say how many are pinned at the offset it is
+    /// moving *to* — `max_scroll_offset` walks the candidates. So the window
+    /// proposes and the model disposes; see `Scroll::At` in `fresh_ui`.
+    pub(super) fn scroll_file_explorer_to(&mut self, offset: usize) {
         if let Some(explorer) = self.file_explorer.as_mut() {
-            let count = explorer.visible_count();
-            if count == 0 {
+            if explorer.visible_count() == 0 {
                 return;
             }
             let max_scroll = explorer.max_scroll_offset();
-            let current_offset = explorer.get_scroll_offset();
-            let new_offset = if delta < 0 {
-                current_offset.saturating_sub(delta.unsigned_abs() as usize)
-            } else {
-                (current_offset + delta as usize).min(max_scroll)
-            };
-            explorer.set_scroll_offset(new_offset);
+            explorer.set_scroll_offset(offset.min(max_scroll));
         }
     }
 

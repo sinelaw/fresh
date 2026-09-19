@@ -51,12 +51,14 @@ impl ChromeComponent for FileExplorer {
 /// Behavior owned by this component (moved from mouse_input.rs —
 /// the handlers its arms dispatch to).
 impl Editor {
-    /// A left press on a tree row, by viewport index.
+    /// A left press on a tree row, by its index in the tree's display order.
     ///
     /// This is `handle_file_explorer_click` minus its geometry: the row is
     /// named rather than derived from `row - (area.y + 1)`, and the title-bar
     /// and close-button branches are gone because the title line is its own
-    /// node in the tree.
+    /// node in the tree. The name is the row's own index, not its screen
+    /// row, so a pinned ancestor drawn at the top of the window names itself
+    /// with nothing in between to disagree.
     ///
     /// It also absorbs the old `Double` arm. `clicks` is which press of a run
     /// this is, carried on the event from the editor's own multi-click
@@ -76,7 +78,7 @@ impl Editor {
         // Everything the branches below need, read out under one borrow of
         // the tree so the editor is free again by the time a file is opened.
         let picked = self.file_explorer_mut().and_then(|explorer| {
-            let (node_id, _indent) = explorer.get_display_node_at_viewport_row(index)?;
+            let node_id = explorer.get_node_at_index(index)?;
             explorer.set_selected(Some(node_id));
             let node = explorer.tree().get_node(node_id)?;
             Some((
@@ -128,10 +130,17 @@ impl Editor {
     /// A right press on a tree row: select it, then open its context menu just
     /// below the pointer.
     pub(crate) fn explorer_row_context(&mut self, index: usize, x: u16, y: u16) {
+        self.explorer_context_for(Some(index), x, y);
+    }
+
+    /// The menu, for a row (`Some`, by display index) or for the panel's
+    /// empty space (`None`: no selection moves, and the menu opens in its
+    /// root form).
+    fn explorer_context_for(&mut self, index: Option<usize>, x: u16, y: u16) {
         let (is_multi, is_root_selected) = if let Some(explorer) = self.file_explorer_mut().as_mut()
         {
             let mut clicked_is_root = false;
-            if let Some((node_id, _)) = explorer.get_display_node_at_viewport_row(index) {
+            if let Some(node_id) = index.and_then(|i| explorer.get_node_at_index(i)) {
                 explorer.set_selected(Some(node_id));
                 clicked_is_root = node_id == explorer.tree().root_id();
             }
@@ -148,20 +157,21 @@ impl Editor {
 
     /// A right-press on the panel that no row claimed.
     ///
-    /// Resolves the viewport row from the panel's own rectangle and hands off
-    /// to [`Self::explorer_row_context`], which already tolerates an index
-    /// past the last entry — `get_display_node_at_viewport_row` returns
-    /// `None`, no selection moves, and the menu opens in its root form. That
-    /// is the component's behaviour: `relative_row = ev.row - (area.y + 1)`,
-    /// with the title row declining rather than opening anything.
+    /// Every row answers its own right-press, so this is the empty space
+    /// under the last one: no selection moves, and the menu opens in its
+    /// root form. That is the component's behaviour — `relative_row =
+    /// ev.row - (area.y + 1)` past the last entry resolved to no node — with
+    /// the title row declining rather than opening anything. It used to
+    /// re-derive a viewport row from the panel's rectangle and look it up;
+    /// with rows named by their index in the tree rather than on screen,
+    /// that arithmetic would name a real node that is simply not on screen.
     pub(crate) fn explorer_body_context(&mut self, x: u16, y: u16) {
         let area = self.shell_region_now(crate::view::shell::frame::HostRegion::Explorer);
         // The title row is not a right-click target.
         if area.height == 0 || y <= area.y {
             return;
         }
-        let index = y.saturating_sub(area.y + 1) as usize;
-        self.explorer_row_context(index, x, y);
+        self.explorer_context_for(None, x, y);
     }
 
     /// Show a tooltip for a file explorer status indicator
