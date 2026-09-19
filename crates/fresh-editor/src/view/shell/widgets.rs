@@ -387,6 +387,26 @@ fn tree_rows(content: u32, visible: u32) -> u16 {
     content.min(visible).min(u16::MAX as u32) as u16
 }
 
+/// The column a panel's tree keeps for its scrollbar.
+///
+/// A revealed bar floats over its window's last column — deliberately, so a
+/// bar that comes and goes does not reflow the row under the pointer. That is
+/// right where the row's last cell is padding, and wrong where it is content:
+/// a tree row's tail carries the button the host draws at its edge, the `…`
+/// that says the row was cut, and a card's own right border. So a tree asks
+/// for the bar's column to be reserved (`scrollbar_gutter` beside
+/// `scrollbar_when`) and builds its rows one column narrower.
+///
+/// Named once because the two halves have to agree: reserve without
+/// narrowing and every row is clipped by a column; narrow without reserving
+/// and the bar floats over the blank the narrowing left.
+const TREE_BAR_COLS: u16 = 1;
+
+/// The width a panel tree's rows may paint in.
+fn tree_row_width(panel: u16) -> u16 {
+    panel.saturating_sub(TREE_BAR_COLS)
+}
+
 /// The description for a covered spec.
 ///
 /// `width` is the panel's inner content width, which some variants still
@@ -1737,7 +1757,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                     *checkable,
                     *item_height,
                     true,
-                    width as u32,
+                    tree_row_width(width) as u32,
                     *indent_cols,
                     h_pan,
                 );
@@ -1929,7 +1949,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                         checkable,
                         1,
                         false,
-                        width as u32,
+                        tree_row_width(width) as u32,
                         indent,
                         h_pan,
                     );
@@ -2041,6 +2061,10 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                 row_at,
             )
             .focusable(false)
+            // The bar gets a column of its own rather than the rows' last one:
+            // a tree row's tail is content — an action button, the `…` that says
+            // the row was cut — and an overlay bar would paint over it.
+            .scrollbar_gutter()
             .scrollbar_when(cx.scrollbar_reveal)
             .scrollbar_theme(bar_ink())
             .row_theme({
@@ -3082,6 +3106,10 @@ impl fresh_ui::Component<UiMsg> for Scrolled {
             });
         }
         let body = fresh_ui::viewport(content)
+            // A reserved column for the bar rather than one floated over the
+            // rows: a card's own right border lives in the last column, and an
+            // overlay bar painted over it cuts the box open.
+            .scrollbar_gutter()
             .scrollbar_when(self.reveal)
             .scrollbar_theme(bar_ink());
         match s.anchor.clone() {

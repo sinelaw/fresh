@@ -1555,11 +1555,13 @@ impl RenderObject for ViewportRender {
                 // the content does not reflow when the list crosses the length
                 // that makes it overflow. An overlay bar carves nothing and
                 // floats over the last column, which is what lets it come and
-                // go without moving the content under the pointer.
+                // go without moving the content under the pointer — unless it
+                // was also asked for a stable gutter, which is how a window
+                // whose content reaches its last column gets a bar that
+                // neither covers it nor moves it.
                 let gutter = u16::from(
                     self.props.scrollbar
-                        && !self.props.overlay
-                        && (self.props.stable_gutter || content.h > own.h),
+                        && (self.props.stable_gutter || (!self.props.overlay && content.h > own.h)),
                 );
                 if gutter > 0 {
                     let inner_w = own.w.saturating_sub(gutter);
@@ -1633,9 +1635,12 @@ impl RenderObject for ViewportRender {
                 // A stated band has none of this: the number does not depend
                 // on the width, so the gutter is decided once, from the rows,
                 // exactly as it always was.
+                // A bar that carves a column when the content overflows. An
+                // overlay bar is not one — it floats — but a stable gutter is
+                // the column either way, overlay or not.
                 let bar = self.props.scrollbar && !self.props.overlay;
-                let mut gutter =
-                    u16::from(bar && (self.props.stable_gutter || (measured && self.gutter)));
+                let reserved = self.props.scrollbar && self.props.stable_gutter;
+                let mut gutter = u16::from(reserved || (bar && measured && self.gutter));
                 let mut height;
                 let mut rows;
                 let mut pass = 0;
@@ -1656,9 +1661,10 @@ impl RenderObject for ViewportRender {
                     // When the content overflows and a scrollbar is asked for,
                     // the last column is a gutter the scrollbar owns, so the
                     // rows are not laid out under it. A stable gutter reserves
-                    // it either way; an overlay bar asks for none and floats
-                    // over the rows instead — see [`RenderObject::paint_over`].
-                    let need = u16::from(bar && (self.props.stable_gutter || n > rows));
+                    // it either way, and is the only thing that reserves one
+                    // for an overlay bar — which otherwise asks for none and
+                    // floats over the rows — see [`RenderObject::paint_over`].
+                    let need = u16::from(reserved || (bar && n > rows));
                     if !measured {
                         gutter = need;
                         break;

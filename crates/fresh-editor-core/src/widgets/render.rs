@@ -2153,24 +2153,12 @@ pub struct RenderedTreeRow {
 fn tree_row_action_cols(node: &TreeNode) -> usize {
     node.action
         .as_deref()
-        .map(|label| {
-            ACTION_GAP
-                + crate::primitives::display_width::str_width(label)
-                + 4
-                + ACTION_EDGE_RESERVE
-        })
+        .map(|label| ACTION_GAP + crate::primitives::display_width::str_width(label) + 4)
         .unwrap_or(0)
 }
 
 /// Blank columns between a tree row's body and its action button.
 const ACTION_GAP: usize = 2;
-
-/// Columns left clear at the panel's right edge, where an overlay scrollbar
-/// floats. It takes no gutter of its own — it is painted *over* the window's
-/// last column — so a button drawn flush to the edge loses its closing
-/// bracket the moment the tree overflows and the bar appears. One column is
-/// the bar's whole width; a row without one only gives up a blank cell.
-const ACTION_EDGE_RESERVE: usize = 1;
 
 /// Render a single `TreeNode` row.
 ///
@@ -2185,9 +2173,11 @@ const ACTION_EDGE_RESERVE: usize = 1;
 /// * `<node-text>` is the plugin's pre-rendered row content, with
 ///   its inline overlays byte-shifted by the prefix length.
 ///
-/// * `<action>` = `[ label ]` for a node carrying one, held one column
-///   short of the panel's right edge — where an overlay scrollbar floats
-///   — and outside the body's window.
+/// * `<action>` = `[ label ]` for a node carrying one, held against the
+///   right edge of the width it is given and outside the body's window.
+///   That width is the window's, not the panel's: a panel whose scrollbar
+///   takes a column passes the narrower number, so a button is never drawn
+///   where a bar will be.
 ///
 /// The disclosure glyph is colored with `ui.help_key_fg`; the
 /// checkbox glyph reuses `ui.tab_active_fg` (the same key the
@@ -2667,8 +2657,6 @@ pub fn render_tree_row(
             .saturating_sub(action_cols - ACTION_GAP)
             .saturating_sub(drawn)
             .max(ACTION_GAP);
-        // `action_cols` carries the scrollbar's column too, so the pad above
-        // already stops the button one short of the edge.
         for _ in 0..pad {
             text.push(' ');
         }
@@ -4026,9 +4014,11 @@ pub mod tests {
         }
     }
 
-    /// A row's button is drawn at the panel's right edge, one column clear of
-    /// the overlay scrollbar, and the body is fitted to what it leaves — a
-    /// long row slides under its button rather than pushing it off the panel.
+    /// A row's button is drawn at the right edge of the width it is given,
+    /// and the body is fitted to what it leaves — a long row slides under its
+    /// button rather than pushing it off the panel. Keeping it clear of the
+    /// scrollbar is the panel's business: its tree reserves the bar a column,
+    /// so the width that arrives here is already one the rows may paint in.
     #[test]
     fn tree_row_draws_its_action_at_the_edge() {
         let mut node = tnode("session-a", 0, false);
@@ -4038,9 +4028,8 @@ pub mod tests {
         assert_eq!(&r.entry.text[a..b], "[ Import ]", "the button is the range");
         assert_eq!(
             crate::primitives::display_width::str_width(&r.entry.text),
-            39,
-            "and it stops one column short of the edge, where the overlay \
-             scrollbar floats — flush to it, the bar eats the bracket: {:?}",
+            40,
+            "and it ends at the width it was given: {:?}",
             r.entry.text
         );
 
@@ -4053,7 +4042,7 @@ pub mod tests {
         assert_eq!(&wide.entry.text[a..b], "[ Import ]");
         assert_eq!(
             crate::primitives::display_width::str_width(&wide.entry.text),
-            39,
+            40,
             "a row that overflows still ends in its button: {:?}",
             wide.entry.text
         );
