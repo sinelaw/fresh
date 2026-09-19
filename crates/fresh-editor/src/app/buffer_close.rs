@@ -216,7 +216,10 @@ impl Editor {
         // through the plugin's own close command).
         self.plugin_manager.read().unwrap().run_hook(
             "buffer_closed",
-            fresh_core::hooks::HookArgs::BufferClosed { buffer_id: id },
+            fresh_core::hooks::HookArgs::BufferClosed {
+                buffer_id: id,
+                window_id: self.active_window.0,
+            },
         );
 
         Ok(())

@@ -509,6 +509,13 @@ pub struct BufferInfo {
     /// Buffer ID
     #[ts(type = "number")]
     pub id: BufferId,
+    /// The window this buffer belongs to. A buffer lives in exactly one
+    /// window — the same file open in two windows is two buffers with two
+    /// ids — so a plugin that keeps a buffer id keeps this with it, and
+    /// checks it against the window it is acting in.
+    #[ts(type = "number")]
+    #[serde(default)]
+    pub window_id: u64,
     /// File path (if any)
     #[serde(serialize_with = "serialize_path")]
     #[ts(type = "string")]
@@ -8212,6 +8219,7 @@ mod tests {
             let mut snapshot = state_snapshot.write().unwrap();
             let buffer_info = BufferInfo {
                 id: BufferId(1),
+                window_id: 1,
                 path: Some(std::path::PathBuf::from("/test/file.txt")),
                 name: "file.txt".to_string(),
                 modified: true,
@@ -8262,6 +8270,7 @@ mod tests {
                 BufferId(1),
                 BufferInfo {
                     id: BufferId(1),
+                    window_id: 1,
                     path: Some(std::path::PathBuf::from("/file1.txt")),
                     name: "file1.txt".to_string(),
                     modified: false,
@@ -8282,6 +8291,7 @@ mod tests {
                 BufferId(2),
                 BufferInfo {
                     id: BufferId(2),
+                    window_id: 1,
                     path: Some(std::path::PathBuf::from("/file2.txt")),
                     name: "file2.txt".to_string(),
                     modified: true,
@@ -8302,6 +8312,7 @@ mod tests {
                 BufferId(3),
                 BufferInfo {
                     id: BufferId(3),
+                    window_id: 1,
                     path: None,
                     // A virtual buffer: no path, but it still has the name it
                     // was created with — which is the whole point of the field.

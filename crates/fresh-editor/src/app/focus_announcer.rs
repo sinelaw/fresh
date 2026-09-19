@@ -17,7 +17,7 @@
 
 use super::Editor;
 use crate::model::event::LeafId;
-use crate::services::plugins::hooks::HookArgs;
+use crate::services::plugins::hooks::{BufferRef, HookArgs};
 use fresh_core::{BufferId, WindowId};
 
 /// What was last announced: the active window, its active pane, and the
@@ -66,6 +66,8 @@ impl Editor {
 
         let prev_window = previous.map(|p| p.0);
         let prev_buffer = previous.map(|p| p.2);
+        // The buffer the user left belongs to the window it was left in.
+        let pw_for_buffer = prev_window.map(|w| w.0).unwrap_or(window.0);
         let plugins = self.plugin_manager.read().unwrap();
         if let Some(pw) = prev_window {
             if pw != window {
@@ -83,13 +85,40 @@ impl Editor {
                 if pb != buffer {
                     plugins.run_hook(
                         "buffer_deactivated",
-                        HookArgs::BufferDeactivated { buffer_id: pb },
+                        HookArgs::BufferDeactivated {
+                            buffer_id: pb,
+                            window_id: pw_for_buffer,
+                        },
                     );
                 }
             }
             plugins.run_hook(
                 "buffer_activated",
-                HookArgs::BufferActivated { buffer_id: buffer },
+                HookArgs::BufferActivated {
+                    buffer_id: buffer,
+                    window_id: window.0,
+                },
+            );
+            // The composed hook: one event for "what the user is looking at
+            // changed", with the window attached and the reason named.
+            let reason = if force_buffer && prev_buffer == Some(buffer) {
+                "open"
+            } else if prev_window.is_some_and(|pw| pw != window) {
+                "window"
+            } else {
+                "buffer"
+            };
+            plugins.run_hook(
+                "active_buffer_changed",
+                HookArgs::ActiveBufferChanged {
+                    window_id: window.0,
+                    buffer_id: buffer,
+                    previous: previous.map(|(w, _, b)| BufferRef {
+                        window_id: w.0,
+                        buffer_id: b,
+                    }),
+                    reason: reason.to_string(),
+                },
             );
         }
     }

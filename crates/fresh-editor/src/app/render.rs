@@ -1105,6 +1105,7 @@ impl Editor {
                             crate::services::plugins::hooks::HookArgs::ViewportChanged {
                                 split_id: (*split_id).into(),
                                 buffer_id,
+                                window_id: self.active_window.0,
                                 top_byte: view_state.viewport.top_byte(),
                                 top_line,
                                 width: view_state.viewport.width,

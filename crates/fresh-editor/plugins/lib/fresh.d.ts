@@ -615,6 +615,13 @@ type BufferInfo = {
 	*/
 	id: number;
 	/**
+	* The window this buffer belongs to. A buffer lives in exactly one
+	* window — the same file open in two windows is two buffers with two
+	* ids — so a plugin that keeps a buffer id keeps this with it, and
+	* checks it against the window it is acting in.
+	*/
+	window_id: number;
+	/**
 	* File path (if any)
 	*/
 	path: string;
@@ -5626,12 +5633,15 @@ interface HookEventMap {
 	// ── buffer lifecycle ─────────────────────────────────────────────────────
 	buffer_activated: {
 		buffer_id: number;
+		window_id: number;
 	};
 	buffer_deactivated: {
 		buffer_id: number;
+		window_id: number;
 	};
 	buffer_closed: {
 		buffer_id: number;
+		window_id: number;
 	};
 	// ── file I/O ─────────────────────────────────────────────────────────────
 	before_file_open: {
@@ -5640,14 +5650,17 @@ interface HookEventMap {
 	after_file_open: {
 		path: string;
 		buffer_id: number;
+		window_id: number;
 	};
 	before_file_save: {
 		path: string;
 		buffer_id: number;
+		window_id: number;
 	};
 	after_file_save: {
 		path: string;
 		buffer_id: number;
+		window_id: number;
 	};
 	/**
 	* Fired after a buffer is reloaded from disk: auto-revert picked up an
@@ -5674,11 +5687,13 @@ interface HookEventMap {
 	// ── text edits ───────────────────────────────────────────────────────────
 	before_insert: {
 		buffer_id: number;
+		window_id: number;
 		position: number;
 		text: string;
 	};
 	after_insert: {
 		buffer_id: number;
+		window_id: number;
 		position: number;
 		text: string;
 		affected_start: number;
@@ -5689,11 +5704,13 @@ interface HookEventMap {
 	};
 	before_delete: {
 		buffer_id: number;
+		window_id: number;
 		start: number;
 		end: number;
 	};
 	after_delete: {
 		buffer_id: number;
+		window_id: number;
 		start: number;
 		end: number;
 		deleted_text: string;
@@ -5706,6 +5723,7 @@ interface HookEventMap {
 	// ── cursor & viewport ────────────────────────────────────────────────────
 	cursor_moved: {
 		buffer_id: number;
+		window_id: number;
 		cursor_id: number;
 		old_position: number;
 		new_position: number;
@@ -5715,6 +5733,7 @@ interface HookEventMap {
 	viewport_changed: {
 		split_id: number;
 		buffer_id: number;
+		window_id: number;
 		top_byte: number;
 		top_line: number | null;
 		width: number;
@@ -5948,6 +5967,25 @@ interface HookEventMap {
 		previous_id: number | null;
 		active_id: number;
 	};
+	/**
+	* What the user is looking at changed: the active buffer of the active
+	* window is a different `(window, buffer)` than before. The one hook to
+	* subscribe to for "the active buffer" — it fires for a tab switch, a
+	* split focus, an open, a window dive and a workspace restore alike,
+	* after `active_window_changed` / `buffer_activated` for the same change.
+	* `reason` is `"window"` (a window switch), `"buffer"` (a different
+	* buffer in the same window) or `"open"` (the same buffer re-pointed at
+	* another file in place).
+	*/
+	active_buffer_changed: {
+		window_id: number;
+		buffer_id: number;
+		previous: {
+			window_id: number;
+			buffer_id: number;
+		} | null;
+		reason: string;
+	};
 	// ── widget runtime ───────────────────────────────────────────────────────
 	/**
 	* A widget mounted via `editor.mountWidgetPanel` emitted a
@@ -5967,6 +6005,7 @@ interface HookEventMap {
 	*   * Button: `event_type = "activate"`, `payload = {}`.
 	*/
 	widget_event: {
+		window_id: number;
 		panel_id: number;
 		widget_key: string;
 		event_type: string;

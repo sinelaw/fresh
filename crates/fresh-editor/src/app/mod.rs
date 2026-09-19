@@ -62,6 +62,8 @@ mod overlay;
 mod pane_mirror;
 mod path_utils;
 #[cfg(feature = "plugins")]
+mod plugin_buffer_guard;
+#[cfg(feature = "plugins")]
 mod plugin_commands;
 #[cfg(feature = "plugins")]
 mod plugin_dispatch;
