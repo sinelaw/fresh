@@ -58,7 +58,8 @@ impl UiFact {
                 | UiFact::CardPreviewScroll(_)
                 | UiFact::ExplorerResizeBegin { .. }
                 | UiFact::SectionResizeBegin { .. }
-                | UiFact::ExplorerScroll { .. }
+                | UiFact::ExplorerWheel { .. }
+                | UiFact::ExplorerScrollTo(_)
                 | UiFact::DockHover(_)
                 | UiFact::DockResizeBegin
                 | UiFact::GripDrag { .. }
@@ -441,8 +442,9 @@ pub enum UiFact {
     CloseMenu,
 
     // -- file explorer -------------------------------------------------------
-    /// A left press on a tree row, named by its **viewport** index — the same
-    /// number `FileTreeView::get_display_node_at_viewport_row` takes.
+    /// A left press on a tree row, named by its index in the tree's display
+    /// order — the same number `FileTreeView::get_node_at_index` takes, and
+    /// the one the row's window counts in. A pinned ancestor names its own.
     ///
     /// One fact for what used to be two routes (single click and double
     /// click). `clicks` is which press of a run this is, straight off
@@ -561,13 +563,22 @@ pub enum UiFact {
     /// plugin section and does nothing otherwise; either way the press goes
     /// on. The dock's `DockBlur`, for the column.
     SidebarBlur,
-    /// The wheel over the panel. Positive is down, matching `Input::Wheel`.
-    /// Carries the pointer so the plugin `wheel` hook still gets a position.
-    ExplorerScroll {
+    /// The wheel turned over the panel. Positive is down, matching
+    /// `Input::Wheel`; carries the pointer so the plugin `mouse_scroll` hook
+    /// still gets a position. **It does not move the tree** — the window is
+    /// the library's to move, and `ExplorerScrollTo` is how it says where
+    /// to. What this carries is the hook and the transient-popup dismissal,
+    /// which are the panel's reactions to the wheel rather than the window's.
+    ExplorerWheel {
         delta: i32,
         x: u16,
         y: u16,
     },
+    /// The library moved the tree's window — a wheel, a press or drag on the
+    /// bar — and this is the offset it moved to, in tree rows. The window is
+    /// controlled: the model clamps it to its own ceiling and stores it, and
+    /// the next frame declares it back.
+    ExplorerScrollTo(usize),
     /// A left press landed on the dock's column and nothing in it answered.
     ///
     /// **A press on the column carries no cell, and there is nothing left to

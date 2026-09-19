@@ -16,14 +16,43 @@
 //! rule, purely so a hover could find it. The slot is a keyed node now, and its
 //! rectangle is read back with [`slot_rect`].
 //!
-//! # What it does not measure
+//! # What the window is, and whose
 //!
-//! **Which rows are visible.** `FileTreeView::viewport_display_indices()`
-//! already windows the tree — including its sticky-ancestor rows — and the
-//! scroll offset is app state that survives rebuilds. Handing the tree a
-//! million-row list and a `Viewport` would be the wrong trade here: the
-//! windowing is a model concern (which ancestors are sticky, what the search
-//! filter admits), not a layout one.
+//! The rows sit in a `fresh_ui::viewport`, declared to the library the way
+//! every other scrolling surface's is: the tree's row count, a **controlled**
+//! offset ([`Node::scroll`](fresh_ui::Node::scroll) plus
+//! [`on_scroll`](fresh_ui::Node::on_scroll)), and the sticky ancestors as
+//! **pinned** rows ([`Node::pinned`](fresh_ui::Node::pinned)). The bar, its
+//! gutter, its thumb, its hit-testing and the wheel are the library's for it
+//! — this module used to hand-build the bar as a parallel column of coloured
+//! cells beside the rows, two structures kept in step by hand.
+//!
+//! Three things stay the model's, and the three are why this panel was the
+//! last surface to declare its window:
+//!
+//! - **The offset.** `FileTreeView` owns it; keys, search, reveal and the
+//!   `follow_active_buffer` setting all write it, and it survives rebuilds.
+//!   So the window is *controlled*: the description states the model's
+//!   offset every frame, and a wheel or a bar drag is reported back as
+//!   [`UiFact::ExplorerScrollTo`], which the model clamps and stores. The
+//!   window is where the model says, one frame after the model is told.
+//! - **Which rows are pinned.** `FileTreeView::sticky_display_indices` —
+//!   the expanded ancestors of the first scrolled row — is a fact about the
+//!   tree, and a function of the offset. The model names them; the window
+//!   makes room and derives its ceiling from them. That ceiling is exactly
+//!   `FileTreeView::max_scroll_offset` for the offset the window is at: the
+//!   smallest offset whose run reaches the last row is past `total - rows`
+//!   by the rows the pins took.
+//! - **What a row says.** `describe_row` needs the tree, the decoration and
+//!   slot caches, the theme and the config, none of which a `'static` row
+//!   builder can borrow. So the model describes the rows *it* would window —
+//!   the same `viewport_display_indices()` as before, at the section height
+//!   the frame resolves before the description exists — and the builder the
+//!   viewport calls during layout answers an index out of that set. The
+//!   library still decides which indices it asks for; the app decides what
+//!   each one looks like, which is the split the row builder is for.
+//!
+//! # What it does not measure
 //!
 //! **The chrome.** The border, the title strip and the width grip are the
 //! sidebar column's (`super::sidebar`), because the explorer is one section
@@ -43,7 +72,8 @@
 use std::rc::Rc;
 
 use fresh_ui::{
-    col, gesture, row, stack, text, text_runs, Event, GestureKind, Key, Node, Run, Sizing,
+    col, gesture, layout_reader, row, stack, text, text_runs, viewport, Event, GestureKind, Key,
+    Node, Run, Sizing,
 };
 
 use crate::app::shell_host::shell_theme::{attrs, pair};
@@ -57,9 +87,11 @@ pub type Runs = Vec<(String, String)>;
 
 /// One visible row of the tree.
 ///
-/// `index` is the **viewport** index, which is what
-/// `FileTreeView::get_display_node_at_viewport_row` takes — so a row's key,
-/// its hit answer and the model's lookup are all the same number.
+/// `index` is the row's index in the tree's flattened display order — what
+/// `FileTreeView::get_display_nodes` is indexed by and what the window counts
+/// in — so a row's key, its hit answer, the window's offset and the model's
+/// lookup are all the same number. A pinned ancestor keeps its own index
+/// wherever the window draws it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Row {
     pub index: usize,
@@ -104,40 +136,42 @@ impl Default for Body {
     }
 }
 
-/// Where the tree's window sits, when the tree is taller than the panel.
+/// Where the tree's window sits: what the description declares to the
+/// viewport, in tree rows. All three are the model's (see the module docs:
+/// *what the window is, and whose*).
 ///
-/// The three numbers the bar is drawn from, in tree rows. They are the
-/// model's — `FileTreeView` windows its own rows and owns the offset, so the
-/// panel is not a `viewport` and the bar is not the framework's (see the
-/// module docs: *what it does not measure*). Present only when the tree
-/// overflows, which is the whole of "should there be a bar".
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// Whether there is a bar is no longer stated here — the viewport draws one
+/// when `total` overflows the rows it has, which is the same rule stated
+/// once, by the thing that knows how many rows it has.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Scroll {
-    /// First visible row.
+    /// The first row of the scrolled run — the model's offset, already
+    /// clamped to its own ceiling.
     pub offset: usize,
-    /// The largest offset the tree will scroll to.
-    ///
-    /// **Not `total - rows`.** `FileTreeView::max_scroll_offset` pins the
-    /// first ordinary row's ancestors as sticky context, and those rows eat
-    /// part of the window — so the last offset is *larger* than the naive
-    /// ceiling by however many ancestors are pinned, and the wheel is clamped
-    /// to it. A bar that assumed the naive ceiling parked its thumb at the
-    /// bottom of the track while the list was still moving.
-    pub max_offset: usize,
     /// Rows in the whole tree.
     pub total: usize,
-    /// Rows the panel shows at once — the track's height, in cells.
-    pub rows: usize,
+    /// The ancestors pinned above the run, in the order they are drawn.
+    ///
+    /// **This is why the ceiling is not `total - rows`.** The pinned rows
+    /// eat part of the window, so the last offset is larger than the naive
+    /// ceiling by however many there are — which the viewport derives from
+    /// this list, and which `FileTreeView::max_scroll_offset` computes for
+    /// the model. A bar that assumed the naive ceiling parked its thumb at
+    /// the bottom of the track while the list was still moving.
+    pub pinned: Vec<usize>,
 }
 
 /// The explorer's content: what the sidebar's first section holds.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Explorer {
     pub body: Body,
-    /// The viewport row the caret sits on, when the panel owns the keyboard.
+    /// The row the caret sits on, by [`Row::index`], when the panel owns the
+    /// keyboard.
     pub caret_row: Option<usize>,
-    /// The tree's scroll state when it overflows the panel; `None` when the
-    /// whole tree fits and no bar is drawn (issue #2859).
+    /// Where the window is. `None` is a window over the rows in `body`
+    /// alone, from the top — what a fixture built from a handful of rows
+    /// means, and what the viewport makes of a tree that fits: no bar (issue
+    /// #2859).
     pub scroll: Option<Scroll>,
 }
 
@@ -178,79 +212,92 @@ pub fn rows(e: &Explorer) -> Node<UiMsg> {
 }
 
 fn build_rows(e: &Explorer) -> Node<UiMsg> {
-    let body = match &e.body {
-        Body::Loading(text_) => col().child(
-            text(text_.clone())
-                .theme(pair("editor.line_number_fg", "editor.bg"))
-                .h(Sizing::Cells(1)),
-        ),
-        Body::Rows(rows) => col().children(rows.iter().map(|r| node_row(e, r))),
+    let rows = match &e.body {
+        Body::Loading(text_) => {
+            return col().child(
+                text(text_.clone())
+                    .theme(pair("editor.line_number_fg", "editor.bg"))
+                    .h(Sizing::Cells(1)),
+            )
+        }
+        Body::Rows(rows) => rows,
     };
-    match e.scroll {
-        // The bar takes a column of its own rather than floating over the
-        // rows: a row's trailing status slot is pushed flush to the right
-        // edge by layout, so an overlay bar would sit exactly on top of the
-        // git markers. One column narrower is what a gutter costs, and the
-        // rows are measured at the narrower width by the same layout that
-        // answers a press — nothing re-derives a column.
-        Some(scroll) => row().children([body.flex(1), scrollbar(scroll)]),
-        None => body,
-    }
+    // The window as the model declares it, or — for a body that came with
+    // no window state — the rows themselves, from the top.
+    let (offset, total, pinned): (u32, u32, Vec<u32>) = match &e.scroll {
+        Some(s) => (
+            narrow(s.offset),
+            narrow(s.total),
+            s.pinned.iter().map(|&i| narrow(i)).collect(),
+        ),
+        None => (0, narrow(rows.len()), Vec::new()),
+    };
+    // **The rows the model windowed, by index.** The builder below runs
+    // during layout, for whichever indices the viewport asks for: the pins it
+    // was given and the run under them. Those are exactly the indices the
+    // model described (module docs: *what the window is, and whose*), so the
+    // answer is a lookup; an index outside the set — a frame where the
+    // section's height and the model's disagree — draws an empty row rather
+    // than nothing at all, so the grid the offset addresses holds.
+    let by_index: Rc<std::collections::HashMap<usize, Row>> =
+        Rc::new(rows.iter().map(|r| (r.index, r.clone())).collect());
+    let caret_row = e.caret_row;
+    let pins = pinned.clone();
+    let reader = layout_reader(move |info| {
+        let win = info.scroll_window.unwrap_or_default();
+        let first = win.y.max(0) as u32;
+        let indices = pins[..(info.pinned as usize).min(pins.len())]
+            .iter()
+            .copied()
+            .chain(first..first.saturating_add(u32::from(win.h)).min(total));
+        col().children(indices.map(|i| match by_index.get(&(i as usize)) {
+            Some(r) => node_row(caret_row, r),
+            None => row().h(Sizing::Cells(1)),
+        }))
+    });
+    // A gesture around the window rather than a listener on each row: the
+    // wheel is the window's, wherever over it the pointer is — the rows, the
+    // empty space under the last one, the bar. It does not `stop()`: the
+    // library's scroll chain runs only for a wheel nothing claimed, and the
+    // chain is what moves the window and reports where it went. What this
+    // listener carries is the part the library cannot know about — the
+    // plugin `mouse_scroll` hook wants the pointer, and a wheel over the
+    // panel dismisses a transient popup — as it did when the rows claimed it.
+    gesture(
+        viewport(reader)
+            .items(total)
+            .scroll(offset)
+            .pinned(&pinned)
+            .on_scroll(|offset| UiMsg::Ui(UiFact::ExplorerScrollTo(offset as usize)))
+            // The bar takes a column of its own rather than floating over the
+            // rows: a row's trailing status slot is pushed flush to the right
+            // edge by layout, so an overlay bar would sit exactly on top of
+            // the git markers. One column narrower is what a gutter costs,
+            // and the rows are measured at the narrower width by the same
+            // layout that answers a press — nothing re-derives a column.
+            //
+            // **A bar is two background colours, not two glyphs** — the fold
+            // paints the thumb in the pair's foreground and the track in its
+            // background, both as the cell's ground, because box-drawing
+            // glyphs leave gaps between rows in some terminals and every test
+            // that finds a scrollbar on screen finds it by that background.
+            .scrollbar()
+            .scrollbar_theme(pair("ui.scrollbar_thumb_fg", "ui.scrollbar_track_fg")),
+    )
+    .on(
+        GestureKind::Wheel,
+        Rc::new(move |e: &Event| {
+            Some(UiMsg::Ui(UiFact::ExplorerWheel {
+                delta: e.delta,
+                x: e.pos.x.max(0) as u16,
+                y: e.pos.y.max(0) as u16,
+            }))
+        }),
+    )
 }
 
-/// The bar for an overflowing tree: one cell per visible row, the thumb's
-/// cells in the thumb colour and the rest in the track's.
-///
-/// **A bar is two background colours, not two glyphs** — the rule the shell's
-/// own `Draw::Scrollbar` follows, because box-drawing glyphs leave gaps
-/// between rows in some terminals, and every test that finds a scrollbar on
-/// screen finds it by that background.
-///
-/// The geometry is [`fresh_ui::Draw::scrollbar_thumb`] — the one the fold
-/// paints every declared bar with. A thumb of a given size sits where the rest
-/// of the editor puts it because it is the same call.
-///
-/// **The window is not the panel's height.** `scrollbar_thumb` derives the
-/// thumb's travel from `content - window`, so the window handed to it has to
-/// be the one that makes that ceiling the model's own `max_offset` —
-/// otherwise the thumb reaches the track's end before the tree reaches its
-/// last row. With ancestors pinned that is fewer rows than the panel shows,
-/// and a slightly shorter thumb is the honest answer: fewer of the tree's rows
-/// are reachable as ordinary ones.
-fn scrollbar(scroll: Scroll) -> Node<UiMsg> {
-    let window = scroll.total.saturating_sub(scroll.max_offset).max(1);
-    let narrow = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
-    let (thumb_top, thumb_len) = match scroll.total {
-        // A bar with no content has no thumb. `scrollbar_thumb` fills the
-        // track instead, which is the right answer for a window onto nothing
-        // and the wrong one here — a `Scroll` only exists when the tree
-        // overflows, so this is a guard, not a case.
-        0 => (0, 0),
-        _ => {
-            let (top, len) = fresh_ui::Draw::scrollbar_thumb(
-                narrow(scroll.offset.min(scroll.max_offset)),
-                narrow(scroll.total),
-                narrow(window),
-                u16::try_from(scroll.rows).unwrap_or(u16::MAX),
-            );
-            (usize::from(top), usize::from(len))
-        }
-    };
-    let thumb = pair("ui.scrollbar_thumb_fg", "ui.scrollbar_thumb_fg");
-    let track = pair("ui.scrollbar_track_fg", "ui.scrollbar_track_fg");
-    col()
-        .w(Sizing::Cells(1))
-        // The bar is drawn, not pressed: a press here is the panel's dead
-        // space, which the union box answers by focusing the explorer.
-        .pointer_mode(fresh_ui::PointerMode::Transparent)
-        .children((0..scroll.rows).map(|i| {
-            let on_thumb = i >= thumb_top && i < thumb_top + thumb_len;
-            row().h(Sizing::Cells(1)).theme(if on_thumb {
-                thumb.clone()
-            } else {
-                track.clone()
-            })
-        }))
+fn narrow(n: usize) -> u32 {
+    u32::try_from(n).unwrap_or(u32::MAX)
 }
 
 /// **The union box.** A right-press anywhere on the panel opens the menu,
@@ -309,7 +356,7 @@ fn caret_ink(row: &str) -> String {
     }
 }
 
-fn node_row(e: &Explorer, r: &Row) -> Node<UiMsg> {
+fn node_row(caret_row: Option<usize>, r: &Row) -> Node<UiMsg> {
     let mut children: Vec<Node<UiMsg>> = vec![
         text_runs(runs_of(&r.left)),
         // **The padding rule, as layout.** The old walk computed
@@ -341,7 +388,7 @@ fn node_row(e: &Explorer, r: &Row) -> Node<UiMsg> {
         children.push(text(t.clone()).theme(theme.clone()));
     }
     let index = r.index;
-    let caret = e.caret_row == Some(index);
+    let caret = caret_row == Some(index);
     let body = row()
         .theme(r.theme.clone())
         .h(Sizing::Cells(1))
@@ -405,19 +452,8 @@ fn node_row(e: &Explorer, r: &Row) -> Node<UiMsg> {
                 }))
             }),
         )
-        // The panel scrolls its own viewport — the surface's wheel, with the
-        // surface. `stop()` claims it, as the component's `Consumed` did.
-        .on(
-            GestureKind::Wheel,
-            Rc::new(move |e: &Event| {
-                e.stop();
-                Some(UiMsg::Ui(UiFact::ExplorerScroll {
-                    delta: e.delta,
-                    x: e.pos.x.max(0) as u16,
-                    y: e.pos.y.max(0) as u16,
-                }))
-            }),
-        )
+    // The wheel is not the row's: it is the window's, declared in
+    // `build_rows`, and the library moves the window for it.
 }
 
 // -- the styles, as names ----------------------------------------------------
@@ -632,6 +668,12 @@ mod tests {
 
     /// The same, for a tree whose pinned ancestors push the model's last
     /// offset past `total - rows`.
+    ///
+    /// The model states the last offset by naming the ancestors it pins:
+    /// `max_offset - (total - rows_shown)` of them, the first rows of the
+    /// tree, which is what pins a scrolled tree's expanded ancestors are. The
+    /// rows described are the ones the model would have windowed — the pins,
+    /// then the run under them.
     fn scrolled_panel_with_max(
         total: usize,
         rows_shown: usize,
@@ -639,9 +681,13 @@ mod tests {
         max_offset: usize,
         cols: u16,
     ) -> Sidebar {
-        // The rows the model would have windowed: `rows_shown` of them.
-        let rows: Vec<Row> = (0..rows_shown)
-            .map(|i| row_of(i, &format!("f{}", offset + i), None))
+        let pinned: Vec<usize> = (0..max_offset - (total - rows_shown)).collect();
+        let run = rows_shown - pinned.len();
+        let rows: Vec<Row> = pinned
+            .iter()
+            .copied()
+            .chain(offset..(offset + run).min(total))
+            .map(|i| row_of(i, &format!("f{i}"), None))
             .collect();
         let mut s = Sidebar::explorer_only(
             cols,
@@ -651,9 +697,8 @@ mod tests {
                 caret_row: None,
                 scroll: Some(Scroll {
                     offset,
-                    max_offset,
                     total,
-                    rows: rows_shown,
+                    pinned,
                 }),
             },
         );
@@ -739,6 +784,148 @@ mod tests {
             Some(thumb),
             "at the model's last offset the thumb is flush with the track's end: {at_real_end:?}"
         );
+    }
+
+    /// **The wheel is the window's.** A notch over the rows is not claimed
+    /// by a row; it reaches the viewport, which moves its window and reports
+    /// where it went, and the panel's own reaction rides along unclaimed —
+    /// two facts, in that order: the hook's, then the window's. The window
+    /// is controlled, so the report is the *proposal* the model clamps and
+    /// stores; the description that follows says where the window is.
+    #[test]
+    fn a_wheel_over_the_rows_reports_the_window_the_library_moved_to() {
+        let mut ui = laid_out(scrolled_panel(40, 8, 3, 20), 20, 10);
+        let got = ui.dispatch(Input::Wheel {
+            pos: Point::new(4, 3),
+            delta: 2,
+            axis: fresh_ui::Axis::Vertical,
+            mods: Mods::NONE,
+        });
+        assert!(got.claimed, "a wheel that moved the window is claimed");
+        let facts: Vec<_> = got
+            .msgs
+            .iter()
+            .filter_map(|m| match m {
+                UiMsg::Ui(f) => Some(f.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            facts,
+            vec![
+                UiFact::ExplorerWheel {
+                    delta: 2,
+                    x: 4,
+                    y: 3
+                },
+                UiFact::ExplorerScrollTo(5),
+            ],
+            "the panel's hook, then the window's report"
+        );
+
+        // And over the empty space under the last row, which no row ever
+        // answered for: the window is the whole body.
+        let mut ui = laid_out(scrolled_panel(40, 8, 3, 20), 20, 12);
+        let got = ui.dispatch(Input::Wheel {
+            pos: Point::new(4, 10),
+            delta: 1,
+            axis: fresh_ui::Axis::Vertical,
+            mods: Mods::NONE,
+        });
+        assert!(
+            got.msgs
+                .iter()
+                .any(|m| matches!(m, UiMsg::Ui(UiFact::ExplorerScrollTo(4)))),
+            "got {:?}",
+            got.msgs
+        );
+    }
+
+    /// A press on the bar is the library's: it jumps the window and reports
+    /// the offset, and nothing else on the panel answers the press.
+    #[test]
+    fn a_press_on_the_bar_reports_the_jump() {
+        let mut ui = laid_out(scrolled_panel(40, 8, 0, 20), 20, 10);
+        // The bar's lane is the column before the right wall; the last body
+        // row is the track's end.
+        let got = ui.dispatch(Input::press(
+            Point::new(18, 8),
+            MouseButton::Left,
+            Mods::NONE,
+        ));
+        assert!(got.claimed);
+        assert!(
+            matches!(
+                got.msgs.as_slice(),
+                [UiMsg::Ui(UiFact::ExplorerScrollTo(o))] if *o > 0
+            ),
+            "one report, toward the end: {:?}",
+            got.msgs
+        );
+    }
+
+    /// **Pinned ancestors are drawn at the top, and answer as themselves.**
+    /// The rows the viewport asks the builder for are the pins and then the
+    /// run, so window row 1 is the second pinned ancestor rather than
+    /// `offset + 1` — and a press there names that ancestor's own index,
+    /// because the row's handler carries it and no arithmetic sits between.
+    #[test]
+    fn pinned_ancestors_sit_above_the_run_and_a_press_names_them() {
+        // 8 body rows onto 40, two ancestors (0, 1) pinned, the run from 32.
+        let ui = laid_out(scrolled_panel_with_max(40, 8, 32, 34, 20), 20, 10);
+        let names: Vec<String> = lines_of(&ui, 20, 10)[1..9]
+            .iter()
+            .map(|l| l.trim_matches(|c| c == '│' || c == ' ').to_string())
+            .collect();
+        assert_eq!(
+            names,
+            ["f0", "f1", "f32", "f33", "f34", "f35", "f36", "f37"],
+            "the pins, then six rows of the run"
+        );
+
+        let mut ui = ui;
+        let got = ui.dispatch(Input::press(
+            Point::new(4, 2),
+            MouseButton::Left,
+            Mods::NONE,
+        ));
+        assert!(
+            matches!(
+                got.msgs.as_slice(),
+                [UiMsg::Ui(UiFact::ExplorerRowPress { index: 1, .. })]
+            ),
+            "window row 1 is pinned ancestor 1: {:?}",
+            got.msgs
+        );
+        let got = ui.dispatch(Input::press(
+            Point::new(4, 3),
+            MouseButton::Left,
+            Mods::NONE,
+        ));
+        assert!(
+            matches!(
+                got.msgs.as_slice(),
+                [UiMsg::Ui(UiFact::ExplorerRowPress { index: 32, .. })]
+            ),
+            "and the row under the pins is the first of the run: {:?}",
+            got.msgs
+        );
+    }
+
+    /// The painted lines of a laid-out panel — `lines`, for a tree the test
+    /// already holds.
+    fn lines_of(ui: &Ui<UiMsg>, w: u16, h: u16) -> Vec<String> {
+        let spec = ui.spec().clone();
+        let mut buf = Buffer::empty(Rect::new(0, 0, w, h));
+        let palette = |k: &fresh_ui::ThemeKey| super::super::fold::test_palette::of(k.as_str());
+        fold_native(&spec, &mut buf, &palette, Band::Background);
+        (0..h)
+            .map(|y| {
+                (0..w)
+                    .map(|x| buf[(x, y)].symbol().to_string())
+                    .collect::<String>()
+            })
+            .collect()
     }
 
     /// And a tree that fits draws none: no bar cells at all, in either colour.

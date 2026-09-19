@@ -312,6 +312,24 @@ impl FileTreeView {
         display.get(display_index).copied()
     }
 
+    /// The ancestors pinned above the scrolled rows at the current offset, as
+    /// indices into [`Self::get_display_nodes`] — the prefix of
+    /// [`Self::viewport_display_indices`] that is not the contiguous run.
+    ///
+    /// Handed to the shell's window as its pinned rows: the window makes room
+    /// for them and derives its ceiling from how many there are, which is
+    /// what [`Self::max_scroll_offset`] computes for the offset the window is
+    /// at. Empty at offset zero, where nothing is scrolled away to need
+    /// context.
+    pub fn sticky_display_indices(&self) -> Vec<usize> {
+        let visible = self.filtered_visible_nodes();
+        if visible.is_empty() {
+            return Vec::new();
+        }
+        let scroll_offset = self.scroll_offset.min(visible.len() - 1);
+        self.sticky_indices(&visible, scroll_offset, self.viewport_height)
+    }
+
     fn viewport_display_indices_with_nodes(
         &self,
         visible: &[NodeId],
