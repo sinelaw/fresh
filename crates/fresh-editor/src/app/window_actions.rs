@@ -643,7 +643,6 @@ impl crate::app::Editor {
         );
         // `active_window_changed` (when the dive changed windows) and
         // `buffer_activated` for the seed buffer, from the announcer.
-        let _ = buffer_id;
         self.announce_focus();
 
         // Seeding the terminal dives into the new window. For an *adopted*

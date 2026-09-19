@@ -16,7 +16,10 @@ pub struct BufferRef {
     pub buffer_id: BufferId,
 }
 
-/// Arguments passed to hook callbacks
+/// Arguments passed to hook callbacks.
+///
+/// A `window_id` next to a `buffer_id` is the window (`WindowId.0`) the
+/// buffer belongs to; a buffer lives in one window, so hold the pair together.
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(untagged)]
 pub enum HookArgs {
@@ -26,8 +29,6 @@ pub enum HookArgs {
     /// After a file is successfully opened
     AfterFileOpen {
         buffer_id: BufferId,
-        /// The window the buffer belongs to (`WindowId.0`). A buffer lives in
-        /// one window, so hold `(window_id, buffer_id)` together.
         window_id: u64,
         path: PathBuf,
     },
@@ -35,8 +36,6 @@ pub enum HookArgs {
     /// Before a buffer is saved to disk
     BeforeFileSave {
         buffer_id: BufferId,
-        /// The window the buffer belongs to (`WindowId.0`). A buffer lives in
-        /// one window, so hold `(window_id, buffer_id)` together.
         window_id: u64,
         path: PathBuf,
     },
@@ -44,8 +43,6 @@ pub enum HookArgs {
     /// After a buffer is successfully saved
     AfterFileSave {
         buffer_id: BufferId,
-        /// The window the buffer belongs to (`WindowId.0`). A buffer lives in
-        /// one window, so hold `(window_id, buffer_id)` together.
         window_id: u64,
         path: PathBuf,
     },
@@ -68,18 +65,11 @@ pub enum HookArgs {
     AfterFileExplorerChange { path: PathBuf },
 
     /// A buffer was closed
-    BufferClosed {
-        buffer_id: BufferId,
-        /// The window the buffer belongs to (`WindowId.0`). A buffer lives in
-        /// one window, so hold `(window_id, buffer_id)` together.
-        window_id: u64,
-    },
+    BufferClosed { buffer_id: BufferId, window_id: u64 },
 
     /// Before text is inserted
     BeforeInsert {
         buffer_id: BufferId,
-        /// The window the buffer belongs to (`WindowId.0`). A buffer lives in
-        /// one window, so hold `(window_id, buffer_id)` together.
         window_id: u64,
         position: usize,
         text: String,
@@ -88,8 +78,6 @@ pub enum HookArgs {
     /// After text was inserted
     AfterInsert {
         buffer_id: BufferId,
-        /// The window the buffer belongs to (`WindowId.0`). A buffer lives in
-        /// one window, so hold `(window_id, buffer_id)` together.
         window_id: u64,
         position: usize,
         text: String,
@@ -108,8 +96,6 @@ pub enum HookArgs {
     /// Before text is deleted
     BeforeDelete {
         buffer_id: BufferId,
-        /// The window the buffer belongs to (`WindowId.0`). A buffer lives in
-        /// one window, so hold `(window_id, buffer_id)` together.
         window_id: u64,
         start: usize,
         end: usize,
@@ -118,8 +104,6 @@ pub enum HookArgs {
     /// After text was deleted
     AfterDelete {
         buffer_id: BufferId,
-        /// The window the buffer belongs to (`WindowId.0`). A buffer lives in
-        /// one window, so hold `(window_id, buffer_id)` together.
         window_id: u64,
         start: usize,
         end: usize,
@@ -139,8 +123,6 @@ pub enum HookArgs {
     /// Cursor moved to a new position
     CursorMoved {
         buffer_id: BufferId,
-        /// The window the buffer belongs to (`WindowId.0`). A buffer lives in
-        /// one window, so hold `(window_id, buffer_id)` together.
         window_id: u64,
         cursor_id: CursorId,
         old_position: usize,
@@ -152,20 +134,10 @@ pub enum HookArgs {
     },
 
     /// Buffer became active
-    BufferActivated {
-        buffer_id: BufferId,
-        /// The window the buffer belongs to (`WindowId.0`). A buffer lives in
-        /// one window, so hold `(window_id, buffer_id)` together.
-        window_id: u64,
-    },
+    BufferActivated { buffer_id: BufferId, window_id: u64 },
 
     /// Buffer was deactivated
-    BufferDeactivated {
-        buffer_id: BufferId,
-        /// The window the buffer belongs to (`WindowId.0`). A buffer lives in
-        /// one window, so hold `(window_id, buffer_id)` together.
-        window_id: u64,
-    },
+    BufferDeactivated { buffer_id: BufferId, window_id: u64 },
 
     /// LSP diagnostics were updated for a file
     DiagnosticsUpdated {
@@ -392,8 +364,6 @@ pub enum HookArgs {
     ViewportChanged {
         split_id: SplitId,
         buffer_id: BufferId,
-        /// The window the buffer belongs to (`WindowId.0`). A buffer lives in
-        /// one window, so hold `(window_id, buffer_id)` together.
         window_id: u64,
         top_byte: usize,
         top_line: Option<usize>,

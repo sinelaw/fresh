@@ -652,9 +652,6 @@ impl Editor {
 
         // Snapshot first, then the hook — see the note at the other
         // split-focus site above.
-        // Announce the focus change, matching every other focus-changing
-        // command.
-        let _ = next_buf;
         self.announce_focus();
     }
 }

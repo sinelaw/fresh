@@ -4977,12 +4977,8 @@ impl Editor {
                 self.update_plugin_state_snapshot();
             }
         }
-        // Every frame, not only after a visual plugin command: the safety
-        // net for `app::focus_announcer` — a change of focus down a path
-        // nobody wired to the announcer is announced here, one frame late
-        // rather than never — and the frame count a restored placeholder's
-        // grace is measured in. Both are a compare-and-return when nothing
-        // changed.
+        // Every frame: the announcer's safety net (`app::focus_announcer`)
+        // and the placeholder grace count. Both return at once when idle.
         self.announce_focus();
         self.tick_sidebar_placeholders();
     }

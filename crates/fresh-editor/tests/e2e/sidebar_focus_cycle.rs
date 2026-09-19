@@ -13,6 +13,7 @@
 //! keyboard" is probed: Down moves the mark only when it does.
 
 use crate::common::harness::{copy_plugin_lib, EditorTestHarness, HarnessOptions};
+use crate::common::sidebar::{explorer_focused, explorer_hinted, screen_has, wait_for};
 use crate::common::tracing::init_tracing_from_env;
 use crossterm::event::{KeyCode, KeyModifiers};
 use std::fs;
@@ -30,34 +31,11 @@ fn install_plugin(project: &Path) {
     fs::write(plugins_dir.join("test_sidebar_tree.ts"), PLUGIN).unwrap();
 }
 
-fn run_palette_command(h: &mut EditorTestHarness, command: &str) {
-    h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
-        .unwrap();
-    h.wait_for_prompt().unwrap();
-    h.type_text(command).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains(command))
-        .unwrap();
-    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
-}
-
-fn line_with<'a>(screen: &'a str, needle: &str) -> Option<&'a str> {
-    screen.lines().find(|l| l.contains(needle))
-}
-
-/// The explorer holds the keyboard: its header shows no focus hint.
-fn explorer_focused(h: &EditorTestHarness) -> bool {
-    let s = h.screen_to_string();
-    matches!(line_with(&s, "File Explorer"), Some(l) if !l.contains("(Ctrl+E)"))
-}
-
-/// Something other than the explorer holds the keyboard.
-fn explorer_hinted(h: &EditorTestHarness) -> bool {
-    line_with(&h.screen_to_string(), "File Explorer (Ctrl+E)").is_some()
-}
-
 /// The section's row `text` carries the selection mark.
 fn marked(h: &EditorTestHarness, text: &str) -> bool {
-    matches!(line_with(&h.screen_to_string(), text), Some(l) if l.contains('▌'))
+    h.screen_to_string()
+        .lines()
+        .any(|l| l.contains(text) && l.contains('▌'))
 }
 
 /// Whether the section has the keyboard: Down moves its mark from `alpha`
@@ -110,19 +88,17 @@ fn alt_shift_n_and_p_cycle_the_sidebar_from_any_context() {
     h.editor_mut()
         .restore_active_window_on_launch(false)
         .unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("File Explorer"))
-        .unwrap();
+    wait_for(&mut h, "the explorer", |h| screen_has(h, "File Explorer"));
 
-    run_palette_command(&mut h, "SidebarTree: Mount");
-    h.wait_until(|h| h.screen_to_string().contains("alpha"))
-        .unwrap();
+    h.run_palette_command("SidebarTree: Mount").unwrap();
+    wait_for(&mut h, "the section", |h| screen_has(h, "alpha"));
     // The editor has the keyboard to begin with.
     h.send_key(KeyCode::Char('e'), KeyModifiers::CONTROL)
         .unwrap();
-    h.wait_until(|h| explorer_focused(h)).unwrap();
+    wait_for(&mut h, "the explorer focused", explorer_focused);
     h.send_key(KeyCode::Char('e'), KeyModifiers::CONTROL)
         .unwrap();
-    h.wait_until(|h| explorer_hinted(h)).unwrap();
+    wait_for(&mut h, "the explorer hinted", explorer_hinted);
     assert!(
         !section_takes_keys(&mut h),
         "the editor has the keys to start"
@@ -130,21 +106,16 @@ fn alt_shift_n_and_p_cycle_the_sidebar_from_any_context() {
 
     // Forward: editor → explorer → section → editor.
     next(&mut h);
-    h.wait_until(|h| explorer_focused(h)).unwrap_or_else(|e| {
-        panic!(
-            "explorer after one Alt+Shift+N: {e}\n{}",
-            h.screen_to_string()
-        )
-    });
+    wait_for(&mut h, "explorer after one Alt+Shift+N", explorer_focused);
     next(&mut h);
-    h.wait_until(|h| explorer_hinted(h)).unwrap();
+    wait_for(&mut h, "the explorer hinted", explorer_hinted);
     assert!(
         section_takes_keys(&mut h),
         "section after two Alt+Shift+N\n{}",
         h.screen_to_string()
     );
     next(&mut h);
-    h.wait_until(|h| explorer_hinted(h)).unwrap();
+    wait_for(&mut h, "the explorer hinted", explorer_hinted);
     assert!(
         !section_takes_keys(&mut h),
         "editor after three Alt+Shift+N\n{}",
@@ -153,21 +124,16 @@ fn alt_shift_n_and_p_cycle_the_sidebar_from_any_context() {
 
     // Backward: editor → section → explorer → editor.
     prev(&mut h);
-    h.wait_until(|h| explorer_hinted(h)).unwrap();
+    wait_for(&mut h, "the explorer hinted", explorer_hinted);
     assert!(
         section_takes_keys(&mut h),
         "section after one Alt+Shift+P\n{}",
         h.screen_to_string()
     );
     prev(&mut h);
-    h.wait_until(|h| explorer_focused(h)).unwrap_or_else(|e| {
-        panic!(
-            "explorer after two Alt+Shift+P: {e}\n{}",
-            h.screen_to_string()
-        )
-    });
+    wait_for(&mut h, "explorer after two Alt+Shift+P", explorer_focused);
     prev(&mut h);
-    h.wait_until(|h| explorer_hinted(h)).unwrap();
+    wait_for(&mut h, "the explorer hinted", explorer_hinted);
     assert!(
         !section_takes_keys(&mut h),
         "editor after three Alt+Shift+P\n{}",
@@ -177,9 +143,9 @@ fn alt_shift_n_and_p_cycle_the_sidebar_from_any_context() {
     // From a hidden sidebar the first step shows it and focuses the explorer.
     h.send_key(KeyCode::Char('b'), KeyModifiers::CONTROL)
         .unwrap();
-    h.wait_until(|h| !h.screen_to_string().contains("File Explorer"))
-        .unwrap();
+    wait_for(&mut h, "the column hidden", |h| {
+        !screen_has(h, "File Explorer")
+    });
     next(&mut h);
-    h.wait_until(|h| explorer_focused(h))
-        .unwrap_or_else(|e| panic!("explorer from hidden: {e}\n{}", h.screen_to_string()));
+    wait_for(&mut h, "explorer from hidden", explorer_focused);
 }

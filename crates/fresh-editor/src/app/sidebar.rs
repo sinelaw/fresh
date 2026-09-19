@@ -562,43 +562,19 @@ impl super::Editor {
         }
     }
 
-    /// `Action::FocusNextSidebarSection`: explorer → plugin sections in
-    /// order → editor, and round again. A hidden sidebar is shown and its
-    /// explorer focused, which is what the first step of the cycle is.
+    /// `Action::FocusNextSidebarSection`: the editor → the explorer → each
+    /// plugin section in turn → the editor. A hidden sidebar is shown and
+    /// its explorer focused, which is what the first step of the cycle is.
     pub(crate) fn focus_next_sidebar_section(&mut self) {
-        use crate::input::keybindings::KeyContext;
-        if !self.file_explorer_visible() {
-            self.focus_file_explorer();
-            return;
-        }
-        let current = match self.focused_sidebar_panel() {
-            Some(i) => Some(i),
-            None if self.active_window().key_context == KeyContext::FileExplorer => {
-                self.explorer_section_index()
-            }
-            None => None,
-        };
-        let next = (current.map(|i| i + 1).unwrap_or(0)..self.sidebar_sections.len()).find(|&i| {
-            self.sidebar_sections[i].is_explorer() || self.sidebar_sections[i].panel.is_some()
-        });
-        match (current, next) {
-            (_, Some(i)) if self.sidebar_sections[i].is_explorer() => self.focus_file_explorer(),
-            (_, Some(i)) => self.focus_sidebar_section(i),
-            // Past the last section: the editor.
-            (Some(_), None) => {
-                self.blur_sidebar_panels();
-                self.active_window_mut().focus_editor();
-            }
-            // From the editor with nothing after the explorer to go to.
-            (None, None) => self.focus_file_explorer(),
-        }
+        self.cycle_sidebar_focus(true);
     }
 
-    /// `Action::FocusPrevSidebarSection`: the cycle the other way — from the
-    /// editor to the last plugin section, up through the sections to the
-    /// explorer, and out to the editor again. A hidden sidebar is shown and
-    /// its explorer focused, as for the forward cycle.
+    /// `Action::FocusPrevSidebarSection`: the same cycle the other way.
     pub(crate) fn focus_prev_sidebar_section(&mut self) {
+        self.cycle_sidebar_focus(false);
+    }
+
+    fn cycle_sidebar_focus(&mut self, forward: bool) {
         use crate::input::keybindings::KeyContext;
         if !self.file_explorer_visible() {
             self.focus_file_explorer();
@@ -614,16 +590,17 @@ impl super::Editor {
         let reachable = |i: usize| {
             self.sidebar_sections[i].is_explorer() || self.sidebar_sections[i].panel.is_some()
         };
-        let prev = match current {
-            Some(i) => (0..i).rev().find(|&j| reachable(j)),
-            None => (0..self.sidebar_sections.len())
-                .rev()
-                .find(|&j| reachable(j)),
+        let n = self.sidebar_sections.len();
+        let target = match (forward, current) {
+            (true, Some(i)) => (i + 1..n).find(|&j| reachable(j)),
+            (true, None) => (0..n).find(|&j| reachable(j)),
+            (false, Some(i)) => (0..i).rev().find(|&j| reachable(j)),
+            (false, None) => (0..n).rev().find(|&j| reachable(j)),
         };
-        match (current, prev) {
+        match (current, target) {
             (_, Some(j)) if self.sidebar_sections[j].is_explorer() => self.focus_file_explorer(),
             (_, Some(j)) => self.focus_sidebar_section(j),
-            // Above the first section: the editor.
+            // Off either end of the column: the editor.
             (Some(_), None) => {
                 self.blur_sidebar_panels();
                 self.active_window_mut().focus_editor();
@@ -913,7 +890,7 @@ impl super::Editor {
     }
 
     /// Whether a section with this identity exists, on the column or parked.
-    fn section_exists(&self, key: &PanelKey) -> bool {
+    pub(crate) fn section_exists(&self, key: &PanelKey) -> bool {
         self.sidebar_sections
             .iter()
             .chain(self.parked_sidebar_sections.iter())
@@ -931,13 +908,6 @@ impl super::Editor {
             return Some(self.sidebar_sections.remove(i));
         }
         self.take_parked_section(key)
-    }
-
-    /// Whether a section with this identity is parked out of scope.
-    pub(crate) fn is_parked_panel(&self, key: &PanelKey) -> bool {
-        self.parked_sidebar_sections
-            .iter()
-            .any(|s| s.panel_key() == Some(key))
     }
 
     /// Take a parked section out of the parking list.
