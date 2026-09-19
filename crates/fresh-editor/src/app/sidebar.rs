@@ -5,10 +5,12 @@
 //! file persists — so by the migration's rule it lives on the editor rather
 //! than in the tree, which disposes elements on unmount.
 //!
-//! **Editor-global, like the dock.** A plugin mounts a section once, not once
-//! per window, and the panel state it holds is the same `FloatingWidgetState`
-//! the dock and the centred modal hold. The list is captured into whichever
-//! window's workspace is being saved and restored from the active window's.
+//! **One list, like the dock's slot — but each section has a scope.** A
+//! plugin mounts a section once, not once per window, and the panel state it
+//! holds is the same `FloatingWidgetState` the dock and the centred modal
+//! hold. Which sections are on the column follows the active window and
+//! buffer ([`SectionScope`]); the rest wait in `parked_sidebar_sections`. A
+//! window's workspace file records the editor-wide sections and its own.
 //!
 //! The three functions at the bottom are pure and are the whole of the
 //! accordion's arithmetic (design §3.6, §3.7, §4.3): [`squeeze`] decides which
@@ -16,6 +18,51 @@
 //! rows, and [`drag`] moves one divider between two neighbours.
 
 use crate::widgets::PanelKey;
+use fresh_core::{BufferId, WindowId};
+
+/// What a section is *about*, and so when it is on screen.
+///
+/// The narrow scope is the default: a plugin that says nothing gets a
+/// section scoped to the window it mounted from. Editor-wide has to be asked
+/// for by name, so no section inherits the dock's global lifetime by
+/// accident again (sinelaw/fresh#3326, D).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SectionScope {
+    /// Every window, always. What the dock is; what a section has to ask for.
+    Editor,
+    /// Shown while that window is active; dropped with it.
+    Window(WindowId),
+    /// Shown while that buffer is the active buffer of the active window;
+    /// dropped with it. Never persisted — its plugin recreates it from the
+    /// buffer. Buffer ids are unique across windows, so the scope names no
+    /// window: a buffer that moves to another window (a tab extracted into a
+    /// new workspace) takes its section with it.
+    Buffer { buffer: BufferId },
+}
+
+impl SectionScope {
+    /// Whether a section with this scope belongs on screen while `window`
+    /// is active with `buffer` as its active buffer.
+    pub(crate) fn shows_for(self, window: WindowId, buffer: BufferId) -> bool {
+        match self {
+            SectionScope::Editor => true,
+            SectionScope::Window(w) => w == window,
+            SectionScope::Buffer { buffer: b } => b == buffer,
+        }
+    }
+
+    /// Whether the section is dropped when `buffer` closes.
+    fn dies_with_buffer(self, buffer: BufferId) -> bool {
+        matches!(self, SectionScope::Buffer { buffer: b } if b == buffer)
+    }
+
+    /// Whether the section is dropped when `window` closes. A buffer-scoped
+    /// section is dropped with its buffer instead, which the window close
+    /// reports one by one.
+    fn dies_with_window(self, window: WindowId) -> bool {
+        matches!(self, SectionScope::Window(w) if w == window)
+    }
+}
 
 /// What a section holds.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -54,6 +101,9 @@ pub(crate) struct SidebarSection {
     /// The body rows the last frame resolved this section to. Read for a
     /// panel's row budget, and snapshotted when a divider drag begins.
     pub resolved: u16,
+    /// When the section is on screen — see [`SectionScope`]. The explorer's
+    /// is `Editor`, and never consulted.
+    pub scope: SectionScope,
 }
 
 impl SidebarSection {
@@ -66,6 +116,32 @@ impl SidebarSection {
             squeezed: false,
             dragged: false,
             resolved: 0,
+            scope: SectionScope::Editor,
+        }
+    }
+
+    /// A panel section nothing has mounted yet: a restore's promise that a
+    /// plugin will, laid out as the file said.
+    fn placeholder(
+        key: PanelKey,
+        title: String,
+        rows: u16,
+        collapsed: bool,
+        scope: SectionScope,
+    ) -> SidebarSection {
+        SidebarSection {
+            kind: SidebarSectionKind::Panel {
+                key,
+                title,
+                closable: true,
+            },
+            panel: None,
+            rows,
+            collapsed,
+            squeezed: false,
+            dragged: rows != 0,
+            resolved: 0,
+            scope,
         }
     }
 
@@ -365,7 +441,15 @@ impl super::Editor {
         let Some((a, b, above, below)) = d.neighbours else {
             return;
         };
-        let delta = y as i32 - d.press_y as i32;
+        let press_y = d.press_y;
+        // The column can shrink under a held button — a scope change parks
+        // sections on any activation, an async open included — so the
+        // indices captured at the press are checked, not trusted.
+        if a >= self.sidebar_sections.len() || b >= self.sidebar_sections.len() {
+            self.sidebar_drag = None;
+            return;
+        }
+        let delta = y as i32 - press_y as i32;
         let (ra, rb) = drag(above, below, delta);
         // Both become explicit: the one above takes its new height, and the
         // one below keeps the rows the drag left it — unless it is the last
@@ -577,10 +661,16 @@ impl super::Editor {
         title: String,
         rows: u16,
         closable: bool,
+        scope: SectionScope,
     ) -> usize {
         panel.placement = super::PanelPlacement::SidebarSection { rows };
         panel.fullscreen = false;
         let key = panel.panel_key.clone();
+        // A section parked out of scope comes back as itself — rows,
+        // collapsed state and all — rather than as a new one.
+        if let Some(parked) = self.take_parked_section(&key) {
+            self.sidebar_sections.push(parked);
+        }
         let index = match self
             .sidebar_sections
             .iter()
@@ -588,19 +678,17 @@ impl super::Editor {
         {
             Some(i) => i,
             None => {
-                self.sidebar_sections.push(SidebarSection {
-                    kind: SidebarSectionKind::Panel {
-                        key: key.clone(),
-                        title: title.clone(),
-                        closable,
-                    },
-                    panel: None,
-                    rows: 0,
-                    collapsed: false,
-                    squeezed: false,
-                    dragged: false,
-                    resolved: 0,
-                });
+                // The layout an expired placeholder left behind, if any:
+                // the user's rows and collapsed state land where they were.
+                let (rows, collapsed) =
+                    self.sidebar_layout_hints.remove(&key).unwrap_or((0, false));
+                self.sidebar_sections.push(SidebarSection::placeholder(
+                    key.clone(),
+                    title.clone(),
+                    rows,
+                    collapsed,
+                    scope,
+                ));
                 self.sidebar_sections.len() - 1
             }
         };
@@ -610,6 +698,7 @@ impl super::Editor {
             title,
             closable,
         };
+        sec.scope = scope;
         // The plugin's request, unless the user has already said otherwise.
         if !sec.dragged {
             sec.rows = rows;
@@ -672,12 +761,28 @@ impl super::Editor {
         Some(panel)
     }
 
-    /// What the workspace file records of the sections.
-    pub(crate) fn sidebar_section_states(&self) -> Vec<crate::workspace::SectionState> {
-        use crate::workspace::{SectionState, SectionStateKind};
+    /// What `window`'s workspace file records of the sections: the explorer,
+    /// the editor-wide sections, and the ones scoped to this window — parked
+    /// or not. Buffer-scoped sections are never written; their plugin makes
+    /// them again from the buffer.
+    pub(crate) fn sidebar_section_states(
+        &self,
+        window: WindowId,
+    ) -> Vec<crate::workspace::SectionState> {
+        use crate::workspace::{SectionScopeState, SectionState, SectionStateKind};
         self.sidebar_sections
             .iter()
+            .chain(self.parked_sidebar_sections.iter())
+            .filter(|s| match s.scope {
+                SectionScope::Editor => true,
+                SectionScope::Window(w) => w == window,
+                SectionScope::Buffer { .. } => false,
+            })
             .map(|s| SectionState {
+                scope: match s.scope {
+                    SectionScope::Editor => SectionScopeState::Editor,
+                    _ => SectionScopeState::Window,
+                },
                 kind: match &s.kind {
                     SidebarSectionKind::Explorer => SectionStateKind::Explorer,
                     SidebarSectionKind::Panel { key, .. } => SectionStateKind::Panel {
@@ -695,68 +800,294 @@ impl super::Editor {
             .collect()
     }
 
-    /// Rebuild the sections from a workspace file.
+    /// Restore `window`'s sections from its workspace file.
     ///
-    /// An empty list — every workspace written before sections existed —
-    /// restores as exactly one explorer section filling the column. A panel
-    /// section is restored by its `(plugin, id)` identity: a plugin that has
-    /// already mounted it keeps its panel, one that has not gets a
-    /// placeholder that shows "panel unavailable" until it does. Mounted
-    /// sections the file does not name are kept after the ones it does, so
-    /// a restore never unmounts anything.
-    pub(crate) fn restore_sidebar_sections(&mut self, states: &[crate::workspace::SectionState]) {
-        use crate::workspace::SectionStateKind;
-        let mut old = std::mem::take(&mut self.sidebar_sections);
-        let mut take = |pred: &dyn Fn(&SidebarSection) -> bool| -> Option<SidebarSection> {
-            let i = old.iter().position(pred)?;
-            Some(old.remove(i))
-        };
-        let mut next: Vec<SidebarSection> = Vec::new();
-        let mut explorer = take(&|s| s.kind == SidebarSectionKind::Explorer)
-            .unwrap_or_else(SidebarSection::explorer);
-        let mut saw_explorer = false;
+    /// For the active window this lays the column out as the file says: the
+    /// explorer's rows and collapsed state, then each named section in the
+    /// file's order — the section already carrying that identity, on the
+    /// column or parked, if there is one, else a placeholder its plugin has
+    /// a few frames to claim (`tick_sidebar_placeholders`) — and after them
+    /// everything the file did not name, where it was.
+    ///
+    /// For any other window it touches nothing on screen: that window is not
+    /// what the user is looking at — it is being materialised for a switch,
+    /// or painted as a picker preview — so its file must not resize the
+    /// live column. A section that already exists keeps its place and the
+    /// file's layout for it becomes the hint its next mount lands on; the
+    /// rest become parked placeholders scoped to the window, which
+    /// `reconcile_sidebar_scopes` brings in when it becomes active.
+    ///
+    /// One section per identity, wherever it is: the widget registry holds
+    /// one panel per key, so a second section with the same key could never
+    /// be mounted, and a restore never makes one.
+    pub(crate) fn restore_sidebar_sections(
+        &mut self,
+        window: WindowId,
+        states: &[crate::workspace::SectionState],
+    ) {
+        use crate::workspace::{SectionScopeState, SectionStateKind};
+        let active = window == self.active_window;
+        let mut placeholders = false;
+        let mut restored: Vec<SidebarSection> = Vec::new();
+        let mut explorer_state: Option<(u16, bool)> = None;
         for st in states {
             match &st.kind {
-                SectionStateKind::Explorer if !saw_explorer => {
-                    saw_explorer = true;
-                    explorer.rows = st.rows;
-                    explorer.collapsed = st.collapsed;
-                    explorer.squeezed = false;
-                    explorer.dragged = st.rows != 0;
+                SectionStateKind::Explorer => {
+                    if explorer_state.is_none() {
+                        explorer_state = Some((st.rows, st.collapsed));
+                    }
                 }
-                SectionStateKind::Explorer => {}
                 SectionStateKind::Panel { plugin, id } => {
                     let key = PanelKey::new(plugin.clone(), *id);
-                    let mut sec =
-                        take(&|s| s.panel_key() == Some(&key)).unwrap_or_else(|| SidebarSection {
-                            kind: SidebarSectionKind::Panel {
-                                key: key.clone(),
-                                title: st.title.clone(),
-                                closable: true,
-                            },
-                            panel: None,
-                            rows: 0,
-                            collapsed: false,
-                            squeezed: false,
-                            dragged: false,
-                            resolved: 0,
-                        });
+                    let scope = match st.scope {
+                        SectionScopeState::Editor => SectionScope::Editor,
+                        SectionScopeState::Window => SectionScope::Window(window),
+                    };
+                    if !active {
+                        if self.section_exists(&key) {
+                            self.sidebar_layout_hints
+                                .insert(key, (st.rows, st.collapsed));
+                        } else {
+                            self.parked_sidebar_sections
+                                .push(SidebarSection::placeholder(
+                                    key,
+                                    st.title.clone(),
+                                    st.rows,
+                                    st.collapsed,
+                                    scope,
+                                ));
+                            placeholders = true;
+                        }
+                        continue;
+                    }
+                    let mut sec = match self.take_section_anywhere(&key) {
+                        Some(sec) => sec,
+                        None => {
+                            placeholders = true;
+                            SidebarSection::placeholder(key, st.title.clone(), 0, false, scope)
+                        }
+                    };
                     sec.rows = st.rows;
                     sec.collapsed = st.collapsed;
                     sec.squeezed = false;
                     sec.dragged = st.rows != 0;
-                    next.push(sec);
+                    // An unclaimed placeholder takes the file's scope; a
+                    // mounted section keeps the one its plugin asked for.
+                    if sec.panel.is_none() {
+                        sec.scope = scope;
+                    }
+                    restored.push(sec);
                 }
             }
         }
-        // The explorer is section 0 whatever the file says, and everything
-        // the file did not name follows what it did.
-        next.insert(0, explorer);
-        next.extend(old.into_iter().filter(|s| s.panel.is_some()));
-        self.sidebar_sections = next;
+        if active {
+            let mut old = std::mem::take(&mut self.sidebar_sections);
+            let mut explorer = old
+                .iter()
+                .position(|s| s.is_explorer())
+                .map(|i| old.remove(i))
+                .unwrap_or_else(SidebarSection::explorer);
+            if let Some((rows, collapsed)) = explorer_state {
+                explorer.rows = rows;
+                explorer.collapsed = collapsed;
+                explorer.squeezed = false;
+                explorer.dragged = rows != 0;
+            }
+            // The explorer is section 0 whatever the file says, and
+            // everything the file did not name follows what it did.
+            let mut next = Vec::with_capacity(1 + restored.len() + old.len());
+            next.push(explorer);
+            next.extend(restored);
+            next.extend(old);
+            self.sidebar_sections = next;
+            self.renumber_sidebar_panels();
+        }
+        // A placeholder is a promise the plugin has a few frames to keep
+        // (`tick_sidebar_placeholders`), not a fixture (sinelaw/fresh#3326, F).
+        if placeholders {
+            self.sidebar_placeholder_expiry = Some(PLACEHOLDER_GRACE_FRAMES);
+        }
+        if active {
+            self.reconcile_sidebar_scopes();
+        }
+    }
+
+    /// Whether a section with this identity exists, on the column or parked.
+    fn section_exists(&self, key: &PanelKey) -> bool {
+        self.sidebar_sections
+            .iter()
+            .chain(self.parked_sidebar_sections.iter())
+            .any(|s| s.panel_key() == Some(key))
+    }
+
+    /// Take the section with this identity out of the column or the parking
+    /// list, whichever holds it.
+    fn take_section_anywhere(&mut self, key: &PanelKey) -> Option<SidebarSection> {
+        if let Some(i) = self
+            .sidebar_sections
+            .iter()
+            .position(|s| s.panel_key() == Some(key))
+        {
+            return Some(self.sidebar_sections.remove(i));
+        }
+        self.take_parked_section(key)
+    }
+
+    /// Whether a section with this identity is parked out of scope.
+    pub(crate) fn is_parked_panel(&self, key: &PanelKey) -> bool {
+        self.parked_sidebar_sections
+            .iter()
+            .any(|s| s.panel_key() == Some(key))
+    }
+
+    /// Take a parked section out of the parking list.
+    pub(crate) fn take_parked_section(&mut self, key: &PanelKey) -> Option<SidebarSection> {
+        let i = self
+            .parked_sidebar_sections
+            .iter()
+            .position(|s| s.panel_key() == Some(key))?;
+        Some(self.parked_sidebar_sections.remove(i))
+    }
+
+    /// Move every section whose scope does not match the active window and
+    /// buffer out of the column, and every parked one whose scope now does
+    /// back in. The column, the focus cycle and the hit-test only ever see
+    /// sections that belong on screen, so nothing downstream reasons about
+    /// scope. Called from the focus announcer on every change of the active
+    /// `(window, buffer)`, and after a mount or restore.
+    pub(crate) fn reconcile_sidebar_scopes(&mut self) {
+        let Some((window, _, buffer)) = self.current_focus() else {
+            return;
+        };
+        let mut changed = false;
+        let mut i = 0;
+        while i < self.sidebar_sections.len() {
+            let s = &self.sidebar_sections[i];
+            if s.is_explorer() || s.scope.shows_for(window, buffer) {
+                i += 1;
+                continue;
+            }
+            // A parked section cannot hold the keyboard.
+            if s.panel.as_ref().is_some_and(|p| p.focused) {
+                self.blur_floating_panel(super::PanelSlot::Sidebar(i));
+            }
+            let sec = self.sidebar_sections.remove(i);
+            self.parked_sidebar_sections.push(sec);
+            changed = true;
+        }
+        let parked = std::mem::take(&mut self.parked_sidebar_sections);
+        for sec in parked {
+            if sec.scope.shows_for(window, buffer) {
+                self.sidebar_sections.push(sec);
+                changed = true;
+            } else {
+                self.parked_sidebar_sections.push(sec);
+            }
+        }
+        if changed {
+            self.renumber_sidebar_panels();
+            self.shell_description_stale = true;
+        }
+    }
+
+    /// Drop a section's panel: the plugin hears `cancel`, as for the `×`.
+    fn drop_section_panel(&mut self, panel: super::FloatingWidgetState) {
+        let widget_key = self
+            .widget_registry
+            .get(&panel.panel_key)
+            .map(|p| p.focus_key.clone())
+            .unwrap_or_default();
+        self.fire_widget_event(
+            &panel.panel_key,
+            widget_key,
+            "cancel".to_string(),
+            serde_json::json!({}),
+        );
+        let _ = self.widget_registry.unmount(&panel.panel_key);
+    }
+
+    /// Remove every section, on screen or parked, that `keep` rejects.
+    fn drop_sidebar_sections_where(&mut self, keep: impl Fn(&SidebarSection) -> bool) {
+        let mut dropped: Vec<SidebarSection> = Vec::new();
+        let live = std::mem::take(&mut self.sidebar_sections);
+        for s in live {
+            if s.is_explorer() || keep(&s) {
+                self.sidebar_sections.push(s);
+            } else {
+                dropped.push(s);
+            }
+        }
+        let parked = std::mem::take(&mut self.parked_sidebar_sections);
+        for s in parked {
+            if keep(&s) {
+                self.parked_sidebar_sections.push(s);
+            } else {
+                dropped.push(s);
+            }
+        }
+        if dropped.is_empty() {
+            return;
+        }
+        for s in dropped {
+            if let Some(panel) = s.panel {
+                self.drop_section_panel(panel);
+            }
+        }
         self.renumber_sidebar_panels();
+        self.shell_description_stale = true;
+    }
+
+    /// `buffer` closed: the sections scoped to it go with it.
+    pub(crate) fn drop_sidebar_sections_for_buffer(&mut self, buffer: BufferId) {
+        self.drop_sidebar_sections_where(|s| !s.scope.dies_with_buffer(buffer));
+    }
+
+    /// `window` closed: the sections scoped to it, or to a buffer in it, go
+    /// with it.
+    pub(crate) fn drop_sidebar_sections_for_window(&mut self, window: WindowId) {
+        self.drop_sidebar_sections_where(|s| !s.scope.dies_with_window(window));
+    }
+
+    /// Count down the grace a restore gave its placeholders, and when it
+    /// runs out drop the ones no plugin has claimed — keeping each one's rows
+    /// and collapsed state as the hint its next mount lands on. Called once
+    /// per frame, after the plugin-command drain, whether or not the drain
+    /// carried anything, so a plugin that mounts on activation (the Markdown
+    /// outline) has had its turn and an idle frame still counts.
+    pub(crate) fn tick_sidebar_placeholders(&mut self) {
+        let Some(left) = self.sidebar_placeholder_expiry else {
+            return;
+        };
+        if left > 0 {
+            self.sidebar_placeholder_expiry = Some(left - 1);
+            return;
+        }
+        self.sidebar_placeholder_expiry = None;
+        let expired: Vec<(PanelKey, u16, bool)> = self
+            .sidebar_sections
+            .iter()
+            .chain(self.parked_sidebar_sections.iter())
+            .filter(|s| !s.is_explorer() && s.panel.is_none())
+            .filter_map(|s| s.panel_key().map(|k| (k.clone(), s.rows, s.collapsed)))
+            .collect();
+        if expired.is_empty() {
+            return;
+        }
+        for (key, rows, collapsed) in &expired {
+            self.sidebar_layout_hints
+                .insert(key.clone(), (*rows, *collapsed));
+        }
+        self.drop_sidebar_sections_where(|s| s.panel.is_some());
+        tracing::debug!(
+            "dropped {} sidebar placeholder(s) no plugin mounted after restore",
+            expired.len()
+        );
     }
 }
+
+/// Frames a restored placeholder stays for before `tick_sidebar_placeholders`
+/// drops it: plugin load, the first activation's mounts, and one to spare.
+const PLACEHOLDER_GRACE_FRAMES: u8 = 4;
 
 #[cfg(test)]
 mod tests {

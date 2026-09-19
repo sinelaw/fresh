@@ -5012,6 +5012,12 @@ interface EditorAPI {
 	mountSidebarSection(panelId: number, specObj: unknown, title: string, rows: number, opts?: {
 		closable?: boolean;
 		startBlurred?: boolean;
+		scope?: {
+			buffer: number;
+		} | {
+			window: number;
+		} | "editor";
+		reveal?: boolean;
 	}): boolean;
 	/**
 	* Replace the spec of the currently-mounted floating widget panel.

@@ -323,6 +323,8 @@ pub mod shift_backspace;
 pub mod sidebar_focus_cycle;
 #[cfg(feature = "plugins")]
 pub mod sidebar_sections;
+#[cfg(feature = "plugins")]
+pub mod sidebar_window_scope;
 pub mod slow_filesystem;
 pub mod smart_editing;
 pub mod smart_home;

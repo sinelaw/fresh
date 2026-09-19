@@ -2133,9 +2133,20 @@ impl Editor {
                 rows,
                 closable,
                 start_blurred,
+                scope,
+                reveal,
             } => {
                 let key = crate::widgets::PanelKey::new(plugin, panel_id);
-                self.handle_mount_sidebar_section(key, spec, title, rows, closable, start_blurred);
+                self.handle_mount_sidebar_section(
+                    key,
+                    spec,
+                    title,
+                    rows,
+                    closable,
+                    start_blurred,
+                    scope,
+                    reveal,
+                );
             }
 
             PluginCommand::UpdateFloatingWidget {
@@ -6013,14 +6024,37 @@ impl Editor {
         rows: u16,
         closable: bool,
         start_blurred: bool,
+        scope_spec: fresh_core::api::SectionScopeSpec,
+        reveal: bool,
     ) {
+        use crate::app::sidebar::SectionScope;
         // The description reads what this writes; see
         // `Editor::shell_description_stale`.
         self.shell_description_stale = true;
+        // The scope the plugin asked for, resolved: `editor` wins over
+        // `buffer`, `buffer` over `window`; nothing named is the window of
+        // the mount.
+        let scope = if scope_spec.editor {
+            SectionScope::Editor
+        } else if let Some(b) = scope_spec.buffer {
+            SectionScope::Buffer {
+                buffer: fresh_core::BufferId(b as usize),
+            }
+        } else if let Some(w) = scope_spec.window {
+            SectionScope::Window(fresh_core::WindowId(w))
+        } else {
+            SectionScope::Window(self.active_window)
+        };
         // One slot per identity: a dock or centred panel with this key
-        // moves into the section.
+        // moves into the section, and a parked section comes back. A
+        // remount of a live section (a new title, a new scope) takes only
+        // the panel and leaves the section where it is, rows and all —
+        // `place_panel_in_sidebar` finds it again by its key.
         let existing = match self.slot_of_panel(&panel_key) {
-            Some(super::PanelSlot::Sidebar(i)) => self.take_panel_from_sidebar(i),
+            Some(super::PanelSlot::Sidebar(i)) => self
+                .sidebar_sections
+                .get_mut(i)
+                .and_then(|s| s.panel.take()),
             Some(slot) => self.panel_opt_mut(slot).and_then(|o| o.take()),
             None => None,
         };
@@ -6042,7 +6076,7 @@ impl Editor {
             hovered_item_key: String::new(),
             hovered_popup_row: String::new(),
         });
-        let index = self.place_panel_in_sidebar(panel, title, rows, closable);
+        let index = self.place_panel_in_sidebar(panel, title, rows, closable, scope);
         let slot = super::PanelSlot::Sidebar(index);
         if let Some(p) = self.panel_mut(slot) {
             p.focused = false;
@@ -6071,14 +6105,33 @@ impl Editor {
             false,
             false,
         );
-        if !start_blurred {
-            self.focus_sidebar_section(index);
+        // A section mounted for a buffer that is not on screen parks at
+        // once — before any reveal or focus, which are for a section that
+        // is on screen and would otherwise open the column for nothing.
+        self.reconcile_sidebar_scopes();
+        let live = self
+            .sidebar_sections
+            .iter()
+            .position(|s| s.panel_key() == Some(&panel_key));
+        if let Some(index) = live {
+            if reveal {
+                self.reveal_sidebar();
+                self.reveal_sidebar_section(index);
+            }
+            if !start_blurred {
+                self.focus_sidebar_section(index);
+            }
         }
         tracing::debug!(
-            "Mounted sidebar section {} for panel {} ({} rows)",
-            index,
+            "Mounted sidebar section for panel {} ({} rows, {:?}, {})",
             panel_key,
-            rows
+            rows,
+            scope,
+            if live.is_some() {
+                "on screen"
+            } else {
+                "parked"
+            }
         );
     }
 
@@ -6090,7 +6143,7 @@ impl Editor {
         // The description reads what this writes; see
         // `Editor::shell_description_stale`.
         self.shell_description_stale = true;
-        if self.slot_of_panel(panel_key).is_none() {
+        if self.slot_of_panel(panel_key).is_none() && !self.is_parked_panel(panel_key) {
             tracing::debug!(
                 "UpdateFloatingWidget for unknown / mismatched panel {} ignored",
                 panel_key
@@ -6126,6 +6179,12 @@ impl Editor {
     }
 
     fn handle_unmount_floating_widget(&mut self, panel_key: &crate::widgets::PanelKey) {
+        // A parked section is unmounted where it waits.
+        if self.take_parked_section(panel_key).is_some() {
+            let _ = self.widget_registry.unmount(panel_key);
+            self.shell_description_stale = true;
+            return;
+        }
         let Some(slot) = self.slot_of_panel(panel_key) else {
             tracing::debug!(
                 "UnmountFloatingWidget for unknown / mismatched panel {} ignored",
@@ -6220,8 +6279,15 @@ impl Editor {
                     .clone()
                     .unwrap_or_else(|| panel.panel_key.plugin.clone());
                 let closable = panel.closable;
-                let index =
-                    self.place_panel_in_sidebar(panel, title, arg.max(0.0) as u16, closable);
+                let index = self.place_panel_in_sidebar(
+                    panel,
+                    title,
+                    arg.max(0.0) as u16,
+                    closable,
+                    // Re-anchored from the dock or the centre: the window
+                    // the user did it in, the narrow default.
+                    crate::app::sidebar::SectionScope::Window(self.active_window),
+                );
                 if from == super::PanelSlot::Dock {
                     self.request_full_redraw();
                 }
@@ -6237,6 +6303,13 @@ impl Editor {
             // a bare `focused = true` never would.
             ("focus", super::PanelSlot::Sidebar(i)) => {
                 self.focus_sidebar_section(i);
+                return;
+            }
+            // Show the column and open the section, without the keyboard.
+            ("reveal", super::PanelSlot::Sidebar(i)) => {
+                self.reveal_sidebar();
+                self.reveal_sidebar_section(i);
+                self.relayout();
                 return;
             }
             ("sidebar_rows", super::PanelSlot::Sidebar(i)) => {

@@ -502,6 +502,23 @@ pub struct RemoteBackendInfo {
     pub connected: bool,
 }
 
+/// A sidebar section's scope as a plugin asks for it. None set is the
+/// default: the window the mount came from. If more than one is set,
+/// `editor` wins over `buffer`, and `buffer` over `window`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct SectionScopeSpec {
+    /// Editor-wide: every window, always.
+    #[serde(default)]
+    pub editor: bool,
+    /// Scoped to this window.
+    #[serde(default)]
+    pub window: Option<u64>,
+    /// Scoped to this buffer, in whichever window owns it.
+    #[serde(default)]
+    pub buffer: Option<u64>,
+}
+
 /// Information about a buffer
 #[derive(Debug, Clone, Serialize, Deserialize, TS)]
 #[ts(export)]
@@ -6077,6 +6094,17 @@ pub enum PluginCommand {
         /// section takes the keys, as a dock mount does.
         #[serde(default)]
         start_blurred: bool,
+        /// When the section is on screen. Nothing set: scoped to the window
+        /// the mount came from — the narrow default; editor-wide has to be
+        /// asked for. A buffer scope names the buffer; the host finds its
+        /// window.
+        #[serde(default)]
+        scope: SectionScopeSpec,
+        /// Show the sidebar column and open the section, so "mounted"
+        /// means "visible". Default `false`: a quiet mount waits in a
+        /// hidden column.
+        #[serde(default)]
+        reveal: bool,
     },
 
     /// Replace the spec of the currently-mounted floating widget

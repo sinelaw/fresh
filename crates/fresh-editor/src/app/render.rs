@@ -4972,12 +4972,16 @@ impl Editor {
             if processed {
                 let _s = tracing::info_span!("update_plugin_state_snapshot_post").entered();
                 self.update_plugin_state_snapshot();
-                // The safety net for `app::focus_announcer`: a command that
-                // moved focus down a path nobody wired to the announcer is
-                // announced here, one frame late rather than never.
-                self.announce_focus();
             }
         }
+        // Every frame, not only after a visual plugin command: the safety
+        // net for `app::focus_announcer` — a change of focus down a path
+        // nobody wired to the announcer is announced here, one frame late
+        // rather than never — and the frame count a restored placeholder's
+        // grace is measured in. Both are a compare-and-return when nothing
+        // changed.
+        self.announce_focus();
+        self.tick_sidebar_placeholders();
     }
 
     /// Ensure the active split's cursor is in view, then synchronise scroll-sync groups.
