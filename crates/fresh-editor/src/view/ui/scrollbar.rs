@@ -1,11 +1,13 @@
-//! Reusable scrollbar widget for lists and content areas
+//! Scroll-offset arithmetic and press/drag handling for a scrollbar.
 //!
-//! This module provides a scrollbar that can be used with any scrollable content,
-//! not just the editor buffer. It's extracted from the split_rendering module
-//! to enable reuse in file browsers, popups, and other scrollable UI elements.
+//! **Painting is not here.** A bar is drawn by describing it —
+//! `fresh_ui::Draw::Scrollbar`, which the fold paints — so the file browsers,
+//! popups and other scrollable surfaces this module once offered an
+//! immediate-mode painter to now declare their bars instead. What is left is
+//! the part a declaration does not cover: turning a press or a drag on the
+//! track into a new scroll offset.
 
 use ratatui::layout::Rect;
-use ratatui::style::Color;
 
 /// State needed to render and interact with a scrollbar
 #[derive(Debug, Clone, Copy)]
@@ -225,62 +227,6 @@ impl ScrollbarMouse {
     pub fn release(&mut self) {
         self.drag = None;
     }
-}
-
-/// Colors for the scrollbar
-#[derive(Debug, Clone, Copy)]
-pub struct ScrollbarColors {
-    pub track: Color,
-    pub thumb: Color,
-}
-
-impl ScrollbarColors {
-    /// Create from theme colors
-    pub fn from_theme(theme: &crate::view::theme::Theme) -> Self {
-        Self {
-            track: theme.scrollbar_track_fg,
-            thumb: theme.scrollbar_thumb_fg,
-        }
-    }
-
-    /// Create from theme colors with hover
-    pub fn from_theme_hover(theme: &crate::view::theme::Theme) -> Self {
-        Self {
-            track: theme.scrollbar_track_hover_fg,
-            thumb: theme.scrollbar_thumb_hover_fg,
-        }
-    }
-}
-
-/// Render a vertical scrollbar
-///
-/// # Arguments
-/// * `buf` - The cell buffer to render into
-/// * `area` - A 1-column wide rectangle for the scrollbar
-/// * `state` - The scrollbar state (total items, visible items, offset)
-/// * `colors` - Colors for track and thumb
-///
-/// # Returns
-/// (thumb_start, thumb_end) in row coordinates relative to the area
-///
-/// NOTE: the painting step is currently missing — see issue #3240. Geometry is
-/// still computed and returned, so callers and hit-testing are unaffected, but
-/// nothing is drawn into `buf` until the track/thumb rendering is restored.
-pub fn render_scrollbar(
-    _buf: &mut ratatui::buffer::Buffer,
-    area: Rect,
-    state: &ScrollbarState,
-    _colors: &ScrollbarColors,
-) -> (usize, usize) {
-    let height = area.height as usize;
-    if height == 0 || area.width == 0 {
-        return (0, 0);
-    }
-
-    let (thumb_start, thumb_size) = state.thumb_geometry(height);
-    let thumb_end = thumb_start + thumb_size;
-
-    (thumb_start, thumb_end)
 }
 
 #[cfg(test)]
