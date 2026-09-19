@@ -259,6 +259,9 @@ impl Editor {
         // above the old late `render_menu_bar` call, which is where the
         // description was built from.
         self.update_menu_context();
+        // Once per frame, so every path that moved the keyboard between the
+        // pane and the chrome is announced (`app::focus_announcer`).
+        self.announce_chrome_focus();
 
         // Carve a full-height left column for a docked floating panel
         // (e.g. the orchestrator dock) out of the screen *before* the

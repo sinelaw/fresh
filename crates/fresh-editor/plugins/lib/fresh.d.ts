@@ -5992,6 +5992,19 @@ interface HookEventMap {
 		} | null;
 		reason: string;
 	};
+	/**
+	* Which chrome region holds the keyboard changed: `"editor"` (a pane),
+	* `"explorer"` (the file tree), `"dock"`, or `"section"` (a sidebar
+	* section, named by `plugin` and `panel_id`). Fires once per change, so
+	* a plugin can answer "does the pane have the keyboard?" without
+	* inferring it from its own focus events.
+	*/
+	chrome_focus_changed: {
+		window_id: number;
+		region: string;
+		plugin: string | null;
+		panel_id: number | null;
+	};
 	// ── widget runtime ───────────────────────────────────────────────────────
 	/**
 	* A widget mounted via `editor.mountWidgetPanel` emitted a

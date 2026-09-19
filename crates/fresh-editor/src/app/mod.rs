@@ -701,6 +701,8 @@ pub struct Editor {
     /// The `(window, pane, buffer)` the focus hooks last described — see
     /// `app::focus_announcer`. `None` until the first announcement.
     pub(crate) last_announced_focus: Option<focus_announcer::FocusTriple>,
+    /// The chrome region `chrome_focus_changed` last named.
+    pub(crate) last_announced_chrome: Option<focus_announcer::ChromeFocus>,
 
     // LSP manager moved onto `Window`. Access via
     // `Editor::lsp()` / `lsp_mut()` — each window has its own
