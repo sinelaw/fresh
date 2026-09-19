@@ -60,6 +60,11 @@ pub mod highlight_types;
 // These provide pure-Rust implementations without tree-sitter
 #[cfg(any(feature = "runtime", feature = "wasm"))]
 pub mod indent_pattern;
+// Structural (stack-based) indentation for Pascal, whose nesting a
+// one-reference-line rule set cannot express. Reached through `indent_rules`,
+// which hands the `PascalLike` family over to it.
+#[cfg(any(feature = "runtime", feature = "wasm"))]
+pub mod indent_pascal;
 // Per-language regex indentation rules (VS Code style). Pure Rust; works with
 // or without tree-sitter. See docs/internal/indentation-rules-design.md.
 #[cfg(any(feature = "runtime", feature = "wasm"))]

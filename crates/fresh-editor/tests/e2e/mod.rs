@@ -142,6 +142,7 @@ pub mod language_dialog_tab_size;
 pub mod language_textmate_grammar;
 pub mod mouse_session_input;
 pub mod odin_language;
+pub mod pascal_indent;
 #[cfg(feature = "plugins")]
 pub mod placeholder_window_embed;
 pub mod suspend_process;
