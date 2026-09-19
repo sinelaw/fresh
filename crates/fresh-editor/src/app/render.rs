@@ -1533,6 +1533,7 @@ impl Editor {
             cursor: p.cursor_byte(),
             selection: p.selection_range(),
             dir,
+            wraps: p.prompt_type.is_confirmation(),
         })
     }
 
@@ -4430,6 +4431,7 @@ impl Editor {
                 cursor: prompt.cursor_byte(),
                 selection: prompt.selection_range(),
                 dir: None,
+                wraps: false,
             },
             status: prompt.status.clone(),
             count,
