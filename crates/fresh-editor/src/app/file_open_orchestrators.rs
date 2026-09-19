@@ -204,13 +204,9 @@ impl Editor {
         // as nothing changed and the extra hook would cause spurious refreshes
         // in plugins like the diagnostics panel.
         if !is_new_buffer && !active_had_path {
-            #[cfg(feature = "plugins")]
-            self.update_plugin_state_snapshot();
-
-            self.plugin_manager.read().unwrap().run_hook(
-                "buffer_activated",
-                crate::services::plugins::hooks::HookArgs::BufferActivated { buffer_id },
-            );
+            // The scratch buffer was re-pointed at this file in place: the
+            // buffer id did not change, so the announcer has to be told.
+            self.announce_focus_forced();
 
             // The active *file* changed even though the active *buffer* did
             // not, so `set_active_buffer` — where the follow-the-active-buffer
