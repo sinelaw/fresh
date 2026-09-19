@@ -206,21 +206,36 @@ fn build_rows(e: &Explorer) -> Node<UiMsg> {
 /// between rows in some terminals, and every test that finds a scrollbar on
 /// screen finds it by that background.
 ///
-/// The geometry is [`ScrollbarState::thumb_geometry`], which is now literally
-/// `fresh_ui::Draw::scrollbar_thumb` — the one the fold paints every declared
-/// bar with. A thumb of a given size sits where the rest of the editor puts
-/// it because it is the same call, not because two copies agree.
+/// The geometry is [`fresh_ui::Draw::scrollbar_thumb`] — the one the fold
+/// paints every declared bar with. A thumb of a given size sits where the rest
+/// of the editor puts it because it is the same call.
+///
+/// **The window is not the panel's height.** `scrollbar_thumb` derives the
+/// thumb's travel from `content - window`, so the window handed to it has to
+/// be the one that makes that ceiling the model's own `max_offset` —
+/// otherwise the thumb reaches the track's end before the tree reaches its
+/// last row. With ancestors pinned that is fewer rows than the panel shows,
+/// and a slightly shorter thumb is the honest answer: fewer of the tree's rows
+/// are reachable as ordinary ones.
 fn scrollbar(scroll: Scroll) -> Node<UiMsg> {
-    use crate::view::ui::scrollbar::ScrollbarState;
-    // `ScrollbarState`'s ceiling is `total_items - visible_items`, so the
-    // `visible_items` it is given has to be the one that makes that ceiling
-    // the model's own `max_offset` — otherwise the thumb reaches the track's
-    // end before the tree reaches its last row. With ancestors pinned that is
-    // fewer rows than the panel shows, and a slightly shorter thumb is the
-    // honest answer: fewer of the tree's rows are reachable as ordinary ones.
-    let visible = scroll.total.saturating_sub(scroll.max_offset).max(1);
-    let state = ScrollbarState::new(scroll.total, visible, scroll.offset.min(scroll.max_offset));
-    let (thumb_top, thumb_len) = state.thumb_geometry(scroll.rows);
+    let window = scroll.total.saturating_sub(scroll.max_offset).max(1);
+    let narrow = |n: usize| u32::try_from(n).unwrap_or(u32::MAX);
+    let (thumb_top, thumb_len) = match scroll.total {
+        // A bar with no content has no thumb. `scrollbar_thumb` fills the
+        // track instead, which is the right answer for a window onto nothing
+        // and the wrong one here — a `Scroll` only exists when the tree
+        // overflows, so this is a guard, not a case.
+        0 => (0, 0),
+        _ => {
+            let (top, len) = fresh_ui::Draw::scrollbar_thumb(
+                narrow(scroll.offset.min(scroll.max_offset)),
+                narrow(scroll.total),
+                narrow(window),
+                u16::try_from(scroll.rows).unwrap_or(u16::MAX),
+            );
+            (usize::from(top), usize::from(len))
+        }
+    };
     let thumb = pair("ui.scrollbar_thumb_fg", "ui.scrollbar_thumb_fg");
     let track = pair("ui.scrollbar_track_fg", "ui.scrollbar_track_fg");
     col()
