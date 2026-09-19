@@ -143,10 +143,6 @@ pub struct GrammarEntry {
 /// Embedded TOML grammar (syntect doesn't include one)
 pub const TOML_GRAMMAR: &str = include_str!("../../grammars/toml.sublime-syntax");
 
-/// Embedded Odin grammar (syntect doesn't include one)
-/// From: https://github.com/Tetralux/sublime-odin (MIT License)
-pub const ODIN_GRAMMAR: &str = include_str!("../../grammars/odin/Odin.sublime-syntax");
-
 /// Embedded Zig grammar (syntect doesn't include one)
 pub const ZIG_GRAMMAR: &str = include_str!("../../grammars/zig.sublime-syntax");
 
@@ -651,17 +647,6 @@ impl GrammarRegistry {
             }
             Err(e) => {
                 tracing::warn!("Failed to load embedded TOML grammar: {}", e);
-            }
-        }
-
-        // Odin grammar
-        match SyntaxDefinition::load_from_str(ODIN_GRAMMAR, true, Some("Odin")) {
-            Ok(syntax) => {
-                builder.add(syntax);
-                tracing::debug!("Loaded embedded Odin grammar");
-            }
-            Err(e) => {
-                tracing::warn!("Failed to load embedded Odin grammar: {}", e);
             }
         }
 

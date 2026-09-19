@@ -2206,14 +2206,6 @@ pub struct FileExplorerConfig {
     #[serde(default = "default_true")]
     pub auto_open_on_last_buffer_close: bool,
 
-    /// When the file explorer sidebar is open, automatically expand the
-    /// tree and highlight the file that corresponds to the active buffer
-    /// whenever you switch tabs. Set to `true` to keep the explorer
-    /// selection in sync with the active tab.
-    /// Default: false
-    #[serde(default = "default_false")]
-    pub follow_active_buffer: bool,
-
     /// Render single-child directory chains on a single line, e.g.
     /// `src/main/java/com/example`. Only applies when each intermediate
     /// directory in the chain is expanded and has exactly one visible
@@ -2665,7 +2657,6 @@ impl Default for FileExplorerConfig {
             preview_tabs: true,
             side: default_explorer_side(),
             auto_open_on_last_buffer_close: true,
-            follow_active_buffer: false,
             compact_directories: true,
             tree_indicator_collapsed: default_tree_indicator_collapsed(),
             tree_indicator_expanded: default_tree_indicator_expanded(),
@@ -4932,33 +4923,6 @@ impl Config {
                     stdin: true,
                     timeout_ms: 10000,
                 }),
-                format_on_save: false,
-                on_save: vec![],
-                word_characters: None,
-                indentation_guide: None,
-                indent: None,
-            },
-        );
-
-        languages.insert(
-            "odin".to_string(),
-            LanguageConfig {
-                extensions: vec!["odin".to_string()],
-                filenames: vec![],
-                grammar: "odin".to_string(),
-                comment_prefix: Some("//".to_string()),
-                auto_indent: true,
-                auto_close: None,
-                auto_surround: None,
-                textmate_grammar: None,
-                show_whitespace_tabs: false,
-                line_wrap: None,
-                wrap_column: None,
-                page_view: None,
-                page_width: None,
-                use_tabs: Some(true),
-                tab_size: Some(8),
-                formatter: None,
                 format_on_save: false,
                 on_save: vec![],
                 word_characters: None,
@@ -7692,26 +7656,6 @@ impl Config {
                     "*.sln".to_string(),
                     ".git".to_string(),
                 ],
-            }]),
-        );
-
-        // ols - Odin Language Server (https://github.com/DanielGavin/ols)
-        // Build from source: cd ols && ./build.sh (Linux/macOS) or ./build.bat (Windows)
-        lsp.insert(
-            "odin".to_string(),
-            LspLanguageConfig::Multi(vec![LspServerConfig {
-                command: "ols".to_string(),
-                args: Some(vec![]),
-                enabled: true,
-                auto_start: false,
-                process_limits: ProcessLimits::default(),
-                initialization_options: None,
-                env: Default::default(),
-                language_id_overrides: Default::default(),
-                name: None,
-                only_features: None,
-                except_features: None,
-                root_markers: Default::default(),
             }]),
         );
 

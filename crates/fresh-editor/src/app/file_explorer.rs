@@ -1843,11 +1843,11 @@ impl crate::app::window::Window {
     /// to reveal (issue #2988).
     ///
     /// The replay goes back through [`Window::follow_path_in_explorer`]
-    /// rather than straight to the spawn, because the gate it was queued
-    /// under can have gone false in the meantime: an expand takes seconds on
-    /// a remote filesystem, and the user is free to turn
-    /// `follow_active_buffer` off in Settings or take the keyboard into the
-    /// tree while it runs. Re-checking there keeps the gate at a single fork.
+    /// rather than straight to the spawn, because the conditions it was
+    /// queued under can have gone false in the meantime: an expand takes
+    /// seconds on a remote filesystem, and the user is free to take the
+    /// keyboard into the tree while it runs. Re-checking there keeps those
+    /// conditions at a single fork.
     fn resume_deferred_file_explorer_expand(&mut self) {
         let Some(target_path) = self.file_explorer_sync_deferred.take() else {
             return;
@@ -2088,47 +2088,19 @@ impl crate::app::window::Window {
         self.set_status_message(msg);
     }
 
-    /// Run the `file_explorer.follow_active_buffer` gate against whatever
-    /// file is active right now.
+    /// The single fork the tree-following conditions are enforced at.
     ///
-    /// Called from the two paths that switch which file the user is looking
-    /// at without going through the explorer itself: the buffer-switch path
-    /// ([`Window::set_active_buffer`]) and the file-open path that reuses the
-    /// active scratch buffer in place — which changes the active *file*
-    /// without changing the active *buffer*, so it never reaches
-    /// `set_active_buffer` at all (issue #2988).
-    ///
-    /// Deliberately *not* a claim that every active-file change reaches here.
-    /// Two known ones do not, and their behaviour is unchanged: `Save As`
-    /// (`Editor::save_file_as_with_checks`) renames the active buffer's path
-    /// in place, and workspace restore opens files through
-    /// [`Window::open_file_no_focus`]. Adding either is a behaviour change,
-    /// not a refactor — check here before assuming the coverage is total.
-    pub(crate) fn follow_active_buffer_in_explorer(&mut self) {
-        let active_buf = self.active_buffer();
-        let Some(metadata) = self.buffer_metadata.get(&active_buf) else {
-            return;
-        };
-        let Some(target_path) = metadata.file_path().cloned() else {
-            return;
-        };
-        self.follow_path_in_explorer(target_path);
-    }
-
-    /// The single fork the `follow_active_buffer` gate is enforced at.
-    ///
-    /// Everything that follows the user around the tree — the live requests
-    /// from [`Window::follow_active_buffer_in_explorer`] and the deferred
-    /// ones replayed by [`Window::resume_deferred_file_explorer_expand`] —
-    /// passes its conditions here rather than re-deriving them, so a replay
-    /// cannot slip past a gate that has gone false since it was queued.
+    /// Everything that follows the user around the tree — currently the
+    /// deferred requests replayed by
+    /// [`Window::resume_deferred_file_explorer_expand`] — passes its
+    /// conditions here rather than re-deriving them, so a replay cannot slip
+    /// past a condition that has gone false since it was queued.
     ///
     /// Skipped while the explorer itself holds the keyboard: the user is
     /// navigating the tree, and yanking the selection to the editor's file
     /// under them would fight their own cursor.
     fn follow_path_in_explorer(&mut self, target_path: PathBuf) {
         if !self.file_explorer_visible
-            || !self.resources.config.file_explorer.follow_active_buffer
             || self.key_context == crate::input::keybindings::KeyContext::FileExplorer
             || !target_path.starts_with(&self.root)
         {
@@ -2145,7 +2117,7 @@ impl crate::app::window::Window {
     /// Expand this window's file-explorer tree to the active buffer's file,
     /// *ungated*: this is the explicit "show me where I am" reveal that
     /// opening or focusing the sidebar performs (issue #1569), so it runs
-    /// even with `follow_active_buffer` off and with the tree focused.
+    /// even with the tree focused.
     ///
     /// No-op when the explorer isn't visible, the active buffer has no file
     /// behind it, or that file is outside the window's root.

@@ -5,8 +5,7 @@
 //! to enable reuse in file browsers, popups, and other scrollable UI elements.
 
 use ratatui::layout::Rect;
-use ratatui::style::{Color, Style};
-use ratatui::widgets::Paragraph;
+use ratatui::style::Color;
 
 /// State needed to render and interact with a scrollbar
 #[derive(Debug, Clone, Copy)]
@@ -263,11 +262,15 @@ impl ScrollbarColors {
 ///
 /// # Returns
 /// (thumb_start, thumb_end) in row coordinates relative to the area
+///
+/// NOTE: the painting step is currently missing — see issue #3240. Geometry is
+/// still computed and returned, so callers and hit-testing are unaffected, but
+/// nothing is drawn into `buf` until the track/thumb rendering is restored.
 pub fn render_scrollbar(
-    buf: &mut ratatui::buffer::Buffer,
+    _buf: &mut ratatui::buffer::Buffer,
     area: Rect,
     state: &ScrollbarState,
-    colors: &ScrollbarColors,
+    _colors: &ScrollbarColors,
 ) -> (usize, usize) {
     let height = area.height as usize;
     if height == 0 || area.width == 0 {
@@ -276,20 +279,6 @@ pub fn render_scrollbar(
 
     let (thumb_start, thumb_size) = state.thumb_geometry(height);
     let thumb_end = thumb_start + thumb_size;
-
-    // Render as background fills to avoid gaps with box-drawing glyphs in some terminals.
-    for row in 0..height {
-        let cell_area = Rect::new(area.x, area.y + row as u16, 1, 1);
-
-        let style = if row >= thumb_start && row < thumb_end {
-            Style::default().bg(colors.thumb)
-        } else {
-            Style::default().bg(colors.track)
-        };
-
-        let paragraph = Paragraph::new(" ").style(style);
-        ratatui::widgets::Widget::render(paragraph, cell_area, buf);
-    }
 
     (thumb_start, thumb_end)
 }
