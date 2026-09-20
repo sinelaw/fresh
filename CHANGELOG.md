@@ -15,10 +15,7 @@ Fresh is now licensed **GPL-3.0-or-later**, up from GPL-2.0-only (#3328).
 * **Confirmations are a modal dialog now, not a line on the bottom row** - a centred card with each outcome spelled out as its own button, answering to arrows, Tab, Enter, Esc, the mouse and the letter underlined in the label; an outcome that loses work is in the error colour and never opens armed (#3320)
 * **Find and rejoin the agent sessions other tools are running** - `Orchestrator: Everything` scans any machine you can reach for tmux, Claude Code, Codex, screen and zellij sessions, groups them by project, and rejoins one on Enter (#3332)
 * **Tokyo Night and Gruvbox ship as built-in themes**, which the homepage already promised (#3107, reported by @sgon00)
-* **Odin support** - `//` comments, its own indentation and grammar, and an `ols` entry ready to enable
-* **Pascal indents structurally** - `end`, `else`, `except` and `finally` land on the construct they belong to, however deeply nested
 * **Alt+Shift+N / Alt+Shift+P cycle the keyboard through the sidebar**, so a plugin panel like the Markdown outline is reachable without the palette (#3326)
-* **The file explorer can follow the active buffer** - `file_explorer.follow_active_buffer`, off by default
 
 ### Bug Fixes
 
