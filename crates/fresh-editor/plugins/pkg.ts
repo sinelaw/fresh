@@ -109,12 +109,19 @@ function discardScratch(...all: (Scratch | null)[]): void {
  * The directory name a package occupies, which is also how the editor is
  * asked to install or uninstall it.
  *
- * It has to be a single path component: the editor refuses anything else, so
- * a manifest name carrying a slash lands as one sanitised directory instead
- * of quietly nesting (or escaping) the packages directory.
+ * It has to be a single path component, because that is all the editor will
+ * resolve — so a separator becomes a dash rather than quietly nesting (or
+ * escaping) the packages directory, and a leading dot goes because those are
+ * reserved for the packages directory's own bookkeeping.
+ *
+ * Nothing else is touched. An earlier version replaced everything outside
+ * `[A-Za-z0-9_.-]`, which renamed packages that were already installed: a
+ * package whose manifest called it "Git Log" lived at `Git Log`, and
+ * upgrading it would have installed a second copy at `Git-Log` while the
+ * first stayed loaded and listed.
  */
 function packageDirName(name: string): string {
-  return name.replace(/[^a-zA-Z0-9_.-]/g, "-").replace(/^\.+/, "");
+  return name.replace(/[/\\]/g, "-").replace(/^\.+/, "");
 }
 
 /** Which kind a manifest declares, defaulting the way the installers do. */

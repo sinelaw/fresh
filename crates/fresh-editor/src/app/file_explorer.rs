@@ -813,10 +813,35 @@ impl Editor {
             .map(|d| d.as_secs())
             .unwrap_or(0);
         let trash_name = format!("{}.{}", file_name.to_string_lossy(), timestamp);
-        let trash_path = trash_dir.join(trash_name);
+        let trash_path = trash_dir.join(&trash_name);
 
-        // Move to trash
-        self.authority().filesystem.rename(path, &trash_path)
+        match self.authority().filesystem.rename(path, &trash_path) {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                // A trash directory under the remote home only works for
+                // paths on the same filesystem as that home: a rename cannot
+                // cross a mount point. That is not a corner case here — the
+                // cut/paste fallback that calls this only runs *because* a
+                // rename already reported `CrossesDevices`, so a second mount
+                // is known to be in play.
+                //
+                // Fall back to a trash directory beside the entry itself,
+                // which is on its filesystem by construction. This is what
+                // the freedesktop spec does for the same reason, with its
+                // `.Trash-$uid` at the mount root; a sibling is simpler and
+                // has the same property.
+                let Some(parent) = path.parent() else {
+                    return Err(e);
+                };
+                let local_trash = parent.join(".fresh-trash");
+                if !self.authority().filesystem.exists(&local_trash) {
+                    self.authority().filesystem.create_dir_all(&local_trash)?;
+                }
+                self.authority()
+                    .filesystem
+                    .rename(path, &local_trash.join(&trash_name))
+            }
+        }
     }
 
     pub fn file_explorer_rename(&mut self) {

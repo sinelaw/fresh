@@ -460,6 +460,15 @@ impl OwnedStore {
 
     /// The file a `(namespace, key)` pair occupies.
     fn state_file(&self, namespace: &str, key: &str) -> Option<PathBuf> {
+        // `state_keys` skips dot-prefixed entries, because that is what the
+        // temp files a write leaves behind on a crash look like. A key that
+        // would land on one would therefore be writable and readable but
+        // never enumerable — invisible to exactly the cleanup that walks the
+        // namespace. Refuse it instead of storing something that cannot be
+        // found again.
+        if key.starts_with('.') || key.is_empty() {
+            return None;
+        }
         let dir = self.state_dir(namespace)?;
         child_of(&dir, &format!("{key}.json"))
     }
@@ -562,19 +571,7 @@ fn copy_tree(src: &Path, dst: &Path) -> std::io::Result<()> {
         let to = dst.join(entry.file_name());
         let ty = entry.file_type()?;
         if ty.is_symlink() {
-            let target = std::fs::read_link(&from)?;
-            #[cfg(unix)]
-            std::os::unix::fs::symlink(&target, &to)?;
-            #[cfg(windows)]
-            {
-                // Windows needs to know which kind of link to make, and the
-                // answer is whatever the target is right now.
-                if from.is_dir() {
-                    std::os::windows::fs::symlink_dir(&target, &to)?;
-                } else {
-                    std::os::windows::fs::symlink_file(&target, &to)?;
-                }
-            }
+            copy_symlink(&from, &to)?;
         } else if ty.is_dir() {
             std::fs::create_dir_all(&to)?;
             copy_tree(&from, &to)?;
@@ -583,6 +580,62 @@ fn copy_tree(src: &Path, dst: &Path) -> std::io::Result<()> {
         }
     }
     Ok(())
+}
+
+/// Reproduce the symlink at `from` under `to`, or failing that, copy what it
+/// points at.
+///
+/// Recreating the link is the faithful thing to do, and it is what keeps a
+/// link out of the staging tree from dragging in whatever it points at. But
+/// creating one is not always allowed: Windows needs a privilege that a
+/// normal account does not have unless Developer Mode is on. Failing the
+/// whole install over that would mean a package with a symlink in it could
+/// not be installed from a local directory on most Windows machines at all.
+///
+/// So on failure it falls back to copying the target's contents, which is
+/// what the `copyPath` this replaced always did. That is a worse copy — the
+/// link is gone and the bytes are duplicated — but it is a working install,
+/// and it still cannot write outside the staging directory.
+fn copy_symlink(from: &Path, to: &Path) -> std::io::Result<()> {
+    let target = std::fs::read_link(from)?;
+
+    #[cfg(unix)]
+    let made = std::os::unix::fs::symlink(&target, to);
+    #[cfg(windows)]
+    let made = if from.is_dir() {
+        // Windows needs to know which kind of link to make, and the answer is
+        // whatever the target is right now.
+        std::os::windows::fs::symlink_dir(&target, to)
+    } else {
+        std::os::windows::fs::symlink_file(&target, to)
+    };
+
+    let Err(e) = made else {
+        return Ok(());
+    };
+    tracing::debug!(
+        "could not recreate symlink {:?} ({e}); copying its target",
+        from
+    );
+
+    // `from`, not `target`: a relative link resolves against its own
+    // directory, and following it here is the whole point of the fallback.
+    // Only a link to a *file* is followed. Following one to a directory would
+    // mean walking a tree reached through a link, and a link pointing at one
+    // of its own ancestors would recurse until the disk filled — the hazard
+    // `copy_dir_all` still documents, and there is no reason to reintroduce
+    // it here. A directory link in a package source is unusual enough that
+    // saying so and carrying on beats either risk; so is a dangling one,
+    // which did not resolve in the source either.
+    if from.is_file() {
+        std::fs::copy(from, to).map(|_| ())
+    } else {
+        tracing::warn!(
+            "skipping {:?}: its link could not be recreated and it does not point at a file",
+            from
+        );
+        Ok(())
+    }
 }
 
 /// Move `path` to the system trash, reporting whether it worked.
@@ -720,6 +773,22 @@ mod tests {
         assert!(s.state_keys("machines").is_empty());
         // Clearing something already gone is the caller's desired end state.
         assert!(s.state_delete("machines", "laptop"));
+    }
+
+    #[test]
+    fn a_state_key_that_could_not_be_enumerated_is_refused() {
+        let (s, _guard) = store();
+        // `state_keys` skips dot-prefixed entries (they are what a crashed
+        // write leaves behind), so a key landing on one would be writable and
+        // readable but never listed.
+        assert!(!s.state_set("machines", ".hidden", "{}"));
+        assert!(!s.state_set("machines", "", "{}"));
+        assert!(s.state_get("machines", ".hidden").is_none());
+        assert!(s.state_keys("machines").is_empty());
+
+        // What a caller can write, it can also find again.
+        assert!(s.state_set("machines", "laptop", "{}"));
+        assert_eq!(s.state_keys("machines"), vec!["laptop".to_string()]);
     }
 
     #[test]

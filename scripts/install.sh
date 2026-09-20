@@ -106,9 +106,20 @@ check_cmd() { command -v "$1" >/dev/null 2>&1; }
 # receipt, or the file manifest this script writes. Anything else is a path
 # the user did not mean, and the install stops instead of clearing it.
 assert_safe_install_dir() {
+    # A trailing slash names the same directory, so normalise rather than
+    # refuse: failing here would break a FRESH_INSTALL_DIR that had been
+    # working for someone, in the middle of an upgrade. `/` itself survives
+    # the strip and is caught below.
+    while :; do
+        case "$INSTALL_DIR" in
+            /) break ;;
+            */) INSTALL_DIR="${INSTALL_DIR%/}" ;;
+            *) break ;;
+        esac
+    done
+
     case "$INSTALL_DIR" in
-        ""|"/"|"$HOME"|"$HOME/") log_error "refusing to install into '$INSTALL_DIR'." ;;
-        */) log_error "refusing to install into '$INSTALL_DIR': remove the trailing slash." ;;
+        ""|"/"|"$HOME") log_error "refusing to install into '$INSTALL_DIR'." ;;
         /*) ;;
         *) log_error "refusing to install into '$INSTALL_DIR': an absolute path is required." ;;
     esac
