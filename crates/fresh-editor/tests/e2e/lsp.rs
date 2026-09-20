@@ -10387,3 +10387,70 @@ fn test_no_hover_requests_while_modal_dialog_open() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+/// A language server asking Fresh to delete a file must not get its way.
+///
+/// `workspace/applyEdit` is server-initiated: it arrives with no user
+/// confirmation and names any URI the server likes. Fresh used to honour the
+/// `Delete` resource operation with `std::fs::remove_dir_all` /
+/// `remove_file` — permanently, bypassing the system trash the file explorer
+/// deletes through — so a buggy server could take a directory with it. The
+/// operation is now reported and ignored.
+#[test]
+fn test_lsp_delete_resource_op_is_refused() -> anyhow::Result<()> {
+    use lsp_types::{
+        DeleteFile, DeleteFileOptions, DocumentChangeOperation, DocumentChanges, ResourceOp,
+        WorkspaceEdit,
+    };
+
+    let mut harness = EditorTestHarness::new(80, 30)?;
+
+    let temp_dir = tempfile::tempdir()?;
+
+    // A file the server asks to unlink, and a directory it asks to remove
+    // recursively — the two shapes the old code handled.
+    let doomed_file = temp_dir.path().join("keep-me.rs");
+    std::fs::write(&doomed_file, "fn main() {}\n")?;
+
+    let doomed_dir = temp_dir.path().join("keep-me-too");
+    std::fs::create_dir(&doomed_dir)?;
+    std::fs::write(doomed_dir.join("nested.rs"), "fn nested() {}\n")?;
+
+    let file_uri = fresh_core::file_uri::path_to_lsp_uri(&doomed_file).unwrap();
+    let dir_uri = fresh_core::file_uri::path_to_lsp_uri(&doomed_dir).unwrap();
+
+    let workspace_edit = WorkspaceEdit {
+        changes: None,
+        document_changes: Some(DocumentChanges::Operations(vec![
+            DocumentChangeOperation::Op(ResourceOp::Delete(DeleteFile {
+                uri: file_uri,
+                options: None,
+            })),
+            DocumentChangeOperation::Op(ResourceOp::Delete(DeleteFile {
+                uri: dir_uri,
+                options: Some(DeleteFileOptions {
+                    recursive: Some(true),
+                    ignore_if_not_exists: Some(true),
+                    annotation_id: None,
+                }),
+            })),
+        ])),
+        change_annotations: None,
+    };
+
+    harness
+        .editor_mut()
+        .handle_rename_response(0, Ok(workspace_edit))?;
+    harness.render()?;
+
+    assert!(
+        doomed_file.exists(),
+        "a server-requested delete must leave the file on disk"
+    );
+    assert!(
+        doomed_dir.join("nested.rs").exists(),
+        "a server-requested recursive delete must leave the directory on disk"
+    );
+
+    Ok(())
+}

@@ -1146,6 +1146,7 @@
   "lsp.cannot_open_definition": "Impossibile aprire la posizione della definizione",
   "lsp.definition_external_uri": "La definizione si trova in una posizione esterna senza file sorgente locale: %{uri}",
   "lsp.cannot_rename_unsaved": "Impossibile rinominare in un buffer non salvato",
+  "lsp.delete_refused": "Richiesta di eliminazione di %{name} dal server di linguaggio ignorata",
   "lsp.code_action_applied": "Applicato: %{title} (%{count} modifiche)",
   "lsp.code_action_hint": "Premi un numero per selezionare, Esc per annullare",
   "lsp.disabled.library_file": "File di libreria (fuori dal progetto)",

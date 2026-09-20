@@ -1195,6 +1195,7 @@
   "lsp.buffer_not_found": "Буферът не е намерен",
   "lsp.cannot_open_definition": "Дефиницията не може да се отвори",
   "lsp.cannot_rename_unsaved": "Не може да се преименува в незаписан буфер",
+  "lsp.delete_refused": "Заявката на езиковия сървър за изтриване на %{name} е пренебрегната",
   "lsp.code_action_applied": "Приложено: %{title} (%{count} промяна/промени)",
   "lsp.code_action_hint": "Натиснете число за избор, Esc за отказ",
   "lsp.definition_external_uri": "Дефиницията е на отдалечено място без локален изходен файл: %{uri}",

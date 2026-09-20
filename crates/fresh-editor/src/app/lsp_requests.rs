@@ -2867,33 +2867,22 @@ impl Editor {
                 tracing::info!("RenameFile: {:?} -> {:?}", old_path, new_path);
             }
             lsp_types::ResourceOp::Delete(delete) => {
+                // Fresh does not delete files because a language server asked.
+                //
+                // A server-initiated `workspace/applyEdit` carries no user
+                // confirmation, is not bounded to the workspace, and — unlike
+                // the file explorer's delete, which moves to the system trash —
+                // unlinked whatever URI it named with no way back. One bad
+                // server (or one bad code action from a good one) was enough to
+                // lose a directory. The request is reported and ignored; a user
+                // who agrees with the server can delete the file themselves.
                 let path = to_host(&delete.uri);
-                let recursive = delete
-                    .options
-                    .as_ref()
-                    .and_then(|o| o.recursive)
-                    .unwrap_or(false);
-                let ignore_if_not_exists = delete
-                    .options
-                    .as_ref()
-                    .and_then(|o| o.ignore_if_not_exists)
-                    .unwrap_or(false);
-
-                if !path.exists() {
-                    if ignore_if_not_exists {
-                        tracing::debug!("DeleteFile: {:?} does not exist, ignoring", path);
-                        return Ok(());
-                    }
-                    tracing::warn!("DeleteFile: {:?} does not exist", path);
-                    return Ok(());
-                }
-
-                if path.is_dir() && recursive {
-                    std::fs::remove_dir_all(&path)?;
-                } else if path.is_file() {
-                    std::fs::remove_file(&path)?;
-                }
-                tracing::info!("DeleteFile: deleted {:?}", path);
+                tracing::warn!("DeleteFile refused (server-requested delete): {:?}", path);
+                let name = path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| path.display().to_string());
+                self.set_status_message(t!("lsp.delete_refused", name = &name).to_string());
             }
         }
         Ok(())
