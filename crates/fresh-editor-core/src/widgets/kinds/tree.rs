@@ -223,8 +223,9 @@ impl WidgetImpl for Tree {
     /// hit event is suppressed. A row-body click syncs the host-owned
     /// selection to the clicked index and then lets the recorded
     /// `select` fire, mirroring the List path — without the sync a
-    /// click would leave the highlight where it was. Checkbox
-    /// `toggle` and right-click `context` hits pass through.
+    /// click would leave the highlight where it was; a click on the
+    /// row's action button syncs it the same way and fires `action`.
+    /// Checkbox `toggle` and right-click `context` hits pass through.
     fn on_pointer(
         &self,
         spec: &WidgetSpec,
@@ -270,7 +271,10 @@ impl WidgetImpl for Tree {
                 ));
                 super::PointerDisposition::Consumed
             }
-            "select" => {
+            // A press on a row's action button is also a press on the row:
+            // the selection follows it, so what the plugin then does happens
+            // to the row the reader is looking at.
+            "select" | "action" => {
                 if let Some(idx) = payload.get("index").and_then(|v| v.as_i64()) {
                     panel.set_selected_index(widget_key, idx as i32);
                 }

@@ -116,6 +116,7 @@ Edit multiple locations simultaneously:
 | `Shift+Home/End` | Select to line start/end |
 | `Ctrl+Shift+Home/End` | Select to document start/end |
 | `Shift+PgUp/PgDn` | Select page up/down |
+| Double-click, then drag | Extend the selection a whole word at a time (a plain click-drag extends it by single characters) |
 
 Selected line breaks are drawn too: every line break inside the selection highlights the single column it occupies — column 0 on an empty line, just past the text otherwise — so a selection that spans blank lines is visible instead of leaving them looking untouched. Whitespace inside the selection also gets its `·` / `→` indicators (see [Whitespace Indicators](#whitespace-indicators)).
 

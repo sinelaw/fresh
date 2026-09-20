@@ -3420,13 +3420,15 @@ impl Editor {
         }
     }
 
-    /// Which viewport row the caret sits on, when the panel owns the keyboard.
+    /// The row the caret sits on, by display index, when the panel owns the
+    /// keyboard — `None` when the selection is scrolled out of the window,
+    /// where there is no row to carry it.
     fn explorer_caret_row(&self) -> Option<usize> {
         let view = self.file_explorer()?;
         let selected = view.get_selected_index()?;
         view.viewport_display_indices()
-            .iter()
-            .position(|&i| i == selected)
+            .contains(&selected)
+            .then_some(selected)
     }
 
     /// One row per visible tree node — or the loading placeholder while the
@@ -3449,6 +3451,18 @@ impl Editor {
         let viewport_rows = rows as usize;
         if let Some(view) = self.file_explorer_mut() {
             view.set_viewport_height(viewport_rows);
+            // **One offset for the rows and the window.** The tree can shrink
+            // under a deep offset — a collapse, a search that admits three
+            // files — and the model shows rows from wherever its offset
+            // lands, while the window is declared at the clamped one; the
+            // rows it asks for would then not be the rows described. Clamp
+            // through the owner, here, so the two are the same number. This
+            // is also what the window's bar used to disagree with the rows
+            // about.
+            let max = view.max_scroll_offset();
+            if view.get_scroll_offset() > max {
+                view.set_scroll_offset(max);
+            }
         }
         if self.file_explorer().is_none() {
             return (
@@ -3479,8 +3493,7 @@ impl Editor {
         let search = view.is_search_active();
         let rows: Vec<fe::Row> = indices
             .iter()
-            .enumerate()
-            .filter_map(|(row, &actual)| {
+            .filter_map(|&actual| {
                 let &(node_id, indent) = display.get(actual)?;
                 let matched = search.then(|| view.get_match_for_node(node_id)).flatten();
                 crate::view::ui::file_explorer::describe_row(
@@ -3488,7 +3501,7 @@ impl Editor {
                         view,
                         node_id,
                         indent,
-                        row,
+                        row: actual,
                         is_cursor: selected == Some(actual),
                         is_multi: multi.contains(&node_id),
                         focused,
@@ -3505,24 +3518,20 @@ impl Editor {
                 )
             })
             .collect();
-        // The bar's numbers, in tree rows: what the tree holds, what the panel
-        // shows, where the window sits, and how far it can go. `None` when the
-        // whole tree fits, which is the whole of "should there be a bar"
-        // (issue #2859). The ceiling is the model's own — pinned ancestors put
-        // it past `total - rows`, and a bar that assumed otherwise showed the
-        // thumb at the end while the wheel still moved the tree.
-        let scroll = (viewport_rows > 0 && display.len() > viewport_rows).then(|| {
-            let max_offset = view
-                .max_scroll_offset()
-                .min(display.len().saturating_sub(1));
-            fe::Scroll {
-                offset: view.get_scroll_offset().min(max_offset),
-                max_offset,
-                total: display.len(),
-                rows: viewport_rows,
-            }
-        });
-        (fe::Body::Rows(rows), scroll)
+        // The window, in tree rows, as the viewport is told it: what the
+        // tree holds, where the run starts, and which ancestors are pinned
+        // above it. Whether there is a bar is the viewport's answer (issue
+        // #2859: a tree that fits draws none). The ceiling it derives from
+        // the pins is the model's `max_scroll_offset` for this offset —
+        // pinned ancestors put it past `total - rows`, and a bar that assumed
+        // otherwise showed the thumb at the end while the wheel still moved
+        // the tree.
+        let scroll = fe::Scroll {
+            offset: view.get_scroll_offset(),
+            total: display.len(),
+            pinned: view.sticky_display_indices(),
+        };
+        (fe::Body::Rows(rows), Some(scroll))
     }
 
     /// Paths with unsaved changes, which a row's status slot reads.

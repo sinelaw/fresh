@@ -591,6 +591,15 @@ export function treeNode(
      * Chars, not display columns: a plugin has the string, not the
      * terminal's width table. Out-of-range values resolve to the end. */
     windowAnchor?: { pinned?: number; start: number; len: number };
+    /** A button drawn at the row's tail, `[ label ]`, held against the
+     * panel's right edge: what this row is *for*, said on the row rather
+     * than only in a footer. A click on it fires `widget_event`
+     * `eventType: "action"` with `payload: { index, key }` and moves the
+     * selection to that row; the keyboard reaches the same thing through
+     * `activate`. The body is fitted to the columns the button leaves, so
+     * a row too wide for the panel slides under its button rather than
+     * pushing it off. Ignored on a bordered card. */
+    action?: string;
   },
 ): TreeNode {
   // `checked` is intentionally Optional<bool>, not a default-false
@@ -619,6 +628,9 @@ export function treeNode(
   }
   if (options?.extraLines && options.extraLines.length > 0) {
     node.extraLines = options.extraLines;
+  }
+  if (options?.action !== undefined) {
+    node.action = options.action;
   }
   return node;
 }

@@ -117,7 +117,7 @@ impl<M: 'static> Ui<M> {
             Input::Move { pos, mods } => {
                 if let Some(r) = self.scrollbar_drag {
                     // A drag in progress owns the pointer.
-                    self.scroll_to_pointer(r, pos.y);
+                    self.scroll_to_pointer(r, pos.y, out);
                     return true;
                 }
                 let paths = self.route(pos);
@@ -148,13 +148,15 @@ impl<M: 'static> Ui<M> {
                 // one pane to the pane pressed before it, forever.
                 self.captured = None;
                 // A press on a viewport's scrollbar gutter drives its scroll
-                // directly — click to jump, then drag to follow. Scroll is
-                // framework-owned, so this produces no application message.
+                // directly — click to jump, then drag to follow. The only
+                // message it produces is the window's own report of where it
+                // went (`Node::on_scroll`), for an owner that holds the
+                // offset.
                 if button == MouseButton::Left {
                     if let Some(r) = self.scrollbar_hit(pos) {
                         self.scrollbar_drag = Some(r);
                         self.scrollbar_grab = self.grab_within_thumb(r, pos.y);
-                        self.scroll_to_pointer(r, pos.y);
+                        self.scroll_to_pointer(r, pos.y, out);
                         return true;
                     }
                 }
@@ -282,7 +284,7 @@ impl<M: 'static> Ui<M> {
                     let mut contained = false;
                     for p in paths.iter() {
                         let p = p.clone();
-                        match self.scroll_chain(&p, wheel) {
+                        match self.scroll_chain(&p, wheel, out) {
                             Chain::Scrolled => return true,
                             Chain::Contained => contained = true,
                             Chain::Nothing => {}
@@ -854,11 +856,17 @@ impl<M: 'static> Ui<M> {
         (n.data.scroll_max.y.max(0) as u32 + window, window)
     }
 
-    fn scroll_to_pointer(&mut self, r: RenderId, y: i32) {
-        let (rect, max, content, window) = {
+    fn scroll_to_pointer(&mut self, r: RenderId, y: i32, out: &mut Vec<M>) {
+        let (rect, max, content, window, was) = {
             let Some(n) = self.render.get(r) else { return };
             let (content, window) = Self::bar_extents(n);
-            (n.data.rect, n.data.scroll_max.y, content, window)
+            (
+                n.data.rect,
+                n.data.scroll_max.y,
+                content,
+                window,
+                n.data.scroll.y,
+            )
         };
         use crate::render::spec::Draw;
         let track = rect.h.max(1);
@@ -884,10 +892,30 @@ impl<M: 'static> Ui<M> {
                 hi
             }
         };
+        let off = off.clamp(0, max);
         if let Some(n) = self.render.get_mut(r) {
-            n.data.scroll.y = off.clamp(0, max);
+            n.data.scroll.y = off;
         }
         self.mark_render_dirty(r);
+        if off != was {
+            self.report_scroll(r, off, out);
+        }
+    }
+
+    /// Tell the window's owner where the framework put it, if it asked to be
+    /// told — the reporting half of a controlled offset (`Node::on_scroll`).
+    /// Called after the move, by everything in this module that moves a
+    /// window; the anchor commands in `layout.rs` report the same way.
+    pub(crate) fn report_scroll(&self, r: RenderId, offset: i32, out: &mut Vec<M>) {
+        let Some(e) = self.render.get(r).map(|n| n.element) else {
+            return;
+        };
+        let Some(el) = self.arena.get(e) else {
+            return;
+        };
+        if let Some(f) = &resolve(&el.desc).on_scroll {
+            out.push(f(offset.max(0) as u32));
+        }
     }
 
     /// What one path did with the wheel.
@@ -900,7 +928,7 @@ impl<M: 'static> Ui<M> {
     /// overlay's edge; the web spells it `overscroll-behavior: contain`. A
     /// layer that scrolled nothing still absorbs the notch — but only once
     /// every path has been asked, which is the caller's job.
-    fn scroll_chain(&mut self, path: &[ElementId], wheel: Wheel) -> Chain {
+    fn scroll_chain(&mut self, path: &[ElementId], wheel: Wheel, out: &mut Vec<M>) -> Chain {
         for &n in path.iter().rev() {
             let Some(r) = self.render_for(n) else {
                 continue;
@@ -935,6 +963,9 @@ impl<M: 'static> Ui<M> {
                     }
                 }
                 self.mark_render_dirty(r);
+                if wheel.axis == Axis::Vertical {
+                    self.report_scroll(r, next, out);
+                }
                 return Chain::Scrolled;
             }
         }

@@ -1532,3 +1532,154 @@ fn a_captured_move_reports_the_byte_under_it() {
         got[1]
     );
 }
+
+// -- controlled offsets ------------------------------------------------------
+
+/// Forty one-cell rows in a ten-row frame, the offset held by the owner at
+/// `at`, reporting every move as the new offset.
+fn held_window(at: u32) -> Node<u32> {
+    let rows: Vec<Node<u32>> = (0..40).map(|i| text(format!("row {i}"))).collect();
+    viewport(col().children(rows))
+        .scroll(at)
+        .on_scroll(|y| y)
+        .scrollbar()
+}
+
+/// **A held window reports the wheel and then stands where its owner put
+/// it.** The framework moves its own copy so a run of notches between frames
+/// composes, and says where it went; the next layout re-applies the owner's
+/// value, which is the same one if the owner took the report and the old one
+/// if it did not. The window's position is the owner's fact, not the
+/// framework's — the same terms a list's controlled selection has.
+#[test]
+fn a_held_window_reports_the_wheel_and_stands_where_its_owner_put_it() {
+    let mut ui: Ui<u32> = Ui::new();
+    ui.frame(held_window(5), FRAME);
+    let vp = ui.root().unwrap();
+    assert_eq!(ui.scroll(vp).0.y, 5, "the owner's offset, at every layout");
+
+    let got = ui.dispatch(Input::Wheel {
+        pos: Point::new(2, 2),
+        delta: 3,
+        axis: Axis::Vertical,
+        mods: Mods::NONE,
+    });
+    assert!(got.claimed, "a wheel that moved a window is claimed");
+    assert_eq!(got.msgs, vec![8], "reported as the offset it moved to");
+    assert_eq!(
+        ui.scroll(vp).0.y,
+        8,
+        "between frames the framework's copy has moved, so a second notch \
+         composes with the first"
+    );
+    let got = ui.dispatch(Input::Wheel {
+        pos: Point::new(2, 2),
+        delta: 1,
+        axis: Axis::Vertical,
+        mods: Mods::NONE,
+    });
+    assert_eq!(got.msgs, vec![9]);
+
+    // The owner declined (kept 5): the next layout puts the window back.
+    ui.tick();
+    assert_eq!(ui.scroll(vp).0.y, 5, "the owner's value replaces the copy");
+
+    // The owner took the report: the window is where it said.
+    ui.frame(held_window(9), FRAME);
+    assert_eq!(ui.scroll(vp).0.y, 9);
+}
+
+/// And the bar: a press on the track reports the jump rather than keeping it.
+#[test]
+fn a_press_on_a_held_windows_track_reports_the_jump() {
+    let mut ui: Ui<u32> = Ui::new();
+    ui.frame(held_window(0), FRAME);
+    let vp = ui.root().unwrap();
+    let gutter = FRAME.w as i32 - 1;
+    let got = ui.dispatch(Input::press(
+        Point::new(gutter, FRAME.h as i32 - 1),
+        MouseButton::Left,
+        Mods::NONE,
+    ));
+    assert!(got.claimed);
+    assert_eq!(got.msgs.len(), 1, "one report per move: {:?}", got.msgs);
+    assert!(got.msgs[0] > 0, "toward the end");
+    // Dragging back to the top reports again, once, and a move that lands on
+    // the same offset reports nothing.
+    let got = ui.dispatch(Input::Move {
+        pos: Point::new(gutter, 0),
+        mods: Mods::NONE,
+    });
+    assert_eq!(got.msgs, vec![0]);
+    let got = ui.dispatch(Input::Move {
+        pos: Point::new(gutter, 0),
+        mods: Mods::NONE,
+    });
+    assert!(got.msgs.is_empty(), "no move, no report: {:?}", got.msgs);
+    ui.dispatch(Input::release(
+        Point::new(gutter, 0),
+        MouseButton::Left,
+        Mods::NONE,
+    ));
+    ui.tick();
+    assert_eq!(ui.scroll(vp).0.y, 0, "the owner still says 0");
+}
+
+/// **The owner's offset is never clamped.** Which offsets are reachable can
+/// depend on facts only the owner can evaluate (which rows it pins at an
+/// offset the window is not at), so an offset past the framework's own
+/// ceiling is taken as given, and the ceiling the bar reads rises to meet it
+/// — the thumb says "at the end" rather than pretending the window is
+/// somewhere it is not.
+#[test]
+fn a_held_offset_past_the_ceiling_is_kept_and_the_bar_agrees() {
+    let mut ui: Ui<u32> = Ui::new();
+    // 40 rows, a 10-row window: the framework's ceiling is 30.
+    ui.frame(held_window(33), FRAME);
+    let vp = ui.root().unwrap();
+    assert_eq!(ui.scroll(vp).0.y, 33, "kept, not pulled back to 30");
+    let bar = ui
+        .spec()
+        .items
+        .iter()
+        .find_map(|i| match i.draw {
+            fresh_ui::Draw::Scrollbar {
+                offset,
+                content,
+                window,
+                ..
+            } => Some((offset, content, u32::from(window), i.rect.h)),
+            _ => None,
+        })
+        .expect("a bar");
+    let (top, len) = fresh_ui::Draw::scrollbar_thumb(bar.0, bar.1, bar.2, bar.3);
+    assert_eq!(top + len, bar.3, "the thumb is flush with the track's end");
+    // And the wheel has nowhere further to go: not claimed, nothing reported.
+    let got = ui.dispatch(Input::Wheel {
+        pos: Point::new(2, 2),
+        delta: 1,
+        axis: Axis::Vertical,
+        mods: Mods::NONE,
+    });
+    assert!(!got.claimed && got.msgs.is_empty(), "{got:?}");
+}
+
+/// A window the framework owns can still report — an owner that only wants
+/// to *know* where the window is listens without holding the offset, and the
+/// window keeps what it reported.
+#[test]
+fn an_owned_window_reports_and_keeps_its_moves() {
+    let mut ui: Ui<u32> = Ui::new();
+    let rows: Vec<Node<u32>> = (0..40).map(|i| text(format!("row {i}"))).collect();
+    ui.frame(viewport(col().children(rows)).on_scroll(|y| y), FRAME);
+    let vp = ui.root().unwrap();
+    let got = ui.dispatch(Input::Wheel {
+        pos: Point::new(2, 2),
+        delta: 4,
+        axis: Axis::Vertical,
+        mods: Mods::NONE,
+    });
+    assert_eq!(got.msgs, vec![4]);
+    ui.tick();
+    assert_eq!(ui.scroll(vp).0.y, 4, "framework-owned: the move stands");
+}

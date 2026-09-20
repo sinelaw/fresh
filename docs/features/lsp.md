@@ -80,6 +80,12 @@ Fresh includes built-in LSP configurations for many languages. Install the serve
 | LaTeX | texlab | `brew install texlab` |
 | Markdown | marksman | `brew install marksman` |
 | C/C++ | clangd | `brew install llvm` |
+| Odin | ols | build from source: <https://github.com/DanielGavin/ols> |
+
+`ols` ships no binaries for most platforms, so Fresh does not start it on
+its own — otherwise every Odin file would report a server that isn't there.
+Once you have built it, set `lsp.odin.auto_start` to `true` (or start it
+from the palette) and it behaves like any other server.
 
 ## Python LSP Configuration
 

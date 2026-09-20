@@ -34,8 +34,8 @@ pub struct RowDesc<'a> {
     pub view: &'a FileTreeView,
     pub node_id: NodeId,
     pub indent: usize,
-    /// The row's index *in the viewport* — its key, and what hit-testing
-    /// answers with.
+    /// The row's index in the tree's display order — its key, what
+    /// hit-testing answers with, and the unit the window counts in.
     pub row: usize,
     pub is_cursor: bool,
     pub is_multi: bool,

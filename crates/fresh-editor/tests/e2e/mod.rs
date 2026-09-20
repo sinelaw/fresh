@@ -55,8 +55,10 @@ pub mod file_browser;
 pub mod file_explorer;
 pub mod file_explorer_compact_chain;
 pub mod file_explorer_cursor_under_modal;
+pub mod file_explorer_follow_active_buffer;
 pub mod file_explorer_open_focus;
 pub mod file_explorer_session_persist;
+pub mod file_explorer_window;
 pub mod file_permissions;
 pub mod flash;
 #[cfg(feature = "plugins")]
@@ -140,6 +142,8 @@ pub mod language_dialog_esc_cancels_edit;
 pub mod language_dialog_tab_size;
 pub mod language_textmate_grammar;
 pub mod mouse_session_input;
+pub mod odin_language;
+pub mod pascal_indent;
 #[cfg(feature = "plugins")]
 pub mod placeholder_window_embed;
 pub mod suspend_process;
@@ -388,5 +392,6 @@ pub mod warning_indicators;
 #[cfg(feature = "plugins")]
 pub mod widget_panel_ownership;
 pub mod window_switch_explorer_first_frame;
+pub mod word_drag_selection;
 #[cfg(feature = "plugins")]
 pub mod workspace;

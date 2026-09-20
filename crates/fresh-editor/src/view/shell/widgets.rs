@@ -387,6 +387,30 @@ fn tree_rows(content: u32, visible: u32) -> u16 {
     content.min(visible).min(u16::MAX as u32) as u16
 }
 
+/// The column a panel's scrollbar floats in.
+///
+/// A revealed bar takes no gutter: it is painted over its window's last
+/// column, deliberately, so a bar that comes and goes does not reflow the row
+/// under the pointer. That is right wherever the row's last cell is padding —
+/// which is every row a plugin builds to the panel's width, and why the rows
+/// are built to that width at all. Reserving the column instead takes one
+/// from every row, and a row that no longer fits the panel it was built for
+/// is a worse thing than a bar over a blank cell.
+///
+/// It is wrong for one cell only: the action button the *host* draws at a
+/// row's edge, which is chrome and cannot be padding. So a row carrying one
+/// is built a column short — and nothing else changes.
+const PANEL_BAR_COLS: u16 = 1;
+
+/// The width to build one tree row at: the panel's, less the column a
+/// floating bar would cut its button in half in.
+fn tree_row_width(panel: u16, node: &fresh_core::api::TreeNode) -> u16 {
+    match node.action.is_some() {
+        true => panel.saturating_sub(PANEL_BAR_COLS),
+        false => panel,
+    }
+}
+
 /// The description for a covered spec.
 ///
 /// `width` is the panel's inner content width, which some variants still
@@ -1737,7 +1761,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                     *checkable,
                     *item_height,
                     true,
-                    width as u32,
+                    tree_row_width(width, &n) as u32,
                     *indent_cols,
                     h_pan,
                 );
@@ -1813,6 +1837,11 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                         "key": item_key,
                         "checked": !n.checked.unwrap_or(false),
                     });
+                    hits.push(((a, b), h));
+                }
+                if let Some((a, b)) = r.action_range {
+                    let mut h = select(false);
+                    h.event_type = "action";
                     hits.push(((a, b), h));
                 }
                 // The body starts after whatever prefix the glyphs took —
@@ -1924,7 +1953,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                         checkable,
                         1,
                         false,
-                        width as u32,
+                        tree_row_width(width, &node) as u32,
                         indent,
                         h_pan,
                     );
@@ -1972,6 +2001,15 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
                                 "key": item_key,
                                 "checked": !node.checked.unwrap_or(false),
                             }),
+                            false,
+                        ));
+                    }
+                    if let Some((a, b)) = r.action_range {
+                        hits.push(hit(
+                            "action",
+                            a,
+                            b,
+                            serde_json::json!({ "index": abs, "key": item_key }),
                             false,
                         ));
                     }
@@ -5071,6 +5109,7 @@ pub(crate) mod tests {
             checked: None,
             extra_lines: Vec::new(),
             window_anchor: None,
+            action: None,
         }
     }
 
@@ -6221,6 +6260,7 @@ pub(crate) mod tests {
                     checked: None,
                     extra_lines: vec![raw(&format!("branch-{i}")), raw("2 files")],
                     window_anchor: None,
+                    action: None,
                 })
                 .collect(),
             item_keys: (0..n).map(|i| format!("s{i}")).collect(),

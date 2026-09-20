@@ -14,6 +14,7 @@ pub mod event_hooks;
 pub mod hooks;
 pub mod manager;
 pub mod manifest;
+pub mod owned_store;
 
 #[cfg(feature = "embed-plugins")]
 pub mod embedded;

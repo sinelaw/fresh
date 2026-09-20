@@ -2198,6 +2198,22 @@ pub struct FileExplorerConfig {
     #[serde(default = "default_explorer_side")]
     pub side: FileExplorerSide,
 
+    /// Keep the file-explorer tree pointed at the file the user is
+    /// currently editing: switching tabs, or anything that opens a file
+    /// into the focused pane, reveals that file in the tree and moves the
+    /// selection highlight onto it.
+    ///
+    /// Left alone while the sidebar is hidden, while the keyboard is inside
+    /// the tree (the user is navigating it, and moving the selection under
+    /// them would fight their input), for a file outside the project root,
+    /// and for an active buffer that is not a file at all.
+    ///
+    /// Independent of the explicit "show me where I am" reveal that opening
+    /// or focusing the sidebar performs — that one runs either way.
+    /// Default: false
+    #[serde(default = "default_false")]
+    pub follow_active_buffer: bool,
+
     /// Automatically focus the file explorer when the last buffer is
     /// closed. Set to `false` for a "blank workspace" workflow where
     /// nothing opens automatically and the user explicitly invokes the
@@ -2656,6 +2672,7 @@ impl Default for FileExplorerConfig {
             width: default_explorer_width(),
             preview_tabs: true,
             side: default_explorer_side(),
+            follow_active_buffer: false,
             auto_open_on_last_buffer_close: true,
             compact_directories: true,
             tree_indicator_collapsed: default_tree_indicator_collapsed(),
@@ -4949,6 +4966,38 @@ impl Config {
                 page_width: None,
                 use_tabs: None,
                 tab_size: None,
+                formatter: None,
+                format_on_save: false,
+                on_save: vec![],
+                word_characters: None,
+                indentation_guide: None,
+                indent: None,
+            },
+        );
+
+        // Odin (https://odin-lang.org). Its own convention is tabs shown 8
+        // wide, which is what `odinfmt` and the compiler's own sources use —
+        // the same shape as the Go entry above, and the reason both set
+        // `show_whitespace_tabs: false`: a file that is *meant* to be tabs
+        // does not need every indent flagged.
+        languages.insert(
+            "odin".to_string(),
+            LanguageConfig {
+                extensions: vec!["odin".to_string()],
+                filenames: vec![],
+                grammar: "odin".to_string(),
+                comment_prefix: Some("//".to_string()),
+                auto_indent: true,
+                auto_close: None,
+                auto_surround: None,
+                textmate_grammar: None,
+                show_whitespace_tabs: false,
+                line_wrap: None,
+                wrap_column: None,
+                page_view: None,
+                page_width: None,
+                use_tabs: Some(true),
+                tab_size: Some(8),
                 formatter: None,
                 format_on_save: false,
                 on_save: vec![],
@@ -7676,6 +7725,28 @@ impl Config {
                 only_features: None,
                 except_features: None,
                 root_markers: Default::default(),
+            }]),
+        );
+
+        // ols - Odin Language Server (https://github.com/DanielGavin/ols).
+        // Not auto-started: `ols` has no binary releases for most platforms
+        // and has to be built from source, so assuming it is on PATH would
+        // make every Odin file report a missing server.
+        lsp.insert(
+            "odin".to_string(),
+            LspLanguageConfig::Multi(vec![LspServerConfig {
+                command: "ols".to_string(),
+                args: Some(vec![]),
+                enabled: true,
+                auto_start: false,
+                process_limits: ProcessLimits::default(),
+                initialization_options: None,
+                env: Default::default(),
+                language_id_overrides: Default::default(),
+                name: None,
+                only_features: None,
+                except_features: None,
+                root_markers: vec!["ols.json".to_string(), ".git".to_string()],
             }]),
         );
 
