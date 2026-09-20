@@ -250,10 +250,14 @@ fn build_rows(e: &Explorer) -> Node<UiMsg> {
             .iter()
             .copied()
             .chain(first..first.saturating_add(u32::from(win.h)).min(total));
-        col().children(indices.map(|i| match by_index.get(&(i as usize)) {
-            Some(r) => node_row(caret_row, r),
-            None => row().h(Sizing::Cells(1)),
-        }))
+        // Clip hit targets as well as ink to the content lane. A long row's
+        // status slot can otherwise answer hover beneath the scrollbar.
+        col()
+            .clip(true)
+            .children(indices.map(|i| match by_index.get(&(i as usize)) {
+                Some(r) => node_row(caret_row, r),
+                None => row().h(Sizing::Cells(1)),
+            }))
     });
     // A gesture around the window rather than a listener on each row: the
     // wheel is the window's, wherever over it the pointer is — the rows, the

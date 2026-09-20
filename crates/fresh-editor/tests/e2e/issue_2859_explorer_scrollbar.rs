@@ -9,7 +9,7 @@
 
 use crate::common::explorer::{first_explorer_token, token_on_line_with};
 use crate::common::harness::EditorTestHarness;
-use crossterm::event::{KeyCode, KeyModifiers};
+use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use fresh::config::{Config, ExplorerWidth};
 use ratatui::style::Color;
 use std::fs;
@@ -93,6 +93,31 @@ fn thumb_rows(harness: &EditorTestHarness) -> Vec<u16> {
         .into_iter()
         .filter(|&row| cell_bg(harness, SCROLLBAR_COL, row) == Some(thumb))
         .collect()
+}
+
+fn drag_scrollbar(harness: &mut EditorTestHarness, from: u16, to: u16) {
+    let direction = if to >= from { 1 } else { -1 };
+    let events = std::iter::once((MouseEventKind::Down(MouseButton::Left), from))
+        .chain((1..=from.abs_diff(to)).map(|step| {
+            (
+                MouseEventKind::Drag(MouseButton::Left),
+                (i32::from(from) + direction * i32::from(step)) as u16,
+            )
+        }))
+        .chain(std::iter::once((MouseEventKind::Up(MouseButton::Left), to)));
+    for (kind, row) in events {
+        harness
+            .send_mouse(MouseEvent {
+                kind,
+                column: SCROLLBAR_COL,
+                row,
+                modifiers: KeyModifiers::NONE,
+            })
+            .unwrap();
+        // The controlled viewport receives the model's new pinned rows on
+        // the next frame, which also updates the scrollbar's travel range.
+        harness.render().unwrap();
+    }
 }
 
 /// An overflowing tree paints a themed bar down its reserved lane, and the
@@ -203,9 +228,7 @@ fn file_explorer_scrollbar_thumb_drag_scrolls_without_moving_the_selection() {
     let track_top = body[0];
     let track_bottom = *body.last().unwrap();
 
-    harness
-        .mouse_drag(SCROLLBAR_COL, track_top, SCROLLBAR_COL, track_bottom)
-        .unwrap();
+    drag_scrollbar(&mut harness, track_top, track_bottom);
 
     let dragged = harness.screen_to_string();
     assert!(
@@ -214,9 +237,7 @@ fn file_explorer_scrollbar_thumb_drag_scrolls_without_moving_the_selection() {
          of the tree.\nScreen:\n{dragged}"
     );
 
-    harness
-        .mouse_drag(SCROLLBAR_COL, track_bottom, SCROLLBAR_COL, track_top)
-        .unwrap();
+    drag_scrollbar(&mut harness, track_bottom, track_top);
 
     let back = harness.screen_to_string();
     assert_eq!(
