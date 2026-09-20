@@ -2962,14 +2962,28 @@ impl JsEditorApi {
     /// package from a local directory. The destination is a staging directory
     /// the editor owns, so unlike the `copyPath` this replaced, a copy cannot
     /// land on anything the user cares about.
+    ///
+    /// `from` must be a `LocalPath`. Staging directories, installed packages
+    /// and plugin state all live on the editor host — that is the point of
+    /// them, so an install survives an SSH session going away — and the copy
+    /// that fills one reads the host too. A path belonging to a window's
+    /// authority is refused rather than read from the host, which would
+    /// silently open a same-named local file instead of the remote one the
+    /// caller meant. Build the argument with `editor.localPath(...)`.
     pub fn copy_into_scratch(
         &self,
         token: String,
-        #[plugin_api(ts_type = "string | LocalPath | WindowPath | AuthorityPath")]
-        from: fresh_core::api::PluginPath,
+        #[plugin_api(ts_type = "LocalPath")] from: fresh_core::api::PluginPath,
     ) -> bool {
-        self.services
-            .copy_into_scratch(&token, Path::new(from.as_str()))
+        let fresh_core::api::PluginPath::Local(path) = &from else {
+            tracing::warn!(
+                "copyIntoScratch refused: {:?} is not a local path; staging lives on the \
+                 editor host, so build the source with editor.localPath(...)",
+                from.as_str()
+            );
+            return false;
+        };
+        self.services.copy_into_scratch(&token, Path::new(path))
     }
 
     /// Move an installed package to the system trash. Returns false if nothing

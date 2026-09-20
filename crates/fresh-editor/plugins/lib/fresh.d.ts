@@ -3630,8 +3630,16 @@ interface EditorAPI {
 	* package from a local directory. The destination is a staging directory
 	* the editor owns, so unlike the `copyPath` this replaced, a copy cannot
 	* land on anything the user cares about.
+	* 
+	* `from` must be a `LocalPath`. Staging directories, installed packages
+	* and plugin state all live on the editor host — that is the point of
+	* them, so an install survives an SSH session going away — and the copy
+	* that fills one reads the host too. A path belonging to a window's
+	* authority is refused rather than read from the host, which would
+	* silently open a same-named local file instead of the remote one the
+	* caller meant. Build the argument with `editor.localPath(...)`.
 	*/
-	copyIntoScratch(token: string, from: string | LocalPath | WindowPath | AuthorityPath): boolean;
+	copyIntoScratch(token: string, from: LocalPath): boolean;
 	/**
 	* Move an installed package to the system trash. Returns false if nothing
 	* is installed under that kind and name.
