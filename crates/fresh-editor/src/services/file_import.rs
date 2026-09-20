@@ -1,4 +1,4 @@
-//! Explicit local-file imports. Source and destination filesystems are separate:
+//! Local-file imports. Source and destination filesystems are separate:
 //! an SSH workspace's `copy` would look for the source on the remote host.
 
 use crate::model::filesystem::FileSystem;
@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 /// Parse the quoted/escaped paths terminals send for file drops. This is only
-/// used in the explicit import prompt; it never interprets ordinary pastes.
+/// used by the focused file explorer and the explicit import prompt.
 /// No shell is run and no variables, globs, or command substitutions expand.
 pub fn parse_paths(input: &str) -> io::Result<Vec<PathBuf>> {
     let paths = parse_paths_for_platform(input, cfg!(windows))?;

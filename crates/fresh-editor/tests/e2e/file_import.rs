@@ -18,6 +18,73 @@ fn quoted(path: &std::path::Path) -> String {
 }
 
 #[test]
+fn drop_into_focused_explorer_imports_without_a_command_or_enter() {
+    let mut h = EditorTestHarness::with_temp_project(180, 32).unwrap();
+    let sources = tempfile::tempdir().unwrap();
+    let first = sources.path().join("한글 image.txt");
+    let second = sources.path().join("second.txt");
+    std::fs::write(&first, "FIRST_DROPPED_CONTENT").unwrap();
+    std::fs::write(&second, "SECOND_DROPPED_CONTENT").unwrap();
+    h.send_key(KeyCode::Char('e'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.wait_for_screen_contains("File Explorer").unwrap();
+    h.send_paste(&format!("{} {}", quoted(&first), quoted(&second)))
+        .unwrap();
+    // A pre-change build pastes the paths into the buffer instead. Assert
+    // before waiting so the reproducer fails immediately on that build.
+    h.assert_screen_not_contains(&sources.path().display().to_string());
+    h.wait_for_screen_contains("Imported 2 files; skipped 0")
+        .unwrap();
+    assert!(h
+        .screen_to_string()
+        .replace(' ', "")
+        .contains("한글image.txt"));
+    h.assert_screen_contains("second.txt");
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_for_screen_contains("SECOND_DROPPED_CONTENT")
+        .unwrap();
+}
+
+#[test]
+fn direct_drop_uses_selected_files_parent_and_prompts_for_conflicts() {
+    let mut h = EditorTestHarness::with_temp_project(180, 32).unwrap();
+    let project = h.project_dir().unwrap().to_path_buf();
+    std::fs::create_dir(project.join("assets")).unwrap();
+    std::fs::write(project.join("assets/asset.txt"), "OLD_CONTENT").unwrap();
+    let sources = tempfile::tempdir().unwrap();
+    let source = sources.path().join("asset.txt");
+    std::fs::write(&source, "DIRECT_DROP_CONTENT").unwrap();
+    h.send_key(KeyCode::Char('e'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.wait_for_screen_contains("assets").unwrap();
+    h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_for_screen_contains("asset.txt").unwrap();
+    h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+    h.wait_for_screen_contains("OLD_CONTENT").unwrap();
+    h.send_paste(&quoted(&source)).unwrap();
+    h.wait_for_screen_contains("Name Conflict").unwrap();
+    h.send_key(KeyCode::Char('o'), KeyModifiers::NONE).unwrap();
+    h.wait_for_screen_contains("Imported 1 files; skipped 0")
+        .unwrap();
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_for_screen_contains("DIRECT_DROP_CONTENT").unwrap();
+}
+
+#[test]
+fn explorer_rejects_non_path_pastes_without_editing_the_buffer() {
+    let mut h = EditorTestHarness::with_temp_project(180, 32).unwrap();
+    h.type_text("UNCHANGED_BUFFER").unwrap();
+    h.send_key(KeyCode::Char('e'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.wait_for_screen_contains("File Explorer").unwrap();
+    h.send_paste("not a file drop").unwrap();
+    h.assert_screen_contains("use absolute local file paths");
+    h.assert_screen_not_contains("not a file drop");
+    h.assert_screen_contains("UNCHANGED_BUFFER");
+}
+
+#[test]
 fn imports_multiple_dropped_files_and_refreshes_explorer() {
     let mut h = EditorTestHarness::with_temp_project(180, 32).unwrap();
     let sources = tempfile::tempdir().unwrap();
@@ -221,9 +288,7 @@ fn imports_into_remote_workspace_through_agent() {
     h.send_key(KeyCode::Char('e'), KeyModifiers::CONTROL)
         .unwrap();
     h.wait_for_screen_contains("[localhost]").unwrap();
-    start_import(&mut h);
     h.send_paste(&quoted(&source)).unwrap();
-    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
     h.wait_for_screen_contains("Imported 1 files; skipped 0")
         .unwrap();
     h.assert_screen_contains("uploaded.txt");

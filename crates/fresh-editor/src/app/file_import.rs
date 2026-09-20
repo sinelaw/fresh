@@ -1,4 +1,4 @@
-//! Window-owned import queue and its explicit terminal-drop prompt.
+//! Window-owned import queue for explorer drops and the manual import prompt.
 
 use super::Editor;
 use crate::input::keybindings::KeyContext;
@@ -44,8 +44,19 @@ impl Editor {
         if self.active_window().file_import.is_some() {
             return;
         }
-        let directory = self
-            .file_explorer()
+        let directory = self.file_import_directory();
+        self.start_prompt(
+            t!(
+                "explorer.import_prompt",
+                directory = directory.display().to_string()
+            )
+            .to_string(),
+            PromptType::FileImportPaths { directory },
+        );
+    }
+
+    fn file_import_directory(&self) -> PathBuf {
+        self.file_explorer()
             .and_then(|explorer| explorer.get_selected_entry())
             .map(|entry| {
                 if entry.is_dir() {
@@ -58,18 +69,19 @@ impl Editor {
                         .to_path_buf()
                 }
             })
-            .unwrap_or_else(|| self.working_dir().to_path_buf());
-        self.start_prompt(
-            t!(
-                "explorer.import_prompt",
-                directory = directory.display().to_string()
-            )
-            .to_string(),
-            PromptType::FileImportPaths { directory },
-        );
+            .unwrap_or_else(|| self.working_dir().to_path_buf())
+    }
+
+    /// Terminal drops have no pointer coordinates. The focused explorer's
+    /// selection supplies the destination, just as for its paste command.
+    pub(crate) fn import_dropped_files(&mut self, input: &str) {
+        self.confirm_file_import_paths(input, self.file_import_directory());
     }
 
     pub(crate) fn confirm_file_import_paths(&mut self, input: &str, directory: PathBuf) {
+        if self.active_window().file_import.is_some() {
+            return;
+        }
         match parse_paths(input) {
             Ok(paths) => {
                 self.active_window_mut().file_import = Some(FileImport {

@@ -27,12 +27,17 @@ Preview tabs are enabled by default. Turn them off in the Settings UI if you pre
 
 ## Importing Local Files (Terminal Drag and Drop)
 
-Select a destination directory in the explorer (selecting a file uses its
-parent directory), then choose **Import Local Files** from the command palette
-or the explorer's right-click menu. Drop files from Finder or another file
-manager into the terminal while the import prompt is open, then press **Enter**.
-You can also paste their absolute local paths. Without an explorer selection,
-the command uses the current workspace directory.
+Click a destination directory in the explorer to give it focus, then drop files
+from Finder or another file manager into the terminal.
+When the terminal sends the paths as a bracketed paste, copying starts immediately:
+there is no command to choose or **Enter** to press. Selecting a file uses its
+parent directory. Pasting absolute local file paths into the focused explorer
+works the same way.
+
+Terminal paste events carry paths, not a drop position, so the destination is
+the explorer's selection, not the folder under the mouse pointer. The explorer
+must have focus before the drop. Without a selection, imports use the current
+workspace directory.
 
 This copies the **file bytes**, preserving the originals. Multiple paths,
 spaces, and non-ASCII names are supported. On Unix, paths may be single-quoted,
@@ -54,10 +59,13 @@ the explorer refreshes after each successful import. A disconnected host may
 leave a `.fresh-import-*` staging directory; cleanup failures report its path.
 
 Terminal support depends on the terminal forwarding the drop as quoted or escaped
-local paths, either as bracketed paste or ordinary text input. The explicit prompt
-works with both forms and prevents ordinary text pastes from importing files.
-Dropping onto an editor buffer still follows the terminal's usual text-paste
-behavior. This does not add native GUI/browser drop events. If Fresh itself runs
+local paths. For terminals that send ordinary keystrokes instead of bracketed
+paste, choose **Import Local Files** from the command palette or the explorer's
+right-click menu, drop the files into its prompt, then press **Enter**. The command
+also lets you type paths manually. With the editor buffer focused, drops and
+pastes keep their usual text-paste behavior. Other text pasted into the focused
+explorer is rejected without changing the buffer. This does not add native
+GUI/browser drop events. If Fresh itself runs
 on a server (for example after `ssh host`), local path strings cannot upload your
 computer's files; run Fresh locally with an SSH workspace instead.
 

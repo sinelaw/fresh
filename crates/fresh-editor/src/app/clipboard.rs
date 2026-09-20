@@ -1169,7 +1169,7 @@ impl Editor {
 
     /// Route a terminal-initiated bracketed paste to a focused
     /// floating panel (Orchestrator picker / New-Session form / plugin
-    /// overlay), focused dock, or a panel mounted into the active
+    /// overlay), focused dock, file explorer, or a panel mounted into the active
     /// buffer (Search & Replace) when one owns the keyboard.
     ///
     /// Bracketed paste arrives as a single `Event::Paste` rather than
@@ -1180,11 +1180,11 @@ impl Editor {
     /// into the New-Session dialog dumped the text into the obscured
     /// file instead of the focused field).
     ///
-    /// Returns `true` when a panel owns the keyboard (the paste was
-    /// either inserted into its focused `Text` widget, or deliberately
+    /// Returns `true` when a panel or the explorer owns the keyboard (the
+    /// paste was handled as a file import, inserted into a `Text` widget, or deliberately
     /// swallowed because focus isn't on a text field — a modal with no
     /// text input focused must ignore the paste, not leak it into the
-    /// hidden buffer). Returns `false` when no panel owns the keyboard,
+    /// hidden buffer). Returns `false` when neither owns the keyboard,
     /// so the caller falls back to the normal `paste_text` path.
     pub(crate) fn paste_bracketed_into_focused_panel(&mut self, text: &str) -> bool {
         // The Settings dialog is a capture-all modal overlay that owns the
@@ -1217,6 +1217,15 @@ impl Editor {
         } else if let Some(i) = self.focused_sidebar_panel() {
             super::PanelSlot::Sidebar(i)
         } else {
+            // A terminal file drop arrives as path text. Read the current
+            // keyboard owner from the tree: the explorer itself holds a
+            // sidebar layer, so editor_base_owns_keyboard() excludes it too.
+            // Prompts and other overlays name their own context and retain
+            // their pastes. Ctrl+V's internal file clipboard stays separate.
+            if self.get_key_context() == crate::input::keybindings::KeyContext::FileExplorer {
+                self.import_dropped_files(text);
+                return true;
+            }
             // No floating panel or dock owns the keyboard — but a panel
             // mounted *into the active buffer* still can. The Search &
             // Replace panel is one: a widget panel rendered into a
@@ -1240,16 +1249,6 @@ impl Editor {
             // the layers here, so a new overlay is covered by declaring
             // itself and not by being added to a list.
             if !self.editor_base_owns_keyboard() {
-                return false;
-            }
-            // The file explorer is inside the editor's own layer, so the
-            // check above does not speak for it. `Action::Paste` routes it
-            // to `file_explorer_paste`; a bracketed paste there has never
-            // been wired up, and this is not the change that should wire
-            // it — decline and leave that path exactly as it was.
-            if self.active_window().key_context
-                == crate::input::keybindings::KeyContext::FileExplorer
-            {
                 return false;
             }
             let buffer_id = self.active_buffer();
