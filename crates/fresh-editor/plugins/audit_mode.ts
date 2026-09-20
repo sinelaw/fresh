@@ -4065,18 +4065,32 @@ function buildHunkPatch(filePath: string, hunk: Hunk, lineRange?: { start: numbe
  * Returns true on success.
  */
 async function applyHunkPatch(patch: string, flags: string[]): Promise<boolean> {
-    const tmpDir = editor.getTempDir();
-    const patchPath = editor.pathJoin(tmpDir, `fresh-review-${Date.now()}.patch`);
-    editor.writeFile(editor.localPath(patchPath), patch);
-    const cwd = gitCwd();
-    // Validate first
-    const check = await editor.spawnProcess("git", ["apply", "--check", ...flags, patchPath], cwd);
-    if (check.exit_code !== 0) {
-        editor.setStatus("Patch failed: " + (check.stderr || "").trim());
+    // A staging directory rather than a path of our own under the temp dir:
+    // this used to leave a `fresh-review-*.patch` file behind for every hunk
+    // applied, because there was never any cleanup here. The editor takes the
+    // directory back on `scratchDiscard`, on every path out of this function.
+    const token = editor.scratchCreate("review-patch");
+    if (!token) return false;
+    const dir = editor.scratchPath(token);
+    if (!dir) return false;
+    const patchPath = editor.pathJoin(dir, "hunk.patch");
+    if (!editor.writeFile(editor.localPath(patchPath), patch)) {
+        editor.scratchDiscard(token);
         return false;
     }
-    const result = await editor.spawnProcess("git", ["apply", ...flags, patchPath], cwd);
-    return result.exit_code === 0;
+    try {
+        const cwd = gitCwd();
+        // Validate first
+        const check = await editor.spawnProcess("git", ["apply", "--check", ...flags, patchPath], cwd);
+        if (check.exit_code !== 0) {
+            editor.setStatus("Patch failed: " + (check.stderr || "").trim());
+            return false;
+        }
+        const result = await editor.spawnProcess("git", ["apply", ...flags, patchPath], cwd);
+        return result.exit_code === 0;
+    } finally {
+        editor.scratchDiscard(token);
+    }
 }
 
 /**
