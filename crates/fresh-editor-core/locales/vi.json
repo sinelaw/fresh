@@ -1146,6 +1146,8 @@
   "lsp.cannot_open_definition": "Không thể mở vị trí định nghĩa",
   "lsp.definition_external_uri": "Định nghĩa nằm ở vị trí bên ngoài không có tệp nguồn cục bộ: %{uri}",
   "lsp.cannot_rename_unsaved": "Không thể đổi tên trong buffer chưa lưu",
+  "lsp.overwrite_refused": "Đã bỏ qua yêu cầu ghi đè %{name} từ máy chủ ngôn ngữ",
+  "lsp.delete_refused": "Đã bỏ qua yêu cầu xóa %{name} từ máy chủ ngôn ngữ",
   "lsp.code_action_applied": "Đã áp dụng: %{title} (%{count} thay đổi)",
   "lsp.code_action_hint": "Nhấn số để chọn, Esc để hủy",
   "lsp.disabled.library_file": "Tệp thư viện (ngoài dự án)",

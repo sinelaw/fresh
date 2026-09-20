@@ -1141,11 +1141,18 @@ impl Editor {
                 // accumulates one dead directory per deleted workspace — the
                 // user finds them later with no way to tell which are live.
                 // Best-effort for the same reason as the record above.
+                //
+                // To the trash rather than unlinked. Unlike the editor's
+                // other self-owned directories — staging areas, caches — this
+                // holds something the user typed and read: the scrollback of
+                // terminals they ran. Deleting the workspace is their
+                // decision, but it should not be the last word on output they
+                // may still want.
                 let terminals = self.dir_context().terminal_dir_for(&root);
                 if terminals.is_dir() {
-                    if let Err(e) = std::fs::remove_dir_all(&terminals) {
+                    if let Err(e) = trash::delete(&terminals) {
                         tracing::warn!(
-                            "DeleteWorkspace: could not remove terminal state {:?}: {e}",
+                            "DeleteWorkspace: could not move terminal state {:?} to the trash: {e}",
                             terminals
                         );
                     }

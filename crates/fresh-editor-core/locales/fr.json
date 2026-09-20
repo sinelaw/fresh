@@ -1146,6 +1146,8 @@
   "lsp.cannot_open_definition": "Impossible d'ouvrir l'emplacement de la définition",
   "lsp.definition_external_uri": "La définition se trouve dans un emplacement externe sans fichier source local : %{uri}",
   "lsp.cannot_rename_unsaved": "Impossible de renommer dans un tampon non enregistré",
+  "lsp.overwrite_refused": "Demande d'écrasement de %{name} par le serveur de langage ignorée",
+  "lsp.delete_refused": "Demande de suppression de %{name} par le serveur de langage ignorée",
   "lsp.code_action_applied": "Appliqué : %{title} (%{count} modifications)",
   "lsp.code_action_hint": "Appuyez sur un numéro pour sélectionner, Échap pour annuler",
   "lsp.disabled.library_file": "Fichier de bibliothèque (hors du projet)",

@@ -42,12 +42,20 @@ Fresh is now licensed **GPL-3.0-or-later**, up from GPL-2.0-only (#3328).
 * **Vi `.` no longer drops the insert it replays** when typed quickly after Esc
 * **Fixed stale LSP diagnostics after vi-mode edits**, and Save All sending the wrong file's content to language servers (#3258)
 * **The homepage's demo player paints again on Chrome/Linux** instead of showing a black box (#3106, reported by @sgon00)
+* **A language server can no longer delete your files.** A server-initiated `workspace/applyEdit` arrived with no confirmation and was applied as-is, including its "delete this file (recursively)" operation — permanently, bypassing the system trash the file explorer deletes through. Fresh now reports the request and ignores it
+* **Uninstalling a package, replacing one on upgrade, and deleting a theme all go to the system trash**, instead of being unlinked outright. A mis-click is recoverable now
+* **Deleting a folder that contains a symlink no longer empties what the link points at.** The recursive delete treated a link to a directory as a directory and descended into it, so deleting a folder holding a link to, say, `~/Documents` deleted the contents of `~/Documents` — then reported a failure, after the fact. Links are unlinked now, never followed (reachable from the file explorer when cutting and pasting between filesystems)
+* **A language server can no longer overwrite a file either.** `Create` and `Rename` resource operations honoured an `overwrite` flag from the server, truncating or clobbering an existing file with no confirmation. Both are now reported and ignored
+* **The install script refuses to replace a directory that is not a Fresh install.** `FRESH_INSTALL_DIR` is removed wholesale during an install, and the only guards were against `""`, `/` and `$HOME` — so `FRESH_INSTALL_DIR=$HOME/.local` wiped it without a prompt. An existing directory now has to be empty or hold a Fresh binary, receipt or file manifest
 
 ### Internals
 
 * Minor performance and dependency updates, including a security fix for a TLS library (RUSTSEC-2026-0285)
 * **Less allocation churn on the render path** - a new memory-profiling harness found two hot spots copying and regrowing tens of MB over a two-minute editing session, and a large batch of explorer decorations no longer re-resolves the project root once per path (#3266, #3103)
 * Scrollbars are one implementation in the shared UI library now, so they behave the same on every surface
+* **Plugins can no longer delete, move, or overwrite a path they name.** `removePath`, `renamePath` and `copyPath` are gone from the plugin API. `removePath` checked that its target sat under the temp or config directory, but only the top-level argument — a symlink inside the target walked its recursive delete back out of the fence — and `renamePath` had no fence at all and fell back to copy-then-delete, so anything `removePath` refused could be moved somewhere it allowed and deleted from there. What replaced them names a *thing* rather than a path: `scratchCreate`/`scratchPath`/`scratchDiscard` for staging directories the editor issues and takes back, `scratchFromDirectory`/`installScratch`/`uninstallPackage` for packages by kind and name, and `stateSet`/`stateGet`/`stateKeys`/`stateDelete` for namespaced storage whose layout the editor owns. Third-party plugins using the old calls will need updating
+* **`writeFile` refuses to overwrite an existing file, as it always claimed to.** The docs said it "fails if the file already exists to prevent plugins from accidentally overwriting user data"; the implementation wrote a temp file and renamed it over whatever was there, so a plugin trusting the documentation destroyed the file. Replacing one is now `replaceFile`, asked for by name
+* **The orchestrator's saved machines moved into the editor-owned state store** and are imported from the old directory on first load. The old files are left in place — a plugin can no longer delete a path it names — and are inert
 
 ## 0.5.1
 

@@ -3569,10 +3569,21 @@ interface EditorAPI {
 	*/
 	readFile(path: string | LocalPath | WindowPath | AuthorityPath): string | null;
 	/**
-	* Write file contents to the path's filesystem. Parent directories are
-	* created as needed.
+	* Write file contents to a NEW file on the path's filesystem. Parent
+	* directories are created as needed. Returns false if the path already
+	* exists — use `replaceFile` to replace a file deliberately.
 	*/
 	writeFile(path: string | LocalPath | WindowPath | AuthorityPath, content: string): boolean;
+	/**
+	* Write to a file, replacing it if it already exists.
+	* 
+	* `writeFile` refuses an existing path, which is what its documentation
+	* always promised and what stops a plugin destroying a user's file by
+	* accident. Use this when replacing the file is the actual intent — a
+	* plugin rewriting its own cache or state, or re-exporting a report the
+	* user asked for again. The write is atomic.
+	*/
+	replaceFile(path: string | LocalPath | WindowPath | AuthorityPath, content: string): boolean;
 	/**
 	* Read directory contents (returns array of {name, is_file, is_dir})
 	*/
@@ -3584,21 +3595,76 @@ interface EditorAPI {
 	*/
 	createDir(path: string | LocalPath | WindowPath | AuthorityPath): boolean;
 	/**
-	* Permanently remove a file or directory on the path's filesystem
-	* (recursively for directories). For safety, the path must be under the OS
-	* temp directory or the Fresh config directory. Returns true on success.
+	* Create an editor-owned staging directory and return the opaque token
+	* that names it. Write into it with the path `scratchPath` returns, then
+	* either publish it with `installScratch` or drop it with
+	* `scratchDiscard`. `label` only makes the directory recognisable to a
+	* human; it does not decide where the directory goes.
 	*/
-	removePath(path: string | LocalPath | WindowPath | AuthorityPath): boolean;
+	scratchCreate(label: string): string | null;
 	/**
-	* Rename/move a file or directory. Both paths must target the same
-	* filesystem (a cross-backend move is rejected). Returns true on success.
+	* The directory a staging token names, or `null` if the token is unknown
+	* or already spent.
 	*/
-	renamePath(from: string | LocalPath | WindowPath | AuthorityPath, to: string | LocalPath | WindowPath | AuthorityPath): boolean;
+	scratchPath(token: string): string | null;
 	/**
-	* Copy a file or directory recursively to a new location. Both paths must
-	* target the same filesystem. Returns true on success.
+	* Discard a staging directory. The path is looked up from the token, so
+	* an unknown or spent token removes nothing.
 	*/
-	copyPath(from: string | LocalPath | WindowPath | AuthorityPath, to: string | LocalPath | WindowPath | AuthorityPath): boolean;
+	scratchDiscard(token: string): boolean;
+	/**
+	* Publish a staging directory as the installed package `<kind>/<name>`,
+	* where `kind` is one of `plugin`, `theme`, `language` or `bundle`. Any
+	* existing install under that name goes to the system trash first, so an
+	* upgrade is recoverable.
+	* 
+	* `subpath` installs one directory out of the staging tree (a package in
+	* a subdirectory of a cloned monorepo); pass `""` for the whole thing. It
+	* chooses the source only — `kind` and `name` decide where the package
+	* lands. Installing the whole tree spends the token; installing a subpath
+	* leaves it live so the rest can be discarded.
+	*/
+	installScratch(token: string, kind: string, name: string, subpath: string): boolean;
+	/**
+	* Create a staging directory holding a copy of `from`, and return the
+	* token that names it — how a package installed from a local directory
+	* reaches staging.
+	* 
+	* `from` is a path on the editor host. Staging directories, installed
+	* packages and plugin state all live there by design, so an install
+	* survives the SSH session that started it going away; there is no
+	* authority-path form of this call, so the argument is a plain path
+	* rather than a `LocalPath | WindowPath | AuthorityPath` union with two
+	* thirds of it rejected at runtime.
+	* 
+	* Answers `null` if `from` is not a directory or could not be copied,
+	* having discarded anything it had already staged — so there is never a
+	* half-filled staging directory to clean up.
+	*/
+	scratchFromDirectory(from: string): string | null;
+	/**
+	* Move an installed package to the system trash. Returns false if nothing
+	* is installed under that kind and name.
+	*/
+	uninstallPackage(kind: string, name: string): boolean;
+	/**
+	* Write a namespaced state entry, replacing any previous value. The
+	* editor owns the on-disk layout; a plugin names the entry, not the file.
+	*/
+	stateSet(namespace: string, key: string, value: string): boolean;
+	/**
+	* Read a namespaced state entry, or `null` if it is unset.
+	*/
+	stateGet(namespace: string, key: string): string | null;
+	/**
+	* The keys set in a namespace, in no particular order.
+	*/
+	stateKeys(namespace: string): string[];
+	/**
+	* Clear a namespaced state entry. Returns true if it is gone afterwards,
+	* including when it was already unset.
+	*/
+	stateDelete(namespace: string, key: string): boolean;
 	/**
 	* Construct a `LocalPath` — a path that always resolves on the local
 	* editor host, regardless of the active window's authority. Use for

@@ -1146,6 +1146,8 @@
   "lsp.cannot_open_definition": "Nelze otevřít umístění definice",
   "lsp.definition_external_uri": "Definice je v externím umístění bez místního zdrojového souboru: %{uri}",
   "lsp.cannot_rename_unsaved": "Nelze přejmenovat v neuloženém bufferu",
+  "lsp.overwrite_refused": "Požadavek jazykového serveru na přepsání %{name} byl ignorován",
+  "lsp.delete_refused": "Požadavek jazykového serveru na smazání %{name} byl ignorován",
   "lsp.code_action_applied": "Použito: %{title} (%{count} změn)",
   "lsp.code_action_hint": "Stiskněte číslo pro výběr, Esc pro zrušení",
   "lsp.disabled.library_file": "Knihovní soubor (mimo projekt)",

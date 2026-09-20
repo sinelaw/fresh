@@ -1175,6 +1175,8 @@
   "lsp.cannot_open_definition": "Could not open definition location",
   "lsp.cannot_rename_unsaved": "Cannot rename in unsaved buffer",
   "lsp.definition_external_uri": "Definition is in an external location with no local source file: %{uri}",
+  "lsp.overwrite_refused": "Ignored a request from the language server to overwrite %{name}",
+  "lsp.delete_refused": "Ignored a delete request from the language server for %{name}",
   "lsp.code_action_applied": "Applied: %{title} (%{count} change(s))",
   "lsp.code_action_hint": "Press number to select, Esc to cancel",
   "lsp.disabled.library_file": "Library file (outside project)",

@@ -560,19 +560,27 @@ pub trait FileSystem: Send + Sync {
     /// Remove an empty directory
     fn remove_dir(&self, path: &Path) -> io::Result<()>;
 
-    /// Recursively remove a directory and all its contents
-    fn remove_dir_all(&self, path: &Path) -> io::Result<()> {
-        for entry in self.read_dir(path)? {
-            if entry.is_dir() {
-                self.remove_dir_all(&entry.path)?;
-            } else {
-                self.remove_file(&entry.path)?;
-            }
-        }
-        self.remove_dir(path)
-    }
+    // There is deliberately no `remove_dir_all` here.
+    //
+    // The one that was here walked the tree itself, and `DirEntry::is_dir()`
+    // answers true for a symlink *pointing at* a directory — so it descended
+    // through links and deleted the contents of whatever they pointed at,
+    // anywhere on the disk, then failed with `ENOTDIR` on the link, reporting
+    // an error only once the data was gone. Guarding the entries it walked
+    // still left the case where the path it was handed was itself a link.
+    //
+    // Nothing in the editor needs to walk a tree to delete it. The file
+    // explorer — the only caller that ever did — moves the entry to the
+    // system trash in one operation instead, which cannot follow a link and
+    // which the user can undo. See `App::trash_path`.
 
-    /// Recursively copy a directory and all its contents to dst
+    /// Recursively copy a directory and all its contents to dst.
+    ///
+    /// This follows symlinks: a link to a directory is copied as the
+    /// directory it names. That duplicates data rather than destroying any,
+    /// and there is no symlink-creating operation on this trait to do better
+    /// with. A symlink that points at one of its own ancestors will recurse
+    /// until the disk fills.
     fn copy_dir_all(&self, src: &Path, dst: &Path) -> io::Result<()> {
         self.create_dir_all(dst)?;
         for entry in self.read_dir(src)? {

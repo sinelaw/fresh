@@ -21,7 +21,9 @@ const LOG = `${editor.getCwd()}/focus_log.txt`;
 
 function record(line: string): void {
   lines.push(line);
-  editor.writeFile(LOG, lines.join("\n") + "\n");
+  // `replaceFile`, not `writeFile`: the log is rewritten whole on every
+  // event, and `writeFile` refuses a path that already exists.
+  editor.replaceFile(LOG, lines.join("\n") + "\n");
 }
 
 editor.on("buffer_activated", (a) => record(`buffer_activated ${a.buffer_id}@${a.window_id}`));
