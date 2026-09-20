@@ -51,12 +51,63 @@ const fsLocal = {
   readDir: (p: string) => editor.readDir(editor.localPath(p)),
   fileExists: (p: string) => editor.fileExists(editor.localPath(p)),
   createDir: (p: string) => editor.createDir(editor.localPath(p)),
-  removePath: (p: string) => editor.removePath(editor.localPath(p)),
-  renamePath: (from: string, to: string) =>
-    editor.renamePath(editor.localPath(from), editor.localPath(to)),
-  copyPath: (from: string, to: string) =>
-    editor.copyPath(editor.localPath(from), editor.localPath(to)),
 };
+
+// Staging directories, and the package identities that replaced paths.
+//
+// The package manager used to build its own temp paths and hand them to
+// `removePath` / `renamePath` / `copyPath`. Those took any path at all, and
+// `removePath`'s fence checked only its top-level argument — a symlink inside
+// the tree walked its recursive delete back out. None of them exist any more.
+// What is left names things instead: the editor issues a staging token and
+// knows which directory it stands for, and a package is a kind and a name.
+
+/** A staging directory the editor owns, with the token that names it. */
+interface Scratch {
+  token: string;
+  dir: string;
+}
+
+/** The four package kinds, as `installScratch` and `uninstallPackage` name them. */
+type PackageKind = "plugin" | "theme" | "language" | "bundle";
+
+function newScratch(label: string): Scratch | null {
+  const token = editor.scratchCreate(label);
+  if (!token) return null;
+  const dir = editor.scratchPath(token);
+  if (!dir) return null;
+  return { token, dir };
+}
+
+/**
+ * Drop staging directories. Safe on a null, safe twice, and safe after an
+ * install spent the token — the editor answers an unknown token by removing
+ * nothing, so a cleanup path cannot take the install with it.
+ */
+function discardScratch(...all: (Scratch | null)[]): void {
+  for (const s of all) {
+    if (s) editor.scratchDiscard(s.token);
+  }
+}
+
+/**
+ * The directory name a package occupies, which is also how the editor is
+ * asked to install or uninstall it.
+ *
+ * It has to be a single path component: the editor refuses anything else, so
+ * a manifest name carrying a slash lands as one sanitised directory instead
+ * of quietly nesting (or escaping) the packages directory.
+ */
+function packageDirName(name: string): string {
+  return name.replace(/[^a-zA-Z0-9_.-]/g, "-").replace(/^\.+/, "");
+}
+
+/** Which kind a manifest declares, defaulting the way the installers do. */
+function packageKind(type: string | undefined): PackageKind {
+  return type === "theme" || type === "language" || type === "bundle"
+    ? type
+    : "plugin";
+}
 
 // =============================================================================
 // Configuration
@@ -933,58 +984,40 @@ async function unloadPluginsUnder(packageDir: string): Promise<void> {
 }
 
 /**
- * Move a freshly fetched, already-validated package into its install
- * directory, replacing any copy already there.
+ * Publish a staging directory as the installed package `<kind>/<name>`.
  *
- * Callers validate the staging copy first and unload anything running
- * out of the target, so by the time this runs the replacement is known
- * good. The existing copy is renamed aside and only deleted once the
- * new one is in place; a failed swap puts it back, so an upgrade can
- * never leave the user without a working install. The backup name
- * starts with a dot so `getInstalledPackages` never sees it as a
- * package of its own.
+ * This used to be `swapInstalledDir`, which did the rename-aside/replace/
+ * delete-backup dance here using `renamePath` and `removePath`. The editor
+ * does it now: it moves any existing install to the system trash, then
+ * renames the staging directory into place. Two things follow from that.
+ * A failed upgrade cannot leave the user without a package — the replacement
+ * only lands once the old copy is safely aside — and a *successful* one is
+ * still recoverable, because the copy it replaced is in the trash rather
+ * than unlinked.
  *
- * `move` renames the staging directory in (the git-clone paths, whose
- * staging lives under the temp dir); otherwise it is copied, leaving
- * the source intact (local-path installs).
+ * `subpath` installs one directory out of the staging tree, for a package
+ * that lives in a subdirectory of a cloned monorepo.
  */
-function swapInstalledDir(
-  stagingDir: string,
-  packagesDir: string,
+function installStaged(
+  scratch: Scratch,
+  kind: PackageKind,
   packageName: string,
-  move: boolean,
+  subpath = "",
 ): boolean {
-  const targetDir = editor.pathJoin(packagesDir, packageName);
-  const backupDir = editor.pathJoin(
-    packagesDir,
-    `.${packageName}.replaced-${Date.now()}`,
-  );
+  return editor.installScratch(scratch.token, kind, packageDirName(packageName), subpath);
+}
 
-  const hadExisting = fsLocal.fileExists(targetDir);
-  if (hadExisting && !fsLocal.renamePath(targetDir, backupDir)) {
-    return false;
-  }
+/** Where a package of this kind is installed, for reading version info. */
+function packagesDirFor(kind: PackageKind): string {
+  return kind === "plugin" ? PACKAGES_DIR
+    : kind === "theme" ? THEMES_PACKAGES_DIR
+    : kind === "bundle" ? BUNDLES_PACKAGES_DIR
+    : LANGUAGES_PACKAGES_DIR;
+}
 
-  const placed = move
-    ? fsLocal.renamePath(stagingDir, targetDir)
-    : fsLocal.copyPath(stagingDir, targetDir);
-
-  if (!placed) {
-    // A directory copy that fails part-way still leaves what it managed
-    // to write. Clear it: a half-copied package left at the install
-    // path is scanned as an installed one and shows up in the browser
-    // as if the install had worked.
-    fsLocal.removePath(targetDir);
-    if (hadExisting) {
-      fsLocal.renamePath(backupDir, targetDir);
-    }
-    return false;
-  }
-
-  if (hadExisting) {
-    fsLocal.removePath(backupDir);
-  }
-  return true;
+/** The installed directory a package of this kind and name occupies. */
+function installedDirFor(kind: PackageKind, packageName: string): string {
+  return editor.pathJoin(packagesDirFor(kind), packageDirName(packageName));
 }
 
 /**
@@ -1082,10 +1115,15 @@ async function installFromDirectFile(
   url: string,
   packageName: string
 ): Promise<boolean> {
-  const tempFile = editor.pathJoin(
-    editor.getTempDir(),
-    `fresh-pkg-file-${hashString(url)}-${Date.now()}.json`
-  );
+  // The download and the staged package get separate staging directories:
+  // the staged one becomes the installed package verbatim, so the downloaded
+  // file must not be sitting inside it.
+  const download = newScratch("pkg-file");
+  if (!download) {
+    packageFailure(`Failed to create a staging directory for ${packageName}`);
+    return false;
+  }
+  const tempFile = editor.pathJoin(download.dir, "download.json");
 
   editor.setStatus(`Downloading ${url}...`);
   const result = await editor.httpFetch(url, tempFile);
@@ -1099,14 +1137,14 @@ async function installFromDirectFile(
       ? `HTTP ${result.exit_code}`
       : result.stderr.split("\n")[0] || "Download failed";
     packageFailure(`Failed to download ${packageName}: ${errorMsg}`);
-    fsLocal.removePath(tempFile);
+    discardScratch(download);
     return false;
   }
 
   const content = fsLocal.readFile(tempFile);
   if (!content) {
     packageFailure(`Failed to read downloaded file`);
-    fsLocal.removePath(tempFile);
+    discardScratch(download);
     return false;
   }
 
@@ -1115,7 +1153,7 @@ async function installFromDirectFile(
     parsed = JSON.parse(content) as Record<string, unknown>;
   } catch (e) {
     packageFailure(`Downloaded file is not valid JSON: ${e}`);
-    fsLocal.removePath(tempFile);
+    discardScratch(download);
     return false;
   }
 
@@ -1136,7 +1174,7 @@ async function installFromDirectFile(
     packageFailure(
       `Unrecognized file format at ${url} - direct file install currently supports Fresh theme JSON only`
     );
-    fsLocal.removePath(tempFile);
+    discardScratch(download);
     return false;
   }
 
@@ -1144,32 +1182,29 @@ async function installFromDirectFile(
   if (themeName) packageName = themeName;
 
   // Sanitize for use as a directory name.
-  const safeName = packageName.replace(/[^a-zA-Z0-9_.-]/g, "-");
-  const targetDir = editor.pathJoin(THEMES_PACKAGES_DIR, safeName);
+  const safeName = packageDirName(packageName);
+  const targetDir = installedDirFor("theme", safeName);
   // Remembered before anything is replaced so the finished install can
   // report an upgrade; `null` when this is a first install.
   const previousVersion = fsLocal.fileExists(targetDir)
     ? installedVersion(targetDir)
     : null;
 
-  // Stage the whole package in the temp dir first. Only once it is
-  // complete does `swapInstalledDir` touch the installed copy, so a
-  // half-written theme can never replace a working one.
-  const stagingDir = editor.pathJoin(
-    editor.getTempDir(),
-    `fresh-pkg-theme-${hashString(url)}-${Date.now()}`,
-  );
-  if (!ensureDir(stagingDir)) {
-    packageFailure(`Failed to create staging directory ${stagingDir}`);
-    fsLocal.removePath(tempFile);
+  // Stage the whole package first. Only once it is complete does
+  // `installStaged` touch the installed copy, so a half-written theme can
+  // never replace a working one.
+  const staging = newScratch("pkg-theme");
+  if (!staging) {
+    packageFailure(`Failed to create a staging directory for ${safeName}`);
+    discardScratch(download);
     return false;
   }
+  const stagingDir = staging.dir;
 
   const themeFileName = "theme.json";
   if (!fsLocal.writeFile(editor.pathJoin(stagingDir, themeFileName), content)) {
     packageFailure(`Failed to write theme file`);
-    fsLocal.removePath(tempFile);
-    fsLocal.removePath(stagingDir);
+    discardScratch(download, staging);
     return false;
   }
 
@@ -1184,8 +1219,7 @@ async function installFromDirectFile(
   };
   if (!await writeJsonFile(editor.pathJoin(stagingDir, "package.json"), manifest)) {
     packageFailure(`Failed to write package manifest`);
-    fsLocal.removePath(tempFile);
-    fsLocal.removePath(stagingDir);
+    discardScratch(download, staging);
     return false;
   }
 
@@ -1195,15 +1229,14 @@ async function installFromDirectFile(
     installed_at: new Date().toISOString(),
   });
 
-  ensureDir(THEMES_PACKAGES_DIR);
-  if (!swapInstalledDir(stagingDir, THEMES_PACKAGES_DIR, safeName, true)) {
+  if (!installStaged(staging, "theme", safeName)) {
     packageFailure(`Failed to install ${safeName}: could not replace ${targetDir}`);
-    fsLocal.removePath(tempFile);
-    fsLocal.removePath(stagingDir);
+    discardScratch(download, staging);
     return false;
   }
 
-  fsLocal.removePath(tempFile);
+  // The install spent the staging token; only the download is left to drop.
+  discardScratch(download);
   editor.reloadThemes();
   editor.setStatus(
     installedStatus("Installed theme", themeName ?? safeName, previousVersion, manifest.version),
@@ -1220,8 +1253,15 @@ async function installFromRepo(
   packageName: string,
   version?: string
 ): Promise<boolean> {
-  // Clone to temp directory first to detect package type
-  const tempDir = editor.pathJoin(editor.getTempDir(), `fresh-pkg-clone-${hashString(repoUrl)}-${Date.now()}`);
+  // Clone into a staging directory first to detect package type. `git clone`
+  // is happy with an existing empty directory, which is what the editor hands
+  // back here.
+  const staging = newScratch("pkg-clone");
+  if (!staging) {
+    packageFailure(`Failed to create a staging directory for ${packageName}`);
+    return false;
+  }
+  const tempDir = staging.dir;
 
   const cloneArgs = ["clone"];
   if (!version || version === "latest") {
@@ -1234,6 +1274,7 @@ async function installFromRepo(
   if (result.exit_code !== 0) {
     const errorMsg = gitErrorMessage(result.stderr, "Clone failed");
     packageFailure(`Failed to install ${packageName}: ${errorMsg}`);
+    discardScratch(staging);
     return false;
   }
 
@@ -1250,8 +1291,7 @@ async function installFromRepo(
   if (!validation.valid) {
     editor.warn(`[pkg] Invalid package '${packageName}': ${validation.error}`);
     packageFailure(`Failed to install ${packageName}: ${validation.error}`);
-    // Clean up
-    fsLocal.removePath(tempDir);
+    discardScratch(staging);
     return false;
   }
 
@@ -1261,12 +1301,8 @@ async function installFromRepo(
   if (manifest?.name) packageName = manifest.name;
 
   // Determine correct target directory based on actual package type
-  const actualType = manifest?.type || "plugin";
-  const correctPackagesDir = actualType === "plugin" ? PACKAGES_DIR
-                           : actualType === "theme" ? THEMES_PACKAGES_DIR
-                           : actualType === "bundle" ? BUNDLES_PACKAGES_DIR
-                           : LANGUAGES_PACKAGES_DIR;
-  const correctTargetDir = editor.pathJoin(correctPackagesDir, packageName);
+  const kind = packageKind(manifest?.type);
+  const correctTargetDir = installedDirFor(kind, packageName);
 
   // An existing installation is an upgrade, not a dead end. The clone
   // above is already fetched and validated, so replacing the old copy
@@ -1290,11 +1326,9 @@ async function installFromRepo(
     await unloadPluginsUnder(correctTargetDir);
   }
 
-  // Ensure correct directory exists and move from temp
-  ensureDir(correctPackagesDir);
-  if (!swapInstalledDir(tempDir, correctPackagesDir, packageName, true)) {
+  if (!installStaged(staging, kind, packageName)) {
     packageFailure(`Failed to install ${packageName}: could not move package to target directory`);
-    fsLocal.removePath(tempDir);
+    discardScratch(staging);
     return false;
   }
 
@@ -1372,31 +1406,29 @@ async function installFromLocalPath(
   packageName = manifest.name;
 
   // Determine correct target directory based on actual package type
-  const actualType = manifest.type || "plugin";
-  const correctPackagesDir = actualType === "plugin" ? PACKAGES_DIR
-                           : actualType === "theme" ? THEMES_PACKAGES_DIR
-                           : actualType === "bundle" ? BUNDLES_PACKAGES_DIR
-                           : LANGUAGES_PACKAGES_DIR;
-  const correctTargetDir = editor.pathJoin(correctPackagesDir, packageName);
+  const kind = packageKind(manifest.type);
+  const correctTargetDir = installedDirFor(kind, packageName);
 
   // An existing installation is an upgrade, not a dead end.
   const previousVersion = fsLocal.fileExists(correctTargetDir)
     ? installedVersion(correctTargetDir)
     : null;
 
-  // Ensure correct directory exists
-  ensureDir(correctPackagesDir);
-
   // Copy into a staging directory and validate there, so a source that
   // turns out not to be a valid package never touches an installation
-  // that already works.
-  const stagingDir = editor.pathJoin(
-    editor.getTempDir(),
-    `fresh-pkg-local-${hashString(sourcePath)}-${Date.now()}`,
-  );
+  // that already works. `copyIntoScratch` only ever writes into a staging
+  // directory the editor owns, so unlike the `copyPath` it replaced it
+  // cannot land on — and overwrite — anything else.
+  const staging = newScratch("pkg-local");
+  if (!staging) {
+    packageFailure(`Failed to create a staging directory for ${packageName}`);
+    return false;
+  }
+  const stagingDir = staging.dir;
   editor.setStatus(`Copying from ${sourcePath}...`);
-  if (!fsLocal.copyPath(sourcePath, stagingDir)) {
+  if (!editor.copyIntoScratch(staging.token, editor.localPath(sourcePath))) {
     packageFailure(`Failed to copy package from ${sourcePath}`);
+    discardScratch(staging);
     return false;
   }
 
@@ -1405,8 +1437,7 @@ async function installFromLocalPath(
   if (!validation.valid) {
     editor.warn(`[pkg] Invalid package '${packageName}': ${validation.error}`);
     packageFailure(`Failed to install ${packageName}: ${validation.error}`);
-    // Clean up the invalid package
-    fsLocal.removePath(stagingDir);
+    discardScratch(staging);
     return false;
   }
 
@@ -1423,9 +1454,9 @@ async function installFromLocalPath(
     // leave the old copy running for the rest of the session.
     await unloadPluginsUnder(correctTargetDir);
   }
-  if (!swapInstalledDir(stagingDir, correctPackagesDir, packageName, true)) {
+  if (!installStaged(staging, kind, packageName)) {
     packageFailure(`Failed to install ${packageName}: could not move package to target directory`);
-    fsLocal.removePath(stagingDir);
+    discardScratch(staging);
     return false;
   }
 
@@ -1467,7 +1498,12 @@ async function installFromMonorepo(
   packageName: string,
   version?: string
 ): Promise<boolean> {
-  const tempDir = editor.pathJoin(editor.getTempDir(), `fresh-pkg-${hashString(parsed.repoUrl)}-${Date.now()}`);
+  const staging = newScratch("pkg-mono");
+  if (!staging) {
+    packageFailure(`Failed to create a staging directory for ${packageName}`);
+    return false;
+  }
+  const tempDir = staging.dir;
 
   try {
     // Clone the full repo to temp
@@ -1494,7 +1530,6 @@ async function installFromMonorepo(
     const subpathDir = editor.pathJoin(tempDir, parsed.subpath!);
     if (!fsLocal.fileExists(subpathDir)) {
       packageFailure(`Subpath '${parsed.subpath}' not found in repository`);
-      fsLocal.removePath(tempDir);
       return false;
     }
 
@@ -1503,7 +1538,6 @@ async function installFromMonorepo(
     if (!validation.valid) {
       editor.warn(`[pkg] Invalid package '${packageName}': ${validation.error}`);
       packageFailure(`Failed to install ${packageName}: ${validation.error}`);
-      fsLocal.removePath(tempDir);
       return false;
     }
 
@@ -1513,12 +1547,8 @@ async function installFromMonorepo(
     if (manifest?.name) packageName = manifest.name;
 
     // Determine correct target directory based on actual package type
-    const actualType = manifest?.type || "plugin";
-    const correctPackagesDir = actualType === "plugin" ? PACKAGES_DIR
-                             : actualType === "theme" ? THEMES_PACKAGES_DIR
-                             : actualType === "bundle" ? BUNDLES_PACKAGES_DIR
-                             : LANGUAGES_PACKAGES_DIR;
-    const correctTargetDir = editor.pathJoin(correctPackagesDir, packageName);
+    const kind = packageKind(manifest?.type);
+    const correctTargetDir = installedDirFor(kind, packageName);
 
     // An existing installation is an upgrade, not a dead end. The
     // subdirectory in the clone is already fetched and validated, so
@@ -1526,9 +1556,6 @@ async function installFromMonorepo(
     const previousVersion = fsLocal.fileExists(correctTargetDir)
       ? installedVersion(correctTargetDir)
       : null;
-
-    // Ensure correct directory exists
-    ensureDir(correctPackagesDir);
 
     // Store the original monorepo URL in a .fresh-source file. Written
     // into the clone before the swap so the marker lands with the files
@@ -1547,11 +1574,12 @@ async function installFromMonorepo(
       await unloadPluginsUnder(correctTargetDir);
     }
 
-    // Copy subdirectory to correct target
+    // Install the subdirectory, leaving the rest of the clone for the
+    // `finally` below to drop. A subpath install keeps the staging token
+    // live for exactly that reason.
     editor.setStatus(`Installing ${packageName} from ${parsed.subpath}...`);
-    if (!swapInstalledDir(subpathDir, correctPackagesDir, packageName, false)) {
+    if (!installStaged(staging, kind, packageName, parsed.subpath!)) {
       packageFailure(`Failed to copy package from ${parsed.subpath}`);
-      fsLocal.removePath(tempDir);
       return false;
     }
 
@@ -1577,8 +1605,9 @@ async function installFromMonorepo(
     }
     return true;
   } finally {
-    // Cleanup temp directory
-    fsLocal.removePath(tempDir);
+    // Drop the clone. After a subpath install this is the repo minus the
+    // package, which has already been moved out of it.
+    discardScratch(staging);
   }
 }
 
@@ -1830,8 +1859,13 @@ async function removePackage(pkg: InstalledPackage): Promise<boolean> {
     }
   }
 
-  // Remove package directory
-  if (fsLocal.removePath(pkg.path)) {
+  // Remove the package. The editor resolves kind + directory name to a path
+  // and moves it to the system trash: an uninstall used to unlink the tree
+  // outright, so a mis-click on a package someone had configured was
+  // unrecoverable. The directory name comes off `pkg.path` rather than
+  // `pkg.name`, because the directory is what is actually on disk — a
+  // manifest name that needed sanitising differs from it.
+  if (editor.uninstallPackage(pkg.type, editor.pathBasename(pkg.path))) {
     // Reload themes if we removed a theme so Select Theme list is updated
     if (pkg.type === "theme") {
       editor.reloadThemes();

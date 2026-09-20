@@ -1036,18 +1036,6 @@ impl JsEditorApi {
         }
     }
 
-    /// Whether two plugin paths resolve to the same filesystem backend (so a
-    /// two-path op like rename/copy is well-defined). Cross-backend moves are
-    /// rejected rather than silently operating on one side.
-    fn same_backend(a: &fresh_core::api::PluginPath, b: &fresh_core::api::PluginPath) -> bool {
-        use fresh_core::api::PluginPath::{Authority, Local};
-        match (a, b) {
-            (Local(_), Local(_)) => true,
-            (Authority { window: wa, .. }, Authority { window: wb, .. }) => wa == wb,
-            _ => false,
-        }
-    }
-
     /// Send an AddPluginConfigField command to the host.
     fn send_field_registration(&self, field_name: &str, field_schema: serde_json::Value) {
         let _ = self
@@ -2893,83 +2881,111 @@ impl JsEditorApi {
         self.fs_for(&path).create_dir_all(Path::new(path.as_str()))
     }
 
-    /// Permanently remove a file or directory on the path's filesystem
-    /// (recursively for directories). For safety, the path must be under the OS
-    /// temp directory or the Fresh config directory. Returns true on success.
-    pub fn remove_path(
-        &self,
-        #[plugin_api(ts_type = "string | LocalPath | WindowPath | AuthorityPath")]
-        path: fresh_core::api::PluginPath,
-    ) -> bool {
-        let fs = self.fs_for(&path);
-        let target = match fs.canonicalize(Path::new(path.as_str())) {
-            Some(p) => p,
-            None => return false, // path doesn't exist or can't be resolved
-        };
+    // `removePath`, `renamePath` and `copyPath` used to live here.
+    //
+    // All three took a path the plugin chose. `removePath` checked that the
+    // top-level target sat under the temp or config directory, but a symlink
+    // *inside* that target walked its recursive delete straight back out;
+    // `renamePath` had no such check at all and fell back to copy-then-delete,
+    // so anything `removePath` refused could be moved somewhere it allowed and
+    // deleted from there. `copyPath` overwrote its destination. Between them a
+    // plugin bug could destroy any file the editor could write, with no
+    // confirmation and nothing in the trash to recover from.
+    //
+    // What replaced them takes a name instead of a path — a staging token the
+    // editor issued, or a package kind and name, or a state namespace and key
+    // — and the editor resolves that to a path itself.
 
-        // Canonicalize allowed roots through the same backend so path prefix
-        // comparisons are consistent (e.g. Windows extended-length paths).
-        let temp_dir = fs
-            .canonicalize(&std::env::temp_dir())
-            .unwrap_or_else(std::env::temp_dir);
-        let config_dir = fs
-            .canonicalize(&self.services.config_dir())
-            .unwrap_or_else(|| self.services.config_dir());
-
-        // Verify the path is under an allowed root (temp or config dir)
-        let allowed = target.starts_with(&temp_dir) || target.starts_with(&config_dir);
-        if !allowed {
-            tracing::warn!(
-                "removePath refused: {:?} is not under temp dir ({:?}) or config dir ({:?})",
-                target,
-                temp_dir,
-                config_dir
-            );
-            return false;
-        }
-
-        // Don't allow removing the root directories themselves
-        if target == temp_dir || target == config_dir {
-            tracing::warn!(
-                "removePath refused: cannot remove root directory {:?}",
-                target
-            );
-            return false;
-        }
-
-        fs.remove_path(&target)
+    /// Create an editor-owned staging directory and return the opaque token
+    /// that names it. Write into it with the path `scratchPath` returns, then
+    /// either publish it with `installScratch` or drop it with
+    /// `scratchDiscard`. `label` only makes the directory recognisable to a
+    /// human; it does not decide where the directory goes.
+    pub fn scratch_create(&self, label: String) -> Option<String> {
+        self.services.scratch_create(&label)
     }
 
-    /// Rename/move a file or directory. Both paths must target the same
-    /// filesystem (a cross-backend move is rejected). Returns true on success.
-    pub fn rename_path(
-        &self,
-        #[plugin_api(ts_type = "string | LocalPath | WindowPath | AuthorityPath")]
-        from: fresh_core::api::PluginPath,
-        #[plugin_api(ts_type = "string | LocalPath | WindowPath | AuthorityPath")]
-        to: fresh_core::api::PluginPath,
-    ) -> bool {
-        if !Self::same_backend(&from, &to) {
-            return false;
-        }
-        self.fs_for(&from)
-            .rename(Path::new(from.as_str()), Path::new(to.as_str()))
+    /// The directory a staging token names, or `null` if the token is unknown
+    /// or already spent.
+    pub fn scratch_path(&self, token: String) -> Option<String> {
+        self.services
+            .scratch_path(&token)
+            .map(|p| p.to_string_lossy().to_string())
     }
 
-    /// Copy a file or directory recursively to a new location. Both paths must
-    /// target the same filesystem. Returns true on success.
-    pub fn copy_path(
+    /// Discard a staging directory. The path is looked up from the token, so
+    /// an unknown or spent token removes nothing.
+    pub fn scratch_discard(&self, token: String) -> bool {
+        self.services.scratch_discard(&token)
+    }
+
+    /// Publish a staging directory as the installed package `<kind>/<name>`,
+    /// where `kind` is one of `plugin`, `theme`, `language` or `bundle`. Any
+    /// existing install under that name goes to the system trash first, so an
+    /// upgrade is recoverable.
+    ///
+    /// `subpath` installs one directory out of the staging tree (a package in
+    /// a subdirectory of a cloned monorepo); pass `""` for the whole thing. It
+    /// chooses the source only — `kind` and `name` decide where the package
+    /// lands. Installing the whole tree spends the token; installing a subpath
+    /// leaves it live so the rest can be discarded.
+    pub fn install_scratch(
         &self,
+        token: String,
+        kind: String,
+        name: String,
+        subpath: String,
+    ) -> bool {
+        self.services.install_scratch(&token, &kind, &name, &subpath)
+    }
+
+    /// Copy a directory tree into a staging directory, for installing a
+    /// package from a local directory. The destination is a staging directory
+    /// the editor owns, so unlike the `copyPath` this replaced, a copy cannot
+    /// land on anything the user cares about.
+    pub fn copy_into_scratch(
+        &self,
+        token: String,
         #[plugin_api(ts_type = "string | LocalPath | WindowPath | AuthorityPath")]
         from: fresh_core::api::PluginPath,
-        #[plugin_api(ts_type = "string | LocalPath | WindowPath | AuthorityPath")]
-        to: fresh_core::api::PluginPath,
     ) -> bool {
-        if !Self::same_backend(&from, &to) {
-            return false;
-        }
-        self.fs_for(&from)
-            .copy(Path::new(from.as_str()), Path::new(to.as_str()))
+        self.services
+            .copy_into_scratch(&token, Path::new(from.as_str()))
+    }
+
+    /// Move an installed package to the system trash. Returns false if nothing
+    /// is installed under that kind and name.
+    pub fn uninstall_package(&self, kind: String, name: String) -> bool {
+        self.services.uninstall_package(&kind, &name)
+    }
+
+    /// Write a namespaced state entry, replacing any previous value. The
+    /// editor owns the on-disk layout; a plugin names the entry, not the file.
+    pub fn state_set(&self, namespace: String, key: String, value: String) -> bool {
+        self.services.state_set(&namespace, &key, &value)
+    }
+
+    /// Read a namespaced state entry, or `null` if it is unset.
+    pub fn state_get(&self, namespace: String, key: String) -> Option<String> {
+        self.services.state_get(&namespace, &key)
+    }
+
+    /// The keys set in a namespace, in no particular order.
+    #[plugin_api(ts_return = "string[]")]
+    pub fn state_keys<'js>(
+        &self,
+        ctx: rquickjs::Ctx<'js>,
+        namespace: String,
+    ) -> rquickjs::Result<Value<'js>> {
+        let keys = self.services.state_keys(&namespace);
+        rquickjs_serde::to_value(ctx, &keys)
+            .map_err(|e| rquickjs::Error::new_from_js_message("serialize", "", &e.to_string()))
+    }
+
+    /// Clear a namespaced state entry. Returns true if it is gone afterwards,
+    /// including when it was already unset.
+    pub fn state_delete(&self, namespace: String, key: String) -> bool {
+        self.services.state_delete(&namespace, &key)
     }
 
     /// Construct a `LocalPath` — a path that always resolves on the local
@@ -3833,21 +3849,13 @@ impl JsEditorApi {
     }
 
     /// Delete a custom theme file (sync)
+    ///
+    /// The editor resolves the name to a path and moves the file to the system
+    /// trash: this used to unlink it, so a mis-click lost a hand-tuned theme
+    /// with nothing to recover from.
     #[qjs(rename = "_deleteThemeSync")]
     pub fn delete_theme_sync(&self, name: String) -> bool {
-        // Security: only allow deleting from the themes directory
-        let themes_dir = self.services.config_dir().join("themes");
-        let theme_path = themes_dir.join(format!("{}.json", name));
-
-        // Verify the file is actually in the themes directory (prevent path traversal)
-        if let Ok(canonical) = theme_path.canonicalize() {
-            if let Ok(themes_canonical) = themes_dir.canonicalize() {
-                if canonical.starts_with(&themes_canonical) {
-                    return std::fs::remove_file(&canonical).is_ok();
-                }
-            }
-        }
-        false
+        self.services.trash_theme(&name)
     }
 
     /// Delete a custom theme (alias for deleteThemeSync)
@@ -10512,19 +10520,6 @@ mod tests {
         fn create_dir_all(&self, path: &Path) -> bool {
             path.is_dir() || std::fs::create_dir_all(path).is_ok()
         }
-        fn remove_path(&self, path: &Path) -> bool {
-            if path.is_dir() {
-                std::fs::remove_dir_all(path).is_ok()
-            } else {
-                std::fs::remove_file(path).is_ok()
-            }
-        }
-        fn rename(&self, from: &Path, to: &Path) -> bool {
-            std::fs::rename(from, to).is_ok()
-        }
-        fn copy(&self, from: &Path, to: &Path) -> bool {
-            !from.is_dir() && std::fs::copy(from, to).is_ok()
-        }
         fn stat(&self, path: &Path) -> Option<fresh_core::services::PluginFileStat> {
             let m = std::fs::metadata(path).ok()?;
             Some(fresh_core::services::PluginFileStat {
@@ -13108,15 +13103,6 @@ mod tests {
                 }]
             }
             fn create_dir_all(&self, _path: &Path) -> bool {
-                true
-            }
-            fn remove_path(&self, _path: &Path) -> bool {
-                true
-            }
-            fn rename(&self, _from: &Path, _to: &Path) -> bool {
-                true
-            }
-            fn copy(&self, _from: &Path, _to: &Path) -> bool {
                 true
             }
             fn stat(&self, _path: &Path) -> Option<fresh_core::services::PluginFileStat> {

@@ -8451,6 +8451,18 @@ type Field = { value: string; cursor: number };
 // see `DirectoryContext::project_state_dir`: "Using a directory per project —
 // rather than one shared file — keeps concurrent `fresh` processes on
 // different projects from contending over a single file."
+// The state namespace machines live in. The editor owns the on-disk layout;
+// this names entries, not files.
+const MACHINES_NS = "machines";
+
+// Marks the one-time import out of `machinesDir()`. It shares the namespace
+// with the machines themselves and its shape passes `isSafeMachineId`, so
+// `loadMachines` skips it by name rather than relying on `parseMachine`
+// happening to reject the value.
+const MACHINES_IMPORTED_KEY = "_imported";
+
+// Where machines lived before the state store. Read once, by
+// `importLegacyMachines`, and never written again.
 function machinesDir(): string {
   return editor.pathJoin(editor.getDataDir(), "orchestrator", "machines");
 }
@@ -8462,10 +8474,6 @@ function machinesDir(): string {
 // filesystem.
 function isSafeMachineId(id: string): boolean {
   return /^[A-Za-z0-9._-]{1,64}$/.test(id) && !id.startsWith(".");
-}
-
-function machineFile(id: string): string {
-  return editor.pathJoin(machinesDir(), `${id}.json`);
 }
 
 let machinesCache: Machine[] | null = null;
@@ -8510,41 +8518,55 @@ function parseMachine(raw: string): Machine | null {
 // the whole registry away to stay usable.
 function loadMachines(): Machine[] {
   if (machinesCache) return machinesCache;
+  importLegacyMachines();
   const out: Machine[] = [];
-  for (const e of editor.readDir(editor.localPath(machinesDir()))) {
-    if (!e.is_file || !e.name.endsWith(".json") || e.name.startsWith(".")) continue;
-    const raw = editor.readFile(editor.localPath(editor.pathJoin(machinesDir(), e.name)));
+  for (const id of editor.stateKeys(MACHINES_NS)) {
+    if (id === MACHINES_IMPORTED_KEY) continue;
+    if (!isSafeMachineId(id)) continue;
+    const raw = editor.stateGet(MACHINES_NS, id);
     if (!raw) continue;
     const m = parseMachine(raw);
-    // The filename is the id, so a file whose contents disagree is not one
-    // this code wrote; ignore it rather than serve two identities.
-    if (m && isSafeMachineId(m.id) && `${m.id}.json` === e.name) out.push(m);
+    // The key is the id, so an entry whose contents disagree is not one this
+    // code wrote; ignore it rather than serve two identities.
+    if (m && isSafeMachineId(m.id) && m.id === id) out.push(m);
   }
   out.sort((a, b) => a.name.localeCompare(b.name));
   machinesCache = out;
   return out;
 }
 
-// Write one machine, atomically.
+// Copy machines written by the version that kept its own directory into the
+// editor's state store, once.
 //
-// `writeFile` truncates and writes in place, so a crash or a full disk mid-write
-// leaves a half-file. Writing a temp first and renaming over the target makes
-// the replacement a single `rename(2)`: a reader sees either the old machine or
-// the new one, never a partial one. The temp sits in the same directory so the
-// rename cannot fall into the bridge's cross-device copy-then-remove path,
-// which would not be atomic.
+// The marker is what makes it once: the old files stay where they are, because
+// a plugin can no longer delete a path it names, and without the marker a
+// machine the user deleted after the import would come back on the next load.
+// The leftovers are inert — nothing reads that directory any more — and a user
+// who wants the disk space back can remove it themselves.
+function importLegacyMachines(): void {
+  if (editor.stateGet(MACHINES_NS, MACHINES_IMPORTED_KEY)) return;
+  for (const e of editor.readDir(editor.localPath(machinesDir()))) {
+    if (!e.is_file || !e.name.endsWith(".json") || e.name.startsWith(".")) continue;
+    const raw = editor.readFile(editor.localPath(editor.pathJoin(machinesDir(), e.name)));
+    if (!raw) continue;
+    const m = parseMachine(raw);
+    if (m && isSafeMachineId(m.id) && `${m.id}.json` === e.name) {
+      editor.stateSet(MACHINES_NS, m.id, raw);
+    }
+  }
+  editor.stateSet(MACHINES_NS, MACHINES_IMPORTED_KEY, "1");
+}
+
+// Write one machine.
+//
+// The editor's state store owns the file: it writes a temp alongside and
+// renames, so a reader sees either the old machine or the new one and never a
+// half-written file. This used to do that dance here, which meant holding
+// `renamePath` — a general "move any path onto any other path" primitive —
+// for the sake of one atomic write.
 function writeMachineFile(m: Machine): boolean {
   if (!isSafeMachineId(m.id)) return false;
-  if (!editor.createDir(editor.localPath(machinesDir()))) return false;
-  const tmp = editor.pathJoin(machinesDir(), `.${m.id}.${Date.now().toString(36)}.tmp`);
-  if (!editor.writeFile(editor.localPath(tmp), JSON.stringify(m, null, 2))) return false;
-  if (!editor.renamePath(editor.localPath(tmp), editor.localPath(machineFile(m.id)))) {
-    // Leaving the temp behind is litter `loadMachines` skips but a user would
-    // still find.
-    editor.removePath(editor.localPath(tmp));
-    return false;
-  }
-  return true;
+  return editor.stateSet(MACHINES_NS, m.id, JSON.stringify(m, null, 2));
 }
 
 function machineById(id: string): Machine | null {
@@ -8561,7 +8583,7 @@ function upsertMachine(m: Machine): void {
 
 function removeMachine(id: string): void {
   if (!isSafeMachineId(id)) return;
-  editor.removePath(editor.localPath(machineFile(id)));
+  editor.stateDelete(MACHINES_NS, id);
   invalidateMachines();
 }
 
@@ -8866,14 +8888,18 @@ async function scanHostKeyFingerprints(host: string, port: string): Promise<stri
   if (keys.length === 0) return [];
   // `ssh-keygen -l` reads a *file*, and `spawnHostProcess` execs rather than
   // running a shell, so there is no pipe to hand it — the scan goes through a
-  // scratch file, removed on both paths.
-  const tmp = editor.pathJoin(
-    editor.getTempDir(),
-    `fresh-hostkey-${Date.now().toString(36)}-${Math.floor(Math.random() * 1e6).toString(36)}`,
-  );
-  if (!editor.writeFile(editor.localPath(tmp), `${keys.join("\n")}\n`)) return [];
+  // staging directory the editor hands out and takes back.
+  const token = editor.scratchCreate("hostkey");
+  if (!token) return [];
+  const dir = editor.scratchPath(token);
+  if (!dir) return [];
+  const tmp = editor.pathJoin(dir, "keys");
+  if (!editor.writeFile(editor.localPath(tmp), `${keys.join("\n")}\n`)) {
+    editor.scratchDiscard(token);
+    return [];
+  }
   const fp = await editor.spawnHostProcess("ssh-keygen", ["-l", "-f", tmp]);
-  editor.removePath(editor.localPath(tmp));
+  editor.scratchDiscard(token);
   if (fp.exit_code !== 0) return [];
   return (fp.stdout || "")
     .split(/\r?\n/)

@@ -1578,9 +1578,19 @@ mod tests {
             "writeFile",
             "readDir",
             "createDir",
-            "removePath",
-            "renamePath",
-            "copyPath",
+            // No `removePath` / `renamePath` / `copyPath`: a plugin cannot
+            // name a path and have it removed or overwritten. What replaced
+            // them names a staging directory, a package, or a state entry.
+            "scratchCreate",
+            "scratchPath",
+            "scratchDiscard",
+            "copyIntoScratch",
+            "installScratch",
+            "uninstallPackage",
+            "stateSet",
+            "stateGet",
+            "stateKeys",
+            "stateDelete",
             "getTempDir",
             "getConfig",
             "getUserConfig",
