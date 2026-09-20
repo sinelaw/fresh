@@ -3,8 +3,8 @@
 //! Implements the FileSystem trait for remote operations via SSH agent.
 
 use crate::model::filesystem::{
-    DirEntry, EntryType, FileMetadata, FilePermissions, FileReader, FileSystem, FileUpload,
-    FileWriter, WriteOp,
+    AtomicFileUpload, DirEntry, EntryType, FileMetadata, FilePermissions, FileReader, FileSystem,
+    FileUpload, FileWriter, WriteOp,
 };
 use crate::services::remote::channel::{AgentChannel, ChannelError};
 use crate::services::remote::protocol::{
@@ -344,6 +344,22 @@ impl FileSystem for RemoteFileSystem {
             )
             .map_err(Self::to_io_error)?;
         Ok(Box::new(upload))
+    }
+
+    fn begin_file_import(
+        &self,
+        destination: &Path,
+        overwrite: bool,
+    ) -> io::Result<Option<Box<dyn AtomicFileUpload>>> {
+        let upload = RemoteFileUpload {
+            channel: self.channel.clone(),
+            id: uuid::Uuid::new_v4().to_string(),
+            closed: false,
+        };
+        self.channel.request_blocking("import_begin", serde_json::json!({
+            "upload": upload.id, "destination": destination.to_string_lossy(), "overwrite": overwrite,
+        })).map_err(Self::to_io_error)?;
+        Ok(Some(Box::new(upload)))
     }
 
     fn open_file(&self, path: &Path) -> io::Result<Box<dyn FileReader>> {
@@ -903,6 +919,23 @@ impl FileUpload for RemoteFileUpload {
                     "upload": self.id,
                 }),
             )
+            .map_err(RemoteFileSystem::to_io_error)?;
+        self.closed = true;
+        Ok(())
+    }
+}
+
+impl AtomicFileUpload for RemoteFileUpload {
+    fn commit(mut self: Box<Self>) -> io::Result<()> {
+        self.channel
+            .request_blocking("import_commit", serde_json::json!({"upload": self.id}))
+            .map_err(RemoteFileSystem::to_io_error)?;
+        self.closed = true;
+        Ok(())
+    }
+    fn abort(mut self: Box<Self>) -> io::Result<()> {
+        self.channel
+            .request_blocking("upload_abort", serde_json::json!({"upload": self.id}))
             .map_err(RemoteFileSystem::to_io_error)?;
         self.closed = true;
         Ok(())

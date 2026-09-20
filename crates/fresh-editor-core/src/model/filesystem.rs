@@ -328,6 +328,14 @@ pub trait FileUpload: Write + Send {
     fn finish(self: Box<Self>) -> io::Result<()>;
 }
 
+/// A destination-owned import transaction. The backend owns staging and must
+/// preserve an existing destination until commit. Abort cleans staging; Drop
+/// is a best-effort abort for interrupted callers.
+pub trait AtomicFileUpload: Write + Send {
+    fn commit(self: Box<Self>) -> io::Result<()>;
+    fn abort(self: Box<Self>) -> io::Result<()>;
+}
+
 struct StdFileUpload(std::fs::File);
 
 impl Write for StdFileUpload {
@@ -534,6 +542,16 @@ pub trait FileSystem: Send + Sync {
             io::ErrorKind::Unsupported,
             "streaming uploads are unsupported",
         ))
+    }
+
+    /// Optional combined prepare/commit protocol for high-latency backends.
+    /// None selects the portable staging path; errors must not trigger fallback.
+    fn begin_file_import(
+        &self,
+        _destination: &Path,
+        _overwrite: bool,
+    ) -> io::Result<Option<Box<dyn AtomicFileUpload>>> {
+        Ok(None)
     }
 
     /// Open a file for reading, returns a reader handle

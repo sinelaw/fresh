@@ -225,7 +225,8 @@ fn cancelling_a_conflict_does_not_import_remaining_files() {
     h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
     h.assert_screen_not_contains("Name Conflict");
     h.assert_screen_not_contains("should-not-import.txt");
-    h.assert_screen_contains("Imported 0 files; skipped 0");
+    h.wait_for_screen_contains("Imported 0 files; skipped 0")
+        .unwrap();
     // A cancelled batch leaves the command available for another import.
     start_import(&mut h);
 }
@@ -320,6 +321,16 @@ fn cancelled_batch_refreshes_files_already_imported() {
         .unwrap();
 }
 
+fn open_explorer_row(h: &mut EditorTestHarness, name: &str) {
+    h.wait_for_screen_contains(name).unwrap();
+    let row = h
+        .screen_to_string()
+        .lines()
+        .position(|line| line.contains(name))
+        .unwrap();
+    h.mouse_click(20, row as u16).unwrap();
+}
+
 fn exercise_folder_drop(h: &mut EditorTestHarness) {
     let sources = tempfile::tempdir().unwrap();
     let folder = sources.path().join("folder with spaces");
@@ -335,12 +346,17 @@ fn exercise_folder_drop(h: &mut EditorTestHarness) {
     h.wait_for_screen_contains("Imported").unwrap();
     h.assert_screen_contains("Imported 3 files and 3 folders; skipped 0");
     h.assert_screen_contains("folder with spaces");
-    h.assert_screen_contains("empty");
+    h.assert_screen_not_contains("empty");
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
     h.wait_for_screen_contains("EXTRA_DROP_CONTENT").unwrap();
     h.send_key(KeyCode::Char('e'), KeyModifiers::CONTROL)
         .unwrap();
-    // Tree is expanded after the batch; find the nested file by rendered row.
+    // Imported subtrees stay collapsed until the user opens them.
+    open_explorer_row(h, "folder with spaces");
+    h.assert_screen_not_contains("empty");
+    open_explorer_row(h, "nested");
+    h.wait_for_screen_contains("empty").unwrap();
+    // Find the Korean filename by its rendered row (wide glyph cells vary).
     let row = h
         .screen_to_string()
         .lines()
@@ -397,17 +413,12 @@ fn folder_drop_merges_existing_tree_and_renames_conflicts_inside_it() {
     h.send_key(KeyCode::Char('e'), KeyModifiers::CONTROL)
         .unwrap();
     h.wait_for_screen_contains("bundle").unwrap();
-    // The explorer compacts bundle/nested into one row. Expand it, then
-    // click the rendered root to restore the drop destination and focus.
+    // Expand the compacted bundle/nested row, then select the root without
+    // clicking it (a click toggles expansion and would discard the subtree).
     h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
     h.wait_for_screen_contains("untouched.txt").unwrap();
-    let root_row = h
-        .screen_to_string()
-        .lines()
-        .position(|line| line.contains("project_root"))
-        .unwrap();
-    h.mouse_click(5, root_row as u16).unwrap();
+    h.send_key(KeyCode::Up, KeyModifiers::NONE).unwrap();
     h.send_paste(&quoted(&source)).unwrap();
     h.wait_until(|h| {
         let screen = h.screen_to_string();
@@ -455,7 +466,9 @@ fn folder_drop_cancel_retains_created_empty_folders() {
     h.wait_for_screen_contains("Imported 0 files and 2 folders; skipped 0")
         .unwrap();
     h.assert_screen_contains("Paste cancelled");
-    h.assert_screen_contains("a-empty");
+    h.assert_screen_not_contains("a-empty");
+    open_explorer_row(&mut h, "bundle");
+    h.wait_for_screen_contains("a-empty").unwrap();
     h.assert_screen_not_contains("later.txt");
 }
 
@@ -485,9 +498,11 @@ fn folder_drop_renames_a_folder_when_destination_is_a_file() {
     h.wait_for_screen_contains("Imported 1 files and 2 folders; skipped 0")
         .unwrap();
     h.assert_screen_contains("renamed-folder");
-    h.assert_screen_contains("empty");
+    h.assert_screen_not_contains("empty");
     h.assert_screen_contains("bundle");
-    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    open_explorer_row(&mut h, "renamed-folder");
+    h.wait_for_screen_contains("empty").unwrap();
+    open_explorer_row(&mut h, "inside.txt");
     h.wait_for_screen_contains("RENAMED_FOLDER_CONTENT")
         .unwrap();
 }

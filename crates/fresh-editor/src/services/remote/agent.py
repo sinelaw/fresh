@@ -11,6 +11,7 @@ import re
 import threading
 import select
 import time
+import tempfile
 from concurrent.futures import ThreadPoolExecutor
 
 CHUNK = 65536
@@ -306,7 +307,28 @@ def cmd_upload_open(id, p):
         if key in uploads:
             raise ValueError("upload already open")
         f = open(validate_path(p["path"]), "xb", buffering=0)
-        uploads[key] = (f, threading.Lock())
+        uploads[key] = (f, threading.Lock(), None, None, False)
+    send(id, r={})
+
+
+def cmd_import_begin(id, p):
+    """Check conflict, reserve staging and open one handle in a single request."""
+    key = p["upload"]
+    raw = os.path.abspath(os.path.expanduser(p["destination"]))
+    destination = os.path.join(validate_path(os.path.dirname(raw)), os.path.basename(raw))
+    overwrite = p.get("overwrite", False)
+    with uploads_lock:
+        if key in uploads:
+            raise ValueError("upload already open")
+        if not overwrite and os.path.lexists(destination):
+            raise FileExistsError(destination)
+        staging = tempfile.mkdtemp(prefix=".fresh-import-", dir=os.path.dirname(destination))
+        try:
+            f = open(os.path.join(staging, "data"), "xb", buffering=0)
+        except Exception:
+            os.rmdir(staging)
+            raise
+        uploads[key] = (f, threading.Lock(), staging, destination, overwrite)
     send(id, r={})
 
 
@@ -318,7 +340,7 @@ def cmd_upload_chunk(id, p):
     if len(data) > 1024 * 1024:
         raise ValueError("upload chunk exceeds 1 MiB")
     with uploads_lock:
-        f, guard = uploads[p["upload"]]
+        f, guard = uploads[p["upload"]][:2]
     with guard:
         remaining = memoryview(data)
         while remaining:
@@ -329,20 +351,52 @@ def cmd_upload_chunk(id, p):
     send(id, r={"size": len(data)})
 
 
-def close_upload(key, sync):
+def close_upload(key, sync, publish=False):
     with uploads_lock:
         upload = uploads.pop(key, None)
     if upload is None:
         if sync:
             raise ValueError("upload is not open")
         return
-    f, guard = upload
+    f, guard, staging, destination, overwrite = upload
+    error = None
     with guard:
         try:
-            if sync:
-                os.fsync(f.fileno())
+            try:
+                if sync:
+                    os.fsync(f.fileno())
+            finally:
+                f.close()
+            if publish:
+                if staging is None:
+                    raise ValueError("not an import transaction")
+                source = os.path.join(staging, "data")
+                if overwrite:
+                    os.replace(source, destination)
+                else:
+                    # Recheck atomically: another process may have created it
+                    # after import_begin's initial conflict check.
+                    os.link(source, destination)
+        except Exception as e:
+            error = e
         finally:
-            f.close()
+            if staging is not None:
+                try:
+                    try:
+                        os.unlink(os.path.join(staging, "data"))
+                    except FileNotFoundError:
+                        pass  # replace() moved the file on successful overwrite.
+                    os.rmdir(staging)
+                except OSError as cleanup:
+                    raise OSError(f"{error or 'import completed'}; staging cleanup failed at {staging}: {cleanup}") from cleanup
+    if error is not None:
+        raise error
+
+
+def cmd_import_commit(id, p):
+    """Sync, atomically publish and remove staging in a single request."""
+    close_upload(p["upload"], True, publish=True)
+    send(id, r={})
 
 
 def cmd_upload_finish(id, p):
@@ -821,6 +875,8 @@ METHODS = {
     "chmod": cmd_chmod,
     "append": cmd_append,
     "upload_open": cmd_upload_open,
+    "import_begin": cmd_import_begin,
+    "import_commit": cmd_import_commit,
     "upload_chunk": cmd_upload_chunk,
     "upload_finish": cmd_upload_finish,
     "upload_abort": cmd_upload_abort,
@@ -892,7 +948,10 @@ def main():
 
     pool.shutdown(wait=True)
     for key in list(uploads):
-        close_upload(key, False)
+        try:
+            close_upload(key, False)
+        except OSError as error:
+            print(f"upload cleanup failed: {error}", file=sys.stderr)
 
 
 if __name__ == "__main__":

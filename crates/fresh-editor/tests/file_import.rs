@@ -307,7 +307,7 @@ async fn instrumented_agent() -> (
         "scope = {{'__name__': 'test_agent'}}\nexec({}, scope)\n{}",
         serde_json::to_string(include_str!("../src/services/remote/agent.py")).unwrap(),
         r#"
-counts = {'syncs': 0, 'data_requests': 0, 'opens': 0}
+counts = {'syncs': 0, 'data_requests': 0, 'opens': 0, 'requests': 0}
 faults = {}
 listing_started = scope['threading'].Event()
 listing_release = scope['threading'].Event()
@@ -347,6 +347,13 @@ def stats(id, params):
     result['listing_started'] = listing_started.is_set()
     result['uploads_open'] = len(scope.get('uploads', {}))
     scope['send'](id, r=result)
+for name, handler in list(scope['METHODS'].items()):
+    def track(handler):
+        def call(id, params):
+            counts['requests'] += 1
+            return handler(id, params)
+        return call
+    scope['METHODS'][name] = track(handler)
 scope['METHODS']['test_stats'] = stats
 scope['main']()
 "#
@@ -745,4 +752,111 @@ fn directory_import_skips_source_links_and_refuses_destination_links() {
     )
     .is_err());
     assert!(!source.join("copy").exists());
+}
+
+#[test]
+fn optimized_remote_import_uses_two_control_requests() {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let (channel, _agent) = runtime.block_on(instrumented_agent());
+    let remote = RemoteFileSystem::new(channel.clone(), "test@localhost".into());
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("source");
+    std::fs::write(&source, b"SMALL_FILE").unwrap();
+    import_file(
+        &StdFileSystem,
+        &remote,
+        &source,
+        &root.path().join("destination"),
+        false,
+        &AtomicBool::new(false),
+        |_, _| {},
+    )
+    .unwrap();
+    let stats = channel
+        .request_blocking("test_stats", serde_json::json!({}))
+        .unwrap();
+    assert_eq!(
+        stats["requests"], 3,
+        "prepare, one data chunk, commit+cleanup: {stats}"
+    );
+    assert_eq!(stats["syncs"], 1);
+    assert_eq!(stats["uploads_open"], 0);
+    assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 2);
+}
+
+#[test]
+fn optimized_folder_import_does_not_load_collapsed_descendants() {
+    use crate::common::harness::{EditorTestHarness, HarnessOptions};
+    use crossterm::event::{KeyCode, KeyModifiers};
+    use fresh::services::fs::{SlowFileSystem, SlowFsConfig};
+    use std::sync::Arc;
+    let fs = Arc::new(SlowFileSystem::new(
+        Arc::new(StdFileSystem),
+        SlowFsConfig::none(),
+    ));
+    let project = tempfile::tempdir().unwrap();
+    let sources = tempfile::tempdir().unwrap();
+    let source = sources.path().join("bundle");
+    for i in 0..32 {
+        std::fs::create_dir_all(source.join(format!("child-{i}"))).unwrap();
+        std::fs::write(source.join(format!("child-{i}/data.txt")), "DATA").unwrap();
+    }
+    let mut h = EditorTestHarness::create(
+        180,
+        32,
+        HarnessOptions::new()
+            .with_working_dir(project.path().to_path_buf())
+            .with_filesystem(fs.clone()),
+    )
+    .unwrap();
+    h.send_key(KeyCode::Char('e'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.wait_for_screen_contains("File Explorer").unwrap();
+    let initial_nodes = h.editor().file_explorer().unwrap().tree().node_count();
+    fs.reset_metrics();
+    h.send_paste(&format!("\"{}\"", source.display())).unwrap();
+    h.wait_for_screen_contains("Imported 32 files and 33 folders; skipped 0")
+        .unwrap();
+    assert_eq!(
+        fs.metrics().read_dir_calls.load(Ordering::SeqCst),
+        1,
+        "only refresh the visible destination"
+    );
+    assert_eq!(
+        h.editor().file_explorer().unwrap().tree().node_count(),
+        initial_nodes + 1,
+        "only add the collapsed imported folder"
+    );
+    for i in 0..32 {
+        assert_eq!(
+            std::fs::read(project.path().join(format!("bundle/child-{i}/data.txt"))).unwrap(),
+            b"DATA"
+        );
+    }
+}
+
+#[test]
+fn remote_import_transaction_drop_removes_staging_without_publishing() {
+    use std::io::Write;
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let (channel, _agent) = runtime.block_on(instrumented_agent());
+    let remote = RemoteFileSystem::new(channel.clone(), "test@localhost".into());
+    let root = tempfile::tempdir().unwrap();
+    let destination = root.path().join("destination");
+    std::fs::write(&destination, b"KEEP").unwrap();
+    let mut transaction = remote
+        .begin_file_import(&destination, true)
+        .unwrap()
+        .unwrap();
+    transaction.write_all(b"PARTIAL_DATA").unwrap();
+    drop(transaction);
+    let stats = channel
+        .request_blocking("test_stats", serde_json::json!({}))
+        .unwrap();
+    assert_eq!(stats["uploads_open"], 0);
+    assert_eq!(stats["syncs"], 0);
+    assert_eq!(std::fs::read(&destination).unwrap(), b"KEEP");
+    assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 1);
+    assert!(remote.begin_file_import(&destination, false).is_err());
+    assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 1);
 }

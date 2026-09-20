@@ -201,6 +201,14 @@ impl FileSystem for SlowFileSystem {
         self.inner.create_file_for_upload(path)
     }
 
+    fn begin_file_import(
+        &self,
+        destination: &Path,
+        overwrite: bool,
+    ) -> io::Result<Option<Box<dyn crate::model::filesystem::AtomicFileUpload>>> {
+        self.inner.begin_file_import(destination, overwrite)
+    }
+
     fn open_file(&self, path: &Path) -> io::Result<Box<dyn FileReader>> {
         self.add_delay(self.config.read_file_delay);
         self.metrics.read_file_calls.fetch_add(1, Ordering::SeqCst);

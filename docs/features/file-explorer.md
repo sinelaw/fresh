@@ -61,15 +61,25 @@ Files with unsaved changes in the current window cannot be overwritten. Imports
 show byte progress and can be cancelled with **Escape** or **Cancel**. Cancellation
 stops between chunks (an in-flight remote request must finish or fail first).
 Completed files and created folders remain imported; the current file is published
-only after its transfer finishes. Existing files are preserved on failure or cancellation, and
-the explorer refreshes once at the end of the batch, including after cancellation
-or an error that leaves earlier entries imported. Each affected directory is read
-once in the background so remote refreshes do not block keyboard input. A
-disconnected host may leave a `.fresh-import-*` staging directory; cleanup failures report its path.
+only after its transfer finishes. Failures or cancellation before publication
+preserve existing files. The explorer refreshes at the end of the batch, including after cancellation
+or an error that leaves earlier entries imported. Only the destination and affected
+folders already expanded in the explorer are re-read. New or previously collapsed subfolders stay
+collapsed and are read when opened. Directory snapshots arrive through a bounded
+background queue instead of accumulating the entire imported tree in memory. A
+disconnected host may leave a `.fresh-import-*` staging directory; cleanup
+failures report its path.
+
+Each batch reuses one transfer worker and a copy buffer that grows to at most
+1 MiB. Files proceed without waiting for a UI acknowledgement after each copy;
+only conflicts need a decision. A bounded completion queue limits how far the
+worker can run ahead of the owning window.
 
 Transfers keep one staging-file handle open and sync it before publication.
-SSH data requests contain up to 1 MiB each, bounding memory usage and allowing
-cancellation between requests.
+For SSH, one request checks conflicts and prepares the upload, and one request
+syncs, publishes atomically, and cleans up. Data requests contain up to 1 MiB each.
+Cancellation takes effect between requests; an in-flight commit may complete.
+Aborting an upload removes its staging file without publishing partial content.
 
 Terminal support depends on the terminal forwarding the drop as quoted or escaped
 local paths. For terminals that send ordinary keystrokes instead of bracketed

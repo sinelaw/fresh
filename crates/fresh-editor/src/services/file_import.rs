@@ -1,6 +1,8 @@
 //! Local-file imports. Source and destination filesystems are separate:
 //! an SSH workspace's `copy` would look for the source on the remote host.
 
+pub mod batch;
+
 use crate::model::filesystem::FileSystem;
 use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
@@ -94,12 +96,35 @@ pub fn import_entry(
     cancel: &AtomicBool,
     progress: impl FnMut(u64, u64),
 ) -> io::Result<ImportOutcome> {
+    import_entry_with_buffer(
+        source_fs,
+        destination_fs,
+        source,
+        destination,
+        overwrite,
+        cancel,
+        progress,
+        &mut Vec::new(),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn import_entry_with_buffer(
+    source_fs: &dyn FileSystem,
+    destination_fs: &dyn FileSystem,
+    source: &Path,
+    destination: &Path,
+    overwrite: bool,
+    cancel: &AtomicBool,
+    progress: impl FnMut(u64, u64),
+    buffer: &mut Vec<u8>,
+) -> io::Result<ImportOutcome> {
     check_cancel(cancel)?;
     if !source.is_absolute() {
         return Err(invalid("use absolute local file paths"));
     }
     if !source_fs.is_dir(source)? {
-        return import_file(
+        return import_file_with_buffer(
             source_fs,
             destination_fs,
             source,
@@ -107,6 +132,7 @@ pub fn import_entry(
             overwrite,
             cancel,
             progress,
+            buffer,
         )
         .map(|()| ImportOutcome::File);
     }
@@ -190,7 +216,30 @@ pub fn import_file(
     destination: &Path,
     overwrite: bool,
     cancel: &AtomicBool,
+    progress: impl FnMut(u64, u64),
+) -> io::Result<()> {
+    import_file_with_buffer(
+        source_fs,
+        destination_fs,
+        source,
+        destination,
+        overwrite,
+        cancel,
+        progress,
+        &mut Vec::new(),
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn import_file_with_buffer(
+    source_fs: &dyn FileSystem,
+    destination_fs: &dyn FileSystem,
+    source: &Path,
+    destination: &Path,
+    overwrite: bool,
+    cancel: &AtomicBool,
     mut progress: impl FnMut(u64, u64),
+    buffer: &mut Vec<u8>,
 ) -> io::Result<()> {
     check_cancel(cancel)?;
     if !source.is_absolute() || !source_fs.is_file(source)? {
@@ -202,6 +251,27 @@ pub fn import_file(
             == Some(&source_fs.canonicalize(source)?)
     {
         return Err(invalid("source and destination are the same file"));
+    }
+    let total = source_fs.metadata(source)?.size;
+    let mut reader = source_fs.open_file(source)?;
+    if let Some(mut upload) = destination_fs.begin_file_import(destination, overwrite)? {
+        let copied = copy_stream(
+            reader.as_mut(),
+            upload.as_mut(),
+            total,
+            cancel,
+            &mut progress,
+            buffer,
+        );
+        return match copied {
+            Ok(()) => upload.commit(),
+            Err(error) => match upload.abort() {
+                Ok(()) => Err(error),
+                Err(cleanup) => Err(io::Error::other(format!(
+                    "{error}; upload cleanup failed: {cleanup}"
+                ))),
+            },
+        };
     }
     if !overwrite {
         match destination_fs.symlink_metadata(destination) {
@@ -218,8 +288,6 @@ pub fn import_file(
     let parent = destination
         .parent()
         .ok_or_else(|| invalid("missing destination directory"))?;
-    let total = source_fs.metadata(source)?.size;
-    let mut reader = source_fs.open_file(source)?;
     // An exclusive directory reserves our staging name. Never truncate a
     // pre-existing temp file, and never put uploads in the local /tmp directory.
     let staging_dir = parent.join(format!(".fresh-import-{}", uuid::Uuid::new_v4()));
@@ -227,22 +295,14 @@ pub fn import_file(
     let staging_file = staging_dir.join("data");
     let result = (|| {
         let mut writer = destination_fs.create_file_for_upload(&staging_file)?;
-        // One request per MiB on SSH, with a bounded cancellation interval.
-        // The writer stays open; only finish() makes the data durable.
-        let mut buffer = vec![0; total.clamp(64 * 1024, 1024 * 1024) as usize];
-        let mut copied = 0;
-        progress(0, total);
-        loop {
-            check_cancel(cancel)?;
-            let count = reader.read(&mut buffer)?;
-            if count == 0 {
-                break;
-            }
-            writer.write_all(&buffer[..count])?;
-            copied += count as u64;
-            progress(copied, total);
-        }
-        check_cancel(cancel)?;
+        copy_stream(
+            reader.as_mut(),
+            writer.as_mut(),
+            total,
+            cancel,
+            &mut progress,
+            buffer,
+        )?;
         writer.finish()?;
         check_cancel(cancel)?;
         destination_fs.publish_file(&staging_file, destination, overwrite)
@@ -268,9 +328,60 @@ pub fn import_file(
     }
 }
 
+fn copy_stream(
+    reader: &mut dyn Read,
+    writer: &mut dyn Write,
+    total: u64,
+    cancel: &AtomicBool,
+    progress: &mut impl FnMut(u64, u64),
+    buffer: &mut Vec<u8>,
+) -> io::Result<()> {
+    let size = total.clamp(64 * 1024, 1024 * 1024) as usize;
+    if buffer.len() < size {
+        // Vec's geometric growth could reserve nearly 2 MiB when a later file
+        // is larger. Grow exactly to the required bounded capacity instead.
+        buffer.reserve_exact(size - buffer.len());
+        buffer.resize(size, 0);
+    }
+    let mut copied = 0;
+    progress(0, total);
+    loop {
+        check_cancel(cancel)?;
+        let count = reader.read(buffer)?;
+        if count == 0 {
+            break;
+        }
+        writer.write_all(&buffer[..count])?;
+        copied += count as u64;
+        progress(copied, total);
+    }
+    check_cancel(cancel)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reused_copy_buffer_capacity_stays_within_one_mib() {
+        let mut buffer = Vec::new();
+        for size in [700 * 1024, 1024 * 1024] {
+            copy_stream(
+                &mut std::io::repeat(7).take(size),
+                &mut std::io::sink(),
+                size,
+                &AtomicBool::new(false),
+                &mut |_, _| {},
+                &mut buffer,
+            )
+            .unwrap();
+            assert!(
+                buffer.capacity() <= 1024 * 1024,
+                "capacity {} exceeds the buffer budget",
+                buffer.capacity()
+            );
+        }
+    }
 
     #[test]
     fn parses_terminal_paths_without_shell_expansion() {
