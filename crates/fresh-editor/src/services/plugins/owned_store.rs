@@ -200,7 +200,9 @@ impl OwnedStore {
     /// name is not one this module will act on.
     pub fn package_dir(&self, kind: &str, name: &str) -> Option<PathBuf> {
         if !is_safe_component(name) {
-            tracing::warn!("refusing package name that is not a single safe path component: {name:?}");
+            tracing::warn!(
+                "refusing package name that is not a single safe path component: {name:?}"
+            );
             return None;
         }
         let sub = packages_subdir(kind)?;
@@ -245,7 +247,9 @@ impl OwnedStore {
                 p.push(part);
             }
             if !p.starts_with(&staging) || !p.is_dir() {
-                tracing::warn!("install refused: subpath {subpath:?} is not a directory in staging");
+                tracing::warn!(
+                    "install refused: subpath {subpath:?} is not a directory in staging"
+                );
                 return false;
             }
             p
@@ -361,7 +365,9 @@ impl OwnedStore {
     /// every other removal a plugin can ask for.
     pub fn trash_theme(&self, name: &str) -> bool {
         if !is_safe_component(name) {
-            tracing::warn!("refusing theme name that is not a single safe path component: {name:?}");
+            tracing::warn!(
+                "refusing theme name that is not a single safe path component: {name:?}"
+            );
             return false;
         }
         let path = self.config_dir.join("themes").join(format!("{name}.json"));
@@ -412,7 +418,11 @@ impl OwnedStore {
             Ok(()) => true,
             Err(e) => {
                 tracing::warn!("could not publish state {:?}: {e}", path);
-                let _ = std::fs::remove_file(&tmp);
+                // Leaving the temp behind would be litter `state_keys` skips
+                // but a user would still find.
+                if let Err(cleanup) = std::fs::remove_file(&tmp) {
+                    tracing::debug!("could not remove state temp {:?}: {cleanup}", tmp);
+                }
                 false
             }
         }
@@ -523,10 +533,7 @@ mod tests {
 
     fn store() -> (OwnedStore, tempfile::TempDir) {
         let dir = tempfile::tempdir().unwrap();
-        let store = OwnedStore::new(
-            dir.path().join("config"),
-            dir.path().join("data"),
-        );
+        let store = OwnedStore::new(dir.path().join("config"), dir.path().join("data"));
         (store, dir)
     }
 
@@ -646,7 +653,10 @@ mod tests {
         assert!(s.install_scratch(&token, "plugin", "thing", "packages/thing"));
         let installed = s.package_dir("plugin", "thing").unwrap();
         assert!(installed.join("package.json").exists());
-        assert!(!installed.join("README.md").exists(), "only the subpath installs");
+        assert!(
+            !installed.join("README.md").exists(),
+            "only the subpath installs"
+        );
 
         // The rest of the clone is still the caller's to discard.
         assert!(s.scratch_path(&token).is_some());

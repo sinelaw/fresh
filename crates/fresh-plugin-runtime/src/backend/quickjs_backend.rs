@@ -2953,7 +2953,8 @@ impl JsEditorApi {
         name: String,
         subpath: String,
     ) -> bool {
-        self.services.install_scratch(&token, &kind, &name, &subpath)
+        self.services
+            .install_scratch(&token, &kind, &name, &subpath)
     }
 
     /// Copy a directory tree into a staging directory, for installing a
