@@ -379,30 +379,46 @@ impl OwnedStore {
         }
     }
 
-    /// Copy the tree at `from` into a staging directory.
+    /// Create a staging directory holding a copy of the tree at `from`, and
+    /// return the token that names it.
     ///
-    /// This is how a package installed from a local directory reaches staging.
-    /// It is the one operation here that reads a caller-supplied path, which
-    /// is safe in a way the old `copyPath` was not: the *destination* is a
-    /// staging directory this module made and still owns, so a copy cannot
-    /// land on — and therefore cannot destroy — anything else.
+    /// This is how a package installed from a local directory reaches
+    /// staging. `from` is a path on the editor host: staging directories,
+    /// installed packages and plugin state all live there by design, so an
+    /// install survives the SSH session that started it going away. There is
+    /// no authority-path form of this, which is why the argument is a plain
+    /// path and not a `PluginPath` — the case that would have to be rejected
+    /// cannot be written.
     ///
-    /// Symlinks are recreated as symlinks rather than followed, so a link in
-    /// the source does not silently pull in whatever it points at.
-    pub fn copy_into_scratch(&self, token: &str, from: &Path) -> bool {
-        let Some(dest) = self.scratch_path(token) else {
-            tracing::warn!("copy refused: unknown staging token");
-            return false;
-        };
+    /// Creating and filling in one call is likewise not a convenience. Doing
+    /// it in two meant a copy that failed part-way left a half-filled staging
+    /// directory alive under a token the caller then had to remember to
+    /// discard. Here a failure discards its own directory and answers `None`:
+    /// either there is a staging directory holding the whole tree, or there
+    /// is nothing.
+    ///
+    /// Reading a caller-supplied path is safe in a way the old `copyPath` was
+    /// not: the destination is a directory this module just made, so a copy
+    /// cannot land on — and destroy — anything else. Symlinks are recreated
+    /// as symlinks rather than followed, so a link in the source does not
+    /// silently pull in whatever it points at.
+    pub fn scratch_from_directory(&self, from: &Path) -> Option<String> {
         if !from.is_dir() {
-            tracing::warn!("copy refused: {:?} is not a directory", from);
-            return false;
+            tracing::warn!("staging refused: {:?} is not a directory", from);
+            return None;
         }
+        let label = from
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_default();
+        let token = self.scratch_create(&label)?;
+        let dest = self.scratch_path(&token)?;
         match copy_tree(from, &dest) {
-            Ok(()) => true,
+            Ok(()) => Some(token),
             Err(e) => {
                 tracing::warn!("could not copy {:?} into staging: {e}", from);
-                false
+                self.scratch_discard(&token);
+                None
             }
         }
     }
@@ -751,7 +767,7 @@ mod tests {
     }
 
     #[test]
-    fn copy_into_scratch_recreates_symlinks_instead_of_following_them() {
+    fn staging_from_a_directory_recreates_symlinks_instead_of_following_them() {
         let (s, guard) = store();
         let outside = guard.path().join("outside");
         std::fs::create_dir(&outside).unwrap();
@@ -763,8 +779,7 @@ mod tests {
         #[cfg(unix)]
         std::os::unix::fs::symlink(&outside, source.join("link")).unwrap();
 
-        let token = s.scratch_create("local").unwrap();
-        assert!(s.copy_into_scratch(&token, &source));
+        let token = s.scratch_from_directory(&source).unwrap();
         let dir = s.scratch_path(&token).unwrap();
 
         assert_eq!(std::fs::read(dir.join("plugin.ts")).unwrap(), b"export {}");
@@ -775,16 +790,24 @@ mod tests {
                 meta.file_type().is_symlink(),
                 "the link must be copied as a link, not as the tree it points at"
             );
-            assert!(!dir.join("link/secret.txt").exists() || outside.join("secret.txt").exists());
         }
+        assert!(outside.join("secret.txt").exists());
     }
 
     #[test]
-    fn copy_into_scratch_refuses_an_unknown_token() {
+    fn staging_from_a_directory_refuses_anything_that_is_not_one() {
         let (s, guard) = store();
-        let source = guard.path().join("source");
-        std::fs::create_dir(&source).unwrap();
-        assert!(!s.copy_into_scratch("not-a-token", &source));
+        let file = guard.path().join("a-file");
+        std::fs::write(&file, b"x").unwrap();
+
+        assert!(s.scratch_from_directory(&file).is_none());
+        assert!(s
+            .scratch_from_directory(&guard.path().join("nope"))
+            .is_none());
+        // Nothing was staged, so nothing is left behind to discard.
+        assert!(
+            !s.staging_root().exists() || std::fs::read_dir(s.staging_root()).unwrap().count() == 0
+        );
     }
 
     #[test]

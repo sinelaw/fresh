@@ -217,9 +217,10 @@ pub trait PluginServiceBridge: Send + Sync + 'static {
         false
     }
 
-    /// Copy a directory tree into a staging directory.
-    fn copy_into_scratch(&self, _token: &str, _from: &std::path::Path) -> bool {
-        false
+    /// Create a staging directory holding a copy of a directory tree on the
+    /// editor host, returning its token.
+    fn scratch_from_directory(&self, _from: &std::path::Path) -> Option<String> {
+        None
     }
 
     /// Move an installed package to the system trash.

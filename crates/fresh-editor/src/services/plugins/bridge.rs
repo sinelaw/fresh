@@ -323,8 +323,8 @@ impl PluginServiceBridge for EditorServiceBridge {
         self.owned_store.install_scratch(token, kind, name, subpath)
     }
 
-    fn copy_into_scratch(&self, token: &str, from: &Path) -> bool {
-        self.owned_store.copy_into_scratch(token, from)
+    fn scratch_from_directory(&self, from: &Path) -> Option<String> {
+        self.owned_store.scratch_from_directory(from)
     }
 
     fn uninstall_package(&self, kind: &str, name: &str) -> bool {

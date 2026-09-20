@@ -72,7 +72,22 @@ interface Scratch {
 type PackageKind = "plugin" | "theme" | "language" | "bundle";
 
 function newScratch(label: string): Scratch | null {
-  const token = editor.scratchCreate(label);
+  return resolveScratch(editor.scratchCreate(label));
+}
+
+/**
+ * A staging directory holding a copy of a local directory — how an install
+ * from a path on disk gets its source.
+ *
+ * One call rather than create-then-copy: a copy that failed part-way used to
+ * leave a half-filled staging directory alive that this code had to remember
+ * to discard. Now there is either a complete one or nothing.
+ */
+function scratchFromDirectory(from: string): Scratch | null {
+  return resolveScratch(editor.scratchFromDirectory(from));
+}
+
+function resolveScratch(token: string | null): Scratch | null {
   if (!token) return null;
   const dir = editor.scratchPath(token);
   if (!dir) return null;
@@ -1417,23 +1432,17 @@ async function installFromLocalPath(
     ? installedVersion(correctTargetDir)
     : null;
 
-  // Copy into a staging directory and validate there, so a source that
-  // turns out not to be a valid package never touches an installation
-  // that already works. `copyIntoScratch` only ever writes into a staging
-  // directory the editor owns, so unlike the `copyPath` it replaced it
-  // cannot land on — and overwrite — anything else.
-  const staging = newScratch("pkg-local");
+  // Stage a copy and validate there, so a source that turns out not to be
+  // a valid package never touches an installation that already works. The
+  // editor owns the staging directory, so unlike the `copyPath` this
+  // replaced, the copy cannot land on — and overwrite — anything else.
+  editor.setStatus(`Copying from ${sourcePath}...`);
+  const staging = scratchFromDirectory(sourcePath);
   if (!staging) {
-    packageFailure(`Failed to create a staging directory for ${packageName}`);
+    packageFailure(`Failed to copy package from ${sourcePath}`);
     return false;
   }
   const stagingDir = staging.dir;
-  editor.setStatus(`Copying from ${sourcePath}...`);
-  if (!editor.copyIntoScratch(staging.token, editor.localPath(sourcePath))) {
-    packageFailure(`Failed to copy package from ${sourcePath}`);
-    discardScratch(staging);
-    return false;
-  }
 
   // Validate package structure
   const validation = validatePackage(stagingDir, packageName);

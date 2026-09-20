@@ -143,19 +143,26 @@ scratchDiscard(token: string): boolean        // remove it
 where the directory goes. `scratchDiscard` looks the path up from the token,
 so an unknown, forged, or already-spent token removes nothing.
 
-#### `copyIntoScratch`
+#### `scratchFromDirectory`
 
-Copy a directory tree into a staging directory — how a package installed from
-a local directory reaches staging.
+A staging directory holding a copy of a local directory — how a package
+installed from a path on disk gets its source.
 
 ```typescript
-copyIntoScratch(token: string, from: string | LocalPath): boolean
+scratchFromDirectory(from: string): string | null   // returns a token
 ```
 
-The source is a path you choose, which is safe in a way `copyPath` was not:
-the *destination* is a staging directory the editor owns, so a copy cannot
-land on anything else. Symlinks in the source are recreated as symlinks rather
-than followed.
+`from` is a path on the editor host: staging directories, installed packages
+and plugin state all live there by design, so an install survives the SSH
+session that started it going away. There is no authority-path form, which is
+why this takes a plain path rather than a `LocalPath`.
+
+Reading a path you choose is safe here in a way `copyPath` was not — the
+destination is a staging directory the editor just made, so a copy cannot
+land on anything else. Symlinks are recreated as symlinks rather than
+followed. Returns `null` if `from` is not a directory or could not be copied,
+having discarded whatever it had already staged, so there is never a
+half-filled staging directory to clean up.
 
 #### `installScratch`
 

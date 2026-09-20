@@ -1585,7 +1585,7 @@ mod tests {
             "scratchCreate",
             "scratchPath",
             "scratchDiscard",
-            "copyIntoScratch",
+            "scratchFromDirectory",
             "installScratch",
             "uninstallPackage",
             "stateSet",

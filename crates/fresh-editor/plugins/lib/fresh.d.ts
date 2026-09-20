@@ -3626,20 +3626,22 @@ interface EditorAPI {
 	*/
 	installScratch(token: string, kind: string, name: string, subpath: string): boolean;
 	/**
-	* Copy a directory tree into a staging directory, for installing a
-	* package from a local directory. The destination is a staging directory
-	* the editor owns, so unlike the `copyPath` this replaced, a copy cannot
-	* land on anything the user cares about.
+	* Create a staging directory holding a copy of `from`, and return the
+	* token that names it — how a package installed from a local directory
+	* reaches staging.
 	* 
-	* `from` must be a `LocalPath`. Staging directories, installed packages
-	* and plugin state all live on the editor host — that is the point of
-	* them, so an install survives an SSH session going away — and the copy
-	* that fills one reads the host too. A path belonging to a window's
-	* authority is refused rather than read from the host, which would
-	* silently open a same-named local file instead of the remote one the
-	* caller meant. Build the argument with `editor.localPath(...)`.
+	* `from` is a path on the editor host. Staging directories, installed
+	* packages and plugin state all live there by design, so an install
+	* survives the SSH session that started it going away; there is no
+	* authority-path form of this call, so the argument is a plain path
+	* rather than a `LocalPath | WindowPath | AuthorityPath` union with two
+	* thirds of it rejected at runtime.
+	* 
+	* Answers `null` if `from` is not a directory or could not be copied,
+	* having discarded anything it had already staged — so there is never a
+	* half-filled staging directory to clean up.
 	*/
-	copyIntoScratch(token: string, from: LocalPath): boolean;
+	scratchFromDirectory(from: string): string | null;
 	/**
 	* Move an installed package to the system trash. Returns false if nothing
 	* is installed under that kind and name.
