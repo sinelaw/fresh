@@ -1200,12 +1200,27 @@ function hourlyAt(hours: WttrHour[], targetHour: number): WttrHour | null {
 }
 
 function formatCurrent(c: WttrCurrent | undefined): string | null {
+    const units = weatherUnits();
+
     if (!c) return null;
     const cond = c.weatherDesc?.[0]?.value ?? "";
-    const temp = c.temp_C ? `${c.temp_C}°C` : "";
-    const feels = c.FeelsLikeC && c.FeelsLikeC !== c.temp_C
-        ? `feels ${c.FeelsLikeC}°C` : "";
-    const wind = c.windspeedKmph ? `${c.windspeedKmph} km/h` : "";
+
+    let temp: string;
+    let feels: string;
+    let wind: string;
+
+    if (units === "Metric") {
+        temp = c.temp_C ? `${c.temp_C}°C` : "";
+        feels = c.FeelsLikeC && c.FeelsLikeC !== c.temp_C
+            ? `feels ${c.FeelsLikeC}°C` : "";
+        wind = c.windspeedKmph ? `${c.windspeedKmph} km/h` : "";
+    } else {
+        temp = c.temp_F ? `${c.temp_F}°F` : "";
+        feels = c.FeelsLikeF && c.FeelsLikeF !== c.temp_F
+            ? `feels ${c.FeelsLikeF}°F` : "";
+        wind = c.windspeedMiles ? `${c.windspeedMiles} mph` : "";
+    }
+
     const hum = c.humidity ? `${c.humidity}%` : "";
     const s = [cond, temp, feels, wind, hum]
         .filter((x) => x.length > 0)
@@ -1214,11 +1229,24 @@ function formatCurrent(c: WttrCurrent | undefined): string | null {
 }
 
 function formatHour(h: WttrHour | null): string | null {
+    const units = weatherUnits();
+
     if (!h) return null;
     const cond = h.weatherDesc?.[0]?.value ?? "";
-    const temp = h.tempC ? `${h.tempC}°C` : "";
-    const feels = h.FeelsLikeC && h.FeelsLikeC !== h.tempC
-        ? `feels ${h.FeelsLikeC}°C` : "";
+
+    let temp: string;
+    let feels: string;
+
+    if (units === "Metric") {
+        temp = h.tempC ? `${h.tempC}°C` : "";
+        feels = h.FeelsLikeC && h.FeelsLikeC !== h.tempC
+            ? `feels ${h.FeelsLikeC}°C` : "";
+    } else {
+        temp = h.tempF ? `${h.tempF}°F` : "";
+        feels = h.FeelsLikeF && h.FeelsLikeF !== h.tempF
+            ? `feels ${h.FeelsLikeF}°F` : "";
+    }
+
     const s = [cond, temp, feels]
         .filter((x) => x.length > 0)
         .join(" · ");
@@ -1226,14 +1254,49 @@ function formatHour(h: WttrHour | null): string | null {
 }
 
 function formatDaySummary(day: WttrDay | undefined): string | null {
+    const units = weatherUnits();
+
     if (!day) return null;
     const midday = hourlyAt(day.hourly ?? [], 12);
     const cond = midday?.weatherDesc?.[0]?.value ?? "";
-    const range = day.mintempC && day.maxtempC
-        ? `${day.mintempC}°..${day.maxtempC}°C`
-        : "";
+
+    let range: string;
+
+    if (units === "Metric") {
+        range = day.mintempC && day.maxtempC
+            ? `${day.mintempC}°..${day.maxtempC}°C`
+            : "";
+    } else {
+        range = day.mintempF && day.maxtempF
+            ? `${day.mintempF}°..${day.maxtempF}°F`
+            : "";
+    }
+
     const s = [range, cond].filter((x) => x.length > 0).join(" · ");
     return s ? truncate(s, valueMax()) : null;
+}
+
+editor.defineConfigString("weatherLocation", {
+    default: "",
+    description: "Location wttr.in should use for the weather section, instead of its IP-based geolocation. Leave blank to auto-detect.",
+});
+
+function weatherLocation(): string {
+    const cfg = (editor.getPluginConfig() ?? {}) as { weatherLocation?: string };
+    return (cfg.weatherLocation ?? "").trim();
+}
+
+editor.defineConfigEnum("weatherUnits", {
+    values: ["Metric", "Imperial"] as const,
+    default: "Metric",
+    description: "Units for the weather section: Metric (°C, km/h) or Imperial (°F, mph).",
+});
+
+// Anything other than an explicit "Imperial" (including an unset config)
+// is Metric, matching the declared default.
+function weatherUnits(): "Metric" | "Imperial" {
+    const cfg = (editor.getPluginConfig() ?? {}) as { weatherUnits?: string };
+    return cfg.weatherUnits === "Imperial" ? "Imperial" : "Metric";
 }
 
 const weatherRefresh: SectionRefresh = async (ctx) => {
@@ -1242,9 +1305,13 @@ const weatherRefresh: SectionRefresh = async (ctx) => {
     try {
         // j1 = full JSON payload (current + 3-day forecast, 3-hour samples).
         // Larger than the old %-format but gets us everything in one call.
+        // A configured location takes wttr.in's IP-geolocation lookup out of
+        // the loop entirely — the path segment pins the location.
+        const location = weatherLocation();
+        const path = location ? `/${encodeURIComponent(location)}` : "";
         const res = await run(
             "curl",
-            ["-fsS", "--max-time", "5", "https://wttr.in/?format=j1"],
+            ["-fsS", "--max-time", "5", `https://wttr.in${path}?format=j1`],
             "",
             6000,
         );
