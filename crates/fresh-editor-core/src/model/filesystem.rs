@@ -560,10 +560,25 @@ pub trait FileSystem: Send + Sync {
     /// Remove an empty directory
     fn remove_dir(&self, path: &Path) -> io::Result<()>;
 
-    /// Recursively remove a directory and all its contents
+    /// Recursively remove a directory and all its contents.
+    ///
+    /// Symlinks are unlinked, never descended into. This is not a detail:
+    /// [`DirEntry::is_dir`] answers true for a symlink *pointing at* a
+    /// directory, so the obvious `if entry.is_dir() { recurse }` walked out
+    /// of the tree the caller named and deleted the contents of whatever the
+    /// link pointed at. Deleting a folder holding a link to `~/Documents`
+    /// emptied `~/Documents`, and the operation then failed with `ENOTDIR`
+    /// on the link — reporting an error only after the damage was done.
+    /// `std::fs::remove_dir_all` has never behaved this way; this is the
+    /// same contract.
     fn remove_dir_all(&self, path: &Path) -> io::Result<()> {
         for entry in self.read_dir(path)? {
-            if entry.is_dir() {
+            if entry.is_symlink() {
+                // Unix unlinks a link of either kind with `remove_file`;
+                // Windows needs `remove_dir` for one that names a directory.
+                self.remove_file(&entry.path)
+                    .or_else(|_| self.remove_dir(&entry.path))?;
+            } else if entry.is_dir() {
                 self.remove_dir_all(&entry.path)?;
             } else {
                 self.remove_file(&entry.path)?;
@@ -572,7 +587,13 @@ pub trait FileSystem: Send + Sync {
         self.remove_dir(path)
     }
 
-    /// Recursively copy a directory and all its contents to dst
+    /// Recursively copy a directory and all its contents to dst.
+    ///
+    /// Unlike [`Self::remove_dir_all`], this still follows symlinks: a link
+    /// to a directory is copied as the directory it names. That duplicates
+    /// data rather than destroying any, and there is no symlink-creating
+    /// operation on this trait to do better with. A symlink that points at
+    /// one of its own ancestors will recurse until the disk fills.
     fn copy_dir_all(&self, src: &Path, dst: &Path) -> io::Result<()> {
         self.create_dir_all(dst)?;
         for entry in self.read_dir(src)? {
@@ -1973,6 +1994,50 @@ mod tests {
         assert!(names.contains(&"subdir"));
         assert!(names.contains(&"file1.txt"));
         assert!(names.contains(&"file2.txt"));
+    }
+
+    /// Deleting a directory must not delete through a symlink inside it.
+    ///
+    /// `DirEntry::is_dir()` is true for a symlink pointing at a directory, so
+    /// the recursive delete used to descend into one and empty whatever it
+    /// pointed at — anywhere on disk — before failing with `ENOTDIR` on the
+    /// link itself. Deleting a folder containing a link to `~/Documents`
+    /// emptied `~/Documents` and then reported an error.
+    #[cfg(unix)]
+    #[test]
+    fn remove_dir_all_unlinks_symlinks_instead_of_following_them() {
+        let fs = StdFileSystem;
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        // What the caller asked to delete.
+        let doomed = temp_dir.path().join("doomed");
+        fs.create_dir_all(&doomed).unwrap();
+        fs.write_file(&doomed.join("own.txt"), b"mine").unwrap();
+
+        // What it must not reach: a directory elsewhere, linked from inside.
+        let precious = temp_dir.path().join("precious");
+        fs.create_dir_all(&precious).unwrap();
+        fs.write_file(&precious.join("thesis.txt"), b"years of work")
+            .unwrap();
+        std::os::unix::fs::symlink(&precious, doomed.join("link")).unwrap();
+
+        // A link to a file too: that one was always unlinked correctly, and
+        // must stay that way.
+        let kept_file = temp_dir.path().join("kept.txt");
+        fs.write_file(&kept_file, b"also mine").unwrap();
+        std::os::unix::fs::symlink(&kept_file, doomed.join("file-link")).unwrap();
+
+        fs.remove_dir_all(&doomed).unwrap();
+
+        assert!(!doomed.exists(), "the named directory is gone");
+        assert!(
+            precious.join("thesis.txt").exists(),
+            "a symlinked directory's contents must survive"
+        );
+        assert!(
+            kept_file.exists(),
+            "a symlinked file must survive being unlinked from the tree"
+        );
     }
 
     #[test]
