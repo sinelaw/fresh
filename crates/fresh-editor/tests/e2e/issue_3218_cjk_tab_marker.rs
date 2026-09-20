@@ -1,25 +1,13 @@
-//! Issue #3218 — a tab after CJK text made a wide character disappear.
-//!
-//! `tab_starts` is keyed by character index, but the cell pass probed it with
-//! `col_offset`, the *visual* column. The two agree only while every character
-//! on the row is one column wide. Put a double-width glyph before the tab and
-//! the column runs ahead of the character index, so the row's tab-start index
-//! matched some earlier CJK character, whose glyph was replaced by the `→`
-//! marker: `你好\tworld` drew as `你→    world`, with `好` gone from the screen
-//! while sitting intact in the buffer.
+//! Issue #3218: a tab after CJK text hid the character before it.
+//! `你好\tworld` drew as `你→    world`.
 
 use crate::common::harness::{EditorTestHarness, HarnessOptions};
 use fresh::config::Config;
 use fresh_editor_core::primitives::display_width::str_width;
 use tempfile::TempDir;
 
-/// What a reader sees in the columns around `anchor`: the `before` columns
-/// preceding it, the anchor, then the `after` columns following it.
-///
-/// A double-width glyph owns two terminal columns but only the first carries
-/// its symbol, so the continuation cell is dropped rather than contributing a
-/// stray blank. Reading painted cells — rather than the buffer — is the whole
-/// point here: the characters this bug lost were intact in the file.
+/// The painted text around `anchor`: `before` columns, the anchor, `after`
+/// columns. A wide glyph's second cell carries no symbol, so it is skipped.
 fn painted(harness: &EditorTestHarness, anchor: &str, before: u16, after: u16) -> String {
     let (col, row) = harness
         .find_text_on_screen(anchor)
@@ -43,8 +31,8 @@ fn painted(harness: &EditorTestHarness, anchor: &str, before: u16, after: u16) -
 fn harness_with(file: &std::path::Path, tab_size: usize) -> EditorTestHarness {
     let mut config = Config::default();
     config.editor.tab_size = tab_size;
-    // The defaults, restated: these are the marker settings the bug rendered
-    // under, and the test should not silently follow them if they change.
+    // These are the defaults, set here so the test does not follow them if
+    // they change.
     config.editor.whitespace_show = true;
     config.editor.whitespace_tabs_leading = true;
     config.editor.whitespace_tabs_inner = true;
@@ -56,8 +44,7 @@ fn harness_with(file: &std::path::Path, tab_size: usize) -> EditorTestHarness {
     harness
 }
 
-/// The reporter's fixture, verbatim. Every CJK character survives the render,
-/// and the marker sits on the tab's own first column rather than on a glyph.
+/// The reporter's fixture, unchanged.
 #[test]
 fn cjk_before_a_tab_keeps_every_character() {
     let temp_dir = TempDir::new().unwrap();
@@ -67,22 +54,16 @@ fn cjk_before_a_tab_keeps_every_character() {
     let harness = harness_with(&file, 4);
     let screen = harness.screen_to_string();
 
-    // 你好 is 4 columns, so the tab at column 4 expands to a full 4-column
-    // stop: `→` and three padding columns. Before the fix: `你→    world`.
     assert_eq!(
         painted(&harness, "world", 8, 0),
         "你好→   world",
         "`好` must survive and the marker must sit on the tab\n{screen}"
     );
-    // 测试文字 is 8 columns; the tab at column 8 expands by another 4.
-    // Before the fix: `测试→字    abc`, with 文 gone and 字 stranded.
     assert_eq!(
         painted(&harness, "abc", 12, 0),
         "测试文字→   abc",
         "all four of 测试文字 must be drawn before the marker\n{screen}"
     );
-    // The ASCII line was never affected: `plain` is 5 columns, so the tab
-    // expands by 3 to reach the stop at column 8.
     assert_eq!(
         painted(&harness, "plain", 0, 3),
         "plain→  ",
@@ -90,8 +71,7 @@ fn cjk_before_a_tab_keeps_every_character() {
     );
 }
 
-/// The neighbouring shapes: a tab *between* two wide characters, and a tab
-/// after a mix that leaves the expansion one column wide.
+/// A tab between two wide characters, and a tab that expands to one column.
 #[test]
 fn tabs_among_mixed_width_characters() {
     let temp_dir = TempDir::new().unwrap();
@@ -101,16 +81,12 @@ fn tabs_among_mixed_width_characters() {
     let harness = harness_with(&file, 4);
     let screen = harness.screen_to_string();
 
-    // 你 is 2 columns; the tab expands by 2 to reach the stop at column 4.
-    // Before the fix the marker vanished entirely here — `tab_starts` held
-    // char index 1 while the tab's column was 2 — and the row read `你  好`.
+    // Before the fix the marker was dropped here and the row read `你  好`.
     assert_eq!(
         painted(&harness, "tail", 6, 0),
         "你→ 好tail",
         "a tab between two wide characters keeps both\n{screen}"
     );
-    // `a你` is 3 columns, so the tab lands one column short of its stop and
-    // expands to a single cell: the marker, with no padding behind it.
     assert_eq!(
         painted(&harness, "Z", 4, 0),
         "a你→Z",
@@ -118,8 +94,7 @@ fn tabs_among_mixed_width_characters() {
     );
 }
 
-/// The same fixture at a non-default tab size: the stops move, the characters
-/// stay.
+/// The same fixture at a different tab size.
 #[test]
 fn cjk_before_a_tab_survives_other_tab_sizes() {
     let temp_dir = TempDir::new().unwrap();
@@ -129,13 +104,11 @@ fn cjk_before_a_tab_survives_other_tab_sizes() {
     let harness = harness_with(&file, 8);
     let screen = harness.screen_to_string();
 
-    // Column 4 to the next multiple of 8: a 4-column expansion.
     assert_eq!(
         painted(&harness, "world", 8, 0),
         "你好→   world",
         "tab_size 8: `好` survives\n{screen}"
     );
-    // Column 8 is already a stop, so the tab expands by a full 8.
     assert_eq!(
         painted(&harness, "abc", 16, 0),
         "测试文字→       abc",

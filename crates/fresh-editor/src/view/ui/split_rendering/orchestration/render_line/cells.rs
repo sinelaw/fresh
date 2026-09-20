@@ -289,16 +289,9 @@ impl CellPass<'_, '_, '_> {
 
     /// Style and emit one on-screen cell.
     fn render_visible_cell(&mut self, ch: char, byte_pos: Option<usize>, ansi_style: Style) {
-        // Is this view position the START of a tab expansion?
-        //
-        // `tab_starts` is keyed by *character index*, so it must be probed with
-        // `display_char_idx` and never with `col_offset` (issue #3218). The two
-        // agree only while every character on the row is one column wide; a
-        // double-width glyph before the tab pushes `col_offset` ahead of the
-        // character index, and the row's own tab-start index then lands on some
-        // earlier CJK character, whose glyph `display_cell_text` replaces with
-        // the `→` marker. The character vanished from the screen while sitting
-        // intact in the buffer: `你好\tworld` drew as `你→    world`.
+        // `tab_starts` holds character indices, not columns. Probing it with
+        // `col_offset` put the tab marker on a CJK character instead of the
+        // tab, hiding that character (issue #3218).
         let is_tab_start = self
             .input
             .view_line
