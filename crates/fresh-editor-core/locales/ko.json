@@ -1146,6 +1146,7 @@
   "lsp.cannot_open_definition": "정의 위치를 열 수 없음",
   "lsp.definition_external_uri": "정의가 로컬 소스 파일이 없는 외부 위치에 있습니다: %{uri}",
   "lsp.cannot_rename_unsaved": "저장되지 않은 버퍼에서 이름 바꾸기 불가",
+  "lsp.overwrite_refused": "언어 서버의 %{name} 덮어쓰기 요청을 무시했습니다",
   "lsp.delete_refused": "언어 서버의 %{name} 삭제 요청을 무시했습니다",
   "lsp.code_action_applied": "적용 완료: %{title} (%{count}개 변경)",
   "lsp.code_action_hint": "번호를 눌러 선택, Esc로 취소",

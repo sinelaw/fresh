@@ -2813,10 +2813,28 @@ impl Editor {
                         tracing::debug!("CreateFile: {:?} already exists, ignoring", path);
                         return Ok(());
                     }
-                    if !overwrite {
+                    // `overwrite` is the server asking us to truncate a file
+                    // that already exists — the write below is `""`, so
+                    // honouring it destroys the contents. Same objection as
+                    // the delete arm: server-initiated, unconfirmed, and no
+                    // trash to recover from. The request is reported and the
+                    // file left alone whatever the flag says.
+                    if overwrite {
+                        tracing::warn!(
+                            "CreateFile refused: {:?} exists and the server asked to overwrite it",
+                            path
+                        );
+                        let name = path
+                            .file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_else(|| path.display().to_string());
+                        self.set_status_message(
+                            t!("lsp.overwrite_refused", name = &name).to_string(),
+                        );
+                    } else {
                         tracing::warn!("CreateFile: {:?} already exists and overwrite=false", path);
-                        return Ok(());
                     }
+                    return Ok(());
                 }
 
                 // Create parent directories if needed
@@ -2850,13 +2868,30 @@ impl Editor {
                         tracing::debug!("RenameFile: {:?} already exists, ignoring", new_path);
                         return Ok(());
                     }
-                    if !overwrite {
+                    // `overwrite` here means renaming *onto* an existing
+                    // file, which destroys it. Refused for the same reason
+                    // the delete and create arms are: nothing about a
+                    // server-initiated edit was confirmed by the user, and
+                    // `rename(2)` leaves nothing to recover.
+                    if overwrite {
+                        tracing::warn!(
+                            "RenameFile refused: {:?} exists and the server asked to overwrite it",
+                            new_path
+                        );
+                        let name = new_path
+                            .file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_else(|| new_path.display().to_string());
+                        self.set_status_message(
+                            t!("lsp.overwrite_refused", name = &name).to_string(),
+                        );
+                    } else {
                         tracing::warn!(
                             "RenameFile: {:?} already exists and overwrite=false",
                             new_path
                         );
-                        return Ok(());
                     }
+                    return Ok(());
                 }
 
                 // Create parent directories if needed

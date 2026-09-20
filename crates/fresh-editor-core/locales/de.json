@@ -1146,6 +1146,7 @@
   "lsp.cannot_open_definition": "Definitionsort konnte nicht geöffnet werden",
   "lsp.definition_external_uri": "Die Definition befindet sich an einem externen Ort ohne lokale Quelldatei: %{uri}",
   "lsp.cannot_rename_unsaved": "Umbenennung in nicht gespeichertem Buffer nicht möglich",
+  "lsp.overwrite_refused": "Überschreibanfrage des Sprachservers für %{name} ignoriert",
   "lsp.delete_refused": "Löschanfrage des Sprachservers für %{name} ignoriert",
   "lsp.code_action_applied": "Angewendet: %{title} (%{count} Änderungen)",
   "lsp.code_action_hint": "Nummer drücken zum Auswählen, Esc zum Abbrechen",
