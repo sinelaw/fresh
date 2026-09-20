@@ -3569,8 +3569,9 @@ interface EditorAPI {
 	*/
 	readFile(path: string | LocalPath | WindowPath | AuthorityPath): string | null;
 	/**
-	* Write file contents to the path's filesystem. Parent directories are
-	* created as needed.
+	* Write file contents to a NEW file on the path's filesystem. Parent
+	* directories are created as needed. Returns false if the path already
+	* exists — use `replaceFile` to replace a file deliberately.
 	*/
 	writeFile(path: string | LocalPath | WindowPath | AuthorityPath, content: string): boolean;
 	/**

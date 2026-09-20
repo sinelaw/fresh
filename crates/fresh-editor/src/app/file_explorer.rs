@@ -685,18 +685,7 @@ impl Editor {
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_default();
 
-        // For remote files, move to remote trash directory
-        // For local files, use system trash
-        let delete_result = if self
-            .authority()
-            .filesystem
-            .remote_connection_info()
-            .is_some()
-        {
-            self.move_to_remote_trash(&path)
-        } else {
-            trash::delete(&path).map_err(std::io::Error::other)
-        };
+        let delete_result = self.trash_path(&path);
 
         match delete_result {
             Ok(_) => {
@@ -783,6 +772,28 @@ impl Editor {
     }
 
     /// Move a file/directory to the remote trash directory (~/.local/share/fresh/trash/)
+    /// Move a path to the trash — the system trash locally, a trash directory
+    /// under the remote home for a remote authority.
+    ///
+    /// This is the only removal the file explorer performs, and it is why
+    /// there is no recursive delete on the `FileSystem` trait any more. The
+    /// one that existed walked the tree itself, which meant it could be
+    /// pointed at a symlink and walk out of the tree it was asked to remove.
+    /// Nothing here walks anything: the entry is moved, whole, in one
+    /// operation, and the user can get it back.
+    fn trash_path(&self, path: &std::path::Path) -> std::io::Result<()> {
+        if self
+            .authority()
+            .filesystem
+            .remote_connection_info()
+            .is_some()
+        {
+            self.move_to_remote_trash(path)
+        } else {
+            trash::delete(path).map_err(std::io::Error::other)
+        }
+    }
+
     fn move_to_remote_trash(&self, path: &std::path::Path) -> std::io::Result<()> {
         // Get remote home directory
         let home = self.authority().filesystem.home_dir()?;
@@ -1362,12 +1373,12 @@ impl Editor {
                             // distinct outcome — the user needs to know the
                             // copy is at `dst` AND the original is still at
                             // `src`, so they can decide what to do.
-                            let remove_result = if src_is_dir {
-                                self.authority().filesystem.remove_dir_all(src)
-                            } else {
-                                self.authority().filesystem.remove_file(src)
-                            };
-                            match remove_result {
+                            //
+                            // To the trash rather than unlinked: a move
+                            // between filesystems is the one paste that has
+                            // to destroy its source, so it is the one that
+                            // most deserves to be undoable.
+                            match self.trash_path(src) {
                                 Ok(()) => PasteOpOutcome::Ok,
                                 Err(remove_err) => PasteOpOutcome::SourceRemovalFailed {
                                     dst: dst.to_path_buf(),
@@ -1381,12 +1392,13 @@ impl Editor {
                             // the intact source. Cleanup errors are
                             // swallowed — the copy error is the interesting
                             // one to surface — but logged.
-                            let cleanup = if src_is_dir {
-                                self.authority().filesystem.remove_dir_all(dst)
-                            } else {
-                                self.authority().filesystem.remove_file(dst)
-                            };
-                            if let Err(cleanup_err) = cleanup {
+                            //
+                            // Also to the trash. A partial copy is our mess
+                            // rather than the user's, but it may hold the
+                            // only copy of something the source no longer
+                            // has if the failure was partway through, and
+                            // this code cannot tell.
+                            if let Err(cleanup_err) = self.trash_path(dst) {
                                 tracing::warn!(
                                     "Failed to roll back partial destination {:?} after copy \
                                      fallback failed: {}",

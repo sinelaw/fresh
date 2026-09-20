@@ -2845,8 +2845,9 @@ impl JsEditorApi {
             .and_then(|bytes| String::from_utf8(bytes).ok())
     }
 
-    /// Write file contents to the path's filesystem. Parent directories are
-    /// created as needed.
+    /// Write file contents to a NEW file on the path's filesystem. Parent
+    /// directories are created as needed. Returns false if the path already
+    /// exists — use `replaceFile` to replace a file deliberately.
     pub fn write_file(
         &self,
         #[plugin_api(ts_type = "string | LocalPath | WindowPath | AuthorityPath")]

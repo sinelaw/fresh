@@ -20,7 +20,8 @@
 //! module's own working space and are unlinked outright.
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::ffi::OsStr;
+use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
@@ -66,17 +67,50 @@ fn packages_subdir(kind: &str) -> Option<&'static str> {
     }
 }
 
-/// Whether `s` is safe to use as exactly one path component.
+/// Resolve `name` to a direct child of `parent`, or `None` if it is not one.
 ///
-/// Rejects separators, `.`/`..`, and anything with a leading dot: the package
-/// directories keep their own dot-prefixed entries (`.index`, `.staging`) and
-/// a package must never be able to name one.
-fn is_safe_component(s: &str) -> bool {
-    !s.is_empty()
-        && s.len() <= 128
-        && !s.starts_with('.')
-        && s.chars()
-            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+/// This asks `std::path` what the name is instead of pattern-matching it. An
+/// earlier version of this function guessed — an allow-list of
+/// `[A-Za-z0-9._-]`, then a list of characters to forbid — and guessing was
+/// wrong in both directions at once: it rejected "Café Dark", which
+/// `save_theme_file` will happily write and which a user would then be unable
+/// to delete, while the list of things to forbid was never anything better
+/// than the separators I happened to think of.
+///
+/// `Components` already knows the answer. It yields `Normal` only for an
+/// ordinary name — `.`, `..`, a root and a Windows prefix each have their own
+/// variant — and it splits on whatever separates paths on this platform, so
+/// there is no list to keep. Comparing what it read back against what we were
+/// handed catches the inputs it would otherwise normalise away (`foo/`,
+/// `./foo`): those are paths, not names, whatever they resolve to.
+///
+/// The final `parent()` check is belt and braces — if the first two hold it
+/// cannot fail — and costs nothing to keep.
+fn child_of(parent: &Path, name: &str) -> Option<PathBuf> {
+    let mut components = Path::new(name).components();
+    let Some(Component::Normal(only)) = components.next() else {
+        return None;
+    };
+    if components.next().is_some() {
+        return None;
+    }
+    if only != OsStr::new(name) {
+        return None;
+    }
+    let child = parent.join(only);
+    (child.parent() == Some(parent)).then_some(child)
+}
+
+/// Whether `name` collides with the bookkeeping this module keeps beside the
+/// packages it installs: the registry index, staging directories, and a copy
+/// set aside mid-upgrade. All of them are dot-prefixed, and
+/// `getInstalledPackages` skips dot-prefixed entries for exactly that reason.
+///
+/// This is a rule about *this* directory's contents, not about path safety —
+/// `child_of` handles that — so it is stated separately rather than folded in
+/// as one more character check.
+fn is_reserved_package_name(name: &str) -> bool {
+    name.starts_with('.')
 }
 
 impl OwnedStore {
@@ -107,7 +141,7 @@ impl OwnedStore {
             .unwrap_or_default();
         for entry in entries.flatten() {
             let path = entry.path();
-            if live.iter().any(|p| *p == path) {
+            if live.contains(&path) {
                 continue;
             }
             let old = entry
@@ -199,14 +233,17 @@ impl OwnedStore {
     /// The directory an installed package occupies, or `None` if the kind or
     /// name is not one this module will act on.
     pub fn package_dir(&self, kind: &str, name: &str) -> Option<PathBuf> {
-        if !is_safe_component(name) {
-            tracing::warn!(
-                "refusing package name that is not a single safe path component: {name:?}"
-            );
+        if is_reserved_package_name(name) {
+            tracing::warn!("refusing package name reserved for bookkeeping: {name:?}");
             return None;
         }
         let sub = packages_subdir(kind)?;
-        Some(self.config_dir.join(sub).join("packages").join(name))
+        let packages = self.config_dir.join(sub).join("packages");
+        let dir = child_of(&packages, name);
+        if dir.is_none() {
+            tracing::warn!("refusing package name that is not a single entry: {name:?}");
+        }
+        dir
     }
 
     /// Publish a staging directory as the installed package `<kind>/<name>`,
@@ -235,16 +272,19 @@ impl OwnedStore {
         let source = if subpath.is_empty() {
             staging.clone()
         } else {
-            // A subpath selects inside the staging tree and nowhere else: no
-            // absolute paths, no `..`, no separators smuggled through a single
-            // component.
+            // A subpath selects inside the staging tree and nowhere else.
+            // Each segment has to be a single entry in the directory reached
+            // so far, so there is no `..` to climb and no absolute path to
+            // jump to.
             let mut p = staging.clone();
             for part in subpath.split('/').filter(|s| !s.is_empty()) {
-                if !is_safe_component(part) {
-                    tracing::warn!("install refused: unsafe subpath {subpath:?}");
+                let Some(next) = child_of(&p, part) else {
+                    tracing::warn!(
+                        "install refused: subpath {subpath:?} is not a path within staging"
+                    );
                     return false;
-                }
-                p.push(part);
+                };
+                p = next;
             }
             if !p.starts_with(&staging) || !p.is_dir() {
                 tracing::warn!(
@@ -265,22 +305,22 @@ impl OwnedStore {
             return false;
         }
 
-        // Move any existing install out of the way. The trash is the good
-        // outcome: an upgrade that turns out badly is recoverable from the
-        // desktop's own undo.
+        // Move any existing install aside first, and only dispose of it once
+        // the replacement is actually in place.
         //
-        // When the trash is unavailable — no writable HOME, a container, a
-        // mount with nowhere to put one — the fallback is to rename the old
-        // copy aside under a dot-prefixed sibling rather than to unlink it.
-        // Upgrading still works, nothing is destroyed, and the leftover is
-        // visible to a user who wants the space back. `getInstalledPackages`
-        // skips dot-prefixed directories, so the old copy is not served as a
-        // package of its own.
-        if target.exists() && !trash_path(&target) {
+        // Trashing it up front looked simpler, but it staked the user's
+        // working package on a rename that can still fail — a locked file on
+        // Windows, a target on another mount — and left them with nothing
+        // installed when it did. The order here is the one the package
+        // manager used before this moved into the editor: aside, swap,
+        // then dispose, and put it back if the swap fails.
+        let aside = if target.exists() {
             let nanos = SystemTime::now()
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .map(|d| d.as_nanos())
                 .unwrap_or(0);
+            // Dot-prefixed so `getInstalledPackages` does not serve it as a
+            // package of its own while it is here.
             let aside = parent.join(format!(".{name}.replaced-{nanos}"));
             if let Err(e) = std::fs::rename(&target, &aside) {
                 tracing::warn!(
@@ -289,14 +329,27 @@ impl OwnedStore {
                 );
                 return false;
             }
-            tracing::warn!(
-                "trash unavailable; the previous {name:?} was left at {:?}",
-                aside
-            );
-        }
+            Some(aside)
+        } else {
+            None
+        };
 
         match std::fs::rename(&source, &target) {
             Ok(()) => {
+                // The replacement is in place, so the copy it replaced can
+                // go. To the trash, which is what makes a bad upgrade
+                // recoverable; if there is no trash to put it in — no
+                // writable HOME, a container — it stays where it is rather
+                // than being unlinked. Visible, inert, and the user's to
+                // remove.
+                if let Some(aside) = aside {
+                    if !trash_path(&aside) {
+                        tracing::warn!(
+                            "trash unavailable; the previous {name:?} was left at {:?}",
+                            aside
+                        );
+                    }
+                }
                 // When the whole staging directory moved, the token no longer
                 // names anything: the directory it stood for is the installed
                 // package now, and must not be reachable through a later
@@ -311,6 +364,16 @@ impl OwnedStore {
             }
             Err(e) => {
                 tracing::warn!("could not install staged package to {:?}: {e}", target);
+                // Put the working copy back. The user asked for an upgrade
+                // and did not get one; they must not also lose what they had.
+                if let Some(aside) = aside {
+                    if let Err(restore) = std::fs::rename(&aside, &target) {
+                        tracing::error!(
+                            "could not restore the previous {name:?} from {:?}: {restore}",
+                            aside
+                        );
+                    }
+                }
                 false
             }
         }
@@ -364,13 +427,11 @@ impl OwnedStore {
     /// tuning was gone for good on a mis-click. It goes to the trash now, like
     /// every other removal a plugin can ask for.
     pub fn trash_theme(&self, name: &str) -> bool {
-        if !is_safe_component(name) {
-            tracing::warn!(
-                "refusing theme name that is not a single safe path component: {name:?}"
-            );
+        let themes = self.config_dir.join("themes");
+        let Some(path) = child_of(&themes, &format!("{name}.json")) else {
+            tracing::warn!("refusing theme name that is not a single entry: {name:?}");
             return false;
-        }
-        let path = self.config_dir.join("themes").join(format!("{name}.json"));
+        };
         if !path.exists() {
             return false;
         }
@@ -383,15 +444,13 @@ impl OwnedStore {
 
     /// The file a `(namespace, key)` pair occupies.
     fn state_file(&self, namespace: &str, key: &str) -> Option<PathBuf> {
-        if !is_safe_component(namespace) || !is_safe_component(key) {
-            return None;
-        }
-        Some(
-            self.data_dir
-                .join("state")
-                .join(namespace)
-                .join(format!("{key}.json")),
-        )
+        let dir = self.state_dir(namespace)?;
+        child_of(&dir, &format!("{key}.json"))
+    }
+
+    /// The directory a namespace occupies.
+    fn state_dir(&self, namespace: &str) -> Option<PathBuf> {
+        child_of(&self.data_dir.join("state"), namespace)
     }
 
     /// Write a state entry, replacing any previous value.
@@ -436,10 +495,9 @@ impl OwnedStore {
 
     /// The keys set in a namespace, in no particular order.
     pub fn state_keys(&self, namespace: &str) -> Vec<String> {
-        if !is_safe_component(namespace) {
+        let Some(dir) = self.state_dir(namespace) else {
             return Vec::new();
-        }
-        let dir = self.data_dir.join("state").join(namespace);
+        };
         let Ok(entries) = std::fs::read_dir(dir) else {
             return Vec::new();
         };
@@ -580,13 +638,30 @@ mod tests {
     }
 
     #[test]
-    fn package_names_must_be_one_safe_component() {
+    fn a_package_name_must_be_a_single_entry() {
         let (s, _guard) = store();
         assert!(s.package_dir("plugin", "file-diff").is_some());
+        // Names people actually give things, which `save_theme_file` writes
+        // verbatim. An allow-list of `[A-Za-z0-9._-]` made these saveable but
+        // not deletable.
+        assert!(s.package_dir("theme", "Café Dark").is_some());
+        assert!(s.package_dir("theme", "solarized (v2)").is_some());
+
+        // Not a single entry.
         assert!(s.package_dir("plugin", "../../../etc/passwd").is_none());
         assert!(s.package_dir("plugin", "a/b").is_none());
-        assert!(s.package_dir("plugin", ".index").is_none());
+        assert!(s.package_dir("plugin", "/etc").is_none());
+        assert!(s.package_dir("plugin", "..").is_none());
+        assert!(s.package_dir("plugin", ".").is_none());
         assert!(s.package_dir("plugin", "").is_none());
+        // A path that resolves to one entry is still a path, not a name.
+        assert!(s.package_dir("plugin", "./file-diff").is_none());
+        assert!(s.package_dir("plugin", "file-diff/").is_none());
+
+        // Reserved for this module's own bookkeeping.
+        assert!(s.package_dir("plugin", ".index").is_none());
+        assert!(s.package_dir("plugin", ".staging").is_none());
+
         // An unknown kind resolves nowhere rather than to a default.
         assert!(s.package_dir("not-a-kind", "file-diff").is_none());
     }
@@ -710,6 +785,28 @@ mod tests {
         let source = guard.path().join("source");
         std::fs::create_dir(&source).unwrap();
         assert!(!s.copy_into_scratch("not-a-token", &source));
+    }
+
+    #[test]
+    fn a_failed_swap_puts_the_working_copy_back() {
+        let (s, _guard) = store();
+        let first = s.scratch_create("pkg").unwrap();
+        std::fs::write(s.scratch_path(&first).unwrap().join("v"), b"1").unwrap();
+        assert!(s.install_scratch(&first, "plugin", "file-diff", ""));
+        let installed = s.package_dir("plugin", "file-diff").unwrap();
+
+        // A staging directory whose contents went away underneath us: the
+        // rename onto the target fails, standing in for the locked file or
+        // cross-mount target that can fail it in the wild.
+        let second = s.scratch_create("pkg").unwrap();
+        std::fs::remove_dir_all(s.scratch_path(&second).unwrap()).unwrap();
+
+        assert!(!s.install_scratch(&second, "plugin", "file-diff", ""));
+        assert_eq!(
+            std::fs::read(installed.join("v")).unwrap(),
+            b"1",
+            "a failed upgrade must leave the working copy installed"
+        );
     }
 
     #[test]
