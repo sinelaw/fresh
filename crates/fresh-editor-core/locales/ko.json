@@ -1731,5 +1731,10 @@
   "dialog.title.permission_denied": "권한이 거부되었습니다",
   "dialog.title.name_conflict": "이름 충돌",
   "dialog.title.large_file": "큰 파일",
-  "dialog.title.go_to_line": "줄로 이동"
+  "dialog.title.go_to_line": "줄로 이동",
+  "cmd.explorer_import": "로컬 파일 가져오기",
+  "cmd.explorer_import_desc": "로컬 파일을 작업공간의 선택한 디렉터리로 복사합니다",
+  "explorer.import_prompt": "%{directory}에 가져올 로컬 파일을 드래그하거나 절대 경로를 붙여넣고 Enter: ",
+  "explorer.import_progress": "%{name} 가져오는 중: %{bytes}/%{total}바이트",
+  "explorer.import_done": "파일 %{count}개 가져옴; %{skipped}개 건너뜀"
 }

@@ -1731,5 +1731,10 @@
   "dialog.title.permission_denied": "Permissão negada",
   "dialog.title.name_conflict": "Conflito de nomes",
   "dialog.title.large_file": "Arquivo grande",
-  "dialog.title.go_to_line": "Ir para a linha"
+  "dialog.title.go_to_line": "Ir para a linha",
+  "cmd.explorer_import": "Importar arquivos locais",
+  "cmd.explorer_import_desc": "Copiar arquivos locais para o diretório selecionado do espaço de trabalho",
+  "explorer.import_prompt": "Arraste arquivos ou cole caminhos locais absolutos para %{directory} e pressione Enter: ",
+  "explorer.import_progress": "Importando %{name}: %{bytes}/%{total} bytes",
+  "explorer.import_done": "%{count} arquivos importados; %{skipped} ignorados"
 }

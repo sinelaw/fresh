@@ -1187,6 +1187,7 @@ pub struct Window {
     /// window has its own paste buffer; cross-window file ops would
     /// require a separately-shared clipboard.
     pub file_explorer_clipboard: Option<crate::app::file_explorer::FileExplorerClipboard>,
+    pub(crate) file_import: Option<crate::app::file_import::FileImport>,
 
     /// Process-group tracking for everything this window owns
     /// (today: pty children from `terminal_manager.spawn`).
@@ -2541,6 +2542,7 @@ impl Window {
             animations: crate::view::animation::AnimationRunner::default(),
             plugin_errors: Vec::new(),
             file_explorer_clipboard: None,
+            file_import: None,
             process_groups: ProcessGroups::default(),
             resources,
         }

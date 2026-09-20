@@ -551,6 +551,18 @@ pub trait FileSystem: Send + Sync {
     /// Rename/move a file or directory atomically
     fn rename(&self, from: &Path, to: &Path) -> io::Result<()>;
 
+    /// Publish a fully written, same-filesystem staging file. Without
+    /// `overwrite`, an existing destination (including a symlink) must cause
+    /// `AlreadyExists`, atomically. Never interpret `to` as a directory to
+    /// move into, or follow a destination symlink. The caller cleans up `from`
+    /// if it still exists after publication.
+    fn publish_file(&self, _from: &Path, _to: &Path, _overwrite: bool) -> io::Result<()> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "atomic file publication is unsupported",
+        ))
+    }
+
     /// Copy a file (fallback when rename fails across filesystems)
     fn copy(&self, from: &Path, to: &Path) -> io::Result<u64>;
 
@@ -1505,6 +1517,14 @@ impl FileSystem for StdFileSystem {
     // File Operations
     fn rename(&self, from: &Path, to: &Path) -> io::Result<()> {
         std::fs::rename(from, to)
+    }
+
+    fn publish_file(&self, from: &Path, to: &Path, overwrite: bool) -> io::Result<()> {
+        if overwrite {
+            std::fs::rename(from, to)
+        } else {
+            std::fs::hard_link(from, to)
+        }
     }
 
     fn copy(&self, from: &Path, to: &Path) -> io::Result<u64> {

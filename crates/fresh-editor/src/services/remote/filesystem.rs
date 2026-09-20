@@ -142,6 +142,8 @@ impl RemoteFileSystem {
                     io::ErrorKind::IsADirectory
                 } else if msg.contains("not a directory") {
                     io::ErrorKind::NotADirectory
+                } else if msg.starts_with("already exists:") {
+                    io::ErrorKind::AlreadyExists
                 } else {
                     io::ErrorKind::Other
                 };
@@ -401,6 +403,20 @@ impl FileSystem for RemoteFileSystem {
             .map_err(Self::to_io_error)?;
 
         Ok(result.get("size").and_then(|v| v.as_u64()).unwrap_or(0))
+    }
+
+    fn publish_file(&self, from: &Path, to: &Path, overwrite: bool) -> io::Result<()> {
+        self.channel
+            .request_blocking(
+                "publish_file",
+                serde_json::json!({
+                    "from": from.to_string_lossy(),
+                    "to": to.to_string_lossy(),
+                    "overwrite": overwrite,
+                }),
+            )
+            .map_err(Self::to_io_error)?;
+        Ok(())
     }
 
     fn remove_file(&self, path: &Path) -> io::Result<()> {

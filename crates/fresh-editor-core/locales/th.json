@@ -1731,5 +1731,10 @@
   "dialog.title.permission_denied": "การเข้าถึงถูกปฏิเสธ",
   "dialog.title.name_conflict": "ชื่อซ้ำ",
   "dialog.title.large_file": "ไฟล์ขนาดใหญ่",
-  "dialog.title.go_to_line": "ไปที่บรรทัด"
+  "dialog.title.go_to_line": "ไปที่บรรทัด",
+  "cmd.explorer_import": "นำเข้าไฟล์ในเครื่อง",
+  "cmd.explorer_import_desc": "คัดลอกไฟล์ในเครื่องไปยังไดเรกทอรีที่เลือกในพื้นที่ทำงาน",
+  "explorer.import_prompt": "ลากไฟล์หรือวางพาธแบบเต็มในเครื่องเพื่อนำเข้าไปยัง %{directory} แล้วกด Enter: ",
+  "explorer.import_progress": "กำลังนำเข้า %{name}: %{bytes}/%{total} ไบต์",
+  "explorer.import_done": "นำเข้า %{count} ไฟล์แล้ว; ข้าม %{skipped} ไฟล์"
 }

@@ -305,6 +305,7 @@ impl CloseSplitMenu {
 /// File explorer context menu items
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FileExplorerContextMenuItem {
+    Import,
     NewFile,
     NewDirectory,
     Rename,
@@ -335,6 +336,7 @@ impl FileExplorerContextMenuItem {
             Self::Duplicate,
             Self::CopyFullPath,
             Self::CopyRelativePath,
+            Self::Import,
         ]
     }
 
@@ -347,6 +349,7 @@ impl FileExplorerContextMenuItem {
             Self::Duplicate,
             Self::CopyFullPath,
             Self::CopyRelativePath,
+            Self::Import,
         ]
     }
 
@@ -356,11 +359,12 @@ impl FileExplorerContextMenuItem {
         // off because the workspace path is already exposed via other
         // commands and adding it here would surface a "Copy …" entry on
         // a menu that's supposed to hide destructive/copy-style actions.
-        &[Self::NewFile, Self::NewDirectory, Self::Paste]
+        &[Self::NewFile, Self::NewDirectory, Self::Paste, Self::Import]
     }
 
     pub fn label(&self) -> String {
         match self {
+            Self::Import => t!("cmd.explorer_import").to_string(),
             Self::NewFile => t!("explorer.context.new_file").to_string(),
             Self::NewDirectory => t!("explorer.context.new_directory").to_string(),
             Self::Rename => t!("explorer.context.rename").to_string(),

@@ -1270,6 +1270,7 @@ impl Editor {
             Action::FileExplorerCollapse => self.file_explorer_collapse(),
             Action::FileExplorerOpen => self.file_explorer_open_file()?,
             Action::FileExplorerRefresh => self.file_explorer_refresh(),
+            Action::FileExplorerImport => self.start_file_import(),
             Action::FileExplorerNewFile => self.file_explorer_new_file(),
             Action::FileExplorerNewDirectory => self.file_explorer_new_directory(),
             Action::FileExplorerDelete => self.file_explorer_delete(),

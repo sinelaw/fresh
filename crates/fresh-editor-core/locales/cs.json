@@ -1731,5 +1731,10 @@
   "dialog.title.permission_denied": "Přístup odepřen",
   "dialog.title.name_conflict": "Konflikt názvů",
   "dialog.title.large_file": "Velký soubor",
-  "dialog.title.go_to_line": "Přejít na řádek"
+  "dialog.title.go_to_line": "Přejít na řádek",
+  "cmd.explorer_import": "Importovat místní soubory",
+  "cmd.explorer_import_desc": "Zkopírovat místní soubory do vybraného adresáře pracovního prostoru",
+  "explorer.import_prompt": "Přetáhněte soubory nebo vložte absolutní místní cesty pro %{directory}, pak Enter: ",
+  "explorer.import_progress": "Importuji %{name}: %{bytes}/%{total} bajtů",
+  "explorer.import_done": "Importováno %{count} souborů; přeskočeno %{skipped}"
 }

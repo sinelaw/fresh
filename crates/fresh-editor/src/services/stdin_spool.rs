@@ -202,6 +202,10 @@ impl FileSystem for SpoolFileSystem {
     fn rename(&self, from: &Path, to: &Path) -> io::Result<()> {
         self.inner.rename(from, to)
     }
+    fn publish_file(&self, from: &Path, to: &Path, overwrite: bool) -> io::Result<()> {
+        self.inner.publish_file(from, to, overwrite)
+    }
+
     fn copy(&self, from: &Path, to: &Path) -> io::Result<u64> {
         self.inner.copy(from, to)
     }

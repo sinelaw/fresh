@@ -225,6 +225,12 @@ impl FileSystem for SlowFileSystem {
         self.inner.rename(from, to)
     }
 
+    fn publish_file(&self, from: &Path, to: &Path, overwrite: bool) -> io::Result<()> {
+        self.add_delay(self.config.other_delay);
+        self.metrics.other_calls.fetch_add(1, Ordering::SeqCst);
+        self.inner.publish_file(from, to, overwrite)
+    }
+
     fn copy(&self, from: &Path, to: &Path) -> io::Result<u64> {
         self.add_delay(self.config.write_file_delay);
         self.metrics.write_file_calls.fetch_add(1, Ordering::SeqCst);

@@ -25,6 +25,42 @@ Preview tabs are enabled by default. Turn them off in the Settings UI if you pre
 - **`Shift+Up` / `Shift+Down`** extend a multi-select range from the current anchor; all clipboard operations (and delete) act on the whole selection.
 - **Buffers follow files** — renaming or moving a file (via cut+paste) relocates any open buffers pointing at it; deleting a file closes its buffer. Renaming a directory relocates buffers for every file inside it.
 
+## Importing Local Files (Terminal Drag and Drop)
+
+Select a destination directory in the explorer (selecting a file uses its
+parent directory), then choose **Import Local Files** from the command palette
+or the explorer's right-click menu. Drop files from Finder or another file
+manager into the terminal while the import prompt is open, then press **Enter**.
+You can also paste their absolute local paths. Without an explorer selection,
+the command uses the current workspace directory.
+
+This copies the **file bytes**, preserving the originals. Multiple paths,
+spaces, and non-ASCII names are supported. On Unix, paths may be single-quoted,
+double-quoted, or backslash-escaped; on Windows, quoted paths retain their
+backslashes. No shell expressions are evaluated. Directories, relative paths,
+and `file://` URLs are not accepted; use absolute filesystem paths instead.
+
+For a locally running Fresh with an SSH workspace, the source is read on the
+local machine and uploaded through the workspace's remote agent. A copy on the
+remote filesystem alone would not transfer local files.
+
+Each name conflict offers **Overwrite**, **Skip**, **Rename**, and **Cancel**.
+Files with unsaved changes in the current window cannot be overwritten. Imports
+show byte progress and can be cancelled with **Escape** or **Cancel**. Cancellation
+stops between chunks (an in-flight remote request must finish or fail first).
+Completed files remain imported; the current file is published only after its
+transfer finishes. Existing files are preserved on failure or cancellation, and
+the explorer refreshes after each successful import. A disconnected host may
+leave a `.fresh-import-*` staging directory; cleanup failures report its path.
+
+Terminal support depends on the terminal forwarding the drop as quoted or escaped
+local paths, either as bracketed paste or ordinary text input. The explicit prompt
+works with both forms and prevents ordinary text pastes from importing files.
+Dropping onto an editor buffer still follows the terminal's usual text-paste
+behavior. This does not add native GUI/browser drop events. If Fresh itself runs
+on a server (for example after `ssh host`), local path strings cannot upload your
+computer's files; run Fresh locally with an SSH workspace instead.
+
 ## Following the Active File
 
 `file_explorer.follow_active_buffer` (off by default) keeps the tree pointed at

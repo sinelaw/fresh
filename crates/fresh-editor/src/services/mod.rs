@@ -10,6 +10,7 @@ pub mod completion;
 pub use fresh_editor_core::counters;
 pub mod editorconfig;
 pub mod env_provider;
+pub mod file_import;
 pub mod file_watcher;
 pub mod fs;
 #[cfg(target_os = "linux")]

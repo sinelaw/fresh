@@ -251,6 +251,20 @@ def cmd_cp(id, p):
     send(id, r={"size": os.path.getsize(dst)})
 
 
+def cmd_publish_file(id, p):
+    """Publish a completed upload without following the destination leaf."""
+    src = validate_path(p["from"])
+    # validate_path resolves symlinks. Resolve the parent only: a destination
+    # symlink is a conflict, never permission to overwrite its target.
+    raw_dst = os.path.abspath(os.path.expanduser(p["to"]))
+    dst = os.path.join(validate_path(os.path.dirname(raw_dst)), os.path.basename(raw_dst))
+    if p.get("overwrite", False):
+        os.replace(src, dst)
+    else:
+        os.link(src, dst)
+    send(id, r={})
+
+
 def cmd_realpath(id, p):
     """Get canonical absolute path."""
     send(id, r={"path": validate_path(p["path"])})
@@ -732,6 +746,7 @@ METHODS = {
     "rmdir": cmd_rmdir,
     "mkdir": cmd_mkdir,
     "mv": cmd_mv,
+    "publish_file": cmd_publish_file,
     "cp": cmd_cp,
     "realpath": cmd_realpath,
     "chmod": cmd_chmod,
@@ -772,6 +787,8 @@ def handle_request(line):
         send(id, e=f"permission denied: {e}")
     except FileNotFoundError as e:
         send(id, e=f"not found: {e}")
+    except FileExistsError as e:
+        send(id, e=f"already exists: {e}")
     except IsADirectoryError as e:
         send(id, e=f"is a directory: {e}")
     except NotADirectoryError as e:

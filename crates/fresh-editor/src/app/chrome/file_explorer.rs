@@ -435,6 +435,7 @@ impl Editor {
     ) {
         use crate::app::types::FileExplorerContextMenuItem;
         match item {
+            FileExplorerContextMenuItem::Import => self.start_file_import(),
             FileExplorerContextMenuItem::NewFile => self.file_explorer_new_file(),
             FileExplorerContextMenuItem::NewDirectory => self.file_explorer_new_directory(),
             FileExplorerContextMenuItem::Rename => self.file_explorer_rename(),

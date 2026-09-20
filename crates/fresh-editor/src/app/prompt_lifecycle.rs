@@ -867,6 +867,18 @@ impl Editor {
 
     /// Cancel the current prompt and return to normal mode
     pub fn cancel_prompt(&mut self) {
+        if self.active_window().prompt.as_ref().is_some_and(|prompt| {
+            matches!(
+                prompt.prompt_type,
+                PromptType::FileImportProgress
+                    | PromptType::FileImportConflict
+                    | PromptType::FileImportRename
+            )
+        }) {
+            self.drop_prompt();
+            self.cancel_file_import();
+            return;
+        }
         // Extract theme to restore if this is a SelectTheme prompt
         let theme_to_restore = if let Some(ref prompt) = self.active_window_mut().prompt {
             if let PromptType::SelectTheme { original_theme } = &prompt.prompt_type {

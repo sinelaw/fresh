@@ -28,6 +28,7 @@ mod event_apply;
 pub mod event_debug;
 mod event_debug_actions;
 mod file_explorer;
+mod file_import;
 pub mod file_open;
 mod file_open_input;
 mod file_open_orchestrators;
