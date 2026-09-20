@@ -1,14 +1,10 @@
 # Release Notes
 
-## Unreleased
-
-### Features
-
-* **Confirmations are a modal dialog now, not a line on the bottom row** - quitting with unsaved buffers, closing a modified buffer, deleting from the file explorer, overwriting a file, reverting, paste conflicts, saving with sudo and loading a large file in a fixed encoding all ask in a centred card over a dimmed frame, with the outcomes spelled out as buttons ("Discard and Quit") instead of run together as parenthesised letters ("(d)iscard and quit"). Arrow keys or Tab move between the buttons, Enter takes the armed one, Esc backs out, and the mouse works — buttons light up under the pointer. Every button answers to a key it actually shows — a letter of its own label, underlined, or a number where the language's own words offer no letter a keyboard can type — and the same key means the same thing in every dialog (`c` is always Cancel, `1` is always the way out where the buttons are numbered). Destructive outcomes are in the error colour and are never the button that opens armed
-
 ## 0.5.2
 
 For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
+
+Fresh is now licensed **GPL-3.0-or-later**, up from GPL-2.0-only (#3328).
 
 > Most config options below can be changed in the **Settings UI** - run **Open Settings** from the command palette (`Ctrl+P`).
 
@@ -16,23 +12,42 @@ For live updates on Fresh, [follow me on X](https://x.com/TheNoamLewis).
 
 * **Orchestrator mode** - a bare `fresh`, with no file or flags, reopens the workspace you were last in, dock and all, running as a background daemon. On by default, toggle it in Settings (#3306)
 * **New CLI commands** - `workspace list`, and `agent list` / `get` / `explain` / `wait` / `start`, for scripting Orchestrator workspaces and agents without reading the dock
+* **Confirmations are a modal dialog now, not a line on the bottom row** - a centred card with each outcome spelled out as its own button, answering to arrows, Tab, Enter, Esc, the mouse and the letter underlined in the label; an outcome that loses work is in the error colour and never opens armed (#3320)
+* **Find and rejoin the agent sessions other tools are running** - `Orchestrator: Everything` scans any machine you can reach for tmux, Claude Code, Codex, screen and zellij sessions, groups them by project, and rejoins one on Enter (#3332)
+* **Tokyo Night and Gruvbox ship as built-in themes**, which the homepage already promised (#3107, reported by @sgon00)
+* **Alt+Shift+N / Alt+Shift+P cycle the keyboard through the sidebar**, so a plugin panel like the Markdown outline is reachable without the palette (#3326)
 
 ### Bug Fixes
 
 * **Orchestrator dock polish** - the welcome screen and dock could fail to appear in a daemon session, a context menu could close itself too fast, and a workspace just created from the dock could end up not taking keyboard input (#3306, #3275)
-* **The workspace dock is there from the first frame** - the editor used to come up full width and the dock shoved it aside a moment later, once the plugins had loaded. The column is now laid out before any plugin runs. The dock also **remembers whether you left it open and how wide you dragged it** across launches; `autoOpenDock: false` keeps it closed until you open it, and a bare `fresh` always opens it
+* **The workspace dock is there from the first frame** - the editor used to come up full width and the dock shoved it aside a moment later, once the plugins had loaded. The column is now laid out before any plugin runs. The dock also **remembers whether you left it open and how wide you dragged it** across launches; `autoOpenDock: false` keeps it closed until you open it, and a bare `fresh` always opens it (#3321)
+* **A nested `fresh` in the editor's own terminal no longer shreds the pane** - and a terminal in a daemon session advertises `FRESH_SESSION` again, so `fresh FILE` there hands the file to the editor you are already in (#3318)
+* **Sidebar panels stay with the window and file they belong to** - a Markdown outline mounted in one window showed in every other, and a restored panel no plugin claimed sat reading "Panel unavailable" forever (#3326)
+* **The Markdown outline follows the reader while the file tree has the keyboard**, and its toggle reveals the panel instead of reporting ON for something off screen (#3326)
+* **The explorer says why a reveal could not move the tree** - an unnamed buffer, or a file outside the project - and its scrollbar can be grabbed and dragged (#3326)
 * **SSH workspaces** - creating one didn't always honor your `~/.ssh/config`, and hung with a plain error on an unrecognized host key instead of asking to trust it; deleting one could occasionally crash the app (#3301, #3299, #3300)
-* **Highlighted lines** (diff view, code tour) no longer hide inlay hints at the end of the line; cursor visibility there is still an open issue for code tour (#3314)
+* **A remote host that connects and then says nothing gives up** instead of leaving the workspace on "scanning" forever
+* **Attaching to a machine keeps the window you are in** - its buffers, splits, layout and terminals - instead of restarting the editor
+* **Markdown compose: a heading no longer flickers while you type in it**, and backspacing a list item no longer throws the caret two rows down (#3318)
+* **The occurrence highlight keeps up with the cursor** - it used to wait for your next keystroke to repaint, and in a daemon session every other time-driven repaint was stranded with it (#3318)
+* **Code tour: clicking the prose takes the keyboard**, and its caret stays visible past the end of a line (#3318)
+* **Highlighted lines** (diff view, code tour) no longer hide inlay hints at the end of the line (#3314)
 * **`editor.scroll_offset` fixed** for files under 5000 lines with line wrap off (#3248)
 * **Markdown code block borders** no longer break while you type inside them (#3247)
 * **LSP now finds the right project folder on Windows** (#3067, reported by @Bearmancer; fixed by @56steve)
 * **Keybinding fixes** - multi-byte bindings like German `Ctrl+ü` now load from config (#3036, by @georglauterbach); a panel's Shift+Tab and Review Diff's fold shortcuts now fire (#3253); a rare case with certain Unicode letters no longer got a phantom Shift (#3302)
+* **Emacs chords work in a plugin-mode buffer again** - `C-x C-c`, `C-x C-f` and `C-x C-s` in a Markdown buffer ran the second key's own action instead of completing the chord (#3060, by @dbactual)
+* **Split resize shortcuts reach the editor from a terminal pane** instead of being typed into the shell (#3245, by @kimprap)
 * **Vi mode: many Vim-parity fixes** - `Y`, `J`, `G`, `x`/`X`, visual mode, text objects, dot-repeat, and more, checked against real Vim (#2447)
+* **Vi `.` no longer drops the insert it replays** when typed quickly after Esc
 * **Fixed stale LSP diagnostics after vi-mode edits**, and Save All sending the wrong file's content to language servers (#3258)
+* **The homepage's demo player paints again on Chrome/Linux** instead of showing a black box (#3106, reported by @sgon00)
 
 ### Internals
 
 * Minor performance and dependency updates, including a security fix for a TLS library (RUSTSEC-2026-0285)
+* **Less allocation churn on the render path** - a new memory-profiling harness found two hot spots copying and regrowing tens of MB over a two-minute editing session, and a large batch of explorer decorations no longer re-resolves the project root once per path (#3266, #3103)
+* Scrollbars are one implementation in the shared UI library now, so they behave the same on every surface
 
 ## 0.5.1
 
