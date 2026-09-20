@@ -852,10 +852,17 @@ impl Editor {
     fn handle_lsp_apply_edit(&mut self, edit: lsp_types::WorkspaceEdit, label: Option<String>) {
         tracing::info!("Applying workspace edit from server (label: {:?})", label);
         match self.apply_workspace_edit(edit) {
-            Ok(n) => {
+            // A refused operation has already named the file it was about.
+            Ok(applied) if applied.refused > 0 => {}
+            Ok(applied) => {
                 if let Some(label) = label {
                     self.set_status_message(
-                        t!("lsp.code_action_applied", title = &label, count = n).to_string(),
+                        t!(
+                            "lsp.code_action_applied",
+                            title = &label,
+                            count = applied.changes
+                        )
+                        .to_string(),
                     );
                 }
             }

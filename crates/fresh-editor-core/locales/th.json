@@ -1146,6 +1146,8 @@
   "lsp.cannot_open_definition": "ไม่สามารถเปิดตำแหน่งคำนิยามได้",
   "lsp.definition_external_uri": "คำจำกัดความอยู่ในตำแหน่งภายนอกที่ไม่มีไฟล์ต้นฉบับในเครื่อง: %{uri}",
   "lsp.cannot_rename_unsaved": "ไม่สามารถเปลี่ยนชื่อในบัฟเฟอร์ที่ไม่ได้บันทึก",
+  "lsp.overwrite_refused": "เพิกเฉยต่อคำขอเขียนทับ %{name} จากเซิร์ฟเวอร์ภาษา",
+  "lsp.delete_refused": "เพิกเฉยต่อคำขอลบ %{name} จากเซิร์ฟเวอร์ภาษา",
   "lsp.code_action_applied": "นำไปใช้แล้ว: %{title} (มีการเปลี่ยนแปลง %{count} จุด)",
   "lsp.code_action_hint": "กดตัวเลขเพื่อเลือก หรือ Esc เพื่อยกเลิก",
   "lsp.disabled.library_file": "ไฟล์ไลบรารี (นอกโปรเจกต์)",

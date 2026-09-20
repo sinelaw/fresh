@@ -1146,6 +1146,8 @@
   "lsp.cannot_open_definition": "Не удалось открыть расположение определения",
   "lsp.definition_external_uri": "Определение находится во внешнем расположении без локального исходного файла: %{uri}",
   "lsp.cannot_rename_unsaved": "Невозможно переименовать в несохранённом буфере",
+  "lsp.overwrite_refused": "Запрос языкового сервера на перезапись %{name} проигнорирован",
+  "lsp.delete_refused": "Запрос языкового сервера на удаление %{name} проигнорирован",
   "lsp.code_action_applied": "Применено: %{title} (%{count} изменений)",
   "lsp.code_action_hint": "Нажмите цифру для выбора, Esc для отмены",
   "lsp.disabled.library_file": "Файл библиотеки (вне проекта)",
