@@ -772,6 +772,27 @@ impl Editor {
     }
 
     /// Move a file/directory to the remote trash directory (~/.local/share/fresh/trash/)
+    /// Remove one side of a cross-filesystem move: the source once its copy
+    /// has landed, or a half-written destination being rolled back.
+    ///
+    /// A file is unlinked through the authority filesystem, exactly as it
+    /// always was — one `unlink`, no tree to walk, and no way for a symlink
+    /// to lead it anywhere. A directory has no such operation any more, so it
+    /// goes to the trash instead: that is one move of the whole entry rather
+    /// than a walk, and it leaves the user able to undo a move that was not
+    /// what they meant.
+    ///
+    /// Keeping files on the filesystem handle also keeps them injectable,
+    /// which is what lets a test arm a removal failure and check that the
+    /// "copy landed but the original is still there" outcome is reported.
+    fn remove_moved_source(&self, path: &Path, is_dir: bool) -> std::io::Result<()> {
+        if is_dir {
+            self.trash_path(path)
+        } else {
+            self.authority().filesystem.remove_file(path)
+        }
+    }
+
     /// Move a path to the trash — the system trash locally, a trash directory
     /// under the remote home for a remote authority.
     ///
@@ -1398,12 +1419,7 @@ impl Editor {
                             // distinct outcome — the user needs to know the
                             // copy is at `dst` AND the original is still at
                             // `src`, so they can decide what to do.
-                            //
-                            // To the trash rather than unlinked: a move
-                            // between filesystems is the one paste that has
-                            // to destroy its source, so it is the one that
-                            // most deserves to be undoable.
-                            match self.trash_path(src) {
+                            match self.remove_moved_source(src, src_is_dir) {
                                 Ok(()) => PasteOpOutcome::Ok,
                                 Err(remove_err) => PasteOpOutcome::SourceRemovalFailed {
                                     dst: dst.to_path_buf(),
@@ -1417,13 +1433,7 @@ impl Editor {
                             // the intact source. Cleanup errors are
                             // swallowed — the copy error is the interesting
                             // one to surface — but logged.
-                            //
-                            // Also to the trash. A partial copy is our mess
-                            // rather than the user's, but it may hold the
-                            // only copy of something the source no longer
-                            // has if the failure was partway through, and
-                            // this code cannot tell.
-                            if let Err(cleanup_err) = self.trash_path(dst) {
+                            if let Err(cleanup_err) = self.remove_moved_source(dst, src_is_dir) {
                                 tracing::warn!(
                                     "Failed to roll back partial destination {:?} after copy \
                                      fallback failed: {}",
