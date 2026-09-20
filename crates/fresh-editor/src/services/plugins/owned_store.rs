@@ -261,9 +261,34 @@ impl OwnedStore {
             return false;
         }
 
-        let had_existing = target.exists();
-        if had_existing && !trash_path(&target) {
-            return false;
+        // Move any existing install out of the way. The trash is the good
+        // outcome: an upgrade that turns out badly is recoverable from the
+        // desktop's own undo.
+        //
+        // When the trash is unavailable — no writable HOME, a container, a
+        // mount with nowhere to put one — the fallback is to rename the old
+        // copy aside under a dot-prefixed sibling rather than to unlink it.
+        // Upgrading still works, nothing is destroyed, and the leftover is
+        // visible to a user who wants the space back. `getInstalledPackages`
+        // skips dot-prefixed directories, so the old copy is not served as a
+        // package of its own.
+        if target.exists() && !trash_path(&target) {
+            let nanos = SystemTime::now()
+                .duration_since(SystemTime::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0);
+            let aside = parent.join(format!(".{name}.replaced-{nanos}"));
+            if let Err(e) = std::fs::rename(&target, &aside) {
+                tracing::warn!(
+                    "could not move the installed copy of {name:?} aside ({:?}): {e}",
+                    aside
+                );
+                return false;
+            }
+            tracing::warn!(
+                "trash unavailable; the previous {name:?} was left at {:?}",
+                aside
+            );
         }
 
         match std::fs::rename(&source, &target) {
