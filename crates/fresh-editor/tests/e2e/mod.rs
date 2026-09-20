@@ -134,6 +134,7 @@ pub mod issue_3148_block_selection_tabs;
 pub mod issue_3150_block_selection_offset;
 pub mod issue_3189_multi_workspace_quit;
 pub mod issue_3192_scrollbar_drag_cursor;
+pub mod issue_3214_confirm_prompt_wraps;
 pub mod issue_623_prompt_dropdown_scrollbar;
 pub mod issue_722_inlay_hint_split_drift;
 pub mod issue_779_after_eof_shade;
