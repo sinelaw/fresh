@@ -423,10 +423,14 @@ impl<M: 'static> List<M> {
 
     /// An overlay bar, drawn only while the caller says to — see
     /// [`Node::scrollbar_revealed`](crate::Node::scrollbar_revealed).
+    ///
+    /// Composes with [`scrollbar_gutter`](Self::scrollbar_gutter): the pair is
+    /// a reserved column the bar is only drawn in on attention, which is what
+    /// a list whose rows reach their last column wants — an overlay bar alone
+    /// is painted over that column.
     pub fn scrollbar_revealed(mut self, shown: bool) -> Self {
         self.scrollbar = true;
         self.overlay = true;
-        self.stable_gutter = false;
         self.bar_hidden = !shown;
         self
     }
@@ -667,6 +671,11 @@ impl<M: 'static> Component<M> for List<M> {
         }
         if self.overlay {
             body = body.scrollbar_revealed(!self.bar_hidden);
+            // Asked for both: the column is reserved on every frame and the
+            // bar appears in it on attention.
+            if self.stable_gutter {
+                body = body.scrollbar_gutter();
+            }
         } else if self.stable_gutter {
             body = body.scrollbar_gutter();
         } else if self.scrollbar {

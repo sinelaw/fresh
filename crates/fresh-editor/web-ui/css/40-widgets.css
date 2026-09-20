@@ -65,6 +65,11 @@
   .w-tree-row{padding:1px 6px;white-space:pre;overflow:hidden;text-overflow:ellipsis;cursor:default;border-radius:3px}
   .w-tree-row.sel{background:var(--menuhi);color:var(--on-menuhi)}
   .w-tree-disc,.w-tree-check{color:var(--muted)} .w-tree-row.sel .w-tree-disc,.w-tree-row.sel .w-tree-check{color:var(--on-menuhi-dim)}
+  /* A row's action button (TreeNode.action): pushed to the row's right edge,
+     in the accent the TUI spends on the same glyph family. */
+  .w-tree-action{margin-left:auto;padding-left:2ch;color:var(--accent);cursor:pointer}
+  .w-tree-row:has(.w-tree-action){display:flex}
+  .w-tree-row.sel .w-tree-action{color:var(--on-menuhi)}
   /* Continuation rows of a fixed-height card (Tree.itemHeight > 1): muted
      detail lines that select + highlight with their card's primary row. */
   .w-tree-xrow{padding:0 6px;white-space:pre;overflow:hidden;text-overflow:ellipsis;cursor:default;border-radius:3px;color:var(--muted)}

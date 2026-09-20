@@ -1346,7 +1346,10 @@ impl<M> Node<M> {
     /// stable`.
     ///
     /// Implies [`scrollbar`](Node::scrollbar): a gutter is the bar's column,
-    /// so asking for one asks for the bar.
+    /// so asking for one asks for the bar. It composes with
+    /// [`scrollbar_revealed`](Node::scrollbar_revealed) — a reserved column
+    /// the bar is only drawn in on attention, which is what a window whose
+    /// content reaches its last column wants.
     pub fn scrollbar_gutter(mut self) -> Self {
         match &mut self.desc {
             Desc::Viewport(p) => {
@@ -1375,15 +1378,22 @@ impl<M> Node<M> {
     /// pressing the column it would have been in. And it takes **no gutter** —
     /// it floats over the window's last column rather than carving one out,
     /// which is what makes it an overlay and what keeps a bar that comes and
-    /// goes from reflowing the row being reached for. A window that would
-    /// rather give the bar a column of its own wants
-    /// [`scrollbar_gutter`](Node::scrollbar_gutter) and no reveal.
+    /// goes from reflowing the row being reached for.
+    ///
+    /// **Floating means covering.** A cell in that column is painted over
+    /// while the bar is up — fine when the column holds the padding a row
+    /// usually ends in, and not fine when it holds something the reader needs
+    /// (a button at the row's edge, the `…` that says the row was cut). A
+    /// window whose content reaches its last column asks for
+    /// [`scrollbar_gutter`](Node::scrollbar_gutter) as well: the two compose,
+    /// and the pair is the combination that neither covers nor reflows — the
+    /// column is reserved on every frame, and the bar appears in it on
+    /// attention. The cost is that column, whether or not there is ever a bar.
     pub fn scrollbar_revealed(mut self, shown: bool) -> Self {
         match &mut self.desc {
             Desc::Viewport(p) => {
                 p.scrollbar = true;
                 p.overlay = true;
-                p.stable_gutter = false;
                 p.bar_hidden = !shown;
             }
             _ => panic!("scrollbar_revealed() applies to Viewport nodes only"),

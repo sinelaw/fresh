@@ -64,6 +64,7 @@ other docs assume.
 | [orchestrator-sessions.md](orchestrator-sessions.md) | The Orchestrator/Dock for many concurrent workspaces/agent sessions, session persistence and the Live/Dormant lifecycle, and the dock UX design versus what ships today. |
 | [orchestrator-ux-redesign.md](orchestrator-ux-redesign.md) | **Shipped** visual redesign of the Orchestrator dock and the New Workspace / Run Agent dialogs, with hand-captured transcripts of today's layout as the evidence: the alignment grid, the `+ New` / `⋯` header, an `~/.ssh/config`-driven host picker, and a machine registry (Add Machine / Machines). |
 | [terminal.md](terminal.md) | The integrated terminal: PTY spawning, the embedded `fresh-winterm` VT emulator (and why custom), live/scrollback per-buffer state, mouse/links/OSC52, and restore-on-reconnect. |
+| [tmux-native-sessions.md](tmux-native-sessions.md) | What "native tmux support" could mean: the rejoin flow that ships, adopting tmux sessions as dock rows the way discovered worktrees already work, and control mode (`tmux -CC`) — one tmux pane per Fresh terminal — with the terminal-ownership seam it would land on. |
 
 ### Configuration, features & quality
 | Doc | What it covers |

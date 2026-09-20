@@ -829,6 +829,71 @@ fn a_stable_gutter_reserves_its_column_with_no_bar_to_put_in_it() {
     assert_eq!(row_width(&short), frame.w - 1, "the gutter is not content");
 }
 
+/// **A revealed bar can have a column of its own.**
+///
+/// The two are separate answers: *when* the bar is drawn (on attention) and
+/// *where* it goes (over the rows, or in a column they never use). Asked for
+/// together they are the combination a window whose content reaches its last
+/// column needs — a row ending in a button, or in the `…` that says it was
+/// cut — because a floating bar covers whatever is under it, and a gutter
+/// that came and went would move the row being reached for.
+#[test]
+fn a_revealed_bar_with_a_gutter_neither_covers_the_rows_nor_moves_them() {
+    let list = |n: usize, shown: bool| -> Node<Msg> {
+        List::windowed(n, fresh_ui::Key::from, |i| {
+            fresh_ui::col()
+                .theme("list.row")
+                .child(fresh_ui::text(format!("row {i}")))
+        })
+        .scrollbar_gutter()
+        .scrollbar_revealed(shown)
+        .node()
+    };
+    let frame = Size::new(20, 5);
+    let ui_of = |n: usize, shown: bool| {
+        let mut ui: Ui<Msg> = Ui::new();
+        ui.frame(list(n, shown), frame);
+        ui
+    };
+    let row_width = |ui: &Ui<Msg>| {
+        ui.spec()
+            .items
+            .iter()
+            .filter(|i| matches!(i.draw, Draw::Fill))
+            .map(|i| i.rect.w)
+            .max()
+            .expect("rows paint their ground")
+    };
+
+    let (fits, hidden, shown) = (ui_of(3, false), ui_of(500, false), ui_of(500, true));
+    for (what, ui) in [("fits", &fits), ("hidden", &hidden), ("shown", &shown)] {
+        assert_eq!(
+            row_width(ui),
+            frame.w - 1,
+            "the gutter is the bar's column in every state, not the rows' ({what})"
+        );
+    }
+    assert!(
+        !hidden
+            .spec()
+            .items
+            .iter()
+            .any(|i| matches!(i.draw, Draw::Scrollbar { .. })),
+        "a bar that is not being revealed is still not drawn"
+    );
+    let bar = shown
+        .spec()
+        .items
+        .iter()
+        .find(|i| matches!(i.draw, Draw::Scrollbar { .. }))
+        .expect("revealed, and overflowing");
+    assert_eq!(
+        bar.rect.x,
+        frame.w as i32 - 1,
+        "and when it is drawn it lands in the column that was kept for it"
+    );
+}
+
 /// **An overlay bar: there, and not drawn.**
 ///
 /// A window whose bar comes and goes is answering a question the window

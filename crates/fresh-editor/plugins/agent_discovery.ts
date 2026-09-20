@@ -16,8 +16,10 @@ import {
   discoverAge,
   discoverGroupOf,
   discoverMatches,
+  discoverIsGroup,
+  discoverLayout,
+  discoverRowAction,
   discoverRowEntry,
-  discoverRowWidth,
   discoverRowsFrom,
   discoverVisibleRowCount,
   quoteForAgentCmd,
@@ -137,7 +139,9 @@ function discoverExpandedKeys(): string[] {
   if (st.filter.value === "") return [...st.expanded];
   // The problems and absent groups are not filtered, so they stay folded.
   return (st.rows ?? [])
-    .filter((r) => r.group && r.key !== DISCOVER_PROBLEMS_KEY && r.key !== DISCOVER_ABSENT_KEY)
+    .filter((r) =>
+      discoverIsGroup(r) && r.key !== DISCOVER_PROBLEMS_KEY && r.key !== DISCOVER_ABSENT_KEY
+    )
     .map((r) => r.key);
 }
 
@@ -219,17 +223,21 @@ function buildDiscoverSpec(): WidgetSpec {
   } else if (rows.length === 0) {
     body.push(...filled(label(editor.t("discover.empty"))));
   } else {
-    const rowWidth = discoverRowWidth(rows, measure);
+    // Measured over every row, so the columns line up down the whole
+    // answer rather than within each heading.
+    const layout = discoverLayout(rows, measure);
     // Headings start collapsed so hundreds of sessions fit one screen.
     // `visibleRows` must be given: an auto-sized tree draws nothing here.
     body.push(
       tree({
-        nodes: rows.map((r) =>
-          treeNode(discoverRowEntry(r, rowWidth, measure), {
-            depth: r.group ? 0 : 1,
-            hasChildren: r.group,
-          })
-        ),
+        nodes: rows.map((r) => {
+          const action = discoverRowAction(r, t);
+          return treeNode(discoverRowEntry(r, layout, measure), {
+            depth: discoverIsGroup(r) ? 0 : 1,
+            hasChildren: discoverIsGroup(r),
+            ...(action === null ? {} : { action }),
+          });
+        }),
         itemKeys: rows.map((r) => r.key),
         selectedIndex: Math.min(st.index, rows.length - 1),
         visibleRows: DISCOVER_TREE_ROWS,
@@ -265,7 +273,9 @@ function reflowDiscoverRows(): void {
     : discoverRowsFrom(st.scans, { filter: st.filter.value, grouping: st.grouping }, resumeArgv, t);
   // While filtered every group is open and Enter cannot fold a heading, so
   // the cursor lands on the first hit rather than the heading above it.
-  st.index = st.filter.value === "" ? 0 : Math.max(0, st.rows?.findIndex((r) => !r.group) ?? 0);
+  st.index = st.filter.value === ""
+    ? 0
+    : Math.max(0, st.rows?.findIndex((r) => !discoverIsGroup(r)) ?? 0);
   refreshDiscoverDialog();
 }
 
@@ -493,7 +503,7 @@ function enterDiscoverRow(index: number): void {
   // Enter from the filter field acts on the tree's own selection, which
   // `select` may not have reported yet.
   st.index = index;
-  if (row.group) {
+  if (discoverIsGroup(row)) {
     // Every group is open while the filter is on; nothing to flip.
     if (st.filter.value !== "") return;
     if (st.expanded.has(row.key)) st.expanded.delete(row.key);
@@ -555,6 +565,14 @@ function handleDiscoverEvent(e: WidgetEvt): void {
       st.expanded.clear();
       reflowDiscoverRows();
     }
+    return;
+  }
+  // A press on a row's Import button. The host has already moved the
+  // selection onto that row, so this is exactly what Enter would have done
+  // — one press instead of two.
+  if (e.event_type === "action" && e.widget_key === "discover-rows") {
+    const idx = ((e.payload ?? {}) as Record<string, unknown>).index;
+    if (typeof idx === "number") enterDiscoverRow(idx);
     return;
   }
   // A tree reports its cursor as `select` and its folds as `expand`. The
