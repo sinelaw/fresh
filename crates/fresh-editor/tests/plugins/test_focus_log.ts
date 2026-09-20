@@ -17,7 +17,7 @@ const editor = getEditor();
  */
 
 const lines: string[] = [];
-const LOG = `${editor.getCwd()}/focus_log.txt`;
+const LOG = editor.pathJoin(editor.getCwd(), "focus_log.txt");
 
 function record(line: string): void {
   lines.push(line);
