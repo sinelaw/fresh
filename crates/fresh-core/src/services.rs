@@ -12,9 +12,22 @@ use std::sync::Arc;
 pub trait PluginFilesystem: Send + Sync {
     /// Read a file's raw bytes. `None` if it can't be read.
     fn read_file(&self, path: &Path) -> Option<Vec<u8>>;
-    /// Write bytes to a file, creating parent directories as needed. Returns
-    /// whether the write succeeded.
+    /// Write bytes to a NEW file, creating parent directories as needed.
+    /// Fails if the path already exists.
+    ///
+    /// The refusal is the point. This was documented as create-only from the
+    /// start — "fails if the file already exists to prevent plugins from
+    /// accidentally overwriting user data" — but never implemented that way:
+    /// it wrote a temp file and renamed over the destination, so a plugin
+    /// that believed the documentation destroyed whatever was there. Use
+    /// [`Self::replace_file`] to replace a file on purpose.
     fn write_file(&self, path: &Path, contents: &[u8]) -> bool;
+    /// Write bytes to a file, replacing it if it already exists.
+    ///
+    /// Atomic: the content goes to a temp file which is renamed over the
+    /// destination, so a reader sees the old file or the new one, never a
+    /// partial one.
+    fn replace_file(&self, path: &Path, contents: &[u8]) -> bool;
     /// Whether a path exists.
     fn exists(&self, path: &Path) -> bool;
     /// List a directory's entries (empty on error).
@@ -68,6 +81,9 @@ impl PluginFilesystem for NoopPluginFilesystem {
         None
     }
     fn write_file(&self, _path: &Path, _contents: &[u8]) -> bool {
+        false
+    }
+    fn replace_file(&self, _path: &Path, _contents: &[u8]) -> bool {
         false
     }
     fn exists(&self, _path: &Path) -> bool {

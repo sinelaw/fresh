@@ -2588,7 +2588,7 @@ async function loadDetectionRules(): Promise<DetectionRules> {
         // it is re-read and re-rejected on every start, with the network no
         // longer involved.
         if (applyDetectionRules({ ...remote, source: "url" })) {
-          editor.writeFile(editor.localPath(path), JSON.stringify(remote, null, 2));
+          editor.replaceFile(editor.localPath(path), JSON.stringify(remote, null, 2));
           editor.info(`orchestrator: detection rules v${remote.version} fetched from ${url}`);
         } else {
           editor.warn(`orchestrator: detection rules from ${url} had no usable rule, not saved`);
@@ -6662,7 +6662,7 @@ function saveArchiveManifest(repoRoot: string, m: ArchiveManifest): boolean {
   const path = archiveManifestPath(repoRoot);
   const dir = editor.pathDirname(path);
   if (!editor.createDir(editor.localPath(dir))) return false;
-  return editor.writeFile(editor.localPath(path), JSON.stringify(m, null, 2));
+  return editor.replaceFile(editor.localPath(path), JSON.stringify(m, null, 2));
 }
 
 /// Every archive manifest on this machine, paired with the entries it holds.

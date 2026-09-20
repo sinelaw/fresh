@@ -515,7 +515,10 @@ function readJsonFile<T>(path: string): T | null {
 async function writeJsonFile(path: string, data: unknown): Promise<boolean> {
   try {
     const content = JSON.stringify(data, null, 2);
-    return fsLocal.writeFile(path, content);
+    // Replaces: every caller here writes an editor-owned JSON file that
+    // is meant to be authoritative — a staged manifest, a registry cache,
+    // the lockfile — rather than creating one that must not exist yet.
+    return editor.replaceFile(editor.localPath(path), content);
   } catch (e) {
     editor.debug(`[pkg] Failed to write JSON file ${path}: ${e}`);
     return false;

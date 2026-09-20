@@ -664,7 +664,7 @@ function persistReview(): void {
         updated_at: new Date().toISOString(),
     };
     try {
-        editor.writeFile(editor.localPath(path), JSON.stringify(payload, null, 2));
+        editor.replaceFile(editor.localPath(path), JSON.stringify(payload, null, 2));
     } catch {}
 }
 
@@ -7311,7 +7311,7 @@ async function review_export_session() {
     }
 
     const filePath = editor.pathJoin(reviewDir, "session.md");
-    await editor.writeFile(editor.authorityPath(filePath), md);
+    await editor.replaceFile(editor.authorityPath(filePath), md);
     editor.setStatus(editor.t("status.exported", { path: filePath }));
 }
 registerHandler("review_export_session", review_export_session);
@@ -7335,7 +7335,7 @@ async function review_export_json() {
     };
 
     const filePath = editor.pathJoin(reviewDir, "session.json");
-    await editor.writeFile(editor.authorityPath(filePath), JSON.stringify(session, null, 2));
+    await editor.replaceFile(editor.authorityPath(filePath), JSON.stringify(session, null, 2));
     editor.setStatus(editor.t("status.exported", { path: filePath }));
 }
 registerHandler("review_export_json", review_export_json);

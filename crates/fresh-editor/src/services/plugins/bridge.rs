@@ -116,6 +116,19 @@ impl PluginFilesystem for RoutedFilesystem {
         let Some(fs) = (self.resolve)() else {
             return false;
         };
+        // Create-only, as this has always claimed to be. The underlying
+        // `write_file` replaces its target, so without this check a plugin
+        // aiming at an existing path destroyed it.
+        if fs.exists(path) {
+            return false;
+        }
+        Self::ensure_parent(fs.as_ref(), path) && fs.write_file(path, contents).is_ok()
+    }
+
+    fn replace_file(&self, path: &Path, contents: &[u8]) -> bool {
+        let Some(fs) = (self.resolve)() else {
+            return false;
+        };
         Self::ensure_parent(fs.as_ref(), path) && fs.write_file(path, contents).is_ok()
     }
 

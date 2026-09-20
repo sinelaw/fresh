@@ -3574,6 +3574,16 @@ interface EditorAPI {
 	*/
 	writeFile(path: string | LocalPath | WindowPath | AuthorityPath, content: string): boolean;
 	/**
+	* Write to a file, replacing it if it already exists.
+	* 
+	* `writeFile` refuses an existing path, which is what its documentation
+	* always promised and what stops a plugin destroying a user's file by
+	* accident. Use this when replacing the file is the actual intent — a
+	* plugin rewriting its own cache or state, or re-exporting a report the
+	* user asked for again. The write is atomic.
+	*/
+	replaceFile(path: string | LocalPath | WindowPath | AuthorityPath, content: string): boolean;
+	/**
 	* Read directory contents (returns array of {name, is_file, is_dir})
 	*/
 	readDir(path: string | LocalPath | WindowPath | AuthorityPath): DirEntry[];

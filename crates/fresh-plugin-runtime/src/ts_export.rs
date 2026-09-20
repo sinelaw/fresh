@@ -1576,6 +1576,7 @@ mod tests {
             "fileExists",
             "readFile",
             "writeFile",
+            "replaceFile",
             "readDir",
             "createDir",
             // No `removePath` / `renamePath` / `copyPath`: a plugin cannot

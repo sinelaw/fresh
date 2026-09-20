@@ -20,13 +20,13 @@ readFile(path: string): Promise<string>
 
 #### `writeFile`
 
-Write string content to a file, replacing it if it already exists.
+Write string content to a NEW file. Fails if the path already exists.
 
-The write is atomic — the content goes to a temp file which is then renamed
-over the destination — so a reader sees either the old file or the new one,
-never a partial one. It is *not* a create-only call: this page used to say it
-failed when the destination existed, which was never true of the
-implementation. Check `fileExists` first if you need that.
+This page always said so — "fails if the file already exists to prevent
+plugins from accidentally overwriting user data" — but the implementation did
+the opposite, writing a temp file and renaming it over whatever was there. A
+plugin that trusted the documentation destroyed the user's file. It now
+behaves as documented, and replacing a file has to be asked for by name.
 
 ```typescript
 writeFile(path: string, content: string): Promise<void>
@@ -38,6 +38,20 @@ writeFile(path: string, content: string): Promise<void>
 |------|------|-------------|
 | `path` | `string` | Destination path (absolute or relative to cwd) |
 | `content` | `string` | UTF-8 string to write |
+
+#### `replaceFile`
+
+Write string content to a file, replacing it if it already exists.
+
+```typescript
+replaceFile(path: string, content: string): boolean
+```
+
+Use this when replacing the file is the actual intent — rewriting your own
+cache or state, or re-exporting a report the user asked for again — and
+`writeFile` when the file is meant to be new. The write is atomic: the content
+goes to a temp file which is renamed over the destination, so a reader sees
+either the old file or the new one, never a partial one.
 
 #### `fileExists`
 

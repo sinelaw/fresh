@@ -2857,6 +2857,23 @@ impl JsEditorApi {
             .write_file(Path::new(path.as_str()), content.as_bytes())
     }
 
+    /// Write to a file, replacing it if it already exists.
+    ///
+    /// `writeFile` refuses an existing path, which is what its documentation
+    /// always promised and what stops a plugin destroying a user's file by
+    /// accident. Use this when replacing the file is the actual intent — a
+    /// plugin rewriting its own cache or state, or re-exporting a report the
+    /// user asked for again. The write is atomic.
+    pub fn replace_file(
+        &self,
+        #[plugin_api(ts_type = "string | LocalPath | WindowPath | AuthorityPath")]
+        path: fresh_core::api::PluginPath,
+        content: String,
+    ) -> bool {
+        self.fs_for(&path)
+            .replace_file(Path::new(path.as_str()), content.as_bytes())
+    }
+
     /// Read directory contents (returns array of {name, is_file, is_dir})
     #[plugin_api(ts_return = "DirEntry[]")]
     pub fn read_dir<'js>(
@@ -10498,6 +10515,9 @@ mod tests {
             }
             std::fs::write(path, contents).is_ok()
         }
+        fn replace_file(&self, path: &Path, contents: &[u8]) -> bool {
+            self.write_file(path, contents)
+        }
         fn exists(&self, path: &Path) -> bool {
             path.exists()
         }
@@ -13090,6 +13110,9 @@ mod tests {
                 Some(b"SENTINEL".to_vec())
             }
             fn write_file(&self, _path: &Path, _contents: &[u8]) -> bool {
+                true
+            }
+            fn replace_file(&self, _path: &Path, _contents: &[u8]) -> bool {
                 true
             }
             fn exists(&self, _path: &Path) -> bool {
