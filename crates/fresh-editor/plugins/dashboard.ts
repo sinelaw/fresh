@@ -1148,21 +1148,29 @@ function bar(pct: number, width: number): string {
 type WttrHour = {
     time?: string; // "0", "300", …, "2100"
     tempC?: string;
+    tempF?: string;
     FeelsLikeC?: string;
+    FeelsLikeF?: string;
     windspeedKmph?: string;
+    windspeedMiles?: string;
     humidity?: string;
     weatherDesc?: { value?: string }[];
 };
 type WttrDay = {
     date?: string;
     maxtempC?: string;
+    maxtempF?: string;
     mintempC?: string;
+    mintempF?: string;
     hourly?: WttrHour[];
 };
 type WttrCurrent = {
     temp_C?: string;
+    temp_F?: string;
     FeelsLikeC?: string;
+    FeelsLikeF?: string;
     windspeedKmph?: string;
+    windspeedMiles?: string;
     humidity?: string;
     weatherDesc?: { value?: string }[];
 };
