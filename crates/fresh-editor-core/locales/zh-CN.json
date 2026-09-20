@@ -1736,5 +1736,6 @@
   "cmd.explorer_import_desc": "将本地文件复制到工作区中选定的目录",
   "explorer.import_prompt": "拖入本地文件或粘贴绝对路径以导入到 %{directory}，然后按 Enter：",
   "explorer.import_progress": "正在导入 %{name}：%{bytes}/%{total} 字节",
-  "explorer.import_done": "已导入 %{count} 个文件；跳过 %{skipped} 个"
+  "explorer.import_done": "已导入 %{count} 个文件；跳过 %{skipped} 个",
+  "explorer.import_done_with_folders": "已导入 %{count} 个文件和 %{folders} 个文件夹；已跳过 %{skipped} 项"
 }

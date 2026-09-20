@@ -179,6 +179,15 @@ def cmd_stat(id, p):
     )
 
 
+def cmd_is_symlink(id, p):
+    """Inspect the leaf without resolving it, including dangling links."""
+    raw = os.path.expanduser(p["path"])
+    if not raw:
+        raise ValueError("empty path")
+    path = os.path.join(validate_path(os.path.dirname(raw) or "."), os.path.basename(raw))
+    send(id, r=os.path.islink(path))
+
+
 def cmd_ls(id, p):
     """List directory contents with metadata."""
     path = validate_path(p["path"])
@@ -800,6 +809,7 @@ METHODS = {
     "write": cmd_write,
     "sudo_write": cmd_sudo_write,
     "stat": cmd_stat,
+    "is_symlink": cmd_is_symlink,
     "ls": cmd_ls,
     "rm": cmd_rm,
     "rmdir": cmd_rmdir,

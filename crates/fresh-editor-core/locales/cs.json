@@ -1736,5 +1736,6 @@
   "cmd.explorer_import_desc": "Zkopírovat místní soubory do vybraného adresáře pracovního prostoru",
   "explorer.import_prompt": "Přetáhněte soubory nebo vložte absolutní místní cesty pro %{directory}, pak Enter: ",
   "explorer.import_progress": "Importuji %{name}: %{bytes}/%{total} bajtů",
-  "explorer.import_done": "Importováno %{count} souborů; přeskočeno %{skipped}"
+  "explorer.import_done": "Importováno %{count} souborů; přeskočeno %{skipped}",
+  "explorer.import_done_with_folders": "Importováno %{count} souborů a %{folders} složek; přeskočeno %{skipped}"
 }

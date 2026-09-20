@@ -1736,5 +1736,6 @@
   "cmd.explorer_import_desc": "ローカルファイルをワークスペースの選択したディレクトリにコピー",
   "explorer.import_prompt": "%{directory}に取り込むローカルファイルをドロップするか絶対パスを貼り付け、Enter: ",
   "explorer.import_progress": "%{name}を取り込み中: %{bytes}/%{total}バイト",
-  "explorer.import_done": "%{count}個のファイルを取り込み、%{skipped}個をスキップ"
+  "explorer.import_done": "%{count}個のファイルを取り込み、%{skipped}個をスキップ",
+  "explorer.import_done_with_folders": "ファイル %{count} 個とフォルダー %{folders} 個をインポートしました（%{skipped} 個をスキップ）"
 }

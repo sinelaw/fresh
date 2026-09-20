@@ -1736,5 +1736,6 @@
   "cmd.explorer_import_desc": "Copy local files into the selected workspace directory",
   "explorer.import_prompt": "Drop or paste absolute local file paths into %{directory}, then Enter: ",
   "explorer.import_progress": "Importing %{name}: %{bytes}/%{total} bytes",
-  "explorer.import_done": "Imported %{count} files; skipped %{skipped}"
+  "explorer.import_done": "Imported %{count} files; skipped %{skipped}",
+  "explorer.import_done_with_folders": "Imported %{count} files and %{folders} folders; skipped %{skipped}"
 }

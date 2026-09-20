@@ -25,10 +25,10 @@ Preview tabs are enabled by default. Turn them off in the Settings UI if you pre
 - **`Shift+Up` / `Shift+Down`** extend a multi-select range from the current anchor; all clipboard operations (and delete) act on the whole selection.
 - **Buffers follow files** — renaming or moving a file (via cut+paste) relocates any open buffers pointing at it; deleting a file closes its buffer. Renaming a directory relocates buffers for every file inside it.
 
-## Importing Local Files (Terminal Drag and Drop)
+## Importing Local Files and Folders (Terminal Drag and Drop)
 
 Click a destination directory in the explorer to give it focus, then drop files
-from Finder or another file manager into the terminal.
+or folders from Finder or another file manager into the terminal.
 When the terminal sends the paths as a bracketed paste, copying starts immediately:
 there is no command to choose or **Enter** to press. Selecting a file uses its
 parent directory. Pasting absolute local file paths into the focused explorer
@@ -39,26 +39,33 @@ the explorer's selection, not the folder under the mouse pointer. The explorer
 must have focus before the drop. Without a selection, imports use the current
 workspace directory.
 
-This copies the **file bytes**, preserving the originals. Multiple paths,
+This copies the **file bytes**, preserving the originals. Folders are copied
+recursively, including empty folders and hidden files. Multiple paths,
 spaces, and non-ASCII names are supported. On Unix, paths may be single-quoted,
 double-quoted, or backslash-escaped; on Windows, quoted paths retain their
-backslashes. No shell expressions are evaluated. Directories, relative paths,
-and `file://` URLs are not accepted; use absolute filesystem paths instead.
+backslashes. No shell expressions are evaluated. Relative paths and `file://`
+URLs are not accepted; use absolute filesystem paths instead.
 
 For a locally running Fresh with an SSH workspace, the source is read on the
 local machine and uploaded through the workspace's remote agent. A copy on the
 remote filesystem alone would not transfer local files.
 
-Each name conflict offers **Overwrite**, **Skip**, **Rename**, and **Cancel**.
+Existing folders with the same name are merged, keeping unrelated destination
+files. Each file name conflict offers **Overwrite**, **Skip**, **Rename**, and
+**Cancel**; renaming a nested file keeps it in its containing folder. A folder
+cannot overwrite a file or a symbolic link: rename or skip that conflict.
+Symbolic links inside imported folders are skipped and included in the skipped
+count; dropping a directory symlink directly is rejected. Copying a local folder
+into itself or one of its descendants is rejected.
 Files with unsaved changes in the current window cannot be overwritten. Imports
 show byte progress and can be cancelled with **Escape** or **Cancel**. Cancellation
 stops between chunks (an in-flight remote request must finish or fail first).
-Completed files remain imported; the current file is published only after its
-transfer finishes. Existing files are preserved on failure or cancellation, and
+Completed files and created folders remain imported; the current file is published
+only after its transfer finishes. Existing files are preserved on failure or cancellation, and
 the explorer refreshes once at the end of the batch, including after cancellation
-or an error that leaves earlier files imported. The directory is read in the
-background so remote refreshes do not block keyboard input. A disconnected host may
-leave a `.fresh-import-*` staging directory; cleanup failures report its path.
+or an error that leaves earlier entries imported. Each affected directory is read
+once in the background so remote refreshes do not block keyboard input. A
+disconnected host may leave a `.fresh-import-*` staging directory; cleanup failures report its path.
 
 Transfers keep one staging-file handle open and sync it before publication.
 SSH data requests contain up to 1 MiB each, bounding memory usage and allowing

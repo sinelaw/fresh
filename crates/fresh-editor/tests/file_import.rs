@@ -1,7 +1,7 @@
 //! Exercise the same local-read / destination-write path with a real local
 //! filesystem and the production Python agent, including atomic publication.
 use fresh::model::filesystem::{FileSystem, StdFileSystem};
-use fresh::services::file_import::import_file;
+use fresh::services::file_import::{import_entry, import_file, ImportOutcome};
 use fresh::services::remote::{spawn_local_agent, RemoteFileSystem};
 use std::io;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -524,4 +524,225 @@ fn remote_import_directory_refresh_does_not_block_cancel_input() {
     h.assert_screen_contains("refresh.txt");
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
     h.wait_for_screen_contains("REFRESHED_CONTENT").unwrap();
+}
+
+fn exercise_directory_import(filesystem: &dyn FileSystem) {
+    let sources = tempfile::tempdir().unwrap();
+    let destinations = tempfile::tempdir().unwrap();
+    let source = sources.path().join("folder");
+    let destination = destinations.path().join("folder");
+    std::fs::create_dir_all(source.join("nested/empty")).unwrap();
+    let bytes: Vec<u8> = (0..1024 * 1024 + 7).map(|i| (i % 251) as u8).collect();
+    std::fs::write(source.join("nested/data.bin"), &bytes).unwrap();
+    std::fs::write(source.join(".hidden"), "HIDDEN").unwrap();
+    std::fs::create_dir(&destination).unwrap();
+    std::fs::write(destination.join("keep.txt"), "KEEP").unwrap();
+    let cancel = AtomicBool::new(false);
+    let mut pending = vec![(source.clone(), destination.clone())];
+    while let Some((source, destination)) = pending.pop() {
+        match import_entry(
+            &StdFileSystem,
+            filesystem,
+            &source,
+            &destination,
+            false,
+            &cancel,
+            |_, _| {},
+        )
+        .unwrap()
+        {
+            ImportOutcome::File => {}
+            ImportOutcome::Directory { children, skipped } => {
+                assert_eq!(skipped, 0);
+                for child in children {
+                    let destination = destination.join(child.file_name().unwrap());
+                    pending.push((child, destination));
+                }
+            }
+        }
+    }
+    assert_eq!(
+        filesystem
+            .read_file(&destination.join("nested/data.bin"))
+            .unwrap(),
+        bytes
+    );
+    assert_eq!(
+        filesystem.read_file(&destination.join("keep.txt")).unwrap(),
+        b"KEEP"
+    );
+    assert_eq!(
+        filesystem.read_file(&destination.join(".hidden")).unwrap(),
+        b"HIDDEN"
+    );
+    assert!(filesystem
+        .is_dir(&destination.join("nested/empty"))
+        .unwrap());
+    assert_eq!(
+        std::fs::read(source.join("nested/data.bin")).unwrap(),
+        bytes
+    );
+    // Cancellation before directory work must not create the target.
+    cancel.store(true, Ordering::Release);
+    let cancelled = destinations.path().join("cancelled");
+    assert_eq!(
+        import_entry(
+            &StdFileSystem,
+            filesystem,
+            &source,
+            &cancelled,
+            false,
+            &cancel,
+            |_, _| {}
+        )
+        .unwrap_err()
+        .kind(),
+        io::ErrorKind::Interrupted
+    );
+    assert!(!filesystem.exists(&cancelled));
+    cancel.store(false, Ordering::Release);
+    // A directory must never replace an existing file, even with overwrite.
+    let collision = destinations.path().join("file");
+    std::fs::write(&collision, "PRESERVE_FILE").unwrap();
+    for (overwrite, kind) in [
+        (false, io::ErrorKind::AlreadyExists),
+        (true, io::ErrorKind::InvalidInput),
+    ] {
+        assert_eq!(
+            import_entry(
+                &StdFileSystem,
+                filesystem,
+                &source,
+                &collision,
+                overwrite,
+                &cancel,
+                |_, _| {}
+            )
+            .unwrap_err()
+            .kind(),
+            kind
+        );
+    }
+    assert_eq!(filesystem.read_file(&collision).unwrap(), b"PRESERVE_FILE");
+}
+
+#[test]
+fn directory_import_preserves_tree_and_merges_locally_and_through_agent() {
+    exercise_directory_import(&StdFileSystem);
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let channel = runtime.block_on(spawn_local_agent()).unwrap();
+    channel.set_request_timeout(std::time::Duration::from_secs(60 * 60));
+    exercise_directory_import(&RemoteFileSystem::new(channel, "test@localhost".into()));
+}
+
+#[test]
+fn directory_import_rejects_self_and_descendants_before_creating_them() {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("folder");
+    std::fs::create_dir_all(source.join("child")).unwrap();
+    for destination in [&source, &source.join("copy"), &source.join("child/copy")] {
+        assert!(import_entry(
+            &StdFileSystem,
+            &StdFileSystem,
+            &source,
+            destination,
+            true,
+            &AtomicBool::new(false),
+            |_, _| {}
+        )
+        .is_err());
+    }
+    assert!(!source.join("copy").exists());
+    assert!(!source.join("child/copy").exists());
+}
+
+#[cfg(unix)]
+#[test]
+fn directory_import_skips_source_links_and_refuses_destination_links() {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("source");
+    let outside = root.path().join("outside");
+    std::fs::create_dir(&source).unwrap();
+    std::fs::create_dir(&outside).unwrap();
+    std::fs::write(source.join("data"), "DATA").unwrap();
+    std::os::unix::fs::symlink(&source, source.join("loop")).unwrap();
+    std::os::unix::fs::symlink(source.join("data"), source.join("file-link")).unwrap();
+    let linked_source = root.path().join("linked-source");
+    std::os::unix::fs::symlink(&source, &linked_source).unwrap();
+    let linked_destination = root.path().join("linked-destination");
+    std::os::unix::fs::symlink(&outside, &linked_destination).unwrap();
+    let dangling = root.path().join("dangling");
+    let missing_target = root.path().join("must-not-create");
+    std::os::unix::fs::symlink(&missing_target, &dangling).unwrap();
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let channel = runtime.block_on(spawn_local_agent()).unwrap();
+    let remote = RemoteFileSystem::new(channel, "test@localhost".into());
+    for filesystem in [&StdFileSystem as &dyn FileSystem, &remote] {
+        assert!(filesystem.is_symlink(&dangling).unwrap());
+        assert!(filesystem.is_symlink(&linked_source.join("")).unwrap());
+        assert!(import_entry(
+            &StdFileSystem,
+            filesystem,
+            &source,
+            &dangling,
+            false,
+            &AtomicBool::new(false),
+            |_, _| {}
+        )
+        .is_err());
+        assert!(!missing_target.exists());
+        let target = root.path().join("target");
+        let outcome = import_entry(
+            &StdFileSystem,
+            filesystem,
+            &source,
+            &target,
+            false,
+            &AtomicBool::new(false),
+            |_, _| {},
+        )
+        .unwrap();
+        match outcome {
+            ImportOutcome::Directory { children, skipped } => {
+                assert_eq!(skipped, 2);
+                assert_eq!(children, vec![source.join("data")]);
+            }
+            ImportOutcome::File => panic!("expected directory"),
+        }
+        assert!(import_entry(
+            &StdFileSystem,
+            filesystem,
+            &linked_source,
+            &root.path().join("no-link-copy"),
+            false,
+            &AtomicBool::new(false),
+            |_, _| {}
+        )
+        .is_err());
+        assert!(import_entry(
+            &StdFileSystem,
+            filesystem,
+            &source,
+            &linked_destination,
+            true,
+            &AtomicBool::new(false),
+            |_, _| {}
+        )
+        .is_err());
+        assert_eq!(std::fs::read_dir(&outside).unwrap().count(), 0);
+    }
+    // A symlinked ancestor must not bypass the self-copy guard.
+    let alias = root.path().join("alias");
+    std::os::unix::fs::symlink(&source, &alias).unwrap();
+    assert!(import_entry(
+        &StdFileSystem,
+        &StdFileSystem,
+        &source,
+        &alias.join("copy"),
+        false,
+        &AtomicBool::new(false),
+        |_, _| {}
+    )
+    .is_err());
+    assert!(!source.join("copy").exists());
 }

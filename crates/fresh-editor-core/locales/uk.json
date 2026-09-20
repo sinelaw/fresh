@@ -1736,5 +1736,6 @@
   "cmd.explorer_import_desc": "Копіювати локальні файли до вибраного каталогу робочого простору",
   "explorer.import_prompt": "Перетягніть файли або вставте абсолютні локальні шляхи для %{directory}, потім Enter: ",
   "explorer.import_progress": "Імпорт %{name}: %{bytes}/%{total} байтів",
-  "explorer.import_done": "Імпортовано файлів: %{count}; пропущено: %{skipped}"
+  "explorer.import_done": "Імпортовано файлів: %{count}; пропущено: %{skipped}",
+  "explorer.import_done_with_folders": "Імпортовано файлів: %{count}, папок: %{folders}; пропущено: %{skipped}"
 }

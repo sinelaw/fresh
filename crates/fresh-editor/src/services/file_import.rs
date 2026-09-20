@@ -72,6 +72,113 @@ fn check_cancel(cancel: &AtomicBool) -> io::Result<()> {
     }
 }
 
+/// A directory is expanded one level at a time by the window-owned queue.
+/// This keeps per-file conflicts, cancellation and buffer reloads on one path.
+#[derive(Debug)]
+pub enum ImportOutcome {
+    File,
+    Directory {
+        children: Vec<PathBuf>,
+        skipped: usize,
+    },
+}
+
+/// Import one queue entry. Existing real directories merge; files still require
+/// an explicit overwrite decision. Links inside directories are not traversed.
+pub fn import_entry(
+    source_fs: &dyn FileSystem,
+    destination_fs: &dyn FileSystem,
+    source: &Path,
+    destination: &Path,
+    overwrite: bool,
+    cancel: &AtomicBool,
+    progress: impl FnMut(u64, u64),
+) -> io::Result<ImportOutcome> {
+    check_cancel(cancel)?;
+    if !source.is_absolute() {
+        return Err(invalid("use absolute local file paths"));
+    }
+    if !source_fs.is_dir(source)? {
+        return import_file(
+            source_fs,
+            destination_fs,
+            source,
+            destination,
+            overwrite,
+            cancel,
+            progress,
+        )
+        .map(|()| ImportOutcome::File);
+    }
+    if source_fs.is_symlink(source)? {
+        return Err(invalid("directory symlinks cannot be imported"));
+    }
+    let parent = destination
+        .parent()
+        .ok_or_else(|| invalid("missing destination directory"))?;
+    if destination_fs.remote_connection_info().is_none() {
+        let canonical_source = source_fs.canonicalize(source)?;
+        if destination_fs.canonicalize(destination).ok().as_ref() == Some(&canonical_source) {
+            return Err(io::Error::new(
+                if overwrite {
+                    io::ErrorKind::InvalidInput
+                } else {
+                    io::ErrorKind::AlreadyExists
+                },
+                "source and destination are the same directory",
+            ));
+        }
+        if destination_fs
+            .canonicalize(parent)?
+            .starts_with(&canonical_source)
+        {
+            return Err(invalid(
+                "cannot import a directory into itself or its descendants",
+            ));
+        }
+    }
+    // List before creating the destination, so an unreadable source leaves no
+    // new empty folder. Never recurse on the UI thread or via the call stack.
+    let mut entries = source_fs.read_dir(source)?;
+    entries.sort_by(|a, b| a.path.cmp(&b.path));
+    let skipped = entries.iter().filter(|entry| entry.is_symlink()).count();
+    let children = entries
+        .into_iter()
+        .filter(|entry| !entry.is_symlink())
+        .map(|entry| entry.path)
+        .collect();
+    check_cancel(cancel)?;
+    // Check before mkdir: some remote backends resolve the leaf, including a
+    // dangling link. Do not let that create a directory outside this import.
+    if destination_fs.is_symlink(destination)? {
+        return Err(io::Error::new(
+            if overwrite {
+                io::ErrorKind::InvalidInput
+            } else {
+                io::ErrorKind::AlreadyExists
+            },
+            "cannot merge a folder into a symbolic link; rename or skip this entry",
+        ));
+    }
+    match destination_fs.create_dir(destination) {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+            if !destination_fs.is_dir(destination)? {
+                return Err(io::Error::new(
+                    if overwrite {
+                        io::ErrorKind::InvalidInput
+                    } else {
+                        io::ErrorKind::AlreadyExists
+                    },
+                    "a folder can only merge with a real directory; rename or skip this entry",
+                ));
+            }
+        }
+        Err(error) => return Err(error),
+    }
+    Ok(ImportOutcome::Directory { children, skipped })
+}
+
 /// Copy bytes in bounded chunks, staging beside the destination so publication
 /// is atomic. Cancellation is checked between I/O requests; the current remote
 /// request must finish or fail before cleanup can run. Earlier completed files

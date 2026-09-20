@@ -1736,5 +1736,6 @@
   "cmd.explorer_import_desc": "Copier des fichiers locaux dans le dossier sélectionné de l’espace de travail",
   "explorer.import_prompt": "Déposez les fichiers ou collez leurs chemins locaux absolus vers %{directory}, puis Entrée : ",
   "explorer.import_progress": "Importation de %{name} : %{bytes}/%{total} octets",
-  "explorer.import_done": "%{count} fichiers importés ; %{skipped} ignorés"
+  "explorer.import_done": "%{count} fichiers importés ; %{skipped} ignorés",
+  "explorer.import_done_with_folders": "%{count} fichiers et %{folders} dossiers importés ; %{skipped} éléments ignorés"
 }

@@ -221,6 +221,10 @@ impl FileSystem for SpoolFileSystem {
     fn symlink_metadata(&self, path: &Path) -> io::Result<FileMetadata> {
         self.inner.symlink_metadata(path)
     }
+    fn is_symlink(&self, path: &Path) -> io::Result<bool> {
+        self.inner.is_symlink(path)
+    }
+
     fn is_dir(&self, path: &Path) -> io::Result<bool> {
         self.inner.is_dir(path)
     }

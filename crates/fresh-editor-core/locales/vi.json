@@ -1736,5 +1736,6 @@
   "cmd.explorer_import_desc": "Sao chép tệp cục bộ vào thư mục đã chọn trong không gian làm việc",
   "explorer.import_prompt": "Thả tệp hoặc dán đường dẫn cục bộ tuyệt đối để nhập vào %{directory}, rồi nhấn Enter: ",
   "explorer.import_progress": "Đang nhập %{name}: %{bytes}/%{total} byte",
-  "explorer.import_done": "Đã nhập %{count} tệp; bỏ qua %{skipped}"
+  "explorer.import_done": "Đã nhập %{count} tệp; bỏ qua %{skipped}",
+  "explorer.import_done_with_folders": "Đã nhập %{count} tệp và %{folders} thư mục; bỏ qua %{skipped} mục"
 }

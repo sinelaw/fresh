@@ -651,6 +651,18 @@ pub trait FileSystem: Send + Sync {
     /// Get symlink metadata (doesn't follow symlinks)
     fn symlink_metadata(&self, path: &Path) -> io::Result<FileMetadata>;
 
+    /// Check the final path component without following it. Missing paths are
+    /// not links. Backends should override this to avoid listing the parent.
+    fn is_symlink(&self, path: &Path) -> io::Result<bool> {
+        let Some(parent) = path.parent() else {
+            return Ok(false);
+        };
+        Ok(self
+            .read_dir(parent)?
+            .iter()
+            .any(|entry| entry.path.file_name() == path.file_name() && entry.is_symlink()))
+    }
+
     /// Check if path exists
     fn exists(&self, path: &Path) -> bool {
         self.metadata(path).is_ok()
@@ -1591,6 +1603,14 @@ impl FileSystem for StdFileSystem {
     fn symlink_metadata(&self, path: &Path) -> io::Result<FileMetadata> {
         let meta = std::fs::symlink_metadata(path)?;
         Ok(Self::build_metadata(path, &meta))
+    }
+
+    fn is_symlink(&self, path: &Path) -> io::Result<bool> {
+        match std::fs::symlink_metadata(path.components().collect::<PathBuf>()) {
+            Ok(metadata) => Ok(metadata.file_type().is_symlink()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(error),
+        }
     }
 
     fn is_dir(&self, path: &Path) -> io::Result<bool> {

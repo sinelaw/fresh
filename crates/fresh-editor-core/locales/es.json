@@ -1736,5 +1736,6 @@
   "cmd.explorer_import_desc": "Copiar archivos locales al directorio seleccionado del espacio de trabajo",
   "explorer.import_prompt": "Arrastra archivos o pega sus rutas locales absolutas para %{directory} y pulsa Intro: ",
   "explorer.import_progress": "Importando %{name}: %{bytes}/%{total} bytes",
-  "explorer.import_done": "%{count} archivos importados; %{skipped} omitidos"
+  "explorer.import_done": "%{count} archivos importados; %{skipped} omitidos",
+  "explorer.import_done_with_folders": "Se importaron %{count} archivos y %{folders} carpetas; se omitieron %{skipped} elementos"
 }

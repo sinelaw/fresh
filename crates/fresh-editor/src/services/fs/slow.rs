@@ -267,6 +267,12 @@ impl FileSystem for SlowFileSystem {
         self.inner.symlink_metadata(path)
     }
 
+    fn is_symlink(&self, path: &Path) -> io::Result<bool> {
+        self.add_delay(self.config.metadata_delay);
+        self.metrics.metadata_calls.fetch_add(1, Ordering::SeqCst);
+        self.inner.is_symlink(path)
+    }
+
     fn is_dir(&self, path: &Path) -> io::Result<bool> {
         self.add_delay(self.config.other_delay);
         self.metrics.other_calls.fetch_add(1, Ordering::SeqCst);

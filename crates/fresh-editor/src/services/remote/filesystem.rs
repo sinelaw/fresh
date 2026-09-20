@@ -487,6 +487,19 @@ impl FileSystem for RemoteFileSystem {
         Ok(Self::convert_metadata(&rm, &name))
     }
 
+    fn is_symlink(&self, path: &Path) -> io::Result<bool> {
+        let result = self
+            .channel
+            .request_blocking(
+                "is_symlink",
+                serde_json::json!({ "path": path.components().collect::<PathBuf>().to_string_lossy() }),
+            )
+            .map_err(Self::to_io_error)?;
+        result
+            .as_bool()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "expected symlink status"))
+    }
+
     fn is_dir(&self, path: &Path) -> io::Result<bool> {
         let path_str = path.to_string_lossy();
         let result = self

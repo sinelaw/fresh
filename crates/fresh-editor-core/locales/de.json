@@ -1736,5 +1736,6 @@
   "cmd.explorer_import_desc": "Lokale Dateien in das ausgewählte Verzeichnis des Arbeitsbereichs kopieren",
   "explorer.import_prompt": "Dateien ablegen oder absolute lokale Pfade für %{directory} einfügen, dann Eingabe: ",
   "explorer.import_progress": "Importiere %{name}: %{bytes}/%{total} Bytes",
-  "explorer.import_done": "%{count} Dateien importiert; %{skipped} übersprungen"
+  "explorer.import_done": "%{count} Dateien importiert; %{skipped} übersprungen",
+  "explorer.import_done_with_folders": "%{count} Dateien und %{folders} Ordner importiert; %{skipped} übersprungen"
 }
