@@ -3,7 +3,8 @@
 //! Implements the FileSystem trait for remote operations via SSH agent.
 
 use crate::model::filesystem::{
-    DirEntry, EntryType, FileMetadata, FilePermissions, FileReader, FileSystem, FileWriter, WriteOp,
+    DirEntry, EntryType, FileMetadata, FilePermissions, FileReader, FileSystem, FileUpload,
+    FileWriter, WriteOp,
 };
 use crate::services::remote::channel::{AgentChannel, ChannelError};
 use crate::services::remote::protocol::{
@@ -326,6 +327,23 @@ impl FileSystem for RemoteFileSystem {
             self.channel.clone(),
             path.to_path_buf(),
         )))
+    }
+
+    fn create_file_for_upload(&self, path: &Path) -> io::Result<Box<dyn FileUpload>> {
+        let upload = RemoteFileUpload {
+            channel: self.channel.clone(),
+            id: uuid::Uuid::new_v4().to_string(),
+            closed: false,
+        };
+        self.channel
+            .request_blocking(
+                "upload_open",
+                serde_json::json!({
+                    "upload": upload.id, "path": path.to_string_lossy(),
+                }),
+            )
+            .map_err(Self::to_io_error)?;
+        Ok(Box::new(upload))
     }
 
     fn open_file(&self, path: &Path) -> io::Result<Box<dyn FileReader>> {
@@ -829,6 +847,71 @@ impl Seek for RemoteFileReader {
 }
 
 impl FileReader for RemoteFileReader {}
+
+/// Uploads use one agent-owned handle, never the whole-file buffering writer.
+/// Each write waits for its acknowledgement, so cancellation/cleanup cannot
+/// race a queued write. Cap requests even if a caller supplies a larger slice.
+struct RemoteFileUpload {
+    channel: Arc<AgentChannel>,
+    id: String,
+    closed: bool,
+}
+
+impl Write for RemoteFileUpload {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let count = buf.len().min(1024 * 1024);
+        if count == 0 {
+            return Ok(0);
+        }
+        self.channel
+            .request_blocking(
+                "upload_chunk",
+                serde_json::json!({
+                    "upload": self.id,
+                    "data": crate::services::remote::protocol::encode_base64(&buf[..count]),
+                }),
+            )
+            .map_err(RemoteFileSystem::to_io_error)?;
+        Ok(count)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        // Every write has already been acknowledged; finish performs fsync.
+        Ok(())
+    }
+}
+
+impl FileUpload for RemoteFileUpload {
+    fn finish(mut self: Box<Self>) -> io::Result<()> {
+        self.channel
+            .request_blocking(
+                "upload_finish",
+                serde_json::json!({
+                    "upload": self.id,
+                }),
+            )
+            .map_err(RemoteFileSystem::to_io_error)?;
+        self.closed = true;
+        Ok(())
+    }
+}
+
+impl Drop for RemoteFileUpload {
+    fn drop(&mut self) {
+        if !self.closed {
+            // Runs on the import worker, before staging cleanup. The agent
+            // also closes abandoned handles when its input connection ends.
+            if let Err(error) = self.channel.request_blocking(
+                "upload_abort",
+                serde_json::json!({
+                    "upload": self.id,
+                }),
+            ) {
+                tracing::warn!("Failed to close upload {}: {error}", self.id);
+            }
+        }
+    }
+}
 
 /// Remote file writer - buffers writes and flushes on sync
 struct RemoteFileWriter {

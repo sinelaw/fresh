@@ -28,6 +28,10 @@ cancelled = set()
 lock = threading.Lock()
 # Lock for serializing stdout writes (prevents interleaved JSON lines)
 write_lock = threading.Lock()
+# Open staging-file uploads, owned by this connection. Each upload has a lock
+# because requests use a thread pool (including abort after a timed-out write).
+uploads = {}
+uploads_lock = threading.Lock()
 
 
 def send(id, **kw):
@@ -285,6 +289,61 @@ def cmd_append(id, p):
         f.flush()
         os.fsync(f.fileno())
     send(id, r={"size": len(data)})
+
+
+def cmd_upload_open(id, p):
+    key = p["upload"]
+    with uploads_lock:
+        if key in uploads:
+            raise ValueError("upload already open")
+        f = open(validate_path(p["path"]), "xb", buffering=0)
+        uploads[key] = (f, threading.Lock())
+    send(id, r={})
+
+
+def cmd_upload_chunk(id, p):
+    # Reject oversized requests before decoding another copy of the payload.
+    if len(p["data"]) > 4 * ((1024 * 1024 + 2) // 3):
+        raise ValueError("upload chunk exceeds 1 MiB")
+    data = unb64(p["data"])
+    if len(data) > 1024 * 1024:
+        raise ValueError("upload chunk exceeds 1 MiB")
+    with uploads_lock:
+        f, guard = uploads[p["upload"]]
+    with guard:
+        remaining = memoryview(data)
+        while remaining:
+            written = f.write(remaining)
+            if not written:
+                raise OSError("upload write made no progress")
+            remaining = remaining[written:]
+    send(id, r={"size": len(data)})
+
+
+def close_upload(key, sync):
+    with uploads_lock:
+        upload = uploads.pop(key, None)
+    if upload is None:
+        if sync:
+            raise ValueError("upload is not open")
+        return
+    f, guard = upload
+    with guard:
+        try:
+            if sync:
+                os.fsync(f.fileno())
+        finally:
+            f.close()
+
+
+def cmd_upload_finish(id, p):
+    close_upload(p["upload"], True)
+    send(id, r={})
+
+
+def cmd_upload_abort(id, p):
+    close_upload(p["upload"], False)
+    send(id, r={})
 
 
 def cmd_truncate(id, p):
@@ -751,6 +810,10 @@ METHODS = {
     "realpath": cmd_realpath,
     "chmod": cmd_chmod,
     "append": cmd_append,
+    "upload_open": cmd_upload_open,
+    "upload_chunk": cmd_upload_chunk,
+    "upload_finish": cmd_upload_finish,
+    "upload_abort": cmd_upload_abort,
     "truncate": cmd_truncate,
     "patch": cmd_patch,
     "count_lf": cmd_count_lf,
@@ -818,6 +881,8 @@ def main():
         pool.submit(handle_request, line)
 
     pool.shutdown(wait=True)
+    for key in list(uploads):
+        close_upload(key, False)
 
 
 if __name__ == "__main__":

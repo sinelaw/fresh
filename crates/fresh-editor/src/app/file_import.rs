@@ -2,16 +2,17 @@
 
 use super::Editor;
 use crate::input::keybindings::KeyContext;
-use crate::model::filesystem::StdFileSystem;
+use crate::model::filesystem::{DirEntry, StdFileSystem};
 use crate::services::file_import::{import_file, parse_paths};
 use crate::view::confirm::{Choice, Confirm, Tone};
 use crate::view::prompt::PromptType;
 use fresh_i18n::t;
 use std::collections::VecDeque;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc};
+use std::time::SystemTime;
 
 #[derive(Debug)]
 pub(crate) struct FileImport {
@@ -22,6 +23,16 @@ pub(crate) struct FileImport {
     completed: usize,
     skipped: usize,
     cancelled: bool,
+    last_destination: Option<PathBuf>,
+    refresh: Option<mpsc::Receiver<io::Result<ImportDirectory>>>,
+    error: Option<String>,
+}
+
+#[derive(Debug)]
+struct ImportDirectory {
+    entries: Vec<DirEntry>,
+    modified: Option<SystemTime>,
+    gitignore: Option<(Vec<u8>, Option<SystemTime>)>,
 }
 
 #[derive(Debug)]
@@ -92,6 +103,9 @@ impl Editor {
                     completed: 0,
                     skipped: 0,
                     cancelled: false,
+                    last_destination: None,
+                    refresh: None,
+                    error: None,
                 });
                 self.advance_file_import();
             }
@@ -210,6 +224,14 @@ impl Editor {
     /// Poll only the owning window. An inactive window retains its completion
     /// until selected; it cannot open a conflict prompt in another workspace.
     pub(crate) fn poll_file_import(&mut self) -> bool {
+        if self
+            .active_window()
+            .file_import
+            .as_ref()
+            .is_some_and(|batch| batch.refresh.is_some())
+        {
+            return self.poll_file_import_refresh();
+        }
         let Some(batch) = self.active_window_mut().file_import.as_mut() else {
             return false;
         };
@@ -237,11 +259,12 @@ impl Editor {
             }
         };
         batch.job = None;
-        let (source, destination) = batch.current.clone().unwrap();
+        let (_, destination) = batch.current.clone().unwrap();
         let cancelled = batch.cancelled;
         match result {
             Ok(()) => {
                 batch.completed += 1;
+                batch.last_destination = Some(destination.clone());
                 // Reuse the reload path for cursors, LSP and plugin caches.
                 // Remote mtimes can have only second precision.
                 if self.buffers().iter().any(|(id, state)| {
@@ -252,7 +275,6 @@ impl Editor {
                     self.file_mod_times_mut().remove(&destination);
                     self.handle_file_changed(&destination.to_string_lossy());
                 }
-                self.refresh_tree_after_paste(&source, &destination, false);
                 if cancelled {
                     self.finish_file_import(None);
                 } else {
@@ -371,6 +393,131 @@ impl Editor {
     }
 
     fn finish_file_import(&mut self, error: Option<String>) {
+        let filesystem = Arc::clone(&self.authority().filesystem);
+        let Some(batch) = self.active_window_mut().file_import.as_mut() else {
+            return;
+        };
+        if batch.refresh.is_some() {
+            return;
+        }
+        batch.error = error;
+        if batch.completed == 0 {
+            self.complete_file_import();
+            return;
+        }
+        let directory = batch.directory.clone();
+        let (sender, receiver) = mpsc::channel();
+        batch.refresh = Some(receiver);
+        // One listing for the whole batch, including partial success before
+        // cancellation/error. Never block the editor on remote directory I/O.
+        let spawn = std::thread::Builder::new()
+            .name("import-refresh".into())
+            .spawn(move || {
+                let result = (|| {
+                    // Sample before listing: changes during/after it remain visible
+                    // to the ordinary watcher instead of being acknowledged away.
+                    let modified = filesystem
+                        .metadata(&directory)
+                        .ok()
+                        .and_then(|m| m.modified);
+                    let mut entries = filesystem.read_dir(&directory)?;
+                    for entry in &mut entries {
+                        if entry.metadata.is_none() {
+                            entry.metadata = filesystem.metadata(&entry.path).ok();
+                        }
+                    }
+                    let gitignore = entries
+                        .iter()
+                        .find(|entry| entry.name == ".gitignore")
+                        .and_then(|entry| {
+                            filesystem.read_file(&entry.path).ok().map(|bytes| {
+                                (bytes, entry.metadata.as_ref().and_then(|m| m.modified))
+                            })
+                        });
+                    Ok(ImportDirectory {
+                        entries,
+                        modified,
+                        gitignore,
+                    })
+                })();
+                // The owning window may have been closed while the read was running.
+                drop(sender.send(result));
+            });
+        if let Err(error) = spawn {
+            self.record_import_refresh_error(error);
+            self.complete_file_import();
+        }
+    }
+
+    /// Suppress watcher-triggered re-listing of the same directory while the
+    /// batch owns its refresh. Other directories continue to be watched.
+    pub(super) fn file_import_refresh_pending(&self, path: &Path) -> bool {
+        self.active_window()
+            .file_import
+            .as_ref()
+            .is_some_and(|batch| batch.directory == path)
+    }
+
+    fn record_import_refresh_error(&mut self, error: io::Error) {
+        let batch = self.active_window_mut().file_import.as_mut().unwrap();
+        let message = format!("could not refresh {}: {error}", batch.directory.display());
+        batch.error = Some(match batch.error.take() {
+            Some(previous) => format!("{previous}; {message}"),
+            None => message,
+        });
+    }
+
+    fn poll_file_import_refresh(&mut self) -> bool {
+        let batch = self.active_window().file_import.as_ref().unwrap();
+        let result = match batch.refresh.as_ref().unwrap().try_recv() {
+            Ok(result) => result,
+            Err(mpsc::TryRecvError::Empty) => return false,
+            Err(mpsc::TryRecvError::Disconnected) => {
+                Err(io::Error::other("import refresh worker stopped"))
+            }
+        };
+        let directory = batch.directory.clone();
+        let destination = batch.last_destination.clone().unwrap();
+        match result {
+            Ok(snapshot) => {
+                let window = self.active_window_mut();
+                // Discard any older poll snapshot before installing this stamp.
+                window.pending_dir_poll_rx = None;
+                if let Some(modified) = snapshot.modified {
+                    window.dir_mod_times.insert(directory.clone(), modified);
+                }
+                if let Some(explorer) = window.file_explorer.as_mut() {
+                    if let Some((bytes, modified)) = snapshot.gitignore {
+                        explorer
+                            .ignore_patterns_mut()
+                            .load_gitignore_from_bytes(&directory, &bytes, modified);
+                    } else if !snapshot
+                        .entries
+                        .iter()
+                        .any(|entry| entry.name == ".gitignore")
+                    {
+                        explorer.ignore_patterns_mut().remove_gitignore(&directory);
+                    }
+                    explorer
+                        .tree_mut()
+                        .reconcile_directory(&directory, snapshot.entries);
+                    explorer.clear_multi_selection();
+                    explorer.navigate_to_path(&directory);
+                    explorer.navigate_to_path(&destination);
+                }
+                window.rebuild_file_explorer_decoration_cache();
+                window.rebuild_file_explorer_slot_override_cache();
+            }
+            Err(error) => self.record_import_refresh_error(error),
+        }
+        // Plugins (including git decorations) rescan once per batch. Open
+        // buffers/LSP keep their per-file reload above to respect dirty edits.
+        self.notify_file_explorer_change(&directory);
+        self.complete_file_import();
+        true
+    }
+
+    fn complete_file_import(&mut self) {
         if let Some(batch) = self.active_window_mut().file_import.take() {
             if self.active_window().prompt.as_ref().is_some_and(|prompt| {
                 matches!(
@@ -388,7 +535,7 @@ impl Editor {
                 skipped = batch.skipped
             )
             .to_string();
-            let status = if let Some(error) = error {
+            let status = if let Some(error) = batch.error {
                 format!(
                     "{summary} — {}",
                     t!("explorer.error_copying", error = error)

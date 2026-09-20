@@ -119,8 +119,10 @@ pub fn import_file(
     destination_fs.create_dir(&staging_dir)?;
     let staging_file = staging_dir.join("data");
     let result = (|| {
-        destination_fs.write_file(&staging_file, &[])?;
-        let mut buffer = vec![0; 256 * 1024];
+        let mut writer = destination_fs.create_file_for_upload(&staging_file)?;
+        // One request per MiB on SSH, with a bounded cancellation interval.
+        // The writer stays open; only finish() makes the data durable.
+        let mut buffer = vec![0; total.clamp(64 * 1024, 1024 * 1024) as usize];
         let mut copied = 0;
         progress(0, total);
         loop {
@@ -129,15 +131,12 @@ pub fn import_file(
             if count == 0 {
                 break;
             }
-            // Remote append writers retain their buffer until sync_all, so
-            // use one per chunk. Reusing one would resend previous chunks.
-            let mut writer = destination_fs.open_file_for_append(&staging_file)?;
             writer.write_all(&buffer[..count])?;
-            writer.flush()?;
-            writer.sync_all()?;
             copied += count as u64;
             progress(copied, total);
         }
+        check_cancel(cancel)?;
+        writer.finish()?;
         check_cancel(cancel)?;
         destination_fs.publish_file(&staging_file, destination, overwrite)
     })();

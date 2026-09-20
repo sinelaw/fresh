@@ -295,3 +295,27 @@ fn imports_into_remote_workspace_through_agent() {
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
     h.wait_for_screen_contains("UPLOADED_CONTENT").unwrap();
 }
+
+#[test]
+fn cancelled_batch_refreshes_files_already_imported() {
+    let mut h = EditorTestHarness::with_temp_project(180, 32).unwrap();
+    std::fs::write(h.project_dir().unwrap().join("conflict.txt"), "KEEP").unwrap();
+    let sources = tempfile::tempdir().unwrap();
+    let first = sources.path().join("completed.txt");
+    let conflict = sources.path().join("conflict.txt");
+    std::fs::write(&first, "COMPLETED_BEFORE_CANCEL").unwrap();
+    std::fs::write(&conflict, "NEW").unwrap();
+    h.send_key(KeyCode::Char('e'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.wait_for_screen_contains("conflict.txt").unwrap();
+    h.send_paste(&format!("{} {}", quoted(&first), quoted(&conflict)))
+        .unwrap();
+    h.wait_for_screen_contains("Name Conflict").unwrap();
+    h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    h.wait_for_screen_contains("Imported 1 files; skipped 0")
+        .unwrap();
+    h.assert_screen_contains("completed.txt");
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_for_screen_contains("COMPLETED_BEFORE_CANCEL")
+        .unwrap();
+}

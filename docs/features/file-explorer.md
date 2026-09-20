@@ -55,8 +55,14 @@ show byte progress and can be cancelled with **Escape** or **Cancel**. Cancellat
 stops between chunks (an in-flight remote request must finish or fail first).
 Completed files remain imported; the current file is published only after its
 transfer finishes. Existing files are preserved on failure or cancellation, and
-the explorer refreshes after each successful import. A disconnected host may
+the explorer refreshes once at the end of the batch, including after cancellation
+or an error that leaves earlier files imported. The directory is read in the
+background so remote refreshes do not block keyboard input. A disconnected host may
 leave a `.fresh-import-*` staging directory; cleanup failures report its path.
+
+Transfers keep one staging-file handle open and sync it before publication.
+SSH data requests contain up to 1 MiB each, bounding memory usage and allowing
+cancellation between requests.
 
 Terminal support depends on the terminal forwarding the drop as quoted or escaped
 local paths. For terminals that send ordinary keystrokes instead of bracketed

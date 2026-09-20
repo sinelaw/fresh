@@ -12,7 +12,7 @@ fn exercise_import(destination_fs: &dyn FileSystem) {
     let source = source_dir.path().join("한글 image.bin");
     let destination = destination_dir.path().join("한글 image.bin");
     // Cross several chunk boundaries, including arbitrary binary bytes.
-    let data: Vec<u8> = (0..800_003).map(|i| (i % 251) as u8).collect();
+    let data: Vec<u8> = (0..3 * 1024 * 1024 + 3).map(|i| (i % 251) as u8).collect();
     std::fs::write(&source, &data).unwrap();
     let cancel = AtomicBool::new(false);
     let mut progress = Vec::new();
@@ -266,4 +266,262 @@ fn destination_symlinks_are_not_followed() {
         assert_eq!(std::fs::read(&link).unwrap(), b"imported");
         assert!(!std::fs::symlink_metadata(&link).unwrap().is_symlink());
     }
+}
+
+#[test]
+fn local_import_opens_destination_once() {
+    use fresh::services::fs::{SlowFileSystem, SlowFsConfig};
+    use std::sync::Arc;
+    let fs = SlowFileSystem::new(Arc::new(StdFileSystem), SlowFsConfig::none());
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("source");
+    let destination = dir.path().join("destination");
+    let data = vec![42; 4 * 1024 * 1024 + 17];
+    std::fs::write(&source, &data).unwrap();
+    import_file(
+        &StdFileSystem,
+        &fs,
+        &source,
+        &destination,
+        false,
+        &AtomicBool::new(false),
+        |_, _| {},
+    )
+    .unwrap();
+    assert_eq!(std::fs::read(destination).unwrap(), data);
+    assert_eq!(
+        fs.metrics().write_file_calls.load(Ordering::SeqCst),
+        1,
+        "one destination writer for the whole transfer"
+    );
+}
+
+// Instrument the real agent, keeping performance assertions independent of
+// wall-clock speed. These hooks exist only in this subprocess, never production.
+async fn instrumented_agent() -> (
+    std::sync::Arc<fresh::services::remote::AgentChannel>,
+    tokio::process::Child,
+) {
+    use tokio::io::{AsyncBufReadExt, BufReader};
+    let script = format!(
+        "scope = {{'__name__': 'test_agent'}}\nexec({}, scope)\n{}",
+        serde_json::to_string(include_str!("../src/services/remote/agent.py")).unwrap(),
+        r#"
+counts = {'syncs': 0, 'data_requests': 0, 'opens': 0}
+faults = {}
+listing_started = scope['threading'].Event()
+listing_release = scope['threading'].Event()
+original_sync = scope['os'].fsync
+def counted_sync(fd):
+    counts['syncs'] += 1
+    if faults.get('sync'):
+        raise OSError('injected upload sync failure')
+    return original_sync(fd)
+scope['os'].fsync = counted_sync
+import builtins
+original_open = builtins.open
+def counted_open(*args, **kwargs):
+    counts['opens'] += 1
+    return original_open(*args, **kwargs)
+scope['open'] = counted_open
+for name in ('append', 'upload_chunk'):
+    if name in scope['METHODS']:
+        def wrap(handler):
+            def counted(id, params):
+                counts['data_requests'] += 1
+                return handler(id, params)
+            return counted
+        scope['METHODS'][name] = wrap(scope['METHODS'][name])
+original_ls = scope['METHODS']['ls']
+def gated_ls(id, params):
+    if faults.get('block_ls'):
+        listing_started.set()
+        listing_release.wait()
+    return original_ls(id, params)
+scope['METHODS']['ls'] = gated_ls
+def stats(id, params):
+    faults.update(params)
+    if params.get('release_ls'):
+        listing_release.set()
+    result = dict(counts)
+    result['listing_started'] = listing_started.is_set()
+    result['uploads_open'] = len(scope.get('uploads', {}))
+    scope['send'](id, r=result)
+scope['METHODS']['test_stats'] = stats
+scope['main']()
+"#
+    );
+    let mut child = tokio::process::Command::new("python3")
+        .args(["-u", "-c", &script])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let mut reader = BufReader::new(child.stdout.take().unwrap());
+    let mut ready = String::new();
+    reader.read_line(&mut ready).await.unwrap();
+    assert!(
+        serde_json::from_str::<serde_json::Value>(&ready).unwrap()["ok"]
+            .as_bool()
+            .unwrap()
+    );
+    let channel = std::sync::Arc::new(fresh::services::remote::AgentChannel::new(
+        reader,
+        child.stdin.take().unwrap(),
+    ));
+    channel.set_request_timeout(std::time::Duration::from_secs(60 * 60));
+    (channel, child)
+}
+
+#[test]
+fn remote_import_batches_requests_and_syncs_once() {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let (channel, _agent) = runtime.block_on(instrumented_agent());
+    let remote = RemoteFileSystem::new(channel.clone(), "test@localhost".into());
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("source");
+    let destination = dir.path().join("destination");
+    let data: Vec<u8> = (0..4 * 1024 * 1024 + 17).map(|i| (i % 251) as u8).collect();
+    std::fs::write(&source, &data).unwrap();
+    import_file(
+        &StdFileSystem,
+        &remote,
+        &source,
+        &destination,
+        false,
+        &AtomicBool::new(false),
+        |_, _| {},
+    )
+    .unwrap();
+    assert_eq!(std::fs::read(destination).unwrap(), data);
+    let stats = channel
+        .request_blocking("test_stats", serde_json::json!({}))
+        .unwrap();
+    assert_eq!(stats["syncs"], 1, "sync only before publishing");
+    assert_eq!(stats["opens"], 1, "keep the agent file handle open");
+    assert!(stats["data_requests"].as_u64().unwrap() <= 5, "{stats}");
+}
+
+#[test]
+fn import_batch_lists_destination_once() {
+    use crate::common::harness::{EditorTestHarness, HarnessOptions};
+    use crossterm::event::{KeyCode, KeyModifiers};
+    use fresh::services::fs::{SlowFileSystem, SlowFsConfig};
+    use std::sync::Arc;
+    let fs = Arc::new(SlowFileSystem::new(
+        Arc::new(StdFileSystem),
+        SlowFsConfig::none(),
+    ));
+    let project = tempfile::tempdir().unwrap();
+    let sources = tempfile::tempdir().unwrap();
+    let mut h = EditorTestHarness::create(
+        180,
+        32,
+        HarnessOptions::new()
+            .with_working_dir(project.path().to_path_buf())
+            .with_filesystem(fs.clone()),
+    )
+    .unwrap();
+    h.send_key(KeyCode::Char('e'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.wait_for_screen_contains("File Explorer").unwrap();
+    let mut paths = Vec::new();
+    for i in 0..12 {
+        let path = sources.path().join(format!("file-{i}.txt"));
+        std::fs::write(&path, format!("IMPORTED_{i}")).unwrap();
+        paths.push(format!("\"{}\"", path.display()));
+    }
+    fs.reset_metrics();
+    h.send_paste(&paths.join(" ")).unwrap();
+    h.wait_for_screen_contains("Imported 12 files; skipped 0")
+        .unwrap();
+    h.assert_screen_contains("file-11.txt");
+    assert_eq!(
+        fs.metrics().read_dir_calls.load(Ordering::SeqCst),
+        1,
+        "refresh the batch once, not after each file"
+    );
+}
+
+#[test]
+fn remote_import_sync_failure_preserves_destination_and_closes_upload() {
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let (channel, _agent) = runtime.block_on(instrumented_agent());
+    let remote = RemoteFileSystem::new(channel.clone(), "test@localhost".into());
+    let dir = tempfile::tempdir().unwrap();
+    let source = dir.path().join("source");
+    let destination = dir.path().join("destination");
+    std::fs::write(&source, vec![42; 2 * 1024 * 1024 + 3]).unwrap();
+    std::fs::write(&destination, "KEEP_ORIGINAL").unwrap();
+    channel
+        .request_blocking("test_stats", serde_json::json!({"sync": true}))
+        .unwrap();
+    let error = import_file(
+        &StdFileSystem,
+        &remote,
+        &source,
+        &destination,
+        true,
+        &AtomicBool::new(false),
+        |_, _| {},
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("injected upload sync failure"));
+    assert_eq!(std::fs::read(&destination).unwrap(), b"KEEP_ORIGINAL");
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 2);
+    let stats = channel
+        .request_blocking("test_stats", serde_json::json!({}))
+        .unwrap();
+    assert_eq!(stats["uploads_open"], 0);
+}
+
+#[test]
+fn remote_import_directory_refresh_does_not_block_cancel_input() {
+    use crate::common::harness::{EditorTestHarness, HarnessOptions};
+    use crossterm::event::{KeyCode, KeyModifiers};
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    let (channel, _agent) = runtime.block_on(instrumented_agent());
+    let remote = std::sync::Arc::new(RemoteFileSystem::new(
+        channel.clone(),
+        "test@localhost".into(),
+    ));
+    let project = tempfile::tempdir().unwrap();
+    let sources = tempfile::tempdir().unwrap();
+    let source = sources.path().join("refresh.txt");
+    std::fs::write(&source, "REFRESHED_CONTENT").unwrap();
+    let mut h = EditorTestHarness::create(
+        180,
+        32,
+        HarnessOptions::new()
+            .with_working_dir(project.path().to_path_buf())
+            .with_filesystem(remote),
+    )
+    .unwrap();
+    h.send_key(KeyCode::Char('e'), KeyModifiers::CONTROL)
+        .unwrap();
+    h.wait_for_screen_contains("[localhost]").unwrap();
+    channel
+        .request_blocking("test_stats", serde_json::json!({"block_ls": true}))
+        .unwrap();
+    h.send_paste(&format!("\"{}\"", source.display())).unwrap();
+    h.wait_until(|_| {
+        channel
+            .request_blocking("test_stats", serde_json::json!({}))
+            .unwrap()["listing_started"]
+            == true
+    })
+    .unwrap();
+    // The listing remains blocked until the test releases it. A synchronous
+    // UI refresh cannot reach this key event; no wall-clock assertion is needed.
+    h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    h.assert_screen_contains("Paste cancelled");
+    channel
+        .request_blocking("test_stats", serde_json::json!({"release_ls": true}))
+        .unwrap();
+    h.wait_for_screen_contains("Imported 1 files; skipped 0")
+        .unwrap();
+    h.assert_screen_contains("refresh.txt");
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_for_screen_contains("REFRESHED_CONTENT").unwrap();
 }

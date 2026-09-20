@@ -320,6 +320,32 @@ pub trait FileWriter: Write + Send {
     fn sync_all(&self) -> io::Result<()>;
 }
 
+/// A bounded-memory, sequential writer for a private staging file. Writes
+/// need not be durable until `finish`; dropping without finishing closes the
+/// handle without publishing anything. The caller owns staging-file cleanup.
+pub trait FileUpload: Write + Send {
+    /// Flush, sync and close before the caller atomically publishes the file.
+    fn finish(self: Box<Self>) -> io::Result<()>;
+}
+
+struct StdFileUpload(std::fs::File);
+
+impl Write for StdFileUpload {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.0.write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.0.flush()
+    }
+}
+
+impl FileUpload for StdFileUpload {
+    fn finish(self: Box<Self>) -> io::Result<()> {
+        self.0.sync_all()
+    }
+}
+
 // ============================================================================
 // Patch Operations for Efficient Remote Saves
 // ============================================================================
@@ -500,6 +526,15 @@ pub trait FileSystem: Send + Sync {
 
     /// Create a file for writing, returns a writer handle
     fn create_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>>;
+
+    /// Exclusively create a staging file for a bounded-memory upload. This is
+    /// separate from `create_file`, whose remote writer buffers an entire file.
+    fn create_file_for_upload(&self, _path: &Path) -> io::Result<Box<dyn FileUpload>> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "streaming uploads are unsupported",
+        ))
+    }
 
     /// Open a file for reading, returns a reader handle
     fn open_file(&self, path: &Path) -> io::Result<Box<dyn FileReader>>;
@@ -1486,6 +1521,14 @@ impl FileSystem for StdFileSystem {
     fn create_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
         let file = std::fs::File::create(path)?;
         Ok(Box::new(StdFileWriter(file)))
+    }
+
+    fn create_file_for_upload(&self, path: &Path) -> io::Result<Box<dyn FileUpload>> {
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)?;
+        Ok(Box::new(StdFileUpload(file)))
     }
 
     fn open_file(&self, path: &Path) -> io::Result<Box<dyn FileReader>> {

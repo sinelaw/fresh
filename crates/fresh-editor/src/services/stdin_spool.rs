@@ -31,7 +31,7 @@ use std::sync::Arc;
 
 use fresh_editor_core::model::filesystem::{
     DirEntry, FileMetadata, FilePermissions, FileReader, FileSearchCursor, FileSearchOptions,
-    FileSystem, FileWriter, SearchMatch,
+    FileSystem, FileUpload, FileWriter, SearchMatch,
 };
 
 #[cfg(unix)]
@@ -186,6 +186,9 @@ impl FileSystem for SpoolFileSystem {
     }
     fn create_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>> {
         self.inner.create_file(path)
+    }
+    fn create_file_for_upload(&self, path: &Path) -> io::Result<Box<dyn FileUpload>> {
+        self.inner.create_file_for_upload(path)
     }
     fn open_file(&self, path: &Path) -> io::Result<Box<dyn FileReader>> {
         self.inner.open_file(path)
