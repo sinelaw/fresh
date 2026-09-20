@@ -470,6 +470,13 @@ static COMMAND_DEFS: &[CommandDef] = &[
         custom_contexts: &[],
     },
     CommandDef {
+        name_key: "cmd.duplicate_line_above",
+        desc_key: "cmd.duplicate_line_above_desc",
+        action: || Action::DuplicateLineAbove,
+        contexts: &[Normal],
+        custom_contexts: &[],
+    },
+    CommandDef {
         name_key: "cmd.recenter",
         desc_key: "cmd.recenter_desc",
         action: || Action::Recenter,
