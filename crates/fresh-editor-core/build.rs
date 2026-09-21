@@ -191,6 +191,10 @@ fn generate_syntax_packdump() -> Result<(), Box<dyn std::error::Error>> {
     // Add all embedded grammars — must match the list in types.rs add_embedded_grammars()
     let grammar_files: &[(&str, &str)] = &[
         ("src/grammars/toml.sublime-syntax", "TOML"),
+        // Shadows syntect's older bundled Rust grammar, which swallowed a
+        // string's opening quote after an unspaced `<` (issue #3325). Added
+        // after the defaults, so it wins the reverse-order extension lookup.
+        ("src/grammars/rust.sublime-syntax", "Rust"),
         ("src/grammars/odin/Odin.sublime-syntax", "Odin"),
         ("src/grammars/zig.sublime-syntax", "Zig"),
         ("src/grammars/gdscript.sublime-syntax", "GDScript"),
