@@ -2564,7 +2564,11 @@ impl crate::app::window::Window {
                 .store(mouse_enabled, std::sync::atomic::Ordering::Relaxed);
         }
 
-        self.restore_search_options(&workspace.search_options);
+        // A workspace with no saved choice keeps the window on the
+        // `editor.search` preset it was constructed with (issue #3212).
+        if let Some(opts) = &workspace.search_options {
+            self.restore_search_options(opts);
+        }
         self.restore_prompt_histories(&workspace.histories);
         self.restore_file_explorer_settings(&workspace.file_explorer);
 
@@ -2878,12 +2882,12 @@ impl crate::app::window::Window {
             open_file: Vec::new(),
         };
 
-        let search_options = SearchOptions {
+        let search_options = Some(SearchOptions {
             case_sensitive: self.search_case_sensitive,
             whole_word: self.search_whole_word,
             use_regex: self.search_use_regex,
             confirm_each: self.search_confirm_each,
-        };
+        });
 
         let bookmarks = serialize_bookmarks(&self.bookmarks, &self.buffer_metadata, &self.root);
 

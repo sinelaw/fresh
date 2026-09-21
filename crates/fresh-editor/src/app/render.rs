@@ -5622,14 +5622,19 @@ impl Editor {
             let theme = self.theme.read().unwrap();
             (theme.search_match_fg, theme.search_match_bg)
         };
-        // Live Grep defaults to regex with smart-case (case-insensitive
-        // unless the query carries an uppercase letter) — mirror that so
-        // the highlight tracks what the search actually matched. A query
-        // that isn't valid regex falls back to a literal match.
+        // Live Grep reads its query as a regex, and folds case unless its
+        // Case toggle is on — mirror that so the highlight tracks what the
+        // search actually matched. The toggle's live value is read off the
+        // toolbar the plugin mounted rather than guessed: the plugin owns
+        // the setting, and the host's own copy of the rule would be one
+        // more thing to keep in step (this previously duplicated the
+        // plugin's smart-case heuristic, and would have silently drifted
+        // when that became a toggle). A query that isn't valid regex falls
+        // back to a literal match.
         let preview_regex = if query.is_empty() {
             None
         } else {
-            let case_insensitive = !query.chars().any(|c| c.is_uppercase());
+            let case_insensitive = !self.prompt_toolbar_toggle_checked("mode_case");
             regex::RegexBuilder::new(&query)
                 .case_insensitive(case_insensitive)
                 .build()

@@ -31,11 +31,14 @@
     "label.search_in": "Търсене в: ",
     "label.match": "Съответствие:",
     "mode.word": "Дума",
+    "mode.case": "Регистър",
     "mode.regex": "Рег. израз",
     "cmd.live_grep_toggle_word": "Търсене: Превключване на Цяла Дума",
     "cmd.live_grep_toggle_word_desc": "Търсѝ само цели думи",
     "cmd.live_grep_toggle_regex": "търсене: Превключване на Regex",
-    "cmd.live_grep_toggle_regex_desc": "Интерпретирай заявка като регулярен израз"
+    "cmd.live_grep_toggle_regex_desc": "Интерпретирай заявка като регулярен израз",
+    "cmd.live_grep_toggle_case": "Търсене: Превключване на Отчитане на Регистъра",
+    "cmd.live_grep_toggle_case_desc": "Различавай главни и малки букви"
   },
   "cs": {
     "cmd.live_grep": "Live Grep (Hledat v souborech)",
@@ -69,11 +72,14 @@
     "label.search_in": "Hledat v: ",
     "label.match": "Shoda: ",
     "mode.word": "Slovo",
+    "mode.case": "Velikost",
     "mode.regex": "Regex",
     "cmd.live_grep_toggle_word": "Hledání: Přepnout celá slova",
     "cmd.live_grep_toggle_word_desc": "Hledat pouze celá slova",
     "cmd.live_grep_toggle_regex": "Hledání: Přepnout regulární výraz",
-    "cmd.live_grep_toggle_regex_desc": "Interpretovat dotaz jako regulární výraz"
+    "cmd.live_grep_toggle_regex_desc": "Interpretovat dotaz jako regulární výraz",
+    "cmd.live_grep_toggle_case": "Hledání: Přepnout rozlišování velikosti písmen",
+    "cmd.live_grep_toggle_case_desc": "Rozlišovat velká a malá písmena"
   },
   "de": {
     "cmd.live_grep": "Live Grep (Suche in Dateien)",
@@ -107,11 +113,14 @@
     "label.search_in": "Suchen in: ",
     "label.match": "Treffer: ",
     "mode.word": "Wort",
+    "mode.case": "Groß/klein",
     "mode.regex": "Regex",
     "cmd.live_grep_toggle_word": "Suche: Ganzes Wort umschalten",
     "cmd.live_grep_toggle_word_desc": "Nur ganze Wörter abgleichen",
     "cmd.live_grep_toggle_regex": "Suche: Regex umschalten",
-    "cmd.live_grep_toggle_regex_desc": "Die Abfrage als regulären Ausdruck interpretieren"
+    "cmd.live_grep_toggle_regex_desc": "Die Abfrage als regulären Ausdruck interpretieren",
+    "cmd.live_grep_toggle_case": "Suche: Groß-/Kleinschreibung umschalten",
+    "cmd.live_grep_toggle_case_desc": "Groß- und Kleinschreibung unterscheiden"
   },
   "en": {
     "cmd.live_grep": "Live Grep (Find in Files)",
@@ -145,11 +154,14 @@
     "label.search_in": "Search in: ",
     "label.match": "Match: ",
     "mode.word": "Word",
+    "mode.case": "Case",
     "mode.regex": "Regex",
     "cmd.live_grep_toggle_word": "Search: Toggle Whole Word",
     "cmd.live_grep_toggle_word_desc": "Match whole words only",
     "cmd.live_grep_toggle_regex": "Search: Toggle Regex",
-    "cmd.live_grep_toggle_regex_desc": "Interpret the query as a regular expression"
+    "cmd.live_grep_toggle_regex_desc": "Interpret the query as a regular expression",
+    "cmd.live_grep_toggle_case": "Search: Toggle Case Sensitive",
+    "cmd.live_grep_toggle_case_desc": "Match upper and lower case exactly"
   },
   "es": {
     "cmd.live_grep": "Grep en Vivo (Buscar en Archivos)",
@@ -183,11 +195,14 @@
     "label.search_in": "Buscar en: ",
     "label.match": "Coincidencia: ",
     "mode.word": "Palabra",
+    "mode.case": "May/min",
     "mode.regex": "Regex",
     "cmd.live_grep_toggle_word": "Búsqueda: Alternar palabra completa",
     "cmd.live_grep_toggle_word_desc": "Coincidir solo palabras completas",
     "cmd.live_grep_toggle_regex": "Búsqueda: Alternar regex",
-    "cmd.live_grep_toggle_regex_desc": "Interpretar la consulta como una expresión regular"
+    "cmd.live_grep_toggle_regex_desc": "Interpretar la consulta como una expresión regular",
+    "cmd.live_grep_toggle_case": "Búsqueda: Alternar distinción de mayúsculas",
+    "cmd.live_grep_toggle_case_desc": "Distinguir mayúsculas y minúsculas"
   },
   "fr": {
     "cmd.live_grep": "Grep en Direct (Rechercher dans les Fichiers)",
@@ -221,11 +236,14 @@
     "label.search_in": "Rechercher dans : ",
     "label.match": "Correspondance : ",
     "mode.word": "Mot",
+    "mode.case": "Casse",
     "mode.regex": "Regex",
     "cmd.live_grep_toggle_word": "Recherche : Basculer le mot entier",
     "cmd.live_grep_toggle_word_desc": "Ne correspondre qu'aux mots entiers",
     "cmd.live_grep_toggle_regex": "Recherche : Basculer le regex",
-    "cmd.live_grep_toggle_regex_desc": "Interpréter la requête comme une expression régulière"
+    "cmd.live_grep_toggle_regex_desc": "Interpréter la requête comme une expression régulière",
+    "cmd.live_grep_toggle_case": "Recherche : Basculer la sensibilité à la casse",
+    "cmd.live_grep_toggle_case_desc": "Distinguer les majuscules des minuscules"
   },
   "it": {
     "cmd.live_grep": "Live Grep (Cerca nei file)",
@@ -259,11 +277,14 @@
     "label.search_in": "Cerca in: ",
     "label.match": "Corrispondenza: ",
     "mode.word": "Parola",
+    "mode.case": "Maiuscole",
     "mode.regex": "Regex",
     "cmd.live_grep_toggle_word": "Ricerca: Attiva/disattiva parola intera",
     "cmd.live_grep_toggle_word_desc": "Trova solo parole intere",
     "cmd.live_grep_toggle_regex": "Ricerca: Attiva/disattiva regex",
-    "cmd.live_grep_toggle_regex_desc": "Interpreta la query come espressione regolare"
+    "cmd.live_grep_toggle_regex_desc": "Interpreta la query come espressione regolare",
+    "cmd.live_grep_toggle_case": "Ricerca: Attiva/disattiva distinzione maiuscole",
+    "cmd.live_grep_toggle_case_desc": "Distinguere maiuscole e minuscole"
   },
   "ja": {
     "cmd.live_grep": "Live Grep (ファイル内検索)",
@@ -297,11 +318,14 @@
     "label.search_in": "検索対象: ",
     "label.match": "一致: ",
     "mode.word": "単語",
+    "mode.case": "大小文字",
     "mode.regex": "正規表現",
     "cmd.live_grep_toggle_word": "検索: 単語単位を切り替え",
     "cmd.live_grep_toggle_word_desc": "単語単位でのみ一致させる",
     "cmd.live_grep_toggle_regex": "検索: 正規表現を切り替え",
-    "cmd.live_grep_toggle_regex_desc": "クエリを正規表現として解釈する"
+    "cmd.live_grep_toggle_regex_desc": "クエリを正規表現として解釈する",
+    "cmd.live_grep_toggle_case": "検索: 大文字小文字の区別を切り替え",
+    "cmd.live_grep_toggle_case_desc": "大文字と小文字を区別して一致させる"
   },
   "ko": {
     "cmd.live_grep": "라이브 Grep (파일에서 찾기)",
@@ -335,11 +359,14 @@
     "label.search_in": "검색 대상: ",
     "label.match": "일치: ",
     "mode.word": "단어",
+    "mode.case": "대소문자",
     "mode.regex": "정규식",
     "cmd.live_grep_toggle_word": "검색: 단어 단위 전환",
     "cmd.live_grep_toggle_word_desc": "전체 단어만 일치",
     "cmd.live_grep_toggle_regex": "검색: 정규식 전환",
-    "cmd.live_grep_toggle_regex_desc": "쿼리를 정규식으로 해석"
+    "cmd.live_grep_toggle_regex_desc": "쿼리를 정규식으로 해석",
+    "cmd.live_grep_toggle_case": "검색: 대소문자 구분 전환",
+    "cmd.live_grep_toggle_case_desc": "대문자와 소문자를 구분하여 일치"
   },
   "pt-BR": {
     "cmd.live_grep": "Grep ao Vivo (Buscar em Arquivos)",
@@ -373,11 +400,14 @@
     "label.search_in": "Pesquisar em: ",
     "label.match": "Correspondência: ",
     "mode.word": "Palavra",
+    "mode.case": "Maiúsculas",
     "mode.regex": "Regex",
     "cmd.live_grep_toggle_word": "Pesquisa: Alternar palavra inteira",
     "cmd.live_grep_toggle_word_desc": "Corresponder apenas palavras inteiras",
     "cmd.live_grep_toggle_regex": "Pesquisa: Alternar regex",
-    "cmd.live_grep_toggle_regex_desc": "Interpretar a consulta como expressão regular"
+    "cmd.live_grep_toggle_regex_desc": "Interpretar a consulta como expressão regular",
+    "cmd.live_grep_toggle_case": "Pesquisa: Alternar diferenciar maiúsculas",
+    "cmd.live_grep_toggle_case_desc": "Diferenciar maiúsculas de minúsculas"
   },
   "ru": {
     "cmd.live_grep": "Live Grep (Поиск в файлах)",
@@ -411,11 +441,14 @@
     "label.search_in": "Искать в: ",
     "label.match": "Совпадение: ",
     "mode.word": "Слово",
+    "mode.case": "Регистр",
     "mode.regex": "Рег. выр.",
     "cmd.live_grep_toggle_word": "Поиск: переключить целые слова",
     "cmd.live_grep_toggle_word_desc": "Искать только целые слова",
     "cmd.live_grep_toggle_regex": "Поиск: переключить регулярное выражение",
-    "cmd.live_grep_toggle_regex_desc": "Интерпретировать запрос как регулярное выражение"
+    "cmd.live_grep_toggle_regex_desc": "Интерпретировать запрос как регулярное выражение",
+    "cmd.live_grep_toggle_case": "Поиск: переключить учёт регистра",
+    "cmd.live_grep_toggle_case_desc": "Различать строчные и прописные буквы"
   },
   "th": {
     "cmd.live_grep": "Live Grep (ค้นหาในไฟล์)",
@@ -449,11 +482,14 @@
     "label.search_in": "ค้นหาใน: ",
     "label.match": "การจับคู่: ",
     "mode.word": "คำ",
+    "mode.case": "ตัวพิมพ์",
     "mode.regex": "Regex",
     "cmd.live_grep_toggle_word": "ค้นหา: สลับทั้งคำ",
     "cmd.live_grep_toggle_word_desc": "จับคู่เฉพาะทั้งคำ",
     "cmd.live_grep_toggle_regex": "ค้นหา: สลับ Regex",
-    "cmd.live_grep_toggle_regex_desc": "ตีความคำค้นหาเป็นนิพจน์ทั่วไป"
+    "cmd.live_grep_toggle_regex_desc": "ตีความคำค้นหาเป็นนิพจน์ทั่วไป",
+    "cmd.live_grep_toggle_case": "ค้นหา: สลับการแยกตัวพิมพ์เล็กใหญ่",
+    "cmd.live_grep_toggle_case_desc": "จับคู่ตัวพิมพ์เล็กและใหญ่แบบตรงกัน"
   },
   "uk": {
     "cmd.live_grep": "Live Grep (Пошук у файлах)",
@@ -487,11 +523,14 @@
     "label.search_in": "Шукати в: ",
     "label.match": "Збіг: ",
     "mode.word": "Слово",
+    "mode.case": "Регістр",
     "mode.regex": "Рег. вираз",
     "cmd.live_grep_toggle_word": "Пошук: перемкнути цілі слова",
     "cmd.live_grep_toggle_word_desc": "Шукати лише цілі слова",
     "cmd.live_grep_toggle_regex": "Пошук: перемкнути регулярний вираз",
-    "cmd.live_grep_toggle_regex_desc": "Інтерпретувати запит як регулярний вираз"
+    "cmd.live_grep_toggle_regex_desc": "Інтерпретувати запит як регулярний вираз",
+    "cmd.live_grep_toggle_case": "Пошук: перемкнути врахування регістру",
+    "cmd.live_grep_toggle_case_desc": "Розрізняти великі та малі літери"
   },
   "vi": {
     "cmd.live_grep": "Live Grep (Tìm trong tệp)",
@@ -525,11 +564,14 @@
     "label.search_in": "Tìm trong: ",
     "label.match": "Khớp: ",
     "mode.word": "Từ",
+    "mode.case": "Hoa/thường",
     "mode.regex": "Regex",
     "cmd.live_grep_toggle_word": "Tìm kiếm: Bật/tắt nguyên từ",
     "cmd.live_grep_toggle_word_desc": "Chỉ khớp nguyên từ",
     "cmd.live_grep_toggle_regex": "Tìm kiếm: Bật/tắt regex",
-    "cmd.live_grep_toggle_regex_desc": "Diễn giải truy vấn như một biểu thức chính quy"
+    "cmd.live_grep_toggle_regex_desc": "Diễn giải truy vấn như một biểu thức chính quy",
+    "cmd.live_grep_toggle_case": "Tìm kiếm: Bật/tắt phân biệt hoa thường",
+    "cmd.live_grep_toggle_case_desc": "Phân biệt chữ hoa và chữ thường"
   },
   "zh-CN": {
     "cmd.live_grep": "实时 Grep (文件内搜索)",
@@ -563,10 +605,13 @@
     "label.search_in": "搜索范围: ",
     "label.match": "匹配: ",
     "mode.word": "单词",
+    "mode.case": "大小写",
     "mode.regex": "正则",
     "cmd.live_grep_toggle_word": "搜索：切换全字匹配",
     "cmd.live_grep_toggle_word_desc": "仅匹配完整单词",
     "cmd.live_grep_toggle_regex": "搜索：切换正则",
-    "cmd.live_grep_toggle_regex_desc": "将查询解释为正则表达式"
+    "cmd.live_grep_toggle_regex_desc": "将查询解释为正则表达式",
+    "cmd.live_grep_toggle_case": "搜索：切换区分大小写",
+    "cmd.live_grep_toggle_case_desc": "区分大写和小写字母"
   }
 }

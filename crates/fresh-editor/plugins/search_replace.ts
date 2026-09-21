@@ -137,6 +137,47 @@ interface PanelState {
 }
 let panel: PanelState | null = null;
 
+/** The match options the *next* panel opens on.
+ *
+ * The panel itself is rebuilt from scratch every time it opens, so
+ * without this the Case / Regex / Word toggles reset on each open and
+ * a user who wants case-sensitive matching has to say so again every
+ * single time. Seeded from the `editor.search` config preset, then
+ * updated by every toggle — so the last state wins for the rest of the
+ * session, and the config decides only where the session starts.
+ *
+ * Session-scoped on purpose: the config file is not rewritten behind
+ * the user's back, and the in-buffer search prompt persists its own
+ * copy with the workspace.
+ */
+const sessionMatchOptions = {
+  caseSensitive: false,
+  useRegex: false,
+  wholeWords: false,
+};
+
+/** Seed `sessionMatchOptions` from `editor.search`. Anything missing or
+ *  non-boolean stays off, which is also the shipped default. */
+function seedMatchOptionsFromConfig(): void {
+  const search = (
+    editor.getConfig() as
+      | {
+          editor?: {
+            search?: {
+              case_sensitive?: unknown;
+              regex?: unknown;
+              whole_word?: unknown;
+            };
+          };
+        }
+      | null
+  )?.editor?.search;
+  sessionMatchOptions.caseSensitive = search?.case_sensitive === true;
+  sessionMatchOptions.useRegex = search?.regex === true;
+  sessionMatchOptions.wholeWords = search?.whole_word === true;
+}
+seedMatchOptionsFromConfig();
+
 const MAX_RESULTS = 10000;
 const MIN_WIDTH = 60;
 const DEFAULT_WIDTH = 100;
@@ -1677,9 +1718,9 @@ async function openPanelInner(opts?: { allFiles?: boolean }): Promise<void> {
       queryField: "search",
       optionIndex: 0,
       matchIndex: 0,
-      caseSensitive: false,
-      useRegex: false,
-      wholeWords: false,
+      caseSensitive: sessionMatchOptions.caseSensitive,
+      useRegex: sessionMatchOptions.useRegex,
+      wholeWords: sessionMatchOptions.wholeWords,
       allFiles,
       sourceBufferPath,
       sourceBufferRelPath,
@@ -1950,6 +1991,7 @@ registerHandler("search_replace_shift_tab", () => dispatch(widgetKey("Shift+Tab"
 function search_replace_toggle_case(): void {
   if (!panel) return;
   panel.caseSensitive = !panel.caseSensitive;
+  sessionMatchOptions.caseSensitive = panel.caseSensitive;
   updatePanelContent();
   rerunSearchDebounced();
 }
@@ -1958,6 +2000,7 @@ registerHandler("search_replace_toggle_case", search_replace_toggle_case);
 function search_replace_toggle_regex(): void {
   if (!panel) return;
   panel.useRegex = !panel.useRegex;
+  sessionMatchOptions.useRegex = panel.useRegex;
   updatePanelContent();
   rerunSearchDebounced();
 }
@@ -1966,6 +2009,7 @@ registerHandler("search_replace_toggle_regex", search_replace_toggle_regex);
 function search_replace_toggle_whole_word(): void {
   if (!panel) return;
   panel.wholeWords = !panel.wholeWords;
+  sessionMatchOptions.wholeWords = panel.wholeWords;
   updatePanelContent();
   rerunSearchDebounced();
 }
@@ -2630,16 +2674,19 @@ editor.on("widget_event", (args) => {
         break;
       case "case":
         panel.caseSensitive = newChecked;
+        sessionMatchOptions.caseSensitive = newChecked;
         panel.widgetPanel?.setChecked("case", newChecked);
         rerunSearchDebounced();
         break;
       case "regex":
         panel.useRegex = newChecked;
+        sessionMatchOptions.useRegex = newChecked;
         panel.widgetPanel?.setChecked("regex", newChecked);
         rerunSearchDebounced();
         break;
       case "whole":
         panel.wholeWords = newChecked;
+        sessionMatchOptions.wholeWords = newChecked;
         panel.widgetPanel?.setChecked("whole", newChecked);
         rerunSearchDebounced();
         break;

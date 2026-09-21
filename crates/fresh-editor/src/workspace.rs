@@ -66,9 +66,18 @@ pub struct Workspace {
     #[serde(default)]
     pub histories: WorkspaceHistories,
 
-    /// Search options (persist across searches within workspace)
-    #[serde(default)]
-    pub search_options: SearchOptions,
+    /// Search options (persist across searches within workspace).
+    ///
+    /// `None` means this workspace has never saved a choice — a
+    /// workspace written before the field existed, or one created since
+    /// the config preset landed and never searched in. Restoring `None`
+    /// leaves the window on the `editor.search` defaults instead of
+    /// stamping all-false over them, which is what made the preset from
+    /// issue #3212 reachable at all: an all-false struct is
+    /// indistinguishable from "the user turned everything off", and a
+    /// brand-new workspace would have silently overruled the config.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub search_options: Option<SearchOptions>,
 
     /// Bookmarks (character key -> file position)
     #[serde(default)]
@@ -1378,7 +1387,7 @@ impl Workspace {
             config_overrides: WorkspaceConfigOverrides::default(),
             file_explorer: FileExplorerState::default(),
             histories: WorkspaceHistories::default(),
-            search_options: SearchOptions::default(),
+            search_options: None,
             bookmarks: HashMap::new(),
             terminals: Vec::new(),
             external_files: Vec::new(),
@@ -1624,6 +1633,52 @@ mod tests {
         assert!(restored.confirm_each);
     }
 
+    /// A workspace that never saved a search choice must say so, rather
+    /// than answering with an all-false struct.
+    ///
+    /// The distinction is what lets the `editor.search` config preset
+    /// reach a workspace (issue #3212): the restore only stamps the
+    /// window's toggles when there is a saved choice to stamp, so a
+    /// workspace file written before this field existed — and a fresh one
+    /// that has not been searched in — leaves the preset standing. Both
+    /// directions are pinned here because both are on-disk compatibility:
+    /// old files must read as `None`, and a saved choice must survive.
+    #[test]
+    fn a_workspace_without_saved_search_options_reads_as_none() {
+        // A file from before the field existed: today's shape with the key
+        // taken back out, so the rest of the workspace stays valid and the
+        // absent key is the only thing under test.
+        let mut legacy = serde_json::to_value(Workspace::new(PathBuf::from("/home/user/proj")))
+            .expect("a workspace serializes");
+        legacy
+            .as_object_mut()
+            .expect("a workspace is a JSON object")
+            .remove("search_options");
+        let workspace: Workspace = serde_json::from_value(legacy)
+            .expect("a workspace file from before the field existed still loads");
+        assert!(
+            workspace.search_options.is_none(),
+            "no saved choice must not read as `everything off`"
+        );
+
+        // And a workspace that has one still round-trips it.
+        let saved = Workspace {
+            search_options: Some(SearchOptions {
+                case_sensitive: true,
+                ..SearchOptions::default()
+            }),
+            ..Workspace::new(PathBuf::from("/home/user/myproject"))
+        };
+        let json = serde_json::to_string(&saved).unwrap();
+        let restored: Workspace = serde_json::from_str(&json).unwrap();
+        assert!(
+            restored
+                .search_options
+                .expect("a saved choice survives the round trip")
+                .case_sensitive
+        );
+    }
+
     #[test]
     fn test_full_workspace_round_trip() {
         let mut workspace = Workspace::new(PathBuf::from("/home/user/myproject"));
@@ -1676,8 +1731,11 @@ mod tests {
         );
 
         // Set search options
-        workspace.search_options.case_sensitive = true;
-        workspace.search_options.use_regex = true;
+        workspace.search_options = Some(SearchOptions {
+            case_sensitive: true,
+            use_regex: true,
+            ..SearchOptions::default()
+        });
 
         // Serialize and deserialize
         let json = serde_json::to_string_pretty(&workspace).unwrap();
@@ -1688,8 +1746,9 @@ mod tests {
         assert_eq!(restored.working_dir, PathBuf::from("/home/user/myproject"));
         assert_eq!(restored.active_split_id, 1);
         assert!(restored.bookmarks.contains_key(&'m'));
-        assert!(restored.search_options.case_sensitive);
-        assert!(restored.search_options.use_regex);
+        let restored_options = restored.search_options.expect("saved search options");
+        assert!(restored_options.case_sensitive);
+        assert!(restored_options.use_regex);
 
         // Verify split state
         let split_state = restored.split_states.get(&1).unwrap();
@@ -1710,7 +1769,10 @@ mod tests {
 
         // Create a workspace
         let mut workspace = Workspace::new(temp_dir.clone());
-        workspace.search_options.case_sensitive = true;
+        workspace.search_options = Some(SearchOptions {
+            case_sensitive: true,
+            ..SearchOptions::default()
+        });
         workspace.bookmarks.insert(
             'x',
             SerializedBookmark {
@@ -1733,7 +1795,12 @@ mod tests {
 
         // Verify
         assert_eq!(loaded.working_dir, temp_dir);
-        assert!(loaded.search_options.case_sensitive);
+        assert!(
+            loaded
+                .search_options
+                .expect("saved search options")
+                .case_sensitive
+        );
         assert_eq!(loaded.bookmarks.get(&'x').unwrap().position, 42);
 
         // Cleanup

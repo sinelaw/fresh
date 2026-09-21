@@ -412,7 +412,11 @@ fn test_find_previous_from_end_of_large_file_issue_1305() {
     // Place multiple NEEDLEs close to the end
     writeln!(file, "NEEDLE occurrence 1 near end").unwrap();
     for i in 0..1_000 {
-        writeln!(file, "Line {:06}: gap between needles.", i).unwrap();
+        // Filler, and deliberately not a near-miss for the query: searches
+        // fold case by default, so a lowercase "needles" here would be a
+        // thousand extra matches and this test would be about case
+        // sensitivity rather than about find-previous.
+        writeln!(file, "Line {:06}: gap between markers.", i).unwrap();
     }
     writeln!(file, "NEEDLE occurrence 2 near end").unwrap();
     for i in 0..500 {

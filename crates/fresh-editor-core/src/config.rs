@@ -1311,6 +1311,18 @@ pub struct EditorConfig {
     #[schemars(extend("x-section" = "Status Bar"))]
     pub status_bar: StatusBarConfig,
 
+    /// The match options a search starts with: the state of the Case /
+    /// Word / Regex toggles the first time a search prompt opens in a
+    /// workspace that has not saved a choice of its own.
+    ///
+    /// These are *defaults*, not a lock. Every search surface keeps its
+    /// own live toggles, and the one you flip during a session wins for
+    /// the rest of it; workspaces persist what you left them on, and a
+    /// workspace with a saved choice ignores what is here.
+    #[serde(default)]
+    #[schemars(extend("x-section" = "Search"))]
+    pub search: SearchConfig,
+
     /// Whether the prompt line is always visible.
     /// The prompt line is the bottom-most line used for search, file open, and other prompts.
     /// When `false` (the default), the prompt line auto-hides — it only appears
@@ -2096,6 +2108,7 @@ impl Default for EditorConfig {
             show_tab_bar: true,
             show_status_bar: true,
             status_bar: StatusBarConfig::default(),
+            search: SearchConfig::default(),
             show_prompt_line: false,
             show_vertical_scrollbar: true,
             show_horizontal_scrollbar: false,
@@ -2480,6 +2493,39 @@ pub(crate) mod explorer_width {
             )),
         }
     }
+}
+
+/// Default search options — the starting state of the match toggles
+/// every search surface shows (the search/replace prompt's option row,
+/// the Live Grep toolbar, the Search & Replace panel).
+///
+/// Case sensitivity is **off** by default: a search for `todo` finds
+/// `TODO` until you say otherwise. Issue #3212 asked for this to be a
+/// config preset rather than something each new workspace had to be
+/// taught again, which is what this section is.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
+pub struct SearchConfig {
+    /// Start searches case-sensitively (default: false).
+    ///
+    /// When false, `todo` matches `TODO`. Flipping the Case toggle in
+    /// any search UI overrides this for the rest of the session, and
+    /// the choice is saved with the workspace.
+    #[serde(default = "default_false")]
+    pub case_sensitive: bool,
+
+    /// Start searches matching whole words only (default: false).
+    #[serde(default = "default_false")]
+    pub whole_word: bool,
+
+    /// Start searches with the query read as a regular expression
+    /// (default: false).
+    #[serde(default = "default_false")]
+    pub regex: bool,
+
+    /// Start replace prompts asking for confirmation at each match
+    /// (default: false).
+    #[serde(default = "default_false")]
+    pub confirm_each: bool,
 }
 
 /// Clipboard configuration

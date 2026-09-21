@@ -220,6 +220,7 @@ pub struct PartialEditorConfig {
     pub show_tab_bar: Option<bool>,
     pub show_status_bar: Option<bool>,
     pub status_bar: Option<crate::config::StatusBarConfig>,
+    pub search: Option<PartialSearchConfig>,
     pub show_prompt_line: Option<bool>,
     pub show_vertical_scrollbar: Option<bool>,
     pub show_horizontal_scrollbar: Option<bool>,
@@ -348,6 +349,7 @@ impl Merge for PartialEditorConfig {
         if other.status_bar.is_some() {
             self.status_bar = other.status_bar.clone();
         }
+        merge_partial(&mut self.search, &other.search);
         self.show_prompt_line.merge_from(&other.show_prompt_line);
         self.show_vertical_scrollbar
             .merge_from(&other.show_vertical_scrollbar);
@@ -512,6 +514,25 @@ impl Merge for PartialTerminalConfig {
         self.mouse_drag_selects
             .merge_from(&other.mouse_drag_selects);
         self.mouse_forwarding.merge_from(&other.mouse_forwarding);
+    }
+}
+
+/// Partial search-defaults configuration.
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(default)]
+pub struct PartialSearchConfig {
+    pub case_sensitive: Option<bool>,
+    pub whole_word: Option<bool>,
+    pub regex: Option<bool>,
+    pub confirm_each: Option<bool>,
+}
+
+impl Merge for PartialSearchConfig {
+    fn merge_from(&mut self, other: &Self) {
+        self.case_sensitive.merge_from(&other.case_sensitive);
+        self.whole_word.merge_from(&other.whole_word);
+        self.regex.merge_from(&other.regex);
+        self.confirm_each.merge_from(&other.confirm_each);
     }
 }
 
@@ -716,6 +737,7 @@ impl From<&crate::config::EditorConfig> for PartialEditorConfig {
             show_tab_bar: Some(cfg.show_tab_bar),
             show_status_bar: Some(cfg.show_status_bar),
             status_bar: Some(cfg.status_bar.clone()),
+            search: Some(PartialSearchConfig::from(&cfg.search)),
             show_prompt_line: Some(cfg.show_prompt_line),
             show_vertical_scrollbar: Some(cfg.show_vertical_scrollbar),
             show_horizontal_scrollbar: Some(cfg.show_horizontal_scrollbar),
@@ -896,6 +918,10 @@ impl PartialEditorConfig {
             status_bar: self
                 .status_bar
                 .unwrap_or_else(|| defaults.status_bar.clone()),
+            search: self
+                .search
+                .map(|e| e.resolve(&defaults.search))
+                .unwrap_or_else(|| defaults.search.clone()),
             show_prompt_line: self.show_prompt_line.unwrap_or(defaults.show_prompt_line),
             show_vertical_scrollbar: self
                 .show_vertical_scrollbar
@@ -1065,6 +1091,28 @@ impl PartialTerminalConfig {
                 .mouse_drag_selects
                 .unwrap_or(defaults.mouse_drag_selects),
             mouse_forwarding: self.mouse_forwarding.unwrap_or(defaults.mouse_forwarding),
+        }
+    }
+}
+
+impl From<&crate::config::SearchConfig> for PartialSearchConfig {
+    fn from(cfg: &crate::config::SearchConfig) -> Self {
+        Self {
+            case_sensitive: Some(cfg.case_sensitive),
+            whole_word: Some(cfg.whole_word),
+            regex: Some(cfg.regex),
+            confirm_each: Some(cfg.confirm_each),
+        }
+    }
+}
+
+impl PartialSearchConfig {
+    pub fn resolve(self, defaults: &crate::config::SearchConfig) -> crate::config::SearchConfig {
+        crate::config::SearchConfig {
+            case_sensitive: self.case_sensitive.unwrap_or(defaults.case_sensitive),
+            whole_word: self.whole_word.unwrap_or(defaults.whole_word),
+            regex: self.regex.unwrap_or(defaults.regex),
+            confirm_each: self.confirm_each.unwrap_or(defaults.confirm_each),
         }
     }
 }

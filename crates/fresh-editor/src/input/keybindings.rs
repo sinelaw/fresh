@@ -5617,6 +5617,7 @@ mod tests {
             "live_grep_toggle_diagnostics",
             "live_grep_toggle_word",
             "live_grep_toggle_regex",
+            "live_grep_toggle_case",
             // Export current Live Grep results to the Quickfix dock panel
             // — handled by the live_grep plugin (Finder panel), dispatched
             // as a plugin action from the prompt context.
