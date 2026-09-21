@@ -1488,6 +1488,75 @@ fn the_case_sensitive_config_preset_seeds_the_toggle() {
     );
 }
 
+/// A workspace only remembers a search choice once it *differs* from the
+/// config preset.
+///
+/// Saving the live flags unconditionally is what v1 did, and it turned "the
+/// user never touched the toggles" into a saved decision at the first
+/// checkpoint — after which that workspace ignored its own `editor.search`
+/// preset forever. Nothing to remember means nothing written, so the preset
+/// keeps applying; a real flip is written and wins.
+#[test]
+fn a_workspace_persists_only_a_choice_that_leaves_the_preset() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.txt");
+    std::fs::write(&file_path, "Hello hello").unwrap();
+
+    let mut harness = EditorTestHarness::new(100, 24).unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    assert!(
+        harness
+            .editor()
+            .capture_workspace()
+            .search_options
+            .is_none(),
+        "an untouched window has made no choice to save"
+    );
+
+    // Flip case sensitivity on, away from the (off) preset.
+    harness
+        .send_key(KeyCode::Char('f'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Char('c'), KeyModifiers::ALT)
+        .unwrap();
+    harness.render().unwrap();
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    let saved = harness
+        .editor()
+        .capture_workspace()
+        .search_options
+        .expect("a flip away from the preset is a choice worth saving");
+    assert!(saved.case_sensitive);
+
+    // Flip it back: it matches the preset again, so there is nothing left
+    // to remember and the workspace stops pinning it.
+    harness
+        .send_key(KeyCode::Char('f'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Char('c'), KeyModifiers::ALT)
+        .unwrap();
+    harness.render().unwrap();
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    assert!(
+        harness
+            .editor()
+            .capture_workspace()
+            .search_options
+            .is_none(),
+        "back on the preset, the workspace has nothing of its own to say"
+    );
+}
+
 /// Test toggling case sensitivity with Alt+C during search
 #[test]
 fn test_toggle_case_sensitive_in_search() {

@@ -31,8 +31,21 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::input::input_history::get_data_dir;
 
-/// Current workspace file format version
-pub const WORKSPACE_VERSION: u32 = 1;
+/// Current workspace file format version.
+///
+/// **v2** (search defaults): v1 always wrote `search_options`, whether or
+/// not the user had ever touched a toggle, and the window it was written
+/// from defaulted to case-sensitive. So every v1 file on disk says
+/// `case_sensitive: true`, and nothing distinguishes "I chose this" from
+/// "this is what the editor started on". Restoring those verbatim would
+/// have left the fold-case default — and the `editor.search` preset it
+/// comes from — reaching only workspaces nobody had ever opened.
+///
+/// A v1 file's search options are therefore dropped on load
+/// ([`Workspace::migrate_from`]), which costs a user who had deliberately
+/// turned case sensitivity *on* one `Alt+C` — and that choice re-persists,
+/// because v2 only writes options that differ from the config preset.
+pub const WORKSPACE_VERSION: u32 = 2;
 
 /// Current per-file workspace version
 pub const FILE_WORKSPACE_VERSION: u32 = 1;
@@ -1181,7 +1194,7 @@ impl Workspace {
 
         tracing::debug!("Loading workspace from {:?}", path);
         let content = std::fs::read_to_string(path)?;
-        let workspace: Workspace = serde_json::from_str(&content)?;
+        let mut workspace: Workspace = serde_json::from_str(&content)?;
 
         tracing::debug!(
             "Loaded workspace: version={}, split_states={}, active_split={}",
@@ -1208,6 +1221,10 @@ impl Workspace {
             return Err(WorkspaceError::WorkdirMismatch { expected, found });
         }
 
+        // The version as the *file* spelled it, before any migration
+        // rewrites it.
+        let file_version = workspace.version;
+
         // Check version compatibility
         if workspace.version > WORKSPACE_VERSION {
             tracing::warn!(
@@ -1221,7 +1238,26 @@ impl Workspace {
             });
         }
 
+        workspace.migrate_from(file_version);
         Ok(Some(workspace))
+    }
+
+    /// Bring a workspace loaded from an older format up to
+    /// [`WORKSPACE_VERSION`], in place. `from` is the version the file
+    /// claimed before any of this ran.
+    ///
+    /// v1 → v2: forget the saved search options. See [`WORKSPACE_VERSION`]
+    /// for why they cannot be trusted as a choice.
+    fn migrate_from(&mut self, from: u32) {
+        if from < 2 {
+            if self.search_options.take().is_some() {
+                tracing::debug!(
+                    "Workspace v{from}: dropping search options (v1 saved them \
+                     unconditionally, so they cannot be told from the old defaults)"
+                );
+            }
+            self.version = WORKSPACE_VERSION;
+        }
     }
 
     /// `true` when this workspace snapshot doesn't reference any
@@ -1645,9 +1681,7 @@ mod tests {
     /// old files must read as `None`, and a saved choice must survive.
     #[test]
     fn a_workspace_without_saved_search_options_reads_as_none() {
-        // A file from before the field existed: today's shape with the key
-        // taken back out, so the rest of the workspace stays valid and the
-        // absent key is the only thing under test.
+        // A file with the key absent entirely.
         let mut legacy = serde_json::to_value(Workspace::new(PathBuf::from("/home/user/proj")))
             .expect("a workspace serializes");
         legacy
@@ -1677,6 +1711,76 @@ mod tests {
                 .expect("a saved choice survives the round trip")
                 .case_sensitive
         );
+    }
+
+    /// A **v1** workspace file has its search options dropped on load.
+    ///
+    /// v1 wrote them on every save whether or not the user had chosen
+    /// anything, from a window that defaulted to case-sensitive — so every
+    /// v1 file on disk says `case_sensitive: true` and no v1 file can tell
+    /// a choice from a default. Honouring them would have left the
+    /// fold-case default reaching only workspaces nobody had opened, which
+    /// is every user's *other* projects. This drives the real
+    /// `load_from_path` so the migration is pinned where it actually runs.
+    #[test]
+    fn a_v1_workspace_forgets_its_search_options_on_load() {
+        let temp =
+            std::env::temp_dir().join(format!("fresh_v1_migration_test_{}", std::process::id()));
+        std::fs::create_dir_all(&temp).unwrap();
+        let workspace_file = temp.join("workspace.json");
+
+        // Exactly the shape v1 wrote: version 1, search options present,
+        // case sensitivity on because that is what v1 windows started on.
+        let mut v1 = serde_json::to_value(Workspace::new(temp.clone())).unwrap();
+        let obj = v1.as_object_mut().unwrap();
+        obj.insert("version".to_string(), serde_json::json!(1));
+        obj.insert(
+            "search_options".to_string(),
+            serde_json::json!({
+                "case_sensitive": true,
+                "whole_word": false,
+                "use_regex": false,
+                "confirm_each": false,
+            }),
+        );
+        std::fs::write(&workspace_file, serde_json::to_string(&v1).unwrap()).unwrap();
+
+        let loaded = Workspace::load_from_path(&workspace_file, &temp)
+            .expect("a v1 file still loads")
+            .expect("and is not empty");
+        assert!(
+            loaded.search_options.is_none(),
+            "v1's unconditionally-written options must not read as a choice"
+        );
+        assert_eq!(
+            loaded.version, WORKSPACE_VERSION,
+            "the migration brings the version forward"
+        );
+
+        // A v2 file, by contrast, only ever holds options the user chose,
+        // so they survive.
+        let mut v2 = serde_json::to_value(Workspace::new(temp.clone())).unwrap();
+        v2.as_object_mut().unwrap().insert(
+            "search_options".to_string(),
+            serde_json::json!({
+                "case_sensitive": true,
+                "whole_word": false,
+                "use_regex": false,
+                "confirm_each": false,
+            }),
+        );
+        std::fs::write(&workspace_file, serde_json::to_string(&v2).unwrap()).unwrap();
+        let loaded = Workspace::load_from_path(&workspace_file, &temp)
+            .expect("a v2 file loads")
+            .expect("and is not empty");
+        assert!(
+            loaded
+                .search_options
+                .expect("a v2 choice survives")
+                .case_sensitive
+        );
+
+        std::fs::remove_dir_all(&temp).ok();
     }
 
     #[test]

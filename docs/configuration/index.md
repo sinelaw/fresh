@@ -479,19 +479,21 @@ All settings can be changed via the Settings UI (run **Open Settings** from the 
 
 ### Search
 
-The state each search surface starts on — the Find/Replace prompt's option
-row, the Universal Search (Live Grep) toolbar, the Search & Replace panel and
-Git Grep. These are defaults, not a lock: the toggles stay live in every one
-of those UIs, whatever you flip last holds for the rest of the session, and
-the Find prompt's choice is saved with the workspace (a workspace that saved
-one ignores the setting here).
+The state a search starts on. These are defaults, not a lock: the toggles
+stay live in every search UI, whatever you flip last holds for the rest of
+the session, and the Find prompt's choice is saved with the workspace once it
+differs from what is set here.
 
-| Setting | Description | Default |
-|---------|-------------|---------|
-| Case sensitive | Match upper and lower case exactly. When off, `todo` finds `TODO` | off |
-| Whole word | Match whole words only | off |
-| Regex | Read the query as a regular expression | off |
-| Confirm each | Ask before each replacement | off |
+| Setting | Description | Default | Applies to |
+|---------|-------------|---------|------------|
+| Case sensitive | Match upper and lower case exactly. When off, `todo` finds `TODO` | off | every search UI |
+| Whole word | Match whole words only | off | Find/Replace prompt, Search & Replace panel |
+| Regex | Read the query as a regular expression | off | Find/Replace prompt, Search & Replace panel |
+| Confirm each | Ask before each replacement | off | Replace prompts |
+
+Universal Search keeps its own Word and Regex defaults (regex **on**, matching
+what `rg` and `git grep` do); Git Grep has no word or regex toggle. Case
+sensitivity is the one option all four surfaces take from here.
 
 ```json
 {

@@ -33,10 +33,12 @@ To start somewhere else, set the default in your config:
 }
 ```
 
-That seeds all four surfaces; flipping a toggle still wins from there. A
-workspace that already saved a Find-prompt choice keeps it. See
-[Configuration → Search](../configuration/index.md#search) for the rest of the
-section (`whole_word`, `regex`, `confirm_each`).
+`case_sensitive` seeds all four surfaces; flipping a toggle still wins from
+there, and the Find prompt saves a choice that differs from it with the
+workspace. The section's other keys — `whole_word`, `regex`, `confirm_each` —
+reach the Find/Replace prompt and the Search & Replace panel; see
+[Configuration → Search](../configuration/index.md#search) for which applies
+where.
 
 ## Stepping Through Matches
 

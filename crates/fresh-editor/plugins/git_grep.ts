@@ -148,6 +148,12 @@ function start_git_grep() : void {
       debounceMs: 150,
       minQueryLength: 1,
     },
+    // A toolbar is only painted on a floating overlay — the host draws it
+    // as part of the overlay card, and a bottom-row prompt has nowhere to
+    // put one (`overlay_card_description` declines a non-overlay prompt).
+    // Universal Search is already an overlay for the same reason, and this
+    // prompt shows a preview pane, which wants the room regardless.
+    floatingOverlay: true,
   });
   promptActive = true;
   setToolbar();

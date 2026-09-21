@@ -2882,12 +2882,25 @@ impl crate::app::window::Window {
             open_file: Vec::new(),
         };
 
-        let search_options = Some(SearchOptions {
+        // Only a choice that *differs* from the config preset is worth
+        // persisting. Writing the live values unconditionally would turn
+        // "the user never touched the toggles" into a saved decision at the
+        // first checkpoint, and a workspace would then ignore its own
+        // `editor.search` preset forever after — which is the trap v1 fell
+        // into (see `WORKSPACE_VERSION`). Equal to the preset means there is
+        // nothing to remember, so the preset keeps applying.
+        let preset = &self.config().editor.search;
+        let live = SearchOptions {
             case_sensitive: self.search_case_sensitive,
             whole_word: self.search_whole_word,
             use_regex: self.search_use_regex,
             confirm_each: self.search_confirm_each,
-        });
+        };
+        let search_options = (live.case_sensitive != preset.case_sensitive
+            || live.whole_word != preset.whole_word
+            || live.use_regex != preset.regex
+            || live.confirm_each != preset.confirm_each)
+            .then_some(live);
 
         let bookmarks = serialize_bookmarks(&self.bookmarks, &self.buffer_metadata, &self.root);
 
