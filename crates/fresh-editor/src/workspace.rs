@@ -31,21 +31,21 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::input::input_history::get_data_dir;
 
-/// Current workspace file format version.
+/// Current workspace file format version
+pub const WORKSPACE_VERSION: u32 = 1;
+
+/// The search-option defaults a window started on before `editor.search`
+/// existed, and so the values a pre-`search_overrides` workspace file
+/// carries when the user never touched the toggles.
 ///
-/// **v2** (search defaults): v1 always wrote `search_options`, whether or
-/// not the user had ever touched a toggle, and the window it was written
-/// from defaulted to case-sensitive. So every v1 file on disk says
-/// `case_sensitive: true`, and nothing distinguishes "I chose this" from
-/// "this is what the editor started on". Restoring those verbatim would
-/// have left the fold-case default — and the `editor.search` preset it
-/// comes from — reaching only workspaces nobody had ever opened.
-///
-/// A v1 file's search options are therefore dropped on load
-/// ([`Workspace::migrate_from`]), which costs a user who had deliberately
-/// turned case sensitivity *on* one `Alt+C` — and that choice re-persists,
-/// because v2 only writes options that differ from the config preset.
-pub const WORKSPACE_VERSION: u32 = 2;
+/// A field of [`Workspace::legacy_search_options`] equal to its value here
+/// says nothing; a field that differs is a choice the user made.
+pub const LEGACY_SEARCH_DEFAULTS: SearchOptions = SearchOptions {
+    case_sensitive: true,
+    whole_word: false,
+    use_regex: false,
+    confirm_each: false,
+};
 
 /// Current per-file workspace version
 pub const FILE_WORKSPACE_VERSION: u32 = 1;
@@ -79,18 +79,51 @@ pub struct Workspace {
     #[serde(default)]
     pub histories: WorkspaceHistories,
 
-    /// Search options (persist across searches within workspace).
+    /// The match options this workspace *overrides* the `editor.search`
+    /// config preset with, or `None` when it has nothing of its own to
+    /// say and the preset applies.
     ///
-    /// `None` means this workspace has never saved a choice — a
-    /// workspace written before the field existed, or one created since
-    /// the config preset landed and never searched in. Restoring `None`
-    /// leaves the window on the `editor.search` defaults instead of
-    /// stamping all-false over them, which is what made the preset from
-    /// issue #3212 reachable at all: an all-false struct is
-    /// indistinguishable from "the user turned everything off", and a
-    /// brand-new workspace would have silently overruled the config.
+    /// **Not** the old `search_options` key, and deliberately not named
+    /// it. That one was written on every save whether or not the user
+    /// had chosen anything, from a window that defaulted to
+    /// case-sensitive — so every file written before this says
+    /// `case_sensitive: true`, and nothing in it distinguishes a choice
+    /// from a default. Reading those as choices would have left the
+    /// fold-case default (issue #3212) reaching only workspaces nobody
+    /// had ever opened.
+    ///
+    /// A new name is how they are told apart: serde ignores the unknown
+    /// `search_options` key, so an old file arrives here as `None` and
+    /// keeps the preset, and the dead key drops out on the next save.
+    /// That costs a user who had deliberately turned case sensitivity
+    /// *on* one Alt+C, and it re-persists.
+    ///
+    /// The alternative was a `WORKSPACE_VERSION` bump plus a migration,
+    /// which is a much bigger hammer than this is worth: `load_from_path`
+    /// rejects any file whose version is newer than it knows, so bumping
+    /// would mean an older Fresh refusing to open the whole workspace —
+    /// splits, tabs, terminals, bookmarks — over one search field.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub search_options: Option<SearchOptions>,
+    pub search_overrides: Option<SearchOptions>,
+
+    /// The pre-`search_overrides` key, read only so its *unambiguous*
+    /// parts can be carried across, and never written back — it drops out
+    /// of the file on the next save.
+    ///
+    /// Only `case_sensitive: true` is ambiguous here: it was the old
+    /// window default, so it is equally likely to mean "the user chose
+    /// this" and "nobody ever touched it", and reading it as a choice is
+    /// what would keep the fold-case default (issue #3212) away from every
+    /// workspace a user has ever opened. Every *other* value in this
+    /// struct differs from an old default, so it could only have come from
+    /// the user flipping that toggle — a whole-word or regex search they
+    /// set up is still theirs, and throwing it away because one of its
+    /// neighbours is ambiguous would be losing information we have.
+    ///
+    /// [`LEGACY_SEARCH_DEFAULTS`] is what each field is judged against;
+    /// the restore applies only the ones that diverge.
+    #[serde(default, rename = "search_options", skip_serializing)]
+    pub legacy_search_options: Option<SearchOptions>,
 
     /// Bookmarks (character key -> file position)
     #[serde(default)]
@@ -584,6 +617,44 @@ pub struct SearchOptions {
     pub use_regex: bool,
     #[serde(default)]
     pub confirm_each: bool,
+}
+
+impl SearchOptions {
+    /// Resolve a superseded `search_options` value against the options the
+    /// window was seeded with, keeping only the toggles this file can
+    /// *prove* the user set.
+    ///
+    /// The old key was written on every save whether or not anyone had
+    /// chosen anything, so a field still sitting at its
+    /// [`LEGACY_SEARCH_DEFAULTS`] value says nothing and `seeded` (the
+    /// `editor.search` preset) wins. A field that differs could only have
+    /// come from the user flipping that toggle, so it wins instead.
+    ///
+    /// Concretely: `case_sensitive: true` was the old default and is
+    /// dropped — which is what lets the fold-case default of issue #3212
+    /// reach a workspace the user has opened before — while a whole-word
+    /// or regex search they set up survives, as does a deliberate
+    /// `case_sensitive: false`.
+    pub fn sift_legacy(&self, seeded: SearchOptions) -> SearchOptions {
+        let old = LEGACY_SEARCH_DEFAULTS;
+        let pick = |theirs: bool, was_default: bool, seed: bool| {
+            if theirs == was_default {
+                seed
+            } else {
+                theirs
+            }
+        };
+        SearchOptions {
+            case_sensitive: pick(
+                self.case_sensitive,
+                old.case_sensitive,
+                seeded.case_sensitive,
+            ),
+            whole_word: pick(self.whole_word, old.whole_word, seeded.whole_word),
+            use_regex: pick(self.use_regex, old.use_regex, seeded.use_regex),
+            confirm_each: pick(self.confirm_each, old.confirm_each, seeded.confirm_each),
+        }
+    }
 }
 
 /// Serialized bookmark (file path + byte offset)
@@ -1194,7 +1265,7 @@ impl Workspace {
 
         tracing::debug!("Loading workspace from {:?}", path);
         let content = std::fs::read_to_string(path)?;
-        let mut workspace: Workspace = serde_json::from_str(&content)?;
+        let workspace: Workspace = serde_json::from_str(&content)?;
 
         tracing::debug!(
             "Loaded workspace: version={}, split_states={}, active_split={}",
@@ -1221,10 +1292,6 @@ impl Workspace {
             return Err(WorkspaceError::WorkdirMismatch { expected, found });
         }
 
-        // The version as the *file* spelled it, before any migration
-        // rewrites it.
-        let file_version = workspace.version;
-
         // Check version compatibility
         if workspace.version > WORKSPACE_VERSION {
             tracing::warn!(
@@ -1238,26 +1305,7 @@ impl Workspace {
             });
         }
 
-        workspace.migrate_from(file_version);
         Ok(Some(workspace))
-    }
-
-    /// Bring a workspace loaded from an older format up to
-    /// [`WORKSPACE_VERSION`], in place. `from` is the version the file
-    /// claimed before any of this ran.
-    ///
-    /// v1 → v2: forget the saved search options. See [`WORKSPACE_VERSION`]
-    /// for why they cannot be trusted as a choice.
-    fn migrate_from(&mut self, from: u32) {
-        if from < 2 {
-            if self.search_options.take().is_some() {
-                tracing::debug!(
-                    "Workspace v{from}: dropping search options (v1 saved them \
-                     unconditionally, so they cannot be told from the old defaults)"
-                );
-            }
-            self.version = WORKSPACE_VERSION;
-        }
     }
 
     /// `true` when this workspace snapshot doesn't reference any
@@ -1423,7 +1471,8 @@ impl Workspace {
             config_overrides: WorkspaceConfigOverrides::default(),
             file_explorer: FileExplorerState::default(),
             histories: WorkspaceHistories::default(),
-            search_options: None,
+            search_overrides: None,
+            legacy_search_options: None,
             bookmarks: HashMap::new(),
             terminals: Vec::new(),
             external_files: Vec::new(),
@@ -1669,118 +1718,143 @@ mod tests {
         assert!(restored.confirm_each);
     }
 
-    /// A workspace that never saved a search choice must say so, rather
-    /// than answering with an all-false struct.
+    /// The sifting rule, field by field: an old value equal to the old
+    /// default defers to the seed; anything else is a choice and wins.
     ///
-    /// The distinction is what lets the `editor.search` config preset
-    /// reach a workspace (issue #3212): the restore only stamps the
-    /// window's toggles when there is a saved choice to stamp, so a
-    /// workspace file written before this field existed — and a fresh one
-    /// that has not been searched in — leaves the preset standing. Both
-    /// directions are pinned here because both are on-disk compatibility:
-    /// old files must read as `None`, and a saved choice must survive.
+    /// `case_sensitive` is the field the whole design turns on. It was the
+    /// old default, so `true` there is indistinguishable from "untouched"
+    /// and must defer — otherwise the fold-case default of issue #3212
+    /// reaches only workspaces nobody has ever opened. Its neighbours are
+    /// the opposite case: they had no such ambiguity, so discarding them
+    /// would be throwing away information the file plainly carries.
     #[test]
-    fn a_workspace_without_saved_search_options_reads_as_none() {
-        // A file with the key absent entirely.
-        let mut legacy = serde_json::to_value(Workspace::new(PathBuf::from("/home/user/proj")))
-            .expect("a workspace serializes");
-        legacy
-            .as_object_mut()
-            .expect("a workspace is a JSON object")
-            .remove("search_options");
-        let workspace: Workspace = serde_json::from_value(legacy)
-            .expect("a workspace file from before the field existed still loads");
-        assert!(
-            workspace.search_options.is_none(),
-            "no saved choice must not read as `everything off`"
+    fn sifting_a_legacy_value_keeps_only_what_the_user_chose() {
+        // The seed stands for the `editor.search` preset: all off, the
+        // shipped default.
+        let seed = SearchOptions::default();
+
+        // Untouched by the user: every field at its old default. Nothing
+        // is proven, so the seed survives intact — `case_sensitive: true`
+        // included, which is the whole point.
+        let untouched = LEGACY_SEARCH_DEFAULTS;
+        assert_eq!(
+            untouched.sift_legacy(seed.clone()).case_sensitive,
+            seed.case_sensitive,
+            "`case_sensitive: true` was the old default and proves nothing"
         );
 
-        // And a workspace that has one still round-trips it.
-        let saved = Workspace {
-            search_options: Some(SearchOptions {
-                case_sensitive: true,
-                ..SearchOptions::default()
-            }),
-            ..Workspace::new(PathBuf::from("/home/user/myproject"))
+        // Deliberately turned OFF: differs from the old default, so it is
+        // a choice and is kept, even though it happens to match the seed.
+        let case_off = SearchOptions {
+            case_sensitive: false,
+            ..LEGACY_SEARCH_DEFAULTS
         };
-        let json = serde_json::to_string(&saved).unwrap();
-        let restored: Workspace = serde_json::from_str(&json).unwrap();
+        assert!(!case_off.sift_legacy(seed.clone()).case_sensitive);
+
+        // Each of the unambiguous toggles survives on its own, without
+        // dragging the ambiguous neighbour along with it.
+        let word = SearchOptions {
+            whole_word: true,
+            ..LEGACY_SEARCH_DEFAULTS
+        };
+        let sifted = word.sift_legacy(seed.clone());
+        assert!(sifted.whole_word, "a whole-word search the user set up");
         assert!(
-            restored
-                .search_options
-                .expect("a saved choice survives the round trip")
-                .case_sensitive
+            !sifted.case_sensitive,
+            "and its ambiguous neighbour still defers to the preset"
+        );
+
+        let regex = SearchOptions {
+            use_regex: true,
+            ..LEGACY_SEARCH_DEFAULTS
+        };
+        assert!(regex.sift_legacy(seed.clone()).use_regex);
+
+        let confirm = SearchOptions {
+            confirm_each: true,
+            ..LEGACY_SEARCH_DEFAULTS
+        };
+        assert!(confirm.sift_legacy(seed.clone()).confirm_each);
+
+        // A seed that is itself case-sensitive (the user set the config
+        // preset) is what an untouched old file defers *to* — the preset
+        // wins, not the old default that happens to agree with it.
+        let cs_seed = SearchOptions {
+            case_sensitive: true,
+            ..SearchOptions::default()
+        };
+        assert!(untouched.sift_legacy(cs_seed.clone()).case_sensitive);
+        assert!(
+            !case_off.sift_legacy(cs_seed).case_sensitive,
+            "but a deliberate off still beats the preset"
         );
     }
 
-    /// A **v1** workspace file has its search options dropped on load.
+    /// The superseded `search_options` key is read, but never as a
+    /// wholesale choice: it survives into `legacy_search_options` for the
+    /// restore to sift, and is never written back.
     ///
-    /// v1 wrote them on every save whether or not the user had chosen
-    /// anything, from a window that defaulted to case-sensitive — so every
-    /// v1 file on disk says `case_sensitive: true` and no v1 file can tell
-    /// a choice from a default. Honouring them would have left the
-    /// fold-case default reaching only workspaces nobody had opened, which
-    /// is every user's *other* projects. This drives the real
-    /// `load_from_path` so the migration is pinned where it actually runs.
+    /// Driven through the real `load_from_path`, because "serde reads the
+    /// old name into the legacy field and skips it on write" is a property
+    /// of the whole load path, not of a hand-built value.
     #[test]
-    fn a_v1_workspace_forgets_its_search_options_on_load() {
-        let temp =
-            std::env::temp_dir().join(format!("fresh_v1_migration_test_{}", std::process::id()));
+    fn the_superseded_key_is_read_but_never_written() {
+        let temp = std::env::temp_dir().join(format!(
+            "fresh_search_overrides_test_{}",
+            std::process::id()
+        ));
         std::fs::create_dir_all(&temp).unwrap();
         let workspace_file = temp.join("workspace.json");
 
-        // Exactly the shape v1 wrote: version 1, search options present,
-        // case sensitivity on because that is what v1 windows started on.
-        let mut v1 = serde_json::to_value(Workspace::new(temp.clone())).unwrap();
-        let obj = v1.as_object_mut().unwrap();
-        obj.insert("version".to_string(), serde_json::json!(1));
-        obj.insert(
+        let mut old = serde_json::to_value(Workspace::new(temp.clone())).unwrap();
+        old.as_object_mut().unwrap().insert(
             "search_options".to_string(),
             serde_json::json!({
                 "case_sensitive": true,
-                "whole_word": false,
+                "whole_word": true,
                 "use_regex": false,
                 "confirm_each": false,
             }),
         );
-        std::fs::write(&workspace_file, serde_json::to_string(&v1).unwrap()).unwrap();
+        std::fs::write(&workspace_file, serde_json::to_string(&old).unwrap()).unwrap();
 
         let loaded = Workspace::load_from_path(&workspace_file, &temp)
-            .expect("a v1 file still loads")
+            .expect("an old file still loads — the version did not move")
             .expect("and is not empty");
         assert!(
-            loaded.search_options.is_none(),
-            "v1's unconditionally-written options must not read as a choice"
+            loaded.search_overrides.is_none(),
+            "the old key is not an override on its own"
         );
-        assert_eq!(
-            loaded.version, WORKSPACE_VERSION,
-            "the migration brings the version forward"
-        );
+        let legacy = loaded
+            .legacy_search_options
+            .as_ref()
+            .expect("but it is read, so the restore can sift it");
+        assert!(legacy.case_sensitive && legacy.whole_word);
 
-        // A v2 file, by contrast, only ever holds options the user chose,
-        // so they survive.
-        let mut v2 = serde_json::to_value(Workspace::new(temp.clone())).unwrap();
-        v2.as_object_mut().unwrap().insert(
-            "search_options".to_string(),
-            serde_json::json!({
-                "case_sensitive": true,
-                "whole_word": false,
-                "use_regex": false,
-                "confirm_each": false,
-            }),
-        );
-        std::fs::write(&workspace_file, serde_json::to_string(&v2).unwrap()).unwrap();
-        let loaded = Workspace::load_from_path(&workspace_file, &temp)
-            .expect("a v2 file loads")
-            .expect("and is not empty");
+        // And it is never written back, so it drops out of the file.
+        let round_tripped = serde_json::to_value(&loaded).unwrap();
         assert!(
-            loaded
-                .search_options
-                .expect("a v2 choice survives")
-                .case_sensitive
+            !round_tripped
+                .as_object()
+                .unwrap()
+                .contains_key("search_options"),
+            "the superseded key must not be re-emitted"
         );
 
         std::fs::remove_dir_all(&temp).ok();
+    }
+
+    /// Nothing of its own to say serialises to nothing at all, so the key
+    /// is absent rather than present-and-null — an older Fresh reading
+    /// this file sees no `search_options` and falls back to its own
+    /// defaults instead of tripping over an unexpected shape.
+    #[test]
+    fn a_workspace_with_no_override_writes_no_key() {
+        let json = serde_json::to_value(Workspace::new(PathBuf::from("/home/user/proj"))).unwrap();
+        assert!(
+            !json.as_object().unwrap().contains_key("search_overrides"),
+            "an absent override must not be written at all"
+        );
     }
 
     #[test]
@@ -1835,7 +1909,7 @@ mod tests {
         );
 
         // Set search options
-        workspace.search_options = Some(SearchOptions {
+        workspace.search_overrides = Some(SearchOptions {
             case_sensitive: true,
             use_regex: true,
             ..SearchOptions::default()
@@ -1850,7 +1924,7 @@ mod tests {
         assert_eq!(restored.working_dir, PathBuf::from("/home/user/myproject"));
         assert_eq!(restored.active_split_id, 1);
         assert!(restored.bookmarks.contains_key(&'m'));
-        let restored_options = restored.search_options.expect("saved search options");
+        let restored_options = restored.search_overrides.expect("saved search options");
         assert!(restored_options.case_sensitive);
         assert!(restored_options.use_regex);
 
@@ -1873,7 +1947,7 @@ mod tests {
 
         // Create a workspace
         let mut workspace = Workspace::new(temp_dir.clone());
-        workspace.search_options = Some(SearchOptions {
+        workspace.search_overrides = Some(SearchOptions {
             case_sensitive: true,
             ..SearchOptions::default()
         });
@@ -1901,7 +1975,7 @@ mod tests {
         assert_eq!(loaded.working_dir, temp_dir);
         assert!(
             loaded
-                .search_options
+                .search_overrides
                 .expect("saved search options")
                 .case_sensitive
         );

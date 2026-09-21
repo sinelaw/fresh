@@ -35,7 +35,14 @@ To start somewhere else, set the default in your config:
 
 `case_sensitive` seeds all four surfaces; flipping a toggle still wins from
 there, and the Find prompt saves a choice that differs from it with the
-workspace. The section's other keys — `whole_word`, `regex`, `confirm_each` —
+workspace.
+
+Workspaces saved by an earlier Fresh recorded the toggles on every save,
+whether or not you had chosen anything, from a prompt that started
+case-sensitive. Reopening one keeps the toggles you can be shown to have
+set — a whole-word or regex search survives — but its case sensitivity
+falls back to the setting above, because in those files "on" is
+indistinguishable from "never touched". The section's other keys — `whole_word`, `regex`, `confirm_each` —
 reach the Find/Replace prompt and the Search & Replace panel; see
 [Configuration → Search](../configuration/index.md#search) for which applies
 where.

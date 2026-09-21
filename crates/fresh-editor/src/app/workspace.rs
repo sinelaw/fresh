@@ -1768,6 +1768,26 @@ impl crate::app::window::Window {
         self.search_confirm_each = opts.confirm_each;
     }
 
+    /// Restore from the superseded `search_options` key, applying only the
+    /// toggles it can prove the user set.
+    ///
+    /// The sifting rule itself is [`SearchOptions::sift_legacy`]; the
+    /// window's current flags are the seed, because they are what
+    /// `Window::new` put there from the `editor.search` preset and are
+    /// exactly what should win wherever the old file says nothing.
+    ///
+    /// One-way: the next save writes whatever the window ends up with
+    /// under `search_overrides`, and the old key is never written back.
+    fn restore_legacy_search_options(&mut self, opts: &SearchOptions) {
+        let seeded = SearchOptions {
+            case_sensitive: self.search_case_sensitive,
+            whole_word: self.search_whole_word,
+            use_regex: self.search_use_regex,
+            confirm_each: self.search_confirm_each,
+        };
+        self.restore_search_options(&opts.sift_legacy(seeded));
+    }
+
     fn restore_prompt_histories(&mut self, histories: &WorkspaceHistories) {
         tracing::debug!(
             "Restoring histories: {} search, {} replace, {} goto_line",
@@ -2564,10 +2584,14 @@ impl crate::app::window::Window {
                 .store(mouse_enabled, std::sync::atomic::Ordering::Relaxed);
         }
 
-        // A workspace with no saved choice keeps the window on the
-        // `editor.search` preset it was constructed with (issue #3212).
-        if let Some(opts) = &workspace.search_options {
+        // A workspace with nothing of its own to say keeps the window on
+        // the `editor.search` preset it was constructed with (issue
+        // #3212). An old file speaks through the superseded key instead,
+        // and only for the toggles it can prove the user set.
+        if let Some(opts) = &workspace.search_overrides {
             self.restore_search_options(opts);
+        } else if let Some(legacy) = &workspace.legacy_search_options {
+            self.restore_legacy_search_options(legacy);
         }
         self.restore_prompt_histories(&workspace.histories);
         self.restore_file_explorer_settings(&workspace.file_explorer);
@@ -2886,9 +2910,10 @@ impl crate::app::window::Window {
         // persisting. Writing the live values unconditionally would turn
         // "the user never touched the toggles" into a saved decision at the
         // first checkpoint, and a workspace would then ignore its own
-        // `editor.search` preset forever after — which is the trap v1 fell
-        // into (see `WORKSPACE_VERSION`). Equal to the preset means there is
-        // nothing to remember, so the preset keeps applying.
+        // `editor.search` preset forever after — which is exactly the trap
+        // the old `search_options` key fell into (see
+        // `Workspace::search_overrides`). Equal to the preset means there
+        // is nothing to override, so the preset keeps applying.
         let preset = &self.config().editor.search;
         let live = SearchOptions {
             case_sensitive: self.search_case_sensitive,
@@ -2896,7 +2921,7 @@ impl crate::app::window::Window {
             use_regex: self.search_use_regex,
             confirm_each: self.search_confirm_each,
         };
-        let search_options = (live.case_sensitive != preset.case_sensitive
+        let search_overrides = (live.case_sensitive != preset.case_sensitive
             || live.whole_word != preset.whole_word
             || live.use_regex != preset.regex
             || live.confirm_each != preset.confirm_each)
@@ -2962,7 +2987,8 @@ impl crate::app::window::Window {
             config_overrides,
             file_explorer,
             histories,
-            search_options,
+            search_overrides,
+            legacy_search_options: None,
             bookmarks,
             terminals,
             external_files,

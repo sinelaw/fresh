@@ -1510,7 +1510,7 @@ fn a_workspace_persists_only_a_choice_that_leaves_the_preset() {
         harness
             .editor()
             .capture_workspace()
-            .search_options
+            .search_overrides
             .is_none(),
         "an untouched window has made no choice to save"
     );
@@ -1530,7 +1530,7 @@ fn a_workspace_persists_only_a_choice_that_leaves_the_preset() {
     let saved = harness
         .editor()
         .capture_workspace()
-        .search_options
+        .search_overrides
         .expect("a flip away from the preset is a choice worth saving");
     assert!(saved.case_sensitive);
 
@@ -1551,7 +1551,7 @@ fn a_workspace_persists_only_a_choice_that_leaves_the_preset() {
         harness
             .editor()
             .capture_workspace()
-            .search_options
+            .search_overrides
             .is_none(),
         "back on the preset, the workspace has nothing of its own to say"
     );
