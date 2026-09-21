@@ -258,13 +258,18 @@ fn live_grep_folds_case_until_the_case_toggle_says_otherwise() {
         .unwrap();
 
     // Alt+C turns matching case-sensitive, and the row goes away.
+    //
+    // Checked is `[v]` here, not `[x]`: this is a plugin widget toolbar
+    // (`lib/widgets.ts`'s `toggle`), not the core search-options row the
+    // find prompt draws. Waiting on the wrong glyph is a hang, not a
+    // failure — the wait just never resolves.
     harness
         .send_key(KeyCode::Char('c'), KeyModifiers::ALT)
         .unwrap();
     harness
         .wait_until(|h| {
             let screen = h.screen_to_string();
-            screen.contains("[x] Case") && !screen.contains("notes.txt:2")
+            screen.contains("[v] Case") && !screen.contains("notes.txt:2")
         })
         .unwrap();
 }
