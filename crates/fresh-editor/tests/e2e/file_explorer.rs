@@ -3818,7 +3818,10 @@ fn test_file_explorer_side_right_border_drag_resizes() {
     harness.render().unwrap();
 
     let right_col = find_explorer_border_col(&harness);
-    assert_eq!(right_col, 119, "explorer should be flush with the right edge");
+    assert_eq!(
+        right_col, 119,
+        "explorer should be flush with the right edge"
+    );
     let left_col = right_col - 29;
     assert_eq!(
         harness.get_row_text(15).chars().nth(left_col as usize),
@@ -3829,7 +3832,9 @@ fn test_file_explorer_side_right_border_drag_resizes() {
     );
 
     // Dragging the outer (terminal-edge) wall must do nothing.
-    harness.mouse_drag(right_col, 15, right_col - 10, 15).unwrap();
+    harness
+        .mouse_drag(right_col, 15, right_col - 10, 15)
+        .unwrap();
     assert_eq!(
         harness.editor().active_window().file_explorer_width,
         ExplorerWidth::Columns(30),
