@@ -74,11 +74,11 @@ fn non_daemon_quit_is_unchanged() {
 #[test]
 fn daemon_quit_body_rows_share_one_left_edge() {
     // Narrow enough that the body's lines wrap.
-    let mut h =
-        EditorTestHarness::with_temp_project_and_config(44, 30, Config::default()).unwrap();
+    let mut h = EditorTestHarness::with_temp_project_and_config(44, 30, Config::default()).unwrap();
     h.editor_mut().set_session_mode(true);
     h.render().unwrap();
-    h.send_key(KeyCode::Char('q'), KeyModifiers::CONTROL).unwrap();
+    h.send_key(KeyCode::Char('q'), KeyModifiers::CONTROL)
+        .unwrap();
 
     let screen = h.screen_to_string();
     let lines: Vec<Vec<char>> = screen.lines().map(|l| l.chars().collect()).collect();
@@ -106,5 +106,8 @@ fn daemon_quit_body_rows_share_one_left_edge() {
             "every body row must start one column inside the border.\nScreen:\n{screen}"
         );
     }
-    assert!(body_rows > 3, "the body should have wrapped.\nScreen:\n{screen}");
+    assert!(
+        body_rows > 3,
+        "the body should have wrapped.\nScreen:\n{screen}"
+    );
 }
