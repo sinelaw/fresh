@@ -10217,7 +10217,7 @@ function repoPathStatusRows(d: RepoDialogState): WidgetSpec[] {
   if (d.cloning) {
     return [
       at(editor.t("repo.cloning")),
-      fieldColumnRow(linkButton(editor.t("form.btn_cancel_short"), "repo_clone_cancel")),
+      fieldColumnRow(actionButton(editor.t("form.btn_cancel_short"), "repo_clone_cancel")),
     ];
   }
   if (d.cloneConfirm) {
@@ -10226,7 +10226,7 @@ function repoPathStatusRows(d: RepoDialogState): WidgetSpec[] {
       at(`  ${editor.t("repo.clone_into", { machine, path: d.path.value.trim() })}`, WARN_STYLE),
       fieldColumnRow(
         spacer(30),
-        linkButton(editor.t("form.btn_cancel_short"), "repo_clone_no"),
+        actionButton(editor.t("form.btn_cancel_short"), "repo_clone_no"),
         spacer(3),
         button(`  ${editor.t("repo.btn_clone")}  `, { intent: "primary", key: "repo_clone_yes" }),
       ),
@@ -10239,7 +10239,7 @@ function repoPathStatusRows(d: RepoDialogState): WidgetSpec[] {
     return [
       at(`⚠ ${editor.t("repo.none_on", { machine })}`, WARN_STYLE),
       at(`  ${editor.t("repo.type_or_browse")}`, WARN_STYLE),
-      ...(remote ? [fieldColumnRow(spacer(2), linkButton(editor.t("repo.clone_ellipsis"), "repo_clone_default"))] : []),
+      ...(remote ? [fieldColumnRow(actionButton(editor.t("repo.clone_ellipsis"), "repo_clone_default"))] : []),
     ];
   }
   switch (c.state) {
@@ -10254,7 +10254,7 @@ function repoPathStatusRows(d: RepoDialogState): WidgetSpec[] {
     case "missing":
       return [
         at(`⚠ ${editor.t("repo.path_missing", { machine })}`, WARN_STYLE),
-        ...(remote ? [fieldColumnRow(spacer(2), linkButton(editor.t("repo.clone_here"), "repo_clone_here"))] : []),
+        ...(remote ? [fieldColumnRow(actionButton(editor.t("repo.clone_here"), "repo_clone_here"))] : []),
       ];
   }
   return [];
@@ -10297,7 +10297,7 @@ function buildRepoDialogSpec(): WidgetSpec {
   const repos = loadRepositories();
   if (d.mode === "manage") {
     kids.push(
-      row(spacer(2), linkButton(`+ ${editor.t("repo.add")}`, "repo_add")),
+      row(spacer(2), actionButton(`+ ${editor.t("repo.add")}`, "repo_add")),
       ...gap(),
     );
     if (repos.length === 0) {
@@ -10359,7 +10359,7 @@ function buildRepoDialogSpec(): WidgetSpec {
           key: "repo_machine",
         }),
         spacer(5),
-        linkButton(`+ ${editor.t("repo.add_machine")}`, "repo_add_machine"),
+        actionButton(`+ ${editor.t("repo.add_machine")}`, "repo_add_machine"),
       ),
       row(
         text({
@@ -10372,7 +10372,7 @@ function buildRepoDialogSpec(): WidgetSpec {
           key: "repo_path",
         }),
         spacer(3),
-        linkButton(editor.t("repo.browse"), "repo_browse"),
+        actionButton(editor.t("repo.browse"), "repo_browse"),
       ),
       ...repoBrowseRows(d),
       ...repoPathStatusRows(d),
@@ -10400,8 +10400,8 @@ function repoFooterRow(d: RepoDialogState): WidgetSpec {
   if (d.mode === "add") {
     const canClone = !!repoDialogRemote(d) && (!d.check || d.check.state === "missing" || d.check.state === "empty");
     return endRow(
-      ...(canClone ? [linkButton(editor.t("repo.clone_now"), "repo_clone_now"), spacer(5)] : []),
-      linkButton(editor.t("form.btn_cancel_short"), "repo_cancel"),
+      ...(canClone ? [actionButton(editor.t("repo.clone_now"), "repo_clone_now"), spacer(5)] : []),
+      actionButton(editor.t("form.btn_cancel_short"), "repo_cancel"),
       spacer(5),
       button(`  ${editor.t("repo.btn_save")}  `, { intent: "primary", key: "repo_save", disabled: !ok }),
       spacer(3),
@@ -10409,7 +10409,7 @@ function repoFooterRow(d: RepoDialogState): WidgetSpec {
   }
   if (d.returnTo === "form") {
     return endRow(
-      linkButton(editor.t("repo.back_to_form"), "repo_back"),
+      actionButton(editor.t("repo.back_to_form"), "repo_back"),
       spacer(5),
       button(`  ${editor.t("repo.btn_use")}  `, { intent: "primary", key: "repo_save", disabled: !ok || !repoById(d.repoId) }),
       spacer(3),
@@ -10419,13 +10419,13 @@ function repoFooterRow(d: RepoDialogState): WidgetSpec {
   return endRow(
     ...(has
       ? [
-        linkButton(editor.t("repo.new_here"), "repo_new_here"),
+        actionButton(editor.t("repo.new_here"), "repo_new_here"),
         spacer(4),
-        linkButton(editor.t("repo.remove"), "repo_remove"),
+        actionButton(editor.t("repo.remove"), "repo_remove"),
         spacer(5),
       ]
       : []),
-    linkButton(editor.t("repo.close"), "repo_cancel"),
+    actionButton(editor.t("repo.close"), "repo_cancel"),
     spacer(5),
     button(`  ${editor.t("repo.btn_save")}  `, { intent: "primary", key: "repo_save", disabled: !ok || !has }),
     spacer(3),
@@ -12721,9 +12721,10 @@ function fieldColumnRow(...kids: WidgetSpec[]): WidgetSpec {
   return row(spacer(FORM_LABEL_W + 2), ...kids);
 }
 
-// `Change…`-style link buttons inside the form.
-function linkButton(text: string, key: string): WidgetSpec {
-  return button(text, { key, bare: true, style: { underline: true } });
+// A secondary action inside the form or the Repositories dialog: the
+// standard framed button, so it looks, focuses and clicks like every other.
+function actionButton(text: string, key: string): WidgetSpec {
+  return button(text, { key });
 }
 
 // The repository's main clone on the chosen machine (§4.1, §4.4, §4.5).
@@ -12732,7 +12733,7 @@ function repoWhereRows(f: NewSessionForm, r: Repository): WidgetSpec[] {
   const key = formMachineKey(f);
   if (blocker) {
     const out: WidgetSpec[] = [label(`✗ ${blocker}`, { labelWidth: FORM_LABEL_W, style: { fg: "diagnostic.error_fg" }, wrap: true })];
-    if (key) out.push(fieldColumnRow(linkButton(editor.t("form.use_existing_clone"), "use_existing_clone")));
+    if (key) out.push(fieldColumnRow(actionButton(editor.t("form.use_existing_clone"), "use_existing_clone")));
     return out;
   }
   const clone = formMainClone(f);
@@ -12743,8 +12744,7 @@ function repoWhereRows(f: NewSessionForm, r: Repository): WidgetSpec[] {
         style: WARN_STYLE,
       }),
       fieldColumnRow(
-        spacer(2),
-        linkButton(editor.t("form.use_existing_clone"), "use_existing_clone"),
+        actionButton(editor.t("form.use_existing_clone"), "use_existing_clone"),
         spacer(2),
         label(editor.t("form.or_launch_clones"), { style: WARN_STYLE }),
       ),
@@ -12755,7 +12755,7 @@ function repoWhereRows(f: NewSessionForm, r: Repository): WidgetSpec[] {
   }
   return [
     label(`${formLabel("form.main_clone").padStart(FORM_LABEL_W)}: ${tildePath(clone)}`),
-    fieldColumnRow(linkButton(editor.t("form.change_clone"), "change_clone")),
+    fieldColumnRow(actionButton(editor.t("form.change_clone"), "change_clone")),
   ];
 }
 
@@ -12774,7 +12774,7 @@ function folderRepoRows(f: NewSessionForm): WidgetSpec[] {
   const known = folderKnownRepo(f);
   if (!known) {
     if (!f.folderOrigin) return [];
-    return [fieldColumnRow(linkButton(editor.t("form.save_as_repo"), "save_repo"))];
+    return [fieldColumnRow(actionButton(editor.t("form.save_as_repo"), "save_repo"))];
   }
   const key = formMachineKey(f);
   const main = key ? known.clones[key] ?? "" : "";
@@ -12782,7 +12782,7 @@ function folderRepoRows(f: NewSessionForm): WidgetSpec[] {
   if (main && expandHome(main) === here) {
     return [
       label(editor.t("form.folder_is_main", { name: known.name }), { labelWidth: FORM_LABEL_W, style: NOTE_STYLE }),
-      fieldColumnRow(linkButton(editor.t("form.switch_repo", { name: known.name }), "switch_repo")),
+      fieldColumnRow(actionButton(editor.t("form.switch_repo", { name: known.name }), "switch_repo")),
     ];
   }
   return [
@@ -12793,9 +12793,9 @@ function folderRepoRows(f: NewSessionForm): WidgetSpec[] {
       { labelWidth: FORM_LABEL_W, style: NOTE_STYLE },
     ),
     fieldColumnRow(
-      linkButton(editor.t("form.make_main_clone"), "make_main_clone"),
+      actionButton(editor.t("form.make_main_clone"), "make_main_clone"),
       spacer(4),
-      linkButton(editor.t("form.switch_repo", { name: known.name }), "switch_repo"),
+      actionButton(editor.t("form.switch_repo", { name: known.name }), "switch_repo"),
     ),
   ];
 }
@@ -12806,7 +12806,7 @@ function folderRepoRows(f: NewSessionForm): WidgetSpec[] {
 function detailsToggleRow(f: NewSessionForm): WidgetSpec {
   // Hollow triangles: the filled `▸` is the focus marker.
   const text = f.detailsOpen ? `▿ ${editor.t("form.details_hide")}` : `▹ ${editor.t("form.details_show")}`;
-  return fieldColumnRow(button(text, { key: "details", bare: true, style: { underline: true } }));
+  return fieldColumnRow(actionButton(text, "details"));
 }
 
 // The GIT section (details open): the worktree-or-in-place choice and the
@@ -12835,16 +12835,12 @@ function formFooterRows(creating: boolean): WidgetSpec[] {
   const ok = formIsSubmittable();
   const actions = creating
     ? endRow(
-      button(editor.t("form.btn_launch_bg"), {
-        key: "create-bg",
-        disabled: !ok,
-        bare: true,
-        style: { underline: true },
-      }),
+      button(editor.t("form.btn_launch_bg"), { key: "create-bg", disabled: !ok }),
       spacer(5),
       button(`  ${editor.t("form.btn_launch")}  `, { intent: "primary", key: "create-visit", disabled: !ok }),
+      spacer(3),
     )
-    : endRow(button(`  ${editor.t("run_agent.btn_run")}  `, { intent: "primary", key: "create-visit" }));
+    : endRow(button(`  ${editor.t("run_agent.btn_run")}  `, { intent: "primary", key: "create-visit" }), spacer(3));
   const hints = creating
     ? [
       { keys: "Ctrl+⏎", label: editor.t("hint.launch") },
