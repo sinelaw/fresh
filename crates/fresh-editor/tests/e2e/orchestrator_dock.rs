@@ -91,11 +91,11 @@ fn card_config() -> Config {
 }
 
 /// Open the dock header's `⋯` menu — density, what to show, the project
-/// scope, folder creation and "Manage workspaces…" all live behind it.
+/// scope, folder creation and "Machines…" all live behind it.
 fn open_dock_menu(h: &mut EditorTestHarness) {
     let (mcol, mrow) = pos_of(h, "⋯");
     h.mouse_click(mcol, mrow).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("Manage workspaces"))
+    h.wait_until(|h| h.screen_to_string().contains("Machines…"))
         .unwrap();
 }
 
@@ -103,7 +103,7 @@ fn open_dock_menu(h: &mut EditorTestHarness) {
 /// session list.
 fn close_dock_menu(h: &mut EditorTestHarness) {
     h.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| !h.screen_to_string().contains("Manage workspaces"))
+    h.wait_until(|h| !h.screen_to_string().contains("Machines…"))
         .unwrap();
 }
 
@@ -304,7 +304,7 @@ fn editor_click_blurs_dock_when_a_header_widget_is_focused() {
     h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     h.render().unwrap();
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("Manage workspaces"))
+    h.wait_until(|h| h.screen_to_string().contains("Machines…"))
         .unwrap();
     // Still focused (on a header widget): the divider keeps its accent colour.
     assert_eq!(
@@ -903,11 +903,11 @@ fn dock_enter_on_focused_button_runs_button_action() {
     // Focus opens on the sessions tree. Tab wraps to `[ + New ]` (spec-order
     // first tabbable) and a second lands on `⋯`. Enter must open its menu —
     // the same thing a click on the glyph does — not dive the tree.
-    h.assert_screen_not_contains("Manage workspaces");
+    h.assert_screen_not_contains("Machines…");
     h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("Manage workspaces"))
+    h.wait_until(|h| h.screen_to_string().contains("Machines…"))
         .unwrap();
 
     // Esc closes the menu; back on the tree, nothing dived.
@@ -4069,11 +4069,11 @@ fn box_border_cols(h: &EditorTestHarness, row: u16) -> (u16, u16) {
     (borders[0], borders[1])
 }
 
-/// Open the dock's `⋯` menu (first entries "New Folder…" and "Manage
-/// workspaces…") and return the screen row of its second entry.
+/// Open the dock's `⋯` menu (first entries "New Folder…" and
+/// "Machines…") and return the screen row of its second entry.
 fn open_create_dropdown(h: &mut EditorTestHarness) -> u16 {
     open_dock_menu(h);
-    row_of(h, "Manage workspaces") as u16
+    row_of(h, "Machines…") as u16
 }
 
 /// A dock dropdown's hover band must span the menu row, not a band sized
@@ -4094,7 +4094,7 @@ fn dock_dropdown_hover_band_spans_the_menu_row() {
     h.render().unwrap();
     open_dock(&mut h);
 
-    // "Manage workspaces…" is the entry to hover: "New Folder…" is the
+    // "Machines…" is the entry to hover: "New Folder…" is the
     // keyboard cursor and already carries the focus band.
     let menu_row = open_create_dropdown(&mut h);
     let (left, right) = box_border_cols(&h, menu_row);
@@ -4138,7 +4138,7 @@ fn dock_dropdown_cursor_band_spans_the_menu_row() {
     let (left, right) = box_border_cols(&h, menu_row);
     let idle = row_bgs(&h, menu_row);
 
-    // ↓ moves the dropdown cursor onto "Manage workspaces…".
+    // ↓ moves the dropdown cursor onto "Machines…".
     h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
     h.wait_until(|h| row_bgs(h, menu_row) != idle).unwrap();
     let selected = row_bgs(&h, menu_row);

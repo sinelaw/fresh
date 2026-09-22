@@ -1,4 +1,4 @@
-/** The Everything dialog's row model: a scan in, rows out. */
+/** The Import sessions dialog's row model: a scan in, rows out. */
 import {
   discoverElide,
   discoverIsGroup,

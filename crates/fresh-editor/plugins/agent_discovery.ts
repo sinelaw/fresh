@@ -1,8 +1,8 @@
 /// <reference path="./lib/fresh.d.ts" />
 
 /**
- * The Everything dialog: finds agent sessions other tools are running, on any
- * machine, and rejoins them. State, rendering, scan and cache live here; the
+ * The Import sessions dialog: finds agent sessions other tools are running, on
+ * any machine, and rejoins them. State, rendering, scan and cache live here; the
  * row model is `lib/discovery.ts`. The orchestrator is reached through
  * `DiscoveryHost`, looked up when the dialog opens so load order does not matter.
  */
@@ -85,9 +85,24 @@ function fieldNote(note: string): WidgetSpec {
 const DISCOVER_MODE = "agent-discovery";
 
 
-// Rows the results area always occupies, so the buttons stay put whatever
-// the scan found. Fits a collapsed answer without scrolling.
-const DISCOVER_TREE_ROWS = 14;
+// The panel's share of the terminal height.
+const DISCOVER_HEIGHT_PCT = 90;
+// Rows the dialog spends on everything but the results: borders and title
+// (3), machine and filter rows (2), the spacers around the results (2), the
+// close row (1) and a note with its spacer (2).
+const DISCOVER_CHROME_ROWS = 10;
+// Fewest result rows shown, however small the terminal.
+const DISCOVER_MIN_TREE_ROWS = 8;
+
+/** Rows the results area always occupies, so the buttons stay put whatever
+ *  the scan found: as many as the panel has room for, so a modest answer
+ *  opens up without scrolling. Sized off the whole terminal, which is what
+ *  the centred panel's `heightPct` is a share of. */
+function discoverTreeRows(): number {
+  const h = editor.getScreenSize().height;
+  const panel = Math.floor((h > 0 ? h : 30) * DISCOVER_HEIGHT_PCT / 100);
+  return Math.max(DISCOVER_MIN_TREE_ROWS, panel - DISCOVER_CHROME_ROWS);
+}
 
 let discoverPanel: FloatingWidgetPanel | null = null;
 
@@ -156,6 +171,7 @@ function buildDiscoverSpec(): WidgetSpec {
   const unreachable = selected !== null && !selected.all && selected.spec === null;
   const rows = st.rows ?? [];
   const cached = selected ? discoverCache.get(selected.key) : undefined;
+  const treeRows = discoverTreeRows();
 
   const body: WidgetSpec[] = [
     row(
@@ -208,11 +224,11 @@ function buildDiscoverSpec(): WidgetSpec {
     : st.note;
   if (note) body.push(fieldNote(note), spacer(0));
 
-  // Every state below fills the same `DISCOVER_TREE_ROWS`, so the dialog keeps
-  // one shape.
+  // Every state below fills the same `treeRows`, so the dialog keeps one
+  // shape.
   const filled = (...kids: WidgetSpec[]): WidgetSpec[] => [
     ...kids,
-    raw(Array.from({ length: Math.max(0, DISCOVER_TREE_ROWS - kids.length) }, () => ({ text: "" }))),
+    raw(Array.from({ length: Math.max(0, treeRows - kids.length) }, () => ({ text: "" }))),
   ];
   if (st.scanning) {
     body.push(...filled(label(editor.t("discover.scanning"))));
@@ -240,8 +256,10 @@ function buildDiscoverSpec(): WidgetSpec {
         }),
         itemKeys: rows.map((r) => r.key),
         selectedIndex: Math.min(st.index, rows.length - 1),
-        visibleRows: DISCOVER_TREE_ROWS,
+        visibleRows: treeRows,
         indentCols: DISCOVER_INDENT_COLS,
+        // A heading folds from a click anywhere on its row, not only its glyph.
+        toggleOnClick: true,
         // Read on the first frame only; `refreshDiscoverDialog` pushes later
         // fold sets with `setExpandedKeys`.
         expandedKeys: discoverExpandedKeys(),
@@ -251,7 +269,7 @@ function buildDiscoverSpec(): WidgetSpec {
       // window is padded or the dialog shrinks after a scan.
       ...(() => {
         const drawn = discoverVisibleRowCount(rows, new Set(discoverExpandedKeys()));
-        const pad = Math.max(0, DISCOVER_TREE_ROWS - Math.min(drawn, DISCOVER_TREE_ROWS));
+        const pad = Math.max(0, treeRows - Math.min(drawn, treeRows));
         return pad > 0 ? [raw(Array.from({ length: pad }, () => ({ text: "" })))] : [];
       })(),
     );
@@ -317,7 +335,7 @@ function openDiscoverDialog(): void {
   discoverPanel = new FloatingWidgetPanel();
   discoverPanel.mount(buildDiscoverSpec(), {
     widthPct: 70,
-    heightPct: 70,
+    heightPct: DISCOVER_HEIGHT_PCT,
     focusMarker: true,
     title: editor.t("discover.title"),
     closable: true,
@@ -623,10 +641,10 @@ editor.on("widget_event", (e) => {
 });
 
 registerHandler("agent_discovery_open", openAgentDiscovery);
-editor.registerCommand("%cmd.everything", "%cmd.everything_desc", "agent_discovery_open", null, {
+editor.registerCommand("%cmd.import_sessions", "%cmd.import_sessions_desc", "agent_discovery_open", null, {
   terminalBypass: true,
 });
 
 editor.exportPluginApi("agent-discovery", { open: openAgentDiscovery });
 
-editor.debug("agent-discovery: Everything dialog registered");
+editor.debug("agent-discovery: Import sessions dialog registered");

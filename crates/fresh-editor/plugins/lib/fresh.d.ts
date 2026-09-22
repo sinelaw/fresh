@@ -1998,6 +1998,12 @@ type WidgetSpec = {
 	* the disclosure glyph (or the blank standing in for one).
 	*/
 	indentCols: number;
+	/**
+	* When true, a click anywhere on a node with children toggles its
+	* expansion (and selects it), not only a click on the disclosure
+	* glyph. The toggle fires `expand` with `{ index, key, expanded }`.
+	*/
+	toggleOnClick: boolean;
 	key?: string | null;
 } | {
 	"kind": "text";

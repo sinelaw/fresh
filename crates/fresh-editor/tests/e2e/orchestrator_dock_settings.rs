@@ -88,7 +88,7 @@ fn open_dock_menu(h: &mut EditorTestHarness) {
         .find_text_on_screen("⋯")
         .unwrap_or_else(|| panic!("screen missing '⋯':\n{}", h.screen_to_string()));
     h.mouse_click(mcol, mrow).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("Manage workspaces"))
+    h.wait_until(|h| h.screen_to_string().contains("Machines…"))
         .unwrap();
 }
 

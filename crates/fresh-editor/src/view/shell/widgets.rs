@@ -1737,6 +1737,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
             indent_cols,
             item_height,
             card_borders,
+            toggle_on_click: _,
         } if *card_borders => {
             let sel_abs = live_selection(cx, key, *selected_index);
             let expanded: std::collections::HashSet<String> =
@@ -1920,6 +1921,7 @@ fn node_body(spec: &WidgetSpec, width: u16, cx: &Ctx<'_>, site: Site) -> Node<Ui
             indent_cols,
             item_height,
             card_borders,
+            toggle_on_click: _,
         } if !*card_borders => {
             use std::rc::Rc;
             let expanded: std::collections::HashSet<String> =
@@ -5128,6 +5130,7 @@ pub(crate) mod tests {
             checkable: false,
             item_height: 1,
             card_borders: false,
+            toggle_on_click: false,
             indent_cols: 2,
         }
     }
@@ -6272,6 +6275,7 @@ pub(crate) mod tests {
             indent_cols: 2,
             item_height: 3,
             card_borders: true,
+            toggle_on_click: false,
         }
     }
 

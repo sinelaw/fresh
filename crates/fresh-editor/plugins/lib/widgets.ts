@@ -698,6 +698,10 @@ export function tree(options: {
    * `1` to spend those columns on the node text instead; the disclosure
    * glyph (or the blank standing in for one) still marks each level. */
   indentCols?: number;
+  /** When true, a click anywhere on a node with children toggles its
+   * expansion (and selects it), not only a click on the `▶`/`▼` glyph.
+   * The toggle fires `expand` with `payload: { index, key, expanded }`. */
+  toggleOnClick?: boolean;
   key?: string;
 }): WidgetSpec {
   return {
@@ -711,6 +715,7 @@ export function tree(options: {
     itemHeight: options.itemHeight ?? 1,
     cardBorders: options.cardBorders ?? false,
     indentCols: options.indentCols ?? 2,
+    toggleOnClick: options.toggleOnClick ?? false,
     key: options.key,
   };
 }

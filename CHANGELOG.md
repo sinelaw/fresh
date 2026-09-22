@@ -13,7 +13,7 @@ Fresh is now licensed **GPL-3.0-or-later**, up from GPL-2.0-only (#3328).
 * **Orchestrator mode** - a bare `fresh`, with no file or flags, reopens the workspace you were last in, dock and all, running as a background daemon. On by default, toggle it in Settings (#3306)
 * **New CLI commands** - `workspace list`, and `agent list` / `get` / `explain` / `wait` / `start`, for scripting Orchestrator workspaces and agents without reading the dock
 * **Confirmations are a modal dialog now, not a line on the bottom row** - a centred card with each outcome spelled out as its own button, answering to arrows, Tab, Enter, Esc, the mouse and the letter underlined in the label; an outcome that loses work is in the error colour and never opens armed (#3320)
-* **Find and rejoin the agent sessions other tools are running** - `Orchestrator: Everything` scans any machine you can reach for tmux, Claude Code, Codex, screen and zellij sessions, groups them by project, and rejoins one on Enter (#3332)
+* **Find and rejoin the agent sessions other tools are running** - `Orchestrator: Import sessions` scans any machine you can reach for tmux, Claude Code, Codex, screen and zellij sessions, groups them by project, and rejoins one on Enter (#3332)
 * **Tokyo Night and Gruvbox ship as built-in themes**, which the homepage already promised (#3107, reported by @sgon00)
 * **Alt+Shift+N / Alt+Shift+P cycle the keyboard through the sidebar**, so a plugin panel like the Markdown outline is reachable without the palette (#3326)
 
