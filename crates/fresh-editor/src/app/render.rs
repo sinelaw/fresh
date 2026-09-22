@@ -5606,8 +5606,9 @@ impl Editor {
             })
             .unwrap_or(0);
 
-        // The overlay preview is used exclusively by the Live Grep
-        // floating overlay, so the prompt input IS the search query.
+        // The overlay preview serves whichever search overlay is up —
+        // Universal Search or Git Grep — and in both the prompt input IS
+        // the search query.
         // Highlight every occurrence in the visible region — previously
         // the match was only reachable via the (hidden) cursor, which is
         // near-invisible against the preview chrome. Capture the query and
@@ -5622,19 +5623,28 @@ impl Editor {
             let theme = self.theme.read().unwrap();
             (theme.search_match_fg, theme.search_match_bg)
         };
-        // Live Grep reads its query as a regex, and folds case unless its
-        // Case toggle is on — mirror that so the highlight tracks what the
-        // search actually matched. The toggle's live value is read off the
-        // toolbar the plugin mounted rather than guessed: the plugin owns
-        // the setting, and the host's own copy of the rule would be one
-        // more thing to keep in step (this previously duplicated the
-        // plugin's smart-case heuristic, and would have silently drifted
-        // when that became a toggle). A query that isn't valid regex falls
-        // back to a literal match.
+        // A search overlay folds case unless its Case toggle is on —
+        // mirror that so the highlight tracks what the search actually
+        // matched. The toggle's live value is read off the toolbar the
+        // plugin mounted rather than guessed: the plugin owns the setting,
+        // and the host's own copy of the rule would be one more thing to
+        // keep in step (this previously duplicated Live Grep's smart-case
+        // heuristic, and would have silently drifted when that became a
+        // toggle).
+        //
+        // Two keys because two plugins mount a toolbar here and name that
+        // toggle differently — Universal Search `mode_case`, Git Grep
+        // `git_grep_case`, kept distinct so their broadcast widget events
+        // cannot be mistaken for each other. Neither is present when some
+        // other overlay is up, which reads as "folds case" and is the
+        // right default. A query that isn't valid regex falls back to a
+        // literal match.
         let preview_regex = if query.is_empty() {
             None
         } else {
-            let case_insensitive = !self.prompt_toolbar_toggle_checked("mode_case");
+            let case_insensitive = !["mode_case", "git_grep_case"]
+                .iter()
+                .any(|k| self.prompt_toolbar_toggle_checked(k));
             regex::RegexBuilder::new(&query)
                 .case_insensitive(case_insensitive)
                 .build()

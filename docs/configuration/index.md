@@ -480,9 +480,11 @@ All settings can be changed via the Settings UI (run **Open Settings** from the 
 ### Search
 
 The state a search starts on. These are defaults, not a lock: the toggles
-stay live in every search UI, whatever you flip last holds for the rest of
-the session, and the Find prompt's choice is saved with the workspace once it
-differs from what is set here.
+stay live in every search UI, and whatever you flip last holds for the rest
+of the session. The Find prompt saves a choice with the workspace, per
+option and only where it differs from the setting here — so changing one of
+these later still reaches every workspace that never had an opinion about
+that particular option.
 
 | Setting | Description | Default | Applies to |
 |---------|-------------|---------|------------|

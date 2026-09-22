@@ -1761,31 +1761,26 @@ impl crate::app::window::Window {
         }
     }
 
-    fn restore_search_options(&mut self, opts: &SearchOptions) {
-        self.search_case_sensitive = opts.case_sensitive;
-        self.search_whole_word = opts.whole_word;
-        self.search_use_regex = opts.use_regex;
-        self.search_confirm_each = opts.confirm_each;
-    }
-
-    /// Restore from the superseded `search_options` key, applying only the
-    /// toggles it can prove the user set.
+    /// Apply a workspace's per-field search overrides on top of whatever
+    /// the window already holds.
     ///
-    /// The sifting rule itself is [`SearchOptions::sift_legacy`]; the
-    /// window's current flags are the seed, because they are what
-    /// `Window::new` put there from the `editor.search` preset and are
-    /// exactly what should win wherever the old file says nothing.
-    ///
-    /// One-way: the next save writes whatever the window ends up with
-    /// under `search_overrides`, and the old key is never written back.
-    fn restore_legacy_search_options(&mut self, opts: &SearchOptions) {
-        let seeded = SearchOptions {
-            case_sensitive: self.search_case_sensitive,
-            whole_word: self.search_whole_word,
-            use_regex: self.search_use_regex,
-            confirm_each: self.search_confirm_each,
-        };
-        self.restore_search_options(&opts.sift_legacy(seeded));
+    /// A `None` field is left alone deliberately: the window's flags are
+    /// what `Window::new` seeded from the `editor.search` preset, so
+    /// "no opinion" resolves to the preset without this needing to read
+    /// the config again.
+    fn apply_search_overrides(&mut self, o: &crate::workspace::SearchOverrides) {
+        if let Some(v) = o.case_sensitive {
+            self.search_case_sensitive = v;
+        }
+        if let Some(v) = o.whole_word {
+            self.search_whole_word = v;
+        }
+        if let Some(v) = o.use_regex {
+            self.search_use_regex = v;
+        }
+        if let Some(v) = o.confirm_each {
+            self.search_confirm_each = v;
+        }
     }
 
     fn restore_prompt_histories(&mut self, histories: &WorkspaceHistories) {
@@ -2588,10 +2583,10 @@ impl crate::app::window::Window {
         // the `editor.search` preset it was constructed with (issue
         // #3212). An old file speaks through the superseded key instead,
         // and only for the toggles it can prove the user set.
-        if let Some(opts) = &workspace.search_overrides {
-            self.restore_search_options(opts);
+        if let Some(overrides) = &workspace.search_overrides {
+            self.apply_search_overrides(overrides);
         } else if let Some(legacy) = &workspace.legacy_search_options {
-            self.restore_legacy_search_options(legacy);
+            self.apply_search_overrides(&legacy.legacy_overrides());
         }
         self.restore_prompt_histories(&workspace.histories);
         self.restore_file_explorer_settings(&workspace.file_explorer);
@@ -2906,14 +2901,16 @@ impl crate::app::window::Window {
             open_file: Vec::new(),
         };
 
-        // Only a choice that *differs* from the config preset is worth
-        // persisting. Writing the live values unconditionally would turn
-        // "the user never touched the toggles" into a saved decision at the
-        // first checkpoint, and a workspace would then ignore its own
-        // `editor.search` preset forever after — which is exactly the trap
-        // the old `search_options` key fell into (see
-        // `Workspace::search_overrides`). Equal to the preset means there
-        // is nothing to override, so the preset keeps applying.
+        // Per field: each option that differs from the `editor.search`
+        // preset is this workspace's to remember, and each option that
+        // matches it has nothing to remember, so the preset keeps
+        // applying there. Writing all four the moment one of them
+        // diverges would freeze the other three against every future
+        // config change — silently, with nothing in the UI to explain it
+        // — which is the trap the superseded `search_options` key fell
+        // into. Query Replace setting `confirm_each` programmatically
+        // makes that easy to hit by accident, which is why the split
+        // matters rather than being a nicety.
         let preset = &self.config().editor.search;
         let live = SearchOptions {
             case_sensitive: self.search_case_sensitive,
@@ -2921,11 +2918,8 @@ impl crate::app::window::Window {
             use_regex: self.search_use_regex,
             confirm_each: self.search_confirm_each,
         };
-        let search_overrides = (live.case_sensitive != preset.case_sensitive
-            || live.whole_word != preset.whole_word
-            || live.use_regex != preset.regex
-            || live.confirm_each != preset.confirm_each)
-            .then_some(live);
+        let overrides = crate::workspace::SearchOverrides::between(preset, &live);
+        let search_overrides = (!overrides.is_empty()).then_some(overrides);
 
         let bookmarks = serialize_bookmarks(&self.bookmarks, &self.buffer_metadata, &self.root);
 

@@ -90,7 +90,13 @@ const finder = new Finder<GrepMatch>(editor, {
       column: match.column,
     },
   }),
-  preview: true,
+  // The floating overlay draws its own preview band, so the Finder's
+  // split preview must be off — `lib/finder.ts` names this case exactly
+  // ("or that draw their own preview"), and Live Grep does the same. With
+  // both on, arrowing through results opens each hit as a preview tab in
+  // the split *behind* the overlay, churning that split's tab bar and
+  // loading every file twice (two LSP didOpen/didClose per result).
+  preview: false,
   maxResults: 100,
   onClose: () => {
     promptActive = false;

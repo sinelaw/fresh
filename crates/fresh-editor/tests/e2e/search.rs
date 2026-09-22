@@ -1532,7 +1532,12 @@ fn a_workspace_persists_only_a_choice_that_leaves_the_preset() {
         .capture_workspace()
         .search_overrides
         .expect("a flip away from the preset is a choice worth saving");
-    assert!(saved.case_sensitive);
+    assert_eq!(saved.case_sensitive, Some(true));
+    assert_eq!(
+        (saved.whole_word, saved.use_regex, saved.confirm_each),
+        (None, None, None),
+        "flipping one toggle must not pin the three that never left the preset"
+    );
 
     // Flip it back: it matches the preset again, so there is nothing left
     // to remember and the workspace stops pinning it.

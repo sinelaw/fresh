@@ -37,6 +37,9 @@ To start somewhere else, set the default in your config:
 there, and the Find prompt saves a choice that differs from it with the
 workspace.
 
+A workspace records each option separately, and only where it differs from
+the setting above, so one you never changed there still follows the config.
+
 Workspaces saved by an earlier Fresh recorded the toggles on every save,
 whether or not you had chosen anything, from a prompt that started
 case-sensitive. Reopening one keeps the toggles you can be shown to have

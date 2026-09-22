@@ -79,24 +79,26 @@ pub struct Workspace {
     #[serde(default)]
     pub histories: WorkspaceHistories,
 
-    /// The match options this workspace *overrides* the `editor.search`
-    /// config preset with, or `None` when it has nothing of its own to
-    /// say and the preset applies.
+    /// The match options this workspace overrides the `editor.search`
+    /// config preset with, field by field, or `None` when it has nothing
+    /// of its own to say and the preset applies in full.
     ///
-    /// **Not** the old `search_options` key, and deliberately not named
-    /// it. That one was written on every save whether or not the user
-    /// had chosen anything, from a window that defaulted to
-    /// case-sensitive — so every file written before this says
-    /// `case_sensitive: true`, and nothing in it distinguishes a choice
-    /// from a default. Reading those as choices would have left the
-    /// fold-case default (issue #3212) reaching only workspaces nobody
-    /// had ever opened.
+    /// Per field, not per struct: a workspace where the user turned regex
+    /// on has an opinion about regex and none about the other three, so a
+    /// later change to `editor.search.case_sensitive` still reaches it.
+    /// Persisting all four the moment one of them diverges would freeze
+    /// the other three against every future config change, silently and
+    /// with nothing in the UI to explain it — which is the trap the
+    /// superseded `search_options` key fell into.
     ///
-    /// A new name is how they are told apart: serde ignores the unknown
-    /// `search_options` key, so an old file arrives here as `None` and
-    /// keeps the preset, and the dead key drops out on the next save.
-    /// That costs a user who had deliberately turned case sensitivity
-    /// *on* one Alt+C, and it re-persists.
+    /// **Not** that key, and deliberately not named it. That one was
+    /// written on every save whether or not the user had chosen anything,
+    /// from a window that started case-sensitive, so a `case_sensitive:
+    /// true` in it cannot be told from "nobody ever touched this".
+    /// Reading those as choices would have left the fold-case default
+    /// (issue #3212) reaching only workspaces nobody had ever opened.
+    /// [`Workspace::legacy_search_options`] is how the old key is still
+    /// read, for the parts of it that *are* unambiguous.
     ///
     /// The alternative was a `WORKSPACE_VERSION` bump plus a migration,
     /// which is a much bigger hammer than this is worth: `load_from_path`
@@ -104,24 +106,29 @@ pub struct Workspace {
     /// would mean an older Fresh refusing to open the whole workspace —
     /// splits, tabs, terminals, bookmarks — over one search field.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub search_overrides: Option<SearchOptions>,
+    pub search_overrides: Option<SearchOverrides>,
 
-    /// The pre-`search_overrides` key, read only so its *unambiguous*
+    /// The superseded `search_options` key, read only so its *unambiguous*
     /// parts can be carried across, and never written back — it drops out
     /// of the file on the next save.
     ///
-    /// Only `case_sensitive: true` is ambiguous here: it was the old
-    /// window default, so it is equally likely to mean "the user chose
-    /// this" and "nobody ever touched it", and reading it as a choice is
-    /// what would keep the fold-case default (issue #3212) away from every
-    /// workspace a user has ever opened. Every *other* value in this
-    /// struct differs from an old default, so it could only have come from
-    /// the user flipping that toggle — a whole-word or regex search they
-    /// set up is still theirs, and throwing it away because one of its
-    /// neighbours is ambiguous would be losing information we have.
+    /// `case_sensitive: true` is the ambiguous one: it was the old window
+    /// default, so it is equally likely to mean "the user chose this" and
+    /// "nobody ever touched it", and reading it as a choice is what would
+    /// keep the fold-case default (issue #3212) away from every workspace
+    /// a user has ever opened. A field that *differs* from
+    /// [`LEGACY_SEARCH_DEFAULTS`] is better evidence: for `whole_word` and
+    /// `use_regex` nothing but the toggle could have set it, so a
+    /// whole-word or regex search the user set up survives.
     ///
-    /// [`LEGACY_SEARCH_DEFAULTS`] is what each field is judged against;
-    /// the restore applies only the ones that diverge.
+    /// `confirm_each` is weaker evidence than its neighbours — Query
+    /// Replace sets it programmatically (`Action::QueryReplace`) and
+    /// nothing clears it — so a `true` there may only mean the user once
+    /// ran that command. It is still carried across, because that is what
+    /// the old code would have restored, and because a per-field override
+    /// keeps it from speaking for the other three.
+    ///
+    /// See [`SearchOptions::legacy_overrides`] for the rule.
     #[serde(default, rename = "search_options", skip_serializing)]
     pub legacy_search_options: Option<SearchOptions>,
 
@@ -619,41 +626,70 @@ pub struct SearchOptions {
     pub confirm_each: bool,
 }
 
+/// What a workspace says about the match toggles, field by field.
+///
+/// A `Some` field overrides the `editor.search` preset for that option; a
+/// `None` field has no opinion and the preset stands. Keeping each option
+/// separate is what lets a workspace remember the one toggle its user
+/// flipped without also freezing the three they never touched.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SearchOverrides {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub case_sensitive: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub whole_word: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub use_regex: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confirm_each: Option<bool>,
+}
+
+impl SearchOverrides {
+    /// Nothing to say — every option defers to the preset. A workspace
+    /// holding this writes no key at all.
+    pub fn is_empty(&self) -> bool {
+        *self == SearchOverrides::default()
+    }
+
+    /// The options a window on `preset` would have to be told to reach
+    /// `live`: each field that differs, and nothing else.
+    pub fn between(preset: &crate::config::SearchConfig, live: &SearchOptions) -> Self {
+        let diff = |theirs: bool, base: bool| (theirs != base).then_some(theirs);
+        SearchOverrides {
+            case_sensitive: diff(live.case_sensitive, preset.case_sensitive),
+            whole_word: diff(live.whole_word, preset.whole_word),
+            use_regex: diff(live.use_regex, preset.regex),
+            confirm_each: diff(live.confirm_each, preset.confirm_each),
+        }
+    }
+}
+
 impl SearchOptions {
-    /// Resolve a superseded `search_options` value against the options the
-    /// window was seeded with, keeping only the toggles this file can
-    /// *prove* the user set.
+    /// Read a superseded `search_options` value as per-field overrides,
+    /// keeping only the fields it can be evidence for.
     ///
-    /// The old key was written on every save whether or not anyone had
-    /// chosen anything, so a field still sitting at its
-    /// [`LEGACY_SEARCH_DEFAULTS`] value says nothing and `seeded` (the
-    /// `editor.search` preset) wins. A field that differs could only have
-    /// come from the user flipping that toggle, so it wins instead.
+    /// That key was written on every save whether or not the user had
+    /// chosen anything, so a field still at its [`LEGACY_SEARCH_DEFAULTS`]
+    /// value says nothing and yields `None` — the preset stands. A field
+    /// that differs is carried across.
     ///
     /// Concretely: `case_sensitive: true` was the old default and is
-    /// dropped — which is what lets the fold-case default of issue #3212
-    /// reach a workspace the user has opened before — while a whole-word
-    /// or regex search they set up survives, as does a deliberate
-    /// `case_sensitive: false`.
-    pub fn sift_legacy(&self, seeded: SearchOptions) -> SearchOptions {
-        let old = LEGACY_SEARCH_DEFAULTS;
-        let pick = |theirs: bool, was_default: bool, seed: bool| {
-            if theirs == was_default {
-                seed
-            } else {
-                theirs
-            }
-        };
-        SearchOptions {
-            case_sensitive: pick(
-                self.case_sensitive,
-                old.case_sensitive,
-                seeded.case_sensitive,
-            ),
-            whole_word: pick(self.whole_word, old.whole_word, seeded.whole_word),
-            use_regex: pick(self.use_regex, old.use_regex, seeded.use_regex),
-            confirm_each: pick(self.confirm_each, old.confirm_each, seeded.confirm_each),
-        }
+    /// dropped, which is what lets the fold-case default of issue #3212
+    /// reach a workspace the user has opened before, while a whole-word or
+    /// regex search they set up survives, as does a deliberate
+    /// `case_sensitive: false`. Unlike the old `sift_legacy`, this needs
+    /// no seed: a field with no evidence simply has no opinion, rather
+    /// than being resolved against the preset here.
+    pub fn legacy_overrides(&self) -> SearchOverrides {
+        SearchOverrides::between(
+            &crate::config::SearchConfig {
+                case_sensitive: LEGACY_SEARCH_DEFAULTS.case_sensitive,
+                whole_word: LEGACY_SEARCH_DEFAULTS.whole_word,
+                regex: LEGACY_SEARCH_DEFAULTS.use_regex,
+                confirm_each: LEGACY_SEARCH_DEFAULTS.confirm_each,
+            },
+            self,
+        )
     }
 }
 
@@ -1718,75 +1754,124 @@ mod tests {
         assert!(restored.confirm_each);
     }
 
-    /// The sifting rule, field by field: an old value equal to the old
-    /// default defers to the seed; anything else is a choice and wins.
+    /// Reading a superseded value, field by field: a field at the old
+    /// default yields no opinion; anything else is carried across.
     ///
     /// `case_sensitive` is the field the whole design turns on. It was the
     /// old default, so `true` there is indistinguishable from "untouched"
-    /// and must defer — otherwise the fold-case default of issue #3212
-    /// reaches only workspaces nobody has ever opened. Its neighbours are
-    /// the opposite case: they had no such ambiguity, so discarding them
-    /// would be throwing away information the file plainly carries.
+    /// and must yield `None` — otherwise the fold-case default of issue
+    /// #3212 reaches only workspaces nobody has ever opened. Its
+    /// neighbours are the opposite case: discarding them would throw away
+    /// information the file plainly carries.
     #[test]
-    fn sifting_a_legacy_value_keeps_only_what_the_user_chose() {
-        // The seed stands for the `editor.search` preset: all off, the
-        // shipped default.
-        let seed = SearchOptions::default();
-
-        // Untouched by the user: every field at its old default. Nothing
-        // is proven, so the seed survives intact — `case_sensitive: true`
-        // included, which is the whole point.
-        let untouched = LEGACY_SEARCH_DEFAULTS;
-        assert_eq!(
-            untouched.sift_legacy(seed.clone()).case_sensitive,
-            seed.case_sensitive,
-            "`case_sensitive: true` was the old default and proves nothing"
+    fn reading_a_legacy_value_keeps_only_what_it_is_evidence_for() {
+        // Untouched by the user: every field at its old default, so the
+        // file is evidence of nothing and every option defers.
+        let untouched = LEGACY_SEARCH_DEFAULTS.legacy_overrides();
+        assert!(
+            untouched.is_empty(),
+            "an untouched old file must claim nothing, `case_sensitive: true` included"
         );
 
         // Deliberately turned OFF: differs from the old default, so it is
-        // a choice and is kept, even though it happens to match the seed.
+        // carried across even though it happens to match today's preset.
         let case_off = SearchOptions {
             case_sensitive: false,
             ..LEGACY_SEARCH_DEFAULTS
-        };
-        assert!(!case_off.sift_legacy(seed.clone()).case_sensitive);
+        }
+        .legacy_overrides();
+        assert_eq!(case_off.case_sensitive, Some(false));
 
-        // Each of the unambiguous toggles survives on its own, without
-        // dragging the ambiguous neighbour along with it.
+        // Each unambiguous toggle survives on its own, and — the point of
+        // per-field overrides — without dragging its neighbours along.
         let word = SearchOptions {
             whole_word: true,
             ..LEGACY_SEARCH_DEFAULTS
-        };
-        let sifted = word.sift_legacy(seed.clone());
-        assert!(sifted.whole_word, "a whole-word search the user set up");
-        assert!(
-            !sifted.case_sensitive,
-            "and its ambiguous neighbour still defers to the preset"
+        }
+        .legacy_overrides();
+        assert_eq!(
+            word.whole_word,
+            Some(true),
+            "a whole-word search they set up"
         );
+        assert_eq!(
+            word.case_sensitive, None,
+            "its ambiguous neighbour still has no opinion"
+        );
+        assert_eq!(word.use_regex, None);
+        assert_eq!(word.confirm_each, None);
 
-        let regex = SearchOptions {
-            use_regex: true,
-            ..LEGACY_SEARCH_DEFAULTS
-        };
-        assert!(regex.sift_legacy(seed.clone()).use_regex);
+        assert_eq!(
+            SearchOptions {
+                use_regex: true,
+                ..LEGACY_SEARCH_DEFAULTS
+            }
+            .legacy_overrides()
+            .use_regex,
+            Some(true)
+        );
+        assert_eq!(
+            SearchOptions {
+                confirm_each: true,
+                ..LEGACY_SEARCH_DEFAULTS
+            }
+            .legacy_overrides()
+            .confirm_each,
+            Some(true)
+        );
+    }
 
-        let confirm = SearchOptions {
+    /// A workspace remembers the option its user changed and *only* that
+    /// one, so a later `editor.search` change still reaches the rest.
+    ///
+    /// Persisting all four whenever one diverges is the trap the
+    /// superseded key fell into: the three nobody touched would be frozen
+    /// against every future config change, silently. `Action::QueryReplace`
+    /// sets `confirm_each` programmatically and nothing clears it, so
+    /// running that command once would have been enough to freeze a
+    /// workspace's case sensitivity against the very default this all
+    /// exists to deliver.
+    #[test]
+    fn a_workspace_remembers_only_the_options_that_left_the_preset() {
+        let preset = crate::config::SearchConfig::default();
+
+        // Query Replace has been run: confirm_each is on, nothing else
+        // was touched.
+        let after_query_replace = SearchOptions {
             confirm_each: true,
-            ..LEGACY_SEARCH_DEFAULTS
-        };
-        assert!(confirm.sift_legacy(seed.clone()).confirm_each);
-
-        // A seed that is itself case-sensitive (the user set the config
-        // preset) is what an untouched old file defers *to* — the preset
-        // wins, not the old default that happens to agree with it.
-        let cs_seed = SearchOptions {
-            case_sensitive: true,
             ..SearchOptions::default()
         };
-        assert!(untouched.sift_legacy(cs_seed.clone()).case_sensitive);
-        assert!(
-            !case_off.sift_legacy(cs_seed).case_sensitive,
-            "but a deliberate off still beats the preset"
+        let o = SearchOverrides::between(&preset, &after_query_replace);
+        assert_eq!(o.confirm_each, Some(true));
+        assert_eq!(
+            (o.case_sensitive, o.whole_word, o.use_regex),
+            (None, None, None),
+            "the three untouched options must stay open to the preset"
+        );
+
+        // Nothing diverges at all: no key is written.
+        assert!(SearchOverrides::between(&preset, &SearchOptions::default()).is_empty());
+
+        // And a preset that is itself case-sensitive makes `true` the
+        // unremarkable value and `false` the choice.
+        let cs = crate::config::SearchConfig {
+            case_sensitive: true,
+            ..crate::config::SearchConfig::default()
+        };
+        assert_eq!(
+            SearchOverrides::between(
+                &cs,
+                &SearchOptions {
+                    case_sensitive: true,
+                    ..SearchOptions::default()
+                }
+            )
+            .case_sensitive,
+            None
+        );
+        assert_eq!(
+            SearchOverrides::between(&cs, &SearchOptions::default()).case_sensitive,
+            Some(false)
         );
     }
 
@@ -1909,10 +1994,10 @@ mod tests {
         );
 
         // Set search options
-        workspace.search_overrides = Some(SearchOptions {
-            case_sensitive: true,
-            use_regex: true,
-            ..SearchOptions::default()
+        workspace.search_overrides = Some(SearchOverrides {
+            case_sensitive: Some(true),
+            use_regex: Some(true),
+            ..SearchOverrides::default()
         });
 
         // Serialize and deserialize
@@ -1925,8 +2010,8 @@ mod tests {
         assert_eq!(restored.active_split_id, 1);
         assert!(restored.bookmarks.contains_key(&'m'));
         let restored_options = restored.search_overrides.expect("saved search options");
-        assert!(restored_options.case_sensitive);
-        assert!(restored_options.use_regex);
+        assert_eq!(restored_options.case_sensitive, Some(true));
+        assert_eq!(restored_options.use_regex, Some(true));
 
         // Verify split state
         let split_state = restored.split_states.get(&1).unwrap();
@@ -1947,9 +2032,9 @@ mod tests {
 
         // Create a workspace
         let mut workspace = Workspace::new(temp_dir.clone());
-        workspace.search_overrides = Some(SearchOptions {
-            case_sensitive: true,
-            ..SearchOptions::default()
+        workspace.search_overrides = Some(SearchOverrides {
+            case_sensitive: Some(true),
+            ..SearchOverrides::default()
         });
         workspace.bookmarks.insert(
             'x',
@@ -1973,11 +2058,12 @@ mod tests {
 
         // Verify
         assert_eq!(loaded.working_dir, temp_dir);
-        assert!(
+        assert_eq!(
             loaded
                 .search_overrides
                 .expect("saved search options")
-                .case_sensitive
+                .case_sensitive,
+            Some(true)
         );
         assert_eq!(loaded.bookmarks.get(&'x').unwrap().position, 42);
 
