@@ -390,7 +390,7 @@ if (webDockPanels) {
   // A settings row leaves the menu open (unlike an action row, which closes
   // it); Esc puts the dock back to its plain state for what follows.
   await page.keyboard.press('Escape');
-  await waitTree((t, lines) => !lines('dock').some(l => /Manage workspaces/i.test(l)), null, 5000);
+  await waitTree((t, lines) => !lines('dock').some(l => /Import sessions/i.test(l)), null, 5000);
 
   console.log('\n[dock right-click = plugin context menu (anchored popup, like the TUI)]');
   // Right-click on a session row fires the plugin's `context` event exactly as
@@ -451,17 +451,17 @@ if (webDockPanels) {
   // `+ New` now goes straight to the dialog, and every setting moved here.)
   const dotsTrigger = findLine(await treeOf(), 'dock', /⋯/);
   if (dotsTrigger) await clickLine(dotsTrigger);
-  await waitTree((t, lines) => lines('dock').some(l => /Manage workspaces/i.test(l)), null, 5000);
+  await waitTree((t, lines) => lines('dock').some(l => /Import sessions/i.test(l)), null, 5000);
   const opened = await treeOf();
-  const option = treeLines(opened, 'dock').find(i => /Manage workspaces/i.test(i.text));
+  const option = treeLines(opened, 'dock').find(i => /Import sessions/i.test(i.text));
   check('dock menu rows are items below the trigger', !!option && !!dotsTrigger && option.y > dotsTrigger.y, JSON.stringify({ trigger: dotsTrigger && dotsTrigger.y, option: option && option.y }));
   // One row is checked for the clipping a `list` inside a narrow column
   // silently does: it came back as "Discover agent ses" until the rows were
   // padded to the widest, which is what makes the list ask for the width it
-  // needs. "Manage workspaces…" because it is long enough to have been
+  // needs. "Import sessions…" because it is long enough to have been
   // clipped at the ~20 columns the dock gave, and its wording is not in play.
   check('⋯ menu rows are not clipped by the dock column',
-    !!option && /Manage workspaces…/.test(option.text), JSON.stringify(option && option.text));
+    !!option && /Import sessions…/.test(option.text), JSON.stringify(option && option.text));
   await page.keyboard.press('Escape');
   await waitTree((t, lines, n) => lines('dock').length <= n, treeLines(opened, 'dock').length - 1, 5000);
   await page.keyboard.press('Escape'); await page.waitForTimeout(150);
