@@ -475,9 +475,9 @@ button:
 - **Doing nothing is valid.** Launch clones to the repository's
   `clone new to` path, records it as the main clone for that machine, then
   cuts the worktree. Clone progress shows in the launching view.
-- **`Use an existing clone…`** opens the Repositories manager (§7.9) with
-  **repository = fresh and machine = build-01 preselected** and the Set main
-  clone pane open. On `Use as main clone`, it returns to this dialog with the
+- **`Use an existing clone…`** opens the Repositories dialog with
+  **repository = fresh, Machine = build-01, focus in Path** (§7.8). You type
+  or browse to the clone. `Use as main clone` returns to this dialog with the
   note replaced by `main clone /opt/ci/fresh`. The prompt and every other
   field are kept.
 - A repository with no remote can't be cloned: the note is error-colored
@@ -590,114 +590,48 @@ actions and the GIT section.
 └───────────────────────────────────────────────────────────────────────────────┘
 ```
 
-- `Change…` opens the Change main clone dialog (§7.7). `Open main clone`
+- `Change…` opens the Repositories dialog preselected, like
+  `Use an existing clone…` (§7.8). `Open main clone`
   opens the main clone itself as a workspace.
 - Git mode is a radio: `New worktree` (default) or `Work in the main clone`.
   When working in the main clone, `Branch from` becomes `Check out` and
   `New branch` goes away.
 
-### 7.7 Change main clone
+### 7.7 The Repositories dialog
+
+**One dialog manages repositories and their main clones.** It's opened from
+the palette (`Orchestrator: Repositories`), the dock's `⋯` menu,
+`Manage repositories…` in the Project dropdown, and from the launch dialog's
+`Use an existing clone…` and `Change…`. The last two open it preselected
+(§7.8).
+
+Layout, top to bottom:
+
+- **The repository list**, with a filter and `+ Add repository`.
+- **The selected repository**: its remote and its `Clone new to` path.
+- **MAIN CLONE**, with one **Machine dropdown** (not a grid of every
+  machine), `+ Add machine…` beside it, and the main clone **Path** for that
+  machine with `Browse…`.
 
 ```
-┌─ Main clone · fresh on gpu-box ─────────────────────────────────────────── × ─┐
+┌─ Repositories ──────────────────────────────────────────────────────────── × ─┐
 │                                                                               │
-│    Worktrees for fresh on gpu-box are cut from this clone.                    │
+│    [ / filter                             ]               + Add repository    │
+│                                                                               │
+│    ▸ fresh          github.com/sinelaw/fresh                                  │
+│      fresh-site     github.com/sinelaw/fresh-site                             │
+│      dotfiles       local only                                                │
+│                                                                               │
+│    FRESH ─────────────────────────────────────────────────────────────────    │
+│                                                                               │
+│          Remote   git@github.com:sinelaw/fresh.git                            │
+│    Clone new to   [ ~/src/<name>                   ]                          │
 │                                                                               │
 │    MAIN CLONE ────────────────────────────────────────────────────────────    │
 │                                                                               │
-│            Path   [ ~/src/fresh█                               ]              │
+│         Machine   [ build-01 ▾        ]     + Add machine…                    │
+│            Path   [ /opt/ci/fresh                        ]  Browse…           │
 │                   ✓ git repo · origin matches · master · clean                │
-│                                                                               │
-│                   Other clones of this remote on gpu-box:                     │
-│                     ~/old/fresh          master · 41 behind      Use          │
-│                     ~/tmp/fresh-copy     feat/x · dirty          Use          │
-│                   Scan again                                                  │
-│                                                                               │
-│                   2 existing worktrees stay attached to their current clone.  │
-│                                                                               │
-│    ───────────────────────────────────────────────────────────────────────    │
-│                                                                               │
-│                                                Cancel     [   Save   ]        │
-│                                                                               │
-└───────────────────────────────────────────────────────────────────────────────┘
-```
-
-- The path field validates as you type: git repo? origin matches the
-  repository's remote? current branch and dirty state.
-- Other clones of the same remote on that machine are listed, so moving the
-  main clone is picking a row, not remembering a path.
-- Changing the main clone only affects new worktrees; the dialog says how
-  many existing ones stay with the old clone.
-
-### 7.8 Repositories manager
-
-The top list is repositories; the lower pane is the **repository × machine
-grid** for the selected one.
-
-```
-┌─ Repositories ──────────────────────────────────────────────────────────── × ─┐
-│                                                                               │
-│    [ / filter                             ]               + Add repository    │
-│                                                                               │
-│    ▸ fresh          github.com/sinelaw/fresh           3 machines             │
-│      fresh-site     github.com/sinelaw/fresh-site      —                      │
-│      dotfiles       local only                         1 machine              │
-│                                                                               │
-│    FRESH · MAIN CLONES ───────────────────────────────────────────────────    │
-│                                                                               │
-│      MACHINE       MAIN CLONE            STATE                WORKTREES       │
-│                                                                               │
-│    ▸ Local         ~/repos/fresh         ✓ master · clean     3               │
-│      gpu-box       ~/src/fresh           ✓ 2 behind           1               │
-│      build-01      —                     no clone yet         —               │
-│      ml-cluster    /workspace/fresh      ✗ path missing       —               │
-│                                                                               │
-│    ───────────────────────────────────────────────────────────────────────    │
-│                                                                               │
-│     ⏎ New workspace   C Clone   S Set main clone   W Worktrees   Del Forget   │
-│                                                                               │
-└───────────────────────────────────────────────────────────────────────────────┘
-```
-
-- `⏎` on a machine row opens New Workspace on (repository, machine).
-- `C` clones to a machine with no main clone. `S` sets the main clone
-  (§7.9). `W` lists the worktrees cut from it. `Del` forgets the main clone
-  (it doesn't delete files).
-- The Machines manager gets the mirror view: under a selected machine, the
-  repositories with a main clone on it.
-
-### 7.9 Opened from "Use an existing clone…"
-
-The same manager, opened with the repository and machine rows already
-selected and the Set main clone pane open. The footer returns to the launch
-dialog.
-
-```
-┌─ Repositories ──────────────────────────────────────────────────────────── × ─┐
-│                                                                               │
-│    [ / filter                             ]               + Add repository    │
-│                                                                               │
-│    ▸ fresh          github.com/sinelaw/fresh           3 machines             │
-│      fresh-site     github.com/sinelaw/fresh-site      —                      │
-│      dotfiles       local only                         1 machine              │
-│                                                                               │
-│    FRESH · MAIN CLONES ───────────────────────────────────────────────────    │
-│                                                                               │
-│      MACHINE       MAIN CLONE            STATE                WORKTREES       │
-│                                                                               │
-│      Local         ~/repos/fresh         ✓ master · clean     3               │
-│      gpu-box       ~/src/fresh           ✓ 2 behind           1               │
-│    ▸ build-01      —                     no clone yet         —               │
-│      ml-cluster    /workspace/fresh      ✗ path missing       —               │
-│                                                                               │
-│    SET MAIN CLONE · FRESH ON BUILD-01 ────────────────────────────────────    │
-│                                                                               │
-│      Clones of github.com/sinelaw/fresh found on build-01:                    │
-│                                                                               │
-│        (•) /opt/ci/fresh             master · clean                           │
-│        ( ) ~/scratch/fresh           feat/x · dirty                           │
-│        ( ) Another path   [                            ]                      │
-│        ( ) Clone to       [ ~/src/fresh                ]                      │
 │                                                                               │
 │    ───────────────────────────────────────────────────────────────────────    │
 │                                                                               │
@@ -706,9 +640,121 @@ dialog.
 └───────────────────────────────────────────────────────────────────────────────┘
 ```
 
-The candidates come from a scan of that machine: the `clone new to` path's
-parent, recent workspace roots, and paths listed in its workspace history,
-filtered to the repository's remote.
+The Machine dropdown shows each machine's state for this repository, so the
+overview the grid used to give is one keypress away:
+
+```
+│    MAIN CLONE ────────────────────────────────────────────────────────────    │
+│                                                                               │
+│         Machine   [ █                 ]     + Add machine…                    │
+│                   ╭────────────────────────────────────╮                      │
+│                   │                                    │                      │
+│                   │    Local        ✓ ~/repos/fresh    │                      │
+│                   │    gpu-box      ✓ ~/src/fresh      │                      │
+│                   │  ▸ build-01     no main clone      │                      │
+│                   │    ml-cluster   ✗ path missing     │                      │
+│                   │                                    │                      │
+│                   ╰────────────────────────────────────╯                      │
+```
+
+- **`+ Add machine…`** opens the existing Add Machine dialog
+  (`orchestrator-ux-redesign.md` §5.3). On Save it returns here with the new
+  machine selected in the dropdown and an empty Path.
+- **No automatic scanning for clones.** The path is whatever you type or
+  pick with `Browse…`. Fresh only checks the path you give it:
+
+```
+│            Path   [ /opt/ci/fresh-new                    ]  Browse…           │
+│                   doesn't exist yet · Launch will clone here                  │
+│                                                                               │
+│            Path   [ /opt/ci/other                        ]  Browse…           │
+│                   ✗ git repo, but origin is github.com/acme/other             │
+│                                                                               │
+│            Path   [ /opt/ci                              ]  Browse…           │
+│                   ✗ not a git repo                                            │
+```
+
+  An empty path means "clone to `Clone new to` on first launch". A path that
+  doesn't exist yet means "clone here". An existing path must be a git repo
+  whose origin matches the repository's remote.
+- **`Browse…`** opens a directory browser **on the selected machine** (the
+  local filesystem, or the machine's connection for ssh / k8s), starting at
+  the current path or the machine's home. It reuses the editor's
+  folder-select browser (the one behind Switch Project), rooted on that
+  machine's filesystem. Directories that contain a `.git` are tagged `git`,
+  which is just what the listing already shows, not a search.
+
+```
+│            Path   [ /opt/ci/                             ]  Browse…           │
+│                   ╭─ build-01 : /opt/ci ─────────────────────────────╮        │
+│                   │                                                  │        │
+│                   │     ..                                           │        │
+│                   │   ▸ fresh/                              git      │        │
+│                   │     logs/                                        │        │
+│                   │     tools/                                       │        │
+│                   │                                                  │        │
+│                   │   ⏎ open   Space select   Bksp up   Esc close    │        │
+│                   ╰──────────────────────────────────────────────────╯        │
+```
+
+- Changing a main clone only affects new worktrees. If the old one has
+  worktrees, a line under Path says `2 existing worktrees stay on
+  ~/old/fresh`.
+- Keys: `⏎` on a repository opens New Workspace on it with the selected
+  machine. `Del` on a repository removes it from the list (files untouched).
+  Clearing Path and saving forgets that machine's main clone.
+
+### 7.8 Opened from the launch dialog
+
+`Use an existing clone…` (and `Change…`) open the same dialog with **the
+repository selected, the Machine dropdown set to the launch dialog's
+machine, and focus in Path**. The footer's actions return to the launch
+dialog, which then shows the new main clone. The prompt and every other
+field are kept.
+
+```
+┌─ Repositories ──────────────────────────────────────────────────────────── × ─┐
+│                                                                               │
+│    [ / filter                             ]               + Add repository    │
+│                                                                               │
+│    ▸ fresh          github.com/sinelaw/fresh                                  │
+│      fresh-site     github.com/sinelaw/fresh-site                             │
+│      dotfiles       local only                                                │
+│                                                                               │
+│    FRESH ─────────────────────────────────────────────────────────────────    │
+│                                                                               │
+│          Remote   git@github.com:sinelaw/fresh.git                            │
+│    Clone new to   [ ~/src/<name>                   ]                          │
+│                                                                               │
+│    MAIN CLONE ────────────────────────────────────────────────────────────    │
+│                                                                               │
+│         Machine   [ build-01 ▾        ]     + Add machine…                    │
+│            Path   [ █                                    ]  Browse…           │
+│                   ⚠ No main clone on build-01. Leave empty and Launch clones  │
+│                     to ~/src/fresh, or type / browse to an existing clone.    │
+│                                                                               │
+│    ───────────────────────────────────────────────────────────────────────    │
+│                                                                               │
+│                          Back to New Workspace     [   Use as main clone   ]  │
+│                                                                               │
+└───────────────────────────────────────────────────────────────────────────────┘
+```
+
+After typing or browsing to `/opt/ci/fresh`:
+
+```
+│         Machine   [ build-01 ▾        ]     + Add machine…                    │
+│            Path   [ /opt/ci/fresh                        ]  Browse…           │
+│                   ✓ git repo · origin matches · master · clean                │
+```
+
+`Use as main clone` saves and returns. `Back to New Workspace` returns
+without saving.
+
+### 7.9 (merged into §7.7)
+
+The separate "Change main clone" dialog and the repository × machine grid
+are gone. Both are the Repositories dialog with a machine selected.
 
 ### 7.10 Add Repository
 
@@ -721,17 +767,14 @@ filtered to the repository's remote.
 │                   ✓ reachable · default branch master                         │
 │                                                                               │
 │            Name   [ fresh                                      ]              │
-│                                                                               │
-│    MAIN CLONES ───────────────────────────────────────────────────────────    │
-│                                                                               │
-│        MACHINE       PATH                                                     │
-│        Local         [ ~/repos/fresh            ]   ✓ found                   │
-│        gpu-box       [ ~/src/fresh              ]   will clone                │
-│        build-01      [                          ]   skip                      │
-│        + Add machine                                                          │
-│                                                                               │
 │    Clone new to   [ ~/src/<name>                               ]              │
-│                   used when you first launch on a machine not listed          │
+│                                                                               │
+│    MAIN CLONE ────────────────────────────────────────────────────────────    │
+│                                                                               │
+│         Machine   [ Local ▾          ]     + Add machine…                     │
+│            Path   [ ~/repos/fresh                        ]  Browse…           │
+│                   ✓ git repo · origin matches · master · clean                │
+│                   Other machines can be set later in Repositories.            │
 │                                                                               │
 │    ───────────────────────────────────────────────────────────────────────    │
 │                                                                               │
@@ -740,13 +783,15 @@ filtered to the repository's remote.
 └───────────────────────────────────────────────────────────────────────────────┘
 ```
 
-- **Paste a URL:** checked with `git ls-remote`; the name comes from the URL;
-  existing clones are found on each machine (✓ found) or marked
-  `will clone`.
-- **Paste a local path:** its `origin` becomes the remote, and the path
-  becomes the Local main clone.
-- `Clone now` clones the `will clone` rows immediately instead of on first
-  launch.
+- **Paste a URL:** it's checked with `git ls-remote`, and the name comes from
+  the URL.
+- **Paste a local path:** its `origin` becomes the remote, and the path fills
+  in the Local main clone.
+- **MAIN CLONE works like it does in the Repositories dialog:** a Machine
+  dropdown with `+ Add machine…`, a Path field with `Browse…`, and a check of
+  the path you gave. Nothing is searched for.
+- `Clone now` clones into Path right away (when Path is empty or doesn't
+  exist) instead of on first launch.
 
 ### 7.11 How it gets populated
 
