@@ -67,3 +67,44 @@ fn non_daemon_quit_is_unchanged() {
         .unwrap();
     assert!(h.editor().should_quit());
 }
+
+/// Every row of the question starts on the same column, wrapped or not. The
+/// body used to be indented by a leading space, which moved only its first
+/// row: the rows it wrapped onto sat hard against the border.
+#[test]
+fn daemon_quit_body_rows_share_one_left_edge() {
+    // Narrow enough that the body's lines wrap.
+    let mut h =
+        EditorTestHarness::with_temp_project_and_config(44, 30, Config::default()).unwrap();
+    h.editor_mut().set_session_mode(true);
+    h.render().unwrap();
+    h.send_key(KeyCode::Char('q'), KeyModifiers::CONTROL).unwrap();
+
+    let screen = h.screen_to_string();
+    let lines: Vec<Vec<char>> = screen.lines().map(|l| l.chars().collect()).collect();
+    let title_row = lines
+        .iter()
+        .position(|l| l.iter().collect::<String>().contains("Quit or Detach"))
+        .unwrap_or_else(|| panic!("no dialog title.\nScreen:\n{screen}"));
+    let border = lines[title_row]
+        .iter()
+        .position(|&c| c == '│')
+        .expect("the title row has the card's left border");
+    // Title, rule, blank; then the body until the next rule.
+    let mut body_rows = 0;
+    for l in &lines[title_row + 3..] {
+        let inner = &l[border + 1..];
+        if inner.first() == Some(&'─') {
+            break;
+        }
+        if inner.iter().take_while(|&&c| c != '│').all(|&c| c == ' ') {
+            continue;
+        }
+        body_rows += 1;
+        assert!(
+            inner[0] == ' ' && inner[1] != ' ',
+            "every body row must start one column inside the border.\nScreen:\n{screen}"
+        );
+    }
+    assert!(body_rows > 3, "the body should have wrapped.\nScreen:\n{screen}");
+}

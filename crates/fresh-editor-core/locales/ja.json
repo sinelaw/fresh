@@ -1726,7 +1726,7 @@
   "dialog.title.quit_daemon": "終了またはデタッチ",
   "dialog.btn.detach": "デタッチ",
   "dialog.btn.quit_daemon": "終了してすべて停止",
-  "prompt.quit_daemon": "このエディタはデーモンとして実行されています。デタッチすると、すべてのターミナルとエージェントを保ったままバックグラウンドで動作し続け、後で再接続できます。終了するとデーモンとそのすべてのプロセスとエージェントが停止します。",
+  "prompt.quit_daemon": "Fresh はバックグラウンドで実行中です。\n\nデタッチ: 実行したままにします。いつでも戻れます。\n終了: Fresh とそのターミナル、エージェントを停止します。",
   "dialog.title.delete": "削除",
   "dialog.title.file_exists": "ファイルが存在します",
   "dialog.title.file_changed": "ファイルがディスク上で変更されました",

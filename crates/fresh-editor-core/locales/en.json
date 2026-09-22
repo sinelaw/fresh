@@ -1726,7 +1726,7 @@
   "dialog.title.quit_daemon": "Quit or Detach",
   "dialog.btn.detach": "Detach",
   "dialog.btn.quit_daemon": "Quit and Stop All",
-  "prompt.quit_daemon": "This editor is running as a daemon. Detach to leave it running in the background, with every terminal and agent intact, and reattach later. Quit stops the daemon and all of its processes and agents.",
+  "prompt.quit_daemon": "Fresh is running in the background.\n\nDetach: leave it running. Come back any time.\nQuit: stop Fresh, its terminals, and its agents.",
   "dialog.title.delete": "Delete",
   "dialog.title.file_exists": "File Exists",
   "dialog.title.file_changed": "File Changed on Disk",

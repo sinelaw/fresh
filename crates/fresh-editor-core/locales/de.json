@@ -1726,7 +1726,7 @@
   "dialog.title.quit_daemon": "Beenden oder trennen",
   "dialog.btn.detach": "Trennen",
   "dialog.btn.quit_daemon": "Beenden und alles stoppen",
-  "prompt.quit_daemon": "Dieser Editor läuft als Daemon. Trennen lässt ihn mit allen Terminals und Agenten im Hintergrund weiterlaufen; Sie können sich später wieder verbinden. Beenden stoppt den Daemon und alle seine Prozesse und Agenten.",
+  "prompt.quit_daemon": "Fresh läuft im Hintergrund.\n\nTrennen: weiterlaufen lassen. Jederzeit zurückkehren.\nBeenden: Fresh, seine Terminals und Agenten stoppen.",
   "dialog.title.delete": "Löschen",
   "dialog.title.file_exists": "Datei existiert",
   "dialog.title.file_changed": "Datei auf Festplatte geändert",

@@ -1726,7 +1726,7 @@
   "dialog.title.quit_daemon": "Ukončit nebo odpojit",
   "dialog.btn.detach": "Odpojit",
   "dialog.btn.quit_daemon": "Ukončit a zastavit vše",
-  "prompt.quit_daemon": "Tento editor běží jako démon. Odpojením ho necháte běžet na pozadí se všemi terminály a agenty a později se můžete znovu připojit. Ukončení zastaví démona a všechny jeho procesy a agenty.",
+  "prompt.quit_daemon": "Fresh běží na pozadí.\n\nOdpojit: nechat ho běžet. Vrátit se můžete kdykoli.\nUkončit: zastavit Fresh, jeho terminály a agenty.",
   "dialog.title.delete": "Smazání",
   "dialog.title.file_exists": "Soubor existuje",
   "dialog.title.file_changed": "Soubor byl změněn na disku",
