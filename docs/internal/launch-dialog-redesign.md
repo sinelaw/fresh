@@ -332,265 +332,403 @@ All widgets exist in `plugins/lib/widgets.ts` (`radio`, `textArea`,
   `orchestrator_*`) need their screen assertions updated; the submit paths
   and probes are untouched, so behavioural tests should hold.
 
-## 7. Repositories: separating *what* from *where*
+## 7. Repositories and main clones
 
 Today the form has one field, `Project Path`, that means three things at
 once: which machine's filesystem, which directory, and, if that directory
-happens to be a git repo, which repository to cut a worktree from. The only
-way to say "work on `fresh`" is to type the path where `fresh` is checked
-out on that machine, and doing the same on another machine means knowing
-(and retyping) a different path.
+happens to be a git repo, which clone worktrees get cut from. This section
+separates them and makes the last one, **the main clone**, something you can
+see and manage.
 
 ### 7.1 Model
 
-Three independent choices:
-
 | Choice | Answers | Examples |
 |---|---|---|
-| **Machine** | where the process runs | Local, gpu-box, ml-cluster |
-| **Source** | what you start from | a known *Repository*, or any *Folder* |
-| **Git plan** | what happens to git (repositories and git folders only) | new worktree + branch, check out in place, none |
+| **Repository** | what you work on | fresh, infra, dotfiles |
+| **Machine** | where it runs | Local, gpu-box, ml-cluster |
+| **Main clone** | the clone on that machine that worktrees are cut from | Local → `~/repos/fresh`, gpu-box → `~/src/fresh` |
+| **Git mode** | what this launch does to git | new worktree, or work in the main clone |
 
-A **Repository** is a registry entry, stored next to machines
-(`<data dir>/orchestrator/repositories.json`), never inside a working tree:
+A repository has **at most one main clone per machine**. That pair,
+(repository, machine) → main clone, is the thing that's easy to get wrong
+today, and every screen below shows it explicitly.
 
-```
-name            fresh
-remote          git@github.com:sinelaw/fresh.git        (optional)
-default branch  origin/master                           (detected; editable)
-checkouts       Local    → ~/repos/fresh
-                gpu-box  → ~/src/fresh
-clone to        ~/src/<name>                            (used on a machine with no checkout)
-```
-
-- A repository is identified by its remote when it has one, so the same repo
-  on two machines is one entry with two checkouts.
-- A repository with no remote (local-only) is allowed; it has only the
-  checkout(s) you gave it.
-- **Folder** is the escape hatch and covers today's behaviour exactly: any
-  directory on the chosen machine. If it is a git repo, the git plan is
-  offered (today's worktree group) along with `Save as repository`. If it
-  isn't, the workspace just opens there.
-
-### 7.2 Launch dialog — collapsed Where becomes a picker
-
-The collapsed Where section changes from a read-only summary into one
-dropdown of **recent destinations**: machine + source pairs, most recent
-first. For most launches you type a prompt, maybe change this one dropdown,
-then press Ctrl+Enter.
+Stored next to machines, in `<data dir>/orchestrator/repositories.json`,
+never inside a working tree:
 
 ```
-┌─ New Workspace ────────────────────────────────────────────────────── × ─┐
-│                                                                           │
-│   ( New workspace )    Here · demo                                        │
-│                                                                           │
-│   Prompt                                                                  │
-│   ╭─────────────────────────────────────────────────────────────────────╮ │
-│   │ fix the flaky resize test in split_view.rs                          │ │
-│   │                                                                     │ │
-│   │                                                                     │ │
-│   ╰─────────────────────────────────────────────────────────────────────╯ │
-│                                                                           │
-│   Agent    [ claude ▾ ]       [ ] Auto mode      [✓] Teach Fresh CLI      │
-│                                                                           │
-│   ─────────────────────────────────────────────────────────────────────   │
-│   Where  ▸ [ fresh  ·  Local                                        ▾ ]   │
-│             new worktree fresh-47 from origin/master                      │
-│   ─────────────────────────────────────────────────────────────────────   │
-│                                                                           │
-│                                   Launch in background    [  Launch  ]    │
-│                                                                           │
-│        Ctrl+⏎ launch   Alt+⏎ background   Alt+W details   Esc cancel      │
-└───────────────────────────────────────────────────────────────────────────┘
+fresh
+  remote          git@github.com:sinelaw/fresh.git     (optional; identifies the repo)
+  default path    ~/src/<name>                         (where new main clones go)
+  main clones
+    local         ~/repos/fresh     worktrees: next to main clone
+    gpu-box       ~/src/fresh       worktrees: next to main clone
 ```
 
-Opened (typing filters):
+- The remote identifies a repository, so the same repo on two machines is one
+  entry with two main clones. A repo with no remote is allowed and has only
+  the main clones you gave it.
+- **Folder** stays as the escape hatch: any directory, git or not. This is
+  today's behaviour, unchanged.
+
+### 7.2 Visual rules (supersede §3)
+
+- 4 cells of inner padding on each side; a blank row under the title and
+  around the footer.
+- **Section headers carry their own rule**: `PROMPT ────`, `AGENT ────`,
+  `WHERE ────`, `GIT ────`, with a blank row below each and between sections.
+  This replaces §3's floating label and the two thin rules around Where.
+- One label column (right-aligned, 16 cells) for every labelled row in every
+  dialog, so values always start at the same column.
+- Status text (`✓ master · clean`, `not cloned`) goes to the right of the
+  value it describes, never on its own `↳` line.
+- The prompt box is the only framed input. The footer is a full-width rule,
+  then the primary button at the right with the secondary action as plain
+  text beside it, then one key-hint line.
+- Short terminals: drop the blank rows under the section headers first, then
+  shrink the prompt box to 2 rows.
+
+### 7.3 Launch dialog — collapsed
 
 ```
-│   Where    [ fr█                                                    ▾ ]   │
-│            ╭────────────────────────────────────────────────────────╮     │
-│            │ ▸ fresh          Local      ~/repos/fresh               │     │
-│            │   fresh          gpu-box    ~/src/fresh                 │     │
-│            │   fresh-site     Local      not cloned · will clone     │     │
-│            │   ~/notes        Local      folder                      │     │
-│            │ ────────────────────────────────────────────────────── │     │
-│            │   Other repository or folder…              Alt+W        │     │
-│            │   Manage repositories…                                  │     │
-│            ╰────────────────────────────────────────────────────────╯     │
+┌─ New Workspace ─────────────────────────────────────────────────────────── × ─┐
+│                                                                               │
+│    ( New workspace )      Here · demo                                         │
+│                                                                               │
+│    PROMPT ────────────────────────────────────────────────────────────────    │
+│                                                                               │
+│    ╭─────────────────────────────────────────────────────────────────────╮    │
+│    │ fix the flaky resize test in split_view.rs█                         │    │
+│    │                                                                     │    │
+│    │                                                                     │    │
+│    ╰─────────────────────────────────────────────────────────────────────╯    │
+│                                                                               │
+│    AGENT ─────────────────────────────────────────────────────────────────    │
+│                                                                               │
+│           Agent   [ claude ▾ ]      [ ] Auto mode     [✓] Teach Fresh CLI     │
+│                                                                               │
+│    WHERE ─────────────────────────────────────────────────────────────────    │
+│                                                                               │
+│           Where   [ fresh  ·  Local                               ▾ ]         │
+│                   main clone ~/repos/fresh                                    │
+│                   new worktree fresh-47, branched from origin/master          │
+│                                                                               │
+│    ───────────────────────────────────────────────────────────────────────    │
+│                                                                               │
+│                                   Launch in background     [   Launch   ]     │
+│                                                                               │
+│          Ctrl+⏎ launch    Alt+⏎ background    Alt+W where    Esc close        │
+│                                                                               │
+└───────────────────────────────────────────────────────────────────────────────┘
 ```
 
-`Other…` opens the details (§7.3) with the filter text carried over.
-
-### 7.3 Launch dialog — Where details, source = Repository
-
-```
-│   ─────────────────────────────────────────────────────────────────────   │
-│   ▾ Where                                                                 │
-│                                                                           │
-│        Start from  ( Repository )   Folder                                │
-│        Repository  [ fresh ▾ ]         github.com/sinelaw/fresh           │
-│           Machine  [ Local ▾ ]         ✓ checked out at ~/repos/fresh     │
-│                                                                           │
-│               Git  (•) New worktree   ( ) Use the checkout as is          │
-│       Branch from  [ origin/master                                    ]   │
-│        New branch  [ fresh-47                                         ]   │
-│         Workspace  [ fresh-47                                         ]   │
-│                                                                           │
-│                    worktree at ~/.local/share/fresh/orchestrator/…/fresh-47
-│   ─────────────────────────────────────────────────────────────────────   │
-```
-
-- **Repository comes before Machine.** The repository is the thing you
-  chose; the machine only decides which checkout is used.
-- The status to the right of Machine is where the decoupling shows:
+The Where dropdown lists **recent (repository or folder) × machine**
+destinations. The two lines under it state the main clone that will be used
+and the git plan, so the collapsed form never hides which clone a worktree
+comes from.
 
 ```
-│           Machine  [ gpu-box ▾ ]       ✓ checked out at ~/src/fresh       │
-│           Machine  [ build-01 ▾ ]      not cloned · clones to ~/src/fresh │
-│           Machine  [ build-01 ▾ ]      ✗ no remote · can't clone here     │
+│    WHERE ─────────────────────────────────────────────────────────────────    │
+│                                                                               │
+│           Where   [ fr█                                           ▾ ]         │
+│                   ╭───────────────────────────────────────────────────────╮   │
+│                   │                                                       │   │
+│                   │  ▸ fresh        Local       ~/repos/fresh             │   │
+│                   │    fresh        gpu-box     ~/src/fresh               │   │
+│                   │    fresh        build-01    no main clone · clone…    │   │
+│                   │    fresh-site   Local       ~/repos/fresh-site        │   │
+│                   │    ~/notes      Local       folder                    │   │
+│                   │                                                       │   │
+│                   │  ───────────────────────────────────────────────────  │   │
+│                   │    Other repository or folder…              Alt+W     │   │
+│                   │    Manage repositories…                               │   │
+│                   │                                                       │   │
+│                   ╰───────────────────────────────────────────────────────╯   │
 ```
 
-  A missing checkout isn't an error when the repository has a remote: Launch
-  clones first (the progress shows in the launching view), records the new
-  checkout, then cuts the worktree.
-- `Git` is now a two-way radio instead of a checkbox. "Use the checkout as
-  is" replaces "worktree off + in-place checkout"; when it's selected,
-  `Branch from` reads `Check out` and `New branch` disappears.
-- The Workspace name moves into the git group, since by default it is also
-  the branch name.
+A repository with no main clone on a machine is still listed. Picking it
+opens the details on the "no main clone yet" state (§7.5).
 
-### 7.4 Launch dialog — Where details, source = Folder
-
-Plain folder:
+### 7.4 Launch dialog — expanded, Repository
 
 ```
-│   ▾ Where                                                                 │
-│                                                                           │
-│        Start from   Repository   ( Folder )                               │
-│           Machine  [ Local ▾ ]                                            │
-│            Folder  [ ~/notes                                          ]   │
-│                    plain folder · opens as is                             │
-│         Workspace  [ notes                                            ]   │
-│   ─────────────────────────────────────────────────────────────────────   │
+┌─ New Workspace ─────────────────────────────────────────────────────────── × ─┐
+│                                                                               │
+│    ( New workspace )      Here · demo                                         │
+│                                                                               │
+│    PROMPT ────────────────────────────────────────────────────────────────    │
+│                                                                               │
+│    ╭─────────────────────────────────────────────────────────────────────╮    │
+│    │ fix the flaky resize test in split_view.rs                          │    │
+│    │                                                                     │    │
+│    │                                                                     │    │
+│    ╰─────────────────────────────────────────────────────────────────────╯    │
+│                                                                               │
+│    AGENT ─────────────────────────────────────────────────────────────────    │
+│                                                                               │
+│           Agent   [ claude ▾ ]      [ ] Auto mode     [✓] Teach Fresh CLI     │
+│                                                                               │
+│    WHERE ─────────────────────────────────────────────────────────────────    │
+│                                                                               │
+│      Start from   ( Repository )     Folder                                   │
+│                                                                               │
+│      Repository   [ fresh ▾ ]             github.com/sinelaw/fresh            │
+│         Machine   [ gpu-box ▾ ]                                               │
+│      Main clone   ~/src/fresh               ✓ master · clean                  │
+│                   Change…   Open main clone                                   │
+│                                                                               │
+│    GIT ───────────────────────────────────────────────────────────────────    │
+│                                                                               │
+│            Mode   (•) New worktree     ( ) Work in the main clone             │
+│     Branch from   [ origin/master                        ]                    │
+│      New branch   [ fresh-47                             ]                    │
+│       Workspace   [ fresh-47                             ]                    │
+│                                                                               │
+│                   worktree at ~/src/.fresh-worktrees/fresh/fresh-47           │
+│                                                                               │
+│    ───────────────────────────────────────────────────────────────────────    │
+│                                                                               │
+│                                   Launch in background     [   Launch   ]     │
+│                                                                               │
+│          Ctrl+⏎ launch    Alt+⏎ background    Alt+W where    Esc close        │
+│                                                                               │
+└───────────────────────────────────────────────────────────────────────────────┘
 ```
 
-A folder that turns out to be a git repo (today's flow, unchanged in
-behaviour):
+- **Repository → Machine → Main clone**, top to bottom. The main clone isn't
+  a free-text field here: it's *derived* from the first two, which is the
+  point. You change it on purpose with `Change…` (§7.6), not by accident by
+  editing a path.
+- `Open main clone` opens the main clone itself as a workspace (the old
+  "worktree off" flow for the main checkout).
+- Git mode is a radio: `New worktree` (default) or `Work in the main clone`.
+  When working in the main clone, `Branch from` becomes `Check out` and
+  `New branch` goes away.
+- The worktree location line follows the main clone's "worktrees in" setting.
+
+### 7.5 No main clone on this machine yet
 
 ```
-│   ▾ Where                                                                 │
-│                                                                           │
-│        Start from   Repository   ( Folder )                               │
-│           Machine  [ Local ▾ ]                                            │
-│            Folder  [ ~/repos/other                                    ]   │
-│                    git repo · origin github.com/me/other                  │
-│                    [ Save as repository ]                                 │
-│                                                                           │
-│               Git  (•) New worktree   ( ) Use the folder as is            │
-│       Branch from  [ origin/main                                      ]   │
-│        New branch  [ other-3                                          ]   │
-│         Workspace  [ other-3                                          ]   │
-│   ─────────────────────────────────────────────────────────────────────   │
+│    WHERE ─────────────────────────────────────────────────────────────────    │
+│                                                                               │
+│      Repository   [ fresh ▾ ]             github.com/sinelaw/fresh            │
+│         Machine   [ build-01 ▾ ]                                              │
+│      Main clone   none on build-01 yet                                        │
+│                                                                               │
+│                   (•) Clone to        [ ~/src/fresh                ]          │
+│                   ( ) Use a folder    [                            ]          │
+│                         found on build-01:  /opt/ci/fresh  (same remote)      │
+│                                                                               │
+│                   Remembered as fresh's main clone on build-01.               │
+│                   Cloning happens when you press Launch.                      │
+│                                                                               │
 ```
 
-- **Machine comes before Folder** here: a folder path only means something
-  on a particular machine, and the path completion runs there.
-- If the folder matches a known repository's checkout, the note says so
-  (`checkout of fresh`) and offers `Switch to repository` instead of
-  `Save as repository`.
-- For a remote machine, the connection fields (§3.3) go directly under
-  Machine, as before.
+- The state is shown inline, not as an error. The default is to clone to
+  the repository's default path. If a clone of the same remote is found on
+  that machine (a quick scan of recent workspace roots and the default path's
+  parent), it's offered with one keypress.
+- Either way, the choice is saved as the main clone for that machine, so
+  the next launch there is back to the collapsed one-liner.
+- A repository with no remote shows only `Use a folder`.
 
-### 7.5 Repositories manager
+### 7.6 Change main clone
 
-Opened from the palette (`Orchestrator: Repositories`), from the dock's `⋯`
-menu, or from `Manage repositories…` in the Where picker. It mirrors the
-Machines manager: `⏎` on a row opens New Workspace on that repository.
+Opened from `Change…` in the launch dialog, or `S` in the manager.
 
 ```
-┌─ Repositories ─────────────────────────────────────────────────────── × ─┐
-│                                                                           │
-│  ▸ fresh          github.com/sinelaw/fresh      Local · gpu-box      3    │
-│    fresh-site     github.com/sinelaw/fresh-site —                    —    │
-│    dotfiles       (local only)                  Local                1    │
-│    infra          gitlab.com/acme/infra         build-01             —    │
-│                                                                           │
-│  + Add repository…                                                        │
-│                                                                           │
-│   ─────────────────────────────────────────────────────────────────────   │
-│   fresh                                                                   │
-│     remote          git@github.com:sinelaw/fresh.git                      │
-│     default branch  origin/master                                         │
-│     checkouts       Local    ~/repos/fresh          ✓                     │
-│                     gpu-box  ~/src/fresh            ✓ 2m ago              │
-│                                                                           │
-│    [ New workspace ]  ⏎    Edit  E    Clone to…  C    Remove  Del         │
-└───────────────────────────────────────────────────────────────────────────┘
+┌─ Main clone · fresh on gpu-box ─────────────────────────────────────────── × ─┐
+│                                                                               │
+│    Worktrees for fresh on gpu-box are cut from this clone.                    │
+│                                                                               │
+│    MAIN CLONE ────────────────────────────────────────────────────────────    │
+│                                                                               │
+│            Path   [ ~/src/fresh█                               ]              │
+│                   ✓ git repo · origin matches · master · clean                │
+│                                                                               │
+│                   Other clones of this remote on gpu-box:                     │
+│                     ~/old/fresh          master · 41 behind      Use          │
+│                     ~/tmp/fresh-copy     feat/x · dirty          Use          │
+│                   Scan again                                                  │
+│                                                                               │
+│    WORKTREES ─────────────────────────────────────────────────────────────    │
+│                                                                               │
+│       Create in   (•) Next to the main clone   ~/src/.fresh-worktrees/fresh   │
+│                   ( ) Fresh data directory                                    │
+│                   ( ) Custom   [                                ]             │
+│                                                                               │
+│                   2 existing worktrees stay attached to their current clone.  │
+│                                                                               │
+│    ───────────────────────────────────────────────────────────────────────    │
+│                                                                               │
+│                                                Cancel     [   Save   ]        │
+│                                                                               │
+└───────────────────────────────────────────────────────────────────────────────┘
 ```
 
-Columns: name, remote, machines it is checked out on, live workspaces. The
-lower pane shows details for the selected row.
+- The path field validates as you type: git repo? origin matches the
+  repository's remote? current branch and dirty state.
+- Other clones of the same remote on that machine are listed, so moving the
+  main clone is picking a row, not remembering a path.
+- **Worktrees location** is set per main clone: next to the clone (default,
+  so a machine's worktrees live on the same disk as its clone), Fresh's data
+  directory (today's behaviour), or a custom path.
+- Changing the main clone only affects new worktrees; the dialog says how
+  many existing ones stay with the old clone.
 
-### 7.6 Add / Edit Repository
-
-One field decides the rest: paste a URL or a path, and the dialog works out
-what it is.
+### 7.7 Launch dialog — expanded, Folder
 
 ```
-┌─ Add Repository ───────────────────────────────────────────────────── × ─┐
-│                                                                           │
-│   URL or path  ▸ [ git@github.com:sinelaw/fresh.git                   ]   │
-│                  ✓ reachable · default branch master                      │
-│                                                                           │
-│          Name    [ fresh                                              ]   │
-│                                                                           │
-│     Checkouts    Local     [ ~/repos/fresh                ]  ✓ found      │
-│                  gpu-box   [                              ]  will clone   │
-│                  + Add machine                                            │
-│                                                                           │
-│      Clone to    [ ~/src/<name>                                       ]   │
-│                  used on a machine with no checkout listed                │
-│                                                                           │
-│                             Clone now…       [  Save  ]                   │
-└───────────────────────────────────────────────────────────────────────────┘
+│    WHERE ─────────────────────────────────────────────────────────────────    │
+│                                                                               │
+│      Start from     Repository       ( Folder )                               │
+│                                                                               │
+│         Machine   [ Local ▾ ]                                                 │
+│          Folder   [ ~/work/fresh-copy                    ]                    │
+│                   git repo · a clone of fresh (github.com/sinelaw/fresh)      │
+│                   fresh's main clone on Local is ~/repos/fresh                │
+│                                                                               │
+│                   (•) Use this folder just this once                          │
+│                   ( ) Make it fresh's main clone on Local                     │
+│                   ( ) Switch to repository fresh  (use ~/repos/fresh)         │
+│                                                                               │
+│    GIT ───────────────────────────────────────────────────────────────────    │
+│                                                                               │
+│            Mode   (•) New worktree     ( ) Work in this folder                │
+│     Branch from   [ origin/master                        ]                    │
+│                                                                               │
 ```
 
-- **URL pasted:** the remote is checked with `git ls-remote` (on Local), the
-  name comes from the URL, and existing clones on Local are found by
-  matching `remote.origin.url` in recently used project paths.
-- **Local path pasted:** the remote comes from the folder's `origin`, and
-  that folder becomes the Local checkout. With no origin, it's a local-only
-  repository.
-- `Clone now…` clones to a chosen machine right away instead of on first
+When the folder is a git clone of a known repository that isn't its main
+clone on this machine, the dialog says so and offers the three sensible
+choices. A git folder of an unknown remote offers `Save as repository`
+instead; a non-git folder shows `plain folder · opens as is` and no GIT
+section.
+
+### 7.8 Repositories manager
+
+The top list is repositories; the lower pane is the **repository × machine
+grid** for the selected one. This is where "which clone on which machine"
+is managed in one place.
+
+```
+┌─ Repositories ──────────────────────────────────────────────────────────── × ─┐
+│                                                                               │
+│    [ / filter                             ]               + Add repository    │
+│                                                                               │
+│    ▸ fresh          github.com/sinelaw/fresh           3 machines             │
+│      fresh-site     github.com/sinelaw/fresh-site      —                      │
+│      dotfiles       local only                         1 machine              │
+│      infra          gitlab.com/acme/infra              1 machine              │
+│                                                                               │
+│    FRESH · MAIN CLONES ───────────────────────────────────────────────────    │
+│                                                                               │
+│      MACHINE       MAIN CLONE            STATE                WORKTREES       │
+│                                                                               │
+│    ▸ Local         ~/repos/fresh         ✓ master · clean     3               │
+│      gpu-box       ~/src/fresh           ✓ 2 behind           1               │
+│      build-01      —                     not cloned           —               │
+│      ml-cluster    /workspace/fresh      ✗ path missing       —               │
+│                                                                               │
+│      + Add machine                                                            │
+│                                                                               │
+│    ───────────────────────────────────────────────────────────────────────    │
+│                                                                               │
+│     ⏎ New workspace   C Clone   S Set main clone   W Worktrees   Del Forget   │
+│                                                                               │
+└───────────────────────────────────────────────────────────────────────────────┘
+```
+
+- `⏎` on a machine row opens New Workspace on (repository, machine).
+- `C` clones to a machine that has no main clone. `S` opens Change main clone
+  (§7.6). `Del` forgets the main clone (it doesn't delete files).
+- `✗ path missing` (moved or deleted) is fixed with `S`, which lists other
+  clones found on that machine.
+- The Machines manager gets the mirror view: under a selected machine, the
+  repositories with a main clone on it.
+
+### 7.9 Worktrees of a main clone
+
+`W` in the manager. This is the clone-centric view of what the dock shows
+workspace by workspace.
+
+```
+┌─ Worktrees · fresh on Local ────────────────────────────────────────────── × ─┐
+│                                                                               │
+│    Main clone   ~/repos/fresh                        master · clean           │
+│                                                                               │
+│    WORKTREES ─────────────────────────────────────────────────────────────    │
+│                                                                               │
+│    ▸ fresh-45     fresh-45          ● live workspace      3 ahead             │
+│      fresh-46     fix/resize        ○ no workspace        merged              │
+│      fresh-47     fresh-47          ● live workspace      dirty               │
+│                                                                               │
+│    ───────────────────────────────────────────────────────────────────────    │
+│                                                                               │
+│     ⏎ Open    N New worktree    R Remove (merged)    Del Remove               │
+│                                                                               │
+└───────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 7.10 Add Repository
+
+```
+┌─ Add Repository ────────────────────────────────────────────────────────── × ─┐
+│                                                                               │
+│    SOURCE ────────────────────────────────────────────────────────────────    │
+│                                                                               │
+│     URL or path   [ git@github.com:sinelaw/fresh.git█          ]              │
+│                   ✓ reachable · default branch master                         │
+│                                                                               │
+│            Name   [ fresh                                      ]              │
+│                                                                               │
+│    MAIN CLONES ───────────────────────────────────────────────────────────    │
+│                                                                               │
+│      MACHINE       PATH                                                       │
+│      Local         [ ~/repos/fresh            ]   ✓ found                     │
+│      gpu-box       [ ~/src/fresh              ]   will clone                  │
+│      build-01      [                          ]   skip                        │
+│      + Add machine                                                            │
+│                                                                               │
+│    Default path   [ ~/src/<name>                               ]              │
+│                   used when you first launch on a machine not listed          │
+│                                                                               │
+│    ───────────────────────────────────────────────────────────────────────    │
+│                                                                               │
+│                                          Clone now      [   Save   ]          │
+│                                                                               │
+└───────────────────────────────────────────────────────────────────────────────┘
+```
+
+- **Paste a URL:** checked with `git ls-remote`; the name comes from the URL;
+  existing clones are found on each machine (✓ found) or marked
+  `will clone`.
+- **Paste a local path:** its `origin` becomes the remote, and the path
+  becomes the Local main clone.
+- `Clone now` clones the `will clone` rows immediately instead of on first
   launch.
-- **Optional, if `gh` is installed:** the URL field's completion lists your
-  GitHub repositories (`gh repo list`). Without `gh`, the field is plain
-  text.
 
-### 7.7 How it gets populated (no setup required)
+### 7.11 How it gets populated
 
-The registry must not be a chore you have to fill in before the dialog is
-useful:
-
+- **Empty registry:** the dialog opens on `Start from: Folder` with today's
+  default path, which is exactly today's flow.
+- **First run:** the recents list is seeded from existing workspaces.
 - **Saving from a folder:** launching from a git Folder offers
-  `Save as repository` (§7.4). It's never saved silently.
-- **First run:** the recents list is seeded from existing workspaces, so
-  folders you've used before appear in the Where picker even with an empty
-  registry.
-- **An empty registry still works:** with no repositories, the dialog opens
-  on `Start from: Folder` with today's default path. It is exactly today's
-  flow.
+  `Save as repository` / `Make it the main clone`. Nothing is saved without
+  asking.
 
-### 7.8 Parity with today
+### 7.12 Parity with today
 
 | Today | With repositories |
 |---|---|
-| Project Path on a git repo + worktree | Folder (git detected) + New worktree, or the Repository for that path |
+| Project Path on a git repo + worktree | Repository + Machine (main clone derived), or Folder (git) |
 | Project Path on a non-git dir | Folder, plain |
-| Existing linked worktree → attach | Folder on the worktree path; the note reads `existing worktree of fresh`, and Git defaults to "Use the folder as is" |
-| Machine + remote path | Machine + Folder, or Repository + Machine (checkout path resolved) |
-| Discovered session prefill | Folder prefilled (unchanged) |
-| `Machines ▸ New workspace here` | Machine preselected; source = last used for that machine |
+| Worktree off → in-place checkout | Git mode `Work in the main clone` (or `in this folder`) |
+| Existing linked worktree → attach | Folder on its path; the note names its main clone; Git defaults to working in the folder |
+| Worktrees under the data dir | Main clone's "worktrees in" = `Fresh data directory` |
+| Machine + remote path | Machine + Folder, or Repository + Machine |
+| Discovered-session prefill | Folder prefilled (unchanged) |
+| `Machines ▸ New workspace here` | Machine preselected; the last repository used on it |
 
 ## 8. Open questions
 
@@ -599,8 +737,8 @@ useful:
 3. Should `Here` be the default when the palette's `Run Agent…` is used and
    `New workspace` for `+ New` / Alt+N (today's split), or should both open
    on the last-used choice?
-4. Clone-on-launch: do it silently as part of Launch, or require an
-   explicit `Clone now` the first time a repository is used on a machine?
+4. Default worktree location: next to the main clone (proposed) or keep
+   today's data-directory default?
 5. Should a Repository be able to carry per-repo defaults (preferred agent,
    worktree vs in place, branch prefix like `noam/`)? That would make the
    Where picker set the agent row too.
