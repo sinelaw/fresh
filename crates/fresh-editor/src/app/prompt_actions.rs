@@ -430,6 +430,11 @@ impl Editor {
             PromptType::ConfirmQuit => {
                 self.handle_confirm_quit(&input);
             }
+            PromptType::ConfirmQuitDaemon => match input.trim() {
+                "detach" => self.should_detach = true,
+                "quit" => self.quit_with_prompts(false),
+                _ => self.set_status_message(t!("buffer.close_cancelled").to_string()),
+            },
             PromptType::LspRename {
                 original_text,
                 start_pos,
