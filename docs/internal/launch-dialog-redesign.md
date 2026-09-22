@@ -83,7 +83,7 @@ of which 3 carry information (`runs in this workspace: demo`, `Agent`,
   type a path or browse to one, and Fresh checks that path only.
 - **Stable top, growing bottom.** Prompt, agent and the footer don't move.
   Anything that changes height sits below them and only grows when you ask
-  (Alt+W, a remote machine, a warning).
+  (the `▹ Details` row, a remote machine, a warning).
 
 ### 2.1 Visual rules
 
@@ -121,8 +121,9 @@ of which 3 carry information (`runs in this workspace: demo`, `Agent`,
 - **Folder** is the escape hatch: any directory, git or not. This is today's
   behaviour, unchanged.
 
-The repository registry lives next to machines, in
-`<data dir>/orchestrator/repositories.json`, never inside a working tree:
+The repository registry lives next to machines, in the editor's state store
+(namespace `repositories`, one entry per repository, for the same reasons
+machines are kept one per entry), never inside a working tree:
 
 ```
 fresh
@@ -168,7 +169,7 @@ be cloned, only pointed at.
 │                                                                               │
 │                                   Launch in background     [   Launch   ]     │
 │                                                                               │
-│          Ctrl+⏎ launch    Alt+⏎ background    Alt+W details    Esc close      │
+│          Ctrl+⏎ launch    Alt+⏎ background    Esc close                      │
 │                                                                               │
 └───────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -224,7 +225,7 @@ Each machine shows **its main clone state for the selected repository**,
 so you can see which machines are ready before you pick. `Other host…`,
 `Kubernetes…` and `Devcontainer` work as today (§4.9).
 
-### 4.4 Details (Alt+W)
+### 4.4 Details (the `▹ Details` row)
 
 ```
 ┌─ New Workspace ─────────────────────────────────────────────────────────── × ─┐
@@ -262,7 +263,7 @@ so you can see which machines are ready before you pick. `Other host…`,
 │                                                                               │
 │                                   Launch in background     [   Launch   ]     │
 │                                                                               │
-│          Ctrl+⏎ launch    Alt+⏎ background    Alt+W details    Esc close      │
+│          Ctrl+⏎ launch    Alt+⏎ background    Esc close                      │
 │                                                                               │
 └───────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -305,7 +306,7 @@ so you can see which machines are ready before you pick. `Other host…`,
 │                                                                               │
 │                                   Launch in background     [   Launch   ]     │
 │                                                                               │
-│          Ctrl+⏎ launch    Alt+⏎ background    Alt+W details    Esc close      │
+│          Ctrl+⏎ launch    Alt+⏎ background    Esc close                      │
 │                                                                               │
 └───────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -387,7 +388,7 @@ so you can see which machines are ready before you pick. `Other host…`,
 - A git folder whose origin matches a known repository says so and offers
   `Make this the main clone` or `Switch to fresh`. A git folder with an
   unknown remote offers `Save as repository`. A git folder gets the GIT
-  section (Alt+W) as usual.
+  section (under `▹ Details`) as usual.
 
 ### 4.8 Remote machine typed by hand
 
@@ -663,7 +664,7 @@ removed). When it's done, the path is a valid main clone and
 | Remember this machine as … | same, under the connection fields |
 | Project Path on a git repo + worktree | Project = repository + Machine, main clone shown; or Project = Folder |
 | Project Path on a non-git dir | Project = Folder, plain |
-| Workspace Name | Workspace, in GIT (Alt+W); also shown in the summary line |
+| Workspace Name | Workspace, under `▹ Details`; also shown in the summary line |
 | Create a git worktree toggle | Git mode radio: New worktree / Work in the main clone |
 | Checkout branch / New branch name | Branch from / New branch (placeholder shows the planned name) |
 | Branch-plan and worktree-path notes | the summary line under WHERE; the worktree path line in GIT |
@@ -684,11 +685,13 @@ removed). When it's done, the path is a valid main clone and
 - Mode switch: `radio` in a `row`. Prompt: `textArea({rows: 3})`, initial
   focus. The `Enter` shim (`orchestrator_form_key_enter`) forwards a newline
   when the prompt has focus. Add `M-Enter` → launch in background, and
-  `M-w` → toggle details.
+  a focusable `▹ Details` / `▿ Hide details` row toggles the fold. (No key
+  chord: the editor's keymaps already spend every Alt+letter.)
 - `form.projectPath` becomes `form.project`: `{kind: "repo", id}` or
   `{kind: "folder", path}`. The existing probes run against the main clone
   (repo) or the folder path.
-- **Repository registry**: `repositories.json` beside `machines.json`, with
+- **Repository registry**: a `repositories` state-store namespace beside
+  `machines`, with
   `loadRepositories` / `upsertRepository` mirroring the machine helpers.
   Main-clone validation reuses `pathIsInsideGitWorkTree`, `probeRemoteGit`
   and an origin-URL compare.
@@ -702,6 +705,24 @@ removed). When it's done, the path is a valid main clone and
 - Tests that pin rows (`tests/e2e/plugins/orchestrator_new_dialog.rs` and
   the other `orchestrator_*` tests) need their screen assertions updated.
   Submit paths and probes are unchanged.
+
+### 6.1 As built — where it differs from the wireframes
+
+- **Machine dropdown labels.** A dropdown cell is 20 columns wide, so the
+  per-machine clone state is a glyph (`✓ Local`, `· build-01`) in the
+  Repositories dialog; the New Workspace Machine dropdown shows plain names
+  and the WHERE lines say what the chosen machine has.
+- **The details fold** is a focusable `▹ Details` / `▿ Hide details` row
+  under WHERE (hollow triangles, since the filled `▸` is the focus marker);
+  the Workspace field sits in WHERE while it is open, the GIT section below.
+- **The dialog stays centred** and grows when details open; the prompt,
+  agent and footer keep their order but not their absolute rows.
+- **Focus.** The `▸` marker now sits next to the focused control's label
+  (it used to sit at the panel's left edge), the focus band starts at the
+  label rather than column 0, and link-styled buttons carry the marker too.
+- **Keys.** Enter in the prompt is a newline; Ctrl+Enter launches from
+  anywhere, Alt+Enter launches in the background; Esc closes an open list,
+  then a pending clone question, then the dialog.
 
 ## 7. Decisions
 
