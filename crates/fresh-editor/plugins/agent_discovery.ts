@@ -603,6 +603,13 @@ function handleDiscoverEvent(e: WidgetEvt): void {
     const idx = payload.index;
     if (typeof idx === "number") st.index = idx;
     if (e.event_type === "expand") {
+      // Every group is open while the filter is on, and the reader's own
+      // folds are kept for when it clears: a click on a heading must not
+      // change them. Re-render so the host's flip is undone.
+      if (st.filter.value !== "") {
+        refreshDiscoverDialog();
+        return;
+      }
       const key = payload.key;
       if (typeof key === "string" && key !== "") {
         if (payload.expanded === true) st.expanded.add(key);
