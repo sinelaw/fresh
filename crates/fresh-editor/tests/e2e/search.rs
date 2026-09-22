@@ -1394,6 +1394,174 @@ fn test_search_options_bar_appears() {
     );
 }
 
+/// A search with nothing configured folds case: typing `hello` into a
+/// buffer that spells it three ways finds all three (issue #3212).
+///
+/// This is the shipped default, not a workspace leftover — the harness
+/// starts on `Config::default()`, so what this pins is
+/// `editor.search.case_sensitive`'s own value.
+#[test]
+fn search_folds_case_by_default() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.txt");
+    std::fs::write(&file_path, "Hello HELLO hello").unwrap();
+
+    let mut harness = EditorTestHarness::new(100, 24).unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    harness
+        .send_key(KeyCode::Char('f'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("hello").unwrap();
+    harness.render().unwrap();
+
+    assert!(
+        harness.screen_to_string().contains("[ ] Case Sensitive"),
+        "nothing should have checked the Case box; got:\n{}",
+        harness.screen_to_string()
+    );
+
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.process_async_and_render().unwrap();
+
+    assert_eq!(
+        harness.count_search_highlights(),
+        3,
+        "an unconfigured search should match every spelling of `hello`"
+    );
+}
+
+/// `editor.search.case_sensitive = true` is the preset issue #3212 asked
+/// for: the window opens with the toggle already checked, and the same
+/// search finds only the exact spelling.
+#[test]
+fn the_case_sensitive_config_preset_seeds_the_toggle() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.txt");
+    std::fs::write(&file_path, "Hello HELLO hello").unwrap();
+
+    let mut config = Config::default();
+    config.editor.search.case_sensitive = true;
+    let mut harness = EditorTestHarness::with_config(100, 24, config).unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    harness
+        .send_key(KeyCode::Char('f'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("hello").unwrap();
+    harness.render().unwrap();
+
+    assert!(
+        harness.screen_to_string().contains("[x] Case Sensitive"),
+        "the preset should arrive already checked; got:\n{}",
+        harness.screen_to_string()
+    );
+    // The preset is a starting point, not a lock: Alt+C still frees it.
+    harness
+        .send_key(KeyCode::Char('c'), KeyModifiers::ALT)
+        .unwrap();
+    harness.render().unwrap();
+    assert!(
+        harness.screen_to_string().contains("[ ] Case Sensitive"),
+        "Alt+C must still override the preset"
+    );
+
+    // Back on the preset, the same query matches only the exact spelling.
+    harness
+        .send_key(KeyCode::Char('c'), KeyModifiers::ALT)
+        .unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness.process_async_and_render().unwrap();
+    assert_eq!(
+        harness.count_search_highlights(),
+        1,
+        "case-sensitive `hello` should match only the lowercase spelling"
+    );
+}
+
+/// A workspace only remembers a search choice once it *differs* from the
+/// config preset.
+///
+/// Saving the live flags unconditionally is what v1 did, and it turned "the
+/// user never touched the toggles" into a saved decision at the first
+/// checkpoint — after which that workspace ignored its own `editor.search`
+/// preset forever. Nothing to remember means nothing written, so the preset
+/// keeps applying; a real flip is written and wins.
+#[test]
+fn a_workspace_persists_only_a_choice_that_leaves_the_preset() {
+    let temp_dir = TempDir::new().unwrap();
+    let file_path = temp_dir.path().join("test.txt");
+    std::fs::write(&file_path, "Hello hello").unwrap();
+
+    let mut harness = EditorTestHarness::new(100, 24).unwrap();
+    harness.open_file(&file_path).unwrap();
+    harness.render().unwrap();
+
+    assert!(
+        harness
+            .editor()
+            .capture_workspace()
+            .search_overrides
+            .is_none(),
+        "an untouched window has made no choice to save"
+    );
+
+    // Flip case sensitivity on, away from the (off) preset.
+    harness
+        .send_key(KeyCode::Char('f'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Char('c'), KeyModifiers::ALT)
+        .unwrap();
+    harness.render().unwrap();
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    let saved = harness
+        .editor()
+        .capture_workspace()
+        .search_overrides
+        .expect("a flip away from the preset is a choice worth saving");
+    assert_eq!(saved.case_sensitive, Some(true));
+    assert_eq!(
+        (saved.whole_word, saved.use_regex, saved.confirm_each),
+        (None, None, None),
+        "flipping one toggle must not pin the three that never left the preset"
+    );
+
+    // Flip it back: it matches the preset again, so there is nothing left
+    // to remember and the workspace stops pinning it.
+    harness
+        .send_key(KeyCode::Char('f'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness
+        .send_key(KeyCode::Char('c'), KeyModifiers::ALT)
+        .unwrap();
+    harness.render().unwrap();
+    harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+
+    assert!(
+        harness
+            .editor()
+            .capture_workspace()
+            .search_overrides
+            .is_none(),
+        "back on the preset, the workspace has nothing of its own to say"
+    );
+}
+
 /// Test toggling case sensitivity with Alt+C during search
 #[test]
 fn test_toggle_case_sensitive_in_search() {
@@ -1411,16 +1579,15 @@ fn test_toggle_case_sensitive_in_search() {
         .unwrap();
     harness.render().unwrap();
 
-    // Type search query (case-sensitive by default)
+    // Type search query (case-insensitive by default — `editor.search`
+    // leaves the Case toggle off, so "hello" finds all three spellings).
     harness.type_text("hello").unwrap();
     harness.render().unwrap();
 
-    // By default, case-sensitive is ON, so search for "hello" should match only "hello" (lowercase)
-    // Verify the [x] checkbox is shown for case sensitive
     let screen = harness.screen_to_string();
     assert!(
-        screen.contains("[x] Case Sensitive") || screen.contains("[x]"),
-        "Case Sensitive should be checked by default"
+        screen.contains("[ ] Case Sensitive"),
+        "Case Sensitive should start unchecked; got:\n{screen}"
     );
 
     // Toggle case sensitivity with Alt+C
@@ -1429,11 +1596,11 @@ fn test_toggle_case_sensitive_in_search() {
         .unwrap();
     harness.render().unwrap();
 
-    // Verify checkbox is now unchecked
+    // Verify checkbox is now checked
     let screen_after_toggle = harness.screen_to_string();
     assert!(
-        screen_after_toggle.contains("[ ] Case Sensitive") || screen_after_toggle.contains("[ ]"),
-        "Case Sensitive should be unchecked after Alt+C"
+        screen_after_toggle.contains("[x] Case Sensitive"),
+        "Case Sensitive should be checked after Alt+C; got:\n{screen_after_toggle}"
     );
 
     // Cancel search

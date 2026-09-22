@@ -5,9 +5,50 @@
 *   **Query Replace:** Use "Query Replace" from the command palette for interactive replacement (y/n/!/q prompts for each match).
 
 The search toolbar shows toggle buttons for:
-- **Case Sensitive** — match exact case
-- **Whole Word** — match complete words only
-- **Regex** — use regular expressions
+- **Case Sensitive** (`Alt+C`) — match exact case
+- **Whole Word** (`Alt+W`) — match complete words only
+- **Regex** (`Alt+R`) — use regular expressions
+
+## Case Sensitivity
+
+Searches fold case by default: `todo` finds `TODO`. Every search surface can
+say otherwise, and each remembers what you told it:
+
+| Surface | Where the toggle is | How long the choice lasts |
+| --- | --- | --- |
+| Find / Replace prompt (`Ctrl+F`, `Ctrl+R`) | **Case Sensitive** on the options row, `Alt+C` | Saved with the workspace |
+| Universal Search (Live Grep) | **Case** on the toolbar, `Alt+C` | The rest of the session |
+| Search & Replace panel | **Case** checkbox on the panel, `Alt+C` | The rest of the session, panel reopens included |
+| Git Grep | **Case** checkbox on the prompt toolbar (unbound; `git_grep_toggle_case`) | The rest of the session |
+
+To start somewhere else, set the default in your config:
+
+```json
+{
+  "editor": {
+    "search": {
+      "case_sensitive": true
+    }
+  }
+}
+```
+
+`case_sensitive` seeds all four surfaces; flipping a toggle still wins from
+there, and the Find prompt saves a choice that differs from it with the
+workspace.
+
+A workspace records each option separately, and only where it differs from
+the setting above, so one you never changed there still follows the config.
+
+Workspaces saved by an earlier Fresh recorded the toggles on every save,
+whether or not you had chosen anything, from a prompt that started
+case-sensitive. Reopening one keeps the toggles you can be shown to have
+set — a whole-word or regex search survives — but its case sensitivity
+falls back to the setting above, because in those files "on" is
+indistinguishable from "never touched". The section's other keys — `whole_word`, `regex`, `confirm_each` —
+reach the Find/Replace prompt and the Search & Replace panel; see
+[Configuration → Search](../configuration/index.md#search) for which applies
+where.
 
 ## Stepping Through Matches
 

@@ -11,7 +11,10 @@
     "status.error": "Git grep грешка: %{error}",
     "status.opened": "Отворено %{location}",
     "status.no_selection": "Няма избран файл",
-    "status.cancelled": "Git grep е прекъснат"
+    "status.cancelled": "Git grep е прекъснат",
+    "mode.case": "Регистър",
+    "cmd.git_grep_toggle_case": "Git Grep: Превключване на Отчитане на Регистъра",
+    "cmd.git_grep_toggle_case_desc": "Различавай главни и малки букви при git grep"
   },
   "cs": {
     "cmd.grep": "Git Grep",
@@ -25,7 +28,10 @@
     "status.error": "Chyba git grep: %{error}",
     "status.opened": "Otevreno: %{location}",
     "status.no_selection": "Zadny soubor nevybran",
-    "status.cancelled": "Git grep zrusen"
+    "status.cancelled": "Git grep zrusen",
+    "mode.case": "Velikost",
+    "cmd.git_grep_toggle_case": "Git Grep: Přepnout rozlišování velikosti písmen",
+    "cmd.git_grep_toggle_case_desc": "Rozlišovat velká a malá písmena v git grep"
   },
   "de": {
     "cmd.grep": "Git Grep",
@@ -39,7 +45,10 @@
     "status.error": "Git grep Fehler: %{error}",
     "status.opened": "Geoeffnet: %{location}",
     "status.no_selection": "Keine Datei ausgewaehlt",
-    "status.cancelled": "Git grep abgebrochen"
+    "status.cancelled": "Git grep abgebrochen",
+    "mode.case": "Groß/klein",
+    "cmd.git_grep_toggle_case": "Git Grep: Groß-/Kleinschreibung umschalten",
+    "cmd.git_grep_toggle_case_desc": "Groß- und Kleinschreibung in git grep unterscheiden"
   },
   "en": {
     "cmd.grep": "Git Grep",
@@ -53,7 +62,10 @@
     "status.error": "Git grep error: %{error}",
     "status.opened": "Opened %{location}",
     "status.no_selection": "No file selected",
-    "status.cancelled": "Git grep cancelled"
+    "status.cancelled": "Git grep cancelled",
+    "mode.case": "Case",
+    "cmd.git_grep_toggle_case": "Git Grep: Toggle Case Sensitive",
+    "cmd.git_grep_toggle_case_desc": "Match upper and lower case exactly in git grep"
   },
   "es": {
     "cmd.grep": "Git Grep",
@@ -67,7 +79,10 @@
     "status.error": "Error de git grep: %{error}",
     "status.opened": "Abierto %{location}",
     "status.no_selection": "Ningun archivo seleccionado",
-    "status.cancelled": "Git grep cancelado"
+    "status.cancelled": "Git grep cancelado",
+    "mode.case": "May/min",
+    "cmd.git_grep_toggle_case": "Git Grep: Alternar distinción de mayúsculas",
+    "cmd.git_grep_toggle_case_desc": "Distinguir mayúsculas y minúsculas en git grep"
   },
   "fr": {
     "cmd.grep": "Git Grep",
@@ -81,7 +96,10 @@
     "status.error": "Erreur git grep: %{error}",
     "status.opened": "Ouvert: %{location}",
     "status.no_selection": "Aucun fichier selectionne",
-    "status.cancelled": "Git grep annule"
+    "status.cancelled": "Git grep annule",
+    "mode.case": "Casse",
+    "cmd.git_grep_toggle_case": "Git Grep : Basculer la sensibilité à la casse",
+    "cmd.git_grep_toggle_case_desc": "Distinguer les majuscules des minuscules dans git grep"
   },
   "it": {
     "cmd.grep": "Git Grep",
@@ -95,7 +113,10 @@
     "status.error": "Errore git grep: %{error}",
     "status.opened": "Aperto %{location}",
     "status.no_selection": "Nessun file selezionato",
-    "status.cancelled": "Git grep annullato"
+    "status.cancelled": "Git grep annullato",
+    "mode.case": "Maiuscole",
+    "cmd.git_grep_toggle_case": "Git Grep: Attiva/disattiva distinzione maiuscole",
+    "cmd.git_grep_toggle_case_desc": "Distinguere maiuscole e minuscole in git grep"
   },
   "ja": {
     "cmd.grep": "Git Grep",
@@ -109,7 +130,10 @@
     "status.error": "Git grepエラー: %{error}",
     "status.opened": "開きました: %{location}",
     "status.no_selection": "ファイルが選択されていません",
-    "status.cancelled": "Git grepキャンセル"
+    "status.cancelled": "Git grepキャンセル",
+    "mode.case": "大小文字",
+    "cmd.git_grep_toggle_case": "Git Grep: 大文字小文字の区別を切り替え",
+    "cmd.git_grep_toggle_case_desc": "git grep で大文字と小文字を区別して一致させる"
   },
   "ko": {
     "cmd.grep": "Git Grep",
@@ -123,7 +147,10 @@
     "status.error": "Git grep 오류: %{error}",
     "status.opened": "열림: %{location}",
     "status.no_selection": "선택된 파일 없음",
-    "status.cancelled": "Git grep 취소됨"
+    "status.cancelled": "Git grep 취소됨",
+    "mode.case": "대소문자",
+    "cmd.git_grep_toggle_case": "Git Grep: 대소문자 구분 전환",
+    "cmd.git_grep_toggle_case_desc": "git grep에서 대문자와 소문자를 구분하여 일치"
   },
   "pt-BR": {
     "cmd.grep": "Git Grep",
@@ -137,7 +164,10 @@
     "status.error": "Erro git grep: %{error}",
     "status.opened": "Aberto: %{location}",
     "status.no_selection": "Nenhum arquivo selecionado",
-    "status.cancelled": "Git grep cancelado"
+    "status.cancelled": "Git grep cancelado",
+    "mode.case": "Maiúsculas",
+    "cmd.git_grep_toggle_case": "Git Grep: Alternar diferenciar maiúsculas",
+    "cmd.git_grep_toggle_case_desc": "Diferenciar maiúsculas de minúsculas no git grep"
   },
   "ru": {
     "cmd.grep": "Git Grep",
@@ -151,7 +181,10 @@
     "status.error": "Oshibka git grep: %{error}",
     "status.opened": "Otkryto: %{location}",
     "status.no_selection": "Fayl ne vybran",
-    "status.cancelled": "Git grep otmenen"
+    "status.cancelled": "Git grep otmenen",
+    "mode.case": "Регистр",
+    "cmd.git_grep_toggle_case": "Git Grep: переключить учёт регистра",
+    "cmd.git_grep_toggle_case_desc": "Различать строчные и прописные буквы в git grep"
   },
   "th": {
     "cmd.grep": "Git Grep",
@@ -165,7 +198,10 @@
     "status.error": "ข้อผิดพลาด git grep: %{error}",
     "status.opened": "เปิดแล้ว: %{location}",
     "status.no_selection": "ไม่ได้เลือกไฟล์",
-    "status.cancelled": "ยกเลิก git grep"
+    "status.cancelled": "ยกเลิก git grep",
+    "mode.case": "ตัวพิมพ์",
+    "cmd.git_grep_toggle_case": "Git Grep: สลับการแยกตัวพิมพ์เล็กใหญ่",
+    "cmd.git_grep_toggle_case_desc": "จับคู่ตัวพิมพ์เล็กและใหญ่แบบตรงกันใน git grep"
   },
   "uk": {
     "cmd.grep": "Git Grep",
@@ -179,7 +215,10 @@
     "status.error": "Pomylka git grep: %{error}",
     "status.opened": "Vidkryto: %{location}",
     "status.no_selection": "Fayl ne vybrano",
-    "status.cancelled": "Git grep skasovano"
+    "status.cancelled": "Git grep skasovano",
+    "mode.case": "Регістр",
+    "cmd.git_grep_toggle_case": "Git Grep: перемкнути врахування регістру",
+    "cmd.git_grep_toggle_case_desc": "Розрізняти великі та малі літери в git grep"
   },
   "vi": {
     "cmd.grep": "Git Grep",
@@ -193,7 +232,10 @@
     "status.error": "Lỗi git grep: %{error}",
     "status.opened": "Đã mở: %{location}",
     "status.no_selection": "Chưa chọn tệp",
-    "status.cancelled": "Đã hủy git grep"
+    "status.cancelled": "Đã hủy git grep",
+    "mode.case": "Hoa/thường",
+    "cmd.git_grep_toggle_case": "Git Grep: Bật/tắt phân biệt hoa thường",
+    "cmd.git_grep_toggle_case_desc": "Phân biệt chữ hoa và chữ thường trong git grep"
   },
   "zh-CN": {
     "cmd.grep": "Git Grep",
@@ -207,6 +249,9 @@
     "status.error": "Git grep错误: %{error}",
     "status.opened": "已打开: %{location}",
     "status.no_selection": "未选择文件",
-    "status.cancelled": "Git grep已取消"
+    "status.cancelled": "Git grep已取消",
+    "mode.case": "大小写",
+    "cmd.git_grep_toggle_case": "Git Grep：切换区分大小写",
+    "cmd.git_grep_toggle_case_desc": "在 git grep 中区分大写和小写字母"
   }
 }

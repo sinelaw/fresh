@@ -82,6 +82,12 @@
           ],
           "separator": ""
         },
+        "search": {
+          "case_sensitive": false,
+          "whole_word": false,
+          "regex": false,
+          "confirm_each": false
+        },
         "show_prompt_line": false,
         "show_vertical_scrollbar": true,
         "show_horizontal_scrollbar": false,
@@ -554,6 +560,17 @@
             "separator": ""
           },
           "x-section": "Status Bar"
+        },
+        "search": {
+          "description": "The match options a search starts with: the state of the Case /\nWord / Regex toggles the first time a search prompt opens in a\nworkspace that has not saved a choice of its own.\n\nThese are *defaults*, not a lock. Every search surface keeps its\nown live toggles, and the one you flip during a session wins for\nthe rest of it; workspaces persist what you left them on, and a\nworkspace with a saved choice ignores what is here.",
+          "$ref": "#/$defs/SearchConfig",
+          "default": {
+            "case_sensitive": false,
+            "whole_word": false,
+            "regex": false,
+            "confirm_each": false
+          },
+          "x-section": "Search"
         },
         "show_prompt_line": {
           "description": "Whether the prompt line is always visible.\nThe prompt line is the bottom-most line used for search, file open, and other prompts.\nWhen `false` (the default), the prompt line auto-hides — it only appears\nwhile a prompt is active and disappears again once the prompt closes.\nWhen `true`, the prompt line is always reserved at the bottom of the screen.\nDefault: false",
@@ -1142,6 +1159,32 @@
           "name": "Workspace Trust"
         }
       ]
+    },
+    "SearchConfig": {
+      "description": "Default search options — the starting state of the match toggles\nevery search surface shows (the search/replace prompt's option row,\nthe Live Grep toolbar, the Search & Replace panel).\n\nCase sensitivity is **off** by default: a search for `todo` finds\n`TODO` until you say otherwise. Issue #3212 asked for this to be a\nconfig preset rather than something each new workspace had to be\ntaught again, which is what this section is.",
+      "type": "object",
+      "properties": {
+        "case_sensitive": {
+          "description": "Start searches case-sensitively (default: false).\n\nWhen false, `todo` matches `TODO`. Flipping the Case toggle in\nany search UI overrides this for the rest of the session, and\nthe choice is saved with the workspace.",
+          "type": "boolean",
+          "default": false
+        },
+        "whole_word": {
+          "description": "Start searches matching whole words only (default: false).",
+          "type": "boolean",
+          "default": false
+        },
+        "regex": {
+          "description": "Start searches with the query read as a regular expression\n(default: false).",
+          "type": "boolean",
+          "default": false
+        },
+        "confirm_each": {
+          "description": "Start replace prompts asking for confirmation at each match\n(default: false).",
+          "type": "boolean",
+          "default": false
+        }
+      }
     },
     "CursorStyle": {
       "description": "Terminal cursor style",

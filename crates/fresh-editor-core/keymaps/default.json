@@ -2033,6 +2033,14 @@
       "action": "live_grep_toggle_regex",
       "args": {},
       "when": "prompt"
+    },
+    {
+      "comment": "Universal Search overlay — toggle the 'Case' match mode (off by default: a search for 'todo' finds 'TODO'). Alt+C in the *narrower* searchPrompt context is the find prompt's own toggle_search_case_sensitive, which wins there, so one chord means 'flip case sensitivity' in both search UIs.",
+      "key": "c",
+      "modifiers": ["alt"],
+      "action": "live_grep_toggle_case",
+      "args": {},
+      "when": "prompt"
     }
   ]
 }

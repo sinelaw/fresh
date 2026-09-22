@@ -186,6 +186,94 @@ fn test_live_grep_buffers_scope_finds_unmodified_open_buffer() {
         .unwrap();
 }
 
+/// Universal Search folds case by default, and its **Case** toggle is how
+/// you say otherwise (issue #3212).
+///
+/// The overlay used to decide this by smart-case — case-insensitive unless
+/// the query carried an uppercase letter — which is an unreachable setting:
+/// searching `Foo` could never find `foo`. Here the query is capitalised and
+/// the file spells the token in lower case, so the old rule would have found
+/// nothing. Drives the Buffers scope, which is pure JS (no rg/grep
+/// subprocess) and so deterministic on any host.
+#[test]
+fn live_grep_folds_case_until_the_case_toggle_says_otherwise() {
+    let temp_dir = tempfile::TempDir::new().unwrap();
+    let project_root = temp_dir.path().canonicalize().unwrap().join("project_root");
+    fs::create_dir(&project_root).unwrap();
+
+    let plugins_dir = project_root.join("plugins");
+    fs::create_dir(&plugins_dir).unwrap();
+    copy_plugin_lib(&plugins_dir);
+    copy_plugin(&plugins_dir, "live_grep");
+
+    let target = project_root.join("notes.txt");
+    fs::write(&target, "alpha\ncasetoken_9f1 here\ngamma\n").unwrap();
+
+    let mut harness = EditorTestHarness::with_config_and_working_dir(
+        140,
+        30,
+        Default::default(),
+        project_root.clone(),
+    )
+    .unwrap();
+    harness.open_file(&target).unwrap();
+    harness.render().unwrap();
+
+    harness
+        .send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
+        .unwrap();
+    harness.render().unwrap();
+    harness.type_text("Live Grep (Find").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Live Grep"))
+        .unwrap();
+    harness
+        .send_key(KeyCode::Enter, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("Search in:"))
+        .unwrap();
+
+    // The toolbar offers the toggle, and it starts off.
+    let toolbar = harness.screen_to_string();
+    assert!(
+        toolbar.contains("[ ] Case"),
+        "the Match row should offer an unchecked Case toggle; got:\n{toolbar}"
+    );
+
+    // Buffers only: drop Files (Alt+L) and Terminals (Alt+T).
+    harness
+        .send_key(KeyCode::Char('l'), KeyModifiers::ALT)
+        .unwrap();
+    harness
+        .send_key(KeyCode::Char('t'), KeyModifiers::ALT)
+        .unwrap();
+    harness.render().unwrap();
+
+    // A capitalised query finds the lowercase token, which smart-case
+    // could not.
+    harness.type_text("CaseToken_9f1").unwrap();
+    harness
+        .wait_until(|h| h.screen_to_string().contains("notes.txt:2"))
+        .unwrap();
+
+    // Alt+C turns matching case-sensitive, and the row goes away.
+    //
+    // Checked is `[v]` here, not `[x]`: this is a plugin widget toolbar
+    // (`lib/widgets.ts`'s `toggle`), not the core search-options row the
+    // find prompt draws. Waiting on the wrong glyph is a hang, not a
+    // failure — the wait just never resolves.
+    harness
+        .send_key(KeyCode::Char('c'), KeyModifiers::ALT)
+        .unwrap();
+    harness
+        .wait_until(|h| {
+            let screen = h.screen_to_string();
+            screen.contains("[v] Case") && !screen.contains("notes.txt:2")
+        })
+        .unwrap();
+}
+
 /// The Live Grep preview pane must paint every occurrence of the query
 /// using the search-match highlight colours, not merely park the (hidden)
 /// cursor on it. Drives the deterministic Buffers scope (pure JS, no

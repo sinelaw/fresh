@@ -2350,6 +2350,9 @@ impl Window {
         // are borrowed here, then moved into the struct below.
         let bridge = crate::services::async_bridge::AsyncBridge::new();
         let lsp = build_window_lsp(id, &root, &connection.authority, &resources, &bridge);
+        // The match toggles a search starts on, before any workspace
+        // restore has a say.
+        let search_defaults = resources.config.editor.search.clone();
         Self {
             id,
             label,
@@ -2458,10 +2461,15 @@ impl Window {
             pending_async_prompt_callback: None,
             pending_file_pick_callback: None,
             pending_quit_unnamed_save: Vec::new(),
-            search_case_sensitive: true,
-            search_whole_word: false,
-            search_use_regex: false,
-            search_confirm_each: false,
+            // Seeded from `editor.search` (issue #3212): the config
+            // preset is what a window starts on, and a workspace that
+            // saved its own choice overwrites these on restore via
+            // `restore_search_options`. Case sensitivity defaults to
+            // *off* — `todo` finds `TODO` until the user says otherwise.
+            search_case_sensitive: search_defaults.case_sensitive,
+            search_whole_word: search_defaults.whole_word,
+            search_use_regex: search_defaults.regex,
+            search_confirm_each: search_defaults.confirm_each,
             scheduled_diagnostic_pull: None,
             scheduled_inlay_hints_request: None,
             user_dismissed_lsp_languages: std::collections::HashSet::new(),
