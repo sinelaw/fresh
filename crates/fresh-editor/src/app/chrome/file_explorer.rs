@@ -463,7 +463,12 @@ impl Editor {
             return Ok(());
         };
 
-        let delta = col as i32 - start_col as i32;
+        // Dragging toward the editor widens the column: rightward when it
+        // sits on the left, leftward when it sits on the right.
+        let delta = match self.active_window().file_explorer_side {
+            crate::config::FileExplorerSide::Left => col as i32 - start_col as i32,
+            crate::config::FileExplorerSide::Right => start_col as i32 - col as i32,
+        };
         let total_width = self.terminal_width as i32;
 
         // Drag preserves the variant the user chose. A user editing
