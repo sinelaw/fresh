@@ -647,6 +647,12 @@ editor.on("widget_event", (e) => {
   }
 });
 
+// The results area is sized off the terminal, so a resize re-derives it; the
+// host re-fits the panel itself but only the spec knows the row count.
+editor.on("resize", () => {
+  refreshDiscoverDialog();
+});
+
 registerHandler("agent_discovery_open", openAgentDiscovery);
 editor.registerCommand("%cmd.import_sessions", "%cmd.import_sessions_desc", "agent_discovery_open", null, {
   terminalBypass: true,
