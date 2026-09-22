@@ -68,7 +68,7 @@ of which 3 carry information (`runs in this workspace: demo`, `Agent`,
 
 ## 2. Principles
 
-- **The dialog asks one question: "what should the agent do?"** Everything
+- **The dialog is built around the prompt.** Everything
   else has a correct default and is shown as a sentence, not a form.
 - **Stable top, growing bottom.** Prompt, agent and the Launch button never
   move. Anything that changes height sits below them and only grows when the
@@ -82,119 +82,222 @@ of which 3 carry information (`runs in this workspace: demo`, `Agent`,
 
 ## 3. The new shape
 
-### 3.1 Default (New Workspace, local git repo) — 11 rows
+Visual rules, applied to every shape below:
+
+- **Breathing room.** 3 cells of inner side padding, a blank row under the
+  title and above/below the footer, one blank row between groups. The
+  dialog gets ~4 rows taller than a dense version, and is still ~10 rows
+  shorter than today's because the reserved blank bands are gone.
+- **Three labelled groups, top to bottom: Prompt, Agent, Where.** Each
+  group label sits on its own column at the left margin; within Where, the
+  field labels are right-aligned into one column as today.
+- **The prompt box is the only boxed element.** It's the visual anchor: full
+  width, rounded frame, 4 rows. Every other input keeps the `[ … ]` style.
+- **Where is fenced by two thin rules** so it reads as one collapsible unit,
+  whether it is one line or ten.
+- **One primary button, bottom-right**, with the secondary action as plain
+  text to its left. One quiet key-hint line under it.
+
+### 3.1 New workspace — collapsed (default)
 
 ```
-┌ New Workspace ────────────────────────────────────────────────────────[×]┐
-│  ● New workspace   ○ Here (demo)                                          │
+┌─ New Workspace ────────────────────────────────────────────────────── × ─┐
 │                                                                           │
-│▸ What should the agent do?                                                │
-│  ┌───────────────────────────────────────────────────────────────────────┐│
-│  │ fix the flaky resize test in split_view.rs█                           ││
-│  │                                                                       ││
-│  └───────────────────────────────────────────────────────────────────────┘│
-│  Agent [claude ▼]   [ ] auto   [v] teach Fresh CLI                        │
+│   ( New workspace )    Here · demo                                        │
 │                                                                           │
-│  ▸ Local · ~/repos/fresh · new branch fresh-47 from origin/master   Alt+O │
+│   Prompt                                                                  │
+│   ╭─────────────────────────────────────────────────────────────────────╮ │
+│ ▸ │ fix the flaky resize test in split_view.rs█                         │ │
+│   │                                                                     │ │
+│   │                                                                     │ │
+│   │                                                                     │ │
+│   ╰─────────────────────────────────────────────────────────────────────╯ │
 │                                                                           │
-│                              [ Launch ]  ^⏎    Launch in background  Alt+⏎│
+│   Agent    [ claude ▾ ]       [ ] Auto mode      [✓] Teach Fresh CLI      │
+│                                                                           │
+│   ─────────────────────────────────────────────────────────────────────   │
+│   ▸ Where   Local · ~/repos/fresh                                         │
+│             new worktree fresh-47, branched from origin/master            │
+│   ─────────────────────────────────────────────────────────────────────   │
+│                                                                           │
+│                                   Launch in background    [  Launch  ]    │
+│                                                                           │
+│        Ctrl+⏎ launch   Alt+⏎ background   Alt+W where   Esc cancel        │
 └───────────────────────────────────────────────────────────────────────────┘
 ```
 
-- Focus opens **in the prompt** (a 3-row `textArea`; Enter = newline,
-  ^⏎ = launch). Type, ^⏎. Two actions from palette to running agent.
-- `● New workspace ○ Here (demo)` is a `radio` replacing `Launch in`: both
-  choices visible, ←/→ flips, the workspace name is right there. The title
-  follows it (`New Workspace` / `Run Agent`) as today.
-- The agent row packs dropdown + its switches onto one line; switches still
-  appear only for agents that support them. `custom…` reveals the Command
-  field directly under the row (unchanged rule, §3.5).
-- The prompt box shows for **every** agent. For `terminal` it becomes
-  `Command to run` (the shell gets it as its first line) — or, if we'd rather
-  not add behaviour, it's disabled with placeholder `terminal takes no
-  prompt`. Either way it doesn't vanish, so the layout doesn't jump.
-- The **where-line** is a fold: the summary is `branchPlanNote` +
-  machine + path compressed to one line. Enter / click / Alt+O opens it.
-- One primary button. `Cancel` goes (× and Esc remain, hint is in the
-  frame); `Create in Background` becomes a quiet link-styled button with its
-  own accelerator, still Tab-reachable.
+- **Focus opens in the prompt** (▸). Enter = newline, Ctrl+Enter = Launch.
+  Typing a prompt and pressing Ctrl+Enter is the whole flow.
+- **Mode switch** is a two-segment toggle on the first row: the selected
+  segment is bracketed `( … )`; the other is plain text. ←/→ or click flips it.
+  "Here" carries the current workspace's name. The title follows the mode
+  (`New Workspace` / `Run Agent`).
+- **Agent row**: dropdown and the agent's switches on one line. A switch the
+  agent doesn't support is not drawn. `custom…` inserts a `Command` row
+  directly under it.
+- **Where summary** is two lines: *where it runs* (machine · path) and *what
+  it does to git* (the existing branch-plan preview). Non-git path:
+  `in place, no git`. Existing linked worktree: `attach to existing
+  worktree <name>`.
 
-### 3.2 Where-fold open (local)
+### 3.2 New workspace — expanded (local)
 
-```
-│  ▾ Where                                                           Alt+O │
-│        Machine  [Local ▼]                                                 │
-│        Project  [~/repos/fresh                                        ]   │
-│      Workspace  [fresh-47                                             ]   │
-│                 [v] new git worktree                                      │
-│      Branch off [origin/master                                        ]   │
-│     New branch  [                                                     ]   │
-│                 ↳ blank: new branch fresh-47, cut from origin/master      │  (focused-field note)
-```
-
-Same fields, same order, same probes and completions as today — just
-grouped under the fold and without the reserved padding. The fold's open
-state is remembered (`orchestrator.where_open`), so a user who always tweaks
-branches sees it open every time.
-
-### 3.3 Remote machine picked
-
-Picking a non-local machine auto-opens the fold (there is something to fill
-in) and shows only that machine's connection fields — SSH target/identity/
-options, or k8s target/context/namespace/pod — followed by `Remember this
-machine`. Rows appear below the agent row, so nothing above moves.
+Enter / click on `▸ Where`, or Alt+W, from anywhere. The fold state is
+remembered for next time.
 
 ```
-│  ▾ Where                                                                  │
-│        Machine  [Other host… ▼]                                           │
-│           Host  [user@box:22                                          ]   │
-│       Identity  [~/.ssh/id_ed25519 (optional)                         ]   │
-│    SSH options  [-J jump (optional)                                   ]   │
-│        Project  [~ (remote home)                                      ]   │
-│                 [v] new git worktree   ✓ git repo on box                  │
-│                 [ ] remember this machine as [box        ]                │
-```
-
-The collapsed summary for a saved machine reads
-`▸ gpu-box · ~/src/app · new branch app-3 from main`.
-
-### 3.4 Run Agent (Here) — 8 rows
-
-```
-┌ Run Agent ────────────────────────────────────────────────────────────[×]┐
-│  ○ New workspace   ● Here (demo)                                          │
+┌─ New Workspace ────────────────────────────────────────────────────── × ─┐
 │                                                                           │
-│▸ What should the agent do?                                                │
-│  ┌───────────────────────────────────────────────────────────────────────┐│
-│  │ █                                                                     ││
-│  └───────────────────────────────────────────────────────────────────────┘│
-│  Agent [claude ▼]   [ ] auto   [v] teach Fresh CLI                        │
-│                                                        [ Run ]  ^⏎        │
+│   ( New workspace )    Here · demo                                        │
+│                                                                           │
+│   Prompt                                                                  │
+│   ╭─────────────────────────────────────────────────────────────────────╮ │
+│   │ fix the flaky resize test in split_view.rs                          │ │
+│   │                                                                     │ │
+│   │                                                                     │ │
+│   │                                                                     │ │
+│   ╰─────────────────────────────────────────────────────────────────────╯ │
+│                                                                           │
+│   Agent    [ claude ▾ ]       [ ] Auto mode      [✓] Teach Fresh CLI      │
+│                                                                           │
+│   ─────────────────────────────────────────────────────────────────────   │
+│   ▾ Where                                                                 │
+│                                                                           │
+│          Machine   [ Local ▾ ]                                            │
+│          Project   [ ~/repos/fresh                                    ]   │
+│        Workspace   [ fresh-47                                         ]   │
+│                                                                           │
+│              Git   [✓] Create a worktree                                  │
+│      Branch from ▸ [ origin/master                                    ]   │
+│                    ↳ an existing branch or ref; blank = origin/master     │
+│       New branch   [ fresh-47                                         ]   │
+│                                                                           │
+│                    worktree at ~/.local/share/fresh/orchestrator/…/fresh-47
+│   ─────────────────────────────────────────────────────────────────────   │
+│                                                                           │
+│                                   Launch in background    [  Launch  ]    │
+│                                                                           │
+│        Ctrl+⏎ launch   Alt+⏎ background   Alt+W where   Esc cancel        │
 └───────────────────────────────────────────────────────────────────────────┘
 ```
 
-No where-line (there is no "where" to choose); the path is in the radio
-label. Flipping the radio to `New workspace` inserts the where-line above
-the buttons — the prompt and its text are untouched.
+- The top half is identical to the collapsed form — nothing above the rule
+  moves.
+- Where has two sub-groups separated by a blank row: **location** (Machine,
+  Project, Workspace) and **git** (worktree toggle, Branch from, New
+  branch). Renames: "Checkout branch" → "Branch from", "Workspace Name" →
+  "Workspace", "Project Path" → "Project".
+- `New branch` shows the planned name as its placeholder instead of a
+  separate "blank: new branch …" note.
+- The one `↳` note shows only under the focused field (here: Branch from).
+- The worktree location is a single dim line at the end of the group, not a
+  note on a field.
+- Worktree off: `Branch from` stays (in-place checkout), `New branch` and
+  the location line disappear.
 
-### 3.5 Submitting
+### 3.3 New workspace — expanded, remote machine
 
-The read-only "Connecting…" view keeps its content but uses the same
-summary line instead of `Run in: / Host: / Project:` rows, with the
-prompt shown dimmed above it so the user sees what they sent.
+Picking any non-local machine opens the fold by itself (there's something
+to fill in). The connection fields sit right under Machine.
+
+```
+│   ▾ Where                                                                 │
+│                                                                           │
+│          Machine   [ Other host… ▾ ]                                      │
+│             Host   [ user@box:22                                      ]   │
+│         Identity   [ ~/.ssh/id_ed25519                    (optional)  ]   │
+│      SSH options   [ -J jump                              (optional)  ]   │
+│                    [ ] Remember this machine as [ box              ]      │
+│                                                                           │
+│          Project   [ ~/src/app                                        ]   │
+│        Workspace   [ app-3                                            ]   │
+│                                                                           │
+│              Git   [✓] Create a worktree           ✓ git repo on box      │
+│      Branch from   [ main                                             ]   │
+│       New branch   [ app-3                                            ]   │
+│                                                                           │
+│                    worktree at ~/.fresh/worktrees/app/app-3 (on box)      │
+│   ─────────────────────────────────────────────────────────────────────   │
+```
+
+- The remote-git check result goes on the worktree row, to the right:
+  `checking box…`, `✓ git repo on box`, `not a git repo`,
+  `can't reach box`, `new host key — you'll confirm on launch`.
+- "Remember this machine" moves up into the connection group, since it's
+  about the connection.
+- Kubernetes uses the same slot: `Target`, `Context`, `Namespace`, `Pod`,
+  then Remember. A saved machine or ssh-config host shows no connection
+  rows, just the Machine row with a hint (`user@host:port`).
+- Collapsed summary for a remote: `▸ Where   box · ~/src/app` /
+  `new worktree app-3, branched from main`.
+
+### 3.4 Here (Run Agent)
+
+```
+┌─ Run Agent ────────────────────────────────────────────────────────── × ─┐
+│                                                                           │
+│     New workspace    ( Here · demo )                                      │
+│                                                                           │
+│   Prompt                                                                  │
+│   ╭─────────────────────────────────────────────────────────────────────╮ │
+│ ▸ │ █                                                                   │ │
+│   │                                                                     │ │
+│   │                                                                     │ │
+│   │                                                                     │ │
+│   ╰─────────────────────────────────────────────────────────────────────╯ │
+│                                                                           │
+│   Agent    [ claude ▾ ]       [ ] Auto mode      [✓] Teach Fresh CLI      │
+│                                                                           │
+│                                                            [  Run  ]      │
+│                                                                           │
+│                    Ctrl+⏎ run   Esc cancel                                │
+└───────────────────────────────────────────────────────────────────────────┘
+```
+
+No Where section: the location is the "Here · demo" segment. Switching to
+New workspace adds the Where section between Agent and the footer; the
+prompt text and agent choice carry over.
+
+### 3.5 Agent variations
+
+```
+│   Agent    [ terminal ▾ ]                                                 │
+```
+`terminal`: the prompt box stays in place but reads `Prompt — sent to the
+shell as its first command` (or is disabled; see open questions). No
+switches.
+
+```
+│   Agent    [ custom… ▾ ]                                                  │
+│  Command   [ codex resume --last                                      ]   │
+```
+`custom…`: a Command row appears under Agent; the prompt box is used if
+the command's agent takes one.
+
+### 3.6 Short terminals
+
+Under ~34 rows the blank spacer rows are dropped first (padding → 0, rules
+stay), and the prompt box shrinks to 2 rows. The Where section, when
+expanded, scrolls inside the dialog rather than pushing the footer off.
+
+### 3.7 Submitting
+
+The form turns read-only: the prompt stays visible (dimmed) with the Where
+summary under it and `Creating workspace… Esc to cancel` in the footer, in
+place of today's separate `Run in: / Host: / Project:` view.
 
 ## 4. Feature parity checklist
 
 | Today | Redesign |
 |---|---|
-| Launch in: Current / New | radio row, top |
+| Launch in: Current / New | two-segment toggle, first row |
 | Machine dropdown (Local, saved, ssh-config hosts, Other host…, Kubernetes…, Devcontainer) | fold, first row; picking remote auto-opens fold |
 | SSH target / identity / options | fold, under Machine when `Other host…` |
 | k8s target / context / namespace / pod | fold, under Machine when `Kubernetes…` |
 | Project Path (+ completions, history, linked-worktree hint) | fold `Project` — same widget, note on focus |
 | Workspace Name (auto placeholder) | fold `Workspace`; also in collapsed summary |
 | Agent dropdown, custom… → Command | agent row; Command under it when custom |
-| Start prompt | prompt box, top, multi-line, initial focus |
+| Start prompt | `Prompt` box, top, multi-line, initial focus |
 | Auto mode / Teach Fresh CLI (per-agent) | same switches, inline on agent row |
 | Create git worktree / Checkout branch / New branch / branch plan / worktree path | fold; plan + path condensed into summary line |
 | Remote git probe states (probing / unreachable / untrusted / non-git) | fold, inline status next to the worktree toggle |
@@ -214,11 +317,12 @@ All widgets exist in `plugins/lib/widgets.ts` (`radio`, `textArea`,
   `connectionRowsMax` / `tailRowsMax` → one `buildFormSpec` that emits
   header, prompt, agent row, where-line-or-fold, footer. Deletes the
   row-reservation machinery.
-- `targetRow` → `radio`. `mountFormPanel` initial focus → `start_prompt`.
-- `startPromptFields` → `textArea({rows: 3})`. `FORM_MODE_BINDINGS` already
+- `targetRow` → a two-segment toggle (`radio` laid out in a `row`). `mountFormPanel` initial focus → `start_prompt`.
+- `startPromptFields` → `textArea({rows: 4})` under a `Prompt` label, rounded frame. `FORM_MODE_BINDINGS` already
   binds `C-Enter` to submit; the `Enter` shim (`orchestrator_form_key_enter`)
   must forward to the host's text dispatch (newline) when focus is the
-  prompt box instead of advancing focus. Add `M-Enter` → create-bg.
+  prompt box instead of advancing focus. Add `M-Enter` → create-bg and `M-w` → toggle Where (currently unbound in this mode).
+- Padding: a blank row between groups and 3-cell inner side padding; `divider` rules fence Where. Drop spacers first on short screens (§3.6).
 - New `form.whereOpen` (persisted), `whereSummary(f)` built from
   `branchPlanNote`, `plannedWorkspaceName`, machine label and path.
 - `fieldNote` calls gated on `focusKey === key || error`.
