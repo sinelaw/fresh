@@ -1794,6 +1794,50 @@ impl Editor {
         true
     }
 
+    /// Wait until the plugin runtime is at rest, servicing its command
+    /// channel throughout. Returns whether that servicing processed
+    /// anything.
+    ///
+    /// Not the same as `pending_plugin_actions` being empty: that only
+    /// means the handler was *called*, which for an `async` handler is its
+    /// first `await`. The rest runs a host round-trip at a time, and
+    /// between an answer going out and the next command coming back the
+    /// command channel is quiet for reasons unrelated to being finished.
+    ///
+    /// Test-harness helper. The editor's own loop pumps this pipeline every
+    /// frame and has nowhere to be in between.
+    #[cfg(feature = "plugins")]
+    #[doc(hidden)]
+    pub fn sync_plugin_runtime(&mut self) -> bool {
+        use fresh_plugin_runtime::thread::oneshot::TryRecvError;
+
+        let Some(rx) = self.plugin_manager.read().unwrap().sync_runtime() else {
+            return false;
+        };
+        let mut had_messages = false;
+        loop {
+            match rx.try_recv() {
+                Ok(()) => break,
+                Err(TryRecvError::Empty) => {
+                    // Keep answering: the plugin thread may be parked on a
+                    // host round-trip queued ahead of the sync request.
+                    had_messages |= self.process_async_messages();
+                    std::thread::yield_now();
+                }
+                Err(TryRecvError::Disconnected) => break,
+            }
+        }
+        // Pick up the commands those continuations queued.
+        had_messages | self.process_async_messages()
+    }
+
+    /// Stub for builds without plugin support.
+    #[cfg(not(feature = "plugins"))]
+    #[doc(hidden)]
+    pub fn sync_plugin_runtime(&mut self) -> bool {
+        false
+    }
+
     /// Process pending LSP server restarts (with exponential backoff)
     pub(super) fn process_pending_lsp_restarts(&mut self) {
         let __active_id = self.active_window;

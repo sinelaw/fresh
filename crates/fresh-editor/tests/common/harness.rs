@@ -1244,12 +1244,16 @@ impl EditorTestHarness {
     /// printable chars) with keys handled synchronously by a
     /// host-side bypass (e.g. `Shift+arrow`, `Ctrl+C/V`).
     ///
-    /// We need both:
+    /// We need all three:
     ///  (1) `pending_plugin_actions` to be empty — the plugin
-    ///      thread has finished every action queued by this
+    ///      thread has started every action queued by this
     ///      keypress and any follow-on dispatch the action
     ///      itself triggered.
-    ///  (2) the async bridge to be quiet for one extra
+    ///  (2) the plugin runtime to be at rest — see
+    ///      `Editor::sync_plugin_runtime`. (1) alone is not it:
+    ///      it only means the handler was called, not that it
+    ///      finished.
+    ///  (3) the async bridge to be quiet for one extra
     ///      iteration — to catch the `WidgetCommand` that a
     ///      completed plugin action just pushed.
     ///
@@ -1272,7 +1276,14 @@ impl EditorTestHarness {
     /// survives into a killed test's output. That is a loud, correct
     /// failure in place of a quiet, wrong assertion.
     ///
-    /// (2) keeps a short bound of its own, and that one is not a
+    /// (2) asks the plugin thread rather than sampling the channel. (3)
+    /// used to carry that on its own, and could not: two quiet iterations a
+    /// millisecond apart is a timer — the plugin thread had to turn a
+    /// round-trip around in 2 ms — and on a loaded runner it lost, so
+    /// `send_key` returned mid-handler and the test delivered the next key
+    /// into a half-applied state.
+    ///
+    /// (3) keeps a short bound of its own, and that one is not a
     /// timeout: legitimately continuous message sources — PTY output,
     /// timer-driven plugin polls — never go quiet, so it bounds a wait
     /// for silence that may never come rather than one for a state
@@ -1281,7 +1292,7 @@ impl EditorTestHarness {
         const SLEEP_PER_ITER: std::time::Duration = std::time::Duration::from_millis(1);
         /// How often an in-flight action reports itself while (1) waits.
         const STUCK_REPORT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(10);
-        /// Iterations of (2) to tolerate before concluding the source is
+        /// Iterations of (3) to tolerate before concluding the source is
         /// continuous rather than settling.
         const TAIL_ITERS: usize = 200;
         const QUIET_ITERS: usize = 2;
@@ -1291,7 +1302,7 @@ impl EditorTestHarness {
         let mut quiet_iters = 0;
         let mut tail_iters = 0;
         loop {
-            let had_messages = self.editor.process_async_messages();
+            let mut had_messages = self.editor.process_async_messages();
 
             if !self.editor.pending_plugin_actions_is_empty() {
                 quiet_iters = 0;
@@ -1318,6 +1329,14 @@ impl EditorTestHarness {
                 std::thread::sleep(SLEEP_PER_ITER);
                 continue;
             }
+
+            // (2) The pass above may have answered a host call the plugin
+            //     was waiting on; whatever its continuation asks for next
+            //     only arrives afterwards, so an empty command channel
+            //     right now means nothing. A handler parked on
+            //     `editor.getNextKey()` counts as at rest, so this never
+            //     waits for a key the test has not sent.
+            had_messages |= self.editor.sync_plugin_runtime();
 
             if had_messages {
                 // Messages are still flowing: keep draining at full
