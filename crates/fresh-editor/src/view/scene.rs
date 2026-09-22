@@ -2074,6 +2074,9 @@ pub struct SettingsCategoryView {
     pub expandable: bool,
     pub expanded: bool,
     pub sections: Vec<String>,
+    /// Listed under another category's row (a plugin's page under
+    /// "Plugins"), so drawn indented and without a chevron.
+    pub nested: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -2322,17 +2325,34 @@ impl Editor {
             return None;
         }
 
+        // The rows the TUI's tree shows, in its order: nested pages appear
+        // only under an expanded parent, and a category lists its sections
+        // only when it has more than one.
         let categories = st
-            .pages
-            .iter()
-            .enumerate()
-            .map(|(i, p)| SettingsCategoryView {
-                index: i,
-                name: p.name.clone(),
-                selected: i == st.selected_category,
-                expandable: !p.subpages.is_empty() || p.sections.len() > 1,
-                expanded: st.expanded_categories.contains(&i),
-                sections: p.sections.iter().map(|s| s.name.clone()).collect(),
+            .visible_tree()
+            .into_iter()
+            .filter_map(|row| match row {
+                crate::view::settings::state::TreeRow::Category {
+                    idx,
+                    expandable,
+                    expanded,
+                    nested,
+                } => {
+                    let p = &st.pages[idx];
+                    Some(SettingsCategoryView {
+                        index: idx,
+                        name: p.name.clone(),
+                        selected: idx == st.selected_category,
+                        expandable,
+                        expanded,
+                        sections: match p.sections.len() > 1 {
+                            true => p.sections.iter().map(|s| s.name.clone()).collect(),
+                            false => Vec::new(),
+                        },
+                        nested,
+                    })
+                }
+                crate::view::settings::state::TreeRow::Section { .. } => None,
             })
             .collect();
 

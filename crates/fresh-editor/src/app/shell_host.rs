@@ -1722,12 +1722,16 @@ impl Editor {
 impl Editor {
     /// A click on a category row, anywhere on it. A category not yet under
     /// the cursor is selected and expanded; a click on the one already under
-    /// it toggles it open or shut.
+    /// it toggles it open or shut when it can be, and otherwise takes its
+    /// page back to the top as any other selection does.
     pub(crate) fn settings_select_category(&mut self, idx: usize) {
         use crate::view::settings::state::FocusTarget;
         if let Some(s) = self.settings_state.as_mut() {
             s.focus_on(FocusTarget::Categories);
-            if s.selected_category == idx && s.tree_cursor_section.is_none() {
+            if s.selected_category == idx
+                && s.tree_cursor_section.is_none()
+                && s.is_category_expandable(idx)
+            {
                 s.toggle_category_expanded(idx);
                 return;
             }
