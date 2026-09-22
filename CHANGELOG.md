@@ -31,6 +31,7 @@ Fresh is now licensed **GPL-3.0-or-later**, up from GPL-2.0-only (#3328).
 * **Markdown compose: a heading no longer flickers while you type in it**, and backspacing a list item no longer throws the caret two rows down (#3318)
 * **The occurrence highlight keeps up with the cursor** - it used to wait for your next keystroke to repaint, and in a daemon session every other time-driven repaint was stranded with it (#3318)
 * **Code tour: clicking the prose takes the keyboard**, and its caret stays visible past the end of a line (#3318)
+* **A tab after CJK text no longer eats the character before it** - the tab marker was placed by visual column against an index counted in characters, so a double-width glyph put it one character early and the `→` took that glyph's place: `你好⇥world` drew as `你→    world`. The file was never touched (#3218, reported by @sgon00)
 * **Highlighted lines** (diff view, code tour) no longer hide inlay hints at the end of the line (#3314)
 * **`editor.scroll_offset` fixed** for files under 5000 lines with line wrap off (#3248)
 * **Markdown code block borders** no longer break while you type inside them (#3247)
