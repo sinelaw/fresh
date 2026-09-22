@@ -438,6 +438,12 @@ impl Editor {
             } => {
                 self.perform_lsp_rename(input, original_text, start_pos, overlay_handle);
             }
+            PromptType::FileImportPaths { directory } => {
+                self.confirm_file_import_paths(&input, directory)
+            }
+            PromptType::FileImportProgress => self.cancel_file_import(),
+            PromptType::FileImportConflict => self.confirm_file_import_conflict(&input),
+            PromptType::FileImportRename => self.rename_file_import(&input),
             PromptType::FileExplorerRename {
                 original_path,
                 original_name,

@@ -260,6 +260,54 @@ impl FileTree {
         Ok(())
     }
 
+    /// Apply a directory listing fetched off the UI thread to the *current*
+    /// tree. Keep ids and expanded subtrees for unchanged children; never
+    /// replace the whole view with a stale background snapshot.
+    pub fn reconcile_directory(&mut self, path: &Path, mut entries: Vec<DirEntry>) {
+        let Some(parent) = self.get_node_by_path(path).filter(|n| n.is_dir()) else {
+            return;
+        };
+        let id = parent.id;
+        let mut old: HashMap<PathBuf, NodeId> = parent
+            .children
+            .iter()
+            .filter_map(|child| {
+                self.get_node(*child)
+                    .map(|n| (n.entry.path.clone(), *child))
+            })
+            .collect();
+        entries.sort_by(|a, b| match (a.is_dir(), b.is_dir()) {
+            (true, false) => std::cmp::Ordering::Less,
+            (false, true) => std::cmp::Ordering::Greater,
+            _ => natural_cmp(&a.name, &b.name),
+        });
+        let mut children = Vec::with_capacity(entries.len());
+        for entry in entries {
+            let existing = old.remove(&entry.path).filter(|child| {
+                let same_type = self.get_node(*child).is_some_and(|node| {
+                    node.entry.entry_type == entry.entry_type && node.is_dir() == entry.is_dir()
+                });
+                if !same_type {
+                    self.remove_node_recursive(*child);
+                }
+                same_type
+            });
+            let child = if let Some(child) = existing {
+                self.get_node_mut(child).unwrap().entry = entry;
+                child
+            } else {
+                self.add_node(entry, Some(id))
+            };
+            children.push(child);
+        }
+        for child in old.into_values() {
+            self.remove_node_recursive(child);
+        }
+        let parent = self.get_node_mut(id).unwrap();
+        parent.children = children;
+        parent.state = NodeState::Expanded;
+    }
+
     /// Collect the on-disk paths of every descendant of `id` that is in
     /// `Expanded` state. Excludes `id` itself — the caller is about to
     /// refresh that node, which handles its own expansion.
@@ -626,6 +674,42 @@ mod tests {
         let root = tree.get_node(tree.root_id()).unwrap();
         assert!(root.is_collapsed());
         assert_eq!(root.children.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn import_reconcile_preserves_expanded_descendants_and_replaces_changed_types() {
+        let (_dir, mut tree) = create_test_tree().await;
+        let root = tree.root_path().to_path_buf();
+        let leaf = root.join("dir1/file1.txt");
+        let leaf_id = tree.expand_to_path(&leaf).await.unwrap();
+        let folder_id = tree.get_node_by_path(&root.join("dir1")).unwrap().id;
+        let removed_id = tree.get_node_by_path(&root.join("file4.txt")).unwrap().id;
+        let mut entries = tree
+            .fs_manager
+            .list_dir_with_metadata(root.clone())
+            .await
+            .unwrap();
+        entries.retain(|entry| entry.name != "file4.txt");
+        entries.push(DirEntry::new(
+            root.join("new.txt"),
+            "new.txt".into(),
+            crate::model::filesystem::EntryType::File,
+        ));
+        tree.reconcile_directory(&root, entries.clone());
+        assert_eq!(tree.get_node_by_path(&leaf).unwrap().id, leaf_id);
+        assert!(tree.get_node(folder_id).unwrap().is_expanded());
+        assert!(tree.get_node(removed_id).is_none());
+        assert!(tree.get_node_by_path(&root.join("new.txt")).is_some());
+
+        let folder = entries
+            .iter_mut()
+            .find(|entry| entry.name == "dir1")
+            .unwrap();
+        folder.entry_type = crate::model::filesystem::EntryType::File;
+        tree.reconcile_directory(&root, entries);
+        assert!(tree.get_node(folder_id).is_none());
+        assert!(tree.get_node(leaf_id).is_none());
+        assert!(tree.get_node_by_path(&root.join("dir1")).unwrap().is_file());
     }
 
     #[tokio::test]

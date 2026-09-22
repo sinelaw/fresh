@@ -6,7 +6,7 @@
 //! drives, slow disks, etc.).
 
 use crate::model::filesystem::{
-    DirEntry, FileMetadata, FilePermissions, FileReader, FileSystem, FileWriter,
+    DirEntry, FileMetadata, FilePermissions, FileReader, FileSystem, FileUpload, FileWriter,
 };
 use std::io;
 use std::path::{Path, PathBuf};
@@ -195,6 +195,20 @@ impl FileSystem for SlowFileSystem {
         self.inner.create_file(path)
     }
 
+    fn create_file_for_upload(&self, path: &Path) -> io::Result<Box<dyn FileUpload>> {
+        self.add_delay(self.config.write_file_delay);
+        self.metrics.write_file_calls.fetch_add(1, Ordering::SeqCst);
+        self.inner.create_file_for_upload(path)
+    }
+
+    fn begin_file_import(
+        &self,
+        destination: &Path,
+        overwrite: bool,
+    ) -> io::Result<Option<Box<dyn crate::model::filesystem::AtomicFileUpload>>> {
+        self.inner.begin_file_import(destination, overwrite)
+    }
+
     fn open_file(&self, path: &Path) -> io::Result<Box<dyn FileReader>> {
         self.add_delay(self.config.read_file_delay);
         self.metrics.read_file_calls.fetch_add(1, Ordering::SeqCst);
@@ -225,6 +239,12 @@ impl FileSystem for SlowFileSystem {
         self.inner.rename(from, to)
     }
 
+    fn publish_file(&self, from: &Path, to: &Path, overwrite: bool) -> io::Result<()> {
+        self.add_delay(self.config.other_delay);
+        self.metrics.other_calls.fetch_add(1, Ordering::SeqCst);
+        self.inner.publish_file(from, to, overwrite)
+    }
+
     fn copy(&self, from: &Path, to: &Path) -> io::Result<u64> {
         self.add_delay(self.config.write_file_delay);
         self.metrics.write_file_calls.fetch_add(1, Ordering::SeqCst);
@@ -253,6 +273,12 @@ impl FileSystem for SlowFileSystem {
         self.add_delay(self.config.metadata_delay);
         self.metrics.metadata_calls.fetch_add(1, Ordering::SeqCst);
         self.inner.symlink_metadata(path)
+    }
+
+    fn is_symlink(&self, path: &Path) -> io::Result<bool> {
+        self.add_delay(self.config.metadata_delay);
+        self.metrics.metadata_calls.fetch_add(1, Ordering::SeqCst);
+        self.inner.is_symlink(path)
     }
 
     fn is_dir(&self, path: &Path) -> io::Result<bool> {

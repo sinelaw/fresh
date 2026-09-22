@@ -4,6 +4,7 @@ use crate::input::commands::Suggestion;
 use crate::primitives::word_navigation::{
     find_word_end_bytes, find_word_start_bytes, is_word_char,
 };
+use std::path::PathBuf;
 
 /// Type of prompt - determines what action to take when user confirms
 #[derive(Debug, Clone, PartialEq)]
@@ -12,7 +13,9 @@ pub enum PromptType {
     OpenFile,
     /// Open a file with a specific encoding (used when detect_encoding is disabled)
     /// Contains the path to open after encoding selection
-    OpenFileWithEncoding { path: std::path::PathBuf },
+    OpenFileWithEncoding {
+        path: std::path::PathBuf,
+    },
     /// Reload current file with a different encoding
     /// Requires the buffer to have no unsaved modifications
     ReloadWithEncoding,
@@ -25,11 +28,15 @@ pub enum PromptType {
     /// Search for text in buffer (for replace operation - will prompt for replacement after)
     ReplaceSearch,
     /// Replace text in buffer
-    Replace { search: String },
+    Replace {
+        search: String,
+    },
     /// Search for text in buffer (for query-replace - will prompt for replacement after)
     QueryReplaceSearch,
     /// Query replace text in buffer - prompt for replacement text
-    QueryReplace { search: String },
+    QueryReplace {
+        search: String,
+    },
     /// Query replace confirmation prompt (y/n/!/q for each match)
     QueryReplaceConfirm,
     /// Quick Open - unified prompt with prefix-based provider routing
@@ -54,7 +61,9 @@ pub enum PromptType {
     SetBackgroundBlend,
     /// Plugin-controlled prompt with custom type identifier
     /// The string identifier is used to filter hooks in plugin code
-    Plugin { custom_type: String },
+    Plugin {
+        custom_type: String,
+    },
     /// LSP Rename operation
     /// Stores the original text, start/end positions in buffer, and overlay handle
     LspRename {
@@ -95,7 +104,9 @@ pub enum PromptType {
     RestartLspServer,
     /// Select a theme (select from list)
     /// Stores the original theme name for restoration on cancel
-    SelectTheme { original_theme: String },
+    SelectTheme {
+        original_theme: String,
+    },
     /// Select a keybinding map (select from list)
     SelectKeybindingMap,
     /// Select a cursor style (select from list)
@@ -113,9 +124,13 @@ pub enum PromptType {
         info: crate::model::buffer::SudoSaveRequired,
     },
     /// Confirm overwriting an existing file during SaveAs
-    ConfirmOverwriteFile { path: std::path::PathBuf },
+    ConfirmOverwriteFile {
+        path: std::path::PathBuf,
+    },
     /// Confirm creating parent directories for a save target
-    ConfirmCreateDirectory { path: std::path::PathBuf },
+    ConfirmCreateDirectory {
+        path: std::path::PathBuf,
+    },
     /// Confirm closing a modified buffer (save/discard/cancel)
     /// Stores buffer_id to close after user confirms
     ConfirmCloseBuffer {
@@ -127,6 +142,13 @@ pub enum PromptType {
     /// Issued only when no buffer is modified; otherwise
     /// `ConfirmQuitWithModified` runs instead.
     ConfirmQuit,
+    /// Explicit local-file drop/paste input; destination captured at invocation.
+    FileImportPaths {
+        directory: PathBuf,
+    },
+    FileImportProgress,
+    FileImportConflict,
+    FileImportRename,
     /// File Explorer rename operation
     /// Stores the original path and name for the file/directory being renamed
     FileExplorerRename {
@@ -154,7 +176,9 @@ pub enum PromptType {
         is_cut: bool,
     },
     /// Confirm deleting multiple items from the file explorer
-    ConfirmMultiDelete { paths: Vec<std::path::PathBuf> },
+    ConfirmMultiDelete {
+        paths: Vec<std::path::PathBuf>,
+    },
     /// Per-conflict prompt for multi-file paste.
     /// `pending[0]` is the conflict currently being shown.
     /// User choices: (o)verwrite this, (O) all, (s)kip this, (S) all, (c)ancel.
@@ -166,13 +190,17 @@ pub enum PromptType {
     },
     /// Confirm loading a large file with non-resynchronizable encoding
     /// (like GB18030, GBK, Shift-JIS, EUC-KR) that requires full file loading
-    ConfirmLargeFileEncoding { path: std::path::PathBuf },
+    ConfirmLargeFileEncoding {
+        path: std::path::PathBuf,
+    },
     /// Switch to a tab by name (from the current split's open buffers)
     SwitchToTab,
     /// Run shell command on buffer/selection
     /// If replace is true, replace the input with the output
     /// If replace is false, output goes to a new buffer
-    ShellCommand { replace: bool },
+    ShellCommand {
+        replace: bool,
+    },
     /// Async prompt from plugin (for editor.prompt() API)
     /// The result is returned via callback resolution
     AsyncPrompt,

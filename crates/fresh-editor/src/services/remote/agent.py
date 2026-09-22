@@ -11,6 +11,7 @@ import re
 import threading
 import select
 import time
+import tempfile
 from concurrent.futures import ThreadPoolExecutor
 
 CHUNK = 65536
@@ -28,6 +29,10 @@ cancelled = set()
 lock = threading.Lock()
 # Lock for serializing stdout writes (prevents interleaved JSON lines)
 write_lock = threading.Lock()
+# Open staging-file uploads, owned by this connection. Each upload has a lock
+# because requests use a thread pool (including abort after a timed-out write).
+uploads = {}
+uploads_lock = threading.Lock()
 
 
 def send(id, **kw):
@@ -175,6 +180,15 @@ def cmd_stat(id, p):
     )
 
 
+def cmd_is_symlink(id, p):
+    """Inspect the leaf without resolving it, including dangling links."""
+    raw = os.path.expanduser(p["path"])
+    if not raw:
+        raise ValueError("empty path")
+    path = os.path.join(validate_path(os.path.dirname(raw) or "."), os.path.basename(raw))
+    send(id, r=os.path.islink(path))
+
+
 def cmd_ls(id, p):
     """List directory contents with metadata."""
     path = validate_path(p["path"])
@@ -251,6 +265,20 @@ def cmd_cp(id, p):
     send(id, r={"size": os.path.getsize(dst)})
 
 
+def cmd_publish_file(id, p):
+    """Publish a completed upload without following the destination leaf."""
+    src = validate_path(p["from"])
+    # validate_path resolves symlinks. Resolve the parent only: a destination
+    # symlink is a conflict, never permission to overwrite its target.
+    raw_dst = os.path.abspath(os.path.expanduser(p["to"]))
+    dst = os.path.join(validate_path(os.path.dirname(raw_dst)), os.path.basename(raw_dst))
+    if p.get("overwrite", False):
+        os.replace(src, dst)
+    else:
+        os.link(src, dst)
+    send(id, r={})
+
+
 def cmd_realpath(id, p):
     """Get canonical absolute path."""
     send(id, r={"path": validate_path(p["path"])})
@@ -271,6 +299,114 @@ def cmd_append(id, p):
         f.flush()
         os.fsync(f.fileno())
     send(id, r={"size": len(data)})
+
+
+def cmd_upload_open(id, p):
+    key = p["upload"]
+    with uploads_lock:
+        if key in uploads:
+            raise ValueError("upload already open")
+        f = open(validate_path(p["path"]), "xb", buffering=0)
+        uploads[key] = (f, threading.Lock(), None, None, False)
+    send(id, r={})
+
+
+def cmd_import_begin(id, p):
+    """Check conflict, reserve staging and open one handle in a single request."""
+    key = p["upload"]
+    raw = os.path.abspath(os.path.expanduser(p["destination"]))
+    destination = os.path.join(validate_path(os.path.dirname(raw)), os.path.basename(raw))
+    overwrite = p.get("overwrite", False)
+    with uploads_lock:
+        if key in uploads:
+            raise ValueError("upload already open")
+        if not overwrite and os.path.lexists(destination):
+            raise FileExistsError(destination)
+        staging = tempfile.mkdtemp(prefix=".fresh-import-", dir=os.path.dirname(destination))
+        try:
+            f = open(os.path.join(staging, "data"), "xb", buffering=0)
+        except Exception:
+            os.rmdir(staging)
+            raise
+        uploads[key] = (f, threading.Lock(), staging, destination, overwrite)
+    send(id, r={})
+
+
+def cmd_upload_chunk(id, p):
+    # Reject oversized requests before decoding another copy of the payload.
+    if len(p["data"]) > 4 * ((1024 * 1024 + 2) // 3):
+        raise ValueError("upload chunk exceeds 1 MiB")
+    data = unb64(p["data"])
+    if len(data) > 1024 * 1024:
+        raise ValueError("upload chunk exceeds 1 MiB")
+    with uploads_lock:
+        f, guard = uploads[p["upload"]][:2]
+    with guard:
+        remaining = memoryview(data)
+        while remaining:
+            written = f.write(remaining)
+            if not written:
+                raise OSError("upload write made no progress")
+            remaining = remaining[written:]
+    send(id, r={"size": len(data)})
+
+
+def close_upload(key, sync, publish=False):
+    with uploads_lock:
+        upload = uploads.pop(key, None)
+    if upload is None:
+        if sync:
+            raise ValueError("upload is not open")
+        return
+    f, guard, staging, destination, overwrite = upload
+    error = None
+    with guard:
+        try:
+            try:
+                if sync:
+                    os.fsync(f.fileno())
+            finally:
+                f.close()
+            if publish:
+                if staging is None:
+                    raise ValueError("not an import transaction")
+                source = os.path.join(staging, "data")
+                if overwrite:
+                    os.replace(source, destination)
+                else:
+                    # Recheck atomically: another process may have created it
+                    # after import_begin's initial conflict check.
+                    os.link(source, destination)
+        except Exception as e:
+            error = e
+        finally:
+            if staging is not None:
+                try:
+                    try:
+                        os.unlink(os.path.join(staging, "data"))
+                    except FileNotFoundError:
+                        pass  # replace() moved the file on successful overwrite.
+                    os.rmdir(staging)
+                except OSError as cleanup:
+                    raise OSError(f"{error or 'import completed'}; staging cleanup failed at {staging}: {cleanup}") from cleanup
+    if error is not None:
+        raise error
+
+
+def cmd_import_commit(id, p):
+    """Sync, atomically publish and remove staging in a single request."""
+    close_upload(p["upload"], True, publish=True)
+    send(id, r={})
+
+
+def cmd_upload_finish(id, p):
+    close_upload(p["upload"], True)
+    send(id, r={})
+
+
+def cmd_upload_abort(id, p):
+    close_upload(p["upload"], False)
+    send(id, r={})
 
 
 def cmd_truncate(id, p):
@@ -727,15 +863,23 @@ METHODS = {
     "write": cmd_write,
     "sudo_write": cmd_sudo_write,
     "stat": cmd_stat,
+    "is_symlink": cmd_is_symlink,
     "ls": cmd_ls,
     "rm": cmd_rm,
     "rmdir": cmd_rmdir,
     "mkdir": cmd_mkdir,
     "mv": cmd_mv,
+    "publish_file": cmd_publish_file,
     "cp": cmd_cp,
     "realpath": cmd_realpath,
     "chmod": cmd_chmod,
     "append": cmd_append,
+    "upload_open": cmd_upload_open,
+    "import_begin": cmd_import_begin,
+    "import_commit": cmd_import_commit,
+    "upload_chunk": cmd_upload_chunk,
+    "upload_finish": cmd_upload_finish,
+    "upload_abort": cmd_upload_abort,
     "truncate": cmd_truncate,
     "patch": cmd_patch,
     "count_lf": cmd_count_lf,
@@ -772,6 +916,8 @@ def handle_request(line):
         send(id, e=f"permission denied: {e}")
     except FileNotFoundError as e:
         send(id, e=f"not found: {e}")
+    except FileExistsError as e:
+        send(id, e=f"already exists: {e}")
     except IsADirectoryError as e:
         send(id, e=f"is a directory: {e}")
     except NotADirectoryError as e:
@@ -801,6 +947,11 @@ def main():
         pool.submit(handle_request, line)
 
     pool.shutdown(wait=True)
+    for key in list(uploads):
+        try:
+            close_upload(key, False)
+        except OSError as error:
+            print(f"upload cleanup failed: {error}", file=sys.stderr)
 
 
 if __name__ == "__main__":

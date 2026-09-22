@@ -3,7 +3,8 @@
 //! Implements the FileSystem trait for remote operations via SSH agent.
 
 use crate::model::filesystem::{
-    DirEntry, EntryType, FileMetadata, FilePermissions, FileReader, FileSystem, FileWriter, WriteOp,
+    AtomicFileUpload, DirEntry, EntryType, FileMetadata, FilePermissions, FileReader, FileSystem,
+    FileUpload, FileWriter, WriteOp,
 };
 use crate::services::remote::channel::{AgentChannel, ChannelError};
 use crate::services::remote::protocol::{
@@ -142,6 +143,8 @@ impl RemoteFileSystem {
                     io::ErrorKind::IsADirectory
                 } else if msg.contains("not a directory") {
                     io::ErrorKind::NotADirectory
+                } else if msg.starts_with("already exists:") {
+                    io::ErrorKind::AlreadyExists
                 } else {
                     io::ErrorKind::Other
                 };
@@ -326,6 +329,39 @@ impl FileSystem for RemoteFileSystem {
         )))
     }
 
+    fn create_file_for_upload(&self, path: &Path) -> io::Result<Box<dyn FileUpload>> {
+        let upload = RemoteFileUpload {
+            channel: self.channel.clone(),
+            id: uuid::Uuid::new_v4().to_string(),
+            closed: false,
+        };
+        self.channel
+            .request_blocking(
+                "upload_open",
+                serde_json::json!({
+                    "upload": upload.id, "path": path.to_string_lossy(),
+                }),
+            )
+            .map_err(Self::to_io_error)?;
+        Ok(Box::new(upload))
+    }
+
+    fn begin_file_import(
+        &self,
+        destination: &Path,
+        overwrite: bool,
+    ) -> io::Result<Option<Box<dyn AtomicFileUpload>>> {
+        let upload = RemoteFileUpload {
+            channel: self.channel.clone(),
+            id: uuid::Uuid::new_v4().to_string(),
+            closed: false,
+        };
+        self.channel.request_blocking("import_begin", serde_json::json!({
+            "upload": upload.id, "destination": destination.to_string_lossy(), "overwrite": overwrite,
+        })).map_err(Self::to_io_error)?;
+        Ok(Some(Box::new(upload)))
+    }
+
     fn open_file(&self, path: &Path) -> io::Result<Box<dyn FileReader>> {
         // Read the entire file into memory for seeking
         let data = self.read_file(path)?;
@@ -403,6 +439,20 @@ impl FileSystem for RemoteFileSystem {
         Ok(result.get("size").and_then(|v| v.as_u64()).unwrap_or(0))
     }
 
+    fn publish_file(&self, from: &Path, to: &Path, overwrite: bool) -> io::Result<()> {
+        self.channel
+            .request_blocking(
+                "publish_file",
+                serde_json::json!({
+                    "from": from.to_string_lossy(),
+                    "to": to.to_string_lossy(),
+                    "overwrite": overwrite,
+                }),
+            )
+            .map_err(Self::to_io_error)?;
+        Ok(())
+    }
+
     fn remove_file(&self, path: &Path) -> io::Result<()> {
         let params = serde_json::json!({"path": path.to_string_lossy()});
         self.channel
@@ -451,6 +501,19 @@ impl FileSystem for RemoteFileSystem {
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_default();
         Ok(Self::convert_metadata(&rm, &name))
+    }
+
+    fn is_symlink(&self, path: &Path) -> io::Result<bool> {
+        let result = self
+            .channel
+            .request_blocking(
+                "is_symlink",
+                serde_json::json!({ "path": path.components().collect::<PathBuf>().to_string_lossy() }),
+            )
+            .map_err(Self::to_io_error)?;
+        result
+            .as_bool()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "expected symlink status"))
     }
 
     fn is_dir(&self, path: &Path) -> io::Result<bool> {
@@ -813,6 +876,88 @@ impl Seek for RemoteFileReader {
 }
 
 impl FileReader for RemoteFileReader {}
+
+/// Uploads use one agent-owned handle, never the whole-file buffering writer.
+/// Each write waits for its acknowledgement, so cancellation/cleanup cannot
+/// race a queued write. Cap requests even if a caller supplies a larger slice.
+struct RemoteFileUpload {
+    channel: Arc<AgentChannel>,
+    id: String,
+    closed: bool,
+}
+
+impl Write for RemoteFileUpload {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let count = buf.len().min(1024 * 1024);
+        if count == 0 {
+            return Ok(0);
+        }
+        self.channel
+            .request_blocking(
+                "upload_chunk",
+                serde_json::json!({
+                    "upload": self.id,
+                    "data": crate::services::remote::protocol::encode_base64(&buf[..count]),
+                }),
+            )
+            .map_err(RemoteFileSystem::to_io_error)?;
+        Ok(count)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        // Every write has already been acknowledged; finish performs fsync.
+        Ok(())
+    }
+}
+
+impl FileUpload for RemoteFileUpload {
+    fn finish(mut self: Box<Self>) -> io::Result<()> {
+        self.channel
+            .request_blocking(
+                "upload_finish",
+                serde_json::json!({
+                    "upload": self.id,
+                }),
+            )
+            .map_err(RemoteFileSystem::to_io_error)?;
+        self.closed = true;
+        Ok(())
+    }
+}
+
+impl AtomicFileUpload for RemoteFileUpload {
+    fn commit(mut self: Box<Self>) -> io::Result<()> {
+        self.channel
+            .request_blocking("import_commit", serde_json::json!({"upload": self.id}))
+            .map_err(RemoteFileSystem::to_io_error)?;
+        self.closed = true;
+        Ok(())
+    }
+    fn abort(mut self: Box<Self>) -> io::Result<()> {
+        self.channel
+            .request_blocking("upload_abort", serde_json::json!({"upload": self.id}))
+            .map_err(RemoteFileSystem::to_io_error)?;
+        self.closed = true;
+        Ok(())
+    }
+}
+
+impl Drop for RemoteFileUpload {
+    fn drop(&mut self) {
+        if !self.closed {
+            // Runs on the import worker, before staging cleanup. The agent
+            // also closes abandoned handles when its input connection ends.
+            if let Err(error) = self.channel.request_blocking(
+                "upload_abort",
+                serde_json::json!({
+                    "upload": self.id,
+                }),
+            ) {
+                tracing::warn!("Failed to close upload {}: {error}", self.id);
+            }
+        }
+    }
+}
 
 /// Remote file writer - buffers writes and flushes on sync
 struct RemoteFileWriter {

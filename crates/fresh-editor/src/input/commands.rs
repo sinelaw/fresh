@@ -987,6 +987,13 @@ static COMMAND_DEFS: &[CommandDef] = &[
         custom_contexts: &[],
     },
     CommandDef {
+        name_key: "cmd.explorer_import",
+        desc_key: "cmd.explorer_import_desc",
+        action: || Action::FileExplorerImport,
+        contexts: &[Normal, FileExplorer],
+        custom_contexts: &[],
+    },
+    CommandDef {
         name_key: "cmd.explorer_new_file",
         desc_key: "cmd.explorer_new_file_desc",
         action: || Action::FileExplorerNewFile,

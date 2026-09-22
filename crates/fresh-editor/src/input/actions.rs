@@ -3772,6 +3772,7 @@ pub fn action_to_events(
         | Action::FileExplorerCollapse
         | Action::FileExplorerOpen
         | Action::FileExplorerRefresh
+        | Action::FileExplorerImport
         | Action::FileExplorerNewFile
         | Action::FileExplorerNewDirectory
         | Action::FileExplorerDelete

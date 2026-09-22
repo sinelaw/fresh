@@ -320,6 +320,40 @@ pub trait FileWriter: Write + Send {
     fn sync_all(&self) -> io::Result<()>;
 }
 
+/// A bounded-memory, sequential writer for a private staging file. Writes
+/// need not be durable until `finish`; dropping without finishing closes the
+/// handle without publishing anything. The caller owns staging-file cleanup.
+pub trait FileUpload: Write + Send {
+    /// Flush, sync and close before the caller atomically publishes the file.
+    fn finish(self: Box<Self>) -> io::Result<()>;
+}
+
+/// A destination-owned import transaction. The backend owns staging and must
+/// preserve an existing destination until commit. Abort cleans staging; Drop
+/// is a best-effort abort for interrupted callers.
+pub trait AtomicFileUpload: Write + Send {
+    fn commit(self: Box<Self>) -> io::Result<()>;
+    fn abort(self: Box<Self>) -> io::Result<()>;
+}
+
+struct StdFileUpload(std::fs::File);
+
+impl Write for StdFileUpload {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.0.write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.0.flush()
+    }
+}
+
+impl FileUpload for StdFileUpload {
+    fn finish(self: Box<Self>) -> io::Result<()> {
+        self.0.sync_all()
+    }
+}
+
 // ============================================================================
 // Patch Operations for Efficient Remote Saves
 // ============================================================================
@@ -501,6 +535,25 @@ pub trait FileSystem: Send + Sync {
     /// Create a file for writing, returns a writer handle
     fn create_file(&self, path: &Path) -> io::Result<Box<dyn FileWriter>>;
 
+    /// Exclusively create a staging file for a bounded-memory upload. This is
+    /// separate from `create_file`, whose remote writer buffers an entire file.
+    fn create_file_for_upload(&self, _path: &Path) -> io::Result<Box<dyn FileUpload>> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "streaming uploads are unsupported",
+        ))
+    }
+
+    /// Optional combined prepare/commit protocol for high-latency backends.
+    /// None selects the portable staging path; errors must not trigger fallback.
+    fn begin_file_import(
+        &self,
+        _destination: &Path,
+        _overwrite: bool,
+    ) -> io::Result<Option<Box<dyn AtomicFileUpload>>> {
+        Ok(None)
+    }
+
     /// Open a file for reading, returns a reader handle
     fn open_file(&self, path: &Path) -> io::Result<Box<dyn FileReader>>;
 
@@ -550,6 +603,18 @@ pub trait FileSystem: Send + Sync {
 
     /// Rename/move a file or directory atomically
     fn rename(&self, from: &Path, to: &Path) -> io::Result<()>;
+
+    /// Publish a fully written, same-filesystem staging file. Without
+    /// `overwrite`, an existing destination (including a symlink) must cause
+    /// `AlreadyExists`, atomically. Never interpret `to` as a directory to
+    /// move into, or follow a destination symlink. The caller cleans up `from`
+    /// if it still exists after publication.
+    fn publish_file(&self, _from: &Path, _to: &Path, _overwrite: bool) -> io::Result<()> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "atomic file publication is unsupported",
+        ))
+    }
 
     /// Copy a file (fallback when rename fails across filesystems)
     fn copy(&self, from: &Path, to: &Path) -> io::Result<u64>;
@@ -603,6 +668,18 @@ pub trait FileSystem: Send + Sync {
 
     /// Get symlink metadata (doesn't follow symlinks)
     fn symlink_metadata(&self, path: &Path) -> io::Result<FileMetadata>;
+
+    /// Check the final path component without following it. Missing paths are
+    /// not links. Backends should override this to avoid listing the parent.
+    fn is_symlink(&self, path: &Path) -> io::Result<bool> {
+        let Some(parent) = path.parent() else {
+            return Ok(false);
+        };
+        Ok(self
+            .read_dir(parent)?
+            .iter()
+            .any(|entry| entry.path.file_name() == path.file_name() && entry.is_symlink()))
+    }
 
     /// Check if path exists
     fn exists(&self, path: &Path) -> bool {
@@ -1476,6 +1553,14 @@ impl FileSystem for StdFileSystem {
         Ok(Box::new(StdFileWriter(file)))
     }
 
+    fn create_file_for_upload(&self, path: &Path) -> io::Result<Box<dyn FileUpload>> {
+        let file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(path)?;
+        Ok(Box::new(StdFileUpload(file)))
+    }
+
     fn open_file(&self, path: &Path) -> io::Result<Box<dyn FileReader>> {
         let file = std::fs::File::open(path)?;
         Ok(Box::new(StdFileReader(file)))
@@ -1507,6 +1592,14 @@ impl FileSystem for StdFileSystem {
         std::fs::rename(from, to)
     }
 
+    fn publish_file(&self, from: &Path, to: &Path, overwrite: bool) -> io::Result<()> {
+        if overwrite {
+            std::fs::rename(from, to)
+        } else {
+            std::fs::hard_link(from, to)
+        }
+    }
+
     fn copy(&self, from: &Path, to: &Path) -> io::Result<u64> {
         std::fs::copy(from, to)
     }
@@ -1528,6 +1621,14 @@ impl FileSystem for StdFileSystem {
     fn symlink_metadata(&self, path: &Path) -> io::Result<FileMetadata> {
         let meta = std::fs::symlink_metadata(path)?;
         Ok(Self::build_metadata(path, &meta))
+    }
+
+    fn is_symlink(&self, path: &Path) -> io::Result<bool> {
+        match std::fs::symlink_metadata(path.components().collect::<PathBuf>()) {
+            Ok(metadata) => Ok(metadata.file_type().is_symlink()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+            Err(error) => Err(error),
+        }
     }
 
     fn is_dir(&self, path: &Path) -> io::Result<bool> {

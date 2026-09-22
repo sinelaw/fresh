@@ -1464,7 +1464,7 @@ impl Editor {
     /// the explorer tree after paste operations land on disk, then navigate
     /// the cursor to `dst`. Factored out so multi-paste can invoke it
     /// exactly once for a whole batch rather than N times.
-    fn refresh_tree_after_paste(&mut self, src: &Path, dst: &Path, is_cut: bool) {
+    pub(super) fn refresh_tree_after_paste(&mut self, src: &Path, dst: &Path, is_cut: bool) {
         let active_id = self.active_window;
         // Disjoint borrow on `self.windows` so the body can also read
         // `self.tokio_runtime`.

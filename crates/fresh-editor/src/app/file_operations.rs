@@ -933,6 +933,9 @@ impl Editor {
         let mut dirs_to_refresh: Vec<(crate::view::file_tree::NodeId, PathBuf)> = Vec::new();
 
         for (node_id, path, mtime_opt) in results {
+            if self.file_import_refresh_pending(&path) {
+                continue;
+            }
             let Some(current_mtime) = mtime_opt else {
                 continue;
             };

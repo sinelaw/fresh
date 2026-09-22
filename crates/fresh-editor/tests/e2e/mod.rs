@@ -59,6 +59,7 @@ pub mod file_explorer_follow_active_buffer;
 pub mod file_explorer_open_focus;
 pub mod file_explorer_session_persist;
 pub mod file_explorer_window;
+pub mod file_import;
 pub mod file_permissions;
 pub mod flash;
 #[cfg(feature = "plugins")]

@@ -643,6 +643,7 @@ impl Editor {
             let _s = tracing::info_span!("poll_file_changes").entered();
             self.poll_file_changes()
         };
+        let import_changes = self.poll_file_import();
         let tree_changes = {
             let _s = tracing::info_span!("poll_file_tree_changes").entered();
             self.poll_file_tree_changes()
@@ -662,6 +663,7 @@ impl Editor {
             || frame_requested
             || file_changes
             || tree_changes
+            || import_changes
             || backlogged
     }
 
