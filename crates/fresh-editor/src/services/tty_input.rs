@@ -28,7 +28,6 @@ use std::os::unix::io::{AsRawFd, BorrowedFd, RawFd};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-use crossterm::event::MouseEventKind;
 use fresh_input_parser::{Event as InputEvent, InputParser};
 
 /// How long a buffered lone `ESC` waits for a continuation before it is
@@ -215,17 +214,9 @@ impl TtyReader {
     /// presses, releases and wheel notches each mean something at the moment
     /// they happened, so they always queue.
     fn push_coalesced(&mut self, ev: InputEvent) {
-        if let InputEvent::Mouse(m) = &ev {
-            if matches!(m.kind, MouseEventKind::Moved | MouseEventKind::Drag(_)) {
-                if let Some(InputEvent::Mouse(last)) = self.queue.back() {
-                    if last.kind == m.kind && last.modifiers == m.modifiers {
-                        *self.queue.back_mut().expect("back() was Some") = ev;
-                        return;
-                    }
-                }
-            }
+        if let Some(ev) = fresh_input_parser::coalesce_motion_into(self.queue.back_mut(), ev) {
+            self.queue.push_back(ev);
         }
-        self.queue.push_back(ev);
     }
 
     /// Queue an event that did not come from stdin, through the same motion

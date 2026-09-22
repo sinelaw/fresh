@@ -151,6 +151,56 @@ impl Event {
     }
 }
 
+/// **The one motion-coalescing rule, for every input path.**
+///
+/// Offer `ev` to the event queued just before it: when both are pointer
+/// motion of the same kind (`Moved`, or `Drag` with the same button) and the
+/// same modifiers, `ev` replaces `last` and `None` comes back; otherwise `ev`
+/// comes back to be queued.
+///
+/// A terminal sends a report for every cell the pointer crosses, and each one
+/// an editor handles costs a relayout (a divider drag reflows every pane and
+/// resizes every visible PTY) — so a burst that lands while a frame is being
+/// painted has to come out as the one report that is still true, or the
+/// divider falls further behind the pointer the farther it is pulled. Only a
+/// run of the *same* motion collapses: `Drag(Left)` never swallows
+/// `Drag(Right)`, a modifier change ends the run, and presses, releases,
+/// wheel notches and keys are never touched — each means something at the
+/// moment it happened.
+///
+/// The direct terminal reader and the session server both queue through
+/// this, so a drag behaves the same whichever one the input came in by.
+pub fn coalesce_motion_into(last: Option<&mut Event>, ev: Event) -> Option<Event> {
+    fn run(ev: &Event) -> Option<(MouseEventKind, KeyModifiers)> {
+        match ev {
+            Event::Mouse(m)
+                if matches!(m.kind, MouseEventKind::Moved | MouseEventKind::Drag(_)) =>
+            {
+                Some((m.kind, m.modifiers))
+            }
+            _ => None,
+        }
+    }
+    match last {
+        Some(last) if run(&ev).is_some() && run(last) == run(&ev) => {
+            *last = ev;
+            None
+        }
+        _ => Some(ev),
+    }
+}
+
+/// [`coalesce_motion_into`] over a whole batch.
+pub fn coalesce_motion(events: Vec<Event>) -> Vec<Event> {
+    let mut out: Vec<Event> = Vec::with_capacity(events.len());
+    for ev in events {
+        if let Some(ev) = coalesce_motion_into(out.last_mut(), ev) {
+            out.push(ev);
+        }
+    }
+    out
+}
+
 impl From<crossterm::event::Event> for Event {
     fn from(event: crossterm::event::Event) -> Self {
         use crossterm::event::Event as C;

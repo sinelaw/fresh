@@ -2319,6 +2319,32 @@ impl ExplorerWidth {
         };
         raw.max(Self::MIN_COLS).min(terminal_width)
     }
+
+    /// The width of the same variant that renders as close to `cols` as it
+    /// can within `terminal_width` — the inverse of [`to_cols`](Self::to_cols).
+    ///
+    /// `Columns` is exact. `Percent` picks whichever of the two percents
+    /// bracketing `cols` renders nearer to it (a tie goes to the wider), so a
+    /// divider dragged by N cells moves N cells whenever a percent can say
+    /// so, and never drifts by the truncation of each step.
+    pub fn with_cols(self, cols: u16, terminal_width: u16) -> Self {
+        let cols = cols.min(terminal_width);
+        match self {
+            Self::Columns(_) => Self::Columns(cols),
+            Self::Percent(_) if terminal_width == 0 => self,
+            Self::Percent(_) => {
+                let w = terminal_width as u32;
+                let lo = (cols as u32 * 100 / w).min(100) as u8;
+                let hi = (cols as u32 * 100).div_ceil(w).min(100) as u8;
+                let miss = |pct: u8| Self::Percent(pct).to_cols(terminal_width).abs_diff(cols);
+                if miss(lo) < miss(hi) {
+                    Self::Percent(lo)
+                } else {
+                    Self::Percent(hi)
+                }
+            }
+        }
+    }
 }
 
 impl Default for ExplorerWidth {
@@ -8998,6 +9024,29 @@ mod tests {
             ExplorerWidth::Columns(ExplorerWidth::MIN_COLS + 1).to_cols(100),
             ExplorerWidth::MIN_COLS + 1
         );
+    }
+
+    /// `with_cols` inverts `to_cols` for the variant it was called on.
+    #[test]
+    fn test_with_cols_round_trips() {
+        for w in [0u16, 1, 37, 80, 100, 117, 200, 311] {
+            for cols in ExplorerWidth::MIN_COLS..=w {
+                let c = ExplorerWidth::Columns(9).with_cols(cols, w);
+                assert_eq!(c, ExplorerWidth::Columns(cols));
+                assert_eq!(c.to_cols(w), cols);
+                // A percent can only land within one percent-step of the
+                // target; below 100 columns a step is under one cell, so it
+                // is exact.
+                let p = ExplorerWidth::Percent(30).with_cols(cols, w);
+                assert!(matches!(p, ExplorerWidth::Percent(_)));
+                let step = (w as u32).div_ceil(100) as u16;
+                let got = p.to_cols(w);
+                assert!(
+                    got.abs_diff(cols) * 2 <= step,
+                    "w={w} cols={cols} got {got} ({p})"
+                );
+            }
+        }
     }
 
     /// On very narrow terminals the `MIN_COLS` floor can't fit; the
