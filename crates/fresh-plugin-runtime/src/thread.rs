@@ -142,6 +142,18 @@ pub enum PluginRequest {
         response: oneshot::Sender<Vec<TsPluginInfo>>,
     },
 
+    /// Answer once everything queued ahead of this request has been handled
+    /// and the JS job queue is empty.
+    ///
+    /// The request channel is FIFO, so every `ResolveCallback` sent earlier
+    /// has run — including its JS continuation, which `resolve_callback`
+    /// runs synchronously. So by the time this answers, any host call those
+    /// continuations made is already on the command channel.
+    ///
+    /// This is a sync point, not a wait for the action to finish: a handler
+    /// parked on `editor.getNextKey()` answers immediately.
+    SyncRuntime { response: oneshot::Sender<()> },
+
     /// Track an async resource (buffer/terminal) that was just created.
     /// Sent by deliver_response when the editor confirms resource creation.
     TrackAsyncResource {
@@ -169,6 +181,10 @@ pub enum TrackedAsyncResource {
 pub mod oneshot {
     use std::fmt;
     use std::sync::mpsc;
+
+    /// So callers can match `try_recv`'s error without naming the backing
+    /// channel type.
+    pub use std::sync::mpsc::TryRecvError;
 
     pub struct Sender<T>(mpsc::SyncSender<T>);
     pub struct Receiver<T>(mpsc::Receiver<T>);
@@ -789,6 +805,21 @@ impl PluginThreadHandle {
         rx.recv().unwrap_or(false)
     }
 
+    /// See [`PluginRequest::SyncRuntime`]. `None` if there is no plugin
+    /// thread.
+    ///
+    /// Non-blocking on purpose: the plugin thread may be parked on a host
+    /// round-trip queued ahead of this request, so a caller that blocked on
+    /// the answer instead of servicing the command channel would deadlock.
+    pub fn sync_runtime(&self) -> Option<oneshot::Receiver<()>> {
+        let (tx, rx) = oneshot::channel();
+        let sender = self.request_sender.as_ref()?;
+        sender
+            .send(PluginRequest::SyncRuntime { response: tx })
+            .ok()?;
+        Some(rx)
+    }
+
     /// List all loaded plugins (blocking)
     pub fn list_plugins(&self) -> Vec<TsPluginInfo> {
         let (tx, rx) = oneshot::channel();
@@ -1346,6 +1377,16 @@ async fn handle_request(
         PluginRequest::ListPlugins { response } => {
             let plugin_list: Vec<TsPluginInfo> = plugins.values().cloned().collect();
             fire_and_forget(response.send(plugin_list));
+        }
+
+        PluginRequest::SyncRuntime { response } => {
+            // Reaching this arm means earlier requests are handled, but a
+            // continuation that needed only a microtask to reach its next
+            // host call would otherwise wait for the loop's 1ms poll. Run
+            // the job queue out instead. It terminates: a promise waiting on
+            // the host is not a job.
+            while runtime.borrow_mut().poll_event_loop_once() {}
+            fire_and_forget(response.send(()));
         }
 
         PluginRequest::ResolveCallback {

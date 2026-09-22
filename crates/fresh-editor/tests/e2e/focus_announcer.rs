@@ -41,38 +41,48 @@ fn log_lines(project: &Path) -> Vec<String> {
     complete.lines().map(str::to_string).collect()
 }
 
-/// Wait until the log has a line equal to `line`, then return the log.
+/// Wait until the log has a line equal to `line`, and return the log that
+/// had it. Re-reading the file afterwards would return a different one:
+/// the announcer writes each hook separately.
 fn wait_for_line(h: &mut EditorTestHarness, project: &Path, line: &str) -> Vec<String> {
-    h.wait_until(|_| log_lines(project).iter().any(|l| l == line))
-        .unwrap_or_else(|e| panic!("waiting for {line:?} in {:?}: {e}", log_lines(project)));
-    log_lines(project)
+    let mut matched: Option<Vec<String>> = None;
+    h.wait_until(|_| {
+        let lines = log_lines(project);
+        matched = lines.iter().any(|l| l == line).then_some(lines);
+        matched.is_some()
+    })
+    .unwrap_or_else(|e| panic!("waiting for {line:?} in {:?}: {e}", log_lines(project)));
+    matched.expect("wait_until returned only once the log matched")
 }
 
 /// Wait until the log has `line` and, after it, a line starting with
-/// `then` — the end of the sequence the announcer fires for one change,
-/// each hook of which reaches the file separately. Returns the log from
-/// `line` on.
+/// `then` — the end of the sequence the announcer fires for one change.
+/// Returns `line` through the first `then` after it, out of the log that
+/// had it. Cut at the terminator so the caller sees one switch's hooks and
+/// not whatever the editor announces next.
 fn wait_for_sequence(
     h: &mut EditorTestHarness,
     project: &Path,
     line: &str,
     then: &str,
 ) -> Vec<String> {
-    let tail = |lines: &[String]| -> Option<Vec<String>> {
+    let sequence = |lines: &[String]| -> Option<Vec<String>> {
         let at = lines.iter().position(|l| l == line)?;
-        lines[at..]
-            .iter()
-            .any(|l| l.starts_with(then))
-            .then(|| lines[at..].to_vec())
+        let end = lines[at..].iter().position(|l| l.starts_with(then))?;
+        Some(lines[at..=at + end].to_vec())
     };
-    h.wait_until(|_| tail(&log_lines(project)).is_some())
-        .unwrap_or_else(|e| {
-            panic!(
-                "waiting for {line:?} then {then:?} in {:?}: {e}",
-                log_lines(project)
-            )
-        });
-    tail(&log_lines(project)).unwrap()
+    let mut matched: Option<Vec<String>> = None;
+    h.wait_until(|_| {
+        matched = sequence(&log_lines(project));
+        matched.is_some()
+    })
+    .unwrap_or_else(|e| {
+        panic!(
+            "waiting for {line:?} then {then:?} in {:?}: {e}",
+            log_lines(project)
+        )
+    });
+    matched.expect("wait_until returned only once the sequence was complete")
 }
 
 /// `<buffer>@<window>` after the last `buffer_activated`.
@@ -203,13 +213,41 @@ fn a_window_switch_and_close_fire_the_buffer_hooks() {
         .unwrap();
     assert!(closed_at < window_closed_at, "{lines:?}");
 
-    // A switch that changes nothing announces nothing: the last line is
-    // still the window close.
+    // A switch that changes nothing announces nothing. "Nothing was
+    // written" cannot be established by looking — the hooks arrive
+    // asynchronously, so an empty tail only means "not yet" — so the no-op
+    // is followed by a change that must announce, and the gap between them
+    // is what gets asserted on.
     h.editor_mut().set_active_window(fresh_core::WindowId(1));
-    h.render().unwrap();
-    h.render().unwrap();
-    assert_eq!(
-        log_lines(&project).last().map(String::as_str),
-        Some(format!("window_closed {}", b.0).as_str())
+    fs::write(project.join("c.txt"), "world\n").unwrap();
+    h.editor_mut().open_file(&project.join("c.txt")).unwrap();
+    let window_closed = format!("window_closed {}", b.0);
+    // The open activates a buffer neither window held before.
+    let seen = &[
+        format!("buffer_activated {a}"),
+        format!("buffer_activated {bb}"),
+    ];
+    let is_new_activation = |l: &String| l.starts_with("buffer_activated ") && !seen.contains(l);
+    let mut matched: Option<Vec<String>> = None;
+    h.wait_until(|_| {
+        let lines = log_lines(&project);
+        matched = lines
+            .iter()
+            .position(|l| l == &window_closed)
+            .filter(|&at| lines[at..].iter().any(is_new_activation))
+            .map(|at| lines[at..].to_vec());
+        matched.is_some()
+    })
+    .unwrap_or_else(|e| panic!("waiting for the reopen in {:?}: {e}", log_lines(&project)));
+    let after_noop = matched.unwrap();
+    // The open announces its own buffer change, so the assertion is that
+    // nothing in the tail was announced as a *window* change — the no-op is
+    // the only window switch in it.
+    assert!(
+        !after_noop
+            .iter()
+            .any(|l| l.starts_with("active_window_changed")
+                || l.starts_with("active_buffer_changed") && l.ends_with(" window")),
+        "the no-op window switch announced a window change: {after_noop:?}"
     );
 }

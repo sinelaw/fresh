@@ -421,6 +421,13 @@ impl PluginManager {
             .map(|m| m.mode_text_input_async(mode, text))
     }
 
+    /// See `PluginRequest::SyncRuntime`. Non-blocking: the caller must keep
+    /// servicing the plugin command channel while it waits.
+    #[cfg(feature = "plugins")]
+    pub fn sync_runtime(&self) -> Option<fresh_plugin_runtime::thread::oneshot::Receiver<()>> {
+        self.inner.as_ref().and_then(|m| m.sync_runtime())
+    }
+
     /// List all loaded plugins.
     #[cfg(feature = "plugins")]
     pub fn list_plugins(
