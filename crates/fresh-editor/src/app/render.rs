@@ -2484,6 +2484,7 @@ impl Editor {
                         idx,
                         expandable,
                         expanded,
+                        nested,
                     } => {
                         let page = &s.pages[idx];
                         st::CatRow::Category {
@@ -2493,11 +2494,10 @@ impl Editor {
                                 (true, true) => "▼",
                                 (true, false) => "▶",
                             },
-                            expandable,
                             dirty: s.page_has_pending_changes(idx),
                             icon: crate::view::settings::render::category_icon(&page.name, nerd),
                             label: page.name.clone(),
-                            elide: page.name.starts_with("Plugin: "),
+                            nested,
                         }
                     }
                     TreeRow::Section {

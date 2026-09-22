@@ -161,6 +161,10 @@ pub struct SettingCategory {
     pub settings: Vec<SettingSchema>,
     /// Subcategories
     pub subcategories: Vec<SettingCategory>,
+    /// Name of the category this one is listed under in the left-panel
+    /// tree (e.g. each plugin's page sits under "Plugins"). `None` for a
+    /// top-level category.
+    pub parent: Option<String>,
 }
 
 /// Raw JSON Schema structure for deserialization
@@ -291,6 +295,9 @@ type EnumValuesMap = HashMap<String, Vec<EnumOption>>;
 /// The category top-level settings land in when they name no `x-category`.
 const GENERAL: &str = "General";
 
+/// The category plugin pages are listed under in the tree.
+const PLUGINS: &str = "Plugins";
+
 /// Parse the JSON Schema and build the category tree
 pub fn parse_schema(schema_json: &str) -> Result<Vec<SettingCategory>, serde_json::Error> {
     let raw: RawSchema = serde_json::from_str(schema_json)?;
@@ -335,6 +342,7 @@ pub fn parse_schema(schema_json: &str) -> Result<Vec<SettingCategory>, serde_jso
                 nullable: is_nullable,
                 settings: vec![setting],
                 subcategories: Vec::new(),
+                parent: None,
             });
         } else if let Some(ref inner_props) = resolved.properties {
             // This is a category with nested settings.
@@ -355,6 +363,7 @@ pub fn parse_schema(schema_json: &str) -> Result<Vec<SettingCategory>, serde_jso
                 nullable: is_nullable,
                 settings,
                 subcategories: Vec::new(),
+                parent: None,
             });
         } else {
             // This is a top-level setting: it goes on the page its
@@ -384,6 +393,7 @@ pub fn parse_schema(schema_json: &str) -> Result<Vec<SettingCategory>, serde_jso
             nullable: false,
             settings,
             subcategories: Vec::new(),
+            parent: None,
         });
     }
 
@@ -397,8 +407,8 @@ pub fn parse_schema(schema_json: &str) -> Result<Vec<SettingCategory>, serde_jso
     Ok(categories)
 }
 
-/// Append a top-level "Plugin Settings" category whose subcategories are
-/// built from per-plugin schema sidecars (`<plugin_name>.schema.json`).
+/// Append one category per plugin, built from its schema sidecar
+/// (`<plugin_name>.schema.json`) and listed under "Plugins" in the tree.
 ///
 /// Each sub-category lives at JSON pointer `/plugins/<name>/settings`.
 /// Only the names passed in `enabled_plugins_with_schema` are rendered —
@@ -413,9 +423,8 @@ pub fn append_plugin_settings_category(
         return;
     }
 
-    // Push each plugin as its own top-level category, prefixed so they
-    // cluster together in the left-panel alphabetical sort and don't
-    // collide with built-in names like "Editor" / "Plugins".
+    // Each plugin is its own category, named after the plugin and
+    // parented to "Plugins" so the tree nests it there.
     let mut added = 0;
     for name in enabled_plugins_with_schema {
         let Some(schema_value) = plugin_schemas.get(name) else {
@@ -424,7 +433,7 @@ pub fn append_plugin_settings_category(
         let Some(mut category) = plugin_schema_to_category(name, schema_value) else {
             continue;
         };
-        category.name = format!("Plugin: {}", name);
+        category.parent = Some(PLUGINS.to_string());
         categories.push(category);
         added += 1;
     }
@@ -433,19 +442,15 @@ pub fn append_plugin_settings_category(
         return;
     }
 
-    // Re-sort categories. "General" stays first; "Plugin: <name>"
-    // entries are pushed to the bottom of the list so plugin
-    // configuration doesn't interleave with built-in editor settings.
-    // Within each band the order is alphabetical.
+    // Re-sort categories. "General" stays first; the rest is alphabetical.
     categories.sort_by(|a, b| match (a.name.as_str(), b.name.as_str()) {
         ("General", _) => std::cmp::Ordering::Less,
         (_, "General") => std::cmp::Ordering::Greater,
-        (a, b) => match (a.starts_with("Plugin: "), b.starts_with("Plugin: ")) {
-            (true, false) => std::cmp::Ordering::Greater,
-            (false, true) => std::cmp::Ordering::Less,
-            _ => a.cmp(b),
-        },
+        (a, b) => a.cmp(b),
     });
+    // Plugin pages go after every built-in page, still alphabetical among
+    // themselves (a stable sort keeps the order above).
+    categories.sort_by_key(|c| c.parent.is_some());
 }
 
 fn plugin_schema_to_category(
@@ -473,6 +478,7 @@ fn plugin_schema_to_category(
         nullable: false,
         settings,
         subcategories: Vec::new(),
+        parent: None,
     })
 }
 

@@ -194,9 +194,12 @@ point — opening the settings UI — and reused in settings tests.
 
 Custom `x-` extensions that schemars emits or the struct attributes inject
 (present in the committed JSON) include: `x-display-field`,
-`x-standalone-category`, `x-no-add`, `x-section`, `x-order`, `x-enum-from`,
-`x-dual-list-options`, `x-dual-list-sibling`, and a status-bar
-dynamically-extendable marker. For example, the plugin config carries a
+`x-standalone-category`, `x-no-add`, `x-category`, `x-section`, `x-order`,
+`x-enum-from`, `x-dual-list-options`, `x-dual-list-sibling`, and a status-bar
+dynamically-extendable marker. `x-category`, `x-section` and `x-order` only
+decide where a setting is shown (which left-panel page, which section on it,
+and its position — sections are ranked by their lowest `x-order`), never where
+it lives in the config JSON. For example, the plugin config carries a
 display-field pointing at its `enabled` flag and marks `path` and `settings`
 read-only.
 
@@ -211,8 +214,9 @@ feature.
 Schema parsing walks top-level properties. A property becomes a **standalone
 category** when the standalone-category extension is set (maps such as
 `languages`), a **category with nested settings** when the resolved schema has
-properties, else a **top-level setting** folded into a synthesized "General"
-category. Plugin schemas are appended as `Plugin: <name>` categories rooted at
+properties, else a **top-level setting** folded into the category its
+`x-category` names (a synthesized "General" when it names none). Plugin schemas
+are appended as `<name>` categories nested under "Plugins" in the tree, rooted at
 each plugin's settings subtree.
 
 Control-type selection maps the schema to a setting type:

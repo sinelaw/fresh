@@ -343,7 +343,7 @@ fn test_plugin_toggle_mouse_click_chip_matches_visual_position() {
     harness.render().unwrap();
 
     assert!(
-        screen_contains_text_at_or_after_col(&harness, "Plugin: dashboard", 32),
+        screen_contains_text_at_or_after_col(&harness, "dashboard", 32),
         "plugin settings page should show its title in the right panel. Screen:\n{}",
         harness.screen_to_string()
     );
@@ -505,11 +505,11 @@ fn test_settings_selection_indicator() {
     harness.render().unwrap();
 
     // Settings panel should show focus indicator ">" on selected item
-    // General category has: Active Keybinding Map (first item)
+    // General category has: Orchestrator Mode (first item)
     // Format: ">  " (3-char indicator area: focus, modified, space)
     let screen = harness.screen_to_string();
     assert!(
-        screen.contains(">  Active Keybinding Map"),
+        screen.contains(">  Orchestrator Mode"),
         "Focus indicator '>' should appear before focused item in settings panel. Screen:\n{}",
         screen
     );

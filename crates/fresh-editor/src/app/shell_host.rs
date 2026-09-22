@@ -1720,10 +1720,17 @@ impl Editor {
 /// painter's rectangles produced, so deleting those rectangles would have
 /// taken the web's path with them.
 impl Editor {
+    /// A click on a category row, anywhere on it. A category not yet under
+    /// the cursor is selected and expanded; a click on the one already under
+    /// it toggles it open or shut.
     pub(crate) fn settings_select_category(&mut self, idx: usize) {
         use crate::view::settings::state::FocusTarget;
         if let Some(s) = self.settings_state.as_mut() {
             s.focus_on(FocusTarget::Categories);
+            if s.selected_category == idx && s.tree_cursor_section.is_none() {
+                s.toggle_category_expanded(idx);
+                return;
+            }
             s.selected_category = idx;
             s.selected_item = 0;
             s.body_anchor.scroll_to(fresh_ui::Point::ZERO);
@@ -1743,12 +1750,6 @@ impl Editor {
             // moving focus to the body is right; a click in the tree keeps
             // the tree focused.
             s.focus_on(FocusTarget::Categories);
-        }
-    }
-
-    pub(crate) fn settings_toggle_category(&mut self, idx: usize) {
-        if let Some(s) = self.settings_state.as_mut() {
-            s.toggle_category_expanded(idx);
         }
     }
 }
@@ -3239,7 +3240,6 @@ impl Editor {
             UiFact::SettingsCategorySection(cat, section) => {
                 self.settings_jump_to_section(cat, section)
             }
-            UiFact::SettingsCategoryDisclosure(idx) => self.settings_toggle_category(idx),
             // **The tree's own keys, arriving as what they mean.** The eight
             // arms behind this are the eight `handle_categories_input` still
             // has: one implementation (`SettingsState::tree_key`), reached

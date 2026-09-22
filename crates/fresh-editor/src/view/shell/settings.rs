@@ -1100,47 +1100,36 @@ fn cat_row(r: &CatRow, selected: bool, focused: bool) -> Node<UiMsg> {
         false => " ",
     };
     match r {
+        // The whole row is one target — the list's click, which selects the
+        // category or, on the one already selected, opens or shuts it. The
+        // chevron is only a picture of that state.
         CatRow::Category {
-            idx,
             chevron,
-            expandable,
             dirty,
             icon,
             label,
-            elide,
+            nested,
+            ..
         } => {
-            // The chevron is its own target: the painter recorded a
-            // one-column rectangle for it so a click there expanded the
-            // category instead of selecting it.
-            let idx = *idx;
-            let chev = text(chevron.to_string());
-            let chev = match expandable {
-                true => gesture(chev).on(
-                    GestureKind::Press,
-                    Rc::new(move |e: &Event| {
-                        if e.button != MouseButton::Left {
-                            return None;
-                        }
-                        e.stop();
-                        Some(UiMsg::Ui(UiFact::SettingsCategoryDisclosure(idx)))
-                    }),
-                ),
-                false => chev,
-            };
-            let mut kids: Vec<Node<UiMsg>> = vec![text(marker), chev];
+            let mut kids: Vec<Node<UiMsg>> = vec![text(marker)];
+            match nested {
+                // Past the parent's chevron and dirty dot, so the dot lines
+                // up under the parent's icon.
+                true => kids.push(text("    ")),
+                false => kids.push(text(chevron.to_string())),
+            }
             kids.push(match dirty {
                 true => text("●").theme(pair("ui.menu_highlight_fg", "ui.popup_bg")),
                 false => text(" "),
             });
-            kids.push(text(icon.to_string()).theme(pair("ui.popup_border_fg", "ui.popup_bg")));
-            // A plugin page's name is longer than the tree is wide, so the
-            // painter clipped it with an ellipsis. `Sizing::Flex` gives the
-            // label the rest of the row and the fold clips it; the ellipsis
-            // is what the two do not share, and it stays in the description.
-            kids.push(match elide {
-                true => text(label.clone()).flex(1),
-                false => text(label.clone()),
-            });
+            match nested {
+                true => kids.push(text(" ")),
+                false => kids
+                    .push(text(icon.to_string()).theme(pair("ui.popup_border_fg", "ui.popup_bg"))),
+            }
+            // A name longer than the tree is wide is clipped: `Sizing::Flex`
+            // gives the label the rest of the row and the fold clips it.
+            kids.push(text(label.clone()).flex(1));
             row().h(Sizing::Cells(1)).children(kids)
         }
         // Indented two columns past the category labels (which start after
@@ -1430,13 +1419,13 @@ pub enum CatRow {
         idx: usize,
         /// `▼`, `▶` or a space — the painter's own three states.
         chevron: &'static str,
-        expandable: bool,
         /// A dot beside a category with unsaved changes in it.
         dirty: bool,
         icon: &'static str,
         label: String,
-        /// A plugin's page has a long name and the painter elided it.
-        elide: bool,
+        /// A page nested under another category's row (a plugin's page
+        /// under "Plugins"): indented like a section, with no icon.
+        nested: bool,
     },
     Section {
         cat: usize,
@@ -2029,11 +2018,10 @@ mod tests {
                 CatRow::Category {
                     idx: 0,
                     chevron: "▼",
-                    expandable: true,
                     dirty: true,
                     icon: "⚙",
                     label: "General".into(),
-                    elide: false,
+                    nested: false,
                 },
                 CatRow::Section {
                     cat: 0,
@@ -2048,11 +2036,10 @@ mod tests {
                 CatRow::Category {
                     idx: 1,
                     chevron: " ",
-                    expandable: false,
                     dirty: false,
                     icon: "✂",
                     label: "Clipboard".into(),
-                    elide: false,
+                    nested: false,
                 },
             ],
             selected: Some(0),
@@ -2757,25 +2744,35 @@ mod tests {
         }
     }
 
-    /// **The chevron is its own target.** The painter recorded a one-column
-    /// rectangle for it so a click there expanded the category instead of
-    /// selecting it; here it is a node beside the label that stops the press.
+    /// **The chevron is part of its row.** A click on it is the row's click
+    /// — the host toggles an already-selected category — rather than a
+    /// target of its own that fired on the press while the row's selection
+    /// fired on the release and undid it.
     #[test]
-    fn a_press_on_the_chevron_expands_rather_than_selects() {
+    fn a_click_on_the_chevron_is_the_rows_click() {
         let mut ui = laid_out(200, 60, None);
         let at = ui.rect_of(
             ui.find_by_key(&fresh_ui::Key::Pair("settings_cat".into(), 0u64))
                 .expect("the first row"),
         );
         // Column 0 is the cursor marker; the chevron is the one after it.
-        let got = facts(ui.dispatch(fresh_ui::Input::press(
-            fresh_ui::Point::new(at.x + 1, at.y),
+        let p = fresh_ui::Point::new(at.x + 1, at.y);
+        let mut got = facts(ui.dispatch(fresh_ui::Input::press(
+            p,
             fresh_ui::MouseButton::Left,
             fresh_ui::Mods::NONE,
         )));
-        assert!(
-            got.contains(&UiFact::SettingsCategoryDisclosure(0)),
-            "the chevron toggles, got {got:?}"
+        got.extend(facts(ui.dispatch(fresh_ui::Input::release(
+            p,
+            fresh_ui::MouseButton::Left,
+            fresh_ui::Mods::NONE,
+        ))));
+        assert_eq!(
+            got.iter()
+                .filter(|f| matches!(f, UiFact::SettingsCategory(_)))
+                .collect::<Vec<_>>(),
+            vec![&UiFact::SettingsCategory(0)],
+            "one click, one category fact, got {got:?}"
         );
     }
 

@@ -781,6 +781,9 @@ pub struct SettingsPage {
     /// Cached section list for the tree view in the left panel.
     /// Computed once after sorting items in `build_page`.
     pub sections: Vec<SectionInfo>,
+    /// Name of the page this one is nested under in the left-panel tree
+    /// (plugin pages sit under "Plugins"); `None` for a top-level page.
+    pub parent: Option<String>,
 }
 
 /// One section within a page — name plus the index of its first item, used by
@@ -923,6 +926,7 @@ fn build_page(category: &SettingCategory, ctx: &BuildContext) -> SettingsPage {
         items,
         subpages,
         sections,
+        parent: category.parent.clone(),
     }
 }
 

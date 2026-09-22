@@ -796,11 +796,6 @@ pub enum UiFact {
     SettingsCategory(usize),
     /// A press on a section row under a category, by `(category, section)`.
     SettingsCategorySection(usize, usize),
-    /// A press on a category's `▶`/`▼`, which expands it rather than
-    /// selecting it. This was `layout.disclosures` — a one-column rectangle
-    /// per expandable row, filed so a chain of `point_in_rect` could tell the
-    /// chevron from the label beside it.
-    SettingsCategoryDisclosure(usize),
     /// **A key the category tree answered for itself.** The first of the
     /// settings dialog's keys to arrive as what it *means* rather than as
     /// `ModalKey` — "here is your key back, work out whose it was". The node
