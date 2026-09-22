@@ -1491,8 +1491,18 @@ mod input_fingerprint_tests {
 
         // A fresh directory with the *edited* lib, because the tree hash is
         // memoised per directory for the life of the process.
+        //
+        // The edit changes the file's length, not just its bytes. The
+        // fingerprint is over path, size and mtime, so an edit of exactly the
+        // same length would leave only the mtime to tell the two apart -- and
+        // two files written microseconds apart share an mtime on any
+        // filesystem whose timestamps are coarser than that. This test failed
+        // in CI for precisely that reason.
         let dir2 = tempfile::TempDir::new().unwrap();
-        let entry2 = fixture(dir2.path(), "export function greet() { return \"b\"; }\n");
+        let entry2 = fixture(
+            dir2.path(),
+            "export function greet() { return \"a much longer greeting\"; }\n",
+        );
         // The importer is untouched, so this is the case that used to collide.
         assert_eq!(entry_source, std::fs::read_to_string(&entry2).unwrap());
         let after = input_fingerprint(&entry2, &entry_source).expect("tree is readable");
@@ -1506,6 +1516,37 @@ mod input_fingerprint_tests {
             source_fingerprint(&std::fs::read_to_string(&entry).unwrap()),
             "...even though the entry file's own fingerprint is unchanged, \
              which is exactly why the entry's own fingerprint is not enough"
+        );
+    }
+
+    /// The fingerprint must not depend on the clock.
+    ///
+    /// With both trees pinned to the same mtime, size is the only thing left
+    /// to tell them apart -- which is the guarantee the stat-based hash
+    /// actually offers, stated as a test rather than left to whether two
+    /// writes happened to land in different timestamp ticks.
+    #[test]
+    fn identical_mtimes_do_not_hide_a_changed_file() {
+        let pinned = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000_000);
+        let build = |body: &str| -> (tempfile::TempDir, PathBuf) {
+            let dir = tempfile::TempDir::new().unwrap();
+            let entry = fixture(dir.path(), body);
+            for name in ["lib.ts", "entry.ts"] {
+                let f = std::fs::File::options()
+                    .write(true)
+                    .open(dir.path().join(name))
+                    .unwrap();
+                f.set_modified(pinned).unwrap();
+            }
+            (dir, entry)
+        };
+        let (_a, short) = build("export function greet() { return \"a\"; }\n");
+        let (_b, long) = build("export function greet() { return \"a much longer one\"; }\n");
+        let source = std::fs::read_to_string(&short).unwrap();
+        assert_ne!(
+            input_fingerprint(&short, &source),
+            input_fingerprint(&long, &source),
+            "a file of a different length must change the key with the clock held still"
         );
     }
 
