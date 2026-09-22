@@ -214,6 +214,7 @@ fn load_startup_plugins(
     // package-installed, bundled -- so a change to any of them rebuilds all of
     // them. They share a runtime and can reach each other's globals, so a
     // per-plugin key would be claiming an isolation that does not hold.
+    #[cfg(feature = "plugins")]
     fresh_parser_js::set_plugin_corpus(&plugin_dirs);
 
     let manifests =
