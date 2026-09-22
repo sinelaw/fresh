@@ -12718,7 +12718,7 @@ function whereFields(f: NewSessionForm): WidgetSpec[] {
 
 // A row in the field column: controls indented to where values start.
 function fieldColumnRow(...kids: WidgetSpec[]): WidgetSpec {
-  return row(spacer(FORM_LABEL_W + 4), ...kids);
+  return row(spacer(FORM_LABEL_W + 2), ...kids);
 }
 
 // `Change…`-style link buttons inside the form.
@@ -12804,7 +12804,8 @@ function folderRepoRows(f: NewSessionForm): WidgetSpec[] {
 // the GIT section. A focusable row rather than a key chord — the editor's
 // keymaps already spend every Alt+letter.
 function detailsToggleRow(f: NewSessionForm): WidgetSpec {
-  const text = f.detailsOpen ? `▾ ${editor.t("form.details_hide")}` : `▸ ${editor.t("form.details_show")}`;
+  // Hollow triangles: the filled `▸` is the focus marker.
+  const text = f.detailsOpen ? `▿ ${editor.t("form.details_hide")}` : `▹ ${editor.t("form.details_show")}`;
   return fieldColumnRow(button(text, { key: "details", bare: true, style: { underline: true } }));
 }
 

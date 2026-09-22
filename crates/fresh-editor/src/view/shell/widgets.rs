@@ -3597,10 +3597,16 @@ fn button_node(
         // told).
         .child(text(label).elide(fresh_ui::desc::Elide::Tail));
 
-    // `bare` never took the gutter: the marker exists to give a *word* the
-    // shape of a focused control, and a glyph affordance already has one.
-    let marker =
-        crate::widgets::render::focus_gutter_prefix(focused && !disabled, marker_gutter && !bare);
+    // A bare *glyph* never took the gutter: the marker exists to give a
+    // *word* the shape of a focused control, and a glyph affordance (`×`,
+    // `▾`) already has one. A bare *word* — a link-styled action in a form —
+    // is exactly that word, so it takes the gutter like a framed button does;
+    // otherwise focus on it is invisible in a plain capture.
+    let is_word = label.chars().any(char::is_alphanumeric);
+    let marker = crate::widgets::render::focus_gutter_prefix(
+        focused && !disabled,
+        marker_gutter && (!bare || is_word),
+    );
     let n = match marker.is_empty() {
         true => boxed,
         false => {
