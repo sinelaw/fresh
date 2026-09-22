@@ -1726,7 +1726,7 @@
   "dialog.title.quit_daemon": "退出或分离",
   "dialog.btn.detach": "分离",
   "dialog.btn.quit_daemon": "退出并全部停止",
-  "prompt.quit_daemon": "此编辑器正作为守护进程运行。分离后它会在后台继续运行，所有终端和代理保持不变，稍后可重新连接。退出将停止守护进程及其所有进程和代理。",
+  "prompt.quit_daemon": "Fresh 正在后台运行。\n\n分离：让它继续运行，随时可以回来。\n退出：停止 Fresh 及其终端和代理。",
   "dialog.title.delete": "删除",
   "dialog.title.file_exists": "文件已存在",
   "dialog.title.file_changed": "文件在磁盘上已更改",

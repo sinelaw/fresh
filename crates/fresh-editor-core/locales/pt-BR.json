@@ -1726,7 +1726,7 @@
   "dialog.title.quit_daemon": "Sair ou desanexar",
   "dialog.btn.detach": "Desanexar",
   "dialog.btn.quit_daemon": "Sair e parar tudo",
-  "prompt.quit_daemon": "Este editor está rodando como daemon. Desanexe para deixá-lo em segundo plano com todos os terminais e agentes, e reconecte depois. Sair encerra o daemon e todos os seus processos e agentes.",
+  "prompt.quit_daemon": "O Fresh está rodando em segundo plano.\n\nDesanexar: deixá-lo rodando. Volte quando quiser.\nSair: parar o Fresh, seus terminais e seus agentes.",
   "dialog.title.delete": "Excluir",
   "dialog.title.file_exists": "O arquivo já existe",
   "dialog.title.file_changed": "Arquivo alterado no disco",

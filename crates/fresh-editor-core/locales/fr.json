@@ -1726,7 +1726,7 @@
   "dialog.title.quit_daemon": "Quitter ou détacher",
   "dialog.btn.detach": "Détacher",
   "dialog.btn.quit_daemon": "Quitter et tout arrêter",
-  "prompt.quit_daemon": "Cet éditeur s'exécute en tant que démon. Détachez-vous pour le laisser tourner en arrière-plan avec tous ses terminaux et agents, et rattachez-vous plus tard. Quitter arrête le démon ainsi que tous ses processus et agents.",
+  "prompt.quit_daemon": "Fresh tourne en arrière-plan.\n\nDétacher : le laisser tourner. Revenez quand vous voulez.\nQuitter : arrêter Fresh, ses terminaux et ses agents.",
   "dialog.title.delete": "Supprimer",
   "dialog.title.file_exists": "Le fichier existe",
   "dialog.title.file_changed": "Fichier modifié sur le disque",

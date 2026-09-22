@@ -1726,7 +1726,7 @@
   "dialog.title.quit_daemon": "Esci o scollega",
   "dialog.btn.detach": "Scollega",
   "dialog.btn.quit_daemon": "Esci e arresta tutto",
-  "prompt.quit_daemon": "Questo editor è in esecuzione come demone. Scollegati per lasciarlo in background con tutti i terminali e gli agenti, e ricollegati in seguito. Esci arresta il demone e tutti i suoi processi e agenti.",
+  "prompt.quit_daemon": "Fresh è in esecuzione in background.\n\nScollega: lascialo in esecuzione. Torna quando vuoi.\nEsci: arresta Fresh, i suoi terminali e i suoi agenti.",
   "dialog.title.delete": "Elimina",
   "dialog.title.file_exists": "Il file esiste",
   "dialog.title.file_changed": "File modificato sul disco",
