@@ -10190,16 +10190,15 @@ function openAddRepositoryFromForm(url: string, path: string, machineKey: string
   openRepositoriesDialog({ machineKey, returnTo: "form", add: { url, path } });
 }
 
-// Each machine a main clone can live on, with this repository's state on it:
-// `✓ ~/src/fresh`, `no main clone`.
+// Each machine a main clone can live on, marked with this repository's state
+// on it: `✓ Local` has a main clone, `· build-01` has none. (A dropdown cell is
+// 20 columns wide, so the path itself is left to the Path row.)
 function repoMachineOptions(d: RepoDialogState): { key: string; label: string }[] {
   const r = d.mode === "manage" ? repoById(d.repoId) : null;
-  const keys = cloneMachineKeys();
-  const w = Math.max(8, ...keys.map((k) => machineKeyLabel(k).length)) + 3;
-  return keys.map((k) => {
-    const clone = r?.clones[k];
-    const status = d.mode === "add" ? "" : clone ? `✓ ${clone}` : editor.t("repo.no_main_clone");
-    return { key: k, label: status ? machineKeyLabel(k).padEnd(w) + status : machineKeyLabel(k) };
+  return cloneMachineKeys().map((k) => {
+    const name = machineKeyLabel(k);
+    if (d.mode === "add") return { key: k, label: name };
+    return { key: k, label: `${r?.clones[k] ? "✓" : "·"} ${name}` };
   });
 }
 
@@ -10237,7 +10236,7 @@ function repoPathStatusRows(d: RepoDialogState): WidgetSpec[] {
     return [
       at(`⚠ ${editor.t("repo.none_on", { machine })}`, WARN_STYLE),
       fieldColumnRow(
-        label(`  ${editor.t("repo.type_or_browse")}`, { style: WARN_STYLE }),
+        label(editor.t("repo.type_or_browse"), { style: WARN_STYLE }),
         ...(remote ? [spacer(1), linkButton(editor.t("repo.clone_ellipsis"), "repo_clone_default")] : []),
       ),
     ];
@@ -10283,14 +10282,10 @@ function repoBrowseRows(d: RepoDialogState): WidgetSpec[] {
     });
   }
   return [
-    row(
-      spacer(FORM_LABEL_W + 2),
-      labeledSection({
-        label: title,
-        child: col(body, label(editor.t("repo.browse_hint"), { style: NOTE_STYLE })),
-        widthCols: 60,
-      }),
-    ),
+    labeledSection({
+      label: title,
+      child: col(body, label(editor.t("repo.browse_hint"), { style: NOTE_STYLE })),
+    }),
   ];
 }
 
@@ -10490,27 +10485,25 @@ async function checkRepoUrl(): Promise<void> {
     renderRepoDialog();
     return;
   }
+  // A path to a working tree is a local clone; any other path (a bare
+  // repository, say) is a remote like a URL, and is asked the same way.
   const looksLocal = v.startsWith("/") || v.startsWith("~") || v.startsWith(".");
-  if (looksLocal) {
+  const inside = looksLocal && (await pathIsInsideGitWorkTree(expandHome(v)));
+  if (repoDialog !== d || d.urlToken !== token) return;
+  if (inside) {
     const path = expandHome(v);
     const o = await editor.spawnHostProcess("git", ["-C", path, "remote", "get-url", "origin"]);
     if (repoDialog !== d || d.urlToken !== token) return;
-    const inside = await pathIsInsideGitWorkTree(path);
-    if (repoDialog !== d || d.urlToken !== token) return;
-    if (!inside) {
-      d.urlCheck = { state: "fail", text: editor.t("repo.path_not_git") };
-    } else {
-      const origin = o.exit_code === 0 ? (o.stdout || "").trim() : "";
-      d.urlCheck = { state: "local", text: origin };
-      if (!d.name.value.trim()) {
-        d.name = fieldOf(origin ? repoNameFromRemote(origin) : editor.pathBasename(path));
-        repoPanel?.setValue("repo_name", d.name.value, d.name.cursor);
-      }
-      d.machineKey = "local";
-      d.path = fieldOf(v);
-      repoPanel?.setValue("repo_path", d.path.value, d.path.cursor);
-      void recheckRepoPath();
+    const origin = o.exit_code === 0 ? (o.stdout || "").trim() : "";
+    d.urlCheck = { state: "local", text: origin };
+    if (!d.name.value.trim()) {
+      d.name = fieldOf(origin ? repoNameFromRemote(origin) : editor.pathBasename(path));
+      repoPanel?.setValue("repo_name", d.name.value, d.name.cursor);
     }
+    d.machineKey = "local";
+    d.path = fieldOf(v);
+    repoPanel?.setValue("repo_path", d.path.value, d.path.cursor);
+    void recheckRepoPath();
     renderRepoDialog();
     return;
   }
@@ -10596,7 +10589,11 @@ function openBrowse(): void {
   if (!d) return;
   const typed = d.path.value.trim();
   // Start at the typed path's folder when it names one, else home.
-  const start = typed ? (d.check?.state === "missing" ? parentDir(typed) : typed) : "~";
+  // A clone (or a path still to be made) is looked at from its parent, so it
+  // shows among its neighbours.
+  const start = typed
+    ? (d.check?.state === "missing" || d.check?.state === "ok" ? parentDir(typed) : typed)
+    : "~";
   void browseTo(start);
 }
 
@@ -12085,8 +12082,9 @@ function branchPlanNote(f: NewSessionForm, typedBase: string, fallback: string):
 // Git mode: cut a new worktree, or work in the folder as it is. A radio so
 // both outcomes are named; the key stays `worktree`, whose value is
 // `createWorktree`.
-function gitModeRadio(on: boolean, inPlaceKey: string): WidgetSpec {
-  return radio([editor.t("form.git_mode_worktree"), editor.t(inPlaceKey)], {
+function gitModeRadio(on: boolean): WidgetSpec {
+  const inPlace = form?.repoId ? "form.git_mode_main_clone" : "form.git_mode_folder";
+  return radio([editor.t("form.git_mode_worktree"), editor.t(inPlace)], {
     selectedIndex: on ? 0 : 1,
     label: formLabel("form.git_mode"),
     labelWidth: FORM_LABEL_W,
@@ -12116,7 +12114,7 @@ function worktreeFields(f: NewSessionForm): WidgetSpec[] {
     );
     return out;
   }
-  out.push(gitModeRadio(on, f.repoId ? "form.git_mode_main_clone" : "form.git_mode_folder"));
+  out.push(gitModeRadio(on));
   // "Checkout branch" — an existing branch: with a worktree it's the base
   // the worktree is cut from / checked out to; without one it drives an
   // in-place `git checkout` in the project dir. The value slot shows the
@@ -12152,8 +12150,8 @@ function worktreeFields(f: NewSessionForm): WidgetSpec[] {
     const name = plannedWorkspaceName(f);
     if (name) {
       out.push(spacer(0), label(
-        editor.t("form.worktree_at", { path: localWorktreePath(f, name) }),
-        { labelWidth: FORM_LABEL_W, style: NOTE_STYLE, elide: "head" },
+        editor.t("form.worktree_at", { path: tildePath(localWorktreePath(f, name)) }),
+        { labelWidth: FORM_LABEL_W, style: NOTE_STYLE, wrap: true },
       ));
     }
   }
@@ -12166,7 +12164,7 @@ function worktreeFields(f: NewSessionForm): WidgetSpec[] {
 // dialog does not run), so the two agree on the shape and the preview shows
 // the project path the user can see in the field above.
 function localWorktreePath(f: NewSessionForm, name: string): string {
-  const project = f.projectPath.value.trim() || f.defaultProjectPath;
+  const project = expandHome(f.projectPath.value.trim() || f.defaultProjectPath);
   return editor.pathJoin(editor.getDataDir(), "orchestrator", slugify(project), name);
 }
 
@@ -12225,7 +12223,7 @@ function remoteWorktreeFields(f: NewSessionForm): WidgetSpec[] {
     // while the user typed is reachable by the time they press Create, and
     // the remote's own `git rev-parse` is what decides — refusing here would
     // be this side guessing on the strength of one failed connection.
-    out.push(gitModeRadio(f.createWorktree, "form.git_mode_folder"));
+    out.push(gitModeRadio(f.createWorktree));
     // "Could not ask" has two causes that send the user to different places:
     // a host that did not answer, and one that answered with a key we have
     // never seen. The second is not an error the user has to go and fix —
@@ -12253,7 +12251,7 @@ function remoteWorktreeFields(f: NewSessionForm): WidgetSpec[] {
     return out;
   }
   const on = f.createWorktree;
-  out.push(gitModeRadio(on, "form.git_mode_folder"));
+  out.push(gitModeRadio(on));
   if (f.remoteIsGit === null) {
     out.push(fieldNote(editor.t("form.remote_unknown"), {
       fg: "ui.menu_disabled_fg",
@@ -12711,7 +12709,7 @@ function whereFields(f: NewSessionForm): WidgetSpec[] {
 
 // A row in the field column: controls indented to where values start.
 function fieldColumnRow(...kids: WidgetSpec[]): WidgetSpec {
-  return row(spacer(FORM_LABEL_W + 2), ...kids);
+  return row(spacer(FORM_LABEL_W + 4), ...kids);
 }
 
 // `Change…`-style link buttons inside the form.
@@ -12744,15 +12742,19 @@ function repoWhereRows(f: NewSessionForm, r: Repository): WidgetSpec[] {
     ];
   }
   if (!f.detailsOpen) {
-    return [label(editor.t("form.main_clone_line", { path: clone }), { labelWidth: FORM_LABEL_W, style: NOTE_STYLE })];
+    return [label(editor.t("form.main_clone_line", { path: tildePath(clone) }), { labelWidth: FORM_LABEL_W, style: NOTE_STYLE, wrap: true })];
   }
   return [
-    row(
-      label(`${formLabel("form.main_clone").padStart(FORM_LABEL_W)}: ${clone}`),
-      spacer(3),
-      linkButton(editor.t("form.change_clone"), "change_clone"),
-    ),
+    label(`${formLabel("form.main_clone").padStart(FORM_LABEL_W)}: ${tildePath(clone)}`),
+    fieldColumnRow(linkButton(editor.t("form.change_clone"), "change_clone")),
   ];
+}
+
+// A path under the home directory as `~/…`, the way it is usually typed.
+function tildePath(p: string): string {
+  const home = homeDir();
+  if (home && (p === home || p.startsWith(home + "/"))) return "~" + p.slice(home.length);
+  return p;
 }
 
 // A git folder that belongs to a known repository says so, and offers to make
@@ -12794,17 +12796,19 @@ function folderRepoRows(f: NewSessionForm): WidgetSpec[] {
 // keymaps already spend every Alt+letter.
 function detailsToggleRow(f: NewSessionForm): WidgetSpec {
   const text = f.detailsOpen ? `▾ ${editor.t("form.details_hide")}` : `▸ ${editor.t("form.details_show")}`;
-  return row(
-    spacer(FORM_LABEL_W + 2),
-    button(text, { key: "details", bare: true, style: { underline: true } }),
-  );
+  return fieldColumnRow(button(text, { key: "details", bare: true, style: { underline: true } }));
 }
 
 // The GIT section (details open): the worktree-or-in-place choice and the
 // branches, for a path that is (or may be) a repository.
 function gitSectionFields(f: NewSessionForm): WidgetSpec[] {
-  if (f.backend === "local") return worktreeFields(f);
-  if (f.backend === "ssh") return remoteWorktreeFields(f);
+  // A main clone still to be made will be a repository: offer the worktree
+  // group as it will be, not as the empty path reads now.
+  const g: NewSessionForm = formNeedsClone(f)
+    ? { ...f, projectPathIsGit: true, projectPathIsLinkedWorktree: false, remoteIsGit: true, remoteProbing: false, remoteProbeError: "", defaultBranch: f.defaultBranch || "HEAD" }
+    : f;
+  if (g.backend === "local") return worktreeFields(g);
+  if (g.backend === "ssh") return remoteWorktreeFields(g);
   return [];
 }
 
