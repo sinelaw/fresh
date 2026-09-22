@@ -1,4 +1,4 @@
-//! E2E tests: default_language setting in the General category
+//! E2E tests: default_language setting in the Syntax & Languages category
 //!
 //! Validates that the `default_language` field appears as a dropdown
 //! populated with the defined language keys, and functions correctly.
@@ -6,15 +6,17 @@
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers};
 
-/// The default_language field should appear in the General settings category.
+/// The default_language field should appear in the Syntax & Languages category.
 #[test]
 fn test_default_language_in_general_settings() {
     let mut harness = EditorTestHarness::new(120, 40).unwrap();
     harness.render().unwrap();
 
     harness.open_settings().unwrap();
+    harness
+        .select_settings_category("Syntax & Languages")
+        .unwrap();
 
-    // General is the first category, already selected.
     // Scroll down to find "Default Language" in the settings list.
     for _ in 0..30 {
         let screen = harness.screen_to_string();
@@ -26,7 +28,7 @@ fn test_default_language_in_general_settings() {
     }
 
     let screen = harness.screen_to_string();
-    panic!("Default Language setting not found in General category. Screen:\n{screen}");
+    panic!("Default Language setting not found in Syntax & Languages category. Screen:\n{screen}");
 }
 
 /// The default_language field should render as a dropdown (with ▼ indicator),
@@ -37,6 +39,9 @@ fn test_default_language_is_dropdown() {
     harness.render().unwrap();
 
     harness.open_settings().unwrap();
+    harness
+        .select_settings_category("Syntax & Languages")
+        .unwrap();
 
     // Navigate within settings panel to Default Language
     // Tab to switch focus to the settings panel
@@ -71,6 +76,9 @@ fn test_default_language_dropdown_shows_languages() {
     harness.render().unwrap();
 
     harness.open_settings().unwrap();
+    harness
+        .select_settings_category("Syntax & Languages")
+        .unwrap();
 
     // Tab to settings panel
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();

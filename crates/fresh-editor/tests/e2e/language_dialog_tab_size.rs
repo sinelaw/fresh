@@ -1,5 +1,5 @@
 //! E2E reproducer: editing a language's **Tab Size** through
-//! View → Settings → General → Languages → <lang> must keep the typed value.
+//! View → Settings → Syntax & Languages → Languages → <lang> must keep the typed value.
 //!
 //! The language entry dialog accepts a number field's digits into a separate
 //! edit buffer that only flushes into the control's `value` on *confirm*. The
@@ -48,6 +48,9 @@ fn row_is_focused(harness: &EditorTestHarness, label: &str) -> bool {
 /// dialog open. (Mirrors the helper in `issue_2345_language_settings.rs`.)
 fn open_language_dialog(harness: &mut EditorTestHarness) {
     harness.open_settings().unwrap();
+    harness
+        .select_settings_category("Syntax & Languages")
+        .unwrap();
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
     for _ in 0..60 {

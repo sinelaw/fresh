@@ -384,13 +384,16 @@ fn test_settings_ui_with_language_config_via_command_palette() {
         "Settings should show Editor category"
     );
 
-    // Step 4: Navigate to General category (first category, should be selected by default)
-    // Switch to settings panel to see items
+    // Step 4: Navigate to the Syntax & Languages category, then switch to
+    // the settings panel to see its items
+    harness
+        .select_settings_category("Syntax & Languages")
+        .unwrap();
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
 
     // Step 5: Scroll down in settings to find the "Languages" map setting
-    // Languages is a map-type setting in the General category
+    // Languages is a map-type setting in the Syntax & Languages category
     // It may be below the visible area, so scroll down
     for _ in 0..20 {
         harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
