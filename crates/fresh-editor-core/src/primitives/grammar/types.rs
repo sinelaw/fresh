@@ -6,7 +6,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use syntect::parsing::{SyntaxDefinition, SyntaxReference, SyntaxSet, SyntaxSetBuilder};
 
 // Re-export glob matching utilities for use by other modules
@@ -322,6 +322,7 @@ impl std::fmt::Debug for GrammarRegistry {
     }
 }
 
+#[derive(Clone)]
 pub struct GrammarRegistry {
     /// Combined syntax set (built-in + embedded + user grammars)
     syntax_set: Arc<SyntaxSet>,
@@ -1775,19 +1776,38 @@ impl GrammarRegistry {
 }
 
 impl Default for GrammarRegistry {
+    /// Defaults and embedded grammars only -- no user grammars, no config.
+    ///
+    /// Built once per process and handed out as clones. `SyntaxSet::load_defaults_newlines`
+    /// parses syntect's bundled grammar YAML at runtime, which costs ~0.9s; a
+    /// clone costs ~150us. The inputs are a compiled-in constant, so every
+    /// caller was paying that parse to rebuild byte-identical state. Callers
+    /// that want user grammars or config go through `for_editor`, which reads
+    /// a pre-compiled packdump and is unaffected by this.
+    ///
+    /// A clone rather than a shared `Arc`, deliberately: the expensive part
+    /// (`syntax_set`) is an `Arc` inside the registry and so is shared by the
+    /// clone anyway, while the cheap derived maps are copied so each caller
+    /// owns its registry outright. `apply_languages` asserts unique ownership
+    /// via `Arc::get_mut`, and handing out a shared `Arc` here would turn that
+    /// assertion into a panic the moment two registries existed at once.
     fn default() -> Self {
-        // Create with defaults and embedded grammars only (no user grammars)
-        let defaults = SyntaxSet::load_defaults_newlines();
-        let mut builder = defaults.into_builder();
-        Self::add_embedded_grammars(&mut builder);
-        let syntax_set = builder.build();
-        let filename_scopes = Self::build_filename_scopes();
-        let extra_extensions = Self::build_extra_extensions();
+        static PROTOTYPE: OnceLock<GrammarRegistry> = OnceLock::new();
+        PROTOTYPE
+            .get_or_init(|| {
+                let defaults = SyntaxSet::load_defaults_newlines();
+                let mut builder = defaults.into_builder();
+                Self::add_embedded_grammars(&mut builder);
+                let syntax_set = builder.build();
+                let filename_scopes = Self::build_filename_scopes();
+                let extra_extensions = Self::build_extra_extensions();
 
-        let mut registry = Self::new(syntax_set, extra_extensions, filename_scopes);
-        registry.populate_built_in_aliases();
-        registry.rebuild_catalog();
-        registry
+                let mut registry = Self::new(syntax_set, extra_extensions, filename_scopes);
+                registry.populate_built_in_aliases();
+                registry.rebuild_catalog();
+                registry
+            })
+            .clone()
     }
 }
 
