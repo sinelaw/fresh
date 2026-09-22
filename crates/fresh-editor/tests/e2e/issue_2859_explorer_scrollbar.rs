@@ -7,7 +7,7 @@
 //! `issue_2119_wheel_scroll.rs` documents, whose token readers these tests
 //! share from `common::explorer`.
 
-use crate::common::explorer::{first_explorer_token, token_on_line_with};
+use crate::common::explorer::{first_explorer_token, glyph_col, token_on_line_with};
 use crate::common::harness::EditorTestHarness;
 use crossterm::event::{KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use fresh::config::{Config, ExplorerWidth};
@@ -258,6 +258,20 @@ fn file_explorer_scrollbar_thumb_drag_scrolls_without_moving_the_selection() {
 /// same panel in the same run, so the "no bar" half cannot pass by pointing at
 /// a column that was never the bar's.
 #[test]
+fn a_tree_that_fits_from_the_first_frame_draws_no_scrollbar() {
+    // The gutter decision is seeded from the previous frame, so a panel that
+    // never had a bar takes a different path than one that just lost it.
+    let harness = harness_with_files(3, &[]);
+    assert_eq!(
+        scrollbar_rows(&harness),
+        Vec::<u16>::new(),
+        "a tree that fits from the first frame should leave the bar's column \
+         blank.\nScreen:\n{}",
+        harness.screen_to_string()
+    );
+}
+
+#[test]
 fn file_explorer_scrollbar_appears_only_while_the_tree_overflows() {
     let mut harness = harness_with_files(80, &[]);
 
@@ -292,7 +306,7 @@ fn file_explorer_scrollbar_appears_only_while_the_tree_overflows() {
 /// lane is not part of a row's content, so hovering the bar reveals nothing
 /// about the file behind it.
 #[test]
-fn status_indicator_hover_follows_the_glyph_not_the_scrollbar() {
+fn status_indicator_glyph_sits_in_the_last_content_column() {
     let mut harness = harness_with_files(80, &[]);
 
     // An unsaved buffer decorates its explorer row with "●" and a tooltip.
@@ -334,14 +348,12 @@ fn status_indicator_hover_follows_the_glyph_not_the_scrollbar() {
         "an unsaved buffer should mark its explorer row.\nScreen:\n{screen}"
     );
     let row = row as u16;
-    // Count cells, not bytes, so the multi-byte border/marker glyphs don't
-    // skew the column.
-    let glyph_col = line.chars().position(|c| c == '●').unwrap() as u16;
+    let glyph_col = glyph_col(line, '●')
+        .unwrap_or_else(|| panic!("the row should carry a status marker.\nScreen:\n{screen}"));
 
     // Pin the column, not just "left of the bar": the marker is right-aligned
-    // into the last column of the row's content, which is the one immediately
-    // before the scrollbar. Anything else means the bar has pushed the row's
-    // layout around, which is what it must not do.
+    // into the last content column. This row's name is short, so it is a
+    // placement check — the clip regression is guarded by the overflow test.
     assert_eq!(
         glyph_col,
         SCROLLBAR_COL - 1,
@@ -428,6 +440,23 @@ fn overflowing_row_offers_no_status_tooltip_under_the_scrollbar() {
     // Count cells, not bytes: the row carries multi-byte border and tree
     // glyphs before the panel's right edge.
     let explorer_row: String = line.chars().take(EXPLORER_COLS as usize).collect();
+    // The negative assertions below only mean something if a marker is due
+    // on this row at all, so pin that first: the buffer is unsaved, and the
+    // tree knows it.
+    assert!(
+        screen.contains(&format!("{long_name}*")),
+        "precondition: the buffer should be unsaved.\nScreen:\n{screen}"
+    );
+    let root = screen
+        .lines()
+        .find(|l| l.starts_with('│') && l.contains("project_root"))
+        .unwrap_or_else(|| panic!("the tree should have a root row.\nScreen:\n{screen}"));
+    assert!(
+        root.contains('●'),
+        "precondition: the tree should show the unsaved descendant on its \
+         root.\nScreen:\n{screen}"
+    );
+
     assert!(
         !explorer_row.contains('●'),
         "the marker on an overflowing row is painted over by the scrollbar, so \

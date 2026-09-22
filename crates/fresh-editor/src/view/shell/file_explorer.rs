@@ -1051,6 +1051,22 @@ mod tests {
             "got {:?}",
             got.msgs
         );
+
+        // The bar's own column answers nothing: the row is clipped to its lane.
+        let bar = ui.dispatch(Input::Move {
+            pos: Point::new(slot.x as i32 + 1, slot.y as i32),
+            mods: Mods::NONE,
+        });
+        assert!(
+            !bar.msgs.iter().any(|m| matches!(
+                m,
+                UiMsg::Ui(UiFact::Hover(Some(
+                    HoverTarget::FileExplorerStatusIndicator(_)
+                )))
+            )),
+            "the scrollbar column claimed a status marker: {:?}",
+            bar.msgs
+        );
     }
 
     /// A press on a row names the row and carries the run count the host

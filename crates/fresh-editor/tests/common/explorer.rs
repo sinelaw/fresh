@@ -9,11 +9,7 @@
 /// prefix "file_" on "│▌   file_11.txt  ●" returns "file_11.txt".
 pub fn token_after(line: &str, prefix: &str) -> Option<String> {
     let idx = line.find(prefix)?;
-    let tok: String = line[idx..]
-        .chars()
-        .take_while(|c| !c.is_whitespace())
-        .collect();
-    Some(tok)
+    line[idx..].split_whitespace().next().map(str::to_owned)
 }
 
 /// The `prefix`-token on the first screen line that also contains `marker`.
@@ -32,4 +28,21 @@ pub fn first_explorer_token(screen: &str, prefix: &str) -> Option<String> {
         .lines()
         .filter(|l| l.starts_with('│'))
         .find_map(|l| token_after(l, prefix))
+}
+
+/// The screen column of the first `ch` on the line.
+///
+/// Sums display widths rather than counting symbols: `screen_to_string` writes
+/// a wide glyph as one symbol and its continuation cell as none, so a symbol
+/// index drifts left of the true column once anything wide sits to its left.
+pub fn glyph_col(line: &str, ch: char) -> Option<u16> {
+    use unicode_width::UnicodeWidthChar;
+    let mut col = 0usize;
+    for c in line.chars() {
+        if c == ch {
+            return u16::try_from(col).ok();
+        }
+        col += c.width().unwrap_or(0);
+    }
+    None
 }
