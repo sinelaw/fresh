@@ -469,24 +469,24 @@ impl Editor {
             crate::config::FileExplorerSide::Left => col as i32 - start_col as i32,
             crate::config::FileExplorerSide::Right => start_col as i32 - col as i32,
         };
-        let total_width = self.terminal_width as i32;
+        // **Measured against the width the explorer is sized from.** A
+        // percent is a percent of the chrome left after the dock
+        // (`to_cols(terminal_width - dock_cols)`, as the renderer and
+        // `editor_content_area` apply it), so converting the pointer's cells
+        // with the full terminal width moved the divider short of the
+        // pointer — by more the wider the dock. And it went through percent
+        // deltas truncated toward zero, then truncated again by `to_cols`.
+        // Working in cells and converting once, at the end, is exact
+        // wherever a percent can be.
+        let chrome = self.terminal_width.saturating_sub(self.dock_cols());
 
         // Drag preserves the variant the user chose. A user editing
         // columns doesn't want their mode silently flipped to percent
         // just because they grabbed the divider.
-        if total_width > 0 {
-            use crate::config::ExplorerWidth;
-            let new_width = match start_width {
-                ExplorerWidth::Percent(start_pct) => {
-                    let percent_delta = (delta * 100) / total_width;
-                    let new_pct = (start_pct as i32 + percent_delta).clamp(0, 100) as u8;
-                    ExplorerWidth::Percent(new_pct)
-                }
-                ExplorerWidth::Columns(start_cols) => {
-                    let new_cols = (start_cols as i32 + delta).clamp(0, total_width) as u16;
-                    ExplorerWidth::Columns(new_cols)
-                }
-            };
+        if chrome > 0 {
+            let start_cols = start_width.to_cols(chrome) as i32;
+            let target = (start_cols + delta).clamp(0, chrome as i32) as u16;
+            let new_width = start_width.with_cols(target, chrome);
             // **Only a width that actually moved reflows**, the way the dock's
             // grip has always guarded its own drag. A grip's `Move` fires for
             // every motion report the pointer produces while it holds the

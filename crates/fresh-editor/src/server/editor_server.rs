@@ -521,7 +521,7 @@ impl EditorServer {
             // Process input events
             if !input_events.is_empty() {
                 self.last_client_activity = Instant::now();
-                for event in input_events {
+                for event in crate::server::input_parser::coalesce_motion(input_events) {
                     if self.handle_event(event)? {
                         needs_render = true;
                     }
