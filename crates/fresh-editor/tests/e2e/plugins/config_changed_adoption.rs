@@ -12,29 +12,11 @@
 
 use crate::common::git_test_helper::GitTestRepo;
 use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness};
+use crate::common::settings_ui::focus_category;
 use crate::common::tracing::init_tracing_from_env;
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::{Config, PluginConfig};
 use std::fs;
-
-/// Navigate the Settings UI category list until `name` is highlighted.
-fn focus_category(h: &mut EditorTestHarness, name: &str) {
-    for _ in 0..40 {
-        if h.screen_to_string()
-            .lines()
-            .any(|line| line.contains('>') && line.contains(name))
-        {
-            return;
-        }
-        h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-        h.render().unwrap();
-    }
-    panic!(
-        "category {:?} never became selected. Screen:\n{}",
-        name,
-        h.screen_to_string()
-    );
-}
 
 /// Open Settings, land on the plugin's category, move focus into the
 /// panel, step down `steps` fields, toggle with Enter, save, and close.

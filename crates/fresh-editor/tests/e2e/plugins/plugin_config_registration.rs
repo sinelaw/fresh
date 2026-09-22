@@ -12,6 +12,7 @@
 //! loop times out before finding it.
 
 use crate::common::harness::{copy_plugin_lib, EditorTestHarness};
+use crate::common::settings_ui::focus_category;
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::Config;
 use std::fs;
@@ -80,37 +81,6 @@ fn run_insert_greeting(h: &mut EditorTestHarness) {
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
     h.wait_for_prompt_closed().unwrap();
     h.render().unwrap();
-}
-
-/// Navigate the Settings UI category list until the named entry is
-/// highlighted. The selection marker `>` lives in column 0 of the
-/// category cell, but expandable categories (those with sub-sections)
-/// render a `▶` chevron in front of the name, which shifts the layout.
-/// Just look for any line that contains both the `>` selector glyph
-/// and the category name — robust against either layout.
-fn focus_category(h: &mut EditorTestHarness, name: &str) {
-    for _ in 0..40 {
-        if category_is_selected(h, name) {
-            return;
-        }
-        h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-        h.render().unwrap();
-    }
-    panic!(
-        "category {:?} never became selected. Screen:\n{}",
-        name,
-        h.screen_to_string()
-    );
-}
-
-/// True iff some line in the rendered screen contains both the `>`
-/// selection marker AND `name`. The marker is column-aligned to the
-/// category cell's first glyph, so co-occurrence on the same line is
-/// a reliable indicator that *that* row is the selected one.
-fn category_is_selected(h: &EditorTestHarness, name: &str) -> bool {
-    h.screen_to_string()
-        .lines()
-        .any(|line| line.contains('>') && line.contains(name))
 }
 
 /// 1. The plugin's category shows up under "Plugin: <name>".

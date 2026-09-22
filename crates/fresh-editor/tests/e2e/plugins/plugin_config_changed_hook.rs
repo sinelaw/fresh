@@ -17,6 +17,7 @@
 //! bar so tests have a deterministic barrier to wait on.
 
 use crate::common::harness::{copy_plugin_lib, EditorTestHarness};
+use crate::common::settings_ui::focus_category;
 use crossterm::event::{KeyCode, KeyModifiers};
 use fresh::config::Config;
 use std::fs;
@@ -96,28 +97,6 @@ fn run_command(h: &mut EditorTestHarness, name: &str) {
     h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
     h.wait_for_prompt_closed().unwrap();
     h.render().unwrap();
-}
-
-/// Navigate the Settings UI category list until `name` is highlighted.
-/// Mirrors `plugin_config_registration.rs`: the `>` selection marker and
-/// the category name land on the same rendered line whether or not the
-/// category draws an expand chevron.
-fn focus_category(h: &mut EditorTestHarness, name: &str) {
-    for _ in 0..40 {
-        if h.screen_to_string()
-            .lines()
-            .any(|line| line.contains('>') && line.contains(name))
-        {
-            return;
-        }
-        h.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-        h.render().unwrap();
-    }
-    panic!(
-        "category {:?} never became selected. Screen:\n{}",
-        name,
-        h.screen_to_string()
-    );
 }
 
 /// Saving a Settings-UI change fires `config_changed`, and the handler
