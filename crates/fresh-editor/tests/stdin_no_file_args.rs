@@ -118,6 +118,34 @@ fn a_bare_fresh_reads_the_pipe_and_keeps_the_keyboard() {
         .expect("typed keys should reach the buffer");
 }
 
+/// `fresh -` with nothing redirected in is a usage error, not an empty
+/// buffer — the one case where stdin being the terminal has to be refused
+/// rather than ignored.
+#[test]
+fn an_explicit_dash_on_a_terminal_is_a_usage_error() {
+    use crate::common::pty::ChildStdin;
+    if !pty_available() {
+        eprintln!("Skipping: no PTY available in this environment");
+        return;
+    }
+    let home = tempfile::tempdir().unwrap();
+
+    let mut cmd = isolated_fresh(home.path());
+    cmd.args(["--no-session", "--no-init", "--no-upgrade-check", "-"]);
+    let mut editor =
+        spawn_on_pty(cmd, ChildStdin::Terminal, COLS, ROWS).expect("spawn fresh on a pty");
+
+    editor
+        .wait_for_screen(|screen| screen.contains("stdin is a terminal"))
+        .expect("the launch should refuse, naming why");
+
+    let status = editor.drain_and_wait().expect("wait for fresh to exit");
+    assert!(
+        !status.success(),
+        "asking for stdin with none redirected in should fail, got {status:?}"
+    );
+}
+
 /// `echo … | fresh -`, the form that already worked, still does — same
 /// buffer, same terminal on fd 0.
 #[test]

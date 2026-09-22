@@ -814,61 +814,6 @@ fn stdin_is_terminal() -> bool {
     io::stdin().is_terminal()
 }
 
-/// What a launch wants done with whatever is sitting on stdin.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum StdinPlan {
-    /// Stdin is already the terminal. Nothing to do.
-    Terminal,
-    /// Read stdin into a buffer, then reopen stdin from the terminal.
-    ReadAsBuffer,
-    /// Something else says what to open, but stdin is still not the
-    /// terminal — reopen it so the editor has somewhere to read keys from.
-    ReopenOnly,
-    /// `--stdin` or `-` was asked for while stdin *is* the terminal: there
-    /// is nothing to read, and the launch has to say so.
-    MissingPipe,
-}
-
-/// Decide what the editor does with stdin, from the command line and
-/// whether stdin is a terminal.
-///
-/// **Whatever is on stdin is input, never keystrokes.** `--stdin` and a `-`
-/// among the files are the explicit ways to say so, and a bare `fresh` with
-/// stdin redirected means the same thing (#3252) — it is the only input
-/// there is. Before that, such a launch fell between the cases (`fresh -`
-/// reads stdin, a bare `fresh` on a terminal goes to the orchestrator) and
-/// left the redirect on fd 0: its bytes arrived at the key decoder as
-/// keystrokes, and once a pipe's writer closed, `poll` reported `POLLHUP`
-/// immediately and forever — without `POLLIN`, which
-/// `services::tty_input::poll_readable` reads as a timeout — so the editor
-/// spun on a full core and never saw a key again, Ctrl+Q included.
-///
-/// File arguments say what to open, so they leave stdin unread: `cmd |
-/// fresh file.txt` opens `file.txt`. That launch has the same dead fd 0 and
-/// spun the same way, so it still has to take the terminal —
-/// [`StdinPlan::ReopenOnly`] — it just has no buffer to make of stdin.
-///
-/// The question asked is only "is stdin the terminal" (see
-/// [`stdin_is_terminal`]), so a redirect from a file or `/dev/null` is
-/// treated like a pipe. That is deliberate: each of them left the same
-/// unreadable descriptor on fd 0, and none of them is a source of keys.
-fn stdin_plan(stdin_flag: bool, files: &[String], stdin_is_tty: bool) -> StdinPlan {
-    if stdin_flag || files.iter().any(|f| f == "-") {
-        return if stdin_is_tty {
-            StdinPlan::MissingPipe
-        } else {
-            StdinPlan::ReadAsBuffer
-        };
-    }
-    if stdin_is_tty {
-        StdinPlan::Terminal
-    } else if files.is_empty() {
-        StdinPlan::ReadAsBuffer
-    } else {
-        StdinPlan::ReopenOnly
-    }
-}
-
 /// Reopen stdin from /dev/tty after reading piped content.
 /// This allows crossterm to use the terminal for keyboard input
 /// even though the original stdin was a pipe.
@@ -1809,60 +1754,67 @@ fn initialize_app(args: &Args) -> AnyhowResult<SetupState> {
         original_hook(panic);
     }));
 
-    // What to do with stdin: read it as a buffer (`--stdin`, `-`, or a bare
-    // `fresh` with something piped in), or just take the terminal back off
-    // it. Either way the editor must not be left polling the pipe — see
-    // `stdin_plan`.
+    // **Whatever is on stdin is input, never keystrokes.** `--stdin` and a
+    // `-` among the files ask for it explicitly; a bare `fresh` with stdin
+    // redirected means the same thing (#3252), since it is the only input
+    // there is. That launch used to fall between the cases — `fresh -` reads
+    // stdin, a bare `fresh` on a terminal goes to the orchestrator — and kept
+    // the redirect on fd 0: its bytes reached the key decoder as keystrokes,
+    // and once a pipe's writer closed, `poll` reported `POLLHUP` immediately
+    // and forever, without `POLLIN`, which `services::tty_input::poll_readable`
+    // reads as a timeout. The editor spun on a full core and never saw another
+    // key, Ctrl+Q included.
     //
-    // Both branches run BEFORE raw mode is enabled: once it is, stdin is the
-    // editor's source of terminal events. The reading branch streams the
-    // pipe into the spool on a background thread, so the editor starts while
-    // data is still arriving.
-    let stdin_stream = match stdin_plan(args.stdin, &args.files, stdin_is_terminal()) {
-        StdinPlan::ReadAsBuffer => {
-            tracing::info!("Starting background stdin streaming");
-            match start_stdin_streaming() {
-                Ok(stream_state) => {
-                    tracing::info!(
-                        "Stdin streaming started, spool: {:?}",
-                        stream_state.spool.path()
-                    );
-                    Some(stream_state)
-                }
-                Err(e) => {
-                    eprintln!("Error: Failed to start stdin streaming: {}", e);
-                    return Err(e);
-                }
-            }
-        }
-        StdinPlan::ReopenOnly => {
-            // The pipe is not this launch's input — the file arguments are —
-            // but it is still on fd 0, where the editor would poll it
-            // forever. Nothing reads it, so it is simply replaced.
-            //
-            // This fails the launch exactly as the reading branch does, and
-            // for the same reason: without a controlling terminal there is
-            // nowhere to read keys from. Reporting it here rather than
-            // swallowing it is what makes the failure legible — crossterm
-            // opens `/dev/tty` itself a moment later in `TerminalModes`, so a
-            // launch that carried on regardless still died, just with a bare
-            // "No such device or address" naming nothing.
-            //
-            // Replacing fd 0 drops the last read end of the pipe, so a writer
-            // still filling it gets SIGPIPE instead of blocking forever on a
-            // pipe nobody will ever read.
-            reopen_stdin_from_tty()?;
-            tracing::info!("Reopened stdin from the terminal (file arguments given)");
-            None
-        }
-        StdinPlan::MissingPipe => {
+    // File arguments say what to open, so they leave stdin unread — but that
+    // launch had the same dead fd 0 and spun the same way, so it still has to
+    // take the terminal; it just has no buffer to make of stdin. Replacing
+    // fd 0 drops the last read end, so a writer still filling the pipe gets
+    // SIGPIPE rather than blocking on a pipe nobody will read.
+    //
+    // Only "is stdin the terminal" is asked, so a redirect from a file or
+    // `/dev/null` counts too: each left the same unreadable fd 0, and none is
+    // a source of keys.
+    //
+    // All of this runs BEFORE raw mode is enabled: once it is, stdin is the
+    // editor's source of terminal events. The reading path streams stdin into
+    // the spool on a background thread, so the editor starts while data is
+    // still arriving.
+    let stdin_asked_for = args.stdin || args.files.iter().any(|f| f == "-");
+    let stdin_stream = if stdin_is_terminal() {
+        if stdin_asked_for {
             eprintln!("Error: --stdin or \"-\" specified but stdin is a terminal (no piped data)");
             anyhow::bail!(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "No data piped to stdin",
             ));
         }
-        StdinPlan::Terminal => None,
+        None
+    } else if stdin_asked_for || args.files.is_empty() {
+        tracing::info!("Starting background stdin streaming");
+        match start_stdin_streaming() {
+            Ok(stream_state) => {
+                tracing::info!(
+                    "Stdin streaming started, spool: {:?}",
+                    stream_state.spool.path()
+                );
+                Some(stream_state)
+            }
+            Err(e) => {
+                eprintln!("Error: Failed to start stdin streaming: {}", e);
+                return Err(e);
+            }
+        }
+    } else {
+        // Nothing reads stdin here, so it is simply replaced. This fails the
+        // launch exactly as the reading path does, and for the same reason:
+        // with no controlling terminal there is nowhere to read keys from.
+        // Reporting it here is what makes the failure legible — crossterm
+        // opens `/dev/tty` itself a moment later in `TerminalModes`, so a
+        // launch that carried on regardless still died, just with a bare
+        // "No such device or address" naming nothing.
+        reopen_stdin_from_tty()?;
+        tracing::info!("Reopened stdin from the terminal (file arguments given)");
+        None
     };
 
     // Determine working directory early for config loading
@@ -6945,72 +6897,6 @@ fn coalesce_mouse_moves(event: InputEvent) -> AnyhowResult<(InputEvent, Option<I
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn files(names: &[&str]) -> Vec<String> {
-        names.iter().map(|s| s.to_string()).collect()
-    }
-
-    const TTY: bool = true;
-    const PIPE: bool = false;
-
-    /// **A pipe on stdin is input, never keystrokes** (#3252). `echo 123 |
-    /// fresh` — no `-`, no file — used to be neither `fresh -` nor a bare
-    /// `fresh` on a terminal, so fd 0 stayed the pipe: its bytes were
-    /// decoded as keys, and its `POLLHUP` after the writer closed spun the
-    /// event loop at 100% of a core with no way left to quit. It means
-    /// `fresh -` now.
-    #[test]
-    fn a_pipe_with_no_file_arguments_is_read_as_a_buffer() {
-        assert_eq!(
-            stdin_plan(false, &[], PIPE),
-            StdinPlan::ReadAsBuffer,
-            "`echo 123 | fresh` should read the pipe, like `fresh -`"
-        );
-    }
-
-    /// The explicit forms are unchanged, and a bare `fresh` on a terminal
-    /// still reaches the ordinary launch (orchestrator mode and all) —
-    /// there is no pipe to imply anything from.
-    #[test]
-    fn the_explicit_forms_and_a_plain_terminal_launch_are_unchanged() {
-        assert_eq!(
-            stdin_plan(false, &files(&["-"]), PIPE),
-            StdinPlan::ReadAsBuffer
-        );
-        assert_eq!(stdin_plan(true, &[], PIPE), StdinPlan::ReadAsBuffer);
-        assert_eq!(
-            stdin_plan(false, &files(&["a.txt", "-"]), PIPE),
-            StdinPlan::ReadAsBuffer
-        );
-
-        assert_eq!(stdin_plan(false, &[], TTY), StdinPlan::Terminal);
-        assert_eq!(
-            stdin_plan(false, &files(&["a.txt"]), TTY),
-            StdinPlan::Terminal
-        );
-    }
-
-    /// File arguments say what to open, so the pipe is not made a buffer —
-    /// but `cmd | fresh file.txt` had the same dead fd 0 and span the same
-    /// way, so the terminal is still taken back.
-    #[test]
-    fn a_file_argument_leaves_the_pipe_unread_but_still_takes_the_terminal() {
-        assert_eq!(
-            stdin_plan(false, &files(&["a.txt"]), PIPE),
-            StdinPlan::ReopenOnly
-        );
-    }
-
-    /// Asking for stdin when there is no pipe is a usage error, not an
-    /// empty buffer.
-    #[test]
-    fn asking_for_a_pipe_that_is_not_there_is_an_error() {
-        assert_eq!(stdin_plan(true, &[], TTY), StdinPlan::MissingPipe);
-        assert_eq!(
-            stdin_plan(false, &files(&["-"]), TTY),
-            StdinPlan::MissingPipe
-        );
-    }
 
     /// **A flag with nothing usable after it is a usage error, not a
     /// default.** The CLI is driven by agents, and `--prompt --timeout 30`
