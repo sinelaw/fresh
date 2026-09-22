@@ -172,6 +172,45 @@ fn dock_delete_confirmation_shows_its_buttons_on_a_short_terminal() {
     );
 }
 
+/// The confirmation is one framed modal, not a box inside a box. It used to
+/// render the picker's `labeledSection` pane inside the popup's own frame, so
+/// a content-hugging "Confirm Delete" box sat in the top-left corner of a
+/// wider, empty one. The title now rides in the host frame's top border, and
+/// every content row is bounded by exactly that frame's two side borders.
+#[test]
+fn dock_delete_confirmation_is_a_single_frame() {
+    let (_tmp, h) = open_delete_confirmation(HEIGHT);
+
+    let screen = h.screen_to_string();
+    let header = screen
+        .lines()
+        .find(|l| l.contains("Delete workspace"))
+        .unwrap_or_else(|| panic!("no confirmation header.\nScreen:\n{screen}"));
+    // Only whitespace between the header and the frame's border — and no
+    // second border straight outside that one (`│ │ Delete workspace …` is the
+    // nested box). The dimmed dock may share the row, so this looks only at
+    // the run of borders adjacent to the header.
+    let left = &header[..header.find("Delete workspace").unwrap()];
+    let left = left.trim_end();
+    assert!(
+        left.ends_with('│'),
+        "the header must sit just inside the frame.\nScreen:\n{screen}"
+    );
+    let outside = left[..left.len() - '│'.len_utf8()].trim_end();
+    assert!(
+        !outside.ends_with('│'),
+        "the confirmation must be one frame, not a box inside a box.\nScreen:\n{screen}"
+    );
+    let title = screen
+        .lines()
+        .find(|l| l.contains("Confirm Delete") && !l.contains("[ Confirm Delete ]"))
+        .unwrap_or_else(|| panic!("no frame title.\nScreen:\n{screen}"));
+    assert!(
+        title.contains('─'),
+        "the title must ride in the frame's top border.\nScreen:\n{screen}"
+    );
+}
+
 /// Cancel holds the keyboard by default, so a stray Enter on a destructive
 /// prompt is recoverable: it returns to the context menu rather than wiping a
 /// worktree.

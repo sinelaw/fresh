@@ -4106,6 +4106,30 @@ function gerundAction(action: BulkAction): string {
 function buildConfirmPane(
   confirm: { action: BulkAction; ids: number[] },
 ): WidgetSpec {
+  return labeledSection({
+    label: confirmTitle(confirm),
+    child: buildConfirmBody(confirm),
+  });
+}
+
+// The confirmation's heading ("Confirm Delete", "Confirm Delete (3)"). The
+// picker draws it as the pane's `labeledSection` border; the dock's popup
+// hands it to the host as the modal frame's native title instead.
+function confirmTitle(confirm: { action: BulkAction; ids: number[] }): string {
+  const cap = capAction(confirm.action);
+  const existing = confirm.ids.filter((id) => orchestratorSessions.has(id));
+  return existing.length > 1
+    ? editor.t("confirm.label_bulk", { cap, count: String(existing.length) })
+    : editor.t("confirm.label_single", { cap });
+}
+
+// The confirmation's contents without a frame of its own. The dock's popup
+// renders this directly: the host already frames that panel, and a
+// `labeledSection` inside it drew a second, content-hugging box in the
+// top-left corner of the first.
+function buildConfirmBody(
+  confirm: { action: BulkAction; ids: number[] },
+): WidgetSpec {
   const { action, ids } = confirm;
   const cap = capAction(action);
   const existing = ids.filter((id) => orchestratorSessions.has(id));
@@ -4179,35 +4203,30 @@ function buildConfirmPane(
       ]),
     );
   }
-  return labeledSection({
-    label: bulk
-      ? editor.t("confirm.label_bulk", { cap, count: String(existing.length) })
-      : editor.t("confirm.label_single", { cap }),
-    child: col(
-      { kind: "raw", entries },
-      // Only rendered when there is a worktree to remove: on an in-place or
-      // shared-tree session the control would be a switch wired to nothing.
-      // Checked by default, because removing it is what Delete has always
-      // done — this adds a way to keep the files, it does not quietly change
-      // what the button means.
-      ...(worktree
-        ? [
-          spacer(0),
-          toggle(confirmRemoveWorktree, editor.t("confirm.remove_worktree"), {
-            key: "confirm-worktree",
-          }),
-        ]
-        : []),
-      spacer(0),
-      // `endRow`: flush right, reflowing instead of clipping on a narrow pane.
-      // No leading flex spacer; the wrap path ignores flex.
-      endRow(
-        button(editor.t("confirm.btn_cancel"), { key: "confirm-cancel" }),
-        spacer(2),
-        button(editor.t("confirm.btn_confirm", { cap }), { intent: "danger", key: `confirm-${action}` }),
-      ),
+  return col(
+    { kind: "raw", entries },
+    // Only rendered when there is a worktree to remove: on an in-place or
+    // shared-tree session the control would be a switch wired to nothing.
+    // Checked by default, because removing it is what Delete has always
+    // done — this adds a way to keep the files, it does not quietly change
+    // what the button means.
+    ...(worktree
+      ? [
+        spacer(0),
+        toggle(confirmRemoveWorktree, editor.t("confirm.remove_worktree"), {
+          key: "confirm-worktree",
+        }),
+      ]
+      : []),
+    spacer(0),
+    // `endRow`: flush right, reflowing instead of clipping on a narrow pane.
+    // No leading flex spacer; the wrap path ignores flex.
+    endRow(
+      button(editor.t("confirm.btn_cancel"), { key: "confirm-cancel" }),
+      spacer(2),
+      button(editor.t("confirm.btn_confirm", { cap }), { intent: "danger", key: `confirm-${action}` }),
     ),
-  });
+  );
 }
 
 // The dedicated bulk selection bar (Layout B). Shown in place of the
@@ -6181,10 +6200,11 @@ function dockMenuVisit(id: number): void {
 
 function buildDockMenuSpec(state: DockMenuState): WidgetSpec {
   if (state.stage === "confirm") {
-    // Reuse the picker's confirmation pane (single-session form). Its
-    // buttons are keyed `confirm-cancel` / `confirm-<action>`, handled
-    // in the dock-menu `widget_event` block.
-    return buildConfirmPane({ action: state.action, ids: [state.target.id] });
+    // Reuse the picker's confirmation contents (single-session form),
+    // unframed: the popup's own frame carries the title (see
+    // `dockMenuEnterConfirm`). Its buttons are keyed `confirm-cancel` /
+    // `confirm-<action>`, handled in the dock-menu `widget_event` block.
+    return buildConfirmBody({ action: state.action, ids: [state.target.id] });
   }
   // A folder's context menu: organise actions (Rename / New Subfolder /
   // Delete Folder).
@@ -6308,8 +6328,16 @@ function openDockContextMenu(index: number, col: number, row: number): void {
   if (openPanel) openPanel.setSelectedIndex("sessions", index);
   dockMenuState = { target, anchorCol: col, anchorRow: row, stage: "menu" };
   if (!dockMenuPanel) dockMenuPanel = new FloatingWidgetPanel();
-  // widthPct/heightPct seed the centered confirm stage; the anchored menu
-  // stage ignores them (it sizes to content). Mount, then anchor.
+  mountDockMenu();
+}
+
+// Mount the menu stage: an untitled, content-sized popup anchored at the
+// click cell. A mount rather than an update, because the confirm stage
+// mounts a titled frame and the menu must not inherit that title when
+// Cancel brings it back.
+function mountDockMenu(): void {
+  if (!dockMenuPanel || !dockMenuState) return;
+  // The anchored menu sizes to content; widthPct/heightPct are unused.
   dockMenuPanel.mount(buildDockMenuSpec(dockMenuState), {
     widthPct: 50,
     heightPct: 44,
@@ -6388,9 +6416,17 @@ function dockMenuEnterConfirm(action: "archive" | "delete"): void {
     stage: "confirm",
     action,
   };
-  editor.floatingPanelControl(dockMenuPanel.id(), "center", 0);
+  // Remount rather than re-center: the frame's title is a mount option, and
+  // the confirmation is a titled modal like the rename dialog, not a popup
+  // with a second box drawn inside it. Same panel id, so the widget_event
+  // routing is unchanged; the mount centers it.
+  dockMenuPanel.mount(buildDockMenuSpec(dockMenuState), {
+    widthPct: 50,
+    heightPct: 44,
+    title: confirmTitle({ action, ids: [dockMenuState.target.id] }),
+    closable: true,
+  });
   editor.floatingPanelControl(dockMenuPanel.id(), "fullscreen", 1);
-  renderDockMenu();
   // Pin Cancel, exactly as the modal picker's `enterConfirm` does. Today the
   // host would land here anyway (the outgoing `ctx-delete` focus key isn't
   // tabbable in the confirm spec, so it falls back to the first one), but
@@ -15248,8 +15284,7 @@ editor.on("widget_event", (e) => {
           anchorRow: dockMenuState.anchorRow,
           stage: "menu",
         };
-        renderDockMenu();
-        anchorDockMenu();
+        mountDockMenu();
         return;
       }
       if (e.widget_key === "confirm-archive" || e.widget_key === "confirm-delete") {
