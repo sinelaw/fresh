@@ -18,6 +18,10 @@ oxc_codegen.workspace = true
 oxc_span.workspace = true
 oxc_semantic.workspace = true
 oxc_isolated_declarations.workspace = true
+tracing.workspace = true
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+tempfile = "3.25"

@@ -9245,6 +9245,341 @@ fn install_console<'js>(
     Ok(())
 }
 
+/// What a previous run worked out about a plugin: the compiled body, and the
+/// two things derived from its source that the editor needs at load time.
+pub(crate) struct CompiledPlugin {
+    pub bytecode: Vec<u8>,
+    pub declarations: Option<String>,
+    pub dependencies: Vec<String>,
+}
+
+/// One plugin, as far as it got before it needs the engine.
+///
+/// Passed whole rather than as seven arguments so the compiled form, the
+/// source it was prepared from and the key that names both always travel
+/// together.
+pub(crate) struct PreparedBody<'a> {
+    /// The cached compiled module, when a previous process left one.
+    pub bytecode: Option<&'a [u8]>,
+    /// Transpiled JS, when this process had to prepare it.
+    pub js_code: Option<&'a str>,
+    /// The plugin file itself.
+    pub path: &'a Path,
+    /// How the plugin names itself in errors and stack traces.
+    pub source_name: &'a str,
+    /// `input_fingerprint` of the source these were prepared from, computed by
+    /// the same read. `None` means "do not cache".
+    pub cache_key: Option<u64>,
+    pub declarations: Option<&'a str>,
+    pub dependencies: &'a [String],
+}
+
+/// What came of handing a cached compiled module to QuickJS.
+///
+/// The distinction is load-bearing: only `Unloadable` may be retried from
+/// source. See [`QuickJsBackend::execute_bytecode`].
+pub(crate) enum BytecodeOutcome {
+    /// The module body ran. This is its result, error and all.
+    Ran(Result<()>),
+    /// The bytes were rejected before the body ran.
+    Unloadable(anyhow::Error),
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+struct CompiledMeta {
+    declarations: Option<String>,
+    dependencies: Vec<String>,
+}
+
+/// Where compiled plugins are cached.
+///
+/// A single root, not a `.compiled/` beside each plugin: plugin directories
+/// are not ours to write into (a package plugin lives in the user's project
+/// tree, a system install may be read-only), and one root is what makes the
+/// entries prunable.
+fn compiled_cache_root() -> Option<PathBuf> {
+    if let Some(dir) = std::env::var_os("FRESH_COMPILED_CACHE_DIR") {
+        return Some(PathBuf::from(dir));
+    }
+    dirs::cache_dir().map(|p| p.join("fresh").join("compiled-plugins"))
+}
+
+/// This plugin's own directory under the cache root: one per plugin path, so
+/// pruning reads a handful of entries rather than the whole cache.
+fn compiled_cache_dir(plugin: &Path) -> Option<PathBuf> {
+    let root = compiled_cache_root()?;
+    let stem = plugin.file_name()?.to_str()?;
+    // The path, so two plugins with the same filename in different directories
+    // do not share a bucket.
+    let path_hash = fresh_parser_js::source_fingerprint(&plugin.to_string_lossy());
+    Some(root.join(format!("{stem}.{path_hash:016x}")))
+}
+
+/// Where this plugin's compiled form is cached, and under what key.
+///
+/// `key_input` is [`fresh_parser_js::input_fingerprint`] over the plugin: its
+/// own source *and* every local file its imports inline. Keying on the entry
+/// file alone would serve a stale bundle forever after an edit to an imported
+/// `lib/*.ts`, because the cached bytecode stays perfectly valid -- it is just
+/// the wrong program.
+///
+/// The key also covers the binary and its ABI. QuickJS stamps bytecode with
+/// `BC_VERSION` and refuses to read a mismatch, but that only catches changes
+/// to the bytecode format itself: a Fresh release moving to a different
+/// QuickJS build at the same format version would otherwise read back
+/// bytecode it never wrote. Folding in the running executable's identity means
+/// an entry is only ever read by the exact binary that produced it; an
+/// upgrade, or a rebuild, simply misses and redoes the work.
+fn compiled_cache_paths(plugin: &Path, key_input: u64) -> Option<(PathBuf, PathBuf)> {
+    let dir = compiled_cache_dir(plugin)?;
+    let key = key_input ^ binary_fingerprint();
+    Some((
+        dir.join(format!("{key:016x}.bin")),
+        dir.join(format!("{key:016x}.json")),
+    ))
+}
+
+/// A fingerprint of the running executable: its version and ABI, plus the size
+/// and modification time of the file on disk.
+///
+/// The ABI parts are named rather than left to chance. `Module::write` emits
+/// native-endian, native-pointer-width bytecode, and while two builds for
+/// different architectures would almost certainly differ in size or mtime too,
+/// "almost certainly" is not what should stand between a cross-built binary
+/// and `JS_ReadObject`.
+fn binary_fingerprint() -> u64 {
+    static FINGERPRINT: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *FINGERPRINT.get_or_init(|| {
+        let mut parts = format!(
+            "{}:{}:{}:{}",
+            env!("CARGO_PKG_VERSION"),
+            std::env::consts::ARCH,
+            if cfg!(target_endian = "big") {
+                "be"
+            } else {
+                "le"
+            },
+            std::mem::size_of::<usize>(),
+        );
+        if let Ok(exe) = std::env::current_exe() {
+            if let Ok(meta) = std::fs::metadata(&exe) {
+                parts.push_str(&format!(":{}", meta.len()));
+                if let Ok(modified) = meta.modified() {
+                    if let Ok(age) = modified.duration_since(std::time::UNIX_EPOCH) {
+                        parts.push_str(&format!(":{}", age.as_secs()));
+                    }
+                }
+            }
+        }
+        fresh_parser_js::source_fingerprint(&parts)
+    })
+}
+
+/// Magic + format version for the bytecode container. Bumping the trailing
+/// digit invalidates every entry written by an older layout.
+const COMPILED_MAGIC: &[u8; 8] = b"FRSHBC01";
+/// Magic, then payload length, then payload checksum.
+const COMPILED_HEADER_LEN: usize = 8 + 8 + 8;
+
+/// Wrap bytecode in the container `read_compiled_bytecode` verifies.
+fn frame_compiled_bytecode(bytecode: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(COMPILED_HEADER_LEN + bytecode.len());
+    out.extend_from_slice(COMPILED_MAGIC);
+    out.extend_from_slice(&(bytecode.len() as u64).to_le_bytes());
+    out.extend_from_slice(&bytecode_checksum(bytecode).to_le_bytes());
+    out.extend_from_slice(bytecode);
+    out
+}
+
+/// Unwrap and verify a container, or `None` if it is not one we wrote whole.
+///
+/// This is what stands between a half-written file and `JS_ReadObject`, which
+/// is not hardened against malformed input. The file is published by `rename`
+/// after an `fsync`, so a torn write should not be observable -- but "should
+/// not" is not a guarantee across filesystems and crashes, and the cost of
+/// checking is one pass over a few hundred kilobytes.
+fn unframe_compiled_bytecode(framed: &[u8]) -> Option<Vec<u8>> {
+    if framed.len() < COMPILED_HEADER_LEN || &framed[..8] != COMPILED_MAGIC {
+        return None;
+    }
+    let len = u64::from_le_bytes(framed[8..16].try_into().ok()?) as usize;
+    let want = u64::from_le_bytes(framed[16..COMPILED_HEADER_LEN].try_into().ok()?);
+    let payload = framed.get(COMPILED_HEADER_LEN..)?;
+    if payload.len() != len || bytecode_checksum(payload) != want {
+        return None;
+    }
+    Some(payload.to_vec())
+}
+
+/// FNV-1a over bytes -- the same construction as
+/// [`fresh_parser_js::source_fingerprint`], which is defined over `str`.
+fn bytecode_checksum(bytes: &[u8]) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in bytes {
+        hash ^= *byte as u64;
+        hash = hash.wrapping_mul(0x100_0000_01b3);
+    }
+    hash
+}
+
+/// The compiled form of `plugin`, if a previous run left one that this binary
+/// wrote for exactly these inputs.
+pub(crate) fn read_compiled_plugin(plugin: &Path, key_input: u64) -> Option<CompiledPlugin> {
+    let (bin, json) = compiled_cache_paths(plugin, key_input)?;
+    let bytecode = unframe_compiled_bytecode(&std::fs::read(&bin).ok()?)?;
+    let meta: CompiledMeta = serde_json::from_slice(&std::fs::read(&json).ok()?).ok()?;
+    Some(CompiledPlugin {
+        bytecode,
+        declarations: meta.declarations,
+        dependencies: meta.dependencies,
+    })
+}
+
+/// Throw away an entry that would not load, so the next run recompiles rather
+/// than retrying it.
+fn discard_compiled_plugin(plugin: &Path, key_input: u64) {
+    if let Some((bin, json)) = compiled_cache_paths(plugin, key_input) {
+        let _ = std::fs::remove_file(bin);
+        let _ = std::fs::remove_file(json);
+    }
+}
+
+/// How many generations of one plugin's compiled form to keep.
+///
+/// Every rebuild of the editor changes `binary_fingerprint` and so mints a new
+/// key for every plugin, and under `cargo nextest` each integration-test
+/// binary is its own executable -- so a single test run legitimately wants
+/// tens of live entries per plugin at once. The cap is set well above that:
+/// pruning harder would make the test binaries evict each other and turn every
+/// process back into a cache miss, which is the whole cost this cache exists
+/// to avoid.
+const COMPILED_CACHE_GENERATIONS: usize = 64;
+
+/// Drop all but the most recently written `COMPILED_CACHE_GENERATIONS` entries
+/// in one plugin's bucket, plus any temp file a killed process left behind.
+///
+/// Without this the cache only grows: nothing else ever removes an entry, and
+/// a developer looping build-and-test mints a full generation each time.
+fn prune_compiled_cache(dir: &Path, keep_key: &str) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let mut generations: HashMap<String, (std::time::SystemTime, Vec<PathBuf>)> = HashMap::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
+        let modified = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .unwrap_or(std::time::UNIX_EPOCH);
+        if name.starts_with(".tmp.") {
+            // A temp file older than an hour belongs to a process that died
+            // between writing and renaming; nothing will ever claim it.
+            if modified
+                .elapsed()
+                .map(|e| e.as_secs() > 3600)
+                .unwrap_or(false)
+            {
+                let _ = std::fs::remove_file(&path);
+            }
+            continue;
+        }
+        let Some((key, _ext)) = name.rsplit_once('.') else {
+            continue;
+        };
+        if key == keep_key {
+            continue; // Never evict the entry this process just published.
+        }
+        let slot = generations
+            .entry(key.to_string())
+            .or_insert((std::time::UNIX_EPOCH, Vec::new()));
+        slot.0 = slot.0.max(modified);
+        slot.1.push(path);
+    }
+
+    // `keep_key` is not in the map, so it costs one of the slots implicitly.
+    if generations.len() < COMPILED_CACHE_GENERATIONS {
+        return;
+    }
+    let mut by_age: Vec<_> = generations.into_values().collect();
+    by_age.sort_by_key(|(modified, _)| *modified);
+    let evict = by_age.len() + 1 - COMPILED_CACHE_GENERATIONS;
+    for (_, paths) in by_age.into_iter().take(evict) {
+        for path in paths {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
+
+/// Publish an entry atomically, so a reader sees whole files or none. Several
+/// test processes compile the same plugin at once; losing that race is normal,
+/// and failing to cache at all only costs the next process the work again.
+fn write_compiled_plugin(
+    plugin: &Path,
+    key_input: u64,
+    bytecode: &[u8],
+    declarations: Option<&str>,
+    dependencies: &[String],
+) {
+    let Some((bin, json)) = compiled_cache_paths(plugin, key_input) else {
+        return;
+    };
+    let Some(dir) = bin.parent() else { return };
+    if std::fs::create_dir_all(dir).is_err() {
+        // A read-only or otherwise unwritable cache root is not an error: the
+        // plugin has already been prepared and is about to run. Every start
+        // just pays for the preparation again.
+        tracing::debug!("compiled cache unwritable at {}", dir.display());
+        return;
+    }
+    let meta = CompiledMeta {
+        declarations: declarations.map(|d| d.to_string()),
+        dependencies: dependencies.to_vec(),
+    };
+    let Ok(meta_bytes) = serde_json::to_vec(&meta) else {
+        return;
+    };
+    // Metadata first: a reader requires both files, so the bytecode landing
+    // last is what makes the pair visible.
+    if !publish_atomically(dir, &json, &meta_bytes) {
+        return;
+    }
+    if !publish_atomically(dir, &bin, &frame_compiled_bytecode(bytecode)) {
+        return;
+    }
+    if let Some(key) = bin.file_stem().and_then(|s| s.to_str()) {
+        prune_compiled_cache(dir, key);
+    }
+}
+
+fn publish_atomically(dir: &Path, dest: &Path, bytes: &[u8]) -> bool {
+    let tmp = dir.join(format!(
+        ".tmp.{}.{:x}",
+        std::process::id(),
+        fresh_parser_js::source_fingerprint(&dest.to_string_lossy())
+    ));
+    // `sync_all` before the rename, not `fs::write` alone: the rename can
+    // otherwise be durable while the contents it names are not, which is
+    // exactly the truncated-file case `unframe_compiled_bytecode` then has to
+    // catch. Belt and braces, cheaply.
+    let written = std::fs::File::create(&tmp).and_then(|mut f| {
+        use std::io::Write;
+        f.write_all(bytes)?;
+        f.sync_all()
+    });
+    if written.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+        return false;
+    }
+    if std::fs::rename(&tmp, dest).is_err() {
+        let _ = std::fs::remove_file(&tmp);
+        return false;
+    }
+    true
+}
+
 impl QuickJsBackend {
     /// Create a new QuickJS backend (standalone, for testing)
     pub fn new() -> Result<Self> {
@@ -9508,6 +9843,18 @@ impl QuickJsBackend {
 
     /// Execute JavaScript code in the context
     pub(crate) fn execute_js(&mut self, code: &str, source_name: &str) -> Result<()> {
+        let wrapped = fresh_parser_js::wrap_plugin_body(code);
+        self.execute_wrapped(&wrapped, source_name, None)
+    }
+
+    /// Declare and evaluate an already-wrapped plugin body, optionally saving
+    /// the compiled form so the next process can skip the parse.
+    fn execute_wrapped(
+        &mut self,
+        wrapped: &str,
+        source_name: &str,
+        compiled: Option<&std::cell::RefCell<Option<Vec<u8>>>>,
+    ) -> Result<()> {
         // Extract plugin name from path (filename without extension)
         let plugin_name = Path::new(source_name)
             .file_stem()
@@ -9520,40 +9867,31 @@ impl QuickJsBackend {
             source_name
         );
 
-        // Get or create context for this plugin
-        let context = {
-            let mut contexts = self.plugin_contexts.borrow_mut();
-            if let Some(ctx) = contexts.get(plugin_name) {
-                ctx.clone()
-            } else {
-                let ctx = Context::full(&self.runtime).map_err(|e| {
-                    anyhow!(
-                        "Failed to create QuickJS context for plugin {}: {}",
-                        plugin_name,
-                        e
-                    )
-                })?;
-                self.setup_context_api(&ctx, plugin_name)?;
-                contexts.insert(plugin_name.to_string(), ctx.clone());
-                ctx
-            }
-        };
+        let context = self.context_for_plugin(plugin_name)?;
 
         // Wrap plugin code in IIFE to prevent TDZ errors and scope pollution
         // This is critical for plugins like vi_mode that declare `const editor = ...`
         // which shadows the global `editor` causing TDZ if not wrapped.
-        let wrapped_code = format!("(function() {{ {} }})();", code);
-        let wrapped = wrapped_code.as_str();
+        //
+        // `.call(globalThis)` rather than `()`: the body runs as a module now,
+        // and modules are always strict, where a plain call would leave `this`
+        // as `undefined` instead of the global object the plugins have always
+        // seen. Binding it explicitly keeps that unchanged.
+
+        // Modules are declared by name, and re-declaring one in a context that
+        // still holds the previous definition is an error. A plugin can be
+        // loaded more than once into the same context (hot reload), so the
+        // name carries a counter and is never reused.
+        static MODULE_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let module_name = format!(
+            "{source_name}#{}",
+            MODULE_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        );
 
         context.with(|ctx| {
             tracing::debug!("execute_js: executing plugin code for '{}'", plugin_name);
 
-            // Execute the plugin code with filename for better stack traces
-            let mut eval_options = rquickjs::context::EvalOptions::default();
-            eval_options.global = true;
-            eval_options.filename = Some(source_name.to_string());
-            let result = ctx
-                .eval_with_options::<(), _>(wrapped.as_bytes(), eval_options)
+            let result = Self::eval_plugin_module(&ctx, &module_name, wrapped, compiled)
                 .map_err(|e| format_js_error(&ctx, e, source_name));
 
             tracing::debug!(
@@ -9564,6 +9902,225 @@ impl QuickJsBackend {
 
             result
         })
+    }
+
+    /// Run a prepared plugin: from the compiled cache when a previous process
+    /// left an entry, and from source otherwise. The two paths are the same
+    /// module and the same body; only the parse differs.
+    ///
+    /// `cache_key` is the [`fresh_parser_js::input_fingerprint`] of the source
+    /// this `js_code` was prepared from, computed by the same read. It is
+    /// passed in rather than recomputed here so the key and the bytes it names
+    /// can never come from two different reads of a file that changed in
+    /// between -- which would publish an entry that loads cleanly and runs the
+    /// wrong program, permanently.
+    pub(crate) fn execute_prepared(&mut self, plugin: PreparedBody<'_>) -> Result<()> {
+        let PreparedBody {
+            bytecode,
+            js_code,
+            path: plugin_path,
+            source_name,
+            cache_key,
+            declarations,
+            dependencies,
+        } = plugin;
+        if let Some(bytes) = bytecode {
+            match self.execute_bytecode(bytes, source_name) {
+                // The module loaded. Whatever happened next -- including the
+                // plugin's own top level throwing -- is the plugin's result,
+                // not a verdict on the cache entry. Re-running the body here
+                // would apply every registration it managed before the throw a
+                // second time, into the same context.
+                BytecodeOutcome::Ran(result) => return result,
+                BytecodeOutcome::Unloadable(e) => {
+                    tracing::debug!("compiled '{source_name}' would not load ({e}); rebuilding");
+                    if let Some(key) = cache_key {
+                        discard_compiled_plugin(plugin_path, key);
+                    }
+                    // Nothing was evaluated, so starting over from source is
+                    // safe. Read, key and prepare in that order so all three
+                    // describe the same bytes.
+                    if let Ok(source) = std::fs::read_to_string(plugin_path) {
+                        let key = fresh_parser_js::input_fingerprint(plugin_path, &source);
+                        let prepared = fresh_parser_js::prepare_source(plugin_path, &source)?;
+                        return self.compile_and_run(
+                            &prepared.js_code,
+                            plugin_path,
+                            key,
+                            source_name,
+                            prepared.declarations.as_deref(),
+                            &prepared.dependencies,
+                        );
+                    }
+                }
+            }
+        }
+
+        let Some(code) = js_code else {
+            return Err(anyhow!(
+                "plugin '{source_name}' has neither compiled form nor source"
+            ));
+        };
+        self.compile_and_run(
+            code,
+            plugin_path,
+            cache_key,
+            source_name,
+            declarations,
+            dependencies,
+        )
+    }
+
+    /// Run a plugin from source, keeping what QuickJS compiled so the next
+    /// process -- the next test, or the user's next editor start -- can skip
+    /// both the transpile and the parse.
+    ///
+    /// `cache_key` is `None` when the plugin's inputs could not be
+    /// enumerated (an import that does not resolve). The plugin still runs;
+    /// it just is not cached, because an entry under a key that does not
+    /// cover its inputs is worse than no entry at all.
+    fn compile_and_run(
+        &mut self,
+        js_code: &str,
+        plugin_path: &Path,
+        cache_key: Option<u64>,
+        source_name: &str,
+        declarations: Option<&str>,
+        dependencies: &[String],
+    ) -> Result<()> {
+        let wrapped = fresh_parser_js::wrap_plugin_body(js_code);
+        let compiled = std::cell::RefCell::new(None);
+        let result = self.execute_wrapped(&wrapped, source_name, Some(&compiled));
+        if let (Some(bytes), Some(key)) = (compiled.into_inner(), cache_key) {
+            write_compiled_plugin(plugin_path, key, &bytes, declarations, dependencies);
+        }
+        result
+    }
+
+    /// Execute a plugin from a cached compiled module.
+    ///
+    /// Same module, same body, same context setup as [`Self::execute_js`] --
+    /// only the parse is skipped, because a previous process already did it.
+    ///
+    /// The two failures are kept apart deliberately. `Unloadable` means the
+    /// bytes were rejected before anything ran, so the caller may start over
+    /// from source. `Ran` means the module body executed, and its `Result` is
+    /// the plugin's own -- a plugin whose top level throws must *not* be run
+    /// again, because everything it registered before throwing has already
+    /// been applied to this context.
+    pub(crate) fn execute_bytecode(
+        &mut self,
+        bytecode: &[u8],
+        source_name: &str,
+    ) -> BytecodeOutcome {
+        let plugin_name = Path::new(source_name)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("unknown");
+
+        let context = match self.context_for_plugin(plugin_name) {
+            Ok(context) => context,
+            Err(e) => return BytecodeOutcome::Ran(Err(e)),
+        };
+
+        context.with(|ctx| {
+            // SAFETY: `bytecode` is the payload of a container written by
+            // `frame_compiled_bytecode` and just verified by
+            // `unframe_compiled_bytecode` -- magic, length and checksum -- so
+            // it is the exact byte string some `Module::write` produced, not a
+            // truncated or partially written file. That it was produced by a
+            // *compatible* QuickJS is enforced by the cache key, which folds
+            // in this executable's identity along with the architecture,
+            // endianness and pointer width `Module::write` bakes into its
+            // output; an entry from any other build has a different key and is
+            // never read. `JS_ReadObject` on anything else is undefined
+            // behaviour, which is why neither check is optional.
+            let declared = match unsafe { rquickjs::Module::load(ctx.clone(), bytecode) } {
+                Ok(declared) => declared,
+                Err(e) => {
+                    return BytecodeOutcome::Unloadable(format_js_error(&ctx, e, source_name))
+                }
+            };
+            let (_module, promise) = match declared.eval() {
+                Ok(evaluated) => evaluated,
+                Err(e) => {
+                    return BytecodeOutcome::Unloadable(format_js_error(&ctx, e, source_name))
+                }
+            };
+            BytecodeOutcome::Ran(
+                Self::settle_plugin_module(promise, source_name)
+                    .map_err(|e| format_js_error(&ctx, e, source_name)),
+            )
+        })
+    }
+
+    /// The QuickJS context this plugin runs in, created (and given the host
+    /// API) on first use. Each plugin gets its own, so one cannot see
+    /// another's globals.
+    fn context_for_plugin(&mut self, plugin_name: &str) -> Result<Context> {
+        if let Some(ctx) = self.plugin_contexts.borrow().get(plugin_name) {
+            return Ok(ctx.clone());
+        }
+        let ctx = Context::full(&self.runtime).map_err(|e| {
+            anyhow!(
+                "Failed to create QuickJS context for plugin {}: {}",
+                plugin_name,
+                e
+            )
+        })?;
+        self.setup_context_api(&ctx, plugin_name)?;
+        self.plugin_contexts
+            .borrow_mut()
+            .insert(plugin_name.to_string(), ctx.clone());
+        Ok(ctx)
+    }
+
+    /// Drive a module's evaluation promise to settlement, so a plugin whose
+    /// top level throws is reported as an error rather than loading silently.
+    fn settle_plugin_module(promise: rquickjs::Promise<'_>, name: &str) -> rquickjs::Result<()> {
+        match promise.finish::<()>() {
+            Ok(()) => Ok(()),
+            // No plugin uses top-level `await`, so a module body settles as it
+            // evaluates. If one ever does and leaves work outstanding, that is
+            // not a load failure -- the old script path could not report it
+            // either -- so note it and carry on.
+            Err(rquickjs::Error::WouldBlock) => {
+                tracing::warn!(
+                    "plugin module '{name}' left work pending after evaluation; \
+                     continuing without it"
+                );
+                Ok(())
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Declare and evaluate one plugin body as a module.
+    ///
+    /// Evaluating a module hands back a promise rather than raising, so a
+    /// plugin whose top level throws would otherwise load "successfully" and
+    /// fail silently. `finish` drives the job queue until that promise settles
+    /// and turns a rejection back into an `Err`, which is what the caller's
+    /// error reporting has always relied on.
+    fn eval_plugin_module<'js>(
+        ctx: &rquickjs::Ctx<'js>,
+        module_name: &str,
+        code: &str,
+        compiled: Option<&std::cell::RefCell<Option<Vec<u8>>>>,
+    ) -> rquickjs::Result<()> {
+        let declared = rquickjs::Module::declare(ctx.clone(), module_name, code)?;
+
+        // Take what QuickJS just parsed. Captured before evaluation: the
+        // compiled form is a function of the source alone, and a plugin that
+        // throws on load is still the same program next time.
+        if let Some(sink) = compiled {
+            if let Ok(bytes) = declared.write(rquickjs::module::WriteOptions::default()) {
+                *sink.borrow_mut() = Some(bytes);
+            }
+        }
+
+        let (_module, promise) = declared.eval()?;
+        Self::settle_plugin_module(promise, module_name)
     }
 
     /// Execute JavaScript source code directly as a plugin (no file I/O).
@@ -13963,6 +14520,126 @@ mod tests {
         assert_eq!(
             js_global_accessor("odd\"name\\"),
             "globalThis[\"odd\\\"name\\\\\"]"
+        );
+    }
+
+    /// A plugin body that throws must run **once** per load, even on the
+    /// cache-hit path.
+    ///
+    /// `execute_bytecode` reports two very different failures, and conflating
+    /// them is a live bug: "these bytes are not a module" may be retried from
+    /// source, but "the module's body threw" may not -- by then the body has
+    /// already run, and everything it registered before throwing has been
+    /// applied to this context. Re-running it applies all of that a second
+    /// time, silently, on every start.
+    ///
+    /// The body reports its own execution count in the error it throws, so
+    /// one load that runs it twice is directly visible here.
+    #[test]
+    fn a_cached_plugin_whose_body_throws_runs_it_once() {
+        let (mut backend, _rx) = create_test_backend();
+        // The body counts its own executions and reports the count in what it
+        // throws, so one load that runs it twice is directly visible.
+        let body = "globalThis.loads = (globalThis.loads || 0) + 1; \
+                    throw new Error('loads=' + globalThis.loads);";
+
+        // On disk, and real: the misclassification this guards against
+        // recovers by re-reading the plugin file, so a path that does not
+        // exist would hide the bug rather than catch it.
+        let dir = tempfile::TempDir::new().unwrap();
+        let path = dir.path().join("thrower.ts");
+        std::fs::write(&path, body).unwrap();
+        let source_name = path.to_str().unwrap().to_string();
+
+        // Compile it the way a cold start would, keeping what QuickJS parsed.
+        let wrapped = fresh_parser_js::wrap_plugin_body(body);
+        let sink = std::cell::RefCell::new(None);
+        let first = backend.execute_wrapped(&wrapped, &source_name, Some(&sink));
+        let first = format!("{}", first.expect_err("the body throws"));
+        assert!(
+            first.contains("loads=1"),
+            "first load runs the body once: {first}"
+        );
+        let bytecode = sink.into_inner().expect("QuickJS compiled the module");
+
+        // Now the warm path. Same context (it is keyed on the plugin name), so
+        // the counter carries over: one more execution means `loads=2`.
+        let second = backend.execute_prepared(PreparedBody {
+            bytecode: Some(&bytecode),
+            js_code: None,
+            path: &path,
+            source_name: &source_name,
+            // No key: this test must not touch the on-disk cache.
+            cache_key: None,
+            declarations: None,
+            dependencies: &[],
+        });
+        let second = format!("{}", second.expect_err("the body still throws"));
+        assert!(
+            second.contains("loads=2"),
+            "the cached body must run exactly once per load; \
+             `loads=3` means the throw was misread as a bad cache entry and \
+             the body was re-prepared and re-run into the same context, \
+             applying everything it registered before throwing a second \
+             time: {second}"
+        );
+    }
+
+    /// Bytes that are not a module at all *are* a bad cache entry, and the
+    /// caller may start over from source.
+    #[test]
+    fn bytes_that_are_not_a_module_are_unloadable() {
+        let (mut backend, _rx) = create_test_backend();
+        match backend.execute_bytecode(b"not bytecode, just some bytes", "junk.ts") {
+            BytecodeOutcome::Unloadable(_) => {}
+            BytecodeOutcome::Ran(r) => {
+                panic!("garbage must not be reported as a module that ran: {r:?}")
+            }
+        }
+    }
+
+    /// The container is what stands between a half-written cache file and
+    /// `JS_ReadObject`, which is not hardened against malformed input.
+    #[test]
+    fn the_bytecode_container_rejects_anything_it_did_not_write_whole() {
+        let payload = b"some compiled bytes".as_slice();
+        let framed = frame_compiled_bytecode(payload);
+        assert_eq!(unframe_compiled_bytecode(&framed).as_deref(), Some(payload));
+
+        // Truncated: the crash-after-rename case.
+        for cut in [0, 1, COMPILED_HEADER_LEN, framed.len() - 1] {
+            assert_eq!(
+                unframe_compiled_bytecode(&framed[..cut]),
+                None,
+                "a {cut}-byte prefix is not a whole entry"
+            );
+        }
+        // Right length, wrong contents.
+        let mut flipped = framed.clone();
+        *flipped.last_mut().unwrap() ^= 0xff;
+        assert_eq!(unframe_compiled_bytecode(&flipped), None, "checksum");
+        // Right contents, wrong magic -- an entry from an older layout.
+        let mut aged = framed.clone();
+        aged[0] = b'X';
+        assert_eq!(unframe_compiled_bytecode(&aged), None, "magic");
+    }
+
+    /// Two builds of the editor must not read each other's entries: the
+    /// bytecode is native-endian and native-pointer-width, and QuickJS's
+    /// `BC_VERSION` stamp does not cover either.
+    #[test]
+    fn the_cache_key_separates_plugins_and_inputs() {
+        let a = Path::new("/plugins/one.ts");
+        let b = Path::new("/plugins/two.ts");
+        let (a1, _) = compiled_cache_paths(a, 0x1111).unwrap();
+        let (a2, _) = compiled_cache_paths(a, 0x2222).unwrap();
+        let (b1, _) = compiled_cache_paths(b, 0x1111).unwrap();
+        assert_ne!(a1, a2, "different inputs, different entry");
+        assert_ne!(a1, b1, "different plugins, different bucket");
+        assert_eq!(
+            compiled_cache_paths(a, 0x1111).unwrap().0,
+            a1,
+            "and the same inputs find the same entry again"
         );
     }
 }

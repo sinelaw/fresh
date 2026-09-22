@@ -1189,3 +1189,274 @@ import { helper } from "./lib/utils";
         assert!(alpha_pos < gamma_pos);
     }
 }
+
+/// Everything about a plugin that is a pure function of its source text.
+///
+/// One pipeline, two callers: the build script precomputes this for the
+/// plugins shipped with the editor, and the runtime computes it for
+/// user-installed ones. Sharing the function is what keeps the precomputed
+/// table and the live path from drifting apart.
+pub struct PreparedSource {
+    /// Bundled/stripped/transpiled JavaScript, ready for the engine.
+    pub js_code: String,
+    /// `.d.ts` emit from oxc's isolated-declarations transformer. `None` when
+    /// that emit failed -- the plugin still runs, it just contributes no types.
+    pub declarations: Option<String>,
+    /// Plugins this one declares a dependency on, for load ordering.
+    pub dependencies: Vec<String>,
+}
+
+/// Run the plugin preparation pipeline over one source file.
+///
+/// `path` is load-bearing, not decorative: a plugin containing ES imports is
+/// bundled, and bundling resolves those imports relative to this file.
+pub fn prepare_source(path: &Path, source: &str) -> Result<PreparedSource> {
+    let filename = path
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("plugin.ts");
+
+    let dependencies = extract_plugin_dependencies(source);
+
+    // Emitted from the raw TS, before transpilation strips the types away:
+    // every `export type`, `export interface` and `declare global` the author
+    // wrote is exactly what downstream plugins and init.ts need in order to
+    // reach this plugin's surface without casts.
+    let declarations = if filename.ends_with(".ts") {
+        match emit_isolated_declarations(source, filename) {
+            Ok(dts) => Some(dts),
+            Err(e) => {
+                // `tracing`, not `eprintln!`: the editor runs inside the
+                // terminal's alternate screen and does not redirect stderr, so
+                // a raw print lands on top of the rendered frame.
+                tracing::warn!(
+                    "plugin {} isolated-declarations emit failed: {e}",
+                    path.display()
+                );
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    let js_code = if has_es_imports(source) {
+        bundle_module(path)?
+    } else if has_es_module_syntax(source) {
+        let stripped = strip_imports_and_exports(source);
+        if filename.ends_with(".ts") {
+            transpile_typescript(&stripped, filename)?
+        } else {
+            stripped
+        }
+    } else if filename.ends_with(".ts") {
+        transpile_typescript(source, filename)?
+    } else {
+        source.to_string()
+    };
+
+    Ok(PreparedSource {
+        js_code,
+        declarations,
+        dependencies,
+    })
+}
+
+/// A fingerprint of *everything* that goes into preparing `path`: its own
+/// text, plus every local file its imports pull in, transitively.
+///
+/// [`source_fingerprint`] alone is not enough to key a cache on. A plugin that
+/// imports `./lib/foo.ts` is bundled with that file's contents inlined, so
+/// editing the import and leaving the importer untouched changes the prepared
+/// output while leaving the importer's own fingerprint identical. Keying on
+/// the entry file alone would serve the stale bundle forever, because the
+/// cached bytecode is perfectly valid -- it is just the wrong program.
+///
+/// `None` when the import graph cannot be enumerated (an unreadable or
+/// unresolvable import). That is deliberately conservative: a caller that
+/// cannot compute the full key must not cache at all, rather than cache under
+/// a key that does not cover its inputs.
+///
+/// Walking the graph costs one parse per file, which is why this is worth
+/// doing up front: the alternative -- transpiling and *then* keying on the
+/// output -- would defeat the point of consulting a cache before oxc runs.
+pub fn input_fingerprint(path: &Path, source: &str) -> Option<u64> {
+    let mut visited: HashSet<PathBuf> = HashSet::new();
+    let mut inputs: Vec<(String, u64)> = Vec::new();
+    collect_input_fingerprints(path, Some(source), &mut visited, &mut inputs).ok()?;
+    // Sorted, so the key does not depend on the order the graph was walked,
+    // and path-qualified, so two files swapping contents is a different key.
+    inputs.sort();
+    let mut buf = String::new();
+    for (path, fingerprint) in inputs {
+        buf.push_str(&path);
+        buf.push('\0');
+        buf.push_str(&format!("{fingerprint:016x}"));
+        buf.push('\n');
+    }
+    Some(source_fingerprint(&buf))
+}
+
+/// One node of [`input_fingerprint`]'s walk. `source` is the already-read text
+/// for the entry file, so the caller's read is reused rather than repeated.
+fn collect_input_fingerprints(
+    path: &Path,
+    source: Option<&str>,
+    visited: &mut HashSet<PathBuf>,
+    inputs: &mut Vec<(String, u64)>,
+) -> Result<()> {
+    let canonical = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
+    if !visited.insert(canonical.clone()) {
+        return Ok(()); // Already counted (and circular imports terminate here)
+    }
+
+    let owned;
+    let text = match source {
+        Some(text) => text,
+        None => {
+            owned = std::fs::read_to_string(path)
+                .map_err(|e| anyhow!("Failed to read {}: {}", path.display(), e))?;
+            &owned
+        }
+    };
+
+    inputs.push((
+        canonical.to_string_lossy().into_owned(),
+        source_fingerprint(text),
+    ));
+
+    // Nothing to follow, and no reason to pay for a parse.
+    if !has_es_module_syntax(text) {
+        return Ok(());
+    }
+
+    let (imports, _exports, reexports) = extract_module_bindings(text);
+    let parent_dir = path.parent().unwrap_or(Path::new("."));
+    let referenced = imports
+        .iter()
+        .map(|i| &i.source_path)
+        .chain(reexports.iter().map(|r| &r.source_path));
+    for source_path in referenced {
+        // Bare specifiers are not bundled, so they are not inputs.
+        if source_path.starts_with("./") || source_path.starts_with("../") {
+            let resolved = resolve_import(source_path, parent_dir)?;
+            collect_input_fingerprints(&resolved, None, visited, inputs)?;
+        }
+    }
+    Ok(())
+}
+
+/// A 64-bit fingerprint of a plugin's source text (FNV-1a).
+///
+/// Spelled out rather than reached for from `std`: the build script and the
+/// runtime must agree on this value across separately compiled crates, and
+/// `DefaultHasher` makes no stability promise. This one is fixed by its own
+/// definition.
+pub fn source_fingerprint(source: &str) -> u64 {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in source.as_bytes() {
+        hash ^= *byte as u64;
+        hash = hash.wrapping_mul(0x100_0000_01b3);
+    }
+    hash
+}
+
+/// Wrap a prepared plugin body the way the engine expects to receive it.
+///
+/// Shared because the build script compiles this exact text to bytecode and
+/// the runtime evaluates this exact text when there is no bytecode; if the two
+/// spellings drifted, the compiled and interpreted paths would stop being the
+/// same program.
+///
+/// The IIFE keeps a plugin's top-level `const editor = ...` from colliding
+/// with the `editor` global (a TDZ error otherwise). `.call(globalThis)` is
+/// what keeps `this` meaning the global object: module bodies are strict, and
+/// a plain call would pass `undefined`.
+pub fn wrap_plugin_body(code: &str) -> String {
+    format!("(function() {{ {code} }}).call(globalThis);")
+}
+
+#[cfg(test)]
+mod input_fingerprint_tests {
+    use super::*;
+
+    /// Write `entry.ts` importing `lib.ts`, and return both paths.
+    fn fixture(dir: &Path, lib_body: &str) -> PathBuf {
+        let lib = dir.join("lib.ts");
+        std::fs::write(&lib, lib_body).unwrap();
+        let entry = dir.join("entry.ts");
+        std::fs::write(
+            &entry,
+            "import { greet } from \"./lib.ts\";\nglobalThis.out = greet();\n",
+        )
+        .unwrap();
+        entry
+    }
+
+    /// The regression this exists for: a plugin's *own* text is not the whole
+    /// input. Keying a compiled-plugin cache on `source_fingerprint` alone
+    /// serves the bundle compiled against the old `lib.ts` forever, because
+    /// the entry file never changed and the cached bytecode stays valid.
+    #[test]
+    fn editing_an_imported_file_changes_the_fingerprint() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let entry = fixture(dir.path(), "export function greet() { return \"a\"; }\n");
+        let entry_source = std::fs::read_to_string(&entry).unwrap();
+
+        let before = input_fingerprint(&entry, &entry_source).expect("graph is enumerable");
+
+        std::fs::write(
+            dir.path().join("lib.ts"),
+            "export function greet() { return \"b\"; }\n",
+        )
+        .unwrap();
+        // The importer is untouched, so this is the case that used to collide.
+        assert_eq!(entry_source, std::fs::read_to_string(&entry).unwrap());
+        let after = input_fingerprint(&entry, &entry_source).expect("graph is enumerable");
+
+        assert_ne!(
+            before, after,
+            "an edit to an imported file must change the key"
+        );
+        assert_eq!(
+            source_fingerprint(&entry_source),
+            source_fingerprint(&std::fs::read_to_string(&entry).unwrap()),
+            "...even though the entry file's own fingerprint is unchanged, \
+             which is exactly why the entry's own fingerprint is not enough"
+        );
+    }
+
+    #[test]
+    fn the_same_inputs_give_the_same_fingerprint() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let entry = fixture(dir.path(), "export function greet() { return \"a\"; }\n");
+        let source = std::fs::read_to_string(&entry).unwrap();
+        assert_eq!(
+            input_fingerprint(&entry, &source),
+            input_fingerprint(&entry, &source),
+        );
+    }
+
+    /// A plugin with no imports still gets a key -- it just does not need a
+    /// walk to compute one.
+    #[test]
+    fn a_plugin_without_imports_is_still_fingerprinted() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let plain = dir.path().join("plain.ts");
+        std::fs::write(&plain, "globalThis.out = 1;\n").unwrap();
+        let source = std::fs::read_to_string(&plain).unwrap();
+        assert!(input_fingerprint(&plain, &source).is_some());
+    }
+
+    /// An import that does not resolve means the input set is unknown, and an
+    /// unknown input set must not be cached under a key that claims to cover
+    /// it.
+    #[test]
+    fn an_unresolvable_import_has_no_fingerprint() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let entry = dir.path().join("entry.ts");
+        std::fs::write(&entry, "import { x } from \"./missing.ts\";\nx();\n").unwrap();
+        let source = std::fs::read_to_string(&entry).unwrap();
+        assert_eq!(input_fingerprint(&entry, &source), None);
+    }
+}

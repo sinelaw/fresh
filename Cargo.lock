@@ -1587,6 +1587,8 @@ dependencies = [
  "oxc_semantic",
  "oxc_span",
  "oxc_transformer",
+ "tempfile",
+ "tracing",
 ]
 
 [[package]]
@@ -1603,6 +1605,7 @@ name = "fresh-plugin-runtime"
 version = "0.5.1"
 dependencies = [
  "anyhow",
+ "dirs",
  "fresh-core",
  "fresh-parser-js",
  "fresh-plugin-api-macros",
@@ -1617,6 +1620,7 @@ dependencies = [
  "rquickjs-serde",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "tracing",
  "ts-rs",

@@ -1416,7 +1416,17 @@ async fn handle_request(
 struct PreparedPlugin {
     name: String,
     path: PathBuf,
-    js_code: String,
+    /// Transpiled JS. `None` when the plugin was served from the compiled
+    /// cache, where the transpile never had to happen.
+    js_code: Option<String>,
+    /// The compiled form, when a previous run left one behind.
+    bytecode: Option<Vec<u8>>,
+    /// `input_fingerprint` of the source this was prepared from, computed by
+    /// the same read. Carried rather than recomputed at execute time so the
+    /// cache key and the bytes it names always describe the same read of the
+    /// file. `None` when the plugin's imports could not be enumerated, which
+    /// means "do not cache".
+    cache_key: Option<u64>,
     i18n: Option<HashMap<String, HashMap<String, String>>>,
     dependencies: Vec<String>,
     /// `.d.ts` emit for the plugin source, produced by oxc's
@@ -1443,80 +1453,57 @@ fn prepare_plugin(path: &Path) -> Result<PreparedPlugin> {
     let source = std::fs::read_to_string(path)
         .map_err(|e| anyhow!("Failed to read plugin {}: {}", path.display(), e))?;
 
-    let filename = path
-        .file_name()
-        .and_then(|s| s.to_str())
-        .unwrap_or("plugin.ts");
+    // The key covers this plugin's own text *and* every local file its
+    // imports inline, so an edit to a shared `lib/*.ts` misses rather than
+    // serving the bundle that was compiled before it. Computed from the read
+    // above, and carried through to execution, so the key and the bytes it
+    // names can never describe two different reads.
+    let cache_key = fresh_parser_js::input_fingerprint(path, &source);
 
-    // Extract dependencies before transpilation
-    let dependencies = fresh_parser_js::extract_plugin_dependencies(&source);
+    // A previous run may have left the compiled form and the derived metadata
+    // behind. On a hit neither oxc nor QuickJS has anything to do: the
+    // transpile and the parse were both settled last time.
+    if let Some(cached) =
+        cache_key.and_then(|key| crate::backend::quickjs_backend::read_compiled_plugin(path, key))
+    {
+        return Ok(PreparedPlugin {
+            name: plugin_name,
+            path: path.to_path_buf(),
+            js_code: None,
+            bytecode: Some(cached.bytecode),
+            cache_key,
+            i18n: read_plugin_i18n(path),
+            dependencies: cached.dependencies,
+            declarations: cached.declarations,
+        });
+    }
 
-    // Emit `.d.ts` via oxc's isolated-declarations before the
-    // transpile step consumes `source`. We want the raw TS (every
-    // `export type`, `export interface`, and `declare global` block
-    // the plugin author wrote) so downstream plugins and init.ts
-    // reach the plugin's public types without casts. Failures are
-    // non-fatal — the plugin still runs.
-    let declarations = if filename.ends_with(".ts") {
-        match fresh_parser_js::emit_isolated_declarations(&source, filename) {
-            Ok(dts) => Some(dts),
-            Err(e) => {
-                tracing::warn!(
-                    "Plugin {} isolated-declarations emit failed: {}",
-                    path.display(),
-                    e
-                );
-                None
-            }
-        }
-    } else {
-        None
-    };
-
-    // Transpile/bundle to JS (same logic as QuickJsBackend::load_module_with_source)
-    let js_code = if fresh_parser_js::has_es_imports(&source) {
-        match fresh_parser_js::bundle_module(path) {
-            Ok(bundled) => bundled,
-            Err(e) => {
-                tracing::warn!(
-                    "Plugin {} uses ES imports but bundling failed: {}. Skipping.",
-                    path.display(),
-                    e
-                );
-                return Err(anyhow!("Bundling failed for {}: {}", plugin_name, e));
-            }
-        }
-    } else if fresh_parser_js::has_es_module_syntax(&source) {
-        let stripped = fresh_parser_js::strip_imports_and_exports(&source);
-        if filename.ends_with(".ts") {
-            fresh_parser_js::transpile_typescript(&stripped, filename)?
-        } else {
-            stripped
-        }
-    } else if filename.ends_with(".ts") {
-        fresh_parser_js::transpile_typescript(&source, filename)?
-    } else {
-        source
-    };
-
-    // Load accompanying .i18n.json file
-    let i18n_path = path.with_extension("i18n.json");
-    let i18n = if i18n_path.exists() {
-        std::fs::read_to_string(&i18n_path)
-            .ok()
-            .and_then(|content| serde_json::from_str(&content).ok())
-    } else {
-        None
-    };
+    let prepared = fresh_parser_js::prepare_source(path, &source)
+        .map_err(|e| anyhow!("Failed to prepare plugin '{}': {}", plugin_name, e))?;
 
     Ok(PreparedPlugin {
         name: plugin_name,
         path: path.to_path_buf(),
-        js_code,
-        i18n,
-        dependencies,
-        declarations,
+        js_code: Some(prepared.js_code),
+        bytecode: None,
+        cache_key,
+        i18n: read_plugin_i18n(path),
+        dependencies: prepared.dependencies,
+        declarations: prepared.declarations,
     })
+}
+
+/// Load a plugin's accompanying `.i18n.json`, if it has one. Read on both
+/// paths: it is a small file, and baking translations into the build-time
+/// table would only add a way for them to go stale.
+fn read_plugin_i18n(path: &Path) -> Option<HashMap<String, HashMap<String, String>>> {
+    let i18n_path = path.with_extension("i18n.json");
+    if !i18n_path.exists() {
+        return None;
+    }
+    std::fs::read_to_string(&i18n_path)
+        .ok()
+        .and_then(|content| serde_json::from_str(&content).ok())
 }
 
 /// Execute a pre-prepared plugin in QuickJS. This is the serial phase —
@@ -1543,7 +1530,15 @@ fn execute_prepared_plugin(
     let exec_start = std::time::Instant::now();
     runtime
         .borrow_mut()
-        .execute_js(&prepared.js_code, path_str)?;
+        .execute_prepared(crate::backend::quickjs_backend::PreparedBody {
+            bytecode: prepared.bytecode.as_deref(),
+            js_code: prepared.js_code.as_deref(),
+            path: &prepared.path,
+            source_name: path_str,
+            cache_key: prepared.cache_key,
+            declarations: prepared.declarations.as_deref(),
+            dependencies: &prepared.dependencies,
+        })?;
     let exec_elapsed = exec_start.elapsed();
 
     tracing::debug!(
