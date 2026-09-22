@@ -174,17 +174,20 @@ fn a_file_argument_wins_over_the_pipe_and_still_takes_the_terminal() {
 /// No controlling terminal at all: say so and exit, rather than coming up
 /// with no way to take input. `setsid` between fork and exec is what makes
 /// `/dev/tty` unopenable (ENXIO).
-#[test]
-fn no_controlling_terminal_fails_with_a_message() {
+/// Launch `fresh` with `args` and `PIPED` on stdin in a session of its own,
+/// so `/dev/tty` cannot be opened, and return its exit status and stderr.
+fn fresh_without_a_controlling_terminal(
+    home: &Path,
+    args: &[&str],
+) -> (std::process::ExitStatus, String) {
     use std::io::{Read, Write};
     use std::os::unix::process::CommandExt;
     use std::process::Stdio;
 
-    let home = tempfile::tempdir().unwrap();
-
-    let mut cmd = isolated_fresh(home.path());
-    cmd.args(["--no-session", "--no-init", "--no-upgrade-check"])
-        .stdin(Stdio::piped())
+    let mut cmd = isolated_fresh(home);
+    cmd.args(["--no-session", "--no-init", "--no-upgrade-check"]);
+    cmd.args(args);
+    cmd.stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
 
@@ -197,12 +200,15 @@ fn no_controlling_terminal_fails_with_a_message() {
     }
 
     let mut child = cmd.spawn().expect("spawn fresh");
-    child
+    // Deliberately not asserted: the child is racing us to exit, and once it
+    // has, this write is EPIPE. Failing here would report the race instead of
+    // the exit status and message the test is actually about.
+    let _ = child
         .stdin
         .take()
         .expect("piped stdin")
         .write_all(PIPED)
-        .expect("write to fresh's stdin");
+        .is_ok();
 
     let mut stderr = String::new();
     child
@@ -212,6 +218,37 @@ fn no_controlling_terminal_fails_with_a_message() {
         .read_to_string(&mut stderr)
         .expect("read fresh's stderr");
     let status = child.wait().expect("wait for fresh to exit");
+    (status, stderr)
+}
+
+#[test]
+fn no_controlling_terminal_fails_with_a_message() {
+    let home = tempfile::tempdir().unwrap();
+    let (status, stderr) = fresh_without_a_controlling_terminal(home.path(), &[]);
+
+    assert!(
+        !status.success(),
+        "expected the launch to fail without a controlling terminal, got {status:?}"
+    );
+    assert!(
+        stderr.contains("/dev/tty"),
+        "the failure should name the terminal it could not open, got:\n{stderr}"
+    );
+}
+
+/// The same, for the launch that opens a file rather than reading stdin.
+///
+/// This one reported the failure the unhelpful way round until the reopen
+/// stopped being best-effort: the launch went on without a terminal and died
+/// a couple of hundred lines later inside `TerminalModes::enable`, which
+/// opens `/dev/tty` itself and says only "No such device or address". Both
+/// halves of `stdin_plan` name the device now.
+#[test]
+fn no_controlling_terminal_fails_with_a_message_with_file_arguments_too() {
+    let home = tempfile::tempdir().unwrap();
+    std::fs::write(home.path().join("named.txt"), "from-the-named-file\n").unwrap();
+
+    let (status, stderr) = fresh_without_a_controlling_terminal(home.path(), &["named.txt"]);
 
     assert!(
         !status.success(),
