@@ -10,6 +10,7 @@
 #![cfg(all(target_os = "linux", feature = "plugins"))]
 
 use crate::common::dormant_ssh::isolated_dir_context;
+use crate::common::launch_form;
 use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness, HarnessOptions};
 use crossterm::event::{KeyCode, KeyModifiers};
 
@@ -52,20 +53,11 @@ fn local_submit_closes_form_and_shows_dock_row() {
     .unwrap();
 
     // Open the New Workspace form.
-    h.send_key(KeyCode::Char('p'), KeyModifiers::CONTROL)
-        .unwrap();
-    h.wait_for_prompt().unwrap();
-    h.type_text("Orchestrator: New Workspace").unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("Orchestrator: New Workspace"))
-        .unwrap();
-    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| {
-        h.screen_to_string()
-            .contains("ORCHESTRATOR :: New Workspace")
-    })
-    .unwrap();
+    launch_form::open_new_workspace_form(&mut h);
+    // The form opens on the agent; the Folder field is a few stops on.
+    launch_form::focus_stop(&mut h, "Folder:");
 
-    // Point the Project Path at the distinct non-git dir, then submit.
+    // Point the Folder at the distinct non-git dir, then submit.
     // Ctrl+Enter submits from the text field.
     h.type_text(&task_dir.display().to_string()).unwrap();
     h.wait_until(|h| h.screen_to_string().contains("task_ws"))
@@ -83,7 +75,7 @@ fn local_submit_closes_form_and_shows_dock_row() {
     // way the workspace's own row must be listed.
     h.wait_until(|h| {
         let s = h.screen_to_string();
-        s.contains("task_ws") && !s.contains("ORCHESTRATOR :: New Workspace")
+        s.contains("task_ws") && !s.contains(launch_form::FORM_TITLE)
     })
     .unwrap();
 

@@ -2,13 +2,14 @@
 //! `[ + New ]` button must leave the keyboard **in the file**.
 //!
 //! The user flow: the dock is focused, `[ + New ]` opens the New Workspace
-//! form, "Create Workspace" builds the workspace and takes the user into it.
+//! form, "Launch" builds the workspace and takes the user into it.
 //! Running "Open File" there opens the file — and typing must land in it.
 //!
 //! Per CONTRIBUTING §2 this drives only keyboard/mouse and asserts on
 //! rendered output: the marker typed after the open has to appear on screen.
 
 use crate::common::harness::{copy_plugin, copy_plugin_lib, EditorTestHarness};
+use crate::common::launch_form::FORM_TITLE;
 use crossterm::event::{KeyCode, KeyModifiers};
 use portable_pty::{native_pty_system, PtySize};
 use std::fs;
@@ -83,18 +84,19 @@ fn open_file_in_a_just_created_workspace_takes_the_keyboard() {
     // `[ + New ]` → the New Workspace form.
     let (ncol, nrow) = pos_of(&h, "+ New");
     h.mouse_click(ncol + 1, nrow).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("New Workspace"))
+    h.wait_until(|h| h.screen_to_string().contains(FORM_TITLE))
         .unwrap();
 
-    // "Create Workspace" is the create-and-visit button: it builds the
-    // workspace and takes the user into it.
-    let (ccol, crow) = pos_of(&h, "Create Workspace");
-    h.mouse_click(ccol + 1, crow).unwrap();
+    // "Launch" is the create-and-visit button: it builds the workspace and
+    // takes the user into it. (Matched with its bracket, since "Launch in
+    // background" sits beside it.)
+    let (ccol, crow) = pos_of(&h, "[   Launch");
+    h.mouse_click(ccol + 4, crow).unwrap();
     // The workspace is live once the form is gone and its seeded terminal is
     // on screen as the new window's only tab.
     h.wait_until(|h| {
         let s = h.screen_to_string();
-        !s.contains("New Workspace") && s.contains("Terminal 0")
+        !s.contains(FORM_TITLE) && s.contains("Terminal 0")
     })
     .unwrap();
 

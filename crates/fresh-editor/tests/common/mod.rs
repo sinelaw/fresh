@@ -23,6 +23,9 @@ pub mod global_state;
 pub mod harness;
 #[cfg(test)]
 #[allow(dead_code)]
+pub mod launch_form;
+#[cfg(test)]
+#[allow(dead_code)]
 pub mod pty;
 #[cfg(test)]
 #[allow(dead_code)]

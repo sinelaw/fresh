@@ -234,7 +234,7 @@ fn dock_menu_dismissal_passes_the_click_through() {
 
     h.wait_until(|h| {
         let s = h.screen_to_string();
-        !s.contains("New Folder") && s.contains("Project Path")
+        !s.contains("New Folder") && s.contains("Folder:")
     })
     .unwrap();
 }
