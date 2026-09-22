@@ -3098,10 +3098,15 @@ impl EditorTestHarness {
     /// tree down until the category row named `name` is under the cursor
     /// (the row carrying the `>` marker a few columns before the name).
     pub fn select_settings_category(&mut self, name: &str) -> anyhow::Result<()> {
+        // Look back from the name for the marker: a `>` further left on the
+        // line belongs to whatever is drawn behind the dialog.
         let selected = |screen: &str| {
-            screen.lines().any(|l| match (l.find('>'), l.find(name)) {
-                (Some(m), Some(n)) => m < n && l[m..n].chars().count() <= 8,
-                _ => false,
+            screen.lines().any(|l| {
+                l.find(name).is_some_and(|n| {
+                    l[..n]
+                        .rfind('>')
+                        .is_some_and(|m| l[m..n].chars().count() <= 8)
+                })
             })
         };
         for _ in 0..60 {
