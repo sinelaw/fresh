@@ -34,7 +34,8 @@
     "orchestrator_mode": {
       "description": "Master switch for Orchestrator mode (default: true).\n\nOrchestrator mode is what a bare `fresh` — no files, no flags —\nlaunches into: the editor runs as a background daemon this terminal\nattaches to, the workspace dock is on screen, and the workspace you\nwere last in comes back regardless of which directory you typed\n`fresh` in. A second bare `fresh`, anywhere, reattaches to that same\neditor rather than starting a second one.\n\nTurning it off makes a bare `fresh` what it always was: an editor in\nthis terminal, in this directory, with no daemon. Every other\ninvocation (`fresh FILE`, `fresh --cmd …`, `fresh -a …`) is unaffected\neither way — the mode is only ever chosen when the command line is\nempty, so a named file or flag always means \"just this, here\".",
       "type": "boolean",
-      "default": true
+      "default": true,
+      "x-order": 1
     },
     "editor": {
       "description": "Editor behavior settings (indentation, line numbers, wrapping, etc.)",
@@ -219,7 +220,9 @@
       "items": {
         "$ref": "#/$defs/Keybinding"
       },
-      "default": []
+      "default": [],
+      "x-category": "Keybindings",
+      "x-order": 2
     },
     "keybinding_maps": {
       "description": "Named keybinding maps (user can define custom maps here)\nEach map can optionally inherit from another map",
@@ -227,12 +230,16 @@
       "additionalProperties": {
         "$ref": "#/$defs/KeymapConfig"
       },
-      "default": {}
+      "default": {},
+      "x-category": "Keybindings",
+      "x-order": 3
     },
     "active_keybinding_map": {
       "description": "Active keybinding map name",
       "$ref": "#/$defs/KeybindingMapOptions",
-      "default": "default"
+      "default": "default",
+      "x-category": "Keybindings",
+      "x-order": 1
     },
     "languages": {
       "description": "Per-language configuration overrides (tab size, formatters, etc.)",
@@ -240,7 +247,10 @@
       "additionalProperties": {
         "$ref": "#/$defs/LanguageConfig"
       },
-      "default": {}
+      "default": {},
+      "x-category": "Syntax & Languages",
+      "x-section": "Languages",
+      "x-order": 1
     },
     "default_language": {
       "description": "Default language for files whose type cannot be detected.\nMust reference a key in the `languages` map (e.g., \"bash\").\nApplied when no extension, filename, glob, or built-in detection matches.\nThe referenced language's full configuration (grammar, comment_prefix,\ntab_size, etc.) is used for unrecognized files.",
@@ -249,12 +259,18 @@
         "null"
       ],
       "default": null,
-      "x-enum-from": "/languages"
+      "x-enum-from": "/languages",
+      "x-category": "Syntax & Languages",
+      "x-section": "Languages",
+      "x-order": 2
     },
     "lsp_enabled": {
       "description": "Master switch for LSP support. When false, no language server is\nstarted automatically for any language (per-language and universal\nservers alike), without having to disable each server individually.\nServers can still be started manually, e.g. via the command palette's\n\"Start/Restart LSP Server\".",
       "type": "boolean",
-      "default": true
+      "default": true,
+      "x-category": "Syntax & Languages",
+      "x-section": "Language Servers",
+      "x-order": 3
     },
     "lsp": {
       "description": "LSP server configurations by language.\nEach language maps to one or more server configs (multi-LSP support).\nAccepts both single-object and array forms for backwards compatibility.",
@@ -262,7 +278,10 @@
       "additionalProperties": {
         "$ref": "#/$defs/LspLanguageConfig"
       },
-      "default": {}
+      "default": {},
+      "x-category": "Syntax & Languages",
+      "x-section": "Language Servers",
+      "x-order": 4
     },
     "universal_lsp": {
       "description": "Universal LSP servers that apply to all languages.\nThese servers run alongside language-specific LSP servers defined in `lsp`.\nKeyed by a unique server name (e.g. \"quicklsp\").",
@@ -270,7 +289,10 @@
       "additionalProperties": {
         "$ref": "#/$defs/LspLanguageConfig"
       },
-      "default": {}
+      "default": {},
+      "x-category": "Syntax & Languages",
+      "x-section": "Language Servers",
+      "x-order": 5
     },
     "warnings": {
       "description": "Warning notification settings",

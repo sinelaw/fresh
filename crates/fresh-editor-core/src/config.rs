@@ -490,6 +490,7 @@ pub struct Config {
     /// either way — the mode is only ever chosen when the command line is
     /// empty, so a named file or flag always means "just this, here".
     #[serde(default = "default_true")]
+    #[schemars(extend("x-order" = 1))]
     pub orchestrator_mode: bool,
 
     /// Editor behavior settings (indentation, line numbers, wrapping, etc.)
@@ -518,20 +519,24 @@ pub struct Config {
 
     /// Custom keybindings (overrides for the active map)
     #[serde(default)]
+    #[schemars(extend("x-category" = "Keybindings", "x-order" = 2))]
     pub keybindings: Vec<Keybinding>,
 
     /// Named keybinding maps (user can define custom maps here)
     /// Each map can optionally inherit from another map
     #[serde(default)]
+    #[schemars(extend("x-category" = "Keybindings", "x-order" = 3))]
     pub keybinding_maps: HashMap<String, KeymapConfig>,
 
     /// Active keybinding map name
     #[serde(default = "default_keybinding_map_name")]
     #[schemars(default = "default_keybinding_map_schema")]
+    #[schemars(extend("x-category" = "Keybindings", "x-order" = 1))]
     pub active_keybinding_map: KeybindingMapName,
 
     /// Per-language configuration overrides (tab size, formatters, etc.)
     #[serde(default)]
+    #[schemars(extend("x-category" = "Syntax & Languages", "x-section" = "Languages", "x-order" = 1))]
     pub languages: HashMap<String, LanguageConfig>,
 
     /// Default language for files whose type cannot be detected.
@@ -540,7 +545,12 @@ pub struct Config {
     /// The referenced language's full configuration (grammar, comment_prefix,
     /// tab_size, etc.) is used for unrecognized files.
     #[serde(default)]
-    #[schemars(extend("x-enum-from" = "/languages"))]
+    #[schemars(extend(
+        "x-enum-from" = "/languages",
+        "x-category" = "Syntax & Languages",
+        "x-section" = "Languages",
+        "x-order" = 2
+    ))]
     pub default_language: Option<String>,
 
     /// Master switch for LSP support. When false, no language server is
@@ -549,18 +559,21 @@ pub struct Config {
     /// Servers can still be started manually, e.g. via the command palette's
     /// "Start/Restart LSP Server".
     #[serde(default = "default_true")]
+    #[schemars(extend("x-category" = "Syntax & Languages", "x-section" = "Language Servers", "x-order" = 3))]
     pub lsp_enabled: bool,
 
     /// LSP server configurations by language.
     /// Each language maps to one or more server configs (multi-LSP support).
     /// Accepts both single-object and array forms for backwards compatibility.
     #[serde(default)]
+    #[schemars(extend("x-category" = "Syntax & Languages", "x-section" = "Language Servers", "x-order" = 4))]
     pub lsp: HashMap<String, LspLanguageConfig>,
 
     /// Universal LSP servers that apply to all languages.
     /// These servers run alongside language-specific LSP servers defined in `lsp`.
     /// Keyed by a unique server name (e.g. "quicklsp").
     #[serde(default)]
+    #[schemars(extend("x-category" = "Syntax & Languages", "x-section" = "Language Servers", "x-order" = 5))]
     pub universal_lsp: HashMap<String, LspLanguageConfig>,
 
     /// Warning notification settings

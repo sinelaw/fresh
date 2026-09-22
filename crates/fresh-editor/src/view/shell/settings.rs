@@ -1113,7 +1113,7 @@ fn cat_row(r: &CatRow, selected: bool, focused: bool) -> Node<UiMsg> {
             // one-column rectangle for it so a click there expanded the
             // category instead of selecting it.
             let idx = *idx;
-            let chev = text(format!("{chevron} "));
+            let chev = text(chevron.to_string());
             let chev = match expandable {
                 true => gesture(chev).on(
                     GestureKind::Press,
@@ -1129,8 +1129,8 @@ fn cat_row(r: &CatRow, selected: bool, focused: bool) -> Node<UiMsg> {
             };
             let mut kids: Vec<Node<UiMsg>> = vec![text(marker), chev];
             kids.push(match dirty {
-                true => text("● ").theme(pair("ui.menu_highlight_fg", "ui.popup_bg")),
-                false => text("  "),
+                true => text("●").theme(pair("ui.menu_highlight_fg", "ui.popup_bg")),
+                false => text(" "),
             });
             kids.push(text(icon.to_string()).theme(pair("ui.popup_border_fg", "ui.popup_bg")));
             // A plugin page's name is longer than the tree is wide, so the
@@ -1143,19 +1143,15 @@ fn cat_row(r: &CatRow, selected: bool, focused: bool) -> Node<UiMsg> {
             });
             row().h(Sizing::Cells(1)).children(kids)
         }
-        CatRow::Section { label, .. } => row().h(Sizing::Cells(1)).children([
-            text(marker),
-            // Four columns of indent, then the chevron column the category
-            // rows spend on their arrow.
-            text("     "),
-            // The dirty dot's two columns, and the icon's two. A category
-            // row's icon is a wide glyph — `⚙`, `✎` — so it occupies two
-            // cells, and a section that reserved one for it sat a column to
-            // the left of every category label instead of indented past them.
-            text("  "),
-            text("  "),
-            text(label.clone()),
-        ]),
+        // Indented two columns past the category labels (which start after
+        // the chevron, the dirty dot and the two-column icon), so a section
+        // reads as the category's child without spending the tree's narrow
+        // width on blank columns.
+        CatRow::Section { label, .. } => {
+            row()
+                .h(Sizing::Cells(1))
+                .children([text(marker), text("      "), text(label.clone())])
+        }
     }
 }
 

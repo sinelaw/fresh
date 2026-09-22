@@ -198,6 +198,13 @@ struct RawSchema {
     /// Whether this Map should disallow adding new entries (entries are auto-managed)
     #[serde(rename = "x-no-add", default)]
     no_add: bool,
+    /// Left-panel category a top-level property is listed under. Top-level
+    /// properties that aren't objects of their own (maps, lists, scalars)
+    /// land in "General" unless they name a category here; properties naming
+    /// the same category share one page. Only affects the Settings UI — the
+    /// property's place in the config JSON is unchanged.
+    #[serde(rename = "x-category")]
+    category: Option<String>,
     /// Section/group within the category for organizing related settings
     #[serde(rename = "x-section")]
     section: Option<String>,
@@ -281,6 +288,9 @@ impl SchemaType {
 /// Map from $ref paths to their enum options
 type EnumValuesMap = HashMap<String, Vec<EnumOption>>;
 
+/// The category top-level settings land in when they name no `x-category`.
+const GENERAL: &str = "General";
+
 /// Parse the JSON Schema and build the category tree
 pub fn parse_schema(schema_json: &str) -> Result<Vec<SettingCategory>, serde_json::Error> {
     let raw: RawSchema = serde_json::from_str(schema_json)?;
@@ -292,7 +302,7 @@ pub fn parse_schema(schema_json: &str) -> Result<Vec<SettingCategory>, serde_jso
     let enum_values_map = build_enum_values_map(&raw.extensible_enum_values);
 
     let mut categories = Vec::new();
-    let mut top_level_settings = Vec::new();
+    let mut top_level_groups: Vec<(String, Vec<SettingSchema>)> = Vec::new();
 
     // Process each top-level property (sorted for deterministic output)
     let mut sorted_props: Vec<_> = properties.into_iter().collect();
@@ -347,27 +357,34 @@ pub fn parse_schema(schema_json: &str) -> Result<Vec<SettingCategory>, serde_jso
                 subcategories: Vec::new(),
             });
         } else {
-            // This is a top-level setting
+            // This is a top-level setting: it goes on the page its
+            // `x-category` names, or "General" when it names none.
             let setting = parse_setting(&name, &path, &prop, &defs, &enum_values_map);
-            top_level_settings.push(setting);
+            let group = prop
+                .category
+                .clone()
+                .or_else(|| resolved.category.clone())
+                .unwrap_or_else(|| GENERAL.to_string());
+            match top_level_groups.iter_mut().find(|(g, _)| *g == group) {
+                Some((_, settings)) => settings.push(setting),
+                None => top_level_groups.push((group, vec![setting])),
+            }
         }
     }
 
-    // If there are top-level settings, create a "General" category for them
-    if !top_level_settings.is_empty() {
-        // Sort top-level settings alphabetically
-        top_level_settings.sort_by(|a, b| a.name.cmp(&b.name));
-        categories.insert(
-            0,
-            SettingCategory {
-                name: "General".to_string(),
-                path: String::new(),
-                description: Some("General settings".to_string()),
-                nullable: false,
-                settings: top_level_settings,
-                subcategories: Vec::new(),
-            },
-        );
+    // Each group of top-level settings becomes a category of its own. Their
+    // paths are absolute, so the category itself has no path prefix.
+    for (group, mut settings) in top_level_groups {
+        sort_settings(&mut settings);
+        let description = (group == GENERAL).then(|| "General settings".to_string());
+        categories.push(SettingCategory {
+            name: group,
+            path: String::new(),
+            description,
+            nullable: false,
+            settings,
+            subcategories: Vec::new(),
+        });
     }
 
     // Sort categories alphabetically, but keep General first
@@ -496,16 +513,19 @@ fn parse_properties(
         settings.push(setting);
     }
 
-    // Sort settings: by x-order (if set) first, then alphabetically by name.
-    // Settings with x-order come before those without.
+    sort_settings(&mut settings);
+    settings
+}
+
+/// Sort settings: by x-order (if set) first, then alphabetically by name.
+/// Settings with x-order come before those without.
+fn sort_settings(settings: &mut [SettingSchema]) {
     settings.sort_by(|a, b| match (a.order, b.order) {
         (Some(a_ord), Some(b_ord)) => a_ord.cmp(&b_ord).then_with(|| a.name.cmp(&b.name)),
         (Some(_), None) => std::cmp::Ordering::Less,
         (None, Some(_)) => std::cmp::Ordering::Greater,
         (None, None) => a.name.cmp(&b.name),
     });
-
-    settings
 }
 
 /// Parse a single setting from its schema

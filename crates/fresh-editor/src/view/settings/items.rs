@@ -843,19 +843,48 @@ pub fn build_pages(
 
 /// Build a single page from a category
 fn build_page(category: &SettingCategory, ctx: &BuildContext) -> SettingsPage {
-    let mut items: Vec<SettingItem> = category
+    // Each item carries its schema's `x-order` for the sort below.
+    let mut ordered: Vec<(Option<i32>, SettingItem)> = category
         .settings
         .iter()
         .flat_map(|s| expand_or_build(s, ctx))
         .collect();
 
-    // Sort items: by section first (None comes last), then alphabetically by name
-    items.sort_by(|a, b| match (&a.section, &b.section) {
-        (Some(sec_a), Some(sec_b)) => sec_a.cmp(sec_b).then_with(|| a.name.cmp(&b.name)),
+    // A section is placed by the lowest `x-order` among its items (sections
+    // with none come after those with one), then by name.
+    let mut section_rank: HashMap<String, Option<i32>> = HashMap::new();
+    for (order, item) in &ordered {
+        if let Some(sec) = &item.section {
+            let rank = section_rank.entry(sec.clone()).or_insert(*order);
+            *rank = match (*rank, *order) {
+                (Some(a), Some(b)) => Some(a.min(b)),
+                (a, b) => a.or(b),
+            };
+        }
+    }
+    let by_order = |a: Option<i32>, b: Option<i32>| match (a, b) {
+        (Some(a), Some(b)) => a.cmp(&b),
         (Some(_), None) => std::cmp::Ordering::Less,
         (None, Some(_)) => std::cmp::Ordering::Greater,
-        (None, None) => a.name.cmp(&b.name),
+        (None, None) => std::cmp::Ordering::Equal,
+    };
+
+    // Sort items: by section first (None comes last), then by x-order
+    // (items without one last), then alphabetically by name.
+    ordered.sort_by(|(ord_a, a), (ord_b, b)| {
+        let sections = match (&a.section, &b.section) {
+            (Some(sec_a), Some(sec_b)) => {
+                by_order(section_rank[sec_a], section_rank[sec_b]).then_with(|| sec_a.cmp(sec_b))
+            }
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => std::cmp::Ordering::Equal,
+        };
+        sections
+            .then_with(|| by_order(*ord_a, *ord_b))
+            .then_with(|| a.name.cmp(&b.name))
     });
+    let mut items: Vec<SettingItem> = ordered.into_iter().map(|(_, item)| item).collect();
 
     // Mark items that start a new section, and capture the section list
     // for the left-panel tree view in one pass.
@@ -902,7 +931,9 @@ fn build_page(category: &SettingCategory, ctx: &BuildContext) -> SettingsPage {
 /// config structs like `StatusBarConfig` surface their children as individual
 /// settings with proper DualList / toggle / etc. controls, while objects whose
 /// children would all fall through to JSON editors stay collapsed.
-fn expand_or_build(schema: &SettingSchema, ctx: &BuildContext) -> Vec<SettingItem> {
+/// The item(s) a setting shows as on its page, each paired with the
+/// `x-order` it sorts by (an expanded child's own, else the setting's).
+fn expand_or_build(schema: &SettingSchema, ctx: &BuildContext) -> Vec<(Option<i32>, SettingItem)> {
     if let SettingType::Object { properties } = &schema.setting_type {
         let all_native = !properties.is_empty()
             && properties.iter().all(|child| {
@@ -927,12 +958,12 @@ fn expand_or_build(schema: &SettingSchema, ctx: &BuildContext) -> Vec<SettingIte
                             *sib = format!("{}{}", schema.path, sib);
                         }
                     }
-                    build_item(&child, ctx)
+                    (child.order.or(schema.order), build_item(&child, ctx))
                 })
                 .collect();
         }
     }
-    vec![build_item(schema, ctx)]
+    vec![(schema.order, build_item(schema, ctx))]
 }
 
 /// Build a setting item with its control state initialized from current config
