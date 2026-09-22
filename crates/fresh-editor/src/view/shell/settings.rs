@@ -438,14 +438,7 @@ pub fn categories(c: &Categories) -> Node<UiMsg> {
         {
             let rows = rows.clone();
             let selected = c.selected;
-            move |i, st| {
-                cat_row(
-                    &rows[i],
-                    selected == Some(i),
-                    focused,
-                    tree_band(st, focused),
-                )
-            }
+            move |i, st| cat_row(&rows[i], selected == Some(i), focused, st)
         },
     )
     .scrollbar()
@@ -1090,9 +1083,9 @@ fn inherit(idx: usize, i: &Inherit, band: &str) -> Node<UiMsg> {
     ])
 }
 
-/// The ink a tree row is banded in for its state — the selection (muted when
-/// the tree does not have the keyboard) or the pointer's hover — or `None`
-/// for a plain row.
+/// The ink a selected tree row is banded in (muted when the tree does not
+/// have the keyboard), or `None` for any other row. The tree shows one band
+/// at a time: a hovered row is marked on its label instead (see `cat_row`).
 fn tree_band(st: fresh_ui::widgets::RowState, focused: bool) -> Option<String> {
     use fresh_ui::widgets::RowState;
     match (st, focused) {
@@ -1102,15 +1095,23 @@ fn tree_band(st: fresh_ui::widgets::RowState, focused: bool) -> Option<String> {
         (RowState::Selected | RowState::SelectedBlur, false) => {
             Some(pair("ui.menu_fg", "editor.selection_bg"))
         }
-        (RowState::Hover, _) => Some(pair("ui.menu_hover_fg", "ui.menu_hover_bg")),
-        (RowState::Normal, _) => None,
+        (RowState::Hover | RowState::Normal, _) => None,
     }
 }
 
 /// One row: the cursor's `>`, the indent, the chevron, the dirty dot, the
-/// icon and the label — the painter's own span order. `band` is the row's
-/// highlight, which every cell takes in place of its own ink.
-fn cat_row(r: &CatRow, selected: bool, focused: bool, band: Option<String>) -> Node<UiMsg> {
+/// icon and the label — the painter's own span order. A selected row's band
+/// covers every cell in place of its own ink; a hovered row's label is bold
+/// and underlined, on the plain ground.
+fn cat_row(
+    r: &CatRow,
+    selected: bool,
+    focused: bool,
+    st: fresh_ui::widgets::RowState,
+) -> Node<UiMsg> {
+    let band = tree_band(st, focused);
+    let label_ink = (st == fresh_ui::widgets::RowState::Hover)
+        .then(|| attrs("ui.popup_text_fg", "ui.popup_bg", &["bold", "underline"]));
     let paint = |n: Node<UiMsg>, own: Option<String>| match (&band, own) {
         (Some(b), _) => n.theme(b.clone()),
         (None, Some(t)) => n.theme(t),
@@ -1157,7 +1158,7 @@ fn cat_row(r: &CatRow, selected: bool, focused: bool, band: Option<String>) -> N
             });
             // A name longer than the tree is wide is clipped: `Sizing::Flex`
             // gives the label the rest of the row and the fold clips it.
-            kids.push(paint(text(label.clone()), None).flex(1));
+            kids.push(paint(text(label.clone()), label_ink.clone()).flex(1));
             row().h(Sizing::Cells(1)).children(kids)
         }
         // Indented two columns past the category labels (which start after
@@ -1167,7 +1168,7 @@ fn cat_row(r: &CatRow, selected: bool, focused: bool, band: Option<String>) -> N
         CatRow::Section { label, .. } => row().h(Sizing::Cells(1)).children([
             paint(text(marker), None),
             paint(text("      "), None),
-            paint(text(label.clone()), None).flex(1),
+            paint(text(label.clone()), label_ink.clone()).flex(1),
         ]),
     }
 }

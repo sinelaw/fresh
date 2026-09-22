@@ -177,8 +177,11 @@ fn plugin_config_round_trip_toggles_visible_behavior() {
         plugin_row > plugins_row && plugin_row < row_of("Terminal"),
         "The plugin's category should be nested under \"Plugins\". Screen:\n{after_open}"
     );
+    // Columns, not byte offsets: the "Plugins" row carries multi-byte
+    // glyphs (chevron, icon) before its name.
+    let col_of = |line: &str, needle: &str| line.find(needle).map(|b| line[..b].chars().count());
     assert!(
-        lines[plugin_row].find(&plugin_marker) > lines[plugins_row].find("Plugins"),
+        col_of(lines[plugin_row], &plugin_marker) > col_of(lines[plugins_row], "Plugins"),
         "The plugin's category should be indented past \"Plugins\". Screen:\n{after_open}"
     );
 

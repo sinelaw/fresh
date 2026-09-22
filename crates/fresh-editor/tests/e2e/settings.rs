@@ -3725,8 +3725,9 @@ fn test_languages_map_has_add_new_button() {
     harness.assert_screen_contains("Languages");
 
     // Navigate down through the Languages entries to reach the "[+] Add new" row
-    // The Languages map has many built-in entries, so we need to scroll to see the add button
-    for _ in 0..30 {
+    // The Languages map has many built-in entries (100+), so walk them all
+    // to reach the add button; the loop stops as soon as it is on screen.
+    for _ in 0..300 {
         harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
         harness.render().unwrap();
 
