@@ -1101,8 +1101,8 @@ fn tree_band(st: fresh_ui::widgets::RowState, focused: bool) -> Option<String> {
 
 /// One row: the cursor's `>`, the indent, the chevron, the dirty dot, the
 /// icon and the label — the painter's own span order. A selected row's band
-/// covers every cell in place of its own ink; a hovered row's label is bold
-/// and underlined, on the plain ground.
+/// covers every cell in place of its own ink; a hovered row's label is bold,
+/// on the plain ground.
 fn cat_row(
     r: &CatRow,
     selected: bool,
@@ -1111,7 +1111,7 @@ fn cat_row(
 ) -> Node<UiMsg> {
     let band = tree_band(st, focused);
     let label_ink = (st == fresh_ui::widgets::RowState::Hover)
-        .then(|| attrs("ui.popup_text_fg", "ui.popup_bg", &["bold", "underline"]));
+        .then(|| attrs("ui.popup_text_fg", "ui.popup_bg", &["bold"]));
     let paint = |n: Node<UiMsg>, own: Option<String>| match (&band, own) {
         (Some(b), _) => n.theme(b.clone()),
         (None, Some(t)) => n.theme(t),
