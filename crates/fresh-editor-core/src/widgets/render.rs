@@ -83,6 +83,42 @@ const FOCUS_GUTTER_BLANK: &str = "  ";
 /// two spaces for every other control. Returns `""` when the panel
 /// didn't opt into the gutter, so non-marker panels render
 /// byte-for-byte as before.
+/// Move a focused control's `▸ ` from the gutter to just before its label,
+/// past the padding a right-aligned label column puts in front of it — so the
+/// marker points at the control instead of sitting at the panel's edge. The
+/// bytes are only rotated, so every offset past the padding is unchanged.
+pub fn hug_focus_marker(text: &mut String) {
+    let Some(rest) = text.strip_prefix(FOCUS_MARKER) else {
+        return;
+    };
+    let pad = rest.len() - rest.trim_start_matches(' ').len();
+    if pad == 0 {
+        return;
+    }
+    let body = rest[pad..].to_string();
+    *text = format!("{}{}{}", " ".repeat(pad), FOCUS_MARKER, body);
+}
+
+/// Where a focused form control's highlight band starts: at its first
+/// visible character, past the focus-marker gutter and a right-aligned
+/// label's padding. Banding from column 0 painted a wide empty strip across
+/// the label column of a form, which read as a selected row rather than a
+/// focused control.
+fn focus_band_start(text: &str) -> usize {
+    let body = text.strip_prefix(FOCUS_MARKER).unwrap_or(text);
+    let skip = text.len() - body.len();
+    let first = body
+        .char_indices()
+        .find(|(_, c)| !c.is_whitespace())
+        .map(|(i, _)| i)
+        .unwrap_or(0);
+    // A marker already moved in front of the label is not part of the band.
+    match body[first..].strip_prefix(FOCUS_MARKER) {
+        Some(_) => skip + first + FOCUS_MARKER.len(),
+        None => skip + first,
+    }
+}
+
 pub fn focus_gutter_prefix(focused: bool, marker_gutter: bool) -> &'static str {
     if !marker_gutter {
         ""
@@ -1263,7 +1299,7 @@ pub fn render_toggle(
     // Focused: full-entry fg/bg + bold.
     if focused {
         overlays.push(InlineOverlay {
-            start: 0,
+            start: focus_band_start(&text),
             end: text.len(),
             style: OverlayOptions {
                 fg: Some(OverlayColorSpec::theme_key(KEY_FOCUSED_FG)),
@@ -1276,6 +1312,7 @@ pub fn render_toggle(
         });
     }
 
+    hug_focus_marker(&mut text);
     TextPropertyEntry {
         text,
         properties: Default::default(),
@@ -1442,6 +1479,7 @@ pub fn render_number(
         );
     }
 
+    hug_focus_marker(&mut text);
     let entry = TextPropertyEntry {
         text,
         properties: Default::default(),
@@ -1597,7 +1635,7 @@ pub fn render_toggle_form(
     }
     if focused {
         overlays.push(InlineOverlay {
-            start: 0,
+            start: focus_band_start(&text),
             end: text.len(),
             style: OverlayOptions {
                 fg: Some(OverlayColorSpec::theme_key(KEY_FOCUSED_FG)),
@@ -1610,6 +1648,7 @@ pub fn render_toggle_form(
         });
     }
 
+    hug_focus_marker(&mut text);
     let entry = TextPropertyEntry {
         text,
         properties: Default::default(),
@@ -1810,7 +1849,7 @@ pub fn render_radio(
     }
     if focused {
         overlays.push(InlineOverlay {
-            start: 0,
+            start: focus_band_start(&text),
             end: text.len(),
             style: OverlayOptions {
                 fg: Some(OverlayColorSpec::theme_key(KEY_FOCUSED_FG)),
@@ -1822,6 +1861,7 @@ pub fn render_radio(
             unit: OffsetUnit::Byte,
         });
     }
+    hug_focus_marker(&mut text);
     RenderedRadio {
         entry: TextPropertyEntry {
             text,
@@ -1932,7 +1972,7 @@ pub fn render_dropdown(
     let mut overlays = Vec::new();
     if focused {
         overlays.push(InlineOverlay {
-            start: 0,
+            start: focus_band_start(&text),
             end: text.len(),
             style: OverlayOptions {
                 fg: Some(OverlayColorSpec::theme_key(KEY_FOCUSED_FG)),
@@ -1958,6 +1998,7 @@ pub fn render_dropdown(
         });
     }
 
+    hug_focus_marker(&mut text);
     let entry = TextPropertyEntry {
         text,
         properties: Default::default(),

@@ -7552,7 +7552,7 @@ let openFormDropdown: string | null = null;
 // selector. Enter on any of them is the widget's own (open / commit), which
 // `activate()` would drop.
 function formDropdownFocused(): boolean {
-  return ["agent_dropdown", "machine"].includes(formFocusedKey());
+  return ["agent_dropdown", "machine", "project"].includes(formFocusedKey());
 }
 
 function rebuildFormFocusCycle(): void {
@@ -7562,9 +7562,15 @@ function rebuildFormFocusCycle(): void {
     return;
   }
   // Mirrors `buildFormSpec`'s render order exactly (the host's tabbable set);
-  // see `formFocusKeys`.
+  // see `formFocusKeys`. Focus follows its *key* across the rebuild: rows come
+  // and go above the focused control (Teach Fresh CLI is Local-only), and an
+  // index kept across that names a different control than the one the host
+  // still has focused.
+  const was = formFocusCycle[formFocusIndex];
   formFocusCycle = formFocusKeys(form);
-  if (formFocusIndex >= formFocusCycle.length) formFocusIndex = 0;
+  const at = was ? formFocusCycle.indexOf(was) : -1;
+  if (at >= 0) formFocusIndex = at;
+  else if (formFocusIndex >= formFocusCycle.length) formFocusIndex = 0;
 }
 
 function formFocusedKey(): string {
@@ -12611,7 +12617,9 @@ function promptBox(f: NewSessionForm): WidgetSpec {
     readOnly: !takes,
     key: takes ? "start_prompt" : undefined,
   });
-  return labeledSection({ child: spec });
+  // Inset from the dialog's edges: a margin on the left, and a width that
+  // leaves the same on the right (a section otherwise fills its row).
+  return row(spacer(3), labeledSection({ child: spec, widthPct: 93 }));
 }
 
 // The agent and its own switches on one row; `custom…` adds the command row
@@ -12961,6 +12969,7 @@ function buildFormSpec(): WidgetSpec {
     launchModeRow(),
     ...gap(),
     sectionHeader("form.section_prompt"),
+    ...gap(),
     promptBox(f),
     ...gap(),
     sectionHeader("form.section_agent"),
@@ -13036,6 +13045,10 @@ function initialLaunchTarget(): RunAgentTarget {
 }
 
 const LAUNCH_PROJECT_KEY = "orchestrator.last_project";
+
+// `Manage repositories…` highlighted in the Project list, waiting for the list
+// to close on it.
+let projectManageArmed = false;
 
 // A repository asked for by whoever opens the form (the Repositories dialog's
 // `New workspace here`); consumed by the next open.
@@ -16929,6 +16942,11 @@ editor.on("widget_event", (e) => {
       // Host-authoritative open/closed signal for a dropdown's pop-over.
       const payload = (e.payload ?? {}) as Record<string, unknown>;
       openFormDropdown = payload.open === true ? e.widget_key : null;
+      if (payload.open !== true && e.widget_key === "project" && projectManageArmed) {
+        projectManageArmed = false;
+        formPanel.setDropdown("project", projectPickIndex(form));
+        openRepositoriesFromForm(form.repoId, formMachineKey(form));
+      }
       return;
     }
     if (e.event_type === "change" && e.widget_key === "machine") {
@@ -16978,12 +16996,13 @@ editor.on("widget_event", (e) => {
           clearRepoPath();
         }
       } else {
-        // `Manage repositories…` is an action, not a project: put the pick
-        // back and open the dialog.
-        formPanel?.setDropdown("project", projectPickIndex(form));
-        openRepositoriesFromForm(form.repoId, formMachineKey(form));
+        // `Manage repositories…` is an action, not a project. The list reports
+        // every highlight move as a change, so it is only armed here and runs
+        // when the list closes on it (see `dropdown_open`).
+        projectManageArmed = true;
         return;
       }
+      projectManageArmed = false;
       form.lastError = null;
       rebuildFormFocusCycle();
       renderForm();
@@ -17199,6 +17218,8 @@ editor.on("widget_event", (e) => {
           syncRepoPath();
           rebuildFormFocusCycle();
           renderForm();
+          // The dropdown's pick is host-owned after the first render.
+          formPanel.setDropdown("project", projectPickIndex(form));
           formPanel.setFocusKey("project");
         }
       } else if (e.widget_key === "make_main_clone") {
@@ -17211,6 +17232,7 @@ editor.on("widget_event", (e) => {
           syncRepoPath();
           rebuildFormFocusCycle();
           renderForm();
+          formPanel.setDropdown("project", projectPickIndex(form));
           formPanel.setFocusKey("project");
         }
       } else if (e.widget_key === "save_repo") {
