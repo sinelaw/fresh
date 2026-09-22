@@ -794,13 +794,11 @@ pub enum UiFact {
     /// painter filed one rectangle per visible row in `layout.categories` and
     /// `layout.sections`, and the arm behind them walked both lists.
     SettingsCategory(usize),
+    /// A press on a category in the narrow layout's strip, which has no tree
+    /// to open or shut: it only selects the page (and takes it to the top).
+    SettingsStripCategory(usize),
     /// A press on a section row under a category, by `(category, section)`.
     SettingsCategorySection(usize, usize),
-    /// A press on a category's `▶`/`▼`, which expands it rather than
-    /// selecting it. This was `layout.disclosures` — a one-column rectangle
-    /// per expandable row, filed so a chain of `point_in_rect` could tell the
-    /// chevron from the label beside it.
-    SettingsCategoryDisclosure(usize),
     /// **A key the category tree answered for itself.** The first of the
     /// settings dialog's keys to arrive as what it *means* rather than as
     /// `ModalKey` — "here is your key back, work out whose it was". The node

@@ -495,6 +495,16 @@ check('Add-binding dialog renders natively (fields)', (await page.locator('.kbed
 await page.screenshot({ path: `${SHOTS}/29-native-keybindings.png` });
 await page.keyboard.press('Escape'); await page.waitForTimeout(150); await page.keyboard.press('Escape'); await page.waitForTimeout(200);
 
+// Select a Settings category by clicking its row in the tree.
+async function openSettingsCategory(name) {
+  await page.locator('.settings-modal .set-cat', { hasText: name }).first().click();
+  await page.waitForFunction(n => {
+    const s = window.fresh.scene.regions.settings;
+    return s && s.categories.some(c => c.selected && c.name === n);
+  }, name, { timeout: 5000 }).catch(() => {});
+  await page.waitForTimeout(150);
+}
+
 console.log('\n[Settings = full native modal incl. entry dialog]');
 await page.keyboard.press('Escape'); await page.waitForTimeout(120);
 await page.request.post(URL + '/action', { data: { action: 'open_settings' } });
@@ -502,6 +512,8 @@ await page.waitForFunction(() => !!window.fresh.scene.regions.settings, { timeou
 await page.waitForTimeout(300);
 check('Settings is a native modal (categories+items)', (await page.locator('.settings-modal .set-cat').count()) >= 5 && (await page.locator('.settings-modal .set-item').count()) >= 3);
 check('NO svg/cells in the settings modal', (await page.locator('.settings-modal svg').count()) === 0);
+// The Languages map lives on the "Syntax & Languages" page.
+await openSettingsCategory('Syntax & Languages');
 await page.keyboard.press('Tab'); await page.waitForTimeout(120);
 for (let i = 0; i < 4; i++) { await page.keyboard.press('ArrowDown'); await page.waitForTimeout(80); }
 await page.keyboard.press('Enter');
@@ -570,6 +582,7 @@ console.log('\n[Settings map entry rows: mouse + keyboard, TUI-parity interactio
 await page.request.post(URL + '/action', { data: { action: 'open_settings' } });
 await page.waitForFunction(() => !!window.fresh.scene.regions.settings, { timeout: 8000 }).catch(() => {});
 await page.waitForTimeout(250);
+await openSettingsCategory('Syntax & Languages');
 const langIdx = await page.evaluate(() => [...document.querySelectorAll('.set-items > .set-item')]
   .findIndex(r => (r.querySelector('.set-name') || {}).textContent === 'Languages'));
 const langRowsLoc = page.locator('.set-items > .set-item').nth(langIdx).locator('.set-list-row:not(.set-list-head)');
@@ -1358,6 +1371,7 @@ await page.keyboard.press('Escape'); await page.waitForTimeout(200);
 await page.request.post(URL + '/action', { data: { action: 'open_settings' } });
 await page.waitForFunction(() => !!window.fresh.scene.regions.settings, { timeout: 8000 }).catch(() => {});
 await page.waitForTimeout(300);
+await openSettingsCategory('Syntax & Languages');
 const langPill = page.locator('.settings-modal .set-item', { hasText: 'Default Language' }).locator('.set-pill');
 await langPill.scrollIntoViewIfNeeded().catch(() => {});
 const lpBox = await langPill.boundingBox();

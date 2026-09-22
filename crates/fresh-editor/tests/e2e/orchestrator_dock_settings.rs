@@ -1,6 +1,6 @@
 //! E2E coverage for the orchestrator dock's user-facing settings
 //! (`plugins.orchestrator.settings.*`, rendered by the Settings UI under
-//! "Plugin: orchestrator"):
+//! "orchestrator" under "Plugins"):
 //!
 //! * `autoOpenDock` — open the dock on the `ready` hook, unfocused;
 //! * `defaultView` — the density (`card` / `compact`) the dock opens at;

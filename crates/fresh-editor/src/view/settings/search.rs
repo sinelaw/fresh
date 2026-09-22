@@ -400,6 +400,7 @@ mod tests {
             items,
             subpages: Vec::new(),
             sections: Vec::new(),
+            parent: None,
         }
     }
 

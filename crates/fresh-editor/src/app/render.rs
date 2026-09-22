@@ -2484,6 +2484,7 @@ impl Editor {
                         idx,
                         expandable,
                         expanded,
+                        nested,
                     } => {
                         let page = &s.pages[idx];
                         st::CatRow::Category {
@@ -2493,11 +2494,10 @@ impl Editor {
                                 (true, true) => "▼",
                                 (true, false) => "▶",
                             },
-                            expandable,
                             dirty: s.page_has_pending_changes(idx),
                             icon: crate::view::settings::render::category_icon(&page.name, nerd),
                             label: page.name.clone(),
-                            elide: page.name.starts_with("Plugin: "),
+                            nested,
                         }
                     }
                     TreeRow::Section {
@@ -2555,10 +2555,12 @@ impl Editor {
         let strip = (!s.search_active).then(|| st::Strip {
             focused: s.focus_panel() == crate::view::settings::state::FocusPanel::Categories,
             hint: "←→: Switch category".into(),
+            // In the tree's order (a plugin's page right after "Plugins"),
+            // which is the order Up/Down walk.
             cats: s
-                .pages
-                .iter()
-                .enumerate()
+                .tree_order()
+                .into_iter()
+                .map(|idx| (idx, &s.pages[idx]))
                 .map(|(idx, page)| st::StripCat {
                     idx,
                     label: page.name.clone(),
@@ -4053,6 +4055,15 @@ impl Editor {
         // The menu, as content: its labels and the open chain. Where each
         // label sits and how wide each box is are the tree's to decide, and
         // the web reads them back off it (`menu_view`).
+        // Expand the config menus' dynamic submenus once per theme registry
+        // rather than per frame: `all_menus_expanded` reuses this cache, and
+        // without it every frame rescanned the themes directory and parsed
+        // every theme file for the "Copy with theme" submenu.
+        self.expanded_menus_cache.update(
+            &self.theme_registry,
+            &self.menus,
+            &self.menu_state.themes_dir,
+        );
         let (menu_bar_items, dropdowns) = match menu_bar_visible {
             true => self.menu_description(),
             false => Default::default(),

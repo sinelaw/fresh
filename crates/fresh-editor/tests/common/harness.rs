@@ -3094,6 +3094,34 @@ impl EditorTestHarness {
         Ok(())
     }
 
+    /// With the settings dialog open and its category tree focused, walk the
+    /// tree down until the category row named `name` is under the cursor
+    /// (the row carrying the `>` marker a few columns before the name).
+    pub fn select_settings_category(&mut self, name: &str) -> anyhow::Result<()> {
+        // Look back from the name for the marker: a `>` further left on the
+        // line belongs to whatever is drawn behind the dialog.
+        let selected = |screen: &str| {
+            screen.lines().any(|l| {
+                l.find(name).is_some_and(|n| {
+                    l[..n]
+                        .rfind('>')
+                        .is_some_and(|m| l[m..n].chars().count() <= 8)
+                })
+            })
+        };
+        for _ in 0..60 {
+            if selected(&self.screen_to_string()) {
+                return Ok(());
+            }
+            self.send_key(KeyCode::Down, KeyModifiers::NONE)?;
+            self.render()?;
+        }
+        anyhow::bail!(
+            "settings category {name:?} never became selected. Screen:\n{}",
+            self.screen_to_string()
+        )
+    }
+
     /// Wait for screen to contain specific text
     pub fn wait_for_screen_contains(&mut self, text: &str) -> anyhow::Result<()> {
         let text = text.to_string();

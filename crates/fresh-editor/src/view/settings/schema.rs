@@ -161,6 +161,10 @@ pub struct SettingCategory {
     pub settings: Vec<SettingSchema>,
     /// Subcategories
     pub subcategories: Vec<SettingCategory>,
+    /// Name of the category this one is listed under in the left-panel
+    /// tree (e.g. each plugin's page sits under "Plugins"). `None` for a
+    /// top-level category.
+    pub parent: Option<String>,
 }
 
 /// Raw JSON Schema structure for deserialization
@@ -198,6 +202,13 @@ struct RawSchema {
     /// Whether this Map should disallow adding new entries (entries are auto-managed)
     #[serde(rename = "x-no-add", default)]
     no_add: bool,
+    /// Left-panel category a top-level property is listed under. Top-level
+    /// properties that aren't objects of their own (maps, lists, scalars)
+    /// land in "General" unless they name a category here; properties naming
+    /// the same category share one page. Only affects the Settings UI — the
+    /// property's place in the config JSON is unchanged.
+    #[serde(rename = "x-category")]
+    category: Option<String>,
     /// Section/group within the category for organizing related settings
     #[serde(rename = "x-section")]
     section: Option<String>,
@@ -281,6 +292,12 @@ impl SchemaType {
 /// Map from $ref paths to their enum options
 type EnumValuesMap = HashMap<String, Vec<EnumOption>>;
 
+/// The category top-level settings land in when they name no `x-category`.
+const GENERAL: &str = "General";
+
+/// The category plugin pages are listed under in the tree.
+const PLUGINS: &str = "Plugins";
+
 /// Parse the JSON Schema and build the category tree
 pub fn parse_schema(schema_json: &str) -> Result<Vec<SettingCategory>, serde_json::Error> {
     let raw: RawSchema = serde_json::from_str(schema_json)?;
@@ -292,7 +309,7 @@ pub fn parse_schema(schema_json: &str) -> Result<Vec<SettingCategory>, serde_jso
     let enum_values_map = build_enum_values_map(&raw.extensible_enum_values);
 
     let mut categories = Vec::new();
-    let mut top_level_settings = Vec::new();
+    let mut top_level_groups: Vec<(String, Vec<SettingSchema>)> = Vec::new();
 
     // Process each top-level property (sorted for deterministic output)
     let mut sorted_props: Vec<_> = properties.into_iter().collect();
@@ -325,6 +342,7 @@ pub fn parse_schema(schema_json: &str) -> Result<Vec<SettingCategory>, serde_jso
                 nullable: is_nullable,
                 settings: vec![setting],
                 subcategories: Vec::new(),
+                parent: None,
             });
         } else if let Some(ref inner_props) = resolved.properties {
             // This is a category with nested settings.
@@ -345,29 +363,38 @@ pub fn parse_schema(schema_json: &str) -> Result<Vec<SettingCategory>, serde_jso
                 nullable: is_nullable,
                 settings,
                 subcategories: Vec::new(),
+                parent: None,
             });
         } else {
-            // This is a top-level setting
+            // This is a top-level setting: it goes on the page its
+            // `x-category` names, or "General" when it names none.
             let setting = parse_setting(&name, &path, &prop, &defs, &enum_values_map);
-            top_level_settings.push(setting);
+            let group = prop
+                .category
+                .clone()
+                .or_else(|| resolved.category.clone())
+                .unwrap_or_else(|| GENERAL.to_string());
+            match top_level_groups.iter_mut().find(|(g, _)| *g == group) {
+                Some((_, settings)) => settings.push(setting),
+                None => top_level_groups.push((group, vec![setting])),
+            }
         }
     }
 
-    // If there are top-level settings, create a "General" category for them
-    if !top_level_settings.is_empty() {
-        // Sort top-level settings alphabetically
-        top_level_settings.sort_by(|a, b| a.name.cmp(&b.name));
-        categories.insert(
-            0,
-            SettingCategory {
-                name: "General".to_string(),
-                path: String::new(),
-                description: Some("General settings".to_string()),
-                nullable: false,
-                settings: top_level_settings,
-                subcategories: Vec::new(),
-            },
-        );
+    // Each group of top-level settings becomes a category of its own. Their
+    // paths are absolute, so the category itself has no path prefix.
+    for (group, mut settings) in top_level_groups {
+        sort_settings(&mut settings);
+        let description = (group == GENERAL).then(|| "General settings".to_string());
+        categories.push(SettingCategory {
+            name: group,
+            path: String::new(),
+            description,
+            nullable: false,
+            settings,
+            subcategories: Vec::new(),
+            parent: None,
+        });
     }
 
     // Sort categories alphabetically, but keep General first
@@ -380,8 +407,8 @@ pub fn parse_schema(schema_json: &str) -> Result<Vec<SettingCategory>, serde_jso
     Ok(categories)
 }
 
-/// Append a top-level "Plugin Settings" category whose subcategories are
-/// built from per-plugin schema sidecars (`<plugin_name>.schema.json`).
+/// Append one category per plugin, built from its schema sidecar
+/// (`<plugin_name>.schema.json`) and listed under "Plugins" in the tree.
 ///
 /// Each sub-category lives at JSON pointer `/plugins/<name>/settings`.
 /// Only the names passed in `enabled_plugins_with_schema` are rendered —
@@ -396,9 +423,8 @@ pub fn append_plugin_settings_category(
         return;
     }
 
-    // Push each plugin as its own top-level category, prefixed so they
-    // cluster together in the left-panel alphabetical sort and don't
-    // collide with built-in names like "Editor" / "Plugins".
+    // Each plugin is its own category, named after the plugin and
+    // parented to "Plugins" so the tree nests it there.
     let mut added = 0;
     for name in enabled_plugins_with_schema {
         let Some(schema_value) = plugin_schemas.get(name) else {
@@ -407,7 +433,7 @@ pub fn append_plugin_settings_category(
         let Some(mut category) = plugin_schema_to_category(name, schema_value) else {
             continue;
         };
-        category.name = format!("Plugin: {}", name);
+        category.parent = Some(PLUGINS.to_string());
         categories.push(category);
         added += 1;
     }
@@ -416,19 +442,15 @@ pub fn append_plugin_settings_category(
         return;
     }
 
-    // Re-sort categories. "General" stays first; "Plugin: <name>"
-    // entries are pushed to the bottom of the list so plugin
-    // configuration doesn't interleave with built-in editor settings.
-    // Within each band the order is alphabetical.
+    // Re-sort categories. "General" stays first; the rest is alphabetical.
     categories.sort_by(|a, b| match (a.name.as_str(), b.name.as_str()) {
         ("General", _) => std::cmp::Ordering::Less,
         (_, "General") => std::cmp::Ordering::Greater,
-        (a, b) => match (a.starts_with("Plugin: "), b.starts_with("Plugin: ")) {
-            (true, false) => std::cmp::Ordering::Greater,
-            (false, true) => std::cmp::Ordering::Less,
-            _ => a.cmp(b),
-        },
+        (a, b) => a.cmp(b),
     });
+    // Plugin pages go after every built-in page, still alphabetical among
+    // themselves (a stable sort keeps the order above).
+    categories.sort_by_key(|c| c.parent.is_some());
 }
 
 fn plugin_schema_to_category(
@@ -456,6 +478,7 @@ fn plugin_schema_to_category(
         nullable: false,
         settings,
         subcategories: Vec::new(),
+        parent: None,
     })
 }
 
@@ -496,16 +519,19 @@ fn parse_properties(
         settings.push(setting);
     }
 
-    // Sort settings: by x-order (if set) first, then alphabetically by name.
-    // Settings with x-order come before those without.
+    sort_settings(&mut settings);
+    settings
+}
+
+/// Sort settings: by x-order (if set) first, then alphabetically by name.
+/// Settings with x-order come before those without.
+fn sort_settings(settings: &mut [SettingSchema]) {
     settings.sort_by(|a, b| match (a.order, b.order) {
         (Some(a_ord), Some(b_ord)) => a_ord.cmp(&b_ord).then_with(|| a.name.cmp(&b.name)),
         (Some(_), None) => std::cmp::Ordering::Less,
         (None, Some(_)) => std::cmp::Ordering::Greater,
         (None, None) => a.name.cmp(&b.name),
     });
-
-    settings
 }
 
 /// Parse a single setting from its schema

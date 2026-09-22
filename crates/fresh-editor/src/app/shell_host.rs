@@ -1720,7 +1720,28 @@ impl Editor {
 /// painter's rectangles produced, so deleting those rectangles would have
 /// taken the web's path with them.
 impl Editor {
+    /// A click on a category row, anywhere on it. A category not yet under
+    /// the cursor is selected and expanded; a click on the one already under
+    /// it toggles it open or shut when it can be, and otherwise takes its
+    /// page back to the top as any other selection does.
     pub(crate) fn settings_select_category(&mut self, idx: usize) {
+        use crate::view::settings::state::FocusTarget;
+        if let Some(s) = self.settings_state.as_mut() {
+            s.focus_on(FocusTarget::Categories);
+            if s.selected_category == idx
+                && s.tree_cursor_section.is_none()
+                && s.is_category_expandable(idx)
+            {
+                s.toggle_category_expanded(idx);
+                return;
+            }
+        }
+        self.settings_pick_category(idx);
+    }
+
+    /// Select a category and take its page to the top, expanding it in the
+    /// tree — a click on an unselected row, or any click in the narrow strip.
+    pub(crate) fn settings_pick_category(&mut self, idx: usize) {
         use crate::view::settings::state::FocusTarget;
         if let Some(s) = self.settings_state.as_mut() {
             s.focus_on(FocusTarget::Categories);
@@ -1735,6 +1756,14 @@ impl Editor {
         }
     }
 
+    /// Open or shut a category without selecting it — the web UI's chevron.
+    #[cfg_attr(not(feature = "web"), allow(dead_code))]
+    pub(crate) fn settings_toggle_category(&mut self, idx: usize) {
+        if let Some(s) = self.settings_state.as_mut() {
+            s.toggle_category_expanded(idx);
+        }
+    }
+
     pub(crate) fn settings_jump_to_section(&mut self, cat: usize, section: usize) {
         use crate::view::settings::state::FocusTarget;
         if let Some(s) = self.settings_state.as_mut() {
@@ -1743,12 +1772,6 @@ impl Editor {
             // moving focus to the body is right; a click in the tree keeps
             // the tree focused.
             s.focus_on(FocusTarget::Categories);
-        }
-    }
-
-    pub(crate) fn settings_toggle_category(&mut self, idx: usize) {
-        if let Some(s) = self.settings_state.as_mut() {
-            s.toggle_category_expanded(idx);
         }
     }
 }
@@ -3236,10 +3259,10 @@ impl Editor {
             // what is gone is the five families of rectangle that decided
             // *which* arm, and the walk over them.
             UiFact::SettingsCategory(idx) => self.settings_select_category(idx),
+            UiFact::SettingsStripCategory(idx) => self.settings_pick_category(idx),
             UiFact::SettingsCategorySection(cat, section) => {
                 self.settings_jump_to_section(cat, section)
             }
-            UiFact::SettingsCategoryDisclosure(idx) => self.settings_toggle_category(idx),
             // **The tree's own keys, arriving as what they mean.** The eight
             // arms behind this are the eight `handle_categories_input` still
             // has: one implementation (`SettingsState::tree_key`), reached

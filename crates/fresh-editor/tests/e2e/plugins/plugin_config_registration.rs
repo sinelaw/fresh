@@ -1,6 +1,6 @@
 //! E2E test: a plugin registers config fields via
 //! `editor.defineConfigBoolean/.../defineConfigString`. The Settings UI
-//! must surface a "Plugin: <name>" category populated with those
+//! must surface a `<name>` category (nested under "Plugins") populated with those
 //! fields, the user must be able to toggle/edit values, and a re-open
 //! must show the persisted state. The test plugin exposes its current
 //! config value as visible buffer text (via a command) so we can assert
@@ -113,7 +113,7 @@ fn category_is_selected(h: &EditorTestHarness, name: &str) -> bool {
         .any(|line| line.contains('>') && line.contains(name))
 }
 
-/// 1. The plugin's category shows up under "Plugin: <name>".
+/// 1. The plugin's category shows up as `<name>` under "Plugins".
 /// 2. Both registered fields render with their default values.
 /// 3. After toggling a boolean and saving, the plugin's visible
 ///    behavior reflects the new value on the next invocation.
@@ -138,7 +138,7 @@ fn plugin_config_round_trip_toggles_visible_behavior() {
     // The Settings panel rebuilds its category list every time it
     // opens, so re-opening is enough to pick up newly-registered
     // schemas without an editor restart.
-    let plugin_marker = format!("Plugin: {}", PLUGIN_NAME);
+    let plugin_marker = PLUGIN_NAME.to_string();
     harness.open_settings().unwrap();
     // The Settings panel rebuilds its category list every time it
     // opens, so close + reopen drives a fresh read of plugin_schemas.
@@ -159,37 +159,33 @@ fn plugin_config_round_trip_toggles_visible_behavior() {
         "Settings UI should show the plugin's category. Screen:\n{after_open}"
     );
 
-    // Plugin categories belong at the bottom of the category list so
-    // plugin configuration doesn't interleave with built-in editor
-    // settings. Verify by asserting that the plugin marker appears
-    // AFTER every built-in category name in the left-panel pane.
-    let plugin_marker_pos = after_open
-        .find(&plugin_marker)
-        .expect("plugin marker present");
-    for builtin in &[
-        "General",
-        "Clipboard",
-        "Editor",
-        "File Browser",
-        "File Explorer",
-        "Packages",
-        "Plugins",
-        "Terminal",
-        "Warnings",
-    ] {
-        let bi_pos = after_open
-            .find(builtin)
-            .unwrap_or_else(|| panic!("built-in category {:?} missing from screen", builtin));
-        assert!(
-            bi_pos < plugin_marker_pos,
-            "Built-in category {:?} (offset {bi_pos}) must render before the plugin \
-             marker {:?} (offset {plugin_marker_pos}). Screen:\n{after_open}",
-            builtin,
-            plugin_marker,
-        );
-    }
+    // Plugin categories are nested under "Plugins" in the tree (which
+    // starts expanded), so plugin configuration doesn't interleave with
+    // built-in editor settings: the plugin's row comes right after the
+    // "Plugins" row, indented past it, and before the categories that
+    // follow "Plugins".
+    let lines: Vec<&str> = after_open.lines().collect();
+    let row_of = |name: &str| {
+        lines
+            .iter()
+            .position(|l| l.contains(name))
+            .unwrap_or_else(|| panic!("{name:?} missing from screen:\n{after_open}"))
+    };
+    let plugins_row = row_of("Plugins");
+    let plugin_row = row_of(&plugin_marker);
+    assert!(
+        plugin_row > plugins_row && plugin_row < row_of("Terminal"),
+        "The plugin's category should be nested under \"Plugins\". Screen:\n{after_open}"
+    );
+    // Columns, not byte offsets: the "Plugins" row carries multi-byte
+    // glyphs (chevron, icon) before its name.
+    let col_of = |line: &str, needle: &str| line.find(needle).map(|b| line[..b].chars().count());
+    assert!(
+        col_of(lines[plugin_row], &plugin_marker) > col_of(lines[plugins_row], "Plugins"),
+        "The plugin's category should be indented past \"Plugins\". Screen:\n{after_open}"
+    );
 
-    focus_category(&mut harness, &format!("Plugin: {}", PLUGIN_NAME));
+    focus_category(&mut harness, &PLUGIN_NAME.to_string());
     let after_focus = harness.screen_to_string();
     assert!(
         after_focus.contains("Prefix"),
@@ -244,7 +240,7 @@ fn plugin_config_round_trip_toggles_visible_behavior() {
     // schema map, so the persisted value should still be reflected
     // (toggle still renders checked as [v]).
     harness.open_settings().unwrap();
-    focus_category(&mut harness, &format!("Plugin: {}", PLUGIN_NAME));
+    focus_category(&mut harness, &PLUGIN_NAME.to_string());
     let after_reopen = harness.screen_to_string();
     assert!(
         after_reopen.contains("Uppercase")
@@ -289,7 +285,7 @@ fn plugin_config_category_hidden_when_plugin_disabled() {
     harness.open_settings().unwrap();
     let screen = harness.screen_to_string();
     assert!(
-        !screen.contains(&format!("Plugin: {}", PLUGIN_NAME)),
-        "A disabled plugin must not show a 'Plugin: <name>' category. Screen:\n{screen}"
+        !screen.contains(&PLUGIN_NAME.to_string()),
+        "A disabled plugin must not show a category. Screen:\n{screen}"
     );
 }

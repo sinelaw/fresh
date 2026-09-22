@@ -678,7 +678,8 @@ function settingsEls(s){
   // left: category tree
   const cats=div("set-cats"+(s.focus==="categories"?" focus":""));
   for(const c of s.categories){ const r=div("set-cat"+(c.selected?" sel":""));
-    if(c.expandable){ const chev=document.createElement("span"); chev.className="set-cat-chev"; chev.textContent=c.expanded?"▼ ":"▶ "; chev.onmousedown=setHit("categoryDisclosure",c.index); r.appendChild(chev); } else r.appendChild(document.createTextNode("  "));
+    if(c.nested) r.appendChild(document.createTextNode("    "));
+    else if(c.expandable){ const chev=document.createElement("span"); chev.className="set-cat-chev"; chev.textContent=c.expanded?"▼ ":"▶ "; chev.onmousedown=setHit("categoryDisclosure",c.index); r.appendChild(chev); } else r.appendChild(document.createTextNode("  "));
     const nm=document.createElement("span"); nm.textContent=c.name; r.appendChild(nm);
     r.onmousedown=setHit("category",c.index); cats.appendChild(r);
     if(c.expanded){ c.sections.forEach((sec,si)=>{ const sr=div("set-cat-sec"); sr.textContent="   "+sec; sr.onmousedown=setHit("categorySection",c.index,si); cats.appendChild(sr); }); } }
