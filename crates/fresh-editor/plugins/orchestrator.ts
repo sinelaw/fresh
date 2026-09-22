@@ -452,6 +452,19 @@ interface NewSessionForm {
   // separate dialogs with separate submit functions, and the current-workspace
   // one silently dropped the agent-resume argv.
   target: RunAgentTarget;
+  // The `▸ Details` fold: shows the workspace name and the GIT section.
+  // Remembered across opens (`orchestrator.launch_details_open`).
+  detailsOpen: boolean;
+  // The Project control: a repository's id, or null for `Folder…`.
+  repoId: string | null;
+  // A local git folder's `origin`, read by the folder probe, so the form can
+  // say when the folder is a clone of a known repository.
+  folderOrigin: string;
+  // Launch asked to clone first and is waiting for the user's answer.
+  cloneConfirm: { visit: boolean } | null;
+  // A launch-time clone in flight: where it goes, and the process to kill on
+  // Cancel.
+  cloning: { path: string; handle: ProcessHandle<SpawnResult> | null } | null;
   // Which backend the session runs in, as the Machine control set it: drives
   // the connection fields and the submit path. Only meaningful when
   // `target === "new"`.
@@ -7539,7 +7552,7 @@ let openFormDropdown: string | null = null;
 // selector. Enter on any of them is the widget's own (open / commit), which
 // `activate()` would drop.
 function formDropdownFocused(): boolean {
-  return ["target_dropdown", "agent_dropdown", "machine"].includes(formFocusedKey());
+  return ["agent_dropdown", "machine"].includes(formFocusedKey());
 }
 
 function rebuildFormFocusCycle(): void {
@@ -7548,40 +7561,10 @@ function rebuildFormFocusCycle(): void {
     formFocusIndex = 0;
     return;
   }
-  // Tab cycle, mirroring `buildFormSpec`'s render order exactly (the host's
-  // tabbable set): the target switch, the Machine control (one stop — ←/→
-  // moves within it), its connection fields, the path and the name, then the
-  // agent and what it reveals, the mode-only tail, and the buttons.
-  // Bind once: `form` is a mutable module-level slot, so TypeScript drops the
-  // non-null narrowing across every call below.
-  const f = form;
-  const creating = f.target === "new";
-  const cycle: string[] = ["target_dropdown"];
-  if (creating) {
-    cycle.push("machine");
-    if (!f.machineId && f.backend === "ssh" && sshOther()) {
-      cycle.push("ssh_host", "ssh_identity", "ssh_options");
-    }
-    if (!f.machineId && f.backend === "kubernetes") {
-      cycle.push("k8s_target");
-      if (f.k8sTarget.value.trim().length === 0) cycle.push("k8s_context", "k8s_namespace", "k8s_pod");
-    }
-    cycle.push(pathFieldKey(f.backend), "name");
-  }
-  cycle.push("agent_dropdown");
-  // The command field is a stop only while it is shown — and it is shown
-  // whenever the preset hands focus to it, so that focus is never dropped.
-  if (cmdVisible()) cycle.push("cmd");
-  const agent = activeAgentEntry();
-  if (agent?.prompt) cycle.push("start_prompt");
-  if (agent?.auto) cycle.push("auto_mode");
-  if (agent?.systemPrompt && teachApplies()) cycle.push("teach_fresh_cli");
-  cycle.push(...tailFocusKeys(f));
-  cycle.push("create-visit");
-  if (creating) cycle.push("create-bg");
-  cycle.push("cancel");
-  formFocusCycle = cycle;
-  if (formFocusIndex >= cycle.length) formFocusIndex = 0;
+  // Mirrors `buildFormSpec`'s render order exactly (the host's tabbable set);
+  // see `formFocusKeys`.
+  formFocusCycle = formFocusKeys(form);
+  if (formFocusIndex >= formFocusCycle.length) formFocusIndex = 0;
 }
 
 function formFocusedKey(): string {
@@ -9316,6 +9299,347 @@ function restoreDockAfterDialog(): void {
   }
 }
 
+// =============================================================================
+// Repositories — what a workspace works on, apart from where it runs
+// (docs/internal/launch-dialog-redesign.md §3).
+//
+// A repository is a remote plus, per machine, the **main clone** new worktrees
+// are cut from. It lives in the editor's state store next to machines, one
+// entry per repository, for the same reason machines do (see `MACHINES_NS`).
+// Nothing here searches a machine for clones: a main clone is only ever a path
+// the user typed or browsed to, and Fresh checks that path and no other.
+// =============================================================================
+
+interface Repository {
+  id: string;
+  name: string;
+  // The clone URL. Empty for a local-only repository, which can be pointed at
+  // but never cloned.
+  remote: string;
+  // Where a new main clone goes when one is made; `<name>` is the repository's
+  // name.
+  cloneNewTo: string;
+  // Machine key (see `machineOptionKey`) → that machine's main clone.
+  clones: Record<string, string>;
+}
+
+const REPOS_NS = "repositories";
+const DEFAULT_CLONE_NEW_TO = "~/src/<name>";
+
+let reposCache: Repository[] | null = null;
+
+function invalidateRepositories(): void {
+  reposCache = null;
+}
+
+function parseRepository(raw: string): Repository | null {
+  try {
+    const x = JSON.parse(raw) as Partial<Repository>;
+    if (typeof x.id !== "string" || typeof x.name !== "string") return null;
+    const clones: Record<string, string> = {};
+    for (const [k, v] of Object.entries(x.clones ?? {})) {
+      if (typeof v === "string" && v) clones[k] = v;
+    }
+    return {
+      id: x.id,
+      name: x.name,
+      remote: typeof x.remote === "string" ? x.remote : "",
+      cloneNewTo: typeof x.cloneNewTo === "string" && x.cloneNewTo ? x.cloneNewTo : DEFAULT_CLONE_NEW_TO,
+      clones,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function loadRepositories(): Repository[] {
+  if (reposCache) return reposCache;
+  const out: Repository[] = [];
+  for (const id of editor.stateKeys(REPOS_NS)) {
+    if (!isSafeMachineId(id)) continue;
+    const raw = editor.stateGet(REPOS_NS, id);
+    const r = raw ? parseRepository(raw) : null;
+    if (r && r.id === id) out.push(r);
+  }
+  out.sort((a, b) => a.name.localeCompare(b.name));
+  reposCache = out;
+  return out;
+}
+
+function repoById(id: string | null): Repository | null {
+  if (!id) return null;
+  return loadRepositories().find((r) => r.id === id) ?? null;
+}
+
+function upsertRepository(r: Repository): void {
+  if (!isSafeMachineId(r.id)) return;
+  editor.stateSet(REPOS_NS, r.id, JSON.stringify(r, null, 2));
+  invalidateRepositories();
+}
+
+function removeRepository(id: string): void {
+  if (!isSafeMachineId(id)) return;
+  editor.stateDelete(REPOS_NS, id);
+  invalidateRepositories();
+}
+
+function newRepoId(): string {
+  return `r-${Date.now().toString(36)}-${Math.floor(Math.random() * 1e6).toString(36)}`;
+}
+
+// The path a new main clone of `r` goes to.
+function repoCloneTarget(r: Repository): string {
+  return r.cloneNewTo.replace(/<name>/g, r.name);
+}
+
+// `git@github.com:sinelaw/fresh.git` → `fresh`.
+function repoNameFromRemote(url: string): string {
+  const tail = url.trim().replace(/\/+$/, "").split(/[/:]/).pop() ?? "";
+  return tail.replace(/\.git$/, "");
+}
+
+// `github.com/sinelaw/fresh` for any of the ways one remote is spelled (ssh,
+// https, with or without `.git`), so two spellings compare equal.
+function remoteIdentity(url: string): string {
+  let s = url.trim().toLowerCase();
+  s = s.replace(/^[a-z+]+:\/\//, "").replace(/^[^@/]+@/, "");
+  s = s.replace(/^([^/:]+):(?!\d+\/)/, "$1/");
+  s = s.replace(/^([^/:]+):\d+\//, "$1/");
+  return s.replace(/\.git$/, "").replace(/\/+$/, "");
+}
+
+function sameRemote(a: string, b: string): boolean {
+  return !!a.trim() && !!b.trim() && remoteIdentity(a) === remoteIdentity(b);
+}
+
+// The remote as a row shows it: `github.com/sinelaw/fresh`, or `local only`.
+function repoRemoteLabel(r: Repository): string {
+  return r.remote ? remoteIdentity(r.remote) : editor.t("repo.local_only");
+}
+
+// A machine's key in `Repository.clones`: Local, a saved machine or an
+// `~/.ssh/config` host — the machines that have a stable identity. A host or
+// cluster typed into the form has none, so it cannot hold a main clone.
+function machineOptionKey(o: MachineOption | undefined): string | null {
+  if (!o) return null;
+  return o.kind === "local" || o.kind === "machine" || o.kind === "sshhost" ? o.key : null;
+}
+
+function machineKeyLabel(key: string): string {
+  if (key === "local") return editor.t("machine.local");
+  if (key.startsWith("host:")) return key.slice(5);
+  return machineById(key)?.name ?? key;
+}
+
+// Every machine a main clone can live on, in the Machine control's order.
+function cloneMachineKeys(): string[] {
+  const keys = ["local", ...loadMachines().map((m) => m.id)];
+  for (const h of sshConfigHosts()) keys.push(`host:${h.alias}`);
+  return keys;
+}
+
+// A remote path for a remote shell: `~/x` stays expandable there (quoting the
+// tilde would make it literal), everything else is quoted.
+function remoteShellPath(p: string): string {
+  if (p === "~") return '"$HOME"';
+  if (p.startsWith("~/")) return `"$HOME"/${shQuote(p.slice(2))}`;
+  return shQuote(p);
+}
+
+// How a main-clone path checks out. Only the path given is looked at.
+interface ClonePathCheck {
+  state: "ok" | "missing" | "wrong_remote" | "not_git" | "unreachable" | "empty";
+  branch: string;
+  dirty: boolean;
+  origin: string;
+  error: string;
+}
+
+// Ask one machine about one path: does it exist, is it a repository, what is
+// its origin and branch. Local runs git directly; a remote asks once over ssh.
+async function checkClonePath(
+  machineKey: string,
+  path: string,
+  remote: string,
+): Promise<ClonePathCheck> {
+  const none: ClonePathCheck = { state: "empty", branch: "", dirty: false, origin: "", error: "" };
+  const p = path.trim();
+  if (!p) return none;
+  const script = [
+    `cd ${machineKey === "local" ? shQuote(expandHome(p)) : remoteShellPath(p)} 2>/dev/null || { echo MISSING; exit 0; }`,
+    "git rev-parse --show-toplevel >/dev/null 2>&1 || { echo NOTGIT; exit 0; }",
+    "echo GIT",
+    "git remote get-url origin 2>/dev/null || echo",
+    "git symbolic-ref --short HEAD 2>/dev/null || echo",
+    "git status --porcelain 2>/dev/null | head -1",
+  ].join("; ");
+  let r: SpawnResult;
+  if (machineKey === "local") {
+    r = await editor.spawnHostProcess("sh", ["-c", script]);
+  } else {
+    const argv = machineKeySshArgv(machineKey, REMOTE_PROBE_TIMEOUT_S);
+    if (!argv) return { ...none, state: "unreachable", error: editor.t("repo.err_no_ssh") };
+    r = await editor.spawnHostProcess("ssh", [...argv, script]);
+  }
+  if (r.exit_code !== 0) {
+    const err = (r.stderr || "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean).pop() || "";
+    return { ...none, state: "unreachable", error: err || editor.t("err.connection_failed") };
+  }
+  const lines = (r.stdout || "").split(/\r?\n/);
+  if (lines[0] === "MISSING") return { ...none, state: "missing" };
+  if (lines[0] === "NOTGIT") return { ...none, state: "not_git" };
+  const origin = (lines[1] || "").trim();
+  const out = { state: "ok" as ClonePathCheck["state"], branch: (lines[2] || "").trim(), dirty: !!(lines[3] || "").trim(), origin, error: "" };
+  if (remote && !sameRemote(remote, origin)) out.state = "wrong_remote";
+  return out;
+}
+
+// The ssh argv for a machine key (a saved ssh machine or a config host).
+function machineKeySshArgv(key: string, timeout: number): string[] | null {
+  const base = ["-o", "BatchMode=yes", "-o", `ConnectTimeout=${timeout}`];
+  if (key.startsWith("host:")) return [...base, "--", key.slice(5)];
+  const m = machineById(key);
+  if (!m || m.kind !== "ssh") return null;
+  const { dest, port } = parseSshTarget(m.target);
+  if (!dest) return null;
+  return [
+    ...base,
+    ...(port ? ["-p", port] : []),
+    ...(m.identity.trim() ? ["-i", expandHome(m.identity.trim())] : []),
+    ...(m.options.trim() ? m.options.trim().split(/\s+/) : []),
+    "--",
+    dest,
+  ];
+}
+
+// `git clone <remote> <path>` on a machine. The handle is kept by the caller
+// so Cancel can kill it; a partial directory is removed on failure.
+function startClone(machineKey: string, remote: string, path: string): ProcessHandle<SpawnResult> | null {
+  if (machineKey === "local") {
+    return editor.spawnHostProcess("git", ["clone", "--quiet", remote, expandHome(path)]);
+  }
+  const argv = machineKeySshArgv(machineKey, REMOTE_CREATE_TIMEOUT_S);
+  if (!argv) return null;
+  return editor.spawnHostProcess("ssh", [
+    ...argv,
+    `git clone --quiet ${shQuote(remote)} ${remoteShellPath(path)}`,
+  ]);
+}
+
+// Remove what an interrupted clone left behind — only a directory that is
+// not a finished repository, so a clone that raced to completion is kept.
+async function cleanupPartialClone(machineKey: string, path: string): Promise<void> {
+  const q = machineKey === "local" ? shQuote(expandHome(path)) : remoteShellPath(path);
+  const script = `[ -d ${q} ] && ! git -C ${q} rev-parse HEAD >/dev/null 2>&1 && rm -rf ${q}; exit 0`;
+  if (machineKey === "local") {
+    await editor.spawnHostProcess("sh", ["-c", script]);
+    return;
+  }
+  const argv = machineKeySshArgv(machineKey, REMOTE_PROBE_TIMEOUT_S);
+  if (argv) await editor.spawnHostProcess("ssh", [...argv, script]);
+}
+
+// The last line a failed git or ssh wrote, as the reason to show.
+function lastErrorLine(r: SpawnResult): string {
+  return (r.stderr || r.stdout || "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean).pop() || "";
+}
+
+// ── The form's Project control ───────────────────────────────────────────────
+
+// Project dropdown entries: every repository, then `Folder…` and
+// `Manage repositories…`.
+function projectOptionLabels(): string[] {
+  return [
+    ...loadRepositories().map((r) => r.name),
+    editor.t("form.project_folder"),
+    editor.t("form.project_manage"),
+  ];
+}
+
+function projectPickIndex(f: NewSessionForm): number {
+  const repos = loadRepositories();
+  const i = f.repoId ? repos.findIndex((r) => r.id === f.repoId) : -1;
+  return i >= 0 ? i : repos.length;
+}
+
+function formRepo(f: NewSessionForm): Repository | null {
+  return repoById(f.repoId);
+}
+
+function formMachineKey(f: NewSessionForm): string | null {
+  return machineOptionKey(machineOptions()[f.machinePick]);
+}
+
+// The main clone the form's (repository, machine) resolves to; "" when that
+// machine has none yet.
+function formMainClone(f: NewSessionForm): string {
+  const r = formRepo(f);
+  const key = formMachineKey(f);
+  return r && key ? r.clones[key] ?? "" : "";
+}
+
+// A repository is picked but the machine has no main clone of it: Launch has
+// to clone first, and asks (§4.6).
+function formNeedsClone(f: NewSessionForm): boolean {
+  return !!formRepo(f) && !formMainClone(f);
+}
+
+// What stops a repository launch outright: a machine that cannot hold a main
+// clone (typed by hand), or a missing clone with nothing to clone from.
+function formRepoBlocker(f: NewSessionForm): string {
+  const r = formRepo(f);
+  if (!r) return "";
+  const key = formMachineKey(f);
+  if (!key) return editor.t("form.repo_needs_saved_machine");
+  if (!r.clones[key] && !r.remote) return editor.t("form.repo_no_remote", { name: r.name, machine: machineKeyLabel(key) });
+  return "";
+}
+
+// Point the backend's path slot at the repository's main clone on the chosen
+// machine (or where a new one would go), and re-ask the probes about it. The
+// slot is what the create reads, so a repository launch goes through exactly
+// the folder path below it.
+function syncRepoPath(): void {
+  if (!form) return;
+  const r = formRepo(form);
+  if (!r) return;
+  const p = formMainClone(form) || repoCloneTarget(r);
+  const slot = { value: p, cursor: p.length };
+  if (form.backend === "ssh") {
+    form.sshPath = slot;
+    scheduleRemoteReprobe();
+  } else if (form.backend === "kubernetes") {
+    form.k8sWorkspace = slot;
+  } else {
+    form.projectPath = slot;
+    scheduleProjectPathReprobe();
+  }
+}
+
+// Leaving a repository for `Folder…`: the path slots go back to their
+// defaults so the folder field starts where a plain launch would.
+function clearRepoPath(): void {
+  if (!form) return;
+  form.projectPath = { value: "", cursor: 0 };
+  form.sshPath = { value: "", cursor: 0 };
+  form.k8sWorkspace = { value: "", cursor: 0 };
+  formPanel?.setValue(pathFieldKey(form.backend), "", 0);
+  scheduleProjectPathReprobe();
+  scheduleRemoteReprobe();
+}
+
+// The folder's relation to a known repository, from its origin (local folders
+// only; the probe reads `origin` alongside the git checks).
+function folderKnownRepo(f: NewSessionForm): Repository | null {
+  if (f.repoId || !f.folderOrigin) return null;
+  return loadRepositories().find((r) => sameRemote(r.remote, f.folderOrigin)) ?? null;
+}
+
+// The folder as the create will read it.
+function formFolderPath(f: NewSessionForm): string {
+  return expandHome(f.projectPath.value.trim() || f.defaultProjectPath || localProjectDefault());
+}
+
 // --- Add / Edit Machine (§5.3) ----------------------------------------------
 
 interface MachineDialogState {
@@ -9339,7 +9663,9 @@ interface MachineDialogState {
   // its result stale.
   testToken: number;
   error: string;
-  returnTo: "machines" | "form" | null;
+  returnTo: "machines" | "form" | "repos" | null;
+  // The machine Save wrote, for a dialog that goes back to a picker.
+  savedKey?: string;
 }
 
 const MACHINE_DIALOG_MODE = "orchestrator-machine-dialog";
@@ -9349,7 +9675,7 @@ let machineFocusKey = "machine-name";
 
 function openMachineDialog(
   existing: Machine | null,
-  returnTo: "machines" | "form" | null,
+  returnTo: "machines" | "form" | "repos" | null,
   fromHost?: SshConfigHost,
 ): void {
   yieldDockToDialog();
@@ -9392,6 +9718,7 @@ function openMachineDialog(
 
 function closeMachineDialog(reopen: boolean): void {
   const returnTo = machineDialog?.returnTo ?? null;
+  const savedKey = machineDialog?.savedKey ?? null;
   if (machinePanel) {
     machinePanel.unmount();
     machinePanel = null;
@@ -9402,9 +9729,15 @@ function closeMachineDialog(reopen: boolean): void {
     openMachinesDialog();
     return;
   }
+  if (reopen && returnTo === "repos") {
+    resumeRepoDialogAfterMachine(savedKey);
+    return;
+  }
   if (reopen && returnTo === "form") {
     // Back to the New Workspace form, on the machine just saved (or on
-    // whatever it was on, after a cancel).
+    // whatever it was on, after a cancel) — the form as it was, when it was
+    // set aside rather than closed.
+    if (resumeSuspendedForm()) return;
     dockBlurred = true;
     openForm({ fromPicker: true });
     return;
@@ -9578,6 +9911,7 @@ function saveMachineDialog(): void {
   // An existing machine keeps its last test when this session did not run one.
   if (!m.lastTest && d.id) m.lastTest = machineById(d.id)?.lastTest ?? null;
   upsertMachine(m);
+  d.savedKey = m.id;
   if (d.returnTo === "form") pendingFormMachine = { kind: "option", key: m.id };
   closeMachineDialog(true);
 }
@@ -9677,6 +10011,1002 @@ function handleMachineDialogEvent(e: WidgetEvt): void {
     else if (e.widget_key === "machine-cancel") closeMachineDialog(true);
   }
 }
+
+// --- The launch form, set aside while another dialog runs -------------------
+//
+// `Use an existing clone…`, `Manage repositories…` and `Save as repository`
+// leave the form for the Repositories dialog and come back to it. The form's
+// state is kept whole across that trip — the prompt, the agent, every field —
+// and the form is re-mounted on it rather than rebuilt from defaults.
+
+let suspendedForm: NewSessionForm | null = null;
+
+function suspendForm(): void {
+  if (!form || !formPanel) return;
+  closeCompletion();
+  suspendedForm = form;
+  formPanel.unmount();
+  formPanel = null;
+  form = null;
+  editor.setEditorMode(null);
+}
+
+// Bring the set-aside form back; false when there is none.
+function resumeSuspendedForm(): boolean {
+  const f = suspendedForm;
+  if (!f) return false;
+  suspendedForm = null;
+  invalidateRepositories();
+  invalidateMachines();
+  form = f;
+  formPanel = new FloatingWidgetPanel();
+  // A machine saved on the way (Add Machine) is where the form goes back to.
+  if (pendingFormMachine !== undefined) seedFormMachine();
+  syncRepoPath();
+  mountFormPanel();
+  if (f.backend === "local") void probeProjectPathDefaults();
+  else scheduleRemoteReprobe();
+  return true;
+}
+
+// =============================================================================
+// Repositories dialog (§4.11–§4.16)
+// =============================================================================
+
+interface RepoBrowseEntry { name: string; git: boolean }
+
+interface RepoDialogState {
+  // Back to the launch form when done (its state is `suspendedForm`).
+  returnTo: "form" | null;
+  // "add": the Add Repository shape; "manage": the list and one repository.
+  mode: "manage" | "add";
+  repoId: string | null;
+  // Add Repository's source fields.
+  url: Field;
+  name: Field;
+  urlCheck: { state: "idle" | "running" | "ok" | "fail" | "local"; text: string };
+  urlToken: number;
+  cloneNewTo: Field;
+  // MAIN CLONE: the machine being looked at and its path.
+  machineKey: string;
+  path: Field;
+  check: ClonePathCheck | null;
+  checking: boolean;
+  checkToken: number;
+  cloneConfirm: boolean;
+  cloning: { handle: ProcessHandle<SpawnResult> } | null;
+  browse: { dir: string; entries: RepoBrowseEntry[]; loading: boolean; error: string; index: number } | null;
+  error: string;
+  focus: string;
+}
+
+const REPOS_MODE = "orchestrator-repos";
+let repoDialog: RepoDialogState | null = null;
+let repoPanel: FloatingWidgetPanel | null = null;
+
+// The Add Machine dialog opened from here comes back here.
+let repoDialogAfterMachine: RepoDialogState | null = null;
+
+function repoDialogRepo(): Repository | null {
+  return repoDialog ? repoById(repoDialog.repoId) : null;
+}
+
+// The remote the dialog is working with: the saved repository's, or the one
+// being added.
+function repoDialogRemote(d: RepoDialogState): string {
+  if (d.mode === "add") return d.urlCheck.state === "local" ? d.urlCheck.text : d.url.value.trim();
+  return repoById(d.repoId)?.remote ?? "";
+}
+
+function openRepositoriesDialog(opts: {
+  repoId?: string | null;
+  machineKey?: string | null;
+  returnTo?: "form" | null;
+  add?: { url: string; path: string } | null;
+}): void {
+  yieldDockToDialog();
+  invalidateRepositories();
+  invalidateMachines();
+  const repos = loadRepositories();
+  const repoId = opts.repoId && repoById(opts.repoId) ? opts.repoId : repos[0]?.id ?? null;
+  const machineKey = opts.machineKey ?? "local";
+  const add = opts.add ?? (repos.length === 0 ? { url: "", path: "" } : null);
+  repoDialog = {
+    returnTo: opts.returnTo ?? null,
+    mode: add ? "add" : "manage",
+    repoId: add ? null : repoId,
+    url: fieldOf(add?.url ?? ""),
+    name: fieldOf(add?.url ? repoNameFromRemote(add.url) : ""),
+    urlCheck: { state: "idle", text: "" },
+    urlToken: 0,
+    cloneNewTo: fieldOf(add ? DEFAULT_CLONE_NEW_TO : repoById(repoId)?.cloneNewTo ?? DEFAULT_CLONE_NEW_TO),
+    machineKey,
+    path: fieldOf(add?.path ?? (repoById(repoId)?.clones[machineKey] ?? "")),
+    check: null,
+    checking: false,
+    checkToken: 0,
+    cloneConfirm: false,
+    cloning: null,
+    browse: null,
+    error: "",
+    focus: "",
+  };
+  mountRepoPanel();
+  if (add?.url) void checkRepoUrl();
+  void recheckRepoPath();
+}
+
+function mountRepoPanel(): void {
+  const d = repoDialog;
+  if (!d) return;
+  if (repoPanel) repoPanel.unmount();
+  repoPanel = new FloatingWidgetPanel();
+  repoPanel.mount(buildRepoDialogSpec(), {
+    widthPct: FORM_WIDTH_PCT,
+    heightPct: FORM_HEIGHT_PCT,
+    focusMarker: true,
+    labelAlign: "right",
+    title: d.mode === "add" ? editor.t("repo.add_title") : editor.t("repo.title"),
+    closable: true,
+  });
+  editor.floatingPanelControl(repoPanel.id(), "fullscreen", 1);
+  editor.setEditorMode(REPOS_MODE);
+  const focus = d.mode === "add"
+    ? "repo_url"
+    : d.returnTo === "form" ? "repo_path" : "repo_list";
+  repoPanel.setFocusKey(focus);
+  d.focus = focus;
+}
+
+function renderRepoDialog(): void {
+  if (!repoPanel || !repoDialog) return;
+  repoPanel.update(buildRepoDialogSpec());
+  const i = loadRepositories().findIndex((r) => r.id === repoDialog!.repoId);
+  if (repoDialog.mode === "manage" && i >= 0) repoPanel.setSelectedIndex("repo_list", i);
+}
+
+// Close, and go back where the dialog was opened from.
+function closeRepoDialog(): void {
+  const d = repoDialog;
+  if (d?.cloning) void d.cloning.handle.kill();
+  if (repoPanel) {
+    repoPanel.unmount();
+    repoPanel = null;
+  }
+  repoDialog = null;
+  editor.setEditorMode(null);
+  if (d?.returnTo === "form" && resumeSuspendedForm()) return;
+  restoreDockAfterDialog();
+}
+
+// Opened from the launch form: keep the form, come back to it.
+function openRepositoriesFromForm(repoId: string | null, machineKey: string | null): void {
+  suspendForm();
+  openRepositoriesDialog({ repoId, machineKey, returnTo: "form" });
+}
+
+function openAddRepositoryFromForm(url: string, path: string, machineKey: string | null): void {
+  suspendForm();
+  openRepositoriesDialog({ machineKey, returnTo: "form", add: { url, path } });
+}
+
+// Each machine a main clone can live on, with this repository's state on it:
+// `✓ ~/src/fresh`, `no main clone`.
+function repoMachineOptions(d: RepoDialogState): { key: string; label: string }[] {
+  const r = d.mode === "manage" ? repoById(d.repoId) : null;
+  const keys = cloneMachineKeys();
+  const w = Math.max(8, ...keys.map((k) => machineKeyLabel(k).length)) + 3;
+  return keys.map((k) => {
+    const clone = r?.clones[k];
+    const status = d.mode === "add" ? "" : clone ? `✓ ${clone}` : editor.t("repo.no_main_clone");
+    return { key: k, label: status ? machineKeyLabel(k).padEnd(w) + status : machineKeyLabel(k) };
+  });
+}
+
+// What the path check says, as the lines under Path (§4.14).
+function repoPathStatusRows(d: RepoDialogState): WidgetSpec[] {
+  const at = (txt: string, style: Partial<OverlayOptions> = NOTE_STYLE): WidgetSpec =>
+    label(txt, { labelWidth: FORM_LABEL_W, style, wrap: true });
+  const machine = machineKeyLabel(d.machineKey);
+  const remote = repoDialogRemote(d);
+  if (d.cloning) {
+    return [
+      fieldColumnRow(
+        label(editor.t("repo.cloning"), { style: NOTE_STYLE }),
+        spacer(4),
+        linkButton(editor.t("form.btn_cancel_short"), "repo_clone_cancel"),
+      ),
+    ];
+  }
+  if (d.cloneConfirm) {
+    return [
+      at(`⚠ ${editor.t("repo.clone_q", { remote })}`, WARN_STYLE),
+      at(`  ${editor.t("repo.clone_into", { machine, path: d.path.value.trim() })}`, WARN_STYLE),
+      fieldColumnRow(
+        spacer(30),
+        linkButton(editor.t("form.btn_cancel_short"), "repo_clone_no"),
+        spacer(3),
+        button(`  ${editor.t("repo.btn_clone")}  `, { intent: "primary", key: "repo_clone_yes" }),
+      ),
+    ];
+  }
+  if (d.checking) return [at(editor.t("repo.checking"))];
+  const c = d.check;
+  if (!c || c.state === "empty") {
+    if (d.mode === "add") return [];
+    return [
+      at(`⚠ ${editor.t("repo.none_on", { machine })}`, WARN_STYLE),
+      fieldColumnRow(
+        label(`  ${editor.t("repo.type_or_browse")}`, { style: WARN_STYLE }),
+        ...(remote ? [spacer(1), linkButton(editor.t("repo.clone_ellipsis"), "repo_clone_default")] : []),
+      ),
+    ];
+  }
+  switch (c.state) {
+    case "ok":
+      return [at(`✓ ${editor.t("repo.path_ok", { branch: c.branch || "HEAD", state: c.dirty ? editor.t("repo.dirty") : editor.t("repo.clean") })}`, { fg: "diagnostic.info_fg" })];
+    case "wrong_remote":
+      return [at(`✗ ${editor.t("repo.path_wrong_remote", { origin: c.origin ? remoteIdentity(c.origin) : editor.t("repo.no_origin") })}`, { fg: "diagnostic.error_fg" })];
+    case "not_git":
+      return [at(`✗ ${editor.t("repo.path_not_git")}`, { fg: "diagnostic.error_fg" })];
+    case "unreachable":
+      return [at(`✗ ${editor.t("repo.path_unreachable", { machine, reason: c.error })}`, { fg: "diagnostic.error_fg" })];
+    case "missing":
+      return [
+        fieldColumnRow(
+          label(`⚠ ${editor.t("repo.path_missing", { machine })}`, { style: WARN_STYLE }),
+          ...(remote ? [spacer(3), linkButton(editor.t("repo.clone_here"), "repo_clone_here")] : []),
+        ),
+      ];
+  }
+  return [];
+}
+
+// Browse… (§4.13): the folders of one directory on the selected machine.
+function repoBrowseRows(d: RepoDialogState): WidgetSpec[] {
+  const b = d.browse;
+  if (!b) return [];
+  const title = `${machineKeyLabel(d.machineKey)} : ${b.dir}`;
+  let body: WidgetSpec;
+  if (b.loading) {
+    body = label(editor.t("repo.loading"), { style: NOTE_STYLE });
+  } else if (b.error) {
+    body = label(`✗ ${b.error}`, { style: { fg: "diagnostic.error_fg" }, wrap: true });
+  } else {
+    const items = ["..", ...b.entries.map((e) => `${e.name}/`)];
+    const tags = ["", ...b.entries.map((e) => (e.git ? "git" : ""))];
+    body = list({
+      items: items.map((t, i) => ({ text: `${t.padEnd(40)} ${tags[i]}` })),
+      selectedIndex: Math.min(b.index, items.length - 1),
+      visibleRows: Math.min(8, items.length),
+      key: "repo_browse_list",
+    });
+  }
+  return [
+    row(
+      spacer(FORM_LABEL_W + 2),
+      labeledSection({
+        label: title,
+        child: col(body, label(editor.t("repo.browse_hint"), { style: NOTE_STYLE })),
+        widthCols: 60,
+      }),
+    ),
+  ];
+}
+
+function buildRepoDialogSpec(): WidgetSpec {
+  const d = repoDialog;
+  if (!d) return col();
+  const kids: WidgetSpec[] = [...gap()];
+  const repos = loadRepositories();
+  if (d.mode === "manage") {
+    kids.push(
+      row(spacer(2), linkButton(`+ ${editor.t("repo.add")}`, "repo_add")),
+      ...gap(),
+    );
+    if (repos.length === 0) {
+      kids.push(label(`  ${editor.t("repo.none_yet")}`, { style: NOTE_STYLE }));
+    } else {
+      const w = Math.max(12, ...repos.map((r) => r.name.length)) + 3;
+      kids.push(list({
+        items: repos.map((r) => ({ text: `  ${r.name.padEnd(w)}${repoRemoteLabel(r)}` })),
+        selectedIndex: Math.max(0, repos.findIndex((r) => r.id === d.repoId)),
+        visibleRows: Math.min(6, repos.length),
+        key: "repo_list",
+      }));
+    }
+    kids.push(...gap());
+    const r = repoById(d.repoId);
+    if (r) {
+      kids.push(
+        label(`  ${r.name.toUpperCase()} ${"─".repeat(400)}`, { style: SECTION_STYLE }),
+        ...gap(),
+        label(`${formLabel("repo.remote").padStart(FORM_LABEL_W)}: ${r.remote || editor.t("repo.local_only")}`),
+        ...field(formLabel("repo.clone_new_to"), d.cloneNewTo, { key: "repo_clone_new_to" }),
+        ...gap(),
+      );
+    }
+  } else {
+    kids.push(
+      sectionHeader("repo.section_source"),
+      ...gap(),
+      ...field(formLabel("repo.url_or_path"), d.url, { key: "repo_url", placeholder: editor.t("repo.url_placeholder") }),
+    );
+    if (d.urlCheck.state !== "idle") {
+      const st = d.urlCheck.state;
+      kids.push(label(
+        st === "running" ? editor.t("repo.checking")
+          : st === "ok" ? `✓ ${editor.t("repo.url_ok")}`
+          : st === "local" ? `✓ ${editor.t("repo.url_local", { remote: d.urlCheck.text || editor.t("repo.no_origin") })}`
+          : `✗ ${d.urlCheck.text}`,
+        { labelWidth: FORM_LABEL_W, style: st === "fail" ? { fg: "diagnostic.error_fg" } : NOTE_STYLE, wrap: true },
+      ));
+    }
+    kids.push(
+      ...gap(),
+      ...field(formLabel("repo.name"), d.name, { key: "repo_name" }),
+      ...field(formLabel("repo.clone_new_to"), d.cloneNewTo, { key: "repo_clone_new_to" }),
+      ...gap(),
+    );
+  }
+  if (d.mode === "add" || repoById(d.repoId)) {
+    const opts = repoMachineOptions(d);
+    const idx = Math.max(0, opts.findIndex((o) => o.key === d.machineKey));
+    kids.push(
+      sectionHeader("repo.section_main_clone"),
+      ...gap(),
+      row(
+        dropdown(opts.map((o) => o.label), {
+          selectedIndex: idx,
+          label: formLabel("form.machine"),
+          labelWidth: FORM_LABEL_W,
+          key: "repo_machine",
+        }),
+        spacer(5),
+        linkButton(`+ ${editor.t("repo.add_machine")}`, "repo_add_machine"),
+      ),
+      row(
+        text({
+          value: d.path.value,
+          cursorByte: d.path.cursor,
+          label: formLabel("repo.path"),
+          labelWidth: FORM_LABEL_W,
+          fieldWidth: 44,
+          placeholder: d.mode === "add" ? editor.t("repo.path_placeholder_add") : "",
+          key: "repo_path",
+        }),
+        spacer(3),
+        linkButton(editor.t("repo.browse"), "repo_browse"),
+      ),
+      ...repoBrowseRows(d),
+      ...repoPathStatusRows(d),
+    );
+    if (d.mode === "add") {
+      kids.push(label(editor.t("repo.more_machines_later"), { labelWidth: FORM_LABEL_W, style: NOTE_STYLE }));
+    }
+  }
+  kids.push(...gap(), divider({ style: { fg: "ui.menu_disabled_fg" } }), ...gap());
+  if (d.error) kids.push(label(`  ${d.error}`, { style: { fg: "diagnostic.error_fg", bold: true }, wrap: true }));
+  kids.push(repoFooterRow(d), ...gap());
+  return col(...kids);
+}
+
+// A path the primary action may save: a matching clone, or nothing (which
+// forgets the machine's main clone). A missing path has to be cloned first.
+function repoPathSavable(d: RepoDialogState): boolean {
+  if (d.checking || d.cloning || d.cloneConfirm) return false;
+  const c = d.check;
+  return !c || c.state === "empty" || c.state === "ok";
+}
+
+function repoFooterRow(d: RepoDialogState): WidgetSpec {
+  const ok = repoPathSavable(d);
+  if (d.mode === "add") {
+    const canClone = !!repoDialogRemote(d) && (!d.check || d.check.state === "missing" || d.check.state === "empty");
+    return endRow(
+      ...(canClone ? [linkButton(editor.t("repo.clone_now"), "repo_clone_now"), spacer(5)] : []),
+      linkButton(editor.t("form.btn_cancel_short"), "repo_cancel"),
+      spacer(5),
+      button(`  ${editor.t("repo.btn_save")}  `, { intent: "primary", key: "repo_save", disabled: !ok }),
+      spacer(3),
+    );
+  }
+  if (d.returnTo === "form") {
+    return endRow(
+      linkButton(editor.t("repo.back_to_form"), "repo_back"),
+      spacer(5),
+      button(`  ${editor.t("repo.btn_use")}  `, { intent: "primary", key: "repo_save", disabled: !ok || !repoById(d.repoId) }),
+      spacer(3),
+    );
+  }
+  const has = !!repoById(d.repoId);
+  return endRow(
+    ...(has
+      ? [
+        linkButton(editor.t("repo.new_here"), "repo_new_here"),
+        spacer(4),
+        linkButton(editor.t("repo.remove"), "repo_remove"),
+        spacer(5),
+      ]
+      : []),
+    linkButton(editor.t("repo.close"), "repo_cancel"),
+    spacer(5),
+    button(`  ${editor.t("repo.btn_save")}  `, { intent: "primary", key: "repo_save", disabled: !ok || !has }),
+    spacer(3),
+  );
+}
+
+// ── Checks ───────────────────────────────────────────────────────────────────
+
+// Re-check the Path on the selected machine. Debounced by the caller; a newer
+// check makes an older answer stale.
+async function recheckRepoPath(): Promise<void> {
+  const d = repoDialog;
+  if (!d) return;
+  const token = ++d.checkToken;
+  const p = d.path.value.trim();
+  if (!p) {
+    d.check = null;
+    d.checking = false;
+    renderRepoDialog();
+    return;
+  }
+  d.checking = true;
+  renderRepoDialog();
+  const c = await checkClonePath(d.machineKey, p, repoDialogRemote(d));
+  if (repoDialog !== d || d.checkToken !== token) return;
+  d.check = c;
+  d.checking = false;
+  // Adding from a local path: the clone's origin is the repository's remote.
+  if (d.mode === "add" && c.state !== "missing" && d.urlCheck.state === "local" && !d.urlCheck.text && c.origin) {
+    d.urlCheck = { state: "local", text: c.origin };
+  }
+  renderRepoDialog();
+}
+
+let repoPathTimer = 0;
+function scheduleRepoPathCheck(): void {
+  const d = repoDialog;
+  if (!d) return;
+  d.checkToken++;
+  const token = d.checkToken;
+  const mine = ++repoPathTimer;
+  void editor.delay(350).then(() => {
+    if (repoDialog !== d || d.checkToken !== token || mine !== repoPathTimer) return;
+    void recheckRepoPath();
+  });
+}
+
+// Add Repository's source (§4.16): a URL is asked with `git ls-remote`; a
+// local path is a repository whose origin becomes the remote and which
+// becomes the Local main clone.
+async function checkRepoUrl(): Promise<void> {
+  const d = repoDialog;
+  if (!d || d.mode !== "add") return;
+  const token = ++d.urlToken;
+  const v = d.url.value.trim();
+  if (!v) {
+    d.urlCheck = { state: "idle", text: "" };
+    renderRepoDialog();
+    return;
+  }
+  const looksLocal = v.startsWith("/") || v.startsWith("~") || v.startsWith(".");
+  if (looksLocal) {
+    const path = expandHome(v);
+    const o = await editor.spawnHostProcess("git", ["-C", path, "remote", "get-url", "origin"]);
+    if (repoDialog !== d || d.urlToken !== token) return;
+    const inside = await pathIsInsideGitWorkTree(path);
+    if (repoDialog !== d || d.urlToken !== token) return;
+    if (!inside) {
+      d.urlCheck = { state: "fail", text: editor.t("repo.path_not_git") };
+    } else {
+      const origin = o.exit_code === 0 ? (o.stdout || "").trim() : "";
+      d.urlCheck = { state: "local", text: origin };
+      if (!d.name.value.trim()) {
+        d.name = fieldOf(origin ? repoNameFromRemote(origin) : editor.pathBasename(path));
+        repoPanel?.setValue("repo_name", d.name.value, d.name.cursor);
+      }
+      d.machineKey = "local";
+      d.path = fieldOf(v);
+      repoPanel?.setValue("repo_path", d.path.value, d.path.cursor);
+      void recheckRepoPath();
+    }
+    renderRepoDialog();
+    return;
+  }
+  d.urlCheck = { state: "running", text: "" };
+  renderRepoDialog();
+  const r = await editor.spawnHostProcess("git", ["ls-remote", "--symref", v, "HEAD"]);
+  if (repoDialog !== d || d.urlToken !== token) return;
+  if (r.exit_code !== 0) {
+    d.urlCheck = { state: "fail", text: lastErrorLine(r) || editor.t("repo.url_unreachable") };
+  } else {
+    const m = /ref:\s+refs\/heads\/(\S+)\s+HEAD/.exec(r.stdout || "");
+    d.urlCheck = { state: "ok", text: m ? m[1] : "" };
+  }
+  renderRepoDialog();
+}
+
+let repoUrlTimer = 0;
+function scheduleRepoUrlCheck(): void {
+  const d = repoDialog;
+  if (!d) return;
+  const mine = ++repoUrlTimer;
+  void editor.delay(500).then(() => {
+    if (repoDialog !== d || mine !== repoUrlTimer) return;
+    void checkRepoUrl();
+  });
+}
+
+// ── Browse… ──────────────────────────────────────────────────────────────────
+
+// The folders of `dir` on the dialog's machine, with a `git` tag on those that
+// hold a `.git`. Local reads the directory; a remote lists it over ssh.
+async function listMachineDir(machineKey: string, dir: string): Promise<{ entries: RepoBrowseEntry[]; error: string }> {
+  if (machineKey === "local") {
+    const base = expandHome(dir);
+    const out: RepoBrowseEntry[] = [];
+    for (const e of editor.readDir(editor.localPath(base))) {
+      if (!e.is_dir || e.name.startsWith(".")) continue;
+      const p = editor.pathJoin(base, e.name);
+      out.push({ name: e.name, git: editor.fileExists(editor.localPath(editor.pathJoin(p, ".git"))) });
+    }
+    out.sort((a, b) => a.name.localeCompare(b.name));
+    return { entries: out, error: "" };
+  }
+  const script = [
+    `cd ${remoteShellPath(dir)} 2>/dev/null || { echo NODIR; exit 0; }`,
+    'for d in */; do [ -d "$d" ] || continue; n=${d%/}; if [ -e "$n/.git" ]; then echo "G $n"; else echo "D $n"; fi; done',
+  ].join("; ");
+  const argv = machineKeySshArgv(machineKey, REMOTE_PROBE_TIMEOUT_S);
+  if (!argv) return { entries: [], error: editor.t("repo.err_no_ssh") };
+  const r = await editor.spawnHostProcess("ssh", [...argv, script]);
+  if (r.exit_code !== 0) return { entries: [], error: lastErrorLine(r) || editor.t("err.connection_failed") };
+  const lines = (r.stdout || "").split(/\r?\n/).filter(Boolean);
+  if (lines[0] === "NODIR") return { entries: [], error: editor.t("repo.no_such_dir") };
+  return {
+    entries: lines.map((l) => ({ name: l.slice(2), git: l.startsWith("G ") })),
+    error: "",
+  };
+}
+
+function parentDir(dir: string): string {
+  const t = dir.replace(/\/+$/, "");
+  if (t === "" || t === "/") return "/";
+  if (t === "~") return expandHome("~").replace(/\/[^/]+$/, "") || "/";
+  const i = t.lastIndexOf("/");
+  return i <= 0 ? "/" : t.slice(0, i);
+}
+
+async function browseTo(dir: string): Promise<void> {
+  const d = repoDialog;
+  if (!d) return;
+  d.browse = { dir, entries: [], loading: true, error: "", index: 0 };
+  renderRepoDialog();
+  const r = await listMachineDir(d.machineKey, dir);
+  if (repoDialog !== d || !d.browse || d.browse.dir !== dir) return;
+  d.browse = { dir, entries: r.entries, loading: false, error: r.error, index: 0 };
+  renderRepoDialog();
+  repoPanel?.setFocusKey("repo_browse_list");
+  d.focus = "repo_browse_list";
+}
+
+function openBrowse(): void {
+  const d = repoDialog;
+  if (!d) return;
+  const typed = d.path.value.trim();
+  // Start at the typed path's folder when it names one, else home.
+  const start = typed ? (d.check?.state === "missing" ? parentDir(typed) : typed) : "~";
+  void browseTo(start);
+}
+
+// Put the browsed-to folder into Path and close the browser.
+function pickBrowsed(dir: string): void {
+  const d = repoDialog;
+  if (!d) return;
+  d.browse = null;
+  d.path = fieldOf(dir);
+  renderRepoDialog();
+  repoPanel?.setValue("repo_path", d.path.value, d.path.cursor);
+  repoPanel?.setFocusKey("repo_path");
+  d.focus = "repo_path";
+  void recheckRepoPath();
+}
+
+function browseActivate(index: number): void {
+  const d = repoDialog;
+  const b = d?.browse;
+  if (!d || !b || b.loading) return;
+  if (index === 0) {
+    void browseTo(parentDir(b.dir));
+    return;
+  }
+  const e = b.entries[index - 1];
+  if (!e) return;
+  const next = b.dir === "/" ? `/${e.name}` : `${b.dir.replace(/\/+$/, "")}/${e.name}`;
+  // A repository is what is being looked for: picking one ends the browse.
+  if (e.git) pickBrowsed(next);
+  else void browseTo(next);
+}
+
+// ── Clone (§4.15) ────────────────────────────────────────────────────────────
+
+async function runRepoClone(): Promise<void> {
+  const d = repoDialog;
+  if (!d) return;
+  const remote = repoDialogRemote(d);
+  const path = d.path.value.trim();
+  if (!remote || !path) return;
+  const handle = startClone(d.machineKey, remote, path);
+  d.cloneConfirm = false;
+  if (!handle) {
+    d.error = editor.t("repo.err_no_ssh");
+    renderRepoDialog();
+    return;
+  }
+  d.cloning = { handle };
+  d.error = "";
+  renderRepoDialog();
+  repoPanel?.setFocusKey("repo_clone_cancel");
+  const res = await handle;
+  if (repoDialog !== d || !d.cloning) return;
+  d.cloning = null;
+  if (res.exit_code !== 0) {
+    await cleanupPartialClone(d.machineKey, path);
+    if (repoDialog !== d) return;
+    d.error = editor.t("form.clone_failed", { reason: lastErrorLine(res) || String(res.exit_code) });
+  }
+  await recheckRepoPath();
+  repoPanel?.setFocusKey("repo_save");
+}
+
+async function cancelRepoClone(): Promise<void> {
+  const d = repoDialog;
+  if (!d) return;
+  d.cloneConfirm = false;
+  const c = d.cloning;
+  d.cloning = null;
+  renderRepoDialog();
+  if (c) {
+    await c.handle.kill();
+    await cleanupPartialClone(d.machineKey, d.path.value.trim());
+    await recheckRepoPath();
+  }
+}
+
+function askRepoClone(): void {
+  const d = repoDialog;
+  if (!d) return;
+  d.cloneConfirm = true;
+  renderRepoDialog();
+  repoPanel?.setFocusKey("repo_clone_yes");
+  d.focus = "repo_clone_yes";
+}
+
+// ── Save ─────────────────────────────────────────────────────────────────────
+
+function saveRepoDialog(): void {
+  const d = repoDialog;
+  if (!d || !repoPathSavable(d)) return;
+  const path = d.path.value.trim();
+  const cloneNewTo = d.cloneNewTo.value.trim() || DEFAULT_CLONE_NEW_TO;
+  if (d.mode === "add") {
+    const name = d.name.value.trim();
+    const remote = repoDialogRemote(d);
+    if (!name) {
+      d.error = editor.t("repo.err_name");
+      renderRepoDialog();
+      return;
+    }
+    if (d.urlCheck.state === "fail" || (!remote && !path)) {
+      d.error = editor.t("repo.err_source");
+      renderRepoDialog();
+      return;
+    }
+    const existing = remote ? loadRepositories().find((r) => sameRemote(r.remote, remote)) : null;
+    const r: Repository = existing ?? { id: newRepoId(), name, remote, cloneNewTo, clones: {} };
+    r.name = name;
+    r.cloneNewTo = cloneNewTo;
+    if (path) r.clones[d.machineKey] = path;
+    upsertRepository(r);
+    if (d.returnTo === "form" && suspendedForm) {
+      suspendedForm.repoId = r.id;
+      closeRepoDialog();
+      return;
+    }
+    d.mode = "manage";
+    d.repoId = r.id;
+    d.error = "";
+    mountRepoPanel();
+    return;
+  }
+  const r = repoById(d.repoId);
+  if (!r) return;
+  r.cloneNewTo = cloneNewTo;
+  if (path) r.clones[d.machineKey] = path;
+  else delete r.clones[d.machineKey];
+  upsertRepository(r);
+  if (d.returnTo === "form") {
+    closeRepoDialog();
+    return;
+  }
+  d.error = "";
+  renderRepoDialog();
+}
+
+// Switch the dialog to another repository or machine: the Path shows that
+// pair's main clone.
+function repoDialogShow(repoId: string | null, machineKey: string): void {
+  const d = repoDialog;
+  if (!d) return;
+  d.repoId = repoId;
+  d.machineKey = machineKey;
+  const r = repoById(repoId);
+  d.cloneNewTo = fieldOf(r?.cloneNewTo ?? DEFAULT_CLONE_NEW_TO);
+  d.path = fieldOf(r?.clones[machineKey] ?? "");
+  d.cloneConfirm = false;
+  d.browse = null;
+  d.error = "";
+  repoPanel?.setValue("repo_path", d.path.value, d.path.cursor);
+  repoPanel?.setValue("repo_clone_new_to", d.cloneNewTo.value, d.cloneNewTo.cursor);
+  void recheckRepoPath();
+}
+
+const REPOS_MODE_BINDINGS: [string, string][] = [
+  ["Enter", "orchestrator_repos_enter"],
+  ["C-Enter", "orchestrator_repos_save"],
+  ["Escape", "orchestrator_repos_escape"],
+  ["Backspace", "orchestrator_repos_backspace"],
+];
+editor.defineMode(REPOS_MODE, REPOS_MODE_BINDINGS, true, true);
+
+registerHandler("orchestrator_repos_save", () => saveRepoDialog());
+registerHandler("orchestrator_repos_enter", () => {
+  const d = repoDialog;
+  if (!d || !repoPanel) return;
+  // Enter on a text field saves; on everything else it is that control's own
+  // (a button, the dropdown, a list row).
+  if (["repo_path", "repo_url", "repo_name", "repo_clone_new_to"].includes(d.focus)) {
+    if (d.focus === "repo_url") {
+      void checkRepoUrl();
+      return;
+    }
+    saveRepoDialog();
+    return;
+  }
+  repoPanel.command({ kind: "key", key: "Enter" });
+});
+registerHandler("orchestrator_repos_escape", () => {
+  const d = repoDialog;
+  if (!d || !repoPanel) return;
+  if (d.browse) {
+    d.browse = null;
+    renderRepoDialog();
+    repoPanel.setFocusKey("repo_browse");
+    d.focus = "repo_browse";
+    return;
+  }
+  if (d.cloneConfirm || d.cloning) {
+    void cancelRepoClone();
+    return;
+  }
+  if (d.focus === "repo_machine") {
+    repoPanel.command({ kind: "key", key: "Escape" });
+    return;
+  }
+  closeRepoDialog();
+});
+registerHandler("orchestrator_repos_backspace", () => {
+  const d = repoDialog;
+  if (!d || !repoPanel) return;
+  // In the browser, Backspace goes up a folder.
+  if (d.browse && d.focus === "repo_browse_list") {
+    void browseTo(parentDir(d.browse.dir));
+    return;
+  }
+  repoPanel.command({ kind: "key", key: "Backspace" });
+});
+
+function handleRepoDialogEvent(e: WidgetEvt): void {
+  const d = repoDialog!;
+  if (e.event_type === "cancel") {
+    // Esc / the native `[×]`: the host unmounted the panel already.
+    repoPanel = null;
+    closeRepoDialog();
+    return;
+  }
+  if (e.event_type === "focus") {
+    if (typeof e.widget_key === "string") d.focus = e.widget_key;
+    return;
+  }
+  const payload = (e.payload ?? {}) as Record<string, unknown>;
+  if (isListEvent(e as { event_type: string; widget_key?: string; payload?: unknown }, "repo_list")) {
+    const idx = typeof payload.index === "number" ? payload.index : -1;
+    const r = loadRepositories()[idx];
+    if (!r) return;
+    if (e.event_type === "select" && r.id !== d.repoId) {
+      repoDialogShow(r.id, d.machineKey);
+      renderRepoDialog();
+    } else if (e.event_type === "activate") {
+      repoDialogShow(r.id, d.machineKey);
+      newWorkspaceOnRepo();
+    }
+    return;
+  }
+  if (isListEvent(e as { event_type: string; widget_key?: string; payload?: unknown }, "repo_browse_list")) {
+    const idx = typeof payload.index === "number" ? payload.index : -1;
+    if (d.browse && idx >= 0) d.browse.index = idx;
+    if (e.event_type === "activate" && idx >= 0) browseActivate(idx);
+    return;
+  }
+  if (e.event_type === "change" && e.widget_key === "repo_machine") {
+    const idx = payload.index;
+    const opt = typeof idx === "number" ? repoMachineOptions(d)[idx] : undefined;
+    if (opt && opt.key !== d.machineKey) {
+      repoDialogShow(d.mode === "add" ? null : d.repoId, opt.key);
+      if (d.mode === "add") {
+        d.path = fieldOf("");
+        repoPanel?.setValue("repo_path", "", 0);
+      }
+      renderRepoDialog();
+    }
+    return;
+  }
+  if (e.event_type === "change") {
+    const slots: Record<string, Field> = {
+      repo_path: d.path,
+      repo_url: d.url,
+      repo_name: d.name,
+      repo_clone_new_to: d.cloneNewTo,
+    };
+    const slot = e.widget_key ? slots[e.widget_key] : undefined;
+    if (!slot) return;
+    const before = slot.value;
+    applyTextChange(slot, e.payload);
+    if (slot.value === before) return;
+    d.error = "";
+    if (e.widget_key === "repo_path") {
+      d.cloneConfirm = false;
+      scheduleRepoPathCheck();
+      renderRepoDialog();
+    } else if (e.widget_key === "repo_url") {
+      // The name follows the URL until the user types one of their own.
+      const prevName = repoNameFromRemote(before);
+      if (!d.name.value.trim() || d.name.value === prevName) {
+        d.name = fieldOf(repoNameFromRemote(d.url.value));
+        repoPanel?.setValue("repo_name", d.name.value, d.name.cursor);
+      }
+      d.urlCheck = { state: "idle", text: "" };
+      scheduleRepoUrlCheck();
+      renderRepoDialog();
+    }
+    return;
+  }
+  if (e.event_type !== "activate") return;
+  switch (e.widget_key) {
+    case "repo_add":
+      d.mode = "add";
+      d.repoId = null;
+      d.url = fieldOf("");
+      d.name = fieldOf("");
+      d.urlCheck = { state: "idle", text: "" };
+      d.cloneNewTo = fieldOf(DEFAULT_CLONE_NEW_TO);
+      d.machineKey = "local";
+      d.path = fieldOf("");
+      d.check = null;
+      d.error = "";
+      mountRepoPanel();
+      return;
+    case "repo_add_machine":
+      // Add Machine, then back here with the new machine selected.
+      repoDialogAfterMachine = d;
+      if (repoPanel) {
+        repoPanel.unmount();
+        repoPanel = null;
+      }
+      repoDialog = null;
+      openMachineDialog(null, "repos");
+      return;
+    case "repo_browse":
+      openBrowse();
+      return;
+    case "repo_clone_here":
+      askRepoClone();
+      return;
+    case "repo_clone_default": {
+      const r = repoById(d.repoId);
+      d.path = fieldOf(r ? repoCloneTarget(r) : (d.cloneNewTo.value || DEFAULT_CLONE_NEW_TO).replace(/<name>/g, d.name.value.trim()));
+      repoPanel?.setValue("repo_path", d.path.value, d.path.cursor);
+      d.check = { state: "missing", branch: "", dirty: false, origin: "", error: "" };
+      askRepoClone();
+      return;
+    }
+    case "repo_clone_now": {
+      if (!d.path.value.trim()) {
+        d.path = fieldOf((d.cloneNewTo.value || DEFAULT_CLONE_NEW_TO).replace(/<name>/g, d.name.value.trim() || repoNameFromRemote(d.url.value)));
+        repoPanel?.setValue("repo_path", d.path.value, d.path.cursor);
+      }
+      askRepoClone();
+      return;
+    }
+    case "repo_clone_yes":
+      void runRepoClone();
+      return;
+    case "repo_clone_no":
+    case "repo_clone_cancel":
+      void cancelRepoClone();
+      return;
+    case "repo_save":
+      saveRepoDialog();
+      return;
+    case "repo_back":
+    case "repo_cancel":
+      if (d.mode === "add" && d.returnTo !== "form" && loadRepositories().length > 0) {
+        d.mode = "manage";
+        d.repoId = loadRepositories()[0].id;
+        repoDialogShow(d.repoId, d.machineKey);
+        mountRepoPanel();
+        return;
+      }
+      closeRepoDialog();
+      return;
+    case "repo_remove": {
+      if (!d.repoId) return;
+      removeRepository(d.repoId);
+      const next = loadRepositories()[0]?.id ?? null;
+      repoDialogShow(next, d.machineKey);
+      renderRepoDialog();
+      return;
+    }
+    case "repo_new_here":
+      newWorkspaceOnRepo();
+      return;
+  }
+}
+
+// `⏎ New workspace here`: the launch form on this repository and machine.
+function newWorkspaceOnRepo(): void {
+  const d = repoDialog;
+  if (!d || !d.repoId) return;
+  const repoId = d.repoId;
+  const key = d.machineKey;
+  if (d.returnTo === "form" && suspendedForm) {
+    suspendedForm.repoId = repoId;
+    pendingFormMachine = { kind: "option", key };
+    closeRepoDialog();
+    return;
+  }
+  if (repoPanel) {
+    repoPanel.unmount();
+    repoPanel = null;
+  }
+  repoDialog = null;
+  editor.setEditorMode(null);
+  pendingFormRepo = repoId;
+  pendingFormMachine = { kind: "option", key };
+  dockBlurred = true;
+  openForm({ fromPicker: true });
+}
+
+// Back from Add Machine (opened by `+ Add machine…`): the dialog as it was,
+// on the machine just saved.
+function resumeRepoDialogAfterMachine(savedKey: string | null): void {
+  const d = repoDialogAfterMachine;
+  repoDialogAfterMachine = null;
+  if (!d) return;
+  repoDialog = d;
+  invalidateMachines();
+  if (savedKey) {
+    d.machineKey = savedKey;
+    d.path = fieldOf(repoById(d.repoId)?.clones[savedKey] ?? "");
+  }
+  mountRepoPanel();
+  repoPanel?.setFocusKey("repo_path");
+  d.focus = "repo_path";
+  void recheckRepoPath();
+}
+
+registerHandler("orchestrator_repositories", () => openRepositoriesDialog({}));
 
 // --- Machines (§5.4) --------------------------------------------------------
 
@@ -10278,7 +11608,7 @@ function sshChosenHost(): string {
 
 // The label column, in cells. Wide enough for the longest English label
 // ("New branch name"); a longer translation is trimmed to the column with `…`.
-const FORM_LABEL_W = 15;
+const FORM_LABEL_W = 16;
 
 // The form's size, as a percentage of the screen: wide enough that an
 // accepted Project Path completion fits with its cursor. Both are the
@@ -10362,22 +11692,6 @@ function field(
 // A form toggle: chip-first, indented into the field column.
 function formToggle(checked: boolean, lbl: string, key: string): WidgetSpec {
   return toggle(checked, lbl, { key, labelWidth: FORM_LABEL_W });
-}
-
-// The dialog's top-level switch: run the agent in the workspace you're in, or
-// make a new one for it. Everything workspace-shaped below is conditioned on
-// this, so "current" collapses the form down to the old Run-Agent dialog.
-function targetRow(): WidgetSpec {
-  const sel = form ? form.target : "new";
-  return dropdown(
-    [editor.t("run_agent.target_current"), editor.t("run_agent.target_new")],
-    {
-      selectedIndex: sel === "current" ? 0 : 1,
-      label: formLabel("form.launch_in"),
-      labelWidth: FORM_LABEL_W,
-      key: "target_dropdown",
-    },
-  );
 }
 
 // === The Machine control (design §5.1, §3.8) ===============================
@@ -10534,23 +11848,25 @@ function pickMachineOption(key: string): void {
   if (idx >= 0) applyMachinePick(idx);
 }
 
-function machineRow(): WidgetSpec[] {
+// The Machine control, without its note: it shares a row with Project.
+function machineDropdown(): WidgetSpec {
   const opts = machineOptions();
   // Machines can be deleted while the form is open, so the stored pick is
   // re-clamped here rather than only where it is drawn.
   if (form!.machinePick >= opts.length || form!.machinePick < 0) applyMachinePick(0);
-  const pick = form!.machinePick;
-  const out: WidgetSpec[] = [
-    dropdown(opts.map((o) => o.label), {
-      selectedIndex: pick,
-      label: editor.t("form.machine"),
-      labelWidth: FORM_LABEL_W,
-      key: "machine",
-    }),
-  ];
-  const note = machineOptionNote(opts[pick]);
-  if (note) out.push(fieldNote(note));
-  return out;
+  return dropdown(opts.map((o) => o.label), {
+    selectedIndex: form!.machinePick,
+    label: editor.t("form.machine"),
+    key: "machine",
+  });
+}
+
+// What a non-local machine resolves to (`user@host:port`, a pod); Local needs
+// no gloss.
+function machineNoteRows(): WidgetSpec[] {
+  const o = machineOptions()[form!.machinePick];
+  const note = !o || o.kind === "local" ? "" : machineOptionNote(o);
+  return note ? [fieldNote(note)] : [];
 }
 
 // A name for a remembered machine when the user gives none: the host of an
@@ -10700,10 +12016,9 @@ function localBodyFields(): WidgetSpec[] {
   // The value slot shows the default itself (dim, as every placeholder is);
   // the note under it says that blank means this path. Submitting with the
   // field empty uses it.
-  const fields = field(formLabel("form.project_path"), form.projectPath, {
+  const fields = field(formLabel("form.folder"), form.projectPath, {
     key: "project_path",
     placeholder: form.defaultProjectPath || editor.t("form.detecting_project_root"),
-    note: form.defaultProjectPath ? editor.t("form.project_path_note") : undefined,
   });
   if (form.projectPathIsLinkedWorktree === true) {
     fields.push(
@@ -10767,6 +12082,18 @@ function branchPlanNote(f: NewSessionForm, typedBase: string, fallback: string):
     : editor.t("form.branch_plan_default_nobase", { branch });
 }
 
+// Git mode: cut a new worktree, or work in the folder as it is. A radio so
+// both outcomes are named; the key stays `worktree`, whose value is
+// `createWorktree`.
+function gitModeRadio(on: boolean, inPlaceKey: string): WidgetSpec {
+  return radio([editor.t("form.git_mode_worktree"), editor.t(inPlaceKey)], {
+    selectedIndex: on ? 0 : 1,
+    label: formLabel("form.git_mode"),
+    labelWidth: FORM_LABEL_W,
+    key: "worktree",
+  });
+}
+
 // The worktree group (local backend): the toggle, then what it reveals.
 // Disclosure is value-driven — the branch field shows on any git path (it
 // drives an in-place checkout when no worktree is cut), the new-branch field
@@ -10774,7 +12101,7 @@ function branchPlanNote(f: NewSessionForm, typedBase: string, fallback: string):
 function worktreeFields(f: NewSessionForm): WidgetSpec[] {
   const worktreeEnabled = f.projectPathIsGit !== false;
   const on = worktreeEnabled && f.createWorktree;
-  const out: WidgetSpec[] = [spacer(0)];
+  const out: WidgetSpec[] = [];
   if (!worktreeEnabled) {
     // Not a git path: say so where the toggle would be, and stop.
     out.push(
@@ -10789,7 +12116,7 @@ function worktreeFields(f: NewSessionForm): WidgetSpec[] {
     );
     return out;
   }
-  out.push(formToggle(on, editor.t("form.create_worktree_short"), "worktree"));
+  out.push(gitModeRadio(on, f.repoId ? "form.git_mode_main_clone" : "form.git_mode_folder"));
   // "Checkout branch" — an existing branch: with a worktree it's the base
   // the worktree is cut from / checked out to; without one it drives an
   // in-place `git checkout` in the project dir. The value slot shows the
@@ -10805,28 +12132,28 @@ function worktreeFields(f: NewSessionForm): WidgetSpec[] {
     branch = { placeholder: f.defaultBranch, note: "" };
   }
   out.push(
-    ...field(formLabel("form.checkout_branch"), f.branch, {
+    ...field(formLabel(on ? "form.branch_from" : "form.check_out"), f.branch, {
       key: "branch",
       placeholder: branch.placeholder,
       note: branch.note || undefined,
     }),
   );
-  // "New branch name" — creates the worktree on a freshly-cut branch. Only
-  // meaningful when a worktree is being created, so it appears with it.
+  // "New branch" — creates the worktree on a freshly-cut branch. Only
+  // meaningful when a worktree is being created, so it appears with it. The
+  // placeholder is the branch a blank field cuts.
   if (on) {
-    const nb = splitLabel("form.new_branch");
-    out.push(...field(nb.label, f.newBranch, {
+    out.push(...field(formLabel("form.new_branch_short"), f.newBranch, {
       key: "new_branch",
-      note: branchPlanNote(f, f.branch.value.trim(), f.defaultBranch) || undefined,
+      placeholder: f.branch.value.trim() ? "" : plannedWorkspaceName(f),
     }));
     // Where the files land. A first-run user expects to be taken to their
     // project and is instead dropped in a deep directory under the data dir,
     // which nothing named beforehand.
     const name = plannedWorkspaceName(f);
     if (name) {
-      out.push(fieldNote(
-        editor.t("form.worktree_where", { path: localWorktreePath(f, name) }),
-        { fg: "ui.menu_disabled_fg", italic: true },
+      out.push(spacer(0), label(
+        editor.t("form.worktree_at", { path: localWorktreePath(f, name) }),
+        { labelWidth: FORM_LABEL_W, style: NOTE_STYLE, elide: "head" },
       ));
     }
   }
@@ -10879,7 +12206,7 @@ async function probeRemoteProjectDefaults(): Promise<void> {
 // different rows — the second is a connection problem, and saying "non-git"
 // for it would send the user to fix the wrong thing.
 function remoteWorktreeFields(f: NewSessionForm): WidgetSpec[] {
-  const out: WidgetSpec[] = [spacer(0)];
+  const out: WidgetSpec[] = [];
   if (f.remoteProbing) {
     out.push(
       label(`[ ] ${editor.t("form.create_worktree_short")}`, {
@@ -10898,7 +12225,7 @@ function remoteWorktreeFields(f: NewSessionForm): WidgetSpec[] {
     // while the user typed is reachable by the time they press Create, and
     // the remote's own `git rev-parse` is what decides — refusing here would
     // be this side guessing on the strength of one failed connection.
-    out.push(formToggle(f.createWorktree, editor.t("form.create_worktree_short"), "worktree"));
+    out.push(gitModeRadio(f.createWorktree, "form.git_mode_folder"));
     // "Could not ask" has two causes that send the user to different places:
     // a host that did not answer, and one that answered with a key we have
     // never seen. The second is not an error the user has to go and fix —
@@ -10926,7 +12253,7 @@ function remoteWorktreeFields(f: NewSessionForm): WidgetSpec[] {
     return out;
   }
   const on = f.createWorktree;
-  out.push(formToggle(on, editor.t("form.create_worktree_short"), "worktree"));
+  out.push(gitModeRadio(on, "form.git_mode_folder"));
   if (f.remoteIsGit === null) {
     out.push(fieldNote(editor.t("form.remote_unknown"), {
       fg: "ui.menu_disabled_fg",
@@ -10941,15 +12268,14 @@ function remoteWorktreeFields(f: NewSessionForm): WidgetSpec[] {
   // in place.
   if (!on) return out;
   out.push(
-    ...field(formLabel("form.checkout_branch"), f.branch, {
+    ...field(formLabel("form.branch_from"), f.branch, {
       key: "branch",
       placeholder: f.remoteDefaultBranch,
     }),
   );
-  const nb = splitLabel("form.new_branch");
-  out.push(...field(nb.label, f.newBranch, {
+  out.push(...field(formLabel("form.new_branch_short"), f.newBranch, {
     key: "new_branch",
-    note: branchPlanNote(f, f.branch.value.trim(), f.remoteDefaultBranch) || undefined,
+    placeholder: f.branch.value.trim() ? "" : plannedWorkspaceName(f),
   }));
   // The remote resolves `$HOME` and the repository's basename itself, so the
   // preview says the shape and fills in the part this side does know — the
@@ -11049,7 +12375,7 @@ function applyPrefillPath(path: string): void {
 // rooted at, wherever that is. The hint under it says what blank means.
 function projectPathFields(): WidgetSpec[] {
   if (!form) return [];
-  const lbl = formLabel("form.project_path");
+  const lbl = formLabel("form.folder");
   const m = form.machineId ? machineById(form.machineId) : null;
   switch (form.backend) {
     case "local":
@@ -11187,6 +12513,7 @@ function formIsSubmittable(): boolean {
   // Running in the current workspace needs no input at all — worst case it
   // opens a bare terminal here, which is always possible.
   if (form.target === "current") return true;
+  if (formRepoBlocker(form)) return false;
   switch (form.backend) {
     case "local":
       // Mirror `captureCreateSpec`'s fallback chain EXACTLY: a local
@@ -11217,266 +12544,455 @@ function formIsSubmittable(): boolean {
   }
 }
 
-// The dialog keeps one size and one layout whatever its switches say (see
-// `buildFormSpecFixed`), unless the panel is too short to hold that layout,
-// in which case it falls back to the compact, content-sized form.
+// ── The launch form's layout (docs/internal/launch-dialog-redesign.md) ──────
 //
-// **What it is measured against is the panel, not the screen.** The panel is
-// `FORM_HEIGHT_PCT` of the screen with a border row above and below, so its
-// inner height is that and nothing else; the margin this used to subtract
-// from the screen height was a fudge for the same quantity that only agreed
-// with it near a 40-row terminal. One row spare for a footer that wraps on a
-// narrow form.
-function fixedFormFits(rows: number): boolean {
+// Sections top to bottom: the mode switch, PROMPT, AGENT, WHERE (new
+// workspace only), GIT (details open, git paths only), then the footer. The
+// prompt, the agent and the footer never move; everything that changes height
+// sits between them and grows only when the user asked for it (the details
+// fold, a typed host, a warning). There is no row reservation: a section is
+// as tall as what it shows.
+
+// Rows of the prompt box. Two on a short terminal (see `formRoomy`).
+const PROMPT_ROWS = 3;
+const PROMPT_ROWS_SHORT = 2;
+
+const SECTION_STYLE = { fg: "ui.menu_disabled_fg", bold: true } as const;
+const WARN_STYLE = { fg: "diagnostic.warning_fg" } as const;
+
+// Room for the blank rows between sections. A short terminal drops them first,
+// then the prompt's third row; the sections themselves always show.
+function formRoomy(): boolean {
   const h = editor.getScreenSize().height;
-  if (h <= 0) return true;
-  return rows + 1 <= Math.floor((h * FORM_HEIGHT_PCT) / 100) - 2;
+  return h <= 0 || h >= 34;
 }
 
-// The two layouts hand back their rows rather than a column, so the choice
-// between them is made on a number the type already carries — this used to
-// reach past `WidgetSpec` with a cast to count a built form's children.
+// A blank row, only when there is room for one.
+function gap(): WidgetSpec[] {
+  return formRoomy() ? [spacer(0)] : [];
+}
+
+// `PROMPT ─────…` — a section's name and a rule to the right edge. The rule
+// is a long label the host clips at the panel's inner width, so it always
+// ends at the border without this side knowing the width.
+function sectionHeader(key: string): WidgetSpec {
+  return label(`  ${editor.t(key)} ${"─".repeat(400)}`, { style: SECTION_STYLE });
+}
+
+// The mode switch: a new workspace, or here. Both options are always on
+// screen; ←/→ flips it.
+function launchModeRow(): WidgetSpec {
+  const sel = form ? form.target : "new";
+  const here = currentWorkspaceIds();
+  const name = orchestratorSessions.get(here.windowId)?.label || editor.pathBasename(here.root) || here.root;
+  return radio(
+    [editor.t("run_agent.target_new"), editor.t("form.mode_here", { name })],
+    {
+      selectedIndex: sel === "new" ? 0 : 1,
+      labelWidth: FORM_LABEL_W,
+      key: "launch_mode",
+    },
+  );
+}
+
+// Whether the active agent takes a launch prompt. The prompt box is drawn for
+// every agent so nothing moves when the agent changes; for one that takes no
+// prompt it is read-only and out of the Tab cycle.
+function promptApplies(): boolean {
+  return !!activeAgentEntry()?.prompt;
+}
+
+function promptBox(f: NewSessionForm): WidgetSpec {
+  const takes = promptApplies();
+  const spec = text({
+    value: takes ? f.startPrompt.value : "",
+    cursorByte: f.startPrompt.cursor,
+    rows: formRoomy() ? PROMPT_ROWS : PROMPT_ROWS_SHORT,
+    fullWidth: true,
+    placeholder: takes ? editor.t("form.prompt_placeholder") : editor.t("form.prompt_none"),
+    readOnly: !takes,
+    key: takes ? "start_prompt" : undefined,
+  });
+  return labeledSection({ child: spec });
+}
+
+// The agent and its own switches on one row; `custom…` adds the command row
+// under it.
+function agentRowFields(f: NewSessionForm): WidgetSpec[] {
+  const kids: WidgetSpec[] = [agentPresetRow()];
+  const entry = activeAgentEntry();
+  if (entry?.auto) {
+    kids.push(spacer(4), toggle(f.autoMode, editor.t("form.auto_mode_short"), { key: "auto_mode" }));
+  }
+  if (entry?.systemPrompt && teachApplies()) {
+    kids.push(spacer(4), toggle(f.teachFreshCli, editor.t("form.teach_short"), { key: "teach_fresh_cli" }));
+  }
+  const out: WidgetSpec[] = [kids.length > 1 ? row(...kids) : kids[0]];
+  if (cmdVisible()) out.push(...cmdField(f));
+  return out;
+}
+
+// One line under WHERE saying what Launch will do to git — the preview the
+// branch notes used to spell out field by field.
+function gitPlanLine(f: NewSessionForm): { text: string; style?: Partial<OverlayOptions> } | null {
+  const name = plannedWorkspaceName(f);
+  const newBranch = f.newBranch.value.trim();
+  const typedBase = f.branch.value.trim();
+  if (f.backend === "local") {
+    if (f.projectPathIsGit === null) return { text: editor.t("form.plan_checking") };
+    if (f.projectPathIsGit === false) return { text: editor.t("form.plan_plain") };
+    if (!f.createWorktree) {
+      return { text: typedBase ? editor.t("form.plan_inplace_checkout", { base: typedBase }) : editor.t("form.plan_inplace") };
+    }
+    const base = typedBase || f.defaultBranch;
+    return { text: planWorktreeText(newBranch || (typedBase ? "" : name), base, name) };
+  }
+  if (f.backend === "ssh") {
+    if (f.remoteProbing) return { text: editor.t("form.remote_probing") };
+    if (f.remoteProbeError) {
+      return {
+        text: isHostKeyFailure(f.remoteProbeError) ? editor.t("form.remote_untrusted") : editor.t("form.remote_unreachable"),
+        style: WARN_STYLE,
+      };
+    }
+    if (f.remoteIsGit === false) return { text: editor.t("form.plan_plain") };
+    if (f.remoteIsGit === null) return null;
+    if (!f.createWorktree) return { text: editor.t("form.plan_inplace") };
+    return { text: planWorktreeText(newBranch || (typedBase ? "" : name), typedBase || f.remoteDefaultBranch, name) };
+  }
+  return null;
+}
+
+// `new worktree fresh-47, branched from origin/master` — or, when an existing
+// branch is checked out rather than a new one cut, `new worktree on <base>`.
+function planWorktreeText(branch: string, base: string, name: string): string {
+  if (!branch) return editor.t("form.plan_worktree_checkout", { name, base });
+  return base
+    ? editor.t("form.plan_worktree", { branch, base })
+    : editor.t("form.plan_worktree_nobase", { branch });
+}
+
+// The WHERE section (§4.1): Project and Machine on one row, the connection
+// fields for a host typed by hand, then either the repository's main clone or
+// the folder, then one line saying what Launch will do to git.
+function whereFields(f: NewSessionForm): WidgetSpec[] {
+  const out: WidgetSpec[] = [
+    row(
+      dropdown(projectOptionLabels(), {
+        selectedIndex: projectPickIndex(f),
+        label: formLabel("form.project"),
+        labelWidth: FORM_LABEL_W,
+        key: "project",
+      }),
+      spacer(5),
+      machineDropdown(),
+    ),
+    ...machineNoteRows(),
+    ...connectionFields(f),
+  ];
+  const r = formRepo(f);
+  if (r) out.push(...repoWhereRows(f, r));
+  else out.push(...projectPathFields(), ...folderRepoRows(f));
+  if (formTypedMachine(f)) out.push(...rememberFields(f));
+  if (f.detailsOpen) {
+    out.push(...field(formLabel("form.workspace_short"), f.name, {
+      key: "name",
+      placeholder: f.defaultSessionName || editor.t("form.auto_generating"),
+    }));
+  } else {
+    const plan = r && formNeedsClone(f)
+      ? { text: editor.t("form.plan_after_clone", { name: plannedWorkspaceName(f) || r.name }) }
+      : gitPlanLine(f);
+    if (plan) out.push(label(plan.text, { labelWidth: FORM_LABEL_W, style: plan.style ?? NOTE_STYLE }));
+  }
+  out.push(detailsToggleRow(f));
+  return out;
+}
+
+// A row in the field column: controls indented to where values start.
+function fieldColumnRow(...kids: WidgetSpec[]): WidgetSpec {
+  return row(spacer(FORM_LABEL_W + 2), ...kids);
+}
+
+// `Change…`-style link buttons inside the form.
+function linkButton(text: string, key: string): WidgetSpec {
+  return button(text, { key, bare: true, style: { underline: true } });
+}
+
+// The repository's main clone on the chosen machine (§4.1, §4.4, §4.5).
+function repoWhereRows(f: NewSessionForm, r: Repository): WidgetSpec[] {
+  const blocker = formRepoBlocker(f);
+  const key = formMachineKey(f);
+  if (blocker) {
+    const out: WidgetSpec[] = [label(`✗ ${blocker}`, { labelWidth: FORM_LABEL_W, style: { fg: "diagnostic.error_fg" }, wrap: true })];
+    if (key) out.push(fieldColumnRow(linkButton(editor.t("form.use_existing_clone"), "use_existing_clone")));
+    return out;
+  }
+  const clone = formMainClone(f);
+  if (!clone) {
+    return [
+      label(`⚠ ${editor.t("form.no_main_clone", { name: r.name, machine: machineKeyLabel(key!) })}`, {
+        labelWidth: FORM_LABEL_W,
+        style: WARN_STYLE,
+      }),
+      fieldColumnRow(
+        spacer(2),
+        linkButton(editor.t("form.use_existing_clone"), "use_existing_clone"),
+        spacer(2),
+        label(editor.t("form.or_launch_clones"), { style: WARN_STYLE }),
+      ),
+    ];
+  }
+  if (!f.detailsOpen) {
+    return [label(editor.t("form.main_clone_line", { path: clone }), { labelWidth: FORM_LABEL_W, style: NOTE_STYLE })];
+  }
+  return [
+    row(
+      label(`${formLabel("form.main_clone").padStart(FORM_LABEL_W)}: ${clone}`),
+      spacer(3),
+      linkButton(editor.t("form.change_clone"), "change_clone"),
+    ),
+  ];
+}
+
+// A git folder that belongs to a known repository says so, and offers to make
+// it that repository's main clone or to switch to the repository (§4.7). A
+// git folder of an unknown remote offers to save it as a repository.
+function folderRepoRows(f: NewSessionForm): WidgetSpec[] {
+  if (f.backend !== "local" || f.projectPathIsGit !== true) return [];
+  const known = folderKnownRepo(f);
+  if (!known) {
+    if (!f.folderOrigin) return [];
+    return [fieldColumnRow(linkButton(editor.t("form.save_as_repo"), "save_repo"))];
+  }
+  const key = formMachineKey(f);
+  const main = key ? known.clones[key] ?? "" : "";
+  const here = formFolderPath(f);
+  if (main && expandHome(main) === here) {
+    return [
+      label(editor.t("form.folder_is_main", { name: known.name }), { labelWidth: FORM_LABEL_W, style: NOTE_STYLE }),
+      fieldColumnRow(linkButton(editor.t("form.switch_repo", { name: known.name }), "switch_repo")),
+    ];
+  }
+  return [
+    label(
+      main
+        ? editor.t("form.folder_clone_of", { name: known.name, machine: key ? machineKeyLabel(key) : "", path: main })
+        : editor.t("form.folder_clone_of_nomain", { name: known.name }),
+      { labelWidth: FORM_LABEL_W, style: NOTE_STYLE },
+    ),
+    fieldColumnRow(
+      linkButton(editor.t("form.make_main_clone"), "make_main_clone"),
+      spacer(4),
+      linkButton(editor.t("form.switch_repo", { name: known.name }), "switch_repo"),
+    ),
+  ];
+}
+
+// `▸ Details` / `▾ Hide details`: the fold that reveals the workspace name and
+// the GIT section. A focusable row rather than a key chord — the editor's
+// keymaps already spend every Alt+letter.
+function detailsToggleRow(f: NewSessionForm): WidgetSpec {
+  const text = f.detailsOpen ? `▾ ${editor.t("form.details_hide")}` : `▸ ${editor.t("form.details_show")}`;
+  return row(
+    spacer(FORM_LABEL_W + 2),
+    button(text, { key: "details", bare: true, style: { underline: true } }),
+  );
+}
+
+// The GIT section (details open): the worktree-or-in-place choice and the
+// branches, for a path that is (or may be) a repository.
+function gitSectionFields(f: NewSessionForm): WidgetSpec[] {
+  if (f.backend === "local") return worktreeFields(f);
+  if (f.backend === "ssh") return remoteWorktreeFields(f);
+  return [];
+}
+
+function gitSectionShown(f: NewSessionForm): boolean {
+  return f.target === "new" && f.detailsOpen && gitSectionFields(f).length > 0;
+}
+
+// The footer: a rule, the actions flush right (the background launch as a
+// quiet link beside the primary button), then the key hints — or the last
+// error in their place.
+function formFooterRows(creating: boolean): WidgetSpec[] {
+  if (!form) return [];
+  if (creating && (form.cloneConfirm || form.cloning)) return cloneFooterRows(form);
+  const ok = formIsSubmittable();
+  const actions = creating
+    ? endRow(
+      button(editor.t("form.btn_launch_bg"), {
+        key: "create-bg",
+        disabled: !ok,
+        bare: true,
+        style: { underline: true },
+      }),
+      spacer(5),
+      button(`  ${editor.t("form.btn_launch")}  `, { intent: "primary", key: "create-visit", disabled: !ok }),
+    )
+    : endRow(button(`  ${editor.t("run_agent.btn_run")}  `, { intent: "primary", key: "create-visit" }));
+  const hints = creating
+    ? [
+      { keys: "Ctrl+⏎", label: editor.t("hint.launch") },
+      { keys: "Alt+⏎", label: editor.t("hint.background") },
+      { keys: "Esc", label: editor.t("hint.close") },
+    ]
+    : [
+      { keys: "Ctrl+⏎", label: editor.t("hint.run") },
+      { keys: "Esc", label: editor.t("hint.close") },
+    ];
+  const tail = form.lastError
+    ? label(editor.t("form.error_prefix") + form.lastError, {
+      style: { fg: "diagnostic.error_fg", bold: true },
+      wrap: true,
+    })
+    : row(flexSpacer(), hintBar(hints), flexSpacer());
+  return [divider({ style: { fg: "ui.menu_disabled_fg" } }), ...gap(), actions, ...gap(), tail];
+}
+
+// Launch asks before cloning (§4.6): the question replaces the footer and
+// names the URL, the machine and the path. While the clone runs the same place
+// shows its progress and a Cancel.
+function cloneFooterRows(f: NewSessionForm): WidgetSpec[] {
+  const r = formRepo(f);
+  const key = formMachineKey(f);
+  const rule = divider({ style: { fg: "ui.menu_disabled_fg" } });
+  if (!r || !key) return [rule];
+  const where = `${machineKeyLabel(key)} : ${f.cloning?.path ?? repoCloneTarget(r)}`;
+  if (f.cloning) {
+    return [
+      rule,
+      ...gap(),
+      label(`  ${editor.t("form.cloning", { remote: remoteIdentity(r.remote), where })}`, { style: NOTE_STYLE }),
+      ...gap(),
+      endRow(button(editor.t("form.btn_cancel_short"), { key: "clone_cancel" }), spacer(3)),
+    ];
+  }
+  return [
+    rule,
+    ...gap(),
+    label(`  ⚠ ${editor.t("form.clone_confirm_title")}`, { style: { ...WARN_STYLE, bold: true } }),
+    ...gap(),
+    label(`      ${r.remote}`),
+    label(`      → ${where}      ${editor.t("form.clone_becomes_main", { name: r.name })}`, { elide: "tail" }),
+    ...gap(),
+    endRow(
+      button(editor.t("form.btn_cancel_short"), { key: "clone_cancel" }),
+      spacer(5),
+      button(`  ${editor.t("form.btn_clone_launch")}  `, { intent: "primary", key: "clone_launch" }),
+      spacer(3),
+    ),
+  ];
+}
+
+// Run the confirmed launch-time clone, record it as the machine's main clone,
+// re-read the new checkout, then launch as the user asked.
+async function runLaunchClone(): Promise<void> {
+  const f = form;
+  if (!f || !f.cloneConfirm) return;
+  const r = formRepo(f);
+  const key = formMachineKey(f);
+  if (!r || !key || !r.remote) return;
+  const visit = f.cloneConfirm.visit;
+  const path = repoCloneTarget(r);
+  const handle = startClone(key, r.remote, path);
+  f.cloneConfirm = null;
+  if (!handle) {
+    f.lastError = editor.t("repo.err_no_ssh");
+    renderForm();
+    return;
+  }
+  f.cloning = { path, handle };
+  f.lastError = null;
+  rebuildFormFocusCycle();
+  renderForm();
+  formPanel?.setFocusKey("clone_cancel");
+  const res = await handle;
+  if (form !== f || !f.cloning) return;
+  f.cloning = null;
+  if (res.exit_code !== 0) {
+    await cleanupPartialClone(key, path);
+    if (form !== f) return;
+    f.lastError = editor.t("form.clone_failed", { reason: lastErrorLine(res) || String(res.exit_code) });
+    rebuildFormFocusCycle();
+    renderForm();
+    return;
+  }
+  const fresh = repoById(r.id) ?? r;
+  fresh.clones[key] = path;
+  upsertRepository(fresh);
+  syncRepoPath();
+  if (f.backend === "local") await probeProjectPathDefaults();
+  else if (f.backend === "ssh") await probeRemoteProjectDefaults();
+  if (form !== f) return;
+  rebuildFormFocusCycle();
+  renderForm();
+  await submitForm(visit);
+}
+
+// Cancel a pending question or an in-flight clone; the form is left as it was.
+async function cancelLaunchClone(): Promise<void> {
+  const f = form;
+  if (!f) return;
+  f.cloneConfirm = null;
+  const c = f.cloning;
+  f.cloning = null;
+  rebuildFormFocusCycle();
+  renderForm();
+  formPanel?.setFocusKey("create-visit");
+  if (c?.handle) {
+    await c.handle.kill();
+    const key = formMachineKey(f);
+    if (key) await cleanupPartialClone(key, c.path);
+  }
+}
+
 function buildFormSpec(): WidgetSpec {
   if (!form) return col();
   if (form.submitting) return buildConnectingView();
-  const fixed = buildFormSpecFixed();
-  return col(...(fixedFormFits(fixed.length) ? fixed : buildFormSpecCompact()));
-}
-
-function blankRows(n: number): WidgetSpec[] {
-  return Array.from({ length: Math.max(0, n) }, () => spacer(0));
-}
-
-// `rows` padded with blank rows to `n` (never truncated: a variant that
-// outgrows its reservation still shows everything, the dialog just grows).
-function padRows(rows: WidgetSpec[], n: number): WidgetSpec[] {
-  return [...rows, ...blankRows(n - rows.length)];
-}
-
-// **A section is measured by building it, not by becoming it.** The builders
-// take the form they describe, so a candidate shape is a spread — no mutation
-// of the live form, and nothing to put back. `k8sTarget` is a `TextField`, so
-// a shape that needs a different value gets a fresh one rather than writing
-// through the shared reference.
-function rowsOf(f: NewSessionForm, build: (f: NewSessionForm) => WidgetSpec[]): number {
-  return build(f).length;
-}
-
-// The tallest shape the connection section can take — an SSH host typed by
-// hand, or a cluster with no named target — so the rows below it never move
-// when `Machine` changes.
-function connectionRowsMax(f: NewSessionForm): number {
-  return Math.max(
-    rowsOf({ ...f, backend: "ssh", machineId: null, sshPick: f.sshHosts.length }, connectionFields),
-    rowsOf(
-      { ...f, backend: "kubernetes", machineId: null, k8sTarget: { value: "", cursor: 0 } },
-      connectionFields,
-    ),
-  );
-}
-
-// The tallest shape the mode-only tail can take: the worktree group open,
-// or `Remember this machine` with its name field.
-//
-// **Both probes force `target: "new"`.** `modeTailFields` is empty for the
-// current-workspace shape, so a reservation measured from the live `target`
-// answered 6 there and the remote tail's full height when creating — two
-// different total form heights, which re-centred the whole dialog the moment
-// the switch was flipped. The reservation is a constant of the form, not of
-// whichever shape happens to be showing.
-function tailRowsMax(f: NewSessionForm): number {
-  // **Every input the tail's height depends on is pinned, not read.** Three
-  // of them arrive from async probes — is the path a repository, what is its
-  // default branch, what is the workspace called — and each one decides
-  // whether a row exists. Measured from the live values, the reservation is
-  // whatever those probes had answered by that frame, so it *grew* when they
-  // landed and the whole dialog re-centred under the user a second after it
-  // opened. Pinned, the reservation is the form's final height from the first
-  // frame. Only row counts are being measured here, so what the pinned values
-  // say never reaches the screen — `NONBLANK` stands for "this note exists".
-  const NONBLANK = "x";
-  const tallest = {
-    ...f,
-    target: "new" as const,
-    machineId: null,
-    createWorktree: true,
-    // The branch preview names a branch and a fork point, and the worktree
-    // path preview names a directory; all three need a workspace name.
-    defaultSessionName: f.defaultSessionName || NONBLANK,
-    // A default branch detected as HEAD carries a note the others do not.
-    defaultBranch: f.defaultBranch || NONBLANK,
-    defaultBranchIsHeadFallback: true,
-  };
-  return Math.max(
-    6,
-    // The tallest local shape: a repository, so the worktree group is open
-    // rather than the two dim rows a non-git path gets.
-    rowsOf({ ...tallest, backend: "local", projectPathIsGit: true }, modeTailFields),
-    // The tallest remote shape: a typed host (so `Remember this machine`
-    // shows) over a repository (so the worktree group is at full height).
-    rowsOf(
-      {
-        ...tallest,
-        backend: "ssh",
-        sshPick: f.sshHosts.length,
-        remember: true,
-        remoteProbing: false,
-        remoteProbeError: "",
-        remoteIsGit: true,
-        remoteRepoRoot: f.remoteRepoRoot || NONBLANK,
-      },
-      modeTailFields,
-    ),
-  );
-}
-
-// The footer both layouts share: the action buttons, and the hint bar (or
-// the last error in its place — the row is the same either way).
-function formFooterRows(creating: boolean): WidgetSpec[] {
-  if (!form) return [];
-  const cancel = withAccel(
-    button(editor.t("form.btn_cancel"), { intent: "danger", key: "cancel" }),
-    "Esc",
-  );
-  // Flush right when the buttons fit on one line; on a form too narrow for
-  // that they wrap onto several lines from the left instead, so none is
-  // clipped off the right edge. **Which of the two this terminal gets is not
-  // asked here**: the host lays the row out at a width this side cannot see,
-  // so a fit judged from the labels would be a guess about a frame that has
-  // not happened, and would survive a resize that invalidated it.
-  const buttonRow = (...kids: WidgetSpec[]): WidgetSpec => endRow(...kids);
-  const buttons = creating
-    ? buttonRow(
-      withAccel(
-        button(editor.t("form.btn_create"), {
-          intent: "primary",
-          key: "create-visit",
-          disabled: !formIsSubmittable(),
-          focusable: true,
-        }),
-        "^⏎",
-      ),
-      spacer(2),
-      button(editor.t("form.btn_create_bg"), {
-        key: "create-bg",
-        disabled: !formIsSubmittable(),
-        focusable: true,
-      }),
-      spacer(2),
-      cancel,
-    )
-    : buttonRow(
-      withAccel(
-        button(editor.t("run_agent.btn_run"), {
-          intent: "primary",
-          key: "create-visit",
-          focusable: true,
-        }),
-        "^⏎",
-      ),
-      spacer(2),
-      cancel,
-    );
-  const footer = form.lastError
-    ? label(editor.t("form.error_prefix") + form.lastError, {
-      labelWidth: FORM_LABEL_W,
-      style: { fg: "diagnostic.error_fg", bold: true },
-    })
-    : row(
-      flexSpacer(),
-      hintBar([
-        { keys: "Tab", label: editor.t("hint.form_next") },
-        { keys: "←→", label: editor.t("hint.form_change") },
-        { keys: "↑↓", label: editor.t("hint.form_suggest") },
-      ]),
-      flexSpacer(),
-    );
-  return [buttons, footer];
-}
-
-// The form at one constant size (§3.8): every section that can change shape
-// is reserved at the tallest shape it can take and padded with blank rows
-// otherwise, so flipping `Launch in`, `Machine`, the agent or the worktree
-// toggle changes what is in a section, never where the sections are.
-function buildFormSpecFixed(): WidgetSpec[] {
-  if (!form) return [];
   const f = form;
   const creating = f.target === "new";
-  const connRows = connectionRowsMax(f);
-  const children: WidgetSpec[] = [targetRow()];
+  const kids: WidgetSpec[] = [
+    ...gap(),
+    launchModeRow(),
+    ...gap(),
+    sectionHeader("form.section_prompt"),
+    promptBox(f),
+    ...gap(),
+    sectionHeader("form.section_agent"),
+    ...gap(),
+    ...agentRowFields(f),
+    ...gap(),
+  ];
   if (creating) {
-    children.push(
-      ...padRows(machineRow(), 2),
-      ...padRows(connectionFields(f), connRows),
-      ...padRows(projectPathFields(), 2),
-      ...field(formLabel("form.workspace_name"), form.name, {
-        key: "name",
-        placeholder: form.defaultSessionName || editor.t("form.auto_generating"),
-      }),
-    );
-  } else {
-    const here = currentWorkspaceIds();
-    const name = orchestratorSessions.get(here.windowId)?.label || editor.pathBasename(here.root) || here.root;
-    children.push(
-      ...blankRows(2),
-      ...padRows(
-        [
-          label(editor.t("form.runs_here", { name }), { labelWidth: FORM_LABEL_W }),
-          fieldNote(here.root),
-        ],
-        connRows,
-      ),
-      ...blankRows(3),
-    );
+    kids.push(sectionHeader("form.section_where"), ...gap(), ...whereFields(f), ...gap());
+    if (gitSectionShown(f)) {
+      kids.push(sectionHeader("form.section_git"), ...gap(), ...gitSectionFields(f), ...gap());
+    }
   }
-  children.push(agentPresetRow());
-  // The custom command (with its SSH note) or the start prompt — an agent
-  // shows one or the other — reserved at the command's tallest, whichever
-  // backend is selected.
-  const agentExtra = [...(cmdVisible() ? cmdField(f) : []), ...startPromptFields()];
-  const cmdRows = Math.max(
-    rowsOf({ ...f, backend: "local" }, cmdField),
-    rowsOf({ ...f, backend: "ssh" }, cmdField),
-  );
-  children.push(...padRows(agentExtra, cmdRows));
-  children.push(spacer(0), ...padRows(agentSwitchFields(), 2));
-  // The mode-only tail (its own leading blank row included), at its tallest.
-  children.push(...padRows(modeTailFields(f), tailRowsMax(f)));
-  children.push(spacer(0), ...formFooterRows(creating));
-  return children;
+  kids.push(...formFooterRows(creating));
+  return col(...kids);
 }
 
-// The content-sized form, for panels too short for the fixed layout.
-function buildFormSpecCompact(): WidgetSpec[] {
-  if (!form) return [];
-  const creating = form.target === "new";
-  // The title + border are native modal-frame chrome drawn by the host
-  // (see `openForm`), so the spec starts straight at the target switch.
-  const children: WidgetSpec[] = [targetRow()];
-  if (creating) {
-    const conn = connectionFields(form);
-    children.push(
-      ...machineRow(),
-      ...conn,
-      spacer(0),
-      ...projectPathFields(),
-      ...field(formLabel("form.workspace_name"), form.name, {
-        key: "name",
-        // Concrete default (e.g. "session-3") rather than the literal
-        // `(auto-generated)` — the user sees the exact name an empty
-        // submit would create. Empty while the ref probe runs.
-        placeholder: form.defaultSessionName || editor.t("form.auto_generating"),
-      }),
-    );
+// The Tab cycle: the keyed, focusable widgets of the spec as built, in
+// render order — the host's own tabbable set, read off the same tree it gets,
+// so the mirror cannot drift from what is on screen.
+const FOCUSABLE_KINDS = new Set(["text", "dropdown", "radio", "toggle", "number", "button", "list", "tree", "dualList"]);
+
+function collectFocusKeys(spec: WidgetSpec, out: string[] = []): string[] {
+  const w = spec as unknown as Record<string, unknown>;
+  const key = typeof w.key === "string" ? w.key : "";
+  if (key && FOCUSABLE_KINDS.has(w.kind as string)) {
+    const off = w.kind === "button" && (w.disabled === true || w.focusable === false);
+    if (!off) out.push(key);
   }
-  children.push(agentPresetRow());
-  if (cmdVisible()) children.push(...cmdField(form));
-  children.push(...startPromptFields());
-  const switches = agentSwitchFields();
-  if (switches.length > 0) children.push(spacer(0), ...switches);
-  children.push(...modeTailFields(form));
-  children.push(spacer(0), ...formFooterRows(creating));
-  return children;
+  if (Array.isArray(w.children)) for (const c of w.children as WidgetSpec[]) collectFocusKeys(c, out);
+  if (w.child) collectFocusKeys(w.child as WidgetSpec, out);
+  return out;
+}
+
+function formFocusKeys(_f: NewSessionForm): string[] {
+  return collectFocusKeys(buildFormSpec());
 }
 
 // Derive a "my_org/project_name" style label from the current
@@ -11502,7 +13018,38 @@ function renderForm(): void {
   formPanel.update(buildFormSpec());
 }
 
+// Where the dialog was last launched to, and whether its details fold was
+// open: both come back on the next open, whichever entry point opens it.
+const LAUNCH_MODE_KEY = "orchestrator.last_launch_mode";
+const LAUNCH_DETAILS_KEY = "orchestrator.launch_details_open";
+
+// The mode a fresh open lands on: the last one used. A caller that brings a
+// workspace to create (a discovered session, a machine picked elsewhere) is
+// asking for a new workspace whatever was used last.
+function initialLaunchTarget(): RunAgentTarget {
+  if (pendingFormPrefill || pendingFormMachine !== undefined) return "new";
+  return editor.getGlobalState(LAUNCH_MODE_KEY) === "current" ? "current" : "new";
+}
+
+const LAUNCH_PROJECT_KEY = "orchestrator.last_project";
+
+// A repository asked for by whoever opens the form (the Repositories dialog's
+// `New workspace here`); consumed by the next open.
+let pendingFormRepo: string | null = null;
+
+// The Project a fresh open lands on: one asked for, else the last used (if it
+// still exists), else `Folder…`. A discovered session brings a folder.
+function initialProjectRepo(): string | null {
+  const asked = pendingFormRepo;
+  pendingFormRepo = null;
+  if (asked && repoById(asked)) return asked;
+  if (pendingFormPrefill) return null;
+  const last = editor.getGlobalState(LAUNCH_PROJECT_KEY);
+  return typeof last === "string" && repoById(last) ? last : null;
+}
+
 function openForm(options?: { fromPicker?: boolean; target?: RunAgentTarget }): void {
+  invalidateRepositories();
   // Same reason as `openMachinesDialog`: the Machine picker is built from the
   // saved machines, so re-read them rather than offer this session's cached
   // list — a machine added in another window is otherwise unreachable here.
@@ -11512,7 +13059,12 @@ function openForm(options?: { fromPicker?: boolean; target?: RunAgentTarget }): 
   form = {
     // Defaults to creating a workspace; "Run Agent…" opens the same form
     // pre-switched to the current one.
-    target: options?.target ?? "new",
+    target: options?.target ?? initialLaunchTarget(),
+    detailsOpen: editor.getGlobalState(LAUNCH_DETAILS_KEY) === true,
+    repoId: initialProjectRepo(),
+    folderOrigin: "",
+    cloneConfirm: null,
+    cloning: null,
     backend: "local",
     sshHost: { value: "", cursor: 0 },
     sshHosts: sshConfigHosts(),
@@ -11586,6 +13138,7 @@ function openForm(options?: { fromPicker?: boolean; target?: RunAgentTarget }): 
   seedFormMachine();
   // After the machine, because the backend decides which field holds the path.
   if (prefill) applyPrefillPath(prefill.projectPath);
+  syncRepoPath();
   mountFormPanel();
   // Kick off the placeholder probes (canonical repo root,
   // default branch, next session name) against the editor's
@@ -11624,9 +13177,7 @@ function mountFormPanel(focusKey?: string): void {
     // (drawn by the host around the WidgetSpec) rather than the in-body
     // "ORCHESTRATOR :: New Workspace" banner, and `closable` renders a
     // native `[×]` that dismisses via the same cancel path as Esc.
-    title: `${editor.t("form.header_keyword")} :: ${
-      creating ? editor.t("form.header_label") : editor.t("run_agent.title")
-    }`,
+    title: creating ? editor.t("form.header_label") : editor.t("run_agent.title"),
     closable: true,
   });
   // The New-Session form is a global orchestrator feature too: center it
@@ -11644,7 +13195,8 @@ function mountFormPanel(focusKey?: string): void {
   // `focusKey` to keep focus where the user left it — flipping the "Launch in"
   // switch must not fling focus away from the control just used, or the next
   // ←/→ silently lands on whatever inherited focus instead.
-  const field = focusKey ?? (creating ? firstBodyFieldKey(form.backend) : "agent_dropdown");
+  // The prompt, when the agent takes one — typing it is the whole flow.
+  const field = focusKey ?? (promptApplies() ? "start_prompt" : "agent_dropdown");
   formPanel.setFocusKey(field);
   snapFormFocusTo(field);
 }
@@ -11715,6 +13267,14 @@ async function probeProjectPathDefaults(): Promise<void> {
   const isGit = await pathIsInsideGitWorkTree(effectivePath);
   if (!form || form.probeToken !== token) return;
   form.projectPathIsGit = isGit;
+  // The folder's origin, so a clone of a known repository can say so.
+  if (isGit) {
+    const o = await editor.spawnHostProcess("git", ["-C", effectivePath, "remote", "get-url", "origin"]);
+    if (!form || form.probeToken !== token) return;
+    form.folderOrigin = o.exit_code === 0 ? (o.stdout || "").trim() : "";
+  } else {
+    form.folderOrigin = "";
+  }
 
   // (2b) Existing-linked-worktree detection. When the path is a
   //      worktree created by `git worktree add` (not the repo's main
@@ -13344,6 +14904,20 @@ function recoverPendingWorkspaces(): void {
 // `!visit`: "Create in Background" — stay put. Both are non-blocking.
 async function submitForm(visit: boolean): Promise<void> {
   if (!form) return;
+  // A repository with no main clone on this machine: ask before cloning
+  // (§4.6). The answer comes back through `runLaunchClone`.
+  if (form.target === "new" && formNeedsClone(form)) {
+    if (formRepoBlocker(form)) return;
+    form.cloneConfirm = { visit };
+    rebuildFormFocusCycle();
+    renderForm();
+    formPanel?.setFocusKey("clone_launch");
+    snapFormFocusTo("clone_launch");
+    return;
+  }
+  // The next open lands on the mode and project used now (§7: last used wins).
+  editor.setGlobalState(LAUNCH_MODE_KEY, form.target);
+  editor.setGlobalState(LAUNCH_PROJECT_KEY, form.repoId ?? "");
   // "Run in the current workspace": no workspace to create, no spec to
   // validate — just launch the chosen agent here. Same argv resolution
   // (`resolveAgentLaunch`, including the resume spec) as the create path.
@@ -14619,6 +16193,7 @@ const FORM_MODE_BINDINGS: [string, string][] = [
   // Ctrl+Enter submits from anywhere in the form, regardless of which
   // field is focused or whether a completion popup is open.
   ["C-Enter", "orchestrator_form_submit"],
+  ["M-Enter", "orchestrator_form_submit_bg"],
   ["Escape", "orchestrator_form_key_escape"],
   ["Backspace", "orchestrator_form_key_backspace"],
   ["Delete", "orchestrator_form_key_delete"],
@@ -14882,10 +16457,32 @@ registerHandler("orchestrator_form_key_tab", () => {
 // Visit" (the "In Background" alternative is an explicit button / Enter on it).
 registerHandler("orchestrator_form_submit", () => {
   if (!form) return;
+  if (form.cloneConfirm) {
+    void runLaunchClone();
+    return;
+  }
+  if (form.cloning) return;
   // Same gating as the Create buttons: no required input ⇒ no submit.
   if (!formIsSubmittable()) return;
   void submitForm(true);
 });
+// Alt+Enter: launch in the background from anywhere in the form.
+registerHandler("orchestrator_form_submit_bg", () => {
+  if (!form || form.target !== "new" || !formIsSubmittable()) return;
+  void submitForm(false);
+});
+
+// Open or close the `▸ Details` fold, keeping focus on its row.
+function toggleFormDetails(): void {
+  if (!form || !formPanel) return;
+  form.detailsOpen = !form.detailsOpen;
+  editor.setGlobalState(LAUNCH_DETAILS_KEY, form.detailsOpen);
+  rebuildFormFocusCycle();
+  renderForm();
+  formPanel.setFocusKey("details");
+  snapFormFocusTo("details");
+}
+
 registerHandler("orchestrator_form_key_enter", () => {
   if (!form || !formPanel) return;
   // Popup open: keep the existing behaviour — the host's smart-key
@@ -14899,6 +16496,12 @@ registerHandler("orchestrator_form_key_enter", () => {
   // smart-key dispatch, which opens the pop-over and — when it is already
   // open — commits the highlighted option.
   if (formDropdownFocused()) {
+    dispatchFormKey("Enter");
+    return;
+  }
+  // The prompt box is multi-line: Enter is a newline there (Ctrl+Enter
+  // launches from anywhere).
+  if (formFocusedKey() === "start_prompt") {
     dispatchFormKey("Enter");
     return;
   }
@@ -14935,6 +16538,10 @@ registerHandler("orchestrator_form_key_escape", () => {
   // falls through to `cancelForm` below.
   if (openFormDropdown !== null && formFocusedKey() === openFormDropdown) {
     dispatchFormKey("Escape");
+    return;
+  }
+  if (form && (form.cloneConfirm || form.cloning)) {
+    void cancelLaunchClone();
     return;
   }
   if (form) cancelForm();
@@ -15103,6 +16710,10 @@ editor.on("widget_event", (e) => {
   }
   if (machinesPanel && machinesState && e.panel_id === machinesPanel.id()) {
     handleMachinesEvent(e);
+    return;
+  }
+  if (repoPanel && repoDialog && e.panel_id === repoPanel.id()) {
+    handleRepoDialogEvent(e);
     return;
   }
   if (explainPanel && e.panel_id === explainPanel.id()) {
@@ -15323,6 +16934,7 @@ editor.on("widget_event", (e) => {
       const index = payload.index;
       if (typeof index === "number" && index !== form.machinePick) {
         applyMachinePick(index);
+        syncRepoPath();
         rebuildFormFocusCycle();
         renderForm();
       }
@@ -15335,19 +16947,51 @@ editor.on("widget_event", (e) => {
       renderForm();
       return;
     }
-    if (e.event_type === "change" && e.widget_key === "target_dropdown") {
-      // Flipping the target reshapes the whole form: "new" reveals the
-      // backend tabs, Project Path, Workspace Name and the Advanced fold;
-      // "current" hides them all, leaving the agent controls.
-      const payload = (e.payload ?? {}) as Record<string, unknown>;
-      const index = payload.index;
+    if (e.event_type === "change" && e.widget_key === "launch_mode") {
+      // New workspace ⇄ here. The prompt, agent and options carry over; the
+      // panel re-mounts because its title is mount-time chrome.
+      const index = ((e.payload ?? {}) as Record<string, unknown>).index;
       if (typeof index === "number") {
-        const next: RunAgentTarget = index === 0 ? "current" : "new";
+        const next: RunAgentTarget = index === 0 ? "new" : "current";
         if (next !== form.target) {
           form.target = next;
           form.lastError = null;
-          mountFormPanel("target_dropdown");
+          mountFormPanel("launch_mode");
         }
+      }
+      return;
+    }
+    if (e.event_type === "change" && e.widget_key === "project") {
+      const index = ((e.payload ?? {}) as Record<string, unknown>).index;
+      if (typeof index !== "number") return;
+      const repos = loadRepositories();
+      if (index < repos.length) {
+        form.repoId = repos[index].id;
+        syncRepoPath();
+      } else if (index === repos.length) {
+        if (form.repoId) {
+          form.repoId = null;
+          clearRepoPath();
+        }
+      } else {
+        // `Manage repositories…` is an action, not a project: put the pick
+        // back and open the dialog.
+        formPanel?.setDropdown("project", projectPickIndex(form));
+        openRepositoriesFromForm(form.repoId, formMachineKey(form));
+        return;
+      }
+      form.lastError = null;
+      rebuildFormFocusCycle();
+      renderForm();
+      return;
+    }
+    if (e.event_type === "change" && e.widget_key === "worktree") {
+      // Git mode radio: 0 = new worktree, 1 = work in the folder as is.
+      const index = ((e.payload ?? {}) as Record<string, unknown>).index;
+      if (typeof index === "number") {
+        form.createWorktree = index === 0;
+        rebuildFormFocusCycle();
+        renderForm();
       }
       return;
     }
@@ -15536,6 +17180,37 @@ editor.on("widget_event", (e) => {
       } else if (e.widget_key === "create-bg") {
         if (!formIsSubmittable()) return;
         void submitForm(false);
+      } else if (e.widget_key === "details") {
+        toggleFormDetails();
+      } else if (e.widget_key === "clone_launch") {
+        void runLaunchClone();
+      } else if (e.widget_key === "clone_cancel") {
+        void cancelLaunchClone();
+      } else if (e.widget_key === "use_existing_clone" || e.widget_key === "change_clone") {
+        openRepositoriesFromForm(form.repoId, formMachineKey(form));
+      } else if (e.widget_key === "switch_repo") {
+        const known = folderKnownRepo(form);
+        if (known) {
+          form.repoId = known.id;
+          syncRepoPath();
+          rebuildFormFocusCycle();
+          renderForm();
+          formPanel.setFocusKey("project");
+        }
+      } else if (e.widget_key === "make_main_clone") {
+        const known = folderKnownRepo(form);
+        const key = formMachineKey(form);
+        if (known && key) {
+          known.clones[key] = formFolderPath(form);
+          upsertRepository(known);
+          form.repoId = known.id;
+          syncRepoPath();
+          rebuildFormFocusCycle();
+          renderForm();
+          formPanel.setFocusKey("project");
+        }
+      } else if (e.widget_key === "save_repo") {
+        openAddRepositoryFromForm(form.folderOrigin, formFolderPath(form), formMachineKey(form));
       } else if (e.widget_key === "cancel") {
         cancelForm();
       }
@@ -16337,6 +18012,13 @@ editor.registerCommand(
   { terminalBypass: true },
 );
 editor.registerCommand(
+  "%cmd.repositories",
+  "%cmd.repositories_desc",
+  "orchestrator_repositories",
+  null,
+  { terminalBypass: true },
+);
+editor.registerCommand(
   "%cmd.new",
   "%cmd.new_desc",
   "orchestrator_new",
@@ -16505,7 +18187,7 @@ editor.registerCommand("%cmd.jump_back", "%cmd.jump_back_desc", "orchestrator_ju
   terminalBypass: true,
 });
 
-registerHandler("orchestrator_run_agent", () => openForm({ target: "current" }));
+registerHandler("orchestrator_run_agent", () => openForm());
 editor.registerCommand(
   "%cmd.run_agent",
   "%cmd.run_agent_desc",
