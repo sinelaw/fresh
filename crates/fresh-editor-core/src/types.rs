@@ -93,7 +93,8 @@ pub struct ProcessLimits {
     #[serde(default)]
     pub max_cpu_percent: Option<u32>,
 
-    /// Apply these limits (on by default on Linux only).
+    /// Apply these limits. Default: true (the built-in config turns them on
+    /// only on Linux).
     #[serde(default = "default_true")]
     pub enabled: bool,
 }

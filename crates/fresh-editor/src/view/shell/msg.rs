@@ -794,6 +794,9 @@ pub enum UiFact {
     /// painter filed one rectangle per visible row in `layout.categories` and
     /// `layout.sections`, and the arm behind them walked both lists.
     SettingsCategory(usize),
+    /// A press on a category in the narrow layout's strip, which has no tree
+    /// to open or shut: it only selects the page (and takes it to the top).
+    SettingsStripCategory(usize),
     /// A press on a section row under a category, by `(category, section)`.
     SettingsCategorySection(usize, usize),
     /// **A key the category tree answered for itself.** The first of the

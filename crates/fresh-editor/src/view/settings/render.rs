@@ -38,9 +38,6 @@ pub fn category_icon(name: &str, nerd_fonts: bool) -> &'static str {
             _ => "\u{f111} ",                    //  (dot circle as fallback)
         };
     }
-    if name.starts_with("plugin: ") {
-        return "\u{271a} "; // ✚ heavy plus (add-on)
-    }
     match name.as_str() {
         "general" => "\u{2699} ",            // ⚙ gear
         "editor" => "\u{270e} ",             // ✎ pencil

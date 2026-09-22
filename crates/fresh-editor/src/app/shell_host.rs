@@ -1735,6 +1735,16 @@ impl Editor {
                 s.toggle_category_expanded(idx);
                 return;
             }
+        }
+        self.settings_pick_category(idx);
+    }
+
+    /// Select a category and take its page to the top, expanding it in the
+    /// tree — a click on an unselected row, or any click in the narrow strip.
+    pub(crate) fn settings_pick_category(&mut self, idx: usize) {
+        use crate::view::settings::state::FocusTarget;
+        if let Some(s) = self.settings_state.as_mut() {
+            s.focus_on(FocusTarget::Categories);
             s.selected_category = idx;
             s.selected_item = 0;
             s.body_anchor.scroll_to(fresh_ui::Point::ZERO);
@@ -3249,6 +3259,7 @@ impl Editor {
             // what is gone is the five families of rectangle that decided
             // *which* arm, and the walk over them.
             UiFact::SettingsCategory(idx) => self.settings_select_category(idx),
+            UiFact::SettingsStripCategory(idx) => self.settings_pick_category(idx),
             UiFact::SettingsCategorySection(cat, section) => {
                 self.settings_jump_to_section(cat, section)
             }

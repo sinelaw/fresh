@@ -332,7 +332,7 @@ impl SettingsState {
     }
 
     /// Same as [`Self::new`], plus inject per-plugin config schemas as
-    /// subcategories of a "Plugin Settings" top-level category. Only
+    /// pages nested under the "Plugins" category. Only
     /// enabled plugins with a schema are rendered.
     pub fn new_with_plugin_schemas(
         schema_json: &str,
@@ -689,10 +689,37 @@ impl SettingsState {
     /// Whether a category should render with a chevron + be expandable in
     /// the tree view. We require strictly more than one section, since one
     /// section adds no information beyond the category itself.
+    /// A nested page (a plugin's, under "Plugins") never is: the tree has
+    /// no room for a third level.
     pub fn is_category_expandable(&self, cat_idx: usize) -> bool {
-        self.pages
-            .get(cat_idx)
-            .is_some_and(|p| p.sections.len() > 1 || self.has_child_pages(&p.name))
+        self.pages.get(cat_idx).is_some_and(|p| {
+            !self.is_nested(cat_idx) && (p.sections.len() > 1 || self.has_child_pages(&p.name))
+        })
+    }
+
+    /// Whether the page is listed under another category's row.
+    fn is_nested(&self, idx: usize) -> bool {
+        self.pages[idx].parent.as_deref().is_some_and(|parent| {
+            self.pages
+                .iter()
+                .any(|q| q.name == parent && q.parent.is_none())
+        })
+    }
+
+    /// Every page's index in the tree's order with everything expanded —
+    /// the order the narrow layout's strip lists them in.
+    pub fn tree_order(&self) -> Vec<usize> {
+        let mut order = Vec::with_capacity(self.pages.len());
+        for (idx, page) in self.pages.iter().enumerate() {
+            if self.is_nested(idx) {
+                continue;
+            }
+            order.push(idx);
+            order.extend((0..self.pages.len()).filter(|&c| {
+                self.is_nested(c) && self.pages[c].parent.as_deref() == Some(page.name.as_str())
+            }));
+        }
+        order
     }
 
     /// Whether any page is nested under the top-level page named `name`.
@@ -847,8 +874,20 @@ impl SettingsState {
         if !self.is_category_expandable(cat_idx) {
             return;
         }
-        if !self.expanded_categories.insert(cat_idx) {
-            self.expanded_categories.remove(&cat_idx);
+        if self.expanded_categories.insert(cat_idx) {
+            return;
+        }
+        self.expanded_categories.remove(&cat_idx);
+        // Collapsing hides the rows under it; a cursor on one of them moves
+        // up to the category, as Left does.
+        let parent = self.pages[cat_idx].name.clone();
+        if self.selected_category == cat_idx {
+            self.tree_cursor_section = None;
+        } else if self.pages[self.selected_category].parent.as_deref() == Some(parent.as_str()) {
+            self.selected_category = cat_idx;
+            self.selected_item = 0;
+            self.tree_cursor_section = None;
+            self.body_anchor.scroll_to(fresh_ui::Point::ZERO);
         }
     }
 

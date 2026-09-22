@@ -30,7 +30,7 @@ pub struct PluginConfig {
     pub path: Option<PathBuf>,
 
     /// The plugin's own settings, as defined by its `<plugin_name>.schema.json`.
-    /// Shown under "Plugin Settings".
+    /// Shown in Settings as the plugin's page under "Plugins".
     #[serde(default, skip_serializing_if = "settings_is_empty")]
     #[schemars(extend("readOnly" = true))]
     pub settings: serde_json::Value,

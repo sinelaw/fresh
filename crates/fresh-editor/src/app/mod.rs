@@ -978,7 +978,7 @@ pub struct Editor {
     /// `plugins.<name>.settings.*`. Populated at startup from
     /// `<plugin_name>.schema.json` sidecar files discovered next to plugin
     /// `.ts`/`.js` files; the Settings UI reads this to render a
-    /// per-plugin sub-category under "Plugin Settings".
+    /// per-plugin page under "Plugins".
     pub(crate) plugin_schemas:
         std::sync::Arc<std::sync::RwLock<HashMap<String, serde_json::Value>>>,
 

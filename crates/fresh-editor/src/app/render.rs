@@ -2555,10 +2555,12 @@ impl Editor {
         let strip = (!s.search_active).then(|| st::Strip {
             focused: s.focus_panel() == crate::view::settings::state::FocusPanel::Categories,
             hint: "←→: Switch category".into(),
+            // In the tree's order (a plugin's page right after "Plugins"),
+            // which is the order Up/Down walk.
             cats: s
-                .pages
-                .iter()
-                .enumerate()
+                .tree_order()
+                .into_iter()
+                .map(|idx| (idx, &s.pages[idx]))
                 .map(|(idx, page)| st::StripCat {
                     idx,
                     label: page.name.clone(),

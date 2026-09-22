@@ -689,7 +689,7 @@ fn strip_band(s: &Strip) -> Node<UiMsg> {
                         return None;
                     }
                     e.stop();
-                    Some(UiMsg::Ui(UiFact::SettingsCategory(idx)))
+                    Some(UiMsg::Ui(UiFact::SettingsStripCategory(idx)))
                 }),
             ),
         );
@@ -1113,8 +1113,8 @@ fn cat_row(r: &CatRow, selected: bool, focused: bool) -> Node<UiMsg> {
         } => {
             let mut kids: Vec<Node<UiMsg>> = vec![text(marker)];
             match nested {
-                // Past the parent's chevron and dirty dot, so the dot lines
-                // up under the parent's icon.
+                // Indented past the parent's chevron, dot and icon, so the
+                // label lines up with the parent's section rows.
                 true => kids.push(text("    ")),
                 false => kids.push(text(chevron.to_string())),
             }

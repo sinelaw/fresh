@@ -1621,7 +1621,7 @@ pub struct EditorConfig {
     #[schemars(extend("x-section" = "Performance"))]
     pub highlight_context_bytes: usize,
 
-    /// Files at least this size (bytes) count as large: they load lazily, skip
+    /// Files over this size (bytes) count as large: they load lazily, skip
     /// language servers, and get a fixed-size scrollbar thumb. Default: 10 MB
     #[serde(default = "default_large_file_threshold")]
     #[schemars(extend("x-section" = "Performance"))]

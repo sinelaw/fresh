@@ -1017,7 +1017,7 @@
           "x-section": "Performance"
         },
         "large_file_threshold_bytes": {
-          "description": "Files at least this size (bytes) count as large: they load lazily, skip\nlanguage servers, and get a fixed-size scrollbar thumb. Default: 10 MB",
+          "description": "Files over this size (bytes) count as large: they load lazily, skip\nlanguage servers, and get a fixed-size scrollbar thumb. Default: 10 MB",
           "type": "integer",
           "format": "uint64",
           "minimum": 0,
@@ -2108,7 +2108,7 @@
           "default": null
         },
         "enabled": {
-          "description": "Apply these limits (on by default on Linux only).",
+          "description": "Apply these limits. Default: true (the built-in config turns them on\nonly on Linux).",
           "type": "boolean",
           "default": true
         }
@@ -2143,7 +2143,7 @@
           "readOnly": true
         },
         "settings": {
-          "description": "The plugin's own settings, as defined by its `<plugin_name>.schema.json`.\nShown under \"Plugin Settings\".",
+          "description": "The plugin's own settings, as defined by its `<plugin_name>.schema.json`.\nShown in Settings as the plugin's page under \"Plugins\".",
           "readOnly": true
         }
       },

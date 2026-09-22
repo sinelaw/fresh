@@ -246,18 +246,6 @@ fn find_setting_label_and_chip(
     None
 }
 
-fn screen_contains_text_at_or_after_col(
-    harness: &EditorTestHarness,
-    text: &str,
-    min_col: u16,
-) -> bool {
-    harness.screen_to_string().lines().any(|line| {
-        line.find(text)
-            .map(|col| col as u16 >= min_col)
-            .unwrap_or(false)
-    })
-}
-
 #[test]
 fn test_settings_toggle_mouse_click_only_chip_changes_value() {
     let mut harness = EditorTestHarness::new(120, 40).unwrap();
@@ -343,7 +331,10 @@ fn test_plugin_toggle_mouse_click_chip_matches_visual_position() {
     harness.render().unwrap();
 
     assert!(
-        screen_contains_text_at_or_after_col(&harness, "dashboard", 32),
+        harness.screen_to_string().lines().any(|l| {
+            let right: String = l.chars().skip(32).collect();
+            right.trim_start().starts_with("dashboard")
+        }),
         "plugin settings page should show its title in the right panel. Screen:\n{}",
         harness.screen_to_string()
     );
