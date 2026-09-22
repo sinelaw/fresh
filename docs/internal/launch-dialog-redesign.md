@@ -332,10 +332,275 @@ All widgets exist in `plugins/lib/widgets.ts` (`radio`, `textArea`,
   `orchestrator_*`) need their screen assertions updated; the submit paths
   and probes are untouched, so behavioural tests should hold.
 
-## 6. Open questions
+## 7. Repositories: separating *what* from *where*
+
+Today the form has one field, `Project Path`, that means three things at
+once: which machine's filesystem, which directory, and, if that directory
+happens to be a git repo, which repository to cut a worktree from. The only
+way to say "work on `fresh`" is to type the path where `fresh` is checked
+out on that machine, and doing the same on another machine means knowing
+(and retyping) a different path.
+
+### 7.1 Model
+
+Three independent choices:
+
+| Choice | Answers | Examples |
+|---|---|---|
+| **Machine** | where the process runs | Local, gpu-box, ml-cluster |
+| **Source** | what you start from | a known *Repository*, or any *Folder* |
+| **Git plan** | what happens to git (repositories and git folders only) | new worktree + branch, check out in place, none |
+
+A **Repository** is a registry entry, stored next to machines
+(`<data dir>/orchestrator/repositories.json`), never inside a working tree:
+
+```
+name            fresh
+remote          git@github.com:sinelaw/fresh.git        (optional)
+default branch  origin/master                           (detected; editable)
+checkouts       Local    → ~/repos/fresh
+                gpu-box  → ~/src/fresh
+clone to        ~/src/<name>                            (used on a machine with no checkout)
+```
+
+- A repository is identified by its remote when it has one, so the same repo
+  on two machines is one entry with two checkouts.
+- A repository with no remote (local-only) is allowed; it has only the
+  checkout(s) you gave it.
+- **Folder** is the escape hatch and covers today's behaviour exactly: any
+  directory on the chosen machine. If it is a git repo, the git plan is
+  offered (today's worktree group) along with `Save as repository`. If it
+  isn't, the workspace just opens there.
+
+### 7.2 Launch dialog — collapsed Where becomes a picker
+
+The collapsed Where section changes from a read-only summary into one
+dropdown of **recent destinations**: machine + source pairs, most recent
+first. For most launches you type a prompt, maybe change this one dropdown,
+then press Ctrl+Enter.
+
+```
+┌─ New Workspace ────────────────────────────────────────────────────── × ─┐
+│                                                                           │
+│   ( New workspace )    Here · demo                                        │
+│                                                                           │
+│   Prompt                                                                  │
+│   ╭─────────────────────────────────────────────────────────────────────╮ │
+│   │ fix the flaky resize test in split_view.rs                          │ │
+│   │                                                                     │ │
+│   │                                                                     │ │
+│   ╰─────────────────────────────────────────────────────────────────────╯ │
+│                                                                           │
+│   Agent    [ claude ▾ ]       [ ] Auto mode      [✓] Teach Fresh CLI      │
+│                                                                           │
+│   ─────────────────────────────────────────────────────────────────────   │
+│   Where  ▸ [ fresh  ·  Local                                        ▾ ]   │
+│             new worktree fresh-47 from origin/master                      │
+│   ─────────────────────────────────────────────────────────────────────   │
+│                                                                           │
+│                                   Launch in background    [  Launch  ]    │
+│                                                                           │
+│        Ctrl+⏎ launch   Alt+⏎ background   Alt+W details   Esc cancel      │
+└───────────────────────────────────────────────────────────────────────────┘
+```
+
+Opened (typing filters):
+
+```
+│   Where    [ fr█                                                    ▾ ]   │
+│            ╭────────────────────────────────────────────────────────╮     │
+│            │ ▸ fresh          Local      ~/repos/fresh               │     │
+│            │   fresh          gpu-box    ~/src/fresh                 │     │
+│            │   fresh-site     Local      not cloned · will clone     │     │
+│            │   ~/notes        Local      folder                      │     │
+│            │ ────────────────────────────────────────────────────── │     │
+│            │   Other repository or folder…              Alt+W        │     │
+│            │   Manage repositories…                                  │     │
+│            ╰────────────────────────────────────────────────────────╯     │
+```
+
+`Other…` opens the details (§7.3) with the filter text carried over.
+
+### 7.3 Launch dialog — Where details, source = Repository
+
+```
+│   ─────────────────────────────────────────────────────────────────────   │
+│   ▾ Where                                                                 │
+│                                                                           │
+│        Start from  ( Repository )   Folder                                │
+│        Repository  [ fresh ▾ ]         github.com/sinelaw/fresh           │
+│           Machine  [ Local ▾ ]         ✓ checked out at ~/repos/fresh     │
+│                                                                           │
+│               Git  (•) New worktree   ( ) Use the checkout as is          │
+│       Branch from  [ origin/master                                    ]   │
+│        New branch  [ fresh-47                                         ]   │
+│         Workspace  [ fresh-47                                         ]   │
+│                                                                           │
+│                    worktree at ~/.local/share/fresh/orchestrator/…/fresh-47
+│   ─────────────────────────────────────────────────────────────────────   │
+```
+
+- **Repository comes before Machine.** The repository is the thing you
+  chose; the machine only decides which checkout is used.
+- The status to the right of Machine is where the decoupling shows:
+
+```
+│           Machine  [ gpu-box ▾ ]       ✓ checked out at ~/src/fresh       │
+│           Machine  [ build-01 ▾ ]      not cloned · clones to ~/src/fresh │
+│           Machine  [ build-01 ▾ ]      ✗ no remote · can't clone here     │
+```
+
+  A missing checkout isn't an error when the repository has a remote: Launch
+  clones first (the progress shows in the launching view), records the new
+  checkout, then cuts the worktree.
+- `Git` is now a two-way radio instead of a checkbox. "Use the checkout as
+  is" replaces "worktree off + in-place checkout"; when it's selected,
+  `Branch from` reads `Check out` and `New branch` disappears.
+- The Workspace name moves into the git group, since by default it is also
+  the branch name.
+
+### 7.4 Launch dialog — Where details, source = Folder
+
+Plain folder:
+
+```
+│   ▾ Where                                                                 │
+│                                                                           │
+│        Start from   Repository   ( Folder )                               │
+│           Machine  [ Local ▾ ]                                            │
+│            Folder  [ ~/notes                                          ]   │
+│                    plain folder · opens as is                             │
+│         Workspace  [ notes                                            ]   │
+│   ─────────────────────────────────────────────────────────────────────   │
+```
+
+A folder that turns out to be a git repo (today's flow, unchanged in
+behaviour):
+
+```
+│   ▾ Where                                                                 │
+│                                                                           │
+│        Start from   Repository   ( Folder )                               │
+│           Machine  [ Local ▾ ]                                            │
+│            Folder  [ ~/repos/other                                    ]   │
+│                    git repo · origin github.com/me/other                  │
+│                    [ Save as repository ]                                 │
+│                                                                           │
+│               Git  (•) New worktree   ( ) Use the folder as is            │
+│       Branch from  [ origin/main                                      ]   │
+│        New branch  [ other-3                                          ]   │
+│         Workspace  [ other-3                                          ]   │
+│   ─────────────────────────────────────────────────────────────────────   │
+```
+
+- **Machine comes before Folder** here: a folder path only means something
+  on a particular machine, and the path completion runs there.
+- If the folder matches a known repository's checkout, the note says so
+  (`checkout of fresh`) and offers `Switch to repository` instead of
+  `Save as repository`.
+- For a remote machine, the connection fields (§3.3) go directly under
+  Machine, as before.
+
+### 7.5 Repositories manager
+
+Opened from the palette (`Orchestrator: Repositories`), from the dock's `⋯`
+menu, or from `Manage repositories…` in the Where picker. It mirrors the
+Machines manager: `⏎` on a row opens New Workspace on that repository.
+
+```
+┌─ Repositories ─────────────────────────────────────────────────────── × ─┐
+│                                                                           │
+│  ▸ fresh          github.com/sinelaw/fresh      Local · gpu-box      3    │
+│    fresh-site     github.com/sinelaw/fresh-site —                    —    │
+│    dotfiles       (local only)                  Local                1    │
+│    infra          gitlab.com/acme/infra         build-01             —    │
+│                                                                           │
+│  + Add repository…                                                        │
+│                                                                           │
+│   ─────────────────────────────────────────────────────────────────────   │
+│   fresh                                                                   │
+│     remote          git@github.com:sinelaw/fresh.git                      │
+│     default branch  origin/master                                         │
+│     checkouts       Local    ~/repos/fresh          ✓                     │
+│                     gpu-box  ~/src/fresh            ✓ 2m ago              │
+│                                                                           │
+│    [ New workspace ]  ⏎    Edit  E    Clone to…  C    Remove  Del         │
+└───────────────────────────────────────────────────────────────────────────┘
+```
+
+Columns: name, remote, machines it is checked out on, live workspaces. The
+lower pane shows details for the selected row.
+
+### 7.6 Add / Edit Repository
+
+One field decides the rest: paste a URL or a path, and the dialog works out
+what it is.
+
+```
+┌─ Add Repository ───────────────────────────────────────────────────── × ─┐
+│                                                                           │
+│   URL or path  ▸ [ git@github.com:sinelaw/fresh.git                   ]   │
+│                  ✓ reachable · default branch master                      │
+│                                                                           │
+│          Name    [ fresh                                              ]   │
+│                                                                           │
+│     Checkouts    Local     [ ~/repos/fresh                ]  ✓ found      │
+│                  gpu-box   [                              ]  will clone   │
+│                  + Add machine                                            │
+│                                                                           │
+│      Clone to    [ ~/src/<name>                                       ]   │
+│                  used on a machine with no checkout listed                │
+│                                                                           │
+│                             Clone now…       [  Save  ]                   │
+└───────────────────────────────────────────────────────────────────────────┘
+```
+
+- **URL pasted:** the remote is checked with `git ls-remote` (on Local), the
+  name comes from the URL, and existing clones on Local are found by
+  matching `remote.origin.url` in recently used project paths.
+- **Local path pasted:** the remote comes from the folder's `origin`, and
+  that folder becomes the Local checkout. With no origin, it's a local-only
+  repository.
+- `Clone now…` clones to a chosen machine right away instead of on first
+  launch.
+- **Optional, if `gh` is installed:** the URL field's completion lists your
+  GitHub repositories (`gh repo list`). Without `gh`, the field is plain
+  text.
+
+### 7.7 How it gets populated (no setup required)
+
+The registry must not be a chore you have to fill in before the dialog is
+useful:
+
+- **Saving from a folder:** launching from a git Folder offers
+  `Save as repository` (§7.4). It's never saved silently.
+- **First run:** the recents list is seeded from existing workspaces, so
+  folders you've used before appear in the Where picker even with an empty
+  registry.
+- **An empty registry still works:** with no repositories, the dialog opens
+  on `Start from: Folder` with today's default path. It is exactly today's
+  flow.
+
+### 7.8 Parity with today
+
+| Today | With repositories |
+|---|---|
+| Project Path on a git repo + worktree | Folder (git detected) + New worktree, or the Repository for that path |
+| Project Path on a non-git dir | Folder, plain |
+| Existing linked worktree → attach | Folder on the worktree path; the note reads `existing worktree of fresh`, and Git defaults to "Use the folder as is" |
+| Machine + remote path | Machine + Folder, or Repository + Machine (checkout path resolved) |
+| Discovered session prefill | Folder prefilled (unchanged) |
+| `Machines ▸ New workspace here` | Machine preselected; source = last used for that machine |
+
+## 8. Open questions
 
 1. Prompt for `terminal`: run it as the first command, or disable the box?
 2. Keep the where-fold open state per-user globally, or per project?
 3. Should `Here` be the default when the palette's `Run Agent…` is used and
    `New workspace` for `+ New` / Alt+N (today's split), or should both open
    on the last-used choice?
+4. Clone-on-launch: do it silently as part of Launch, or require an
+   explicit `Clone now` the first time a repository is used on a machine?
+5. Should a Repository be able to carry per-repo defaults (preferred agent,
+   worktree vs in place, branch prefix like `noam/`)? That would make the
+   Where picker set the agent row too.
