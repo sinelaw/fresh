@@ -33,7 +33,7 @@ fn focus_terminal_command(harness: &mut EditorTestHarness) {
     harness
         .send_key(KeyCode::Char('/'), KeyModifiers::NONE)
         .unwrap();
-    harness.type_text("Executable to launch").unwrap();
+    harness.type_text("Program to run").unwrap();
     harness.render().unwrap();
     harness
         .send_key(KeyCode::Enter, KeyModifiers::NONE)
