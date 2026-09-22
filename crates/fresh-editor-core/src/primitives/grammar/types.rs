@@ -143,6 +143,14 @@ pub struct GrammarEntry {
 /// Embedded TOML grammar (syntect doesn't include one)
 pub const TOML_GRAMMAR: &str = include_str!("../../grammars/toml.sublime-syntax");
 
+/// Embedded Rust grammar. Unlike the rest of these, syntect *does* bundle a
+/// Rust grammar — an older one that mis-read an unspaced `<` before a string
+/// literal as a generic argument list and ate the string's opening quote
+/// recovering from it, inverting quote parity for the rest of the buffer
+/// (issue #3325). This one is vendored from current sublimehq/Packages, where
+/// both halves of that are fixed. Added after the defaults so it shadows them.
+pub const RUST_GRAMMAR: &str = include_str!("../../grammars/rust.sublime-syntax");
+
 /// Embedded Zig grammar (syntect doesn't include one)
 pub const ZIG_GRAMMAR: &str = include_str!("../../grammars/zig.sublime-syntax");
 
@@ -655,6 +663,17 @@ impl GrammarRegistry {
             }
         }
 
+        // Rust grammar (shadows syntect's older bundled one, see RUST_GRAMMAR)
+        match SyntaxDefinition::load_from_str(RUST_GRAMMAR, true, Some("Rust")) {
+            Ok(syntax) => {
+                builder.add(syntax);
+                tracing::debug!("Loaded embedded Rust grammar");
+            }
+            Err(e) => {
+                tracing::warn!("Failed to load embedded Rust grammar: {}", e);
+            }
+        }
+
         // Zig grammar
         match SyntaxDefinition::load_from_str(ZIG_GRAMMAR, true, Some("Zig")) {
             Ok(syntax) => {
@@ -1146,12 +1165,27 @@ impl GrammarRegistry {
         // Syntect's stock Diff grammar is superseded by Fresh Diff, which
         // exposes per-file embedded regions so patch bodies can use their
         // source language's token colors.
+        // An embedded grammar is added after the defaults, so when it reuses a
+        // syntect grammar's name it is meant to replace it — Rust does exactly
+        // that (see `RUST_GRAMMAR`). Keep only the last syntax of each name, so
+        // the catalog lists one entry per language rather than the shadowed
+        // grammar as well. This matches syntect's own lookups, which scan the
+        // set in reverse and so already resolve a name or extension to the last
+        // definition.
+        let mut last_by_name: HashMap<&str, usize> = HashMap::new();
+        for (idx, syntax) in self.syntax_set.syntaxes().iter().enumerate() {
+            last_by_name.insert(syntax.name.as_str(), idx);
+        }
+
         for (idx, syntax) in self.syntax_set.syntaxes().iter().enumerate() {
             if syntax.name == "Plain Text"
                 || syntax.name == "JavaScript"
                 || syntax.name == "TypeScript"
                 || syntax.name == "Diff"
             {
+                continue;
+            }
+            if last_by_name.get(syntax.name.as_str()) != Some(&idx) {
                 continue;
             }
             let (language_id, tree_sitter) = derive_language_id(&syntax.name);
@@ -1838,6 +1872,56 @@ mod tests {
         let registry = GrammarRegistry::default();
         // Should have built-in syntaxes
         assert!(!registry.available_syntaxes().is_empty());
+    }
+
+    /// Fresh vendors its own Rust grammar (`RUST_GRAMMAR`) to replace the older
+    /// one syntect bundles, which swallowed a string's opening quote after an
+    /// unspaced `<` (issue #3325). Both live in the syntax set, so check the
+    /// shadowing holds: one catalog entry, and `.rs` resolving to the vendored
+    /// grammar rather than syntect's.
+    #[test]
+    fn test_vendored_rust_grammar_shadows_the_bundled_one() {
+        let registry = GrammarRegistry::default();
+
+        let rust_entries: Vec<_> = registry
+            .catalog()
+            .iter()
+            .filter(|entry| entry.display_name == "Rust")
+            .collect();
+        assert_eq!(
+            rust_entries.len(),
+            1,
+            "the catalog should list Rust once, not once per grammar of that name"
+        );
+
+        // Both grammars claim `.rs`; the vendored one is added last and must win.
+        let syntax_set = registry.syntax_set();
+        let resolved = syntax_set
+            .find_syntax_by_extension("rs")
+            .expect("`.rs` should resolve to a Rust grammar");
+        assert_eq!(resolved.name, "Rust");
+        let rust_indices: Vec<_> = syntax_set
+            .syntaxes()
+            .iter()
+            .enumerate()
+            .filter(|(_, s)| s.name == "Rust")
+            .map(|(i, _)| i)
+            .collect();
+        assert_eq!(
+            rust_indices.len(),
+            2,
+            "expected syntect's bundled Rust grammar plus the vendored one"
+        );
+        let resolved_index = syntax_set
+            .syntaxes()
+            .iter()
+            .position(|s| std::ptr::eq(s, resolved))
+            .unwrap();
+        assert_eq!(
+            resolved_index,
+            *rust_indices.last().unwrap(),
+            "`.rs` should resolve to the vendored grammar, not syntect's bundled one"
+        );
     }
 
     #[test]

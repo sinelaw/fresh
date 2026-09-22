@@ -93,6 +93,42 @@ pack / bundle / plugin grammars; otherwise those layers are added on and the set
 is rebuilt. Grammar provenance is tracked (user, language pack, bundle, plugin).
 **[impl]**
 
+Most embedded grammars fill a gap syntect has no grammar for. **Rust is the
+exception: it replaces one.** syntect bundles a years-old Rust grammar that read
+an unspaced `<` before a string literal as the start of a generic argument list
+and then *consumed* the string's opening quote recovering from it, inverting
+quote parity for the rest of the buffer (#3325). Fresh vendors current
+sublimehq/Packages instead, at a pinned commit, in
+`src/grammars/rust.sublime-syntax` (MIT — the package ships its own
+`Rust/LICENSE.txt`, vendored alongside as `rust.sublime-syntax.LICENSE.txt`,
+which MIT requires us to keep). Measured against upstream's own syntax test
+suite (`Rust/tests`, 12117 assertions), syntect's bundled grammar fails 4904 of
+them; the vendored one fails 5. **[impl]**
+
+Because both grammars live in the set, the catalog keeps only the **last**
+syntax of any given name, matching syntect's own lookups, which scan in reverse
+and so already resolve a name or extension to the last definition. That is what
+makes an embedded grammar shadow a syntect default rather than double up in the
+language picker.
+
+Two syntect-versus-Sublime differences are worth knowing before refreshing this
+grammar, because neither shows up as a load error — syntect accepts unknown keys
+silently and compiles regexes lazily:
+
+- **Empty leading alternatives.** `prelude_types` and `std_traits` upstream open
+  their alternation with a bare `|`, so the interpolated `\b(?x:|Box|…)\b` has an
+  empty first branch. Sublime tolerates it; under the Oniguruma build syntect
+  drives it matches zero-width at any word boundary, so the rule consumes
+  nothing and the next one claims the identifier — putting every prelude type on
+  `storage.type` (which Fresh maps to Keyword) instead of `support.type` (Type).
+  Our only local change deletes those two `|`, marked `# FRESH:` in the file.
+- **`embed` plus `pop` on one rule.** syntect's parser checks `pop` first and
+  drops the embed, so a cargo-script TOML frontmatter block highlights as Rust
+  rather than TOML. This is the remaining 5 test failures, and degrades quietly.
+
+When refreshing, re-run upstream's `Rust/tests` through a syntect-backed runner
+(syntect ships `examples/syntest.rs`) rather than trusting a clean load.
+
 ### `DetectedLanguage` — the per-buffer source of truth
 
 `DetectedLanguage` is a struct (not an enum) bundling the canonical LSP/config
