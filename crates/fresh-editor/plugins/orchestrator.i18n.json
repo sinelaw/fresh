@@ -285,7 +285,6 @@
     "dock.done_count": "%{n} готови",
     "dock.menu_hide": "Скриване на дока  %{key}",
     "dock.menu_machines": "Машини…",
-    "dock.menu_manage": "Управление на работните области…",
     "dock.menu_scope": "обхват: %{word} ▾",
     "dock.menu_view_card": "изглед с карти",
     "dock.menu_view_compact": "компактен изглед",
@@ -370,7 +369,7 @@
     "machine.from_ssh_config": "~/.ssh/config",
     "form.machine_path_note": "празно = пътят по подразбиране на машината",
     "form.k8s_workspace_note": "директория в пода",
-    "dock.menu_discover": "Всичко…",
+    "dock.menu_discover": "Импорт на сесии…",
     "machine.all": "Всички машини"
   },
   "cs": {
@@ -659,7 +658,6 @@
     "dock.done_count": "%{n} hotovo",
     "dock.menu_hide": "Skrýt dok  %{key}",
     "dock.menu_machines": "Stroje…",
-    "dock.menu_manage": "Spravovat pracovní prostory…",
     "dock.menu_scope": "rozsah: %{word} ▾",
     "dock.menu_view_card": "zobrazení karet",
     "dock.menu_view_compact": "kompaktní zobrazení",
@@ -744,7 +742,7 @@
     "machine.from_ssh_config": "~/.ssh/config",
     "form.machine_path_note": "prázdné = výchozí cesta stroje",
     "form.k8s_workspace_note": "adresář uvnitř podu",
-    "dock.menu_discover": "Vše…",
+    "dock.menu_discover": "Import relací…",
     "machine.all": "Všechny stroje"
   },
   "de": {
@@ -1033,7 +1031,6 @@
     "dock.done_count": "%{n} fertig",
     "dock.menu_hide": "Dock ausblenden  %{key}",
     "dock.menu_machines": "Maschinen…",
-    "dock.menu_manage": "Arbeitsbereiche verwalten…",
     "dock.menu_scope": "Bereich: %{word} ▾",
     "dock.menu_view_card": "Kartenansicht",
     "dock.menu_view_compact": "Kompaktansicht",
@@ -1118,7 +1115,7 @@
     "machine.from_ssh_config": "~/.ssh/config",
     "form.machine_path_note": "leer = Standardpfad der Maschine",
     "form.k8s_workspace_note": "Verzeichnis im Pod",
-    "dock.menu_discover": "Alles…",
+    "dock.menu_discover": "Sitzungen importieren…",
     "machine.all": "Alle Maschinen"
   },
   "en": {
@@ -1293,7 +1290,6 @@
     "explain.none": "No workspace to explain",
     "explain.rules_loaded": "Detection rules v%{version} (%{source})",
     "dock.search_count": "%{n} of %{total}",
-    "dock.menu_manage": "Manage workspaces…",
     "dock.menu_view_compact": "compact view",
     "dock.menu_view_card": "card view",
     "dock.menu_scope": "scope: %{word} ▾",
@@ -1492,7 +1488,7 @@
     "machine.from_ssh_config": "~/.ssh/config",
     "form.machine_path_note": "blank = the machine's default path",
     "form.k8s_workspace_note": "directory inside the pod",
-    "dock.menu_discover": "Everything…",
+    "dock.menu_discover": "Import sessions…",
     "machine.all": "All machines"
   },
   "es": {
@@ -1781,7 +1777,6 @@
     "dock.done_count": "%{n} listos",
     "dock.menu_hide": "Ocultar dock  %{key}",
     "dock.menu_machines": "Máquinas…",
-    "dock.menu_manage": "Gestionar espacios de trabajo…",
     "dock.menu_scope": "ámbito: %{word} ▾",
     "dock.menu_view_card": "vista de tarjetas",
     "dock.menu_view_compact": "vista compacta",
@@ -1866,7 +1861,7 @@
     "machine.from_ssh_config": "~/.ssh/config",
     "form.machine_path_note": "vacío = ruta predeterminada de la máquina",
     "form.k8s_workspace_note": "directorio dentro del pod",
-    "dock.menu_discover": "Todo…",
+    "dock.menu_discover": "Importar sesiones…",
     "machine.all": "Todas las máquinas"
   },
   "fr": {
@@ -2155,7 +2150,6 @@
     "dock.done_count": "%{n} terminé(s)",
     "dock.menu_hide": "Masquer le dock  %{key}",
     "dock.menu_machines": "Machines…",
-    "dock.menu_manage": "Gérer les espaces de travail…",
     "dock.menu_scope": "portée : %{word} ▾",
     "dock.menu_view_card": "vue cartes",
     "dock.menu_view_compact": "vue compacte",
@@ -2240,7 +2234,7 @@
     "machine.from_ssh_config": "~/.ssh/config",
     "form.machine_path_note": "vide = chemin par défaut de la machine",
     "form.k8s_workspace_note": "répertoire dans le pod",
-    "dock.menu_discover": "Tout…",
+    "dock.menu_discover": "Importer des sessions…",
     "machine.all": "Toutes les machines"
   },
   "it": {
@@ -2529,7 +2523,6 @@
     "dock.done_count": "%{n} finiti",
     "dock.menu_hide": "Nascondi dock  %{key}",
     "dock.menu_machines": "Macchine…",
-    "dock.menu_manage": "Gestisci spazi di lavoro…",
     "dock.menu_scope": "ambito: %{word} ▾",
     "dock.menu_view_card": "vista schede",
     "dock.menu_view_compact": "vista compatta",
@@ -2614,7 +2607,7 @@
     "machine.from_ssh_config": "~/.ssh/config",
     "form.machine_path_note": "vuoto = percorso predefinito della macchina",
     "form.k8s_workspace_note": "directory nel pod",
-    "dock.menu_discover": "Tutto…",
+    "dock.menu_discover": "Importa sessioni…",
     "machine.all": "Tutte le macchine"
   },
   "ja": {
@@ -2903,7 +2896,6 @@
     "dock.done_count": "%{n} 完了",
     "dock.menu_hide": "ドックを隠す  %{key}",
     "dock.menu_machines": "マシン…",
-    "dock.menu_manage": "ワークスペースを管理…",
     "dock.menu_scope": "範囲: %{word} ▾",
     "dock.menu_view_card": "カード表示",
     "dock.menu_view_compact": "コンパクト表示",
@@ -2988,7 +2980,7 @@
     "machine.from_ssh_config": "~/.ssh/config",
     "form.machine_path_note": "空欄 = マシンの既定パス",
     "form.k8s_workspace_note": "Pod 内のディレクトリ",
-    "dock.menu_discover": "すべて…",
+    "dock.menu_discover": "セッションをインポート…",
     "machine.all": "すべてのマシン"
   },
   "ko": {
@@ -3277,7 +3269,6 @@
     "dock.done_count": "%{n}개 완료",
     "dock.menu_hide": "독 숨기기  %{key}",
     "dock.menu_machines": "머신…",
-    "dock.menu_manage": "워크스페이스 관리…",
     "dock.menu_scope": "범위: %{word} ▾",
     "dock.menu_view_card": "카드 보기",
     "dock.menu_view_compact": "간략 보기",
@@ -3362,7 +3353,7 @@
     "machine.from_ssh_config": "~/.ssh/config",
     "form.machine_path_note": "비워두면 머신의 기본 경로",
     "form.k8s_workspace_note": "파드 내부의 디렉터리",
-    "dock.menu_discover": "전체…",
+    "dock.menu_discover": "세션 가져오기…",
     "machine.all": "모든 머신"
   },
   "pt-BR": {
@@ -3651,7 +3642,6 @@
     "dock.done_count": "%{n} concluídos",
     "dock.menu_hide": "Ocultar dock  %{key}",
     "dock.menu_machines": "Máquinas…",
-    "dock.menu_manage": "Gerenciar espaços de trabalho…",
     "dock.menu_scope": "escopo: %{word} ▾",
     "dock.menu_view_card": "visão em cartões",
     "dock.menu_view_compact": "visão compacta",
@@ -3736,7 +3726,7 @@
     "machine.from_ssh_config": "~/.ssh/config",
     "form.machine_path_note": "vazio = caminho padrão da máquina",
     "form.k8s_workspace_note": "diretório dentro do pod",
-    "dock.menu_discover": "Tudo…",
+    "dock.menu_discover": "Importar sessões…",
     "machine.all": "Todas as máquinas"
   },
   "ru": {
@@ -4025,7 +4015,6 @@
     "dock.done_count": "%{n} готово",
     "dock.menu_hide": "Скрыть док  %{key}",
     "dock.menu_machines": "Машины…",
-    "dock.menu_manage": "Управление рабочими пространствами…",
     "dock.menu_scope": "область: %{word} ▾",
     "dock.menu_view_card": "вид карточками",
     "dock.menu_view_compact": "компактный вид",
@@ -4110,7 +4099,7 @@
     "machine.from_ssh_config": "~/.ssh/config",
     "form.machine_path_note": "пусто = путь машины по умолчанию",
     "form.k8s_workspace_note": "каталог внутри пода",
-    "dock.menu_discover": "Всё…",
+    "dock.menu_discover": "Импорт сессий…",
     "machine.all": "Все машины"
   },
   "th": {
@@ -4399,7 +4388,6 @@
     "dock.done_count": "เสร็จ %{n}",
     "dock.menu_hide": "ซ่อนด็อก  %{key}",
     "dock.menu_machines": "เครื่อง…",
-    "dock.menu_manage": "จัดการเวิร์กสเปซ…",
     "dock.menu_scope": "ขอบเขต: %{word} ▾",
     "dock.menu_view_card": "มุมมองการ์ด",
     "dock.menu_view_compact": "มุมมองกะทัดรัด",
@@ -4484,7 +4472,7 @@
     "machine.from_ssh_config": "~/.ssh/config",
     "form.machine_path_note": "ว่าง = พาธเริ่มต้นของเครื่อง",
     "form.k8s_workspace_note": "ไดเรกทอรีภายใน pod",
-    "dock.menu_discover": "ทั้งหมด…",
+    "dock.menu_discover": "นำเข้าเซสชัน…",
     "machine.all": "ทุกเครื่อง"
   },
   "uk": {
@@ -4773,7 +4761,6 @@
     "dock.done_count": "%{n} готово",
     "dock.menu_hide": "Сховати док  %{key}",
     "dock.menu_machines": "Машини…",
-    "dock.menu_manage": "Керування робочими просторами…",
     "dock.menu_scope": "область: %{word} ▾",
     "dock.menu_view_card": "вигляд картками",
     "dock.menu_view_compact": "компактний вигляд",
@@ -4858,7 +4845,7 @@
     "machine.from_ssh_config": "~/.ssh/config",
     "form.machine_path_note": "порожньо = типовий шлях машини",
     "form.k8s_workspace_note": "каталог усередині пода",
-    "dock.menu_discover": "Усе…",
+    "dock.menu_discover": "Імпорт сеансів…",
     "machine.all": "Усі машини"
   },
   "vi": {
@@ -5147,7 +5134,6 @@
     "dock.done_count": "%{n} xong",
     "dock.menu_hide": "Ẩn dock  %{key}",
     "dock.menu_machines": "Máy…",
-    "dock.menu_manage": "Quản lý không gian làm việc…",
     "dock.menu_scope": "phạm vi: %{word} ▾",
     "dock.menu_view_card": "xem dạng thẻ",
     "dock.menu_view_compact": "xem gọn",
@@ -5232,7 +5218,7 @@
     "machine.from_ssh_config": "~/.ssh/config",
     "form.machine_path_note": "để trống = đường dẫn mặc định của máy",
     "form.k8s_workspace_note": "thư mục bên trong pod",
-    "dock.menu_discover": "Tất cả…",
+    "dock.menu_discover": "Nhập phiên…",
     "machine.all": "Tất cả máy"
   },
   "zh-CN": {
@@ -5521,7 +5507,6 @@
     "dock.done_count": "%{n} 个已完成",
     "dock.menu_hide": "隐藏停靠栏  %{key}",
     "dock.menu_machines": "机器…",
-    "dock.menu_manage": "管理工作区…",
     "dock.menu_scope": "范围：%{word} ▾",
     "dock.menu_view_card": "卡片视图",
     "dock.menu_view_compact": "紧凑视图",
@@ -5606,7 +5591,7 @@
     "machine.from_ssh_config": "~/.ssh/config",
     "form.machine_path_note": "留空 = 机器的默认路径",
     "form.k8s_workspace_note": "Pod 内的目录",
-    "dock.menu_discover": "全部…",
+    "dock.menu_discover": "导入会话…",
     "machine.all": "所有机器"
   }
 }

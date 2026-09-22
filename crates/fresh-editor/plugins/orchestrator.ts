@@ -4955,7 +4955,7 @@ function openControlRoom(
   const startBlurred = asDock && opts?.blurred === true;
   if (openPanel) {
     // If the dock is showing and the user asked for the modal picker
-    // (Orchestrator: Open, or the dock's "Manage" button), float the
+    // (Orchestrator: Open), float the
     // picker *over* the dock instead of replacing it: keep the dock
     // mounted in its own host slot (PanelSlot::Dock) and build the picker
     // as a fresh panel in the Floating slot, exactly as the New-Session
@@ -5167,7 +5167,7 @@ function closeOpenDialog(): void {
 // ---------------------------------------------------------------------
 
 // Lifecycle actions, bulk-select, and per-session confirmations now
-// live in the modal picker (reached via the dock's "Manage" button);
+// live in the modal picker (reached via `Orchestrator: Open`);
 // the dock itself is a lean switcher with no destructive controls.
 
 // Option keys for the dock's project dropdown, in display order. Index 0
@@ -5598,7 +5598,7 @@ interface MenuOption {
 }
 
 // Options for the header's `⋯` menu: the rare creation (a folder), the
-// modal picker, then the dock's settings — density, what to show (the `●`
+// machines and import dialogs, then the dock's settings — density, what to show (the `●`
 // marks what is on), the project scope — and hiding the dock.
 function dockMainOptions(): MenuOption[] {
   if (!openDialog) return [];
@@ -5608,7 +5608,6 @@ function dockMainOptions(): MenuOption[] {
   const hideKey = editor.getKeybindingLabel("toggle_dock_focus", "normal") ?? "";
   return [
     { key: "main:folder", label: editor.t("dock.new_menu_folder") },
-    { key: "main:manage", label: editor.t("dock.menu_manage") },
     { key: "main:machines", label: editor.t("dock.menu_machines") },
     { key: "main:discover", label: editor.t("dock.menu_discover") },
     { key: "main:view:compact", label: editor.t("dock.menu_view_compact"), marked: dockView === "compact" },
@@ -5811,11 +5810,6 @@ function runDockMenuOption(optKey: string): void {
   if (optKey === "main:folder") {
     closeDockMenu();
     openCreateFolderDialog(null);
-    return;
-  }
-  if (optKey === "main:manage") {
-    closeDockMenu();
-    openControlRoom();
     return;
   }
   if (optKey === "main:machines") {

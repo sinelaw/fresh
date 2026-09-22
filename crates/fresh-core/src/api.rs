@@ -2872,6 +2872,11 @@ pub enum WidgetSpec {
         /// the disclosure glyph (or the blank standing in for one).
         #[serde(default = "default_tree_indent_cols")]
         indent_cols: u32,
+        /// When true, a click anywhere on a node with children toggles its
+        /// expansion (and selects it), not only a click on the disclosure
+        /// glyph. The toggle fires `expand` with `{ index, key, expanded }`.
+        #[serde(default)]
+        toggle_on_click: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         key: Option<String>,
     },

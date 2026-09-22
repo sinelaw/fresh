@@ -403,6 +403,7 @@ function buildSpec(state: TocState): WidgetSpec {
     checkable: false,
     itemHeight: 1,
     cardBorders: false,
+    toggleOnClick: false,
     // The sidebar is a couple of dozen columns wide: one column per level.
     indentCols: 1,
   };

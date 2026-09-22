@@ -4190,6 +4190,7 @@ mod tests {
             indent_cols: 2,
             item_height: 2,
             card_borders: true,
+            toggle_on_click: false,
         };
         assert_eq!(
             Viewport::from_spec(&cards),
@@ -4222,6 +4223,7 @@ mod tests {
                 indent_cols,
                 item_height: 1,
                 card_borders: false,
+                toggle_on_click: false,
             },
             other => other,
         };

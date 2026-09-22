@@ -1,7 +1,7 @@
 /// <reference path="./fresh.d.ts" />
 
 /**
- * The Everything dialog's row model: how scans become rows, plus
+ * The Import sessions dialog's row model: how scans become rows, plus
  * `DiscoveryHost`, the contract between the dialog and the orchestrator.
  * Pure: nothing here touches the editor, so it can be tested standalone.
  */
