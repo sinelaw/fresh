@@ -10216,11 +10216,8 @@ function repoPathStatusRows(d: RepoDialogState): WidgetSpec[] {
   const remote = repoDialogRemote(d);
   if (d.cloning) {
     return [
-      fieldColumnRow(
-        label(editor.t("repo.cloning"), { style: NOTE_STYLE }),
-        spacer(4),
-        linkButton(editor.t("form.btn_cancel_short"), "repo_clone_cancel"),
-      ),
+      at(editor.t("repo.cloning")),
+      fieldColumnRow(linkButton(editor.t("form.btn_cancel_short"), "repo_clone_cancel")),
     ];
   }
   if (d.cloneConfirm) {
@@ -10241,10 +10238,8 @@ function repoPathStatusRows(d: RepoDialogState): WidgetSpec[] {
     if (d.mode === "add") return [];
     return [
       at(`⚠ ${editor.t("repo.none_on", { machine })}`, WARN_STYLE),
-      fieldColumnRow(
-        label(editor.t("repo.type_or_browse"), { style: WARN_STYLE }),
-        ...(remote ? [spacer(1), linkButton(editor.t("repo.clone_ellipsis"), "repo_clone_default")] : []),
-      ),
+      at(`  ${editor.t("repo.type_or_browse")}`, WARN_STYLE),
+      ...(remote ? [fieldColumnRow(spacer(2), linkButton(editor.t("repo.clone_ellipsis"), "repo_clone_default"))] : []),
     ];
   }
   switch (c.state) {
@@ -10258,10 +10253,8 @@ function repoPathStatusRows(d: RepoDialogState): WidgetSpec[] {
       return [at(`✗ ${editor.t("repo.path_unreachable", { machine, reason: c.error })}`, { fg: "diagnostic.error_fg" })];
     case "missing":
       return [
-        fieldColumnRow(
-          label(`⚠ ${editor.t("repo.path_missing", { machine })}`, { style: WARN_STYLE }),
-          ...(remote ? [spacer(3), linkButton(editor.t("repo.clone_here"), "repo_clone_here")] : []),
-        ),
+        at(`⚠ ${editor.t("repo.path_missing", { machine })}`, WARN_STYLE),
+        ...(remote ? [fieldColumnRow(spacer(2), linkButton(editor.t("repo.clone_here"), "repo_clone_here"))] : []),
       ];
   }
   return [];
@@ -10271,7 +10264,7 @@ function repoPathStatusRows(d: RepoDialogState): WidgetSpec[] {
 function repoBrowseRows(d: RepoDialogState): WidgetSpec[] {
   const b = d.browse;
   if (!b) return [];
-  const title = `${machineKeyLabel(d.machineKey)} : ${b.dir}`;
+  const title = `${machineKeyLabel(d.machineKey)} : ${d.machineKey === "local" ? tildePath(expandHome(b.dir)) : b.dir}`;
   let body: WidgetSpec;
   if (b.loading) {
     body = label(editor.t("repo.loading"), { style: NOTE_STYLE });
@@ -10283,7 +10276,9 @@ function repoBrowseRows(d: RepoDialogState): WidgetSpec[] {
     body = list({
       items: items.map((t, i) => ({ text: `${t.padEnd(40)} ${tags[i]}` })),
       selectedIndex: Math.min(b.index, items.length - 1),
-      visibleRows: Math.min(8, items.length),
+      // A constant height: the list keeps the size it first rendered at, so
+      // one sized to a short folder would clip the next, longer one.
+      visibleRows: 8,
       key: "repo_browse_list",
     });
   }
@@ -10337,7 +10332,7 @@ function buildRepoDialogSpec(): WidgetSpec {
       const st = d.urlCheck.state;
       kids.push(label(
         st === "running" ? editor.t("repo.checking")
-          : st === "ok" ? `✓ ${editor.t("repo.url_ok")}`
+          : st === "ok" ? `✓ ${d.urlCheck.text ? editor.t("repo.url_ok_branch", { branch: d.urlCheck.text }) : editor.t("repo.url_ok")}`
           : st === "local" ? `✓ ${editor.t("repo.url_local", { remote: d.urlCheck.text || editor.t("repo.no_origin") })}`
           : `✗ ${d.urlCheck.text}`,
         { labelWidth: FORM_LABEL_W, style: st === "fail" ? { fg: "diagnostic.error_fg" } : NOTE_STYLE, wrap: true },
@@ -10707,6 +10702,12 @@ function saveRepoDialog(): void {
       return;
     }
     const existing = remote ? loadRepositories().find((r) => sameRemote(r.remote, remote)) : null;
+    // A name picks a repository in the Project list, so two cannot share one.
+    if (loadRepositories().some((o) => o.name === name && o.id !== existing?.id)) {
+      d.error = editor.t("repo.err_name_taken", { name });
+      renderRepoDialog();
+      return;
+    }
     const r: Repository = existing ?? { id: newRepoId(), name, remote, cloneNewTo, clones: {} };
     r.name = name;
     r.cloneNewTo = cloneNewTo;
@@ -14934,7 +14935,8 @@ async function submitForm(visit: boolean): Promise<void> {
   }
   // The next open lands on the mode and project used now (§7: last used wins).
   editor.setGlobalState(LAUNCH_MODE_KEY, form.target);
-  editor.setGlobalState(LAUNCH_PROJECT_KEY, form.repoId ?? "");
+  // Here has no project; only a new workspace says which one was used.
+  if (form.target === "new") editor.setGlobalState(LAUNCH_PROJECT_KEY, form.repoId ?? "");
   // "Run in the current workspace": no workspace to create, no spec to
   // validate — just launch the chosen agent here. Same argv resolution
   // (`resolveAgentLaunch`, including the resume spec) as the create path.
@@ -17226,7 +17228,7 @@ editor.on("widget_event", (e) => {
         const known = folderKnownRepo(form);
         const key = formMachineKey(form);
         if (known && key) {
-          known.clones[key] = formFolderPath(form);
+          known.clones[key] = tildePath(formFolderPath(form));
           upsertRepository(known);
           form.repoId = known.id;
           syncRepoPath();
@@ -17236,7 +17238,7 @@ editor.on("widget_event", (e) => {
           formPanel.setFocusKey("project");
         }
       } else if (e.widget_key === "save_repo") {
-        openAddRepositoryFromForm(form.folderOrigin, formFolderPath(form), formMachineKey(form));
+        openAddRepositoryFromForm(form.folderOrigin, tildePath(formFolderPath(form)), formMachineKey(form));
       } else if (e.widget_key === "cancel") {
         cancelForm();
       }
