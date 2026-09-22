@@ -61,10 +61,8 @@ of which 3 carry information (`runs in this workspace: demo`, `Agent`,
 4. **Mode switch as a dropdown.** `Launch in` is a closed dropdown whose
    other value hides/reveals half the dialog; the user can't see both
    choices at once, and the title changes under them.
-5. **Notes everywhere.** Seven `↳` lines. Defaults, hints and typed values
-   are all dim italic gray (placeholder `rgb(80,80,80)`, notes
-   `rgb(127,127,127)`), so "demo-1" as a placeholder is indistinguishable
-   from "demo-1" typed.
+5. **Notes everywhere.** Seven `↳` lines, each explaining a default for a
+   field the user usually never touches, doubling the dialog's height.
 6. **Footer weight.** Three buttons + accelerator glyphs + a hint bar: 2 rows
    and ~6 things to read to find "go".
 
@@ -80,8 +78,7 @@ of which 3 carry information (`runs in this workspace: demo`, `Agent`,
   and the collapsed summary always states what Launch will do (branch, base,
   machine, path) — the preview the `↳` notes gave, in one line.
 - **Hints on focus only.** A field's `↳` note renders while that field is
-  focused (or when it holds an error). Placeholders stay dim; typed values
-  render at normal weight.
+  focused (or when it holds an error), not all at once.
 
 ## 3. The new shape
 
