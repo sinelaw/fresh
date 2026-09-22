@@ -802,10 +802,16 @@ fn take_stdin_pipe() -> AnyhowResult<std::fs::File> {
     Ok(unsafe { std::fs::File::from_raw_handle(duplicated.cast()) })
 }
 
-/// Check if stdin has data available (is a pipe or redirect, not a TTY)
-fn stdin_has_data() -> bool {
+/// Whether stdin is the terminal.
+///
+/// The only question anything here can actually answer. Its opposite is not
+/// "there is a pipe with data on it" — a redirect from a file, `/dev/null`,
+/// an inherited socket and a closed descriptor all answer the same way — so
+/// nothing downstream may assume more than "these bytes, whatever they are,
+/// are not keystrokes".
+fn stdin_is_terminal() -> bool {
     use std::io::IsTerminal;
-    !io::stdin().is_terminal()
+    io::stdin().is_terminal()
 }
 
 /// Reopen stdin from /dev/tty after reading piped content.
@@ -816,8 +822,23 @@ fn reopen_stdin_from_tty() -> AnyhowResult<()> {
     use std::fs::File;
     use std::os::unix::io::AsRawFd;
 
-    // Open /dev/tty - the controlling terminal
-    let tty = File::open("/dev/tty")?;
+    // Open /dev/tty - the controlling terminal. A process without one (a
+    // daemon, a `setsid` child, a cron job) cannot get keys from anywhere,
+    // so say which device is missing rather than coming up unusable.
+    let tty = File::open("/dev/tty").map_err(|e| {
+        anyhow::anyhow!("Failed to open /dev/tty (no controlling terminal to read keys from): {e}")
+    })?;
+
+    // With fd 0 closed on entry (`fresh file 0<&-`), the open above is handed
+    // fd 0 itself. `dup2(0, 0)` is then a no-op that *succeeds*, and dropping
+    // `tty` closes fd 0 again — leaving stdin closed while reporting success,
+    // which is the same dead descriptor this function exists to replace. There
+    // is nothing to duplicate in that case; the terminal is already fd 0 and
+    // only has to stop being owned by a `File` that will close it.
+    if tty.as_raw_fd() == libc::STDIN_FILENO {
+        std::mem::forget(tty);
+        return Ok(());
+    }
 
     // Duplicate /dev/tty to stdin (fd 0) using libc
     // SAFETY: dup2 is safe to call with valid file descriptors
@@ -1733,37 +1754,66 @@ fn initialize_app(args: &Args) -> AnyhowResult<SetupState> {
         original_hook(panic);
     }));
 
-    // Check if we should read from stdin
-    // This can be triggered by --stdin flag or by using "-" as a file argument
-    let stdin_requested = args.stdin || args.files.iter().any(|f| f == "-");
-
-    // Start stdin streaming in background BEFORE entering raw mode
-    // This is critical - once raw mode is enabled, stdin is used for terminal events
-    // Background thread streams pipe → temp file while editor runs
-    let stdin_stream = if stdin_requested {
-        if stdin_has_data() {
-            tracing::info!("Starting background stdin streaming");
-            match start_stdin_streaming() {
-                Ok(stream_state) => {
-                    tracing::info!(
-                        "Stdin streaming started, spool: {:?}",
-                        stream_state.spool.path()
-                    );
-                    Some(stream_state)
-                }
-                Err(e) => {
-                    eprintln!("Error: Failed to start stdin streaming: {}", e);
-                    return Err(e);
-                }
-            }
-        } else {
+    // **Whatever is on stdin is input, never keystrokes.** `--stdin` and a
+    // `-` among the files ask for it explicitly; a bare `fresh` with stdin
+    // redirected means the same thing (#3252), since it is the only input
+    // there is. That launch used to fall between the cases — `fresh -` reads
+    // stdin, a bare `fresh` on a terminal goes to the orchestrator — and kept
+    // the redirect on fd 0: its bytes reached the key decoder as keystrokes,
+    // and once a pipe's writer closed, `poll` reported `POLLHUP` immediately
+    // and forever, without `POLLIN`, which `services::tty_input::poll_readable`
+    // reads as a timeout. The editor spun on a full core and never saw another
+    // key, Ctrl+Q included.
+    //
+    // File arguments say what to open, so they leave stdin unread — but that
+    // launch had the same dead fd 0 and spun the same way, so it still has to
+    // take the terminal; it just has no buffer to make of stdin. Replacing
+    // fd 0 drops the last read end, so a writer still filling the pipe gets
+    // SIGPIPE rather than blocking on a pipe nobody will read.
+    //
+    // Only "is stdin the terminal" is asked, so a redirect from a file or
+    // `/dev/null` counts too: each left the same unreadable fd 0, and none is
+    // a source of keys.
+    //
+    // All of this runs BEFORE raw mode is enabled: once it is, stdin is the
+    // editor's source of terminal events. The reading path streams stdin into
+    // the spool on a background thread, so the editor starts while data is
+    // still arriving.
+    let stdin_asked_for = args.stdin || args.files.iter().any(|f| f == "-");
+    let stdin_stream = if stdin_is_terminal() {
+        if stdin_asked_for {
             eprintln!("Error: --stdin or \"-\" specified but stdin is a terminal (no piped data)");
             anyhow::bail!(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 "No data piped to stdin",
             ));
         }
+        None
+    } else if stdin_asked_for || args.files.is_empty() {
+        tracing::info!("Starting background stdin streaming");
+        match start_stdin_streaming() {
+            Ok(stream_state) => {
+                tracing::info!(
+                    "Stdin streaming started, spool: {:?}",
+                    stream_state.spool.path()
+                );
+                Some(stream_state)
+            }
+            Err(e) => {
+                eprintln!("Error: Failed to start stdin streaming: {}", e);
+                return Err(e);
+            }
+        }
     } else {
+        // Nothing reads stdin here, so it is simply replaced. This fails the
+        // launch exactly as the reading path does, and for the same reason:
+        // with no controlling terminal there is nowhere to read keys from.
+        // Reporting it here is what makes the failure legible — crossterm
+        // opens `/dev/tty` itself a moment later in `TerminalModes`, so a
+        // launch that carried on regardless still died, just with a bare
+        // "No such device or address" naming nothing.
+        reopen_stdin_from_tty()?;
+        tracing::info!("Reopened stdin from the terminal (file arguments given)");
         None
     };
 
