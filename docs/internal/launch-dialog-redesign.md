@@ -176,6 +176,7 @@ be cloned, only pointed at.
 - Focus opens in the prompt. Enter adds a newline; Ctrl+Enter launches.
 - **Mode switch** on the first row: `( New workspace )` / `Here · demo`.
   ←/→ or click flips it. The title follows (`New Workspace` / `Run Agent`).
+  The dialog opens on whichever mode was used last, whatever opened it (§7).
 - **Agent row**: the dropdown and that agent's switches on one line. A switch
   the agent doesn't support isn't drawn.
 - **WHERE**: the Project and Machine dropdowns, then two lines saying which
@@ -653,7 +654,7 @@ removed). When it's done, the path is a valid main clone and
 
 | Today | Redesign |
 |---|---|
-| Launch in: Current / New | mode switch, first row |
+| Launch in: Current / New | mode switch, first row; opens on the last-used mode |
 | Start prompt (single line, optional, 7th control) | PROMPT box, multi-line, initial focus |
 | Agent dropdown, custom… → Command | AGENT row; Command row when custom |
 | Auto mode / Teach Fresh CLI (per agent) | same switches, on the agent row |
@@ -702,13 +703,16 @@ removed). When it's done, the path is a valid main clone and
   the other `orchestrator_*` tests) need their screen assertions updated.
   Submit paths and probes are unchanged.
 
-## 7. Open questions
+## 7. Decisions
 
-1. Should Launch default to `Here` for `Run Agent…` and `New workspace` for
-   `+ New` / Alt+N (today's split), or should both open on the last-used
-   mode?
-2. Should a repository carry per-repo defaults (preferred agent, git mode,
-   a branch prefix like `noam/`)? Picking the project would then also set the
-   agent row.
-3. Browsing on a Kubernetes machine goes through `kubectl exec ls`, which is
-   slow. Is typing the path with completion enough there?
+1. **Mode opens on whatever was used last.** `+ New`, Alt+N, `New Workspace`
+   and `Run Agent…` all open the same dialog on the last-used mode
+   (`orchestrator.last_launch_mode`, a global setting). The two palette
+   entries still exist and differ only in their name.
+2. **No per-repository defaults.** A repository is a remote, a
+   `Clone new to` path and its main clones, nothing more. Agent, git mode
+   and branch names always come from the launch dialog.
+3. **Browse works on every machine kind, including Kubernetes**, even though
+   listing a pod (`kubectl exec … ls`) is slow. The browser shows
+   `loading…` in place of the listing while it waits; typing in Path stays
+   available the whole time.
