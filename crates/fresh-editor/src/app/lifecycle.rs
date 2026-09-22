@@ -164,9 +164,42 @@ impl Editor {
 
     /// Request the editor to quit
     pub fn quit(&mut self) {
+        // **In a daemon session, "quit" is ambiguous.** The user who presses
+        // Ctrl+Q in an attached client usually wants their terminal back, not
+        // the daemon — and every terminal and agent it hosts — gone. Ask which:
+        // Detach (the default, and the safe one), Quit, or Cancel. Choosing
+        // Quit continues into the ordinary quit path, unsaved-changes prompt
+        // included; the `confirm_quit` opt-in is skipped since this dialog
+        // already asked.
+        if self.session_mode {
+            let body = t!("prompt.quit_daemon").to_string();
+            let confirm = Confirm::new(
+                t!("dialog.title.quit_daemon").into_owned(),
+                body.clone(),
+                vec![
+                    Choice::new(t!("dialog.btn.detach").into_owned(), "detach", Tone::Safe),
+                    Choice::new(
+                        t!("dialog.btn.quit_daemon").into_owned(),
+                        "quit",
+                        Tone::Destructive,
+                    ),
+                    crate::app::confirm_dialog::cancel(),
+                ],
+            )
+            .selecting(0);
+            self.start_confirm_prompt(body, PromptType::ConfirmQuitDaemon, confirm);
+            return;
+        }
+        self.quit_with_prompts(self.config.editor.confirm_quit);
+    }
+
+    /// The quit path past the daemon's Detach/Quit question: prompt for
+    /// unsaved buffers, else (when `confirm_clean` asks for it) confirm the
+    /// clean quit, else quit.
+    pub(crate) fn quit_with_prompts(&mut self, confirm_clean: bool) {
         // Check for unsaved buffers (all are auto-persisted when hot_exit is enabled)
         let modified_count = self.count_modified_buffers_needing_prompt();
-        if modified_count == 0 && self.config.editor.confirm_quit {
+        if modified_count == 0 && confirm_clean {
             // No dirty buffers, but the user has opted into a
             // safety-net confirmation for a stray Ctrl+Q (issue #2030).
             let msg = t!("prompt.quit_confirm").to_string();

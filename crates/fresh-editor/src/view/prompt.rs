@@ -127,6 +127,9 @@ pub enum PromptType {
     /// Issued only when no buffer is modified; otherwise
     /// `ConfirmQuitWithModified` runs instead.
     ConfirmQuit,
+    /// Quit from an attached daemon client: Detach, Quit (stopping the
+    /// daemon and everything it runs), or Cancel.
+    ConfirmQuitDaemon,
     /// File Explorer rename operation
     /// Stores the original path and name for the file/directory being renamed
     FileExplorerRename {

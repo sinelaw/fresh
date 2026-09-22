@@ -23,6 +23,7 @@ pub mod command_palette;
 pub mod conceal_spanning_line_break;
 pub mod config_language_selector;
 pub mod confirm_dialog;
+pub mod daemon_quit_dialog;
 pub mod copy_buffer_path;
 pub mod crash_repro;
 pub mod csharp_language_coherence;
