@@ -4055,6 +4055,15 @@ impl Editor {
         // The menu, as content: its labels and the open chain. Where each
         // label sits and how wide each box is are the tree's to decide, and
         // the web reads them back off it (`menu_view`).
+        // Expand the config menus' dynamic submenus once per theme registry
+        // rather than per frame: `all_menus_expanded` reuses this cache, and
+        // without it every frame rescanned the themes directory and parsed
+        // every theme file for the "Copy with theme" submenu.
+        self.expanded_menus_cache.update(
+            &self.theme_registry,
+            &self.menus,
+            &self.menu_state.themes_dir,
+        );
         let (menu_bar_items, dropdowns) = match menu_bar_visible {
             true => self.menu_description(),
             false => Default::default(),
