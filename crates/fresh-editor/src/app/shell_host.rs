@@ -1742,6 +1742,14 @@ impl Editor {
         }
     }
 
+    /// Open or shut a category without selecting it — the web UI's chevron.
+    #[cfg_attr(not(feature = "web"), allow(dead_code))]
+    pub(crate) fn settings_toggle_category(&mut self, idx: usize) {
+        if let Some(s) = self.settings_state.as_mut() {
+            s.toggle_category_expanded(idx);
+        }
+    }
+
     pub(crate) fn settings_jump_to_section(&mut self, cat: usize, section: usize) {
         use crate::view::settings::state::FocusTarget;
         if let Some(s) = self.settings_state.as_mut() {
