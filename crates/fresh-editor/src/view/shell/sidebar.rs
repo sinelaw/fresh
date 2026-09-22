@@ -596,8 +596,9 @@ fn grip_ink(hovered: bool) -> Node<UiMsg> {
     })
 }
 
-/// The one-column drag handle on the column's outer edge, below the top
-/// border row and above the bottom one.
+/// The one-column drag handle on the column's inner edge (the wall facing
+/// the editor: right when the column is on the left, left when it is on the
+/// right), below the top border row and above the bottom one.
 ///
 /// The corners belong to the frame that drew them: the old post-pass walked
 /// `0..explorer_area.height` and recoloured both of them, so hovering the grip
@@ -630,7 +631,13 @@ fn grip_strip(s: &Sidebar) -> Node<UiMsg> {
             row()
                 .flex(1)
                 .pointer_mode(PointerMode::Transparent)
-                .children([row().flex(1).pointer_mode(PointerMode::Transparent), grip]),
+                .children(if s.on_left {
+                    [row().flex(1).pointer_mode(PointerMode::Transparent), grip]
+                } else {
+                    // On the right the column's inner edge — the one that
+                    // meets the editor — is its left wall.
+                    [grip, row().flex(1).pointer_mode(PointerMode::Transparent)]
+                }),
             row()
                 .h(Sizing::Cells(1))
                 .pointer_mode(PointerMode::Transparent),
