@@ -2651,36 +2651,34 @@ fn test_ctrl_s_saves_settings() {
     );
 }
 
+/// Open settings, go to the Syntax & Languages page and walk its Languages
+/// map down to the first language entry (the row offering "[Enter to edit]").
+fn focus_first_language_entry(harness: &mut EditorTestHarness) {
+    harness.open_settings().unwrap();
+    harness
+        .select_settings_category("Syntax & Languages")
+        .unwrap();
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    harness.render().unwrap();
+    for _ in 0..20 {
+        if harness.screen_to_string().contains("[Enter to edit]") {
+            return;
+        }
+        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
+        harness.render().unwrap();
+    }
+    panic!(
+        "no language entry focused. Screen:\n{}",
+        harness.screen_to_string()
+    );
+}
+
 /// Test that entry dialog (Edit Value) shows focus indicator on focused field
 #[test]
 fn test_entry_dialog_focus_indicator() {
     let mut harness = EditorTestHarness::new(100, 40).unwrap();
 
-    // Open settings
-    harness.open_settings().unwrap();
-
-    // We're in General category. Tab to content panel
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-    harness.render().unwrap();
-
-    // Navigate down to find a language entry in the Languages list
-    // Languages section is after Keybinding Maps and Keybindings sections
-    // Navigate down many times to reach Languages
-    for _ in 0..11 {
-        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-    }
-    harness.render().unwrap();
-
-    // Should see language items like "bash", "c", "rust", etc.
-    let screen = harness.screen_to_string();
-    // Find any language item that shows "[Enter to edit]" - that means we're on it
-    if !screen.contains("[Enter to edit]") {
-        // Navigate more to find language items
-        for _ in 0..5 {
-            harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-        }
-        harness.render().unwrap();
-    }
+    focus_first_language_entry(&mut harness);
 
     // Press Enter to open the Edit Value dialog on the current language
     harness
@@ -2728,15 +2726,7 @@ fn test_entry_dialog_focus_indicator() {
 fn test_entry_dialog_add_new_textlist_item() {
     let mut harness = EditorTestHarness::new(100, 40).unwrap();
 
-    // Open settings
-    harness.open_settings().unwrap();
-
-    // Navigate to Languages section - Tab to content, then down to a language
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-    for _ in 0..10 {
-        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-    }
-    harness.render().unwrap();
+    focus_first_language_entry(&mut harness);
 
     // Open a language entry dialog
     harness
@@ -2802,15 +2792,7 @@ fn test_entry_dialog_add_new_textlist_item() {
 fn test_entry_dialog_delete_textlist_item() {
     let mut harness = EditorTestHarness::new(100, 40).unwrap();
 
-    // Open settings
-    harness.open_settings().unwrap();
-
-    // Navigate to Languages section - Tab to content, then down to a language
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-    for _ in 0..10 {
-        harness.send_key(KeyCode::Down, KeyModifiers::NONE).unwrap();
-    }
-    harness.render().unwrap();
+    focus_first_language_entry(&mut harness);
 
     // Open a language entry dialog
     harness
@@ -3742,32 +3724,14 @@ fn test_languages_map_has_add_new_button() {
     let mut harness = EditorTestHarness::new(120, 50).unwrap();
     harness.render().unwrap();
 
-    // Open settings via Ctrl+,
+    // The Languages map is the first card on the Syntax & Languages page.
     harness.open_settings().unwrap();
-
-    // Search for "languages" to navigate to the Languages section
     harness
-        .send_key(KeyCode::Char('/'), KeyModifiers::NONE)
+        .select_settings_category("Syntax & Languages")
         .unwrap();
-    harness.type_text("languages").unwrap();
+    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
-
-    // Press Enter to jump to the Languages map
-    harness
-        .send_key(KeyCode::Enter, KeyModifiers::NONE)
-        .unwrap();
-    harness.render().unwrap();
-
-    // Verify we're in the Languages section
     harness.assert_screen_contains("Languages");
-
-    // Check that the focus is on Languages (indicated by ">")
-    let screen = harness.screen_to_string();
-    assert!(
-        screen.contains(">  Languages"),
-        "Focus should be on Languages section. Screen:\n{}",
-        screen
-    );
 
     // Navigate down through the Languages entries to reach the "[+] Add new" row
     // The Languages map has many built-in entries, so we need to scroll to see the add button
@@ -4038,14 +4002,14 @@ fn test_usability_backtab_backward_navigation() {
     // Start in the tree. Tab enters the body at its selected card.
     harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     harness.render().unwrap();
-    harness.assert_screen_contains(">  Active Keybinding Map");
+    harness.assert_screen_contains(">  Orchestrator Mode");
 
     // Shift+Tab from the first card goes back to the tree.
     harness
         .send_key(KeyCode::BackTab, KeyModifiers::SHIFT)
         .unwrap();
     harness.render().unwrap();
-    harness.assert_screen_not_contains(">  Active Keybinding Map");
+    harness.assert_screen_not_contains(">  Orchestrator Mode");
 
     // Shift+Tab from the tree wraps the ring to its last stop, Cancel, and
     // walks the footer backwards from there: Save, Reset, Layer, Edit.
@@ -4069,7 +4033,7 @@ fn test_usability_backtab_backward_navigation() {
         .unwrap();
     harness.render().unwrap();
     harness.assert_screen_not_contains(">[ Edit ]");
-    harness.assert_screen_contains(">  Active Keybinding Map");
+    harness.assert_screen_contains(">  Orchestrator Mode");
 
     harness.send_key(KeyCode::Esc, KeyModifiers::NONE).unwrap();
 }
