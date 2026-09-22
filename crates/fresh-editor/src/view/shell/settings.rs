@@ -429,27 +429,27 @@ pub fn categories(c: &Categories) -> Node<UiMsg> {
     let rows = Rc::new(c.rows.clone());
     let focused = c.focused;
     let n = rows.len();
-    let list = fresh_ui::List::windowed(
+    // Stateful rows: a highlighted or hovered row paints every one of its
+    // cells in the band's ink, the icon and dirty dot included — a stamped
+    // row theme only shows through the cells that name no ink of their own.
+    let list = fresh_ui::List::windowed_stateful(
         n,
         |i| fresh_ui::Key::Pair("settings_cat".into(), i as u64),
         {
             let rows = rows.clone();
             let selected = c.selected;
-            move |i| cat_row(&rows[i], selected == Some(i), focused)
+            move |i, st| {
+                cat_row(
+                    &rows[i],
+                    selected == Some(i),
+                    focused,
+                    tree_band(st, focused),
+                )
+            }
         },
     )
     .scrollbar()
-    .row_theme(move |_, st| match (st, focused) {
-        (
-            fresh_ui::widgets::RowState::Selected | fresh_ui::widgets::RowState::SelectedBlur,
-            true,
-        ) => pair("ui.menu_highlight_fg", "ui.menu_highlight_bg"),
-        (
-            fresh_ui::widgets::RowState::Selected | fresh_ui::widgets::RowState::SelectedBlur,
-            false,
-        ) => pair("ui.menu_fg", "editor.selection_bg"),
-        _ => ink(),
-    })
+    .row_theme(move |_, st| tree_band(st, focused).unwrap_or_else(ink))
     .on_select({
         let rows = rows.clone();
         move |i| match &rows[i] {
@@ -1090,9 +1090,32 @@ fn inherit(idx: usize, i: &Inherit, band: &str) -> Node<UiMsg> {
     ])
 }
 
+/// The ink a tree row is banded in for its state — the selection (muted when
+/// the tree does not have the keyboard) or the pointer's hover — or `None`
+/// for a plain row.
+fn tree_band(st: fresh_ui::widgets::RowState, focused: bool) -> Option<String> {
+    use fresh_ui::widgets::RowState;
+    match (st, focused) {
+        (RowState::Selected | RowState::SelectedBlur, true) => {
+            Some(pair("ui.menu_highlight_fg", "ui.menu_highlight_bg"))
+        }
+        (RowState::Selected | RowState::SelectedBlur, false) => {
+            Some(pair("ui.menu_fg", "editor.selection_bg"))
+        }
+        (RowState::Hover, _) => Some(pair("ui.menu_hover_fg", "ui.menu_hover_bg")),
+        (RowState::Normal, _) => None,
+    }
+}
+
 /// One row: the cursor's `>`, the indent, the chevron, the dirty dot, the
-/// icon and the label — the painter's own span order.
-fn cat_row(r: &CatRow, selected: bool, focused: bool) -> Node<UiMsg> {
+/// icon and the label — the painter's own span order. `band` is the row's
+/// highlight, which every cell takes in place of its own ink.
+fn cat_row(r: &CatRow, selected: bool, focused: bool, band: Option<String>) -> Node<UiMsg> {
+    let paint = |n: Node<UiMsg>, own: Option<String>| match (&band, own) {
+        (Some(b), _) => n.theme(b.clone()),
+        (None, Some(t)) => n.theme(t),
+        (None, None) => n,
+    };
     // The row's own theme comes from `row_theme`; a run that differs from it
     // says so, and only two do.
     let marker = match selected && focused {
@@ -1111,36 +1134,41 @@ fn cat_row(r: &CatRow, selected: bool, focused: bool) -> Node<UiMsg> {
             nested,
             ..
         } => {
-            let mut kids: Vec<Node<UiMsg>> = vec![text(marker)];
-            match nested {
-                // Indented past the parent's chevron, dot and icon, so the
-                // label lines up with the parent's section rows.
-                true => kids.push(text("    ")),
-                false => kids.push(text(chevron.to_string())),
-            }
+            let mut kids: Vec<Node<UiMsg>> = vec![paint(text(marker), None)];
+            kids.push(paint(
+                match nested {
+                    // Indented past the parent's chevron, dot and icon, so the
+                    // label lines up with the parent's section rows.
+                    true => text("    "),
+                    false => text(chevron.to_string()),
+                },
+                None,
+            ));
             kids.push(match dirty {
-                true => text("●").theme(pair("ui.menu_highlight_fg", "ui.popup_bg")),
-                false => text(" "),
+                true => paint(text("●"), Some(pair("ui.menu_highlight_fg", "ui.popup_bg"))),
+                false => paint(text(" "), None),
             });
-            match nested {
-                true => kids.push(text(" ")),
-                false => kids
-                    .push(text(icon.to_string()).theme(pair("ui.popup_border_fg", "ui.popup_bg"))),
-            }
+            kids.push(match nested {
+                true => paint(text(" "), None),
+                false => paint(
+                    text(icon.to_string()),
+                    Some(pair("ui.popup_border_fg", "ui.popup_bg")),
+                ),
+            });
             // A name longer than the tree is wide is clipped: `Sizing::Flex`
             // gives the label the rest of the row and the fold clips it.
-            kids.push(text(label.clone()).flex(1));
+            kids.push(paint(text(label.clone()), None).flex(1));
             row().h(Sizing::Cells(1)).children(kids)
         }
         // Indented two columns past the category labels (which start after
         // the chevron, the dirty dot and the two-column icon), so a section
         // reads as the category's child without spending the tree's narrow
         // width on blank columns.
-        CatRow::Section { label, .. } => {
-            row()
-                .h(Sizing::Cells(1))
-                .children([text(marker), text("      "), text(label.clone())])
-        }
+        CatRow::Section { label, .. } => row().h(Sizing::Cells(1)).children([
+            paint(text(marker), None),
+            paint(text("      "), None),
+            paint(text(label.clone()), None).flex(1),
+        ]),
     }
 }
 
