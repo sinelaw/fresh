@@ -4477,6 +4477,12 @@ interface EditorAPI {
 	*/
 	setPromptFooter(footer: StyledText[]): boolean;
 	/**
+	* Lay the floating-overlay prompt's card over the whole frame — the
+	* dock and sidebar included — instead of its default centered box.
+	* `false` puts it back. Has no visible effect on non-overlay prompts.
+	*/
+	setPromptFullscreen(fullscreen: boolean): boolean;
+	/**
 	* Set the floating-overlay prompt's input-row status text (right-aligned,
 	* left of the match count). Empty string clears it.
 	*/

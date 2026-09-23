@@ -1059,7 +1059,7 @@ fn test_live_grep_input_undo_redo() {
     harness.type_text("ZQXJV").unwrap();
     harness.render().unwrap();
     assert!(
-        harness.screen_to_string().contains("Live grep: ZQXJV"),
+        harness.screen_to_string().contains("Live grep: [ZQXJV"),
         "input box should show the typed query; got:\n{}",
         harness.screen_to_string()
     );
@@ -1270,7 +1270,7 @@ fn test_live_grep_overlay_is_mouse_modal() {
         .unwrap();
     harness.render().unwrap();
     assert!(
-        harness.screen_to_string().contains("Live grep:"),
+        harness.screen_to_string().contains("Search "),
         "Live Grep overlay should be open; screen:\n{}",
         harness.screen_to_string()
     );
@@ -1324,7 +1324,7 @@ fn test_live_grep_overlay_is_mouse_modal() {
 
     // The overlay stays up through all of it (no stray dismissal).
     assert!(
-        harness.screen_to_string().contains("Live grep:"),
+        harness.screen_to_string().contains("Search "),
         "overlay should still be open after the clicks"
     );
 }
@@ -1415,7 +1415,7 @@ fn test_live_grep_toolbar_is_on_the_prompts_ring() {
     // And typing edits the query.
     harness.type_text("hel").unwrap();
     harness
-        .wait_until(|h| h.screen_to_string().contains("Live grep: hel"))
+        .wait_until(|h| h.screen_to_string().contains("[hel"))
         .expect("typing after Down edits the query");
 }
 

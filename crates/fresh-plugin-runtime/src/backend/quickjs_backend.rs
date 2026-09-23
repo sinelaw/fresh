@@ -5467,6 +5467,15 @@ impl JsEditorApi {
             .is_ok()
     }
 
+    /// Lay the floating-overlay prompt's card over the whole frame — the
+    /// dock and sidebar included — instead of its default centered box.
+    /// `false` puts it back. Has no visible effect on non-overlay prompts.
+    pub fn set_prompt_fullscreen(&self, fullscreen: bool) -> bool {
+        self.command_sender
+            .send(PluginCommand::SetPromptFullscreen { fullscreen })
+            .is_ok()
+    }
+
     /// Set the floating-overlay prompt's input-row status text (right-aligned,
     /// left of the match count). Empty string clears it.
     pub fn set_prompt_status(&self, status: String) -> bool {

@@ -366,6 +366,22 @@ setPromptFooter(footer: StyledText[]): boolean
 |------|------|-------------|
 | `footer` | `StyledText[]` | Styled segments rendered along the overlay's bottom row |
 
+### `setPromptFullscreen`
+
+Lay the floating-overlay prompt's card over the whole screen — the
+dock and sidebar included — instead of its default centered box.
+Live Grep uses it so its results, preview and toolbar get the room.
+`false` puts the card back. Has no visible effect on non-overlay
+prompts.
+
+```typescript
+setPromptFullscreen(fullscreen: boolean): boolean
+```
+
+| Name | Type | Description |
+|------|------|-------------|
+| `fullscreen` | `boolean` | `true` to cover the whole screen, `false` for the default centered card |
+
 ## Buffer Mutations
 
 ### `applyTheme`

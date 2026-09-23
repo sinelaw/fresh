@@ -342,11 +342,28 @@ fn input_row_at(c: &Card, width: u16) -> Node<UiMsg> {
     let right_gap = usize::from(count_w > 0);
     let status_w = str_width(&c.status);
     let status_gap = if status_w > 0 && count_w > 0 { 2 } else { 0 };
-    let cluster_w =
-        (status_w + status_gap + count_w + right_gap).min(usize::from(width - message_w)) as u16;
-    let input_cols = width - message_w - cluster_w;
+    // And one leading column, so it does not sit flush against the field.
+    let left_gap = usize::from(status_w > 0 || count_w > 0);
+    let cluster_w = (left_gap + status_w + status_gap + count_w + right_gap)
+        .min(usize::from(width - message_w)) as u16;
+    // The query is drawn as the widget system's text field — `[value]` on
+    // the field background, its brackets banded while it has the keyboard
+    // (`render_text_input`) — so it reads as the thing to type into rather
+    // than as a line of the card's text. The brackets take two columns.
+    let well_cols = width - message_w - cluster_w;
+    let input_cols = well_cols.saturating_sub(2);
+    let bracket_ink = match c.input_focused {
+        true => pair("ui.popup_selection_fg", "ui.popup_selection_bg"),
+        false => pair("ui.help_key_fg", "editor.current_line_bg"),
+    };
+    let bracket = |b: &'static str| {
+        text_runs([Run::plain(b)])
+            .theme(bracket_ink.clone())
+            .w(Sizing::Cells(u16::from(well_cols >= 2)))
+    };
     let dim = pair("ui.popup_border_fg", "editor.bg");
     let cluster = text_runs([
+        Run::plain(" ".repeat(left_gap)),
         Run::themed(&c.status, dim.clone()),
         Run::plain(" ".repeat(status_gap)),
         Run::themed(&count, dim),
@@ -356,8 +373,11 @@ fn input_row_at(c: &Card, width: u16) -> Node<UiMsg> {
         text_runs([Run::plain(&c.input.message)])
             .theme(pair("ui.suggestion_fg", "ui.suggestion_bg"))
             .w(Sizing::Cells(message_w)),
+        bracket("["),
         super::prompt_line::input_window(&c.input, input_cols, c.input_focused)
+            .theme(pair("editor.fg", "editor.current_line_bg"))
             .w(Sizing::Cells(input_cols)),
+        bracket("]"),
         cluster.w(Sizing::Cells(cluster_w)),
     ])
 }

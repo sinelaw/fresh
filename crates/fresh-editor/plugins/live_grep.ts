@@ -395,15 +395,30 @@ function toolbarToggle(checked: boolean, text: string, key: string, action: stri
   return row(...parts);
 }
 
+/** The label column's width: the widest section label, the query row's
+ *  `Search` included, so the query field lines up with the controls. */
+function labelColumnWidth(): number {
+  return Math.max(
+    ...["label.search", "label.scope", "label.match", "label.provider"].map((k) =>
+      editor.stringWidth(sectionName(k))
+    ),
+  );
+}
+
+/** The query row's prompt text: `Search` in the label column, padded the
+ *  way `sectionLabel` pads the toolbar's labels, so the field starts in
+ *  the same column as the toggles below it. The card's title already
+ *  names the feature, so the row does not repeat it. */
+function queryLabel(): string {
+  const name = sectionName("label.search");
+  return `  ${name}${" ".repeat(labelColumnWidth() - editor.stringWidth(name) + 3)}`;
+}
+
 function buildToolbarSpec(provider: LiveGrepProvider | null): WidgetSpec {
   const scopeName = sectionName("label.scope");
   const matchName = sectionName("label.match");
   const providerName = sectionName("label.provider");
-  const width = Math.max(
-    editor.stringWidth(scopeName),
-    editor.stringWidth(matchName),
-    editor.stringWidth(providerName),
-  );
+  const width = labelColumnWidth();
 
   // The space between controls rides at the end of each one rather than as
   // a child of its own: a separate spacer that did not fit would wrap to the
@@ -413,34 +428,41 @@ function buildToolbarSpec(provider: LiveGrepProvider | null): WidgetSpec {
     return row(sectionLabel(name, width), wrappingRow(...items));
   };
 
-  const rows: WidgetSpec[] = [
-    section(
-      scopeName,
-      SCOPES.map((s) => toolbarToggle(scopeEnabled[s.id], editor.t(s.labelKey), s.id, s.action)),
-    ),
-    spacer(1),
-    section(
-      matchName,
-      MODES.map((m) => toolbarToggle(searchModes[m.id], editor.t(m.labelKey), m.key, m.action)),
-    ),
-  ];
+  const matchSection = section(
+    matchName,
+    MODES.map((m) => toolbarToggle(searchModes[m.id], editor.t(m.labelKey), m.key, m.action)),
+  );
 
   // Provider dropdown — only when a file-backed scope is on (irrelevant
   // when searching only buffers/terminals/diagnostics). Picking an entry
   // fires `change`; Alt+P still cycles without opening the list.
+  //
+  // It shares a wrapping row with the Match section: beside it when the
+  // card is wide enough, otherwise on the line below, where its own label
+  // lands in the label column. The gap rides at the end of the Match unit
+  // (see `section`) so a wrapped Provider starts flush with the column.
+  let lastRow: WidgetSpec = matchSection;
   const choices = providerChoices();
   if (choices.length > 0 && (scopeEnabled.files || scopeEnabled.ignored)) {
     const options = choices.map((p) => p.name);
     const selectedIndex = Math.max(0, provider ? choices.indexOf(provider) : 0);
     const pLetter = accelLetter(editor.getKeybindingLabel("cycle_live_grep_provider", "prompt"));
-    rows.push(
-      spacer(1),
+    lastRow = wrappingRow(
+      row(matchSection, spacer(2)),
       row(
         sectionLabel(providerName, width, pLetter),
         dropdown(options, { selectedIndex, key: "provider" }),
       ),
     );
   }
+  const rows: WidgetSpec[] = [
+    section(
+      scopeName,
+      SCOPES.map((s) => toolbarToggle(scopeEnabled[s.id], editor.t(s.labelKey), s.id, s.action)),
+    ),
+    spacer(1),
+    lastRow,
+  ];
   return col(...rows);
 }
 
@@ -1203,7 +1225,7 @@ for (const m of MODES) {
 function openLiveGrep(initialQuery: string): void {
   overlayActive = true;
   finder.prompt({
-    title: editor.t("prompt.live_grep"),
+    title: queryLabel(),
     source: {
       mode: "search",
       search,
@@ -1213,6 +1235,8 @@ function openLiveGrep(initialQuery: string): void {
     floatingOverlay: true,
     ...(initialQuery ? { initialQuery } : {}),
   });
+  // Results, preview and toolbar all want the room: take the whole screen.
+  editor.setPromptFullscreen(true);
   // Pre-populate the overlay's frame title with the cached
   // provider name (if any) before the user types — avoids the
   // brief "Live Grep" → "Live Grep · rg" flash when the

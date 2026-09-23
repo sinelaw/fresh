@@ -4682,6 +4682,12 @@ pub enum PluginCommand {
     /// footer. Has no visible effect on non-overlay prompts.
     SetPromptFooter { footer: Vec<StyledText> },
 
+    /// Lay the floating-overlay prompt's card over the whole frame (the
+    /// dock and sidebar included) instead of its default centered box —
+    /// the prompt's counterpart of `FloatingPanelControl`'s `fullscreen`.
+    /// Has no visible effect on non-overlay prompts.
+    SetPromptFullscreen { fullscreen: bool },
+
     /// Plugin-supplied toolbar for the floating-overlay prompt's header
     /// band, as a `WidgetSpec` (a `Row`/`Col` of `Toggle`s/`Button`s). Unlike
     /// `SetPromptTitle` (styled text), these are real widgets: they render
@@ -7812,6 +7818,12 @@ impl PluginApi {
     /// the bottom of the results pane. Empty vec clears.
     pub fn set_prompt_footer(&self, footer: Vec<StyledText>) -> Result<(), String> {
         self.send_command(PluginCommand::SetPromptFooter { footer })
+    }
+
+    /// Lay the floating-overlay prompt's card over the whole frame
+    /// (`true`) or back in its default centered box (`false`).
+    pub fn set_prompt_fullscreen(&self, fullscreen: bool) -> Result<(), String> {
+        self.send_command(PluginCommand::SetPromptFullscreen { fullscreen })
     }
 
     /// Set the floating-overlay prompt's toolbar as a `WidgetSpec` (real,

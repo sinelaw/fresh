@@ -1035,6 +1035,11 @@ impl Editor {
             PluginCommand::SetPromptTitle { title } => {
                 self.handle_set_prompt_title(title);
             }
+            PluginCommand::SetPromptFullscreen { fullscreen } => {
+                if let Some(prompt) = &mut self.active_window_mut().prompt {
+                    prompt.fullscreen = fullscreen;
+                }
+            }
             PluginCommand::SetPromptFooter { footer } => {
                 self.handle_set_prompt_footer(footer);
             }
