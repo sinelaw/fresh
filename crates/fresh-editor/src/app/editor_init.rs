@@ -458,7 +458,7 @@ fn load_prompt_histories(
     dir_context: &DirectoryContext,
 ) -> HashMap<String, crate::input::input_history::InputHistory> {
     let mut histories = HashMap::new();
-    for history_name in ["search", "replace", "goto_line"] {
+    for history_name in super::workspace::GLOBAL_PROMPT_HISTORIES {
         let path = dir_context.prompt_history_path(history_name);
         let history = crate::input::input_history::InputHistory::load_from_file(&path)
             .unwrap_or_else(|e| {

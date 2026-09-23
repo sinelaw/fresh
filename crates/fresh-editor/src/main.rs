@@ -6566,41 +6566,12 @@ where
         }
 
         if editor.should_quit() {
-            // Auto-save file-backed buffers to disk before exiting
-            if editor.config().editor.auto_save_enabled {
-                match editor.save_all_on_exit() {
-                    Ok(count) if count > 0 => {
-                        tracing::info!("Auto-saved {} buffer(s) on exit", count);
-                    }
-                    Ok(_) => {}
-                    Err(e) => {
-                        tracing::warn!("Failed to auto-save on exit: {}", e);
-                    }
-                }
+            // The shared quit-time persistence (auto-save, recovery,
+            // workspaces, prompt histories, plugin state, dock chrome).
+            // Each failure is logged inside; none blocks quit.
+            if let Err(e) = editor.persist_on_exit(workspace_enabled) {
+                tracing::debug!("Quit-time persistence incomplete: {e}");
             }
-
-            // End recovery session first (flushes dirty buffers + assigns recovery IDs),
-            // then save workspace (captures those IDs for next session restore).
-            if let Err(e) = editor.end_recovery_session() {
-                tracing::warn!("Failed to end recovery session: {}", e);
-            }
-            if workspace_enabled {
-                // Save every window's workspace, not just the active one,
-                // so a Orchestrator restart paints buffers/splits in every
-                // session's preview pane without diving in.
-                if let Err(e) = editor.save_all_windows_workspaces() {
-                    tracing::warn!("Failed to save workspaces: {}", e);
-                } else {
-                    tracing::debug!("Workspaces saved successfully");
-                }
-            }
-
-            // Orchestrator cross-restart persistence: write
-            // `windows.json` and `state/*.json` under the platform
-            // data dir (see `orchestrator_persistence`). Best-effort;
-            // failures are logged inside, never block quit.
-            editor.save_orchestrator_state();
-            editor.save_dock_chrome();
             break;
         }
 

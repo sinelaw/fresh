@@ -44,6 +44,30 @@ use crate::workspace::{
 use super::bookmarks::{Bookmark, BookmarkState};
 use super::Editor;
 
+/// The prompt histories kept in the global `<data_dir>/<name>_history.json`
+/// files: loaded into the active window at startup, saved on exit.
+pub(super) const GLOBAL_PROMPT_HISTORIES: [&str; 3] = ["search", "replace", "goto_line"];
+
+/// The on-disk workspace a window with this `root` and durable id restores
+/// from — the one lookup both restore and the unrestored-save history merge
+/// use, so they agree on which file is "this window's".
+///
+/// One store, whatever launched this editor — see `save_workspace_for`.
+fn load_window_workspace(
+    root: &Path,
+    stable_id: &str,
+) -> Result<Option<Workspace>, WorkspaceError> {
+    if stable_id.is_empty() {
+        // No durable id yet (a brand-new window): fall back to the
+        // freshest file for the root.
+        Workspace::load(root)
+    } else {
+        // THIS window's own identity, not merely the freshest file for the
+        // root — several co-tenant workspaces may share the root.
+        Workspace::load_by_id(root, stable_id)
+    }
+}
+
 /// Resolve a saved fold's header_line against the current buffer, using
 /// `header_text` to detect drift from external edits (issue #1568).
 ///
@@ -198,8 +222,20 @@ impl Editor {
     /// Set to `false` for a `--no-restore` run: the flag means "this session
     /// neither reads nor writes workspace state", so quit-time saves and
     /// mid-session checkpoints are suppressed alike (#2735).
+    ///
+    /// That covers the global prompt-history rings too: they were already
+    /// read from disk when the editor was built, so disabling persistence
+    /// (which happens at startup) forgets them again rather than offering
+    /// history this session will never save back.
     pub fn set_workspace_persistence(&mut self, enabled: bool) {
         self.workspace_persistence_enabled = enabled;
+        if !enabled {
+            for window in self.windows.values_mut() {
+                for history in window.prompt_histories.values_mut() {
+                    history.clear();
+                }
+            }
+        }
     }
 
     /// Try to load and apply a workspace for the active window. Thin
@@ -485,6 +521,17 @@ impl Editor {
         // the window's snapshot does not know them; they ride in its file.
         workspace.file_explorer.sections = self.sidebar_section_states(id);
 
+        // The snapshot records the prompt-history rings wholesale, but a
+        // window that never restored its workspace (`fresh file.rs` skips
+        // the restore by default) started without the project's stored
+        // history — writing its rings as they are would erase what earlier
+        // sessions saved. Keep the stored entries beneath this session's.
+        if !win.workspace_restored {
+            if let Ok(Some(stored)) = load_window_workspace(&win.root, &win.stable_id) {
+                workspace.histories = stored.histories.merged_with(&workspace.histories);
+            }
+        }
+
         // Refuse to overwrite a non-empty on-disk workspace with an
         // all-virtual snapshot (issue #2027). The protection is for
         // FILE/unnamed content only — terminals are live runtime state, so
@@ -547,17 +594,7 @@ impl Editor {
             return Ok(false);
         };
 
-        // One store, whatever launched this editor — see `save_workspace_for`.
-        let workspace = if stable_id.is_empty() {
-            // No durable id yet (a brand-new window): fall back to the
-            // freshest file for the root.
-            Workspace::load(&root)?
-        } else {
-            // Restore THIS window's own identity, not merely the freshest file
-            // for the root — several co-tenant workspaces may share the root.
-            Workspace::load_by_id(&root, &stable_id)?
-        };
-        let Some(workspace) = workspace else {
+        let Some(workspace) = load_window_workspace(&root, &stable_id)? else {
             tracing::debug!("No workspace found for {:?}", root);
             return Ok(false);
         };
@@ -692,6 +729,90 @@ impl Editor {
         match first_err {
             Some(e) => Err(e),
             None => Ok(()),
+        }
+    }
+
+    /// Everything the editor persists when it quits, in order: auto-save,
+    /// end the recovery session (flushes dirty buffers and assigns the
+    /// recovery ids the workspace then records), the workspaces, the global
+    /// prompt histories, editor-global plugin state and the dock chrome.
+    ///
+    /// The one exit path shared by the terminal event loop (`main.rs`), the
+    /// GUI, the daemon and the test harness, so no front end — and no test —
+    /// can drift from the others by dropping a step; the prompt-history save
+    /// went missing from all of them exactly that way.
+    ///
+    /// `save_workspaces` is the front end's own gate on the per-window
+    /// workspace files; `--no-restore` is honoured separately, inside every
+    /// write, through `workspace_persistence_enabled`. Best-effort: every
+    /// step runs even when an earlier one failed, each failure is logged and
+    /// the first is returned.
+    pub fn persist_on_exit(&mut self, save_workspaces: bool) -> anyhow::Result<()> {
+        let mut first_err: Option<anyhow::Error> = None;
+        let mut record = |what: &str, result: anyhow::Result<()>| {
+            if let Err(e) = result {
+                tracing::warn!("Failed to {what} on exit: {e}");
+                first_err.get_or_insert(e);
+            }
+        };
+
+        if self.config().editor.auto_save_enabled {
+            let saved = self.save_all_on_exit().map(|count| {
+                if count > 0 {
+                    tracing::info!("Auto-saved {} buffer(s) on exit", count);
+                }
+            });
+            record("auto-save", saved);
+        }
+        let ended = self.end_recovery_session();
+        record("end recovery session", ended);
+        if save_workspaces {
+            // Every window, not just the active one, so an Orchestrator
+            // restart paints each session's preview without diving in.
+            let saved = self.save_all_windows_workspaces().map_err(Into::into);
+            record("save workspaces", saved);
+        }
+        self.save_histories();
+        self.save_orchestrator_state();
+        self.save_dock_chrome();
+
+        first_err.map_or(Ok(()), Err)
+    }
+
+    /// Save the prompt-history rings (search / replace / goto-line) to the
+    /// global `<data_dir>/<name>_history.json` files that every launch loads
+    /// at startup — the history a launch that does not restore its workspace
+    /// starts from.
+    ///
+    /// Each window keeps its own rings, so all of them are folded in, least
+    /// recently focused first and the active window on top. And the result
+    /// is merged into the file rather than overwriting it: another editor
+    /// may have quit since this one loaded it, and its entries stay (beneath
+    /// this session's). Skipped when workspace persistence is off
+    /// (`--no-restore`).
+    pub fn save_histories(&self) {
+        if !self.workspace_persistence_enabled {
+            return;
+        }
+        let mut windows: Vec<&crate::app::window::Window> = self.windows.values().collect();
+        windows.sort_by_key(|w| (w.id == self.active_window, w.last_focused_at));
+        for key in GLOBAL_PROMPT_HISTORIES {
+            let path = self.dir_context.prompt_history_path(key);
+            let mut merged = crate::input::input_history::InputHistory::load_from_file(&path)
+                .unwrap_or_else(|e| {
+                    tracing::warn!("Failed to read {} history, rewriting it: {}", key, e);
+                    crate::input::input_history::InputHistory::new()
+                });
+            for window in &windows {
+                if let Some(history) = window.prompt_histories.get(key) {
+                    merged.merge_newer(history.items());
+                }
+            }
+            if let Err(e) = merged.save_to_file(&path) {
+                tracing::warn!("Failed to save {} history: {}", key, e);
+            } else {
+                tracing::debug!("Saved {} history to {:?}", key, path);
+            }
         }
     }
 
@@ -1789,23 +1910,18 @@ impl crate::app::window::Window {
             histories.replace.len(),
             histories.goto_line.len()
         );
-        for item in &histories.search {
+        // The rings already hold the global history loaded at startup, which
+        // is saved from these same rings on quit — so the two overlap, and a
+        // plain push would repeat the shared entries on every launch.
+        for (key, items) in [
+            ("search", &histories.search),
+            ("replace", &histories.replace),
+            ("goto_line", &histories.goto_line),
+        ] {
             self.prompt_histories
-                .entry("search".to_string())
+                .entry(key.to_string())
                 .or_default()
-                .push(item.clone());
-        }
-        for item in &histories.replace {
-            self.prompt_histories
-                .entry("replace".to_string())
-                .or_default()
-                .push(item.clone());
-        }
-        for item in &histories.goto_line {
-            self.prompt_histories
-                .entry("goto_line".to_string())
-                .or_default()
-                .push(item.clone());
+                .merge_newer(items);
         }
     }
 
