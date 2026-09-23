@@ -560,7 +560,62 @@ impl Editor {
             ?outcome,
             "dispatch_widget_panel_key: decision"
         );
+        // **1. The focused control.** It is offered the key in its own
+        // vocabulary — exactly the key, never one the router masked a
+        // modifier off (Ctrl+Enter is not Enter to a text area) — and Esc,
+        // which closes a control's own pop-up before it closes the panel.
+        // `Consumed` ends the key here; `Pass` and `PassAfter` go on.
+        use crate::widgets::kinds::KeyDisposition;
+        use crossterm::event::{KeyCode, KeyModifiers};
+        let esc = code == KeyCode::Esc && modifiers.is_empty();
+        let offered = match &outcome {
+            WidgetKeyOutcome::SmartKey(k) if router::widget_key_is_exact(k, code, modifiers) => {
+                Some(self.widget_control_key(&panel_key, k))
+            }
+            WidgetKeyOutcome::TextChar(ch) => {
+                Some(self.handle_widget_text_char(&panel_key, &ch.to_string()))
+            }
+            _ if esc => Some(self.widget_control_key(
+                &panel_key,
+                &crate::input::keybindings::KeySeq::one(crate::input::keybindings::Key::new(
+                    KeyCode::Esc,
+                    KeyModifiers::NONE,
+                )),
+            )),
+            _ => None,
+        };
+        if offered == Some(KeyDisposition::Consumed) {
+            return true;
+        }
+        // **2. The panel's mode** — the plugin's commands, for a key the
+        // control left. (Its declared shortcuts never get here: the
+        // interior's capture leg took them ahead of the control.)
+        if let Some(keymap) = self.panel_keymap(&panel_key) {
+            use crate::view::shell::panel::Bound;
+            match keymap.resolve(&crossterm::event::KeyEvent::new(code, modifiers)) {
+                Bound::Run(action) => {
+                    self.active_window_mut().chord_state.clear();
+                    if let Err(e) = self.handle_action(action) {
+                        tracing::warn!("panel mode action failed: {e}");
+                    }
+                    return true;
+                }
+                Bound::Pending => {
+                    self.active_window_mut().chord_state.push((code, modifiers));
+                    return true;
+                }
+                Bound::None => self.active_window_mut().chord_state.clear(),
+            }
+        }
+        // **3. The panel's own defaults.** What the control already had its
+        // turn at is not offered to it again.
         match outcome {
+            WidgetKeyOutcome::SmartKey(key) if offered.is_some() => {
+                self.widget_panel_default_key(&panel_key, &key);
+                true
+            }
+            // The field declined the character and no binding wanted it.
+            WidgetKeyOutcome::TextChar(_) => true,
             WidgetKeyOutcome::FallThrough => false,
             WidgetKeyOutcome::Blur => {
                 if let Some(slot) = slot {
@@ -600,15 +655,6 @@ impl Editor {
                     &panel_key,
                     fresh_core::api::WidgetAction::Key {
                         key: key.to_string(),
-                    },
-                );
-                true
-            }
-            WidgetKeyOutcome::TextChar(ch) => {
-                self.handle_widget_command(
-                    &panel_key,
-                    fresh_core::api::WidgetAction::TextInputChar {
-                        text: ch.to_string(),
                     },
                 );
                 true

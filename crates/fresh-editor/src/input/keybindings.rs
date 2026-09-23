@@ -1659,6 +1659,14 @@ pub struct KeybindingResolver {
     /// `inheritNormalBindings: true`.
     inheriting_modes: std::collections::HashSet<String>,
 
+    /// Per plugin mode, the keys `defineMode` declared as **dialog-wide
+    /// shortcuts** (a binding's third element, `"shortcut"`). A panel's
+    /// focused control handles a key before the panel's mode does; these few
+    /// are the exception, resolved on the panel's capture leg ahead of any
+    /// control (`view::shell::panel::Keymap`). Ctrl+Enter "submit from
+    /// anywhere" is the model case.
+    mode_shortcuts: HashMap<String, std::collections::HashSet<(KeyCode, KeyModifiers)>>,
+
     /// Mirror of `editor.menu_bar_mnemonics`. When false, the menu-bar
     /// mnemonic bindings (`Alt+letter → menu_open`) are suppressed at
     /// *resolution* time — they neither fire nor consume the key — so
@@ -1736,6 +1744,7 @@ impl KeybindingResolver {
             removed_bindings: std::collections::HashSet::new(),
             removed_chords: std::collections::HashSet::new(),
             inheriting_modes: std::collections::HashSet::new(),
+            mode_shortcuts: HashMap::new(),
             menu_mnemonics_enabled: config.editor.menu_bar_mnemonics,
         };
 
@@ -1771,6 +1780,7 @@ impl KeybindingResolver {
         rebuilt.plugin_defaults = std::mem::take(&mut self.plugin_defaults);
         rebuilt.plugin_chord_defaults = std::mem::take(&mut self.plugin_chord_defaults);
         rebuilt.inheriting_modes = std::mem::take(&mut self.inheriting_modes);
+        rebuilt.mode_shortcuts = std::mem::take(&mut self.mode_shortcuts);
         // The carried-over plugin bindings were filtered against the *old*
         // config's removals; apply the new one's `unbind` entries to them.
         rebuilt.prune_removed_plugin_bindings();
@@ -2062,6 +2072,31 @@ impl KeybindingResolver {
         self.plugin_defaults.remove(&context);
         self.plugin_chord_defaults.remove(&context);
         self.inheriting_modes.remove(mode_name);
+        self.mode_shortcuts.remove(mode_name);
+    }
+
+    /// Declare `(key_code, modifiers)` a dialog-wide shortcut of plugin mode
+    /// `mode_name`: it runs ahead of the focused control. See
+    /// [`Self::is_mode_shortcut`].
+    pub fn set_mode_shortcut(
+        &mut self,
+        mode_name: &str,
+        key_code: KeyCode,
+        modifiers: KeyModifiers,
+    ) {
+        self.mode_shortcuts
+            .entry(mode_name.to_string())
+            .or_default()
+            .insert(normalize_key(key_code, modifiers));
+    }
+
+    /// Whether `mode_name` declared this key a dialog-wide shortcut — one the
+    /// panel's keymap takes before the widget holding focus sees it. Every
+    /// other binding of the mode gets only what the focused control leaves.
+    pub fn is_mode_shortcut(&self, mode_name: &str, event: &KeyEvent) -> bool {
+        self.mode_shortcuts
+            .get(mode_name)
+            .is_some_and(|keys| keys.contains(&normalize_key(event.code, event.modifiers)))
     }
 
     /// Mark (or unmark) a plugin mode as inheriting Normal-context bindings

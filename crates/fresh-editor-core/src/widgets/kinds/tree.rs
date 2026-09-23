@@ -206,10 +206,16 @@ impl WidgetImpl for Tree {
                 // a click on its `[v]`/`[ ]` glyph would do). Falls
                 // back to `activate` for trees that aren't checkable,
                 // or rows without a checkbox glyph (`checked: None`).
+                //
+                // The fallback says it came from Space (`via: "space"`): a
+                // plugin whose Enter "opens" a row can tell the two apart and
+                // leave Space inert, now that the focused tree answers Space
+                // before the plugin's own bindings do.
                 if let Some(ev) = toggle_if_checkable_event(spec, widget_key, panel) {
                     fx.events.push(ev);
-                } else if let Some(ev) = activate_event(spec, widget_key, panel) {
-                    fx.events.push(ev);
+                } else if let Some((name, mut payload)) = activate_event(spec, widget_key, panel) {
+                    payload["via"] = json!("space");
+                    fx.events.push((name, payload));
                 }
             }
             _ => return super::KeyDisposition::Pass,

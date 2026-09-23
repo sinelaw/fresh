@@ -663,12 +663,6 @@ interface CreateFolderDialogState {
 }
 let createFolderDialog: CreateFolderDialogState | null = null;
 let createFolderPanel: FloatingWidgetPanel | null = null;
-// Mirror of the dialog's focused widget key, kept in sync from the
-// host's authoritative `focus` widget_events. The dialog's mode-level
-// Enter binding submits from anywhere — except when focus sits on the
-// Cancel button, where Enter must cancel (pressing Enter on a focused
-// Cancel that *creates* the folder is exactly backwards).
-let createFolderFocusKey = "folder-name";
 
 // ---------------------------------------------------------------------
 // "Run Agent…" dialog — a lightweight picker to launch one of the
@@ -6091,7 +6085,6 @@ function mountFolderDialog(): void {
   editor.setEditorMode(CREATE_FOLDER_MODE);
   // Land focus in the name field so typing goes straight to it; the
   // whole value starts selected-for-overwrite feel via a full cursor.
-  createFolderFocusKey = "folder-name";
   createFolderPanel.setFocusKey("folder-name");
 }
 
@@ -7418,21 +7411,18 @@ editor.defineMode(
     // user-rebindable and renders cross-platform (⌥P / Alt+P).
     ["M-p", "orchestrator_toggle_scope"],
     // `/` jumps focus to the filter input — the familiar
-    // search-focus shortcut. (As a mode chord it's intercepted even
-    // while the filter has focus, so `/` can't be typed as filter
-    // text; session names don't contain `/`, so that's an
-    // acceptable trade for the quick-focus.)
-    ["/", "orchestrator_focus_filter"],
+    // search-focus shortcut. Declared a dialog-wide shortcut, so it runs
+    // ahead of the focused control, the filter included: `/` can't be
+    // typed as filter text; session names don't contain `/`, so that's
+    // an acceptable trade for the quick-focus.
+    ["/", "orchestrator_focus_filter", "shortcut"],
     // Space toggles the highlighted row's membership in the bulk
-    // selection. Bound as a mode chord (not a widget smart-key) so
-    // it's user-rebindable in the keybinding editor and fires
-    // regardless of which control holds focus — the host's
-    // `dispatch_floating_widget_key` defers any explicitly-bound
-    // mode key, including bare chars, before the text-input path.
-    // The trade (same as `/`) is that Space can't be typed into the
-    // filter while the picker is open; session names don't contain
-    // spaces, so that's acceptable.
-    ["Space", "orchestrator_toggle_select"],
+    // selection, whichever control holds focus — a dialog-wide shortcut
+    // for the same reason (the list itself is not focusable, so no
+    // control of its own could take it). The trade (same as `/`) is that
+    // Space can't be typed into the filter while the picker is open;
+    // session names don't contain spaces, so that's acceptable.
+    ["Space", "orchestrator_toggle_select", "shortcut"],
     // Alt+T toggles "Show all worktrees" — the opt-in filter that
     // surfaces discovered on-disk worktree rows. Rebindable, same as
     // the scope toggle.
@@ -7618,13 +7608,6 @@ let formFocusIndex = 0;
 // dialog.
 let openFormDropdown: string | null = null;
 
-// The form's dropdowns: the target switch, the Machine control, the agent
-// selector. Enter on any of them is the widget's own (open / commit), which
-// `activate()` would drop.
-function formDropdownFocused(): boolean {
-  return ["agent_dropdown", "machine", "project"].includes(formFocusedKey());
-}
-
 function rebuildFormFocusCycle(): void {
   if (!form) {
     formFocusCycle = [];
@@ -7645,12 +7628,6 @@ function rebuildFormFocusCycle(): void {
 
 function formFocusedKey(): string {
   return formFocusCycle[formFocusIndex] ?? "";
-}
-
-function advanceFormFocus(delta: 1 | -1): void {
-  if (formFocusCycle.length === 0) return;
-  formFocusIndex =
-    (formFocusIndex + delta + formFocusCycle.length) % formFocusCycle.length;
 }
 
 function snapFormFocusTo(key: string): void {
@@ -10072,33 +10049,19 @@ function saveMachineDialog(): void {
   closeMachineDialog(true);
 }
 
-const MACHINE_DIALOG_MODE_BINDINGS: [string, string][] = [
+const MACHINE_DIALOG_MODE_BINDINGS: string[][] = [
   ["Enter", "orchestrator_machine_enter"],
-  ["C-Enter", "orchestrator_machine_save"],
+  ["C-Enter", "orchestrator_machine_save", "shortcut"],
   ["C-t", "orchestrator_machine_test"],
 ];
 editor.defineMode(MACHINE_DIALOG_MODE, MACHINE_DIALOG_MODE_BINDINGS, true, true);
 
+// Enter that no control used: a text field's — including the Host field's
+// after its suggestion list, not stepped into, closed itself. It saves.
+// Buttons, the file browser's list and a highlighted suggestion answer
+// their own Enter before this binding is asked.
 registerHandler("orchestrator_machine_enter", () => {
   if (!machineDialog || !machinePanel) return;
-  // The Host field's suggestions are up: Enter is theirs — it takes the
-  // highlighted host, or closes the list.
-  if (machineHostSuggesting && machineFocusKey === "machine-target") {
-    machinePanel.command(widgetKey("Enter"));
-    return;
-  }
-  // Enter saves from any field; on a button it is that button, and in the
-  // file browser it opens the folder or picks the file.
-  if (machineFocusKey === "machine-browse-list") {
-    machinePanel.command({ kind: "activate" });
-    return;
-  }
-  if (machineFocusKey === "machine-identity-browse") return browseIdentityFile();
-  if (machineFocusKey === "machine-cancel") return closeMachineDialog(true);
-  if (machineFocusKey === "machine-test") return runMachineTest();
-  if (machineFocusKey === "machine-remove") return askRemoveMachine(true);
-  if (machineFocusKey === "machine-remove-no") return askRemoveMachine(false);
-  if (machineFocusKey === "machine-remove-yes") return removeMachineFromDialog();
   if (machineFocusKey === "machine-kind") return;
   if (machineDialog.confirmRemove) return;
   saveMachineDialog();
@@ -11607,9 +11570,12 @@ function repoDialogShow(repoId: string | null, machineKey: string): void {
   void recheckRepoPath();
 }
 
-const REPOS_MODE_BINDINGS: [string, string][] = [
+// Each gets only what the focused control left: an open dropdown closes on
+// its own Esc, a list row and a button take their own Enter, a field its
+// own Backspace.
+const REPOS_MODE_BINDINGS: string[][] = [
   ["Enter", "orchestrator_repos_enter"],
-  ["C-Enter", "orchestrator_repos_save"],
+  ["C-Enter", "orchestrator_repos_save", "shortcut"],
   ["Escape", "orchestrator_repos_escape"],
   ["Backspace", "orchestrator_repos_backspace"],
 ];
@@ -11631,8 +11597,8 @@ registerHandler("orchestrator_repos_enter", () => {
     return;
   }
   // Enter on a text field saves (Add Repository) or checks the path now
-  // (managing, which saves once the check passes); on everything else it is
-  // that control's own (a button, the dropdown, a list row).
+  // (managing, which saves once the check passes). A button, the dropdown
+  // and a list row answered their own Enter before this binding.
   if (["repo_path", "repo_url", "repo_name", "repo_clone_new_to"].includes(d.focus)) {
     if (d.focus === "repo_url") {
       void checkRepoUrl();
@@ -11643,9 +11609,7 @@ registerHandler("orchestrator_repos_enter", () => {
       return;
     }
     saveRepoDialog();
-    return;
   }
-  repoPanel.command({ kind: "key", key: "Enter" });
 });
 registerHandler("orchestrator_repos_escape", () => {
   const d = repoDialog;
@@ -11671,10 +11635,6 @@ registerHandler("orchestrator_repos_escape", () => {
     void cancelRepoClone();
     return;
   }
-  if (d.focus === "repo_machine") {
-    repoPanel.command({ kind: "key", key: "Escape" });
-    return;
-  }
   closeRepoDialog();
 });
 registerHandler("orchestrator_repos_backspace", () => {
@@ -11687,9 +11647,7 @@ registerHandler("orchestrator_repos_backspace", () => {
   }
   if (d.browse && d.focus === "repo_browse_list") {
     void browseTo(parentDir(d.browse.dir));
-    return;
   }
-  repoPanel.command({ kind: "key", key: "Backspace" });
 });
 
 function handleRepoDialogEvent(e: WidgetEvt): void {
@@ -12342,15 +12300,16 @@ function openSelectedMachine(): void {
   else if (row.machine) openMachineDialog(row.machine, "machines");
 }
 
-const MACHINES_MODE_BINDINGS: [string, string][] = [
+// Enter on the list or a button is the control's own; this is Enter with
+// nothing focused, which opens the highlighted machine.
+const MACHINES_MODE_BINDINGS: string[][] = [
   ["Enter", "orchestrator_machines_enter"],
 ];
 editor.defineMode(MACHINES_MODE, MACHINES_MODE_BINDINGS, true, true);
 
 registerHandler("orchestrator_machines_enter", () => {
   if (!machinesPanel || !machinesState) return;
-  if (machinesState.focus === "machines" || machinesState.focus === "") return openSelectedMachine();
-  machinesPanel.command(activate());
+  if (machinesState.focus === "machines" || machinesState.focus === "") openSelectedMachine();
 });
 
 function handleMachinesEvent(e: WidgetEvt): void {
@@ -16913,34 +16872,17 @@ editor.exportPluginApi("orchestrator", {
   setDockFilter: apiSetDockFilter,
 });
 
-// Form key bindings — each delegates to smart-key dispatch on the
-// panel, which routes to the focused widget. `mode_text_input`
-// handles printable input outside this list.
-// Enter is bound to a thin shim that closes the completion
-// dropdown without accepting (Tab is the only accept path —
-// matches bash / fish / readline path-completion conventions),
-// then forwards Enter to the host's smart-key dispatch so the
-// normal behaviour applies: Enter-on-button → activate (Cancel
-// cancels, Create Session submits via their `widget_event`
-// "activate" branches), Enter-on-text-input → focus advance.
-// Without the shim, the host's picker-style Enter wiring would
-// fire the sibling completion list's activate event and silently
-// overwrite the typed text with the highlighted suggestion.
-const FORM_MODE_BINDINGS: [string, string][] = [
-  ["Tab", "orchestrator_form_key_tab"],
-  ["S-Tab", "orchestrator_form_key_shift_tab"],
+// Form key bindings. The focused control answers a key first — a field
+// types and moves its caret, the prompt box takes Enter and the arrows, a
+// dropdown opens and walks its list, a suggestion list accepts on Tab/Enter
+// once stepped into, Esc closes a pop-up — and these commands get only what
+// it leaves. Tab / Shift+Tab are the host's ring. Ctrl+Enter and Alt+Enter
+// are dialog-wide shortcuts: they run ahead of any control.
+const FORM_MODE_BINDINGS: string[][] = [
+  ["C-Enter", "orchestrator_form_submit", "shortcut"],
+  ["M-Enter", "orchestrator_form_submit_bg", "shortcut"],
   ["Enter", "orchestrator_form_key_enter"],
-  // Ctrl+Enter submits from anywhere in the form, regardless of which
-  // field is focused or whether a completion popup is open.
-  ["C-Enter", "orchestrator_form_submit"],
-  ["M-Enter", "orchestrator_form_submit_bg"],
   ["Escape", "orchestrator_form_key_escape"],
-  ["Backspace", "orchestrator_form_key_backspace"],
-  ["Delete", "orchestrator_form_key_delete"],
-  ["Home", "orchestrator_form_key_home"],
-  ["End", "orchestrator_form_key_end"],
-  ["Left", "orchestrator_form_key_left"],
-  ["Right", "orchestrator_form_key_right"],
   ["Up", "orchestrator_form_key_up"],
   ["Down", "orchestrator_form_key_down"],
 ];
@@ -17007,18 +16949,14 @@ function isListEvent(
   return payload.list_key === key;
 }
 
-// The dock's keymap. The host resolves these on the dock's own node ahead
-// of the widget that holds focus, so each command decides what the key
-// means from the plugin's mirror of that focus (`pickerFocusKey`) and of
-// its open dropdown — the policy that used to be a branch of the host's
-// router, said where the dock is defined. Keys these leave alone reach the
-// widgets: ↑/↓ are the tree's or a dropdown list's, Tab is the ring's,
-// typing is the filter's.
-const DOCK_MODE_BINDINGS: [string, string][] = [
+// The dock's keymap. The focused control answers a key first — the tree
+// moves, opens folders and fires `activate` on Enter (see the `sessions`
+// activate below), a menu list walks and accepts, the filter types, a
+// button runs — and these commands get what it leaves.
+const DOCK_MODE_BINDINGS: string[][] = [
   ["/", "orchestrator_dock_filter"],
   ["Escape", "orchestrator_dock_escape"],
   ["Enter", "orchestrator_dock_enter"],
-  ["Space", "orchestrator_dock_space"],
   ["F2", "orchestrator_dock_context"],
   ["Menu", "orchestrator_dock_context"],
   ["M-t", "orchestrator_dock_toggle_worktrees"],
@@ -17086,30 +17024,12 @@ registerHandler("orchestrator_dock_escape", () => {
   editor.floatingPanelControl(openPanel.id(), "blur", 0);
 });
 
-// Enter — accepts an open dropdown's cursor; in the filter returns to the
-// list (the filter is a search, not a form field to submit); on the tree
-// dives; on any other control runs that control.
+// Enter no control used: the filter's. The filter is a search, not a form
+// field to submit, so Enter returns to the list. (An open menu list, the
+// tree and the buttons take their own Enter.)
 registerHandler("orchestrator_dock_enter", () => {
   if (!dockMode || !openPanel) return;
-  const menu = dockOpenMenu();
-  if (menu === "menu") return acceptDockMenu();
-  if (menu === "project") return acceptProjectMenu();
-  if (pickerFocusKey === "filter") return focusDockControl("sessions");
-  if (dockOnSessions()) return dockActivate();
-  openPanel.command({ kind: "activate" });
-});
-
-// Space — accepts an open dropdown's cursor; the tree ignores it (bulk
-// select is the modal picker's); any other control runs. In the filter it
-// never arrives here: a focused text field takes a printable key ahead of
-// the mode's bindings, so the host types it.
-registerHandler("orchestrator_dock_space", () => {
-  if (!dockMode || !openPanel) return;
-  const menu = dockOpenMenu();
-  if (menu === "menu") return acceptDockMenu();
-  if (menu === "project") return acceptProjectMenu();
-  if (dockOnSessions()) return;
-  openPanel.command({ kind: "activate" });
+  if (pickerFocusKey === "filter") focusDockControl("sessions");
 });
 
 // F2 / the Menu key on the tree — the highlighted node's context menu, the
@@ -17139,27 +17059,17 @@ registerHandler("orchestrator_dock_new", () => {
   openForm({ fromPicker: true });
 });
 
-// The "New Folder" dialog only needs Enter to submit from anywhere —
-// everything else (typing, Backspace, Tab focus-cycle, Space on the
-// toggle/buttons, Esc to cancel) uses the floating panel's default
-// smart-key routing. Binding Enter here makes the host defer to us
-// (mode bindings win over the generic "Enter = focus-advance") so the
-// name field's Enter submits instead of just advancing focus.
-const FOLDER_DIALOG_MODE_BINDINGS: [string, string][] = [
+// The "New Folder" dialog: Enter in the name field submits (a button or
+// the checkbox answers its own Enter first); Ctrl+Enter submits from
+// anywhere. Everything else is the controls' and the host's ring.
+const FOLDER_DIALOG_MODE_BINDINGS: string[][] = [
   ["Enter", "orchestrator_folder_submit"],
-  ["C-Enter", "orchestrator_folder_submit"],
+  ["C-Enter", "orchestrator_folder_submit", "shortcut"],
 ];
 editor.defineMode(CREATE_FOLDER_MODE, FOLDER_DIALOG_MODE_BINDINGS, true, true);
 
 registerHandler("orchestrator_folder_submit", () => {
   if (!createFolderDialog) return;
-  // Enter submits from anywhere in the dialog — except on the Cancel
-  // button, where it must cancel. Without this check, Tab-ing onto
-  // [ Cancel ] and pressing Enter *created* the folder.
-  if (createFolderFocusKey === "folder-cancel") {
-    closeCreateFolderDialog();
-    return;
-  }
   submitCreateFolder();
 });
 
@@ -17168,30 +17078,6 @@ function dispatchFormKey(name: string): void {
   formPanel.command(widgetKey(name));
 }
 
-// Tab / Enter / Up / Down / Escape are all routed straight to
-// the host's smart-key dispatch via `dispatchFormKey`. The host
-// owns the completion popup state (instance state on the Text
-// widget), so when the popup is open it short-circuits these
-// keys to popup-specific behaviour (accept, dismiss, move
-// selection) and falls through to the widget's default key
-// handling otherwise. The plugin just reacts to the events the
-// host emits — `completion_accept` and `completion_dismiss`,
-// handled in the `widget_event` dispatch below.
-registerHandler("orchestrator_form_key_tab", () => {
-  // Tab applies the highlighted candidate when the user has stepped
-  // into an open dropdown (↑/↓/wheel); otherwise it advances to the
-  // next field. The host owns that decision (it tracks which row, if
-  // any, is highlighted), so when a popup is open we must NOT
-  // optimistically advance our mirror — doing so would desync it in
-  // the accept case, where the host keeps focus on the field and
-  // fires `completion_accept` (no `focus` event to snap back from).
-  // With no popup, the host always advances and fires an authoritative
-  // `focus` event, so the optimistic advance just avoids a frame lag.
-  if (!completionVisibleForFocused()) {
-    advanceFormFocus(1);
-  }
-  dispatchFormKey("Tab");
-});
 // Ctrl+Enter: submit from anywhere, no matter which field is focused or
 // whether a completion popup is open. Runs the primary action, "Create &
 // Visit" (the "In Background" alternative is an explicit button / Enter on it).
@@ -17222,63 +17108,13 @@ function toggleFormDetails(): void {
   snapFormFocusTo("details");
 }
 
-registerHandler("orchestrator_form_key_enter", () => {
-  if (!form || !formPanel) return;
-  // Popup open: keep the existing behaviour — the host's smart-key
-  // dismisses the completion popup and fires `completion_dismiss` (the
-  // plugin syncs local state via that event), staying on the text input.
-  if (completionVisibleForFocused()) {
-    dispatchFormKey("Enter");
-    return;
-  }
-  // `activate()` is a no-op on a Dropdown, so route the raw key to the host's
-  // smart-key dispatch, which opens the pop-over and — when it is already
-  // open — commits the highlighted option.
-  if (formDropdownFocused()) {
-    dispatchFormKey("Enter");
-    return;
-  }
-  // The prompt box is multi-line: Enter is a newline there (Ctrl+Enter
-  // launches from anywhere).
-  if (formFocusedKey() === "start_prompt") {
-    dispatchFormKey("Enter");
-    return;
-  }
-  // Popup closed: Enter must NOT advance focus (Tab / Shift-Tab are the only
-  // field movers). Activate the focused control instead — `activate()` fires
-  // a Button's "activate" event (Create / Cancel / Advanced / the type tabs)
-  // or a Toggle's "toggle", and is a no-op on text inputs and the dropdown.
-  formPanel.command(activate());
-});
-registerHandler(
-  "orchestrator_form_key_shift_tab",
-  () => {
-    // Shift+Tab doesn't accept — it always reverses focus.
-    // (The convention is that S-Tab is the "go back" gesture;
-    // overloading it to accept-then-go-back is more confusing
-    // than useful.)
-    closeCompletion();
-    advanceFormFocus(-1);
-    dispatchFormKey("Shift+Tab");
-  },
-);
+// Enter that no control used: a single-line field's. The form's Enter
+// neither advances (Tab does) nor submits (Ctrl+Enter does), so it is bound
+// to keep the host's single-line default — advance focus — from applying.
+registerHandler("orchestrator_form_key_enter", () => {});
 registerHandler("orchestrator_form_key_escape", () => {
-  // When the popup is open, the host dismisses on Escape and
-  // emits `completion_dismiss`; the plugin's local state
-  // resync happens in the widget_event handler. Only when
-  // the popup is already closed does Escape cancel the form.
-  if (completionVisibleForFocused()) {
-    dispatchFormKey("Escape");
-    return;
-  }
-  // An open dropdown pop-over swallows the first Escape: route it to the
-  // host's dropdown short-circuit (which closes the list) instead of
-  // cancelling the dialog. A second Escape — now that the list is closed —
-  // falls through to `cancelForm` below.
-  if (openFormDropdown !== null && formFocusedKey() === openFormDropdown) {
-    dispatchFormKey("Escape");
-    return;
-  }
+  // An open suggestion list or dropdown took the first Esc already (the
+  // focused control answers before this binding); this is the dialog's.
   if (form?.place) {
     // Esc closes the folder browser first, then drops the question.
     if (form.place.browse) {
@@ -17293,30 +17129,13 @@ registerHandler("orchestrator_form_key_escape", () => {
   }
   if (form) cancelForm();
 });
-registerHandler(
-  "orchestrator_form_key_backspace",
-  () => dispatchFormKey("Backspace"),
-);
-registerHandler("orchestrator_form_key_delete", () => dispatchFormKey("Delete"));
-registerHandler("orchestrator_form_key_home", () => dispatchFormKey("Home"));
-registerHandler("orchestrator_form_key_end", () => dispatchFormKey("End"));
-// ←/→ go to the host: on a dropdown they move the selection (the widget
-// reports a `change`); in a text field they move the caret.
-registerHandler("orchestrator_form_key_left", () => dispatchFormKey("Left"));
-registerHandler("orchestrator_form_key_right", () => dispatchFormKey("Right"));
 registerHandler("orchestrator_form_key_up", () => {
-  // Popup-open: dispatch straight through so the host moves
-  // the popup-selection cursor.
-  // Popup-closed: on a completion-bearing field
-  // (project_path / branch) re-fetch the popup so the user
-  // gets back live candidates AND any `↶`-marked history rows
-  // mixed in (see `setCompletionItems`). On a history-bearing
-  // non-completion field (name / cmd) walk history in place.
-  // Otherwise pass through.
-  if (completionVisibleForFocused()) {
-    dispatchFormKey("Up");
-    return;
-  }
+  // Only what the focused control left arrives: an open suggestion list
+  // and the prompt box take their own arrows. On a completion-bearing
+  // field (project_path / branch) re-fetch the popup so the user gets back
+  // live candidates AND any `↶`-marked history rows mixed in (see
+  // `setCompletionItems`). On a history-bearing non-completion field
+  // (name / cmd) walk history in place. Otherwise walk the form.
   const focusKey = formFocusedKey();
   if (focusKey === "project_path" || focusKey === "branch") {
     scheduleCompletionRefresh(focusKey);
@@ -17330,10 +17149,6 @@ registerHandler("orchestrator_form_key_up", () => {
   }
 });
 registerHandler("orchestrator_form_key_down", () => {
-  if (completionVisibleForFocused()) {
-    dispatchFormKey("Down");
-    return;
-  }
   const focusKey = formFocusedKey();
   if (focusKey === "project_path" || focusKey === "branch") {
     scheduleCompletionRefresh(focusKey);
@@ -17346,22 +17161,6 @@ registerHandler("orchestrator_form_key_down", () => {
     dispatchFormKey("Down");
   }
 });
-
-/// Is the completion popup open for the currently focused
-/// input? Tracked plugin-side because the plugin still needs
-/// to know in order to gate history-walk (Up/Down on an empty-
-/// popup history-bearing input walks the history list, not
-/// the popup). The host's instance state is authoritative for
-/// the popup itself; the plugin mirrors the open/closed bit
-/// here by populating `form.completion.items` from
-/// `setCompletionItems` and clearing it from
-/// `closeCompletion` / on the `completion_dismiss` event.
-function completionVisibleForFocused(): boolean {
-  if (!form) return false;
-  const c = form.completion;
-  if (c.field === null || c.items.length === 0) return false;
-  return formFocusedKey() === c.field;
-}
 
 // Printable input arrives via the global `mode_text_input` action.
 // Other plugins may also register a `mode_text_input` handler;
@@ -17490,23 +17289,10 @@ editor.on("widget_event", (e) => {
       }
       return;
     }
-    if (e.event_type === "focus") {
-      // Authoritative focus move (Tab / Shift+Tab / click) — mirror it
-      // so the mode-level Enter binding can tell Cancel apart from the
-      // rest of the dialog (see `orchestrator_folder_submit`).
-      if (typeof e.widget_key === "string" && e.widget_key.length > 0) {
-        createFolderFocusKey = e.widget_key;
-      }
-      return;
-    }
     if (e.event_type === "change" && e.widget_key === "folder-name") {
       const payload = (e.payload ?? {}) as Record<string, unknown>;
       if (typeof payload.value === "string") d.name.value = payload.value;
       if (typeof payload.cursorByte === "number") d.name.cursor = payload.cursorByte;
-      // Typing lands in the name field even if focus drifted; the host
-      // routes printable chars to the focused TextInput only, so a
-      // change event implies the field is focused again.
-      createFolderFocusKey = "folder-name";
       return;
     }
     if (e.event_type === "toggle" && e.widget_key === "folder-organize") {
@@ -17700,6 +17486,10 @@ editor.on("widget_event", (e) => {
       // that mirror from the authoritative signal here so the
       // plugin never has to predict host-side focus rules.
       snapFormFocusTo(e.widget_key);
+      // Leaving a field (Shift+Tab, a click) closes its suggestions.
+      if (form.completion.field !== null && form.completion.field !== e.widget_key) {
+        closeCompletion();
+      }
       // Leaving a dropdown (Tab / click elsewhere) closes its pop-over
       // host-side; keep the local mirror honest.
       if (e.widget_key !== openFormDropdown) openFormDropdown = null;
@@ -18220,6 +18010,13 @@ editor.on("widget_event", (e) => {
           openPanel.setFocusKey("visit");
         }
       }
+      return;
+    }
+    // The dock's session tree: Enter dives into the row (or opens and
+    // closes a folder). Space is inert on it — bulk select is the modal
+    // picker's — and the tree says when Space was the key.
+    if (dockMode && e.event_type === "activate" && e.widget_key === "sessions") {
+      if (((e.payload ?? {}) as Record<string, unknown>).via !== "space") dockActivate();
       return;
     }
     if (

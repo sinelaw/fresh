@@ -203,12 +203,12 @@ pub enum WidgetKeyOutcome {
 /// means. Pure: reads the [`WidgetPanelView`] and the keymap, mutates
 /// nothing. See the outcome variants for the effect vocabulary.
 ///
-/// **The panel's own chords are its keymap's, not the router's.** A key the
-/// panel's plugin mode binds — the dock's `/`, Esc, Enter, its Alt chords —
-/// is taken on the tree by `view::shell::panel::Keymap` before the router is
-/// asked, so what arrives here is the generic vocabulary every panel shares:
-/// the widget keys the kinds answer, the characters a field types, and what
-/// an unbound chord does to a modal versus a non-modal panel.
+/// **This is a translation, not the order of precedence.** It names the
+/// generic vocabulary every panel shares — the widget keys the kinds answer,
+/// the characters a field types, and what an unbound chord does to a modal
+/// versus a non-modal panel. `Editor::dispatch_widget_panel_key` then offers
+/// the key to the focused control, then to the panel's plugin mode, and only
+/// then applies the outcome named here.
 pub fn widget_panel_key(
     view: &WidgetPanelView,
     kb: &KeybindingResolver,
@@ -317,6 +317,21 @@ pub fn widget_panel_key(
         return FallThrough;
     }
     Swallow
+}
+
+/// Whether `key` — the widget-vocabulary key [`widget_panel_key`] named for
+/// `code` + `modifiers` — is that key exactly, with no modifier masked off.
+///
+/// Only an exact key is offered to the focused control ahead of the panel's
+/// mode: Ctrl+Enter reaches the vocabulary as Enter, and a text area handed
+/// it first would type a newline where the plugin bound "submit". Shift on
+/// `BackTab` is the one drop that loses nothing — the code already says it.
+pub fn widget_key_is_exact(key: &KeySeq, code: KeyCode, modifiers: KeyModifiers) -> bool {
+    let Some(k) = key.single() else {
+        return false;
+    };
+    let dropped = modifiers.difference(k.mods());
+    dropped.is_empty() || (code == KeyCode::BackTab && dropped == KeyModifiers::SHIFT)
 }
 
 /// Read-only view for [`should_dismiss_transient_popup`]: the state of the

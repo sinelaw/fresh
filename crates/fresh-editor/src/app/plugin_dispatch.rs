@@ -1206,10 +1206,12 @@ impl Editor {
                 allow_text_input,
                 inherit_normal_bindings,
                 plugin_name,
+                shortcuts,
             } => {
                 self.handle_define_mode(
                     name,
                     bindings,
+                    shortcuts,
                     read_only,
                     allow_text_input,
                     inherit_normal_bindings,

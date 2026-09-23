@@ -712,8 +712,10 @@ mod tests {
     /// reachable.
     ///
     /// The layer names the interior as its scope now. This asserts both halves:
-    /// the ring is the panel's widgets, and Tab moves along it rather than
-    /// being claimed by a sink.
+    /// the ring is the panel's widgets, and Tab reaches the runtime — where the
+    /// focused control answers it first (a field accepting a suggestion) and
+    /// what it leaves moves focus along that ring with `Ui::move_focus`
+    /// (`Editor::advance_panel_focus_in_tree`).
     #[test]
     fn tab_in_a_focused_dock_steps_along_the_widgets() {
         let mut ui = described_with_buttons();
@@ -731,21 +733,27 @@ mod tests {
             "the ring is the panel's two buttons, not a sink: {ring:?}"
         );
 
-        // Focus lands inside the scope, and Tab moves it to the other control
-        // rather than being swallowed.
         let first = ui.focused().expect("the scope took focus");
         let got = ui.dispatch(fresh_ui::Input::Key(fresh_ui::KeyPress {
             code: fresh_ui::KeyCode::Tab,
             mods: fresh_ui::Mods::NONE,
         }));
-        assert_ne!(ui.focused(), Some(first), "Tab moved focus");
         assert!(
-            !got.msgs.iter().any(|m| matches!(
+            got.msgs.iter().any(|m| matches!(
                 m,
                 UiMsg::Ui(UiFact::PanelKey(super::super::widgets::Slot::Dock))
             )),
-            "Tab was resolved by the tree, not handed to the runtime: {:?}",
+            "Tab is handed to the runtime, the focused control's first: {:?}",
             got.msgs
+        );
+        assert!(
+            ui.move_focus(fresh_ui::FocusDir::Next),
+            "the ring has a next stop"
+        );
+        assert_ne!(
+            ui.focused(),
+            Some(first),
+            "and the runtime's move reaches it"
         );
     }
 

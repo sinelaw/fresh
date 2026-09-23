@@ -2795,6 +2795,7 @@ impl Editor {
         &mut self,
         name: String,
         bindings: Vec<(String, String)>,
+        shortcuts: Vec<String>,
         read_only: bool,
         allow_text_input: bool,
         inherit_normal_bindings: bool,
@@ -2829,6 +2830,9 @@ impl Editor {
             let mut kb = self.keybindings.write().unwrap();
             match seq.single() {
                 Some(key) => {
+                    if shortcuts.contains(key_str) {
+                        kb.set_mode_shortcut(&name, key.code(), key.mods());
+                    }
                     kb.load_plugin_default(mode_context.clone(), key.code(), key.mods(), action)
                 }
                 None => {

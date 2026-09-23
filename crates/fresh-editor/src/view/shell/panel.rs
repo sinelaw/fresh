@@ -73,34 +73,32 @@ pub struct Panel {
     pub interior: Interior,
 }
 
-/// **A plugin panel's keymap, on the tree.** The mode a panel's plugin
-/// defined (`defineMode`) and the resolver its bindings live in; the
-/// panel's interior captures a key the mode explicitly binds ahead of the
-/// widget that holds focus, and the key arrives as the bound action
-/// (`UiMsg::Action`).
+/// **A plugin panel's keymap.** The mode a panel's plugin defined
+/// (`defineMode`) and the resolver its bindings live in.
 ///
-/// This is where the router's "an explicit mode binding for the key wins
-/// over the panel's smart-key defaults" used to be decided, one key at a
-/// time, after the tree had already declined the key: now it is a property
-/// of the panel's node, resolved on the capture leg, and a panel in a slot
-/// whose keys are not a mode's — a sidebar section — simply declares none.
+/// **The focused control handles a key first; the mode gets what it leaves.**
+/// A plugin binds commands — submit, close, filter — and the controls own
+/// their keys: a field types and moves its caret, an open list takes the
+/// arrows, Esc closes a pop-up before it closes the dialog. So the host offers
+/// every key to the focused widget's kind (`WidgetImpl::on_key` /
+/// `on_text`), and only a key it passes (or passes after acting,
+/// `KeyDisposition::PassAfter`) is resolved against this keymap
+/// ([`Keymap::resolve`], from `Editor::dispatch_widget_panel_key`).
+///
+/// **The exception is declared, not guessed**: a binding `defineMode` marks
+/// `"shortcut"` — Ctrl+Enter "submit from anywhere" — is dialog-wide and runs
+/// ahead of any control. Those, and the rest of a chord already in progress,
+/// are the only keys this keymap takes on the interior's capture leg; they
+/// arrive as the bound action (`UiMsg::Action`).
+///
+/// This used to capture *every* key the mode bound, ahead of the focused
+/// widget, and the plugins that bound Enter, Esc, Tab or the arrows had to
+/// guess what the focused control would have done and forward the key back
+/// by hand (`docs/internal/widget-controls-own-interaction.md`).
 #[derive(Clone)]
 pub struct Keymap {
     pub mode: String,
     pub resolver: std::sync::Arc<std::sync::RwLock<crate::input::keybindings::KeybindingResolver>>,
-    /// The panel's focused widget is a field you type into. **A focused
-    /// text field takes a printable key ahead of the mode's bindings** —
-    /// the rule the router applied when the mode was consulted host-side,
-    /// kept here now that the keymap is consulted on the tree: a mode that
-    /// binds Space, `/` or a digit binds them for the controls, and a
-    /// field with the keyboard still types them.
-    pub text_focused: bool,
-    /// The focused field is a multi-line one, where a bare Enter is a new
-    /// line. It takes Enter ahead of the mode the way any field takes a
-    /// printable key: a mode that bound Enter got it through the plugin
-    /// round trip while the characters typed after it went straight to the
-    /// field, so a fast `line one⏎line two` landed the newline last.
-    pub multiline_focused: bool,
     /// The window's pending chord prefix. Shared rather than per-panel: a
     /// panel's mode is its buffer's mode.
     pub chord: Vec<(crossterm::event::KeyCode, crossterm::event::KeyModifiers)>,
@@ -123,24 +121,28 @@ impl std::fmt::Debug for Keymap {
 }
 
 impl Keymap {
-    /// The action `mode` explicitly binds `k` to, if any — and none for a
-    /// printable key while a text field has the keyboard (see
-    /// [`Keymap::text_focused`]).
+    /// What the capture leg takes: a declared dialog-wide shortcut, or the
+    /// next key of a chord the mode has already started. Everything else is
+    /// the focused control's first (see the type's doc).
     fn action(&self, k: fresh_ui::KeyPress) -> Bound {
-        let printable = matches!(k.code, fresh_ui::KeyCode::Char(_))
-            && (k.mods == fresh_ui::Mods::NONE || k.mods == fresh_ui::Mods::SHIFT);
-        if self.text_focused && printable {
-            return Bound::None;
-        }
-        if self.multiline_focused
-            && k.code == fresh_ui::KeyCode::Enter
-            && k.mods == fresh_ui::Mods::NONE
-        {
-            return Bound::None;
-        }
         let Some(ev) = super::input::crossterm_key_event(k) else {
             return Bound::None;
         };
+        let first = self.chord.is_empty()
+            && !self
+                .resolver
+                .read()
+                .is_ok_and(|r| r.is_mode_shortcut(&self.mode, &ev));
+        match first {
+            true => Bound::None,
+            false => self.resolve(&ev),
+        }
+    }
+
+    /// The action the mode binds `ev` to (completing or extending the pending
+    /// chord where there is one), with no regard to what has focus. The host
+    /// asks this for a key the focused control passed.
+    pub fn resolve(&self, ev: &crossterm::event::KeyEvent) -> Bound {
         let ctx = crate::input::keybindings::KeyContext::Mode(self.mode.clone());
         let Ok(resolver) = self.resolver.read() else {
             return Bound::None;
@@ -148,12 +150,12 @@ impl Keymap {
         // `explicit_binding` rather than `resolve`: a panel takes only what
         // its mode names.
         use crate::input::keybindings::ChordResolution;
-        match resolver.resolve_chord(&self.chord, &ev, ctx.clone()) {
+        match resolver.resolve_chord(&self.chord, ev, ctx.clone()) {
             ChordResolution::Complete(action) => return Bound::Run(action),
             ChordResolution::Partial => return Bound::Pending,
             ChordResolution::NoMatch => {}
         }
-        match resolver.explicit_binding(&ev, &ctx) {
+        match resolver.explicit_binding(ev, &ctx) {
             Some(action) => Bound::Run(action),
             None => Bound::None,
         }
@@ -474,27 +476,15 @@ pub fn interior_key(slot: super::widgets::Slot) -> Key {
 /// is the same requirement. Splitting them would be two nodes with one
 /// invariant between them.
 ///
-/// **The panel's keymap rides on it** (`keymap`): a key the panel's plugin
-/// mode explicitly binds is taken on the capture leg — before the widget
-/// that holds focus, and before the traversal that would otherwise resolve
-/// Tab — and arrives as the bound action. Every other key still reaches the
-/// runtime through `PanelKey`, because a described widget attaches no key
-/// handler of its own — the kinds' key handling is host-side, so nothing in
-/// the tree competes for `Enter` or the arrows. Tab is different: declining
-/// it is how the tree's ring moves focus, and it is declined here for every
-/// panel, because a mode that binds Tab has already taken it above.
-///
-/// **Declining a key it might need back is safe here because of the layer's
-/// modality, not because of anything this node does.** A declined Tab the ring
-/// cannot serve — a panel holding one widget, or none — leaves `move_focus`
-/// with nowhere to go, and what happens to the key then belongs to
-/// [`keys_layer`]: `Modality::Focus` confines traversal without swallowing, so
-/// `dispatch` reports the key unclaimed and the router answers it exactly as it
-/// did before any of this. A layer that *swallows* — `Modality::Keyboard`, which
-/// is what the settings dialog declares — would drop that Tab instead, with no
-/// move and no host. `fresh-ui`'s
-/// `a_key_the_ring_cannot_serve_is_handed_back_only_by_a_focus_layer` pins the
-/// asymmetry.
+/// **The panel's keymap rides on it** (`keymap`), for the few keys that
+/// run ahead of the focused control: a binding the plugin declared a
+/// dialog-wide shortcut, and the rest of a chord its mode has started. Those
+/// are taken on the capture leg and arrive as the bound action. Every other
+/// key — Tab included — reaches the runtime through `PanelKey`, where the
+/// focused widget's kind answers it first, then the panel's mode, then the
+/// panel's own defaults (`Editor::dispatch_widget_panel_key`). A described
+/// widget attaches no key handler of its own, so nothing in the tree competes
+/// for them.
 pub fn interior(
     slot: super::widgets::Slot,
     keymap: Option<Keymap>,
@@ -554,16 +544,13 @@ pub fn interior_capturing(
         false => n,
     };
     n.on_key(move |e: &fresh_ui::Event| {
-        let tab = e
-            .key
-            .is_some_and(|k| matches!(k.code, fresh_ui::KeyCode::Tab | fresh_ui::KeyCode::BackTab));
-        if tab {
-            // Declined, and deliberately not stopped: `propagate_key`
-            // returns false, the key resolves to an intent, and
-            // `default_for_intent` moves focus inside this scope. That is
-            // the tree's ring doing what the box arena's ring did.
-            return None;
-        }
+        // **Tab too.** It used to be declined here so the tree's ring moved
+        // focus before anything else saw it — which meant the focused
+        // control never did: a field whose suggestion list the user had
+        // stepped into could not accept on Tab. It goes to the runtime like
+        // every other key, where the control answers first and the panel's
+        // Tab (`Editor::handle_widget_focus_advance`, the same `move_focus`
+        // on the same ring) is what is left.
         e.stop();
         Some(UiMsg::Ui(UiFact::PanelKey(slot)))
     })
@@ -1035,12 +1022,13 @@ mod tests {
             .collect()
     }
 
-    /// **The panel's keymap takes a key its mode binds before the widget
-    /// that holds focus sees it, and the key arrives as the action.** A
-    /// panel with no keymap hands the same key to its fallback, which names
-    /// the panel for the router.
+    /// **A declared shortcut is taken before the widget that holds focus
+    /// sees it, and arrives as the action; any other binding is not.** An
+    /// undeclared binding reaches the fallback, which names the panel, so
+    /// the focused control answers the key first and the mode gets it only
+    /// if the control passes (`Editor::dispatch_widget_panel_key`).
     #[test]
-    fn a_key_the_panels_mode_binds_arrives_as_its_action() {
+    fn only_a_declared_shortcut_is_taken_ahead_of_the_focused_control() {
         use crate::input::keybindings::{Action, KeybindingResolver};
         use fresh_core::api::WidgetSpec;
         let mut config = crate::config::Config::default();
@@ -1113,12 +1101,27 @@ mod tests {
         let mut ui = framed(Some(Keymap {
             mode: "form".into(),
             resolver: resolver.clone(),
-            text_focused: false,
-            multiline_focused: false,
             chord: Vec::new(),
         }));
         let got = ui.dispatch(enter);
-        assert!(got.claimed, "the keymap claims what it binds");
+        assert_eq!(
+            facts(got),
+            vec![UiFact::PanelKey(super::super::widgets::Slot::Floating)],
+            "a plain binding is the focused control's first"
+        );
+
+        resolver.write().unwrap().set_mode_shortcut(
+            "form",
+            crossterm::event::KeyCode::Enter,
+            crossterm::event::KeyModifiers::NONE,
+        );
+        let mut ui = framed(Some(Keymap {
+            mode: "form".into(),
+            resolver: resolver.clone(),
+            chord: Vec::new(),
+        }));
+        let got = ui.dispatch(enter);
+        assert!(got.claimed, "the keymap claims a declared shortcut");
         assert!(
             got.msgs
                 .iter()
@@ -1163,16 +1166,23 @@ mod tests {
         let km = |chord: Vec<(crossterm::event::KeyCode, crossterm::event::KeyModifiers)>| Keymap {
             mode: "review".into(),
             resolver: resolver.clone(),
-            text_focused: false,
-            multiline_focused: false,
             chord,
         };
         let press = |c| fresh_ui::KeyPress::with(fresh_ui::KeyCode::Char(c), Mods::NONE);
 
         assert_eq!(
             km(Vec::new()).action(press('z')),
+            Bound::None,
+            "`z` is the focused control's first, so the capture leg leaves it"
+        );
+        let z = crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('z'),
+            crossterm::event::KeyModifiers::NONE,
+        );
+        assert_eq!(
+            km(Vec::new()).resolve(&z),
             Bound::Pending,
-            "`z` starts the chord the mode binds"
+            "and once the control passes it, `z` starts the chord the mode binds"
         );
         let prefix = vec![(
             crossterm::event::KeyCode::Char('z'),
@@ -1222,8 +1232,6 @@ mod tests {
         let km = Keymap {
             mode: "review".into(),
             resolver,
-            text_focused: false,
-            multiline_focused: false,
             chord: prefix,
         };
         assert_eq!(
@@ -1254,69 +1262,6 @@ mod tests {
             ),
             Captured::Decline
         ));
-    }
-
-    /// **A focused text field takes a printable key ahead of the mode.**
-    /// The mode binds Space; while a field has the keyboard, Space is
-    /// typed into it (the fallback names the panel, and the router feeds
-    /// the field), and only a key that is not a character — Enter — is
-    /// still the mode's.
-    #[test]
-    fn a_focused_field_types_a_printable_key_the_mode_also_binds() {
-        use crate::input::keybindings::{Action, KeybindingResolver};
-        let mut config = crate::config::Config::default();
-        for (key, action) in [("space", "save"), ("enter", "save")] {
-            config.keybindings.push(crate::config::Keybinding {
-                key: key.to_string(),
-                modifiers: Vec::new(),
-                keys: Vec::new(),
-                chord: String::new(),
-                action: action.to_string(),
-                args: std::collections::HashMap::new(),
-                when: Some("mode:form".to_string()),
-            });
-        }
-        let resolver =
-            std::sync::Arc::new(std::sync::RwLock::new(KeybindingResolver::new(&config)));
-        let km = Keymap {
-            mode: "form".into(),
-            resolver,
-            text_focused: true,
-            multiline_focused: false,
-            chord: Vec::new(),
-        };
-        let space = fresh_ui::KeyPress::with(fresh_ui::KeyCode::Char(' '), Mods::NONE);
-        assert_eq!(km.action(space), Bound::None, "Space is the field's");
-        let shifted = fresh_ui::KeyPress::with(fresh_ui::KeyCode::Char('A'), Mods::SHIFT);
-        assert_eq!(
-            km.action(shifted),
-            Bound::None,
-            "a shifted letter is still typed"
-        );
-        let enter = fresh_ui::KeyPress::with(fresh_ui::KeyCode::Enter, Mods::NONE);
-        assert_eq!(
-            km.action(enter),
-            Bound::Run(Action::Save),
-            "Enter is the mode's"
-        );
-        let multiline = Keymap {
-            multiline_focused: true,
-            ..km.clone()
-        };
-        assert_eq!(
-            multiline.action(enter),
-            Bound::None,
-            "a multi-line field's Enter is a newline"
-        );
-        let km = Keymap {
-            text_focused: false,
-            ..km
-        };
-        assert_eq!(
-            km.action(space),
-            Bound::Run(Action::Save),
-            "with no field focused the mode binds Space"
-        );
     }
 
     /// **The button answers its own press, and it wins.** The panel's whole
