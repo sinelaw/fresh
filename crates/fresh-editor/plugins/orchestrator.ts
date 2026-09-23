@@ -9353,8 +9353,7 @@ function restoreDockAfterDialog(): void {
 }
 
 // =============================================================================
-// Repositories — what a workspace works on, apart from where it runs
-// (docs/internal/launch-dialog-redesign.md §3).
+// Repositories — what a workspace works on, apart from where it runs.
 //
 // A repository is a remote plus, per machine, the **main clone** new worktrees
 // are cut from. It lives in the editor's state store next to machines, one
@@ -12546,7 +12545,7 @@ function sshResolvedTarget(h: SshConfigHost): string {
 // One rule does most of the work: every control shares `FORM_LABEL_W` and the
 // panel is mounted `labelAlign: "right"`, so every `[` opens on one column and
 // a control without a label of its own indents into it. No boxes — the
-// alignment does the grouping. See docs/internal/orchestrator-ux-redesign.md §3.
+// alignment does the grouping.
 
 // The label column, in cells. Wide enough for the longest English label
 // ("New branch name"); a longer translation is trimmed to the column with `…`.
@@ -13326,7 +13325,7 @@ function formIsSubmittable(): boolean {
   }
 }
 
-// ── The launch form's layout (docs/internal/launch-dialog-redesign.md) ──────
+// ── The launch form's layout ──────────────────────────────────────────────────
 //
 // Sections top to bottom: the mode switch, PROMPT, AGENT, WHERE (new
 // workspace only), GIT (details open, git paths only), then the footer. The
