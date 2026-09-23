@@ -6030,12 +6030,9 @@ function openRenameWorkspaceDialog(id: number): void {
 
 // Shared mount path for the create / rename folder dialog.
 function mountFolderDialog(): void {
-  // Yield the dock's keyboard while the dialog owns it (mirrors the
-  // new-session form and the context-menu confirm).
-  if (openPanel && dockMode) {
-    dockBlurred = true;
-    editor.floatingPanelControl(openPanel.id(), "blur", 0);
-  }
+  // The host blurs the dock as the dialog mounts and records the control
+  // that opened it, so closing the dialog hands the keyboard back there.
+  // Blurring it here first would leave the host no opener to return to.
   const d0 = createFolderDialog!;
   const title = d0.renameSessionId !== null
     ? editor.t("dock.rename_workspace_dialog_title")
@@ -16910,7 +16907,7 @@ editor.on("widget_event", (e) => {
         if (e.widget_key === "ctx-rename") {
           // Same centered dialog UX as "New Folder" (was: a bottom
           // minibuffer prompt, inconsistent and label/value ran
-          // together). The dialog blurs the dock itself.
+          // together). The host blurs the dock as the dialog mounts.
           closeDockContextMenu();
           openRenameFolderDialog(target.id);
           return;
@@ -16945,7 +16942,7 @@ editor.on("widget_event", (e) => {
         return;
       }
       if (e.widget_key === "ctx-rename-session") {
-        // Same centered dialog as folder rename; it blurs the dock itself.
+        // Same centered dialog as folder rename; the host blurs the dock as it mounts.
         closeDockContextMenu();
         openRenameWorkspaceDialog(id);
         return;
@@ -17335,14 +17332,18 @@ editor.on("widget_event", (e) => {
       if (dockMode) {
         // A dropdown is a menu: focus leaving its list (Tab, a click
         // elsewhere) dismisses it, the way any menu goes away when you
-        // act elsewhere.
+        // act elsewhere. The host's re-focus — the dock getting the
+        // keyboard back as a dialog over it closes — is not focus leaving
+        // anything: a menu opened in the same breath (the context menu's
+        // Move… replacing itself with the Move dropdown) stays open.
+        const refocus = (e.payload as { previous?: string } | undefined)?.previous === "(re-focus)";
         if (
-          openDialog.projectMenuOpen && e.widget_key !== PROJECT_MENU_KEY
+          openDialog.projectMenuOpen && e.widget_key !== PROJECT_MENU_KEY && !refocus
         ) {
           openDialog.projectMenuOpen = false;
           openPanel?.update(buildDockSpec());
         }
-        if (openDialog.dockMenu?.kind === "move" && e.widget_key !== DOCK_MENU_KEY) {
+        if (openDialog.dockMenu?.kind === "move" && e.widget_key !== DOCK_MENU_KEY && !refocus) {
           openDialog.dockMenu = null;
           openPanel?.update(buildDockSpec());
         }
