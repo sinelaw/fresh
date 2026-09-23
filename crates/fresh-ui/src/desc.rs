@@ -493,6 +493,8 @@ pub struct ViewportProps {
     /// Appearance of the bar itself, named apart from the window's.
     pub bar_theme: Option<Rc<str>>,
     pub mode: ScrollMode,
+    /// Which way this window scrolls. See [`Node::scroll_axis`].
+    pub axis: crate::event::Axis,
 }
 
 /// Whether a gesture region absorbs pointer hits that land on it.
@@ -1874,6 +1876,26 @@ impl<M> Node<M> {
     /// Which end of this run survives a width it did not ask for.
     ///
     /// See [`Elide`]. A no-op on anything but a text run, and on a wrapped one.
+    /// Which way this window scrolls: the axis its offset counts along, its
+    /// affordance is drawn on, and its wheel and [`Anchor`](crate::behavior::Anchor)
+    /// commands move it in. Default [`Axis::Vertical`](crate::event::Axis).
+    ///
+    /// **The axis is the window's, not the command's.** `Anchor::reveal_key`
+    /// means "move the target's window so this is inside it", and which way
+    /// that is has exactly one right answer — the one the window scrolls. A
+    /// caller that had to say would be a caller that could say wrong, and
+    /// every command would need a second spelling.
+    ///
+    /// A horizontal window's affordance is not a bar. Its content is on the
+    /// rows a bar would need, so `scrollbar` emits [`Draw::Overflow`](crate::Draw)
+    /// caps over its first and last cell instead.
+    pub fn scroll_axis(mut self, a: crate::event::Axis) -> Self {
+        if let Desc::Viewport(p) = &mut self.desc {
+            p.axis = a;
+        }
+        self
+    }
+
     pub fn elide(mut self, e: Elide) -> Self {
         if let Desc::TextRun(t) = &mut self.desc {
             t.elide = e;

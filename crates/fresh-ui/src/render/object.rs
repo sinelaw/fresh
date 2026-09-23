@@ -160,6 +160,11 @@ pub struct ScrollInfo {
     /// ones it honoured, which is at most one fewer than fit. Zero for a
     /// window that pins nothing. See [`Node::pinned`](crate::Node::pinned).
     pub pinned: u16,
+    /// Which axis this window's offset counts along. Published with the
+    /// window because everything that *moves* the window has to agree with it
+    /// — an `Anchor` command says "put this inside", and which way that is is
+    /// the window's answer, not the caller's.
+    pub axis: crate::event::Axis,
 }
 
 /// What a constraint-dependent builder is told.
@@ -420,6 +425,8 @@ pub(crate) struct RenderData {
     /// Published with `window` too: the pinned items held above it.
     pub pinned: u16,
     pub scroll_max: Point,
+    /// Which axis the offset counts along. See [`ScrollInfo::axis`].
+    pub scroll_axis: crate::event::Axis,
     pub translate: bool,
 
     /// How many times this node has been measured, and how many of those were a

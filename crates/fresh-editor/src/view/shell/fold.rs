@@ -252,6 +252,7 @@ pub fn fold_band(
                     | Draw::Border(_)
                     | Draw::Lines(_)
                     | Draw::Scrollbar { .. }
+                    | Draw::Overflow { .. }
             ) {
                 sink.item(rect, clip, &item.theme);
             }
@@ -277,6 +278,21 @@ pub fn fold_band(
             // function of the rectangle, which is the point — the caller
             // never said how wide it is.
             Draw::Rule(g) => tile(buf, rect, g, style, clip),
+            // **The terminal's answer to "there is more content this way".**
+            // The library says which edge of which axis still has content
+            // behind it; the glyph is this backend's, the same `<` and `>` the
+            // tab strip's painter drew, in the cell the window reserved for
+            // them. A vertical window uses a bar instead and never emits
+            // these, but the arrows are the honest fallback if one ever does.
+            Draw::Overflow { axis, end } => {
+                let g = match (axis, end) {
+                    (fresh_ui::Axis::Horizontal, fresh_ui::End::Before) => "<",
+                    (fresh_ui::Axis::Horizontal, fresh_ui::End::After) => ">",
+                    (fresh_ui::Axis::Vertical, fresh_ui::End::Before) => "^",
+                    (fresh_ui::Axis::Vertical, fresh_ui::End::After) => "v",
+                };
+                tile(buf, rect, g, style, clip);
+            }
             Draw::Border(bs) => border(buf, item.rect, style, clip, *bs),
             Draw::Scrim(Scrim::Opaque) => fill(buf, frame, ' ', style, frame),
             // Dimming is a backend decision; the library only says "everything

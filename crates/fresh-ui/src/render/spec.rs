@@ -228,11 +228,48 @@ pub enum Draw {
         /// in one cell.
         marks: Rc<[Mark]>,
     },
+    /// There is more content past this edge of a window.
+    ///
+    /// **A draw kind for the reason [`Draw::Rule`] gives**: whether there is
+    /// more depends on the offset layout settled on, so nothing before paint
+    /// can say. A description that decided it would have to know the offset to
+    /// be built, and be built to produce the offset.
+    ///
+    /// It exists because a track does not always fit. A one-row horizontal
+    /// window — a tab strip — has its content *on* that row, so a
+    /// [`Draw::Scrollbar`] beside it has nowhere to go; what it can offer
+    /// instead is a cap on each edge that has content behind it. The item is
+    /// one cell, painted over the window's own first or last cell rather than
+    /// in a gutter, so the content's extent never depends on the offset
+    /// either.
+    ///
+    /// How it looks is the backend's: `‹`/`›`, a chevron, a gradient. The
+    /// library says only which edge, on which axis, has more behind it.
+    Overflow {
+        /// Which way the window scrolls. `Horizontal` caps sit at the left and
+        /// right edges, `Vertical` at the top and bottom.
+        axis: crate::event::Axis,
+        /// Which edge this cap is on: the one the content came from, or the
+        /// one it continues towards.
+        end: End,
+    },
     /// A region whose text the backend may let the user select. The library
     /// holds no selection model; this only says where selecting is meaningful.
     Selectable,
     /// Content the host owns and draws itself.
     Host(HostId),
+}
+
+/// Which edge of a window a [`Draw::Overflow`] cap is on.
+///
+/// Named for the content rather than for the screen, so one word serves both
+/// axes: `Before` is where the content already scrolled past — the left edge
+/// of a horizontal window, the top of a vertical one — and `After` is where it
+/// continues.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum End {
+    Before,
+    After,
 }
 
 /// One mark on a [`Draw::Scrollbar`]'s track.
