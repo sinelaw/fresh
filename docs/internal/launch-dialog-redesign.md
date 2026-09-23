@@ -476,6 +476,8 @@ or `Manage repositories…` in the Project dropdown.
 │                                                                               │
 │    FRESH ─────────────────────────────────────────────────────────────────    │
 │                                                                               │
+│                   [ New workspace here ]   [ Remove… ]                        │
+│                                                                               │
 │          Remote   git@github.com:sinelaw/fresh.git                            │
 │    Clone new to   [ ~/src/<name>                   ]                          │
 │                                                                               │
@@ -485,9 +487,10 @@ or `Manage repositories…` in the Project dropdown.
 │            Path   [ ~/repos/fresh                        ]  Browse…           │
 │                   ✓ git repo · origin matches · master · clean                │
 │                                                                               │
+│                   Changes save as you make them.                              │
 │    ───────────────────────────────────────────────────────────────────────    │
 │                                                                               │
-│     ⏎ New workspace here    Del Remove repository            [   Save   ]     │
+│                                                              [   Done   ]     │
 │                                                                               │
 └───────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -496,9 +499,14 @@ or `Manage repositories…` in the Project dropdown.
   remote and `Clone new to` path.
 - **MAIN CLONE** has one **Machine dropdown** and `+ Add machine…`, and the
   main clone **Path** for that machine with `Browse…`.
-- `⏎` on a repository opens New Workspace on it with the selected machine.
-  `Del` removes a repository from the list (files untouched). Clearing Path
-  and saving forgets that machine's main clone.
+- The selected repository's own actions sit under its name:
+  `New workspace here` (also `⏎` on a list row) opens New Workspace on it
+  with the selected machine; `Remove…` asks in place, then removes it from
+  the list (clones on disk untouched).
+- **Nothing waits on a Save.** `Clone new to` is written as it is typed; the
+  main clone Path is written once its check passes (a path still being typed,
+  missing, or another repository's is left unsaved and the saved one stands).
+  Clearing Path forgets that machine's main clone. The footer is one `Done`.
 
 The Machine dropdown shows each machine's state for this repository:
 
@@ -544,14 +552,14 @@ machine, and focus in Path**. The footer returns to New Workspace.
 │                                                                               │
 │    ───────────────────────────────────────────────────────────────────────    │
 │                                                                               │
-│                          Back to New Workspace     [   Use as main clone   ]  │
+│                                                [ Back to New Workspace ]      │
 │                                                                               │
 └───────────────────────────────────────────────────────────────────────────────┘
 ```
 
-- `Use as main clone` saves and returns; New Workspace then shows
+- A Path that checks out is saved as it settles, as in §4.11;
+  `Back to New Workspace` returns, and New Workspace then shows
   `main clone <path>`. The prompt and every other field are kept.
-- `Back to New Workspace` returns without saving.
 - `[ Clone… ]` fills Path with the `Clone new to` path and opens the clone
   confirmation (§4.15).
 
@@ -626,6 +634,7 @@ removed). When it's done, the path is a valid main clone and
 │                                                                               │
 │     URL or path   [ git@github.com:sinelaw/fresh.git█          ]              │
 │                   ✓ reachable · default branch master                         │
+│                   [ Browse for a local clone… ]                               │
 │                                                                               │
 │            Name   [ fresh                                      ]              │
 │    Clone new to   [ ~/src/<name>                               ]              │
@@ -645,8 +654,13 @@ removed). When it's done, the path is a valid main clone and
 ```
 
 - **Paste a URL:** checked with `git ls-remote`; the name comes from the URL.
-- **Paste a local path:** its `origin` becomes the remote, and the path fills
-  in the Local main clone.
+- **A local clone:** type its path, or `Browse for a local clone…` (this
+  machine's folders; `⏎` on a git folder picks it). A folder inside a clone
+  resolves to the clone's top level. Its `origin` is shown and, by default,
+  becomes the remote — `[v] Use its origin as the remote (…)` unticked keeps
+  the repository local only (as does a clone with no origin). The name comes
+  from the origin, else the folder, and the clone fills in the Local main
+  clone.
 - MAIN CLONE works as in §4.11–4.15: a Machine dropdown with
   `+ Add machine…`, a Path with `Browse…`, a check of that path only, and
   `Clone here…` with confirmation for a path that doesn't exist.
