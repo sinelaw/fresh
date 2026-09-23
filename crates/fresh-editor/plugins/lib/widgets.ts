@@ -1347,10 +1347,15 @@ export class FloatingWidgetPanel {
        * across frames, so a follow-up blur can land a tick late).
        * Default false: mounting focuses the panel. */
       startBlurred?: boolean;
-      /** The plugin mode (`defineMode`) whose bindings this panel's keys
-       * resolve against first — the panel's own keymap, ahead of the
-       * widget that holds focus. A dock declares its chords here rather
-       * than through the window's editor mode. */
+      /** The plugin mode (`defineMode`) whose bindings are this panel's
+       * keymap. **The focused control answers a key first** — a field
+       * types and moves its caret, an open list takes the arrows and Enter,
+       * a button takes Enter/Space, Esc closes a pop-up — and the mode's
+       * bindings get only what it leaves; then the panel's own defaults
+       * (Tab walks the controls). A binding declared `"shortcut"`
+       * (`["C-Enter", "submit", "shortcut"]`) is dialog-wide and runs
+       * ahead of any control. A dock declares its chords here rather than
+       * through the window's editor mode. */
       mode?: string;
       /** How the panel's form controls (`text` / `dropdown` / `toggle` /
        * `number` / `radio` with a `labelWidth`) align their labels in the shared
@@ -1519,11 +1524,13 @@ export function textInputChar(text: string): WidgetAction {
   return { kind: "textInputChar", text };
 }
 
-/** Smart-key dispatch — routes the keystroke to the right widget
- * action based on the focused widget's kind. Plugin's mode bindings
- * use this rather than picking the right action themselves: bind
- * Tab/Shift+Tab/Enter/Space/Backspace/Delete/Left/Right/Up/Down/
- * Home/End all to one handler that calls `panel.command(key("Tab"))`.
+/** Smart-key dispatch — hands the keystroke to the focused widget and
+ * then the panel's own defaults, as if it had been typed.
+ *
+ * A panel's keys already reach its focused control before the mode's
+ * bindings, so a binding never needs to forward a control's own key
+ * (Tab, Enter, the arrows, editing keys) back to it — leave those
+ * unbound. This is for a key the plugin synthesises for its own reasons.
  *
  * See `WidgetAction::Key` (Rust) for the full dispatch table. */
 export function key(name: string): WidgetAction {

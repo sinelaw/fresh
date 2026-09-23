@@ -655,7 +655,7 @@ impl Editor {
                 self.handle_widget_text_key(panel_key, &key);
             }
             WidgetAction::TextInputChar { text } => {
-                self.handle_widget_text_char(panel_key, &text);
+                let _ = self.handle_widget_text_char(panel_key, &text);
             }
             WidgetAction::Key { key } => match crate::input::keybindings::parse_key_seq(&key) {
                 Some(seq) => self.handle_widget_key(panel_key, &seq),
@@ -873,12 +873,29 @@ impl Editor {
         panel_key: &crate::widgets::PanelKey,
         key: &crate::input::keybindings::KeySeq,
     ) {
-        // Smart key dispatch — route to the right specialized
-        // handler based on focused widget kind. See WidgetAction::Key
-        // doc for the dispatch table.
+        // Smart key dispatch: the focused control first, then the panel's
+        // own defaults for what it passes.
+        if self.widget_control_key(panel_key, key)
+            != crate::widgets::kinds::KeyDisposition::Consumed
+        {
+            self.widget_panel_default_key(panel_key, key);
+        }
+    }
+
+    /// **The focused control's turn at a key** — the kind's own
+    /// `WidgetImpl::on_key`, with its effects applied, and nothing of the
+    /// panel's. Its answer decides whether the panel's mode and the panel's
+    /// defaults get the key after it (`Pass` / `PassAfter`) or not
+    /// (`Consumed`); see `Editor::dispatch_widget_panel_key`.
+    pub(super) fn widget_control_key(
+        &mut self,
+        panel_key: &crate::widgets::PanelKey,
+        key: &crate::input::keybindings::KeySeq,
+    ) -> crate::widgets::kinds::KeyDisposition {
+        use crate::widgets::kinds::KeyDisposition;
         let panel = match self.widget_registry.get(panel_key) {
             Some(p) => p,
-            None => return,
+            None => return KeyDisposition::Consumed,
         };
         let focus_key = panel.focus_key.clone();
         // Kind-owned key handling (`docs/internal/retained-mode-ui.md` "Where each surface lives"):
@@ -899,14 +916,14 @@ impl Editor {
                 // kind a byte. Everything else on that surface stays the
                 // kind's and stays logical.
                 if self.prose_vertical_key(panel_key, &widget, &focus_key, key) {
-                    return;
+                    return KeyDisposition::Consumed;
                 }
                 let mut fx = crate::widgets::kinds::KeyFx::default();
                 let viewport = self.widget_viewport(panel_key, &widget, &focus_key);
                 let disposition = match self.widget_registry.get_mut(panel_key) {
                     Some(panel_mut) => crate::widgets::kinds::behavior(&widget)
                         .on_key(&widget, &focus_key, panel_mut, viewport, key, &mut fx),
-                    None => return,
+                    None => return KeyDisposition::Consumed,
                 };
                 if fx.flash_scrollbar {
                     // Keyboard nav in the dock: flash its overlay
@@ -928,20 +945,25 @@ impl Editor {
                 if let Some(delta) = fx.focus_advance {
                     self.handle_widget_focus_advance(panel_key, delta);
                 }
-                if disposition == crate::widgets::kinds::KeyDisposition::Consumed {
-                    return;
-                }
+                return disposition;
             }
         }
-        // Re-fetch the focused widget for the main dispatch: the
-        // kind-owned handler above ran `&mut self` (it may have closed
-        // a popup), so we can't hold a borrow from before it. The spec
-        // is unchanged by a dismiss, so this resolves to the same
-        // widget.
+        KeyDisposition::Pass
+    }
+
+    /// **The panel's own defaults for a key its focused control passed** —
+    /// Tab walking the ring, picker-style arrows, Enter on a single-line
+    /// field. Runs after the control and after the panel's mode.
+    pub(super) fn widget_panel_default_key(
+        &mut self,
+        panel_key: &crate::widgets::PanelKey,
+        key: &crate::input::keybindings::KeySeq,
+    ) {
         let panel = match self.widget_registry.get(panel_key) {
             Some(p) => p,
             None => return,
         };
+        let focus_key = panel.focus_key.clone();
         let widget = if focus_key.is_empty() {
             None
         } else {
@@ -2320,27 +2342,38 @@ impl Editor {
         )
     }
 
-    /// Whether the panel's focused widget is an editable multi-line `Text`,
-    /// where a bare Enter inserts a newline.
-    pub(super) fn panel_focused_widget_is_multiline_text(
+    /// The keymap a panel's keys resolve against once its focused control
+    /// has passed them: the plugin mode its interior names.
+    ///
+    /// Per slot, because a mode reaches a panel three ways. A dock or a
+    /// floating panel names the mode it mounted with, or else the active
+    /// window's editor mode (how a plugin that mounts a centred form declares
+    /// one). A pane's panel resolves against its buffer's mode
+    /// (`setBufferMode`). A sidebar section takes its keys through
+    /// `widget_event` and never through a mode, so it has none. Read by the
+    /// description (the capture leg's shortcuts) and by
+    /// `dispatch_widget_panel_key` (everything else) — one answer for both.
+    pub(crate) fn panel_keymap(
         &self,
         panel_key: &crate::widgets::PanelKey,
-    ) -> bool {
-        let Some(panel) = self.widget_registry.get(panel_key) else {
-            return false;
+    ) -> Option<crate::view::shell::panel::Keymap> {
+        let mode = match self.slot_of_panel(panel_key) {
+            Some(slot @ (super::PanelSlot::Dock | super::PanelSlot::Floating)) => self
+                .panel(slot)?
+                .mode
+                .clone()
+                .or_else(|| self.active_window().editor_mode.clone())?,
+            Some(super::PanelSlot::Sidebar(_)) => return None,
+            None => {
+                let buffer = self.widget_registry.get(panel_key)?.buffer_id?;
+                self.buffer_mode(buffer)?.to_string()
+            }
         };
-        if panel.focus_key.is_empty() {
-            return false;
-        }
-        matches!(
-            crate::widgets::find_widget_by_key(&panel.spec, &panel.focus_key),
-            Some(fresh_core::api::WidgetSpec::Text {
-                read_only: false,
-                markdown: false,
-                rows,
-                ..
-            }) if *rows > 1
-        )
+        Some(crate::view::shell::panel::Keymap {
+            mode,
+            resolver: self.keybindings.clone(),
+            chord: self.active_window().chord_state.clone(),
+        })
     }
 
     /// Read the currently-selected text from the focused `Text`
@@ -2593,30 +2626,32 @@ impl Editor {
         &mut self,
         panel_key: &crate::widgets::PanelKey,
         text: &str,
-    ) {
+    ) -> crate::widgets::kinds::KeyDisposition {
+        use crate::widgets::kinds::KeyDisposition;
         if text.is_empty() {
-            return;
+            return KeyDisposition::Pass;
         }
         let Some(panel) = self.widget_registry.get(panel_key) else {
-            return;
+            return KeyDisposition::Pass;
         };
         let focus_key = panel.focus_key.clone();
         let Some(widget) = crate::widgets::find_widget_by_key(&panel.spec, &focus_key).cloned()
         else {
-            return;
+            return KeyDisposition::Pass;
         };
         let mut fx = crate::widgets::kinds::KeyFx::default();
         let disposition = match self.widget_registry.get_mut(panel_key) {
             Some(panel_mut) => crate::widgets::kinds::behavior(&widget)
                 .on_text(&widget, &focus_key, panel_mut, text, &mut fx),
-            None => return,
+            None => return KeyDisposition::Pass,
         };
-        if disposition != crate::widgets::kinds::KeyDisposition::Pass {
+        if disposition != KeyDisposition::Pass {
             self.rerender_widget_panel(panel_key);
         }
         for (event_type, payload) in fx.events {
             self.fire_widget_event(panel_key, focus_key.clone(), event_type, payload);
         }
+        disposition
     }
 
     /// The row budget auto-sized (`visible_rows: None`) lists/trees inside
@@ -4448,6 +4483,13 @@ mod tests {
         editor.apply_settled_shell_messages();
 
         editor.set_panel_focus_and_notify(&panel_key, "two".to_string());
+        // The tree hands a panel's Tab to the runtime (the focused control
+        // answers it first), which reads the key the entry point recorded —
+        // `handle_key` sets it before it dispatches.
+        editor.shell_key_event = Some(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Tab,
+            crossterm::event::KeyModifiers::NONE,
+        ));
         let tab = fresh_ui::Input::Key(fresh_ui::KeyPress::new(fresh_ui::KeyCode::Tab));
         editor.shell_dispatch(tab);
         assert_eq!(

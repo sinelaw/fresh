@@ -91,6 +91,21 @@ impl WidgetImpl for Text {
         let WidgetSpec::Text { rows, .. } = spec else {
             return Pass;
         };
+        // **A field that cannot be edited does not take the keys that edit.**
+        // A read-only box or a markdown document used to swallow Space,
+        // Backspace, Delete and undo as no-ops; now that the focused control
+        // answers a key before the panel's bindings do, a key it only ignores
+        // must go on to them (a tour's Space for "next step" over its prose).
+        let (is_markdown, is_read_only) = mode(spec);
+        let edits = matches!(
+            key.code(),
+            KeyCode::Backspace | KeyCode::Delete | KeyCode::Char(' ')
+        ) || super::ctrl_char(key, 'z')
+            || super::ctrl_char(key, 'y')
+            || (key.code() == KeyCode::Enter && !is_markdown);
+        if is_read_only && edits {
+            return Pass;
+        }
         match key.code() {
             KeyCode::Up | KeyCode::Down | KeyCode::PageUp | KeyCode::PageDown
                 if *rows <= 1 && bare =>
@@ -1242,5 +1257,91 @@ mod markdown_document_tests {
 
     fn document_text_of(lines: &[crate::markdown::StyledLine]) -> String {
         entry_of(lines).text
+    }
+}
+
+/// **What a focused `Text` does with a key** — the contract the panel's
+/// dispatch relies on now that the control answers before the panel's
+/// bindings: a key the field acts on is `Consumed`, and one it would only
+/// ignore is `Pass`, so it can mean something to the dialog.
+#[cfg(test)]
+mod key_contract_tests {
+    use super::super::{behavior, KeyDisposition, KeyFx};
+    use crate::widgets::WidgetPanelState;
+    use fresh_core::api::WidgetSpec;
+
+    fn field(rows: u32, read_only: bool, markdown: bool) -> WidgetSpec {
+        WidgetSpec::Text {
+            sel_start: -1,
+            sel_end: -1,
+            block_caret: false,
+            label_width: 0,
+            value: "abc".into(),
+            cursor_byte: 3,
+            focused: true,
+            label: String::new(),
+            placeholder: None,
+            rows,
+            field_width: 20,
+            max_visible_chars: 0,
+            full_width: false,
+            completions: Vec::new(),
+            completions_visible_rows: 0,
+            read_only,
+            markdown,
+            key: Some("t".into()),
+        }
+    }
+
+    fn key(spec: &WidgetSpec, panel: &mut WidgetPanelState, k: &str) -> KeyDisposition {
+        let mut fx = KeyFx::default();
+        let seq: crate::keys::KeySeq = k.parse().expect("test key name parses");
+        behavior(spec).on_key(spec, "t", panel, Default::default(), &seq, &mut fx)
+    }
+
+    #[test]
+    fn an_editable_field_takes_its_editing_keys() {
+        let spec = field(1, false, false);
+        let mut panel = WidgetPanelState::surface(spec.clone());
+        for k in ["Space", "Backspace", "Delete", "Left", "Home", "C-z"] {
+            assert_eq!(key(&spec, &mut panel, k), KeyDisposition::Consumed, "{k}");
+        }
+    }
+
+    #[test]
+    fn a_single_line_field_leaves_enter_and_the_vertical_arrows_to_the_dialog() {
+        let spec = field(1, false, false);
+        let mut panel = WidgetPanelState::surface(spec.clone());
+        for k in ["Enter", "Up", "Down", "Esc", "Tab"] {
+            assert_eq!(key(&spec, &mut panel, k), KeyDisposition::Pass, "{k}");
+        }
+    }
+
+    #[test]
+    fn a_text_area_takes_enter_and_the_arrows() {
+        let spec = field(4, false, false);
+        let mut panel = WidgetPanelState::surface(spec.clone());
+        for k in ["Enter", "Up", "Down", "PageDown"] {
+            assert_eq!(key(&spec, &mut panel, k), KeyDisposition::Consumed, "{k}");
+        }
+    }
+
+    #[test]
+    fn a_read_only_field_passes_the_keys_it_could_only_ignore() {
+        for spec in [field(4, true, false), field(4, false, true)] {
+            let mut panel = WidgetPanelState::surface(spec.clone());
+            for k in ["Space", "Backspace", "Delete", "C-z", "C-y"] {
+                assert_eq!(key(&spec, &mut panel, k), KeyDisposition::Pass, "{k}");
+            }
+            // Reading still moves: the caret keys are the reader's.
+            assert_eq!(key(&spec, &mut panel, "Down"), KeyDisposition::Consumed);
+        }
+        let plain = field(4, true, false);
+        let mut panel = WidgetPanelState::surface(plain.clone());
+        assert_eq!(key(&plain, &mut panel, "Enter"), KeyDisposition::Pass);
+        // A markdown document's Enter follows its link: it acts, so it takes it.
+        let md = field(4, false, true);
+        let mut panel = WidgetPanelState::surface(md.clone());
+        assert_eq!(key(&md, &mut panel, "Enter"), KeyDisposition::Consumed);
     }
 }

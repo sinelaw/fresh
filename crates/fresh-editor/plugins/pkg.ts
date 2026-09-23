@@ -2164,12 +2164,15 @@ const pkgTheme: Record<string, ThemeColor> = {
   statusUpdate: { fg: { rgb: [220, 180, 80] } },
 };
 
-// Define pkg-manager mode with arrow key navigation
+// Define pkg-manager mode with arrow key navigation. ↑/↓ step over the
+// packages, skipping section headers and spacers — stepping the list would
+// land on them — so they are declared dialog-wide shortcuts: they run ahead
+// of the focused list instead of after it.
 editor.defineMode(
   "pkg-manager",
   [
-    ["Up", "pkg_nav_up"],
-    ["Down", "pkg_nav_down"],
+    ["Up", "pkg_nav_up", "shortcut"],
+    ["Down", "pkg_nav_down", "shortcut"],
     ["Return", "pkg_activate"],
     ["Tab", "pkg_next_button"],
     ["S-Tab", "pkg_prev_button"],

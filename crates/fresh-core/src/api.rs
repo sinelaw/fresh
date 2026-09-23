@@ -4837,6 +4837,12 @@ pub enum PluginCommand {
         inherit_normal_bindings: bool,
         /// Name of the plugin that defined this mode (for attribution)
         plugin_name: Option<String>,
+        /// Keys (as in `bindings`) the plugin declared **dialog-wide
+        /// shortcuts**: on a widget panel they run ahead of the focused
+        /// control. Every other binding gets only the keys the focused
+        /// control does not use.
+        #[serde(default)]
+        shortcuts: Vec<String>,
     },
 
     /// Switch the current split to display a buffer
@@ -7872,6 +7878,7 @@ impl PluginApi {
             allow_text_input,
             inherit_normal_bindings: false,
             plugin_name: None,
+            shortcuts: Vec::new(),
         })
     }
 
@@ -8980,7 +8987,7 @@ mod tests {
                 false,
             ),
             PluginCommand::DefineMode {
-                name, bindings, read_only, allow_text_input, inherit_normal_bindings, plugin_name
+                name, bindings, read_only, allow_text_input, inherit_normal_bindings, plugin_name, ..
             }
                 if name == "m"
                     && bindings.len() == 1

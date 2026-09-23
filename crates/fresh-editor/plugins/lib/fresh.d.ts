@@ -4469,6 +4469,18 @@ interface EditorAPI {
 	setPromptSelectedIndex(index: number): boolean;
 	/**
 	* Define a buffer mode (takes bindings as array of [key, command] pairs)
+	* 
+	* On a widget panel whose keymap is this mode, **the focused control
+	* handles a key first** — a field types and moves its caret, an open
+	* list takes the arrows and Enter, a button takes Enter and Space, Esc
+	* closes a pop-up before the dialog — and a binding gets only the keys
+	* the control does not use. Bind commands ("submit", "close"), not the
+	* controls' own keys.
+	* 
+	* A binding whose third element is `"shortcut"` —
+	* `["C-Enter", "submit", "shortcut"]` — is a **dialog-wide shortcut**
+	* instead: it runs ahead of any control, wherever focus is. Keep that
+	* list short and made of chords no control uses.
 	*/
 	defineMode(name: string, bindingsArr: string[][], readOnly?: boolean, allowTextInput?: boolean, inheritNormalBindings?: boolean): boolean;
 	/**

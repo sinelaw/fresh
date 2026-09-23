@@ -6329,20 +6329,8 @@ impl Editor {
             label_align: Default::default(),
             avail_height: None,
             scrollbar_reveal: None,
-            // **The panel's keymap: its buffer's mode.** A pane-mounted
-            // panel's plugin declares its bindings on the buffer it mounted
-            // into (`setBufferMode`), and that is the mode its interior
-            // resolves a key against first — the same way the dock's
-            // resolves against the mode it mounted with.
-            keymap: self
-                .buffer_mode(buffer)
-                .map(|mode| crate::view::shell::panel::Keymap {
-                    mode: mode.to_string(),
-                    resolver: self.keybindings.clone(),
-                    text_focused: self.panel_focused_widget_is_text(&key),
-                    multiline_focused: self.panel_focused_widget_is_multiline_text(&key),
-                    chord: self.active_window().chord_state.clone(),
-                }),
+            // The panel's keymap: its buffer's mode (`Editor::panel_keymap`).
+            keymap: self.panel_keymap(&key),
             markdown: Some(self.markdown_ink()),
         })
     }
@@ -6451,25 +6439,9 @@ impl Editor {
                             .is_some_and(|until| self.time_source().now() < until)
                 },
             ),
-            // **The panel's keymap: the mode its plugin defined.** The one
-            // it declared at mount, or else the active window's editor mode,
-            // which is how a plugin that mounts a centred form declares one;
-            // a sidebar section takes its keys through `widget_event` and
-            // never through a mode, so it declares none.
-            keymap: match slot {
-                crate::app::PanelSlot::Dock | crate::app::PanelSlot::Floating => panel
-                    .mode
-                    .clone()
-                    .or_else(|| self.active_window().editor_mode.clone())
-                    .map(|mode| crate::view::shell::panel::Keymap {
-                        mode,
-                        resolver: self.keybindings.clone(),
-                        text_focused: self.panel_focused_widget_is_text(&key),
-                        multiline_focused: self.panel_focused_widget_is_multiline_text(&key),
-                        chord: self.active_window().chord_state.clone(),
-                    }),
-                crate::app::PanelSlot::Sidebar(_) => None,
-            },
+            // The panel's keymap: the mode its plugin defined
+            // (`Editor::panel_keymap`).
+            keymap: self.panel_keymap(&key),
             markdown: Some(self.markdown_ink()),
         })
     }

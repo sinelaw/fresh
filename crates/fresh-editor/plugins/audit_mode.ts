@@ -34,7 +34,6 @@ import {
   styledRow,
   text,
   textInputChar,
-  textInputKey,
   tree,
   treeNode,
 } from "./lib/widgets.ts";
@@ -6193,16 +6192,6 @@ function review_filter_text_input(args: { text: string }): void {
 // unqualified legacy dispatch, which other plugins also answer to.
 registerHandler("mode_text_input", review_filter_text_input);
 
-/** Editing keys (Backspace, arrows, …) and the tree-walking keys, both
- *  handed to the host's smart-key dispatch for the focused field. */
-function review_filter_key(name: string): void {
-    if (filesPanel === null) return;
-    filesPanel.command(name === "Backspace" || name === "Delete"
-        ? textInputKey(name)
-        : key(name));
-}
-registerHandler("review_filter_backspace", () => review_filter_key("Backspace"));
-registerHandler("review_filter_delete", () => review_filter_key("Delete"));
 /** ↑ / ↓ from the field step into the results: focus moves to the tree
  *  (which puts the panel back in command mode) and the key walks it. */
 function review_filter_step(name: "Up" | "Down"): void {
@@ -6213,18 +6202,15 @@ function review_filter_step(name: "Up" | "Down"): void {
 }
 registerHandler("review_filter_up", () => review_filter_step("Up"));
 registerHandler("review_filter_down", () => review_filter_step("Down"));
-registerHandler("review_filter_left", () => review_filter_key("Left"));
-registerHandler("review_filter_right", () => review_filter_key("Right"));
 
+// The filter field answers its own editing keys (Backspace, Delete, the
+// caret) before these; what it leaves — Enter, Esc, Tab and ↑/↓ — are the
+// filter's commands.
 editor.defineMode(REVIEW_FILTER_MODE, [
     ["Esc", "review_filter_cancel"],
     ["Enter", "review_filter_accept"],
-    ["Backspace", "review_filter_backspace"],
-    ["Delete", "review_filter_delete"],
     ["Up", "review_filter_up"],
     ["Down", "review_filter_down"],
-    ["Left", "review_filter_left"],
-    ["Right", "review_filter_right"],
     ["Tab", "review_filter_accept"],
 ], true, true, false);
 
@@ -8757,9 +8743,12 @@ editor.on("buffer_closed", (data) => {
 
 const REVIEW_MODE_BINDINGS: string[][] = [
     // Native cursor motion in the unified diff stream.
-    ["Up", "review_nav_up"], ["Down", "review_nav_down"],
+    // The comments panel steps one *comment* at a time (a note wraps over
+    // several list rows), so these run ahead of the focused list as
+    // declared dialog-wide shortcuts rather than after it.
+    ["Up", "review_nav_up", "shortcut"], ["Down", "review_nav_down", "shortcut"],
     ["k", "review_nav_up"], ["j", "review_nav_down"],
-    ["PageUp", "review_page_up"], ["PageDown", "review_page_down"],
+    ["PageUp", "review_page_up", "shortcut"], ["PageDown", "review_page_down", "shortcut"],
     // Home / End — start / end of line in the diff (the editor's normal
     // meaning), first / last row in a focused side panel. Mode bindings
     // replace globals, so these are bound explicitly.
