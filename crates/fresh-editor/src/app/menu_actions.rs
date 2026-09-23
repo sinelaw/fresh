@@ -182,10 +182,9 @@ impl Editor {
 
     /// The menu's hover REACTION: an open menu follows the pointer —
     /// bar hover switches the open menu, dropdown hover opens/closes
-    /// submenus and moves the highlight. Moved verbatim from the
-    /// central hover ladder; called from
-    /// `chrome::Menu::on_hover_change`. Returns true when menu state
-    /// changed (needs a re-render beyond the target diff).
+    /// submenus and moves the highlight. Moved verbatim from the central
+    /// hover ladder; called by the `UiFact::Hover` arm. Returns true when
+    /// menu state changed (needs a re-render beyond the target diff).
     pub(crate) fn menu_hover_reaction(&mut self, new_target: Option<&HoverTarget>) -> bool {
         let Some(active_menu_idx) = self.menu_state.active_menu else {
             return false;

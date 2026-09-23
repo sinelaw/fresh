@@ -843,6 +843,16 @@ becomes theme-file data. Nothing depends on either.
   `get_final_input`. `FileExplorerRenderer` went too — the type was a
   namespace around one predicate about paths, which now sits beside the row
   that asks it.
+- **The `ChromeComponent` registry is gone.** Its last cargo was two hover
+  reactions, dispatched through a trait whose `on_hover_change` had a `false`
+  default body — so a surface that was registered but had not written one took
+  the default in silence. The menu bar did exactly that: hovering a submenu
+  parent opened nothing while `menu_hover_reaction` sat with no callers at
+  all. The `UiFact::Hover` arm now calls both reactions by name (with `|`, not
+  `||`, so one answering "changed" cannot decide whether the other is offered
+  the move), and a reaction that is not run is a name that does not resolve.
+  `app::chrome`'s modules stay: they are where each surface's `Editor` methods
+  live, which was never the registry's doing.
 - The pointer's legacy walk (see *The one asymmetry*), whose members are now
   the terminal's own mouse and the multi-click detector; the markdown drag was
   its last grab and is the run's own capture.

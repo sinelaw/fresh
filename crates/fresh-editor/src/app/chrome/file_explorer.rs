@@ -4,7 +4,7 @@
 use crate::app::types::HoverTarget;
 use anyhow::Result as AnyhowResult;
 
-use super::{ChromeComponent, Editor};
+use super::Editor;
 
 /// Per-file ceiling on the blob `git diff` will expand, as a top-level `git`
 /// override.
@@ -19,38 +19,32 @@ use super::{ChromeComponent, Editor};
 /// The two runtimes cannot share a constant; keep them in sync.
 const BIG_FILE_ARGS: [&str; 2] = ["-c", "core.bigFileThreshold=1m"];
 
-pub(crate) struct FileExplorer;
-
-impl ChromeComponent for FileExplorer {
-    fn on_hover_change(
-        &self,
-        ed: &mut Editor,
+/// Behavior owned by this surface (moved from mouse_input.rs —
+/// the handlers its arms dispatch to).
+impl Editor {
+    /// The explorer's hover REACTION: a git-status indicator shows its
+    /// tooltip while the pointer is on it. Returns true when that changed
+    /// something beyond the target diff itself.
+    ///
+    /// Leaving an indicator dismisses its tooltip; entering one shows it.
+    /// Independent of any other surface's reaction — the central ladder this
+    /// replaced could skip the dismiss when a menu reaction returned early.
+    pub(crate) fn explorer_hover_reaction(
+        &mut self,
         old: Option<&HoverTarget>,
         new: Option<&HoverTarget>,
         col: u16,
         row: u16,
     ) -> bool {
-        if old == new {
-            return false;
-        }
-        // Leaving a status indicator dismisses its tooltip; entering
-        // one shows it. Independent of any other surface's reaction —
-        // the old central ladder could skip the dismiss when a menu
-        // reaction returned early.
         if matches!(old, Some(HoverTarget::FileExplorerStatusIndicator(_))) {
-            ed.dismiss_file_explorer_status_tooltip();
+            self.dismiss_file_explorer_status_tooltip();
         }
         if let Some(HoverTarget::FileExplorerStatusIndicator(path)) = new {
-            ed.show_file_explorer_status_tooltip(path.clone(), col, row);
+            self.show_file_explorer_status_tooltip(path.clone(), col, row);
             return true;
         }
         false
     }
-}
-
-/// Behavior owned by this component (moved from mouse_input.rs —
-/// the handlers its arms dispatch to).
-impl Editor {
     /// A left press on a tree row, by its index in the tree's display order.
     ///
     /// This is `handle_file_explorer_click` minus its geometry: the row is
