@@ -8,6 +8,7 @@ use crate::model::buffer::Buffer;
 use crate::model::cursor::Cursors;
 use crate::model::event::LeafId;
 use crate::state::{EditorState, ViewMode};
+#[cfg(test)]
 use crate::view::shell::splits::PaneChrome;
 use crate::view::split::SplitViewState;
 use crate::view::ui::view_pipeline::ViewLine;
@@ -29,10 +30,12 @@ pub(crate) struct ComposeLayout {
 }
 
 /// Rectangle partitioning for one split: tabs, content, vertical scrollbar,
-/// horizontal scrollbar — the model's answer, read for its content rect by
-/// the painter and whole by the parity tests in `view::shell::splits`, which
-/// pin the description to it.
-#[cfg_attr(not(test), allow(dead_code))]
+/// horizontal scrollbar.
+///
+/// **Tests only.** This is what the parity tests in `view::shell::splits`
+/// compare `pane_interior` against; the painter reads the frame's own
+/// `PaneRects` and has no use for it.
+#[cfg(test)]
 pub(crate) struct SplitLayout {
     pub tabs_rect: Rect,
     pub content_rect: Rect,
@@ -53,15 +56,23 @@ pub(super) struct ViewPreferences {
     pub highlight_current_line: bool,
 }
 
-/// Partition a split area into tabs / content / scrollbar rectangles.
+/// Partition a split area into tabs / content / scrollbar rectangles, by
+/// laying `pane_interior` out on its own at that area's size.
 ///
-/// **A read of the layout.** This was the arithmetic below — four rectangles
-/// derived by hand from three bools, with the horizontal bar's width the one
-/// part a reader would get wrong from the picture (it stops short of the
-/// vertical bar's column rather than running under it). It is
-/// `shell::splits::pane_interior` now, laid out at the pane's own size, so
-/// there is one statement of how a pane divides itself and the chrome that
-/// hangs off these rectangles can become nodes against the same description.
+/// **Tests only, and the reason is the whole finding.** This is a second
+/// layout: a throwaway `Ui`, the pane's interior laid out again, four
+/// rectangles read back by key. The painter used to call it once per pane per
+/// frame and paint into what it returned, with the frame's own answer
+/// demoted to a `debug_assert` beside it — so release builds painted into a
+/// discarded tree's rectangles and `geometry::stats` saw nothing. The painter
+/// reads `PaneRects` now, off the one layout that placed the pane.
+///
+/// What is left is the one job a second derivation is good for: standing
+/// beside [`reference_split_layout`], the arithmetic the description
+/// replaced, so `a_pane_divides_itself_the_way_the_painter_did` can pin one
+/// to the other. Being `cfg(test)` is what keeps it out of a frame — a
+/// counter would only report the extra layouts, and this cannot have any.
+#[cfg(test)]
 pub(crate) fn split_layout(id: LeafId, split_area: Rect, chrome: PaneChrome) -> SplitLayout {
     use crate::view::shell::splits::{
         content_key, hscroll_key, pane_interior, tabs_key, vscroll_key, PaneSlots,
