@@ -1451,27 +1451,6 @@
       "when": "settings"
     },
     {
-      "key": "Up",
-      "modifiers": [],
-      "action": "move_up",
-      "args": {},
-      "when": "settings"
-    },
-    {
-      "key": "Down",
-      "modifiers": [],
-      "action": "move_down",
-      "args": {},
-      "when": "settings"
-    },
-    {
-      "key": "Tab",
-      "modifiers": [],
-      "action": "settings_toggle_focus",
-      "args": {},
-      "when": "settings"
-    },
-    {
       "key": "Enter",
       "modifiers": [],
       "action": "settings_activate",
@@ -1489,20 +1468,6 @@
       "key": "?",
       "modifiers": [],
       "action": "settings_help",
-      "args": {},
-      "when": "settings"
-    },
-    {
-      "key": "Right",
-      "modifiers": [],
-      "action": "settings_increment",
-      "args": {},
-      "when": "settings"
-    },
-    {
-      "key": "Left",
-      "modifiers": [],
-      "action": "settings_decrement",
       "args": {},
       "when": "settings"
     },

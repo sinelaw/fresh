@@ -313,6 +313,7 @@ pub mod sessions;
 pub mod settings;
 pub mod settings_bracketed_paste_routing;
 pub mod settings_config_issue_806;
+pub mod settings_context_keybindings;
 pub mod settings_fallback_category;
 pub mod settings_lsp_entry_dialog_bugs;
 pub mod settings_paste;
