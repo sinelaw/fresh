@@ -142,6 +142,11 @@ pub struct WindowResources {
     /// Globally-unique `BufferId` allocator (see [`BufferIdAllocator`]).
     pub buffer_id_alloc: BufferIdAllocator,
 
+    /// Editor-wide `TerminalId` allocator shared by every window's
+    /// `TerminalManager`, so a bare terminal id never names terminals in
+    /// two windows (see [`crate::services::terminal::TerminalIdAllocator`]).
+    pub terminal_id_alloc: crate::services::terminal::TerminalIdAllocator,
+
     // NOTE: a window's `Authority` is **not** here — it lives directly on
     // `Window` (owned, non-shared). Keeping it out of these `Clone`-fanned
     // resources is what stops one session's backend/trust/env from leaking

@@ -2361,7 +2361,10 @@ impl Window {
             buffers: WindowBuffers::new(),
             buffer_metadata: HashMap::new(),
             pending_content_load: Vec::new(),
-            terminal_manager: crate::services::terminal::TerminalManager::new(id),
+            terminal_manager: crate::services::terminal::TerminalManager::new(
+                id,
+                resources.terminal_id_alloc.clone(),
+            ),
             terminal_buffers: HashMap::new(),
             terminal_backing_files: HashMap::new(),
             terminal_log_files: HashMap::new(),

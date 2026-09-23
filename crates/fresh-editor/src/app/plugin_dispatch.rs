@@ -6627,12 +6627,29 @@ impl Editor {
         }
     }
 
+    /// The window whose `TerminalManager` owns `terminal_id`. Terminal ids
+    /// are unique editor-wide, so at most one window matches; plugins hold
+    /// bare ids and may target a terminal in a background window.
+    fn window_owning_terminal(
+        &self,
+        terminal_id: crate::services::terminal::TerminalId,
+    ) -> Option<fresh_core::WindowId> {
+        self.windows
+            .iter()
+            .find(|(_, w)| w.terminal_manager.get(terminal_id).is_some())
+            .map(|(&id, _)| id)
+    }
+
     fn handle_send_terminal_input(
         &mut self,
         terminal_id: crate::services::terminal::TerminalId,
         data: String,
     ) {
-        if let Some(handle) = self.active_window().terminal_manager.get(terminal_id) {
+        let handle = self
+            .window_owning_terminal(terminal_id)
+            .and_then(|w| self.windows.get(&w))
+            .and_then(|w| w.terminal_manager.get(terminal_id));
+        if let Some(handle) = handle {
             handle.write(data.as_bytes());
             tracing::trace!(
                 "Plugin sent {} bytes to terminal {:?}",
@@ -6648,6 +6665,23 @@ impl Editor {
     }
 
     fn handle_close_terminal(&mut self, terminal_id: crate::services::terminal::TerminalId) {
+        let owner = self.window_owning_terminal(terminal_id);
+        if owner.is_some_and(|w| w != self.active_window) {
+            // A background window's terminal: `close_buffer` works on the
+            // active window, so stop the process in its owning window. The
+            // exit it causes is handled in that window too
+            // (`handle_terminal_exited`), leaving its tab as read-only
+            // scrollback.
+            if let Some(window) = owner.and_then(|w| self.windows.get_mut(&w)) {
+                window.terminal_manager.close(terminal_id);
+            }
+            tracing::info!(
+                "Plugin closed terminal {:?} in background window {:?}",
+                terminal_id,
+                owner
+            );
+            return;
+        }
         let buffer_to_close = self
             .active_window()
             .terminal_buffers

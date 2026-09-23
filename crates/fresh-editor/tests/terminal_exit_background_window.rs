@@ -1,14 +1,14 @@
 //! Regression: a terminal exiting in a *background* window must be torn down
 //! in *that* window — never in whichever window happens to be active.
 //!
-//! Terminal ids are per-window (`TerminalManager::new` starts `next_id` at 0
-//! for every `Window`), so the first terminal of window A and the first
-//! terminal of window B are both `TerminalId(0)`. The `TerminalExited`
-//! message is tagged with its owning window (`WindowTerminalId`), but
-//! `handle_terminal_exited` ignored the tag for everything except the plugin
-//! hook: it searched `active_window().terminal_buffers` for the id and called
-//! `active_window_mut().terminal_manager.close(id)`. So when B's agent exits
-//! while the user is looking at A:
+//! Terminal ids used to be per-window (every `TerminalManager` numbered from
+//! 0), so the first terminal of window A and the first terminal of window B
+//! were both `TerminalId(0)`. The `TerminalExited` message is tagged with its
+//! owning window (`WindowTerminalId`), but `handle_terminal_exited` ignored
+//! the tag for everything except the plugin hook: it searched
+//! `active_window().terminal_buffers` for the id and called
+//! `active_window_mut().terminal_manager.close(id)`. So when B's agent exited
+//! while the user was looking at A:
 //!   * A's live terminal buffer is flipped to read-only scrollback, removed
 //!     from `terminal_buffers`, and renamed "(exited)";
 //!   * `close()` sends `Shutdown` to A's writer thread, which KILLS A's shell
@@ -98,10 +98,10 @@ fn background_window_terminal_exit_does_not_kill_active_windows_terminal() {
     h.process_async_and_render().unwrap();
 
     assert_ne!(win_a, win_b);
-    assert_eq!(
+    assert_ne!(
         term_a, term_b,
-        "precondition: terminal ids are per-window, so both first terminals \
-         share an id — that collision is what the exit handler must not trip on"
+        "terminal ids are allocated editor-wide, so two windows' terminals \
+         never share an id"
     );
 
     // The user goes back to A; B keeps running in the background.

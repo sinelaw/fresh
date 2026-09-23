@@ -543,6 +543,11 @@ pub struct Editor {
     /// snapshot. Both routes produce the same monotonic id sequence.
     pub(crate) buffer_id_alloc: crate::app::window_resources::BufferIdAllocator,
 
+    /// Editor-wide terminal-id allocator, cloned into every window's
+    /// `TerminalManager` via `WindowResources` so ids are unique across
+    /// windows.
+    pub(crate) terminal_id_alloc: crate::services::terminal::TerminalIdAllocator,
+
     /// Configuration.
     ///
     /// Stored as `Arc<Config>` so that mutations go through `Arc::make_mut`
