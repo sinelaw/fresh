@@ -48,11 +48,16 @@ export interface CollectedSession {
   /** Unix timestamp of last activity. */
   mtime?: number;
   attached?: boolean;
-  /** A session id this row records for another tool, e.g. the Claude session in a tmux pane. */
+  /** A session id this row records for another tool, e.g. the Claude session in a tmux pane.
+   *  With `agent` set it is what Import resumes; empty means the agent's newest
+   *  session in the row's directory. */
   agentSessionId?: string;
   /** The agent's argv0 basename (`claude`, `codex`). Not an argv: how an agent
    *  resumes is known to the orchestrator's agent-resume registry, not here. */
   agent?: string;
+  /** A folder worth opening as a workspace even with no agent to rejoin
+   *  (an Orca worktree): Import opens the form on its `cwd`. */
+  openable?: boolean;
   /** How to attach, when only the scanner knows. Absent for transcripts. */
   attach?: LaunchSpec;
   evidence?: Evidence[];

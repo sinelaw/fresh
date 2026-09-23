@@ -1070,7 +1070,7 @@ fn tab_is_linear_one_stop_per_radio_group() {
                 saw_inactive_option = true;
             }
         }
-        if line.contains("[   Launch") {
+        if line.contains("[ Launch ]") {
             saw_create = true;
         }
     }
@@ -1092,46 +1092,36 @@ fn tab_is_linear_one_stop_per_radio_group() {
     assert!(saw_create, "Tab must reach the [ Launch ] button");
 }
 
-/// ←/→ changes the option *within* the "Machine:" dropdown (and swaps the
-/// connection section), while Tab leaves the option alone. This is the
-/// split the help line documents: Tab between fields, ←/→ within a group.
+/// ←/→ changes the option *within* the "Machine:" dropdown, while Tab
+/// leaves the option alone. This is the split the help line documents: Tab
+/// between fields, ←/→ within a group.
 #[test]
 fn arrows_switch_run_in_selector_option() {
     let (_temp, workspace) = set_up_workspace();
     let mut harness = open_form_on(&workspace);
 
-    // Shift+Tab from the initial Folder field focus lands on the Machine
-    // control (the stop before it).
-    harness
-        .send_key(KeyCode::BackTab, KeyModifiers::NONE)
-        .unwrap();
-    harness.tick_and_render().unwrap();
-    assert!(
-        focused_line(&harness.screen_to_string()).contains("▸ Machine:"),
-        "Shift+Tab should land focus on the Machine control. Screen:\n{}",
-        harness.screen_to_string(),
-    );
+    focus_stop(&mut harness, "▸ Machine:");
 
-    // → moves to the next option (`Other host…`, with no ~/.ssh/config and
-    // no saved machines) and the connection section fills with the SSH
-    // fields. Folder field stays — it is the one path field in every mode.
+    // → moves to the next option: with no saved machines that is the
+    // devcontainer. Folder field stays — it is the one path field in every
+    // mode.
     harness
         .send_key(KeyCode::Right, KeyModifiers::NONE)
         .unwrap();
     harness
-        .wait_until(|h| h.screen_to_string().contains("Target:"))
-        .unwrap();
-    assert!(
-        focused_line(&harness.screen_to_string()).contains("Other host"),
-        "→ should pick `Other host…`. Screen:\n{}",
-        harness.screen_to_string(),
-    );
+        .wait_until(|h| focused_line(&h.screen_to_string()).contains("Devcontainer"))
+        .unwrap_or_else(|_| {
+            panic!(
+                "→ should pick Devcontainer. Screen:\n{}",
+                harness.screen_to_string()
+            )
+        });
     harness.assert_screen_contains("Folder:");
 
-    // ← moves back to Local: the SSH fields go, Folder field stays.
+    // ← moves back to Local.
     harness.send_key(KeyCode::Left, KeyModifiers::NONE).unwrap();
     harness
-        .wait_until(|h| !h.screen_to_string().contains("Target:"))
+        .wait_until(|h| focused_line(&h.screen_to_string()).contains("[Local"))
         .unwrap();
     assert!(
         focused_line(&harness.screen_to_string()).contains("[Local"),
@@ -1895,6 +1885,23 @@ fn custom_agent_is_typable_when_running_in_the_current_workspace() {
         .unwrap();
 }
 
+/// Write `config` as the `~/.ssh/config` of the editor's resolved home.
+fn plant_ssh_config(data_home: &tempfile::TempDir, config: &str) {
+    let ssh = data_home.path().join("home").join(".ssh");
+    fs::create_dir_all(&ssh).unwrap();
+    fs::write(ssh.join("config"), config).unwrap();
+}
+
+/// Save an ssh machine before the editor starts (see the shared helper).
+fn plant_saved_ssh_machine(data_home: &tempfile::TempDir, id: &str, name: &str, target: &str) {
+    crate::common::launch_form::plant_saved_ssh_machine(
+        &data_home.path().join("data"),
+        id,
+        name,
+        target,
+    );
+}
+
 /// Open the New Workspace form on an editor whose resolved home holds
 /// `config` as its `~/.ssh/config`.
 fn form_with_planted_ssh_config(
@@ -1902,10 +1909,7 @@ fn form_with_planted_ssh_config(
     data_home: &tempfile::TempDir,
     config: &str,
 ) -> EditorTestHarness {
-    let ssh = data_home.path().join("home").join(".ssh");
-    fs::create_dir_all(&ssh).unwrap();
-    fs::write(ssh.join("config"), config).unwrap();
-
+    plant_ssh_config(data_home, config);
     let dir_context = fresh::config_io::DirectoryContext::for_testing(data_home.path());
     let mut harness = EditorTestHarness::create(
         160,
@@ -1921,16 +1925,14 @@ fn form_with_planted_ssh_config(
     harness
 }
 
-/// Step onto the first `~/.ssh/config` alias in the Machine control: the form
-/// opens on Folder field, Shift+Tab reaches Machine, → walks off Local.
-fn step_to_first_planted_host(harness: &mut EditorTestHarness) {
-    harness
-        .send_key(KeyCode::BackTab, KeyModifiers::NONE)
-        .unwrap();
-    harness.tick_and_render().unwrap();
+/// Step onto the first saved machine in the Machine control: → walks off
+/// Local onto it (saved machines come straight after Local).
+fn step_to_first_saved_machine(harness: &mut EditorTestHarness) {
+    focus_stop(harness, "▸ Machine:");
     harness
         .send_key(KeyCode::Right, KeyModifiers::NONE)
         .unwrap();
+    harness.tick_and_render().unwrap();
 }
 
 /// **A `~` path is a path.** Nothing in the plugin runs through a shell — the
@@ -1976,18 +1978,13 @@ fn a_tilde_path_expands_for_the_completion_list() {
         });
 }
 
-/// **The Machine control lists the editor's home, not the process's.**
-///
-/// `sshConfigHosts` used to read `$HOME` straight out of the environment,
-/// which is one value for the whole test binary: the form's options then
-/// depended on whoever ran it, and every test here could only assert the
-/// *empty* case — which is what a CI runner with no `~/.ssh/config` gives
-/// either way. The plugin asks the editor for the home it resolved, so a
-/// harness that redirects home redirects the picker with it.
-///
-/// This test plants a config in that home. It fails against an `$HOME` read.
+/// **A `~/.ssh/config` host is not a machine until it is added.** The
+/// Machines dialog is the one place a machine becomes usable; every picker
+/// lists only saved ones, so a host shows up the same way everywhere or not
+/// at all. The form's Machine control goes from Local straight to the
+/// devcontainer, and the `+ Add machine…` button under it is the way in.
 #[test]
-fn the_machine_control_reads_the_editors_own_home() {
+fn a_config_host_is_not_offered_until_it_is_added() {
     let (_temp, workspace) = set_up_workspace();
     let data_home = tempfile::tempdir().unwrap();
     let mut harness = form_with_planted_ssh_config(
@@ -1996,52 +1993,40 @@ fn the_machine_control_reads_the_editors_own_home() {
         "Host plantedbox\n  HostName 10.0.0.9\n  User deploy\n",
     );
 
-    // Shift+Tab lands on the Machine control; → walks off Local onto the
-    // first option after it, which is the planted alias rather than
-    // `Other host…`.
-    step_to_first_planted_host(&mut harness);
+    harness.assert_screen_contains("+ Add machine…");
+    focus_stop(&mut harness, "▸ Machine:");
+    harness
+        .send_key(KeyCode::Right, KeyModifiers::NONE)
+        .unwrap();
+    harness
+        .wait_until(|h| focused_line(&h.screen_to_string()).contains("Devcontainer"))
+        .unwrap_or_else(|_| {
+            panic!(
+                "the option after Local is the devcontainer, not the config host. Screen:\n{}",
+                harness.screen_to_string()
+            )
+        });
+    harness.assert_screen_not_contains("plantedbox");
+}
+
+/// **A saved machine is an option.** Planted the way `Add Machine` saves one.
+#[test]
+fn a_saved_machine_is_offered_with_what_it_resolves_to() {
+    let (_temp, workspace) = set_up_workspace();
+    let data_home = tempfile::tempdir().unwrap();
+    plant_saved_ssh_machine(&data_home, "m-planted", "plantedbox", "deploy@10.0.0.9");
+    let mut harness = form_with_planted_ssh_config(workspace, &data_home, "");
+
+    step_to_first_saved_machine(&mut harness);
     harness
         .wait_until(|h| focused_line(&h.screen_to_string()).contains("plantedbox"))
         .unwrap_or_else(|_| {
             panic!(
-                "the host from the editor's own `~/.ssh/config` should be an option. Screen:\n{}",
+                "the saved machine should be an option. Screen:\n{}",
                 harness.screen_to_string()
             )
         });
-    // And it resolves the entry, not just the alias.
     harness.assert_screen_contains("deploy@10.0.0.9");
-}
-
-/// **An IPv6 literal is all colons, so a bare `host:port` is ambiguous.**
-/// `sshResolvedTarget` joined the hostname and the port with a `:`, which for
-/// `::1` and `22` gives `::1:22` — and `parseSshTarget`, reading the port as
-/// whatever follows the last colon, then took the host to be `::1:` with port
-/// `22`, or for an unported `2001:db8::1` took `2001:db8:` with port `1`. Both
-/// reach `ssh` as a destination that cannot resolve, and the failure the
-/// dialog shows names a host the user never typed.
-///
-/// The resolved target brackets the literal, which is the form `ssh` itself
-/// takes and the form `parseSshTarget` can split unambiguously.
-#[test]
-fn an_ipv6_host_from_the_config_is_bracketed_so_its_port_survives() {
-    let (_temp, workspace) = set_up_workspace();
-    let data_home = tempfile::tempdir().unwrap();
-    let mut harness = form_with_planted_ssh_config(
-        workspace,
-        &data_home,
-        "Host v6box\n  HostName 2001:db8::1\n  User deploy\n  Port 2222\n",
-    );
-
-    step_to_first_planted_host(&mut harness);
-    harness
-        .wait_until(|h| focused_line(&h.screen_to_string()).contains("v6box"))
-        .unwrap_or_else(|_| {
-            panic!(
-                "the planted IPv6 host should be an option. Screen:\n{}",
-                harness.screen_to_string()
-            )
-        });
-    harness.assert_screen_contains("deploy@[2001:db8::1]:2222");
 }
 
 /// **Typing a repository path must arm the worktree toggle.** The form opens
@@ -2159,13 +2144,10 @@ fn a_tilde_repository_path_arms_the_worktree_toggle() {
 fn the_ssh_form_offers_a_worktree_too() {
     let (_temp, workspace) = set_up_workspace();
     let data_home = tempfile::tempdir().unwrap();
-    let mut harness = form_with_planted_ssh_config(
-        workspace,
-        &data_home,
-        "Host plantedbox\n  HostName 10.0.0.9\n  User deploy\n",
-    );
+    plant_saved_ssh_machine(&data_home, "m-planted", "plantedbox", "deploy@10.0.0.9");
+    let mut harness = form_with_planted_ssh_config(workspace, &data_home, "");
 
-    step_to_first_planted_host(&mut harness);
+    step_to_first_saved_machine(&mut harness);
     // The worktree choice lives in the Details fold.
     set_details(&mut harness, true);
     harness
@@ -2193,17 +2175,13 @@ fn the_ssh_form_offers_a_worktree_too() {
 fn an_unreachable_host_is_not_reported_as_a_missing_repository() {
     let (_temp, workspace) = set_up_workspace();
     let data_home = tempfile::tempdir().unwrap();
-    let mut harness = form_with_planted_ssh_config(
-        workspace,
-        &data_home,
-        "Host deadbox\n  HostName nowhere.invalid\n  User deploy\n",
-    );
+    plant_saved_ssh_machine(&data_home, "m-dead", "deadbox", "deploy@nowhere.invalid");
+    let mut harness = form_with_planted_ssh_config(workspace, &data_home, "");
 
-    step_to_first_planted_host(&mut harness);
-    // Machine → the remote path field, which is what the probe needs before
-    // it has anything to ask about.
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-    harness.tick_and_render().unwrap();
+    step_to_first_saved_machine(&mut harness);
+    // The remote path field, which is what the probe needs before it has
+    // anything to ask about.
+    focus_stop(&mut harness, "Folder:");
     harness.type_text("/srv/repo").unwrap();
 
     harness
@@ -2222,11 +2200,11 @@ fn an_unreachable_host_is_not_reported_as_a_missing_repository() {
     );
 }
 
-/// **A `~/.ssh/config` alias reaches ssh as the alias.**
+/// **A machine added from a `~/.ssh/config` host reaches ssh as the alias.**
 ///
-/// The Machine control lists the hosts the file names, which is an implicit
-/// promise that the user's entry for one of them works. It did not: the form
-/// resolved the alias itself to `user@hostname:port` and handed ssh *that*,
+/// `Add as machine` saves the alias as the target, which is an implicit
+/// promise that the user's entry for it keeps working. It once did not: the
+/// form resolved the alias itself to `user@hostname:port` and handed ssh *that*,
 /// and a resolved destination matches no `Host` block — so every directive
 /// beyond the three this plugin's own parser reads (`HostName`, `User`,
 /// `Port`) silently stopped applying. `IdentityFile` was the one that hurt:
@@ -2251,6 +2229,7 @@ fn a_config_alias_is_handed_to_ssh_as_the_alias() {
     let (_temp, workspace) = set_up_workspace();
     let data_home = tempfile::tempdir().unwrap();
     let _ssh = crate::common::dormant_ssh::alias_only_ssh_on_path();
+    plant_saved_ssh_machine(&data_home, "m-alias", "aliasbox", "aliasbox");
 
     let mut harness = form_with_planted_ssh_config(
         workspace,
@@ -2258,13 +2237,10 @@ fn a_config_alias_is_handed_to_ssh_as_the_alias() {
         "Host aliasbox\n  HostName 10.0.0.9\n  User deploy\n  Port 2222\n\
          \n  IdentityFile /keys/aliasbox\n",
     );
-    step_to_first_planted_host(&mut harness);
-    harness.tick_and_render().unwrap();
+    step_to_first_saved_machine(&mut harness);
 
-    // The remote probe only runs once there is a path to ask about; Tab walks
-    // from Machine to Remote path, which is the next control for an SSH host.
-    harness.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-    harness.tick_and_render().unwrap();
+    // The remote probe only runs once there is a path to ask about.
+    focus_stop(&mut harness, "Folder:");
     for ch in "/srv/aliasrepo".chars() {
         harness
             .send_key(KeyCode::Char(ch), KeyModifiers::NONE)

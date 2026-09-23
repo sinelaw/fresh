@@ -71,8 +71,8 @@ struct World {
 }
 
 struct Setup {
-    /// A `~/.ssh/config` host `gpu` whose commands run in a local folder,
-    /// with a clone of the project at `~/src/api` there.
+    /// A `~/.ssh/config` host `gpu`, added as a machine, whose commands run
+    /// in a local folder, with a clone of the project at `~/src/api` there.
     ssh_host: bool,
     /// Files to plant in the data dir before Fresh starts (existing users).
     seed: Vec<(&'static str, String)>,
@@ -125,6 +125,9 @@ fn world(setup: Setup) -> World {
     };
 
     let data_dir = dir_context.data_dir.clone();
+    if setup.ssh_host {
+        crate::common::launch_form::plant_saved_ssh_machine(&data_dir, "gpu", "gpu", "gpu");
+    }
     for (rel, body) in &setup.seed {
         let p = data_dir.join(rel);
         fs::create_dir_all(p.parent().unwrap()).unwrap();
@@ -364,7 +367,7 @@ fn plain_folder_project_lists_its_path_and_opens_in_place() {
     if !pty_available() {
         return;
     }
-    press(&mut w.h, "[   Launch");
+    press(&mut w.h, "[ Launch ]");
     launched(&mut w.h);
 }
 
@@ -383,7 +386,7 @@ fn launch_asks_where_the_project_is_and_clones_it() {
     choose_terminal_agent(&mut w.h);
     wait_for(&mut w.h, "isn't on Local yet — Launch will ask");
 
-    press(&mut w.h, "[   Launch");
+    press(&mut w.h, "[ Launch ]");
     wait_for(&mut w.h, "Where is it?");
     let s = screen(&w.h);
     assert!(s.contains("(•) Clone it"), "{s}");
@@ -428,7 +431,7 @@ fn launch_asks_and_uses_a_folder_that_is_already_there() {
     press(&mut w.h, "[ New workspace here");
     wait_for(&mut w.h, FORM_TITLE);
     choose_terminal_agent(&mut w.h);
-    press(&mut w.h, "[   Launch");
+    press(&mut w.h, "[ Launch ]");
     wait_for(&mut w.h, "Where is it?");
     stop(&mut w.h, "Where:");
     key(&mut w.h, KeyCode::Right);
@@ -446,7 +449,7 @@ fn launch_asks_and_uses_a_folder_that_is_already_there() {
     if !pty_available() {
         return;
     }
-    press(&mut w.h, "[   Launch");
+    press(&mut w.h, "[ Launch ]");
     wait_for(&mut w.h, "Where is it?");
     stop(&mut w.h, "Where:");
     key(&mut w.h, KeyCode::Right);
@@ -550,24 +553,6 @@ fn a_registry_from_an_earlier_build_still_loads() {
     key(&mut w.h, KeyCode::Enter);
     wait_for(&mut w.h, "Project: [legacy");
     wait_for(&mut w.h, "at ~/code/app");
-}
-
-/// A host typed by hand has no name to remember a folder under: picking a
-/// project with one says so instead of launching.
-#[test]
-fn a_typed_host_cannot_hold_a_project() {
-    let mut w = world(Setup::default());
-    add_by_url(&mut w);
-    press(&mut w.h, "[ New workspace here");
-    wait_for(&mut w.h, FORM_TITLE);
-    choose_terminal_agent(&mut w.h);
-    stop(&mut w.h, "Machine:");
-    key(&mut w.h, KeyCode::Enter);
-    wait_for(&mut w.h, "Other host…");
-    // Local, then Other host… (no ssh config hosts here).
-    key(&mut w.h, KeyCode::Down);
-    key(&mut w.h, KeyCode::Enter);
-    wait_for(&mut w.h, "A project needs a saved machine");
 }
 
 /// A remote project's folder is usually written `~/…`; the remote probe has

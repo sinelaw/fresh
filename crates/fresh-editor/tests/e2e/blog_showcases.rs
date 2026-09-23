@@ -3331,7 +3331,7 @@ fn blog_showcase_fresh_0_4_0_ssh_session() {
         "fresh-0.4.0/ssh-session",
         "New SSH Session",
         "Start a remote SSH session from the Orchestrator's New Workspace dialog: \
-         pick the SSH backend and point it at a host. Fresh attaches its \
+         add the host as a machine and launch on it. Fresh attaches its \
          filesystem, terminal, and LSP over the connection, so you can open \
          remote files in buffers — then hop back to a local session through \
          the dock.",
@@ -3362,30 +3362,26 @@ fn blog_showcase_fresh_0_4_0_ssh_session() {
     snap(&mut h, &mut s, Some("Enter"), 110);
     hold(&mut h, &mut s, 4, 75);
 
-    // --- Switch the Machine control to `Other host…`: Tab down onto it, then
-    //     → to the next option (no ~/.ssh/config and no saved machines on the
-    //     demo box). ------------------------------------------------------------
+    // --- Add the demo host as a machine: a remote workspace runs only on a
+    //     saved machine, and `+ Add machine…` under the Machine control opens
+    //     Add Machine over the form. -------------------------------------------
     while !h
         .screen_to_string()
         .lines()
-        .any(|l| l.contains('▸') && l.contains("Machine:"))
+        .any(|l| l.contains("▸ [ + Add machine"))
     {
         h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
         h.render().unwrap();
         snap(&mut h, &mut s, Some("Tab"), 45);
     }
-    h.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("Target:"))
+    h.send_key(KeyCode::Enter, KeyModifiers::NONE).unwrap();
+    h.wait_until(|h| h.screen_to_string().contains("┌ Add Machine"))
         .unwrap();
-    snap(&mut h, &mut s, Some("→"), 90);
+    snap(&mut h, &mut s, Some("Enter"), 90);
     hold(&mut h, &mut s, 2, 55);
 
-    // Tab from the Machine control into the first SSH field (Target).
-    h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-    h.render().unwrap();
-    snap(&mut h, &mut s, Some("Tab"), 65);
-
-    // --- Target: the fake hostname + the throwaway sshd's port. -------------
+    // Host (focus starts here; the machine is named by it): the fake
+    // hostname + the throwaway sshd's port.
     let host_value = format!("{}:{}", sup::DEMO_HOST, server.port);
     for ch in host_value.chars() {
         h.send_key(KeyCode::Char(ch), KeyModifiers::NONE).unwrap();
@@ -3403,6 +3399,9 @@ fn blog_showcase_fresh_0_4_0_ssh_session() {
     h.type_text(&server.identity.to_string_lossy()).unwrap();
     h.render().unwrap();
     snap(&mut h, &mut s, None, 60);
+    // Past Browse…, beside it.
+    h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
+    h.render().unwrap();
 
     // SSH options: a throwaway known_hosts so the demo leaves no trace in the
     // user's ~/.ssh (and to show the free-form options field).
@@ -3417,20 +3416,29 @@ fn blog_showcase_fresh_0_4_0_ssh_session() {
     h.render().unwrap();
     snap(&mut h, &mut s, None, 60);
 
-    // Folder: where the session is rooted on the remote.
+    // Default path: where a workspace on this machine is rooted.
     h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
     h.render().unwrap();
     snap(&mut h, &mut s, Some("Tab"), 45);
     h.type_text(&server.work.to_string_lossy()).unwrap();
     h.render().unwrap();
     snap(&mut h, &mut s, None, 60);
+    hold(&mut h, &mut s, 2, 60);
 
+    // Save: back to the form, on the new machine.
+    h.send_key(KeyCode::Enter, KeyModifiers::CONTROL).unwrap();
+    h.wait_until(|h| {
+        let screen = h.screen_to_string();
+        screen.contains(FORM_TITLE) && screen.contains("[demo-box")
+    })
+    .unwrap();
+    snap(&mut h, &mut s, Some("Ctrl+Enter"), 90);
     hold(&mut h, &mut s, 2, 60);
 
     // --- Submit: click "Launch" (focus follows into the remote). -------------
     let (create_col, create_row) = h
-        .find_text_on_screen("[   Launch")
-        .map(|(c, r)| (c + 4, r))
+        .find_text_on_screen("[ Launch ]")
+        .map(|(c, r)| (c + 3, r))
         .expect("the form should offer a 'Launch' button");
     snap_mouse(&mut h, &mut s, None, (create_col, create_row), 80);
     h.mouse_click(create_col, create_row).unwrap();

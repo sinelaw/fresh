@@ -467,36 +467,15 @@ interface NewSessionForm {
   // the connection fields and the submit path. Only meaningful when
   // `target === "new"`.
   backend: FormBackend;
-  // --- SSH backend fields (rendered only when backend === "ssh") ---
-  // Host as `host`, `user@host[:port]`, or a pasted `ssh://…` (user optional);
-  // remote path to root the session at; optional identity file; and free-form
-  // extra ssh arguments (e.g. `-J jump`, `-o ProxyCommand=…`).
-  sshHost: { value: string; cursor: number };
-  // The hosts `~/.ssh/config` names, read once when the form opens (design
-  // §4): the Machine control lists them and `sshPick` indexes them, with
-  // `sshHosts.length` standing for the hand-typed `Other host…`.
-  sshHosts: SshConfigHost[];
-  sshPick: number;
-  // A saved machine chosen in the Machine control (design §5.1), or null:
-  // then `backend` and the host fields say where. `machinePick` indexes
-  // `machineOptions()`.
+  // The saved machine chosen in the Machine control (design §5.1), or null
+  // for Local and the devcontainer. A remote workspace only ever runs on a
+  // saved machine: the Machines dialog is where one is added.
+  // `machinePick` indexes `machineOptions()`.
   machineId: string | null;
   machinePick: number;
-  // `Remember this machine` (§5.2): save a hand-typed host or cluster to the
-  // registry on submit, under `rememberAs` (blank = a name from the target).
-  remember: boolean;
-  rememberAs: { value: string; cursor: number };
+  // Where on the saved machine the workspace is rooted (blank = the
+  // machine's default path), for an ssh and a Kubernetes machine.
   sshPath: { value: string; cursor: number };
-  sshIdentity: { value: string; cursor: number };
-  sshOptions: { value: string; cursor: number };
-  // --- Kubernetes backend fields (rendered only when backend ===
-  // "kubernetes") ---. `k8sTarget` names a target from `.fresh/k8s.json`;
-  // when empty, the explicit context/namespace/pod/workspace fields are used
-  // to attach directly (no config needed).
-  k8sTarget: { value: string; cursor: number };
-  k8sContext: { value: string; cursor: number };
-  k8sNamespace: { value: string; cursor: number };
-  k8sPod: { value: string; cursor: number };
   k8sWorkspace: { value: string; cursor: number };
   // Project Path: the directory the session is rooted at. When
   // `createWorktree` is true (default for git paths) this is
@@ -831,7 +810,7 @@ interface OpenDialogState {
   // non-empty filter keeps the row on screen regardless — the row says
   // what the list is filtered by, so it cannot go while a filter applies.
   searchOpen: boolean;
-  // Dock-only: a transient toolbar dropdown (the header's `⋯` menu or a
+  // Dock-only: a transient toolbar dropdown (the header's Menu or a
   // session's "Move to folder…" menu), or null when none is open. A
   // `list` the keyboard drives itself; the plugin hears `select` and
   // `activate` on `DOCK_MENU_KEY`, and the dock mode's Esc closes it.
@@ -852,7 +831,8 @@ interface OpenDialogState {
 // A transient dock toolbar dropdown. `index` is the keyboard cursor into
 // the menu's option list. `move` also carries the session being filed.
 type DockDropdown =
-  | { kind: "main"; index: number }
+  // The Menu, a panel of its own (`mainMenuPanel`).
+  | { kind: "main" }
   | { kind: "move"; sessionId: number; index: number };
 let openDialog: OpenDialogState | null = null;
 let openPanel: FloatingWidgetPanel | null = null;
@@ -905,10 +885,6 @@ let dockMenuState: DockMenuState | null = null;
 // The floor of the manifest's width rule (`orchestrator.manifest.json`).
 // The dock's actual width is the host's; `dockWidth()` reads it back.
 const DOCK_MIN_WIDTH_COLS = 24;
-// Everything that is a *setting* of the dock (density, what to show, the
-// project scope), plus folder creation and hiding it, behind one glyph.
-// See docs/internal/orchestrator-ux-redesign.md §2.4.
-const DOCK_MORE_GLYPH = "⋯";
 // `×` (U+00D7), the multiplication sign the file explorer's close button and
 // the host's native modal `[×]` use — not the ASCII letter — so all three
 // close affordances read identically.
@@ -5166,7 +5142,7 @@ function restoreDockBehindPicker(): boolean {
   editor.setEditorMode(null);
   refreshOpenDialog();
   editor.floatingPanelControl(openPanel.id(), "focus", 0);
-  openPanel.setFocusKey("sessions");
+  focusDockControl("sessions");
   return true;
 }
 
@@ -5261,7 +5237,7 @@ function openProjectMenu(): void {
   const keys = projectMenuKeys();
   const applied = openDialog.projectFilter;
   const idx = applied === null ? 0 : Math.max(0, keys.indexOf(applied));
-  // One dropdown at a time: the scope list replaces the `⋯` menu it may
+  // One dropdown at a time: the scope list replaces the Menu it may
   // have been picked from.
   openDialog.dockMenu = null;
   openDialog.projectMenuOpen = true;
@@ -5304,6 +5280,17 @@ function acceptProjectMenu(index?: number): void {
 // keyboard cursor, and any programmatic pick.
 function pickProject(optionKey: string): void {
   if (!openDialog) return;
+  applyProjectFilter(optionKey);
+  closeProjectMenu();
+  if (openPanel && openDialog.filteredIds.length > 0) {
+    openPanel.setSelectedIndex("sessions", openDialog.selectedIndex);
+  }
+}
+
+// Set the dock's project filter (empty = "All projects") and re-filter
+// the session list, leaving focus where it is.
+function applyProjectFilter(optionKey: string): void {
+  if (!openDialog) return;
   openDialog.projectFilter = optionKey === "" ? null : optionKey;
   lastDockProjectFilter = openDialog.projectFilter;
   // Re-filter to the chosen project and keep the active session selected
@@ -5313,11 +5300,7 @@ function pickProject(optionKey: string): void {
   openDialog.filteredIds = next;
   const activeIdx = next.indexOf(activeId);
   openDialog.selectedIndex = activeIdx >= 0 ? activeIdx : 0;
-  closeProjectMenu();
   refreshOpenDialog();
-  if (openPanel && next.length > 0) {
-    openPanel.setSelectedIndex("sessions", openDialog.selectedIndex);
-  }
 }
 
 // The dock's attention line (§2.3): how many workspaces need the user
@@ -5354,26 +5337,21 @@ function dockAttentionRow(att: { blocked: number; done: number }): WidgetSpec {
 // explorer's; the keyboard has Toggle Dock). The accelerator that focuses
 // the dock supplies the mnemonic: its letter in the title is underlined
 // when the binding really is a single letter that appears in the title.
+// The title strip is the Menu's button: `Orchestrator  Menu ▾`, padded to the
+// dock's width so a press anywhere on it drops the Menu, with the `×` that
+// hides the dock at its end.
 function dockTitleRow(): WidgetSpec {
-  const title = editor.t("dock.title");
   const base = { fg: "ui.menu_fg", bg: "ui.menu_bg" };
-  const accel = editor.getKeybindingLabel("toggle_dock_focus", "normal");
-  const m = accel ? accel.match(/([A-Za-z])\s*$/) : null;
-  const mnem = m ? m[1].toLowerCase() : "";
-  const idx = mnem ? title.toLowerCase().indexOf(mnem) : -1;
-  const segments: Entry[] = [];
-  if (idx >= 0) {
-    if (idx > 0) segments.push({ text: title.slice(0, idx), style: base });
-    segments.push({ text: title.slice(idx, idx + 1), style: { ...base, underline: true, bold: true } });
-    segments.push({ text: title.slice(idx + 1), style: base });
-  } else {
-    segments.push({ text: title, style: { ...base, bold: true } });
-  }
-  // The strip's background rides on the first inline piece's entry style:
-  // a Row's inline collapse keeps the leading child's style for the merged
-  // line, so `base` tints the title, the spacer and the button alike.
+  const text = `${editor.t("dock.title")}  ${editor.t("dock.menu_button")}`;
+  // The `×` and the gap before it take the last three columns.
+  const width = Math.max(editor.stringWidth(text), dockWidth() - 3);
   return row(
-    raw([styledRow(segments as Parameters<typeof styledRow>[0], { style: base })]),
+    button(text + " ".repeat(Math.max(0, width - editor.stringWidth(text))), {
+      key: "dock-menu",
+      bare: true,
+      style: { ...base, bold: true },
+      hoverStyle: { ...base, bold: true, fg: "ui.help_key_fg" },
+    }),
     flexSpacer(),
     button(DOCK_CLOSE_GLYPH, {
       key: "dock-close",
@@ -5424,10 +5402,10 @@ function buildDockSpec(): WidgetSpec {
     ? dockTree.keys.indexOf(openDialog.dockSelKey)
     : -1;
 
-  // The action row: `[ + New ]` on the left, `/ search` and `⋯` on the
+  // The action row: `[ + New ]` on the left, `/ search` and `Menu ▾` on the
   // right. Four header controls collapse to two: `+ New` goes straight to
-  // the dialog (folder creation moved into `⋯`, where the rare thing costs
-  // the extra click), and every *setting* lives behind `⋯`.
+  // the dialog (folder creation moved into `Menu ▾`, where the rare thing costs
+  // the extra click), and every *setting* lives behind `Menu ▾`.
   const dockCols = dockContentCols(dockWidth());
   // Search on demand: the filter row appears when asked for, or while a
   // filter applies (the row says what the list is filtered by).
@@ -5533,7 +5511,8 @@ function buildDockSpec(): WidgetSpec {
       button(editor.t("dock.new"), { intent: "primary", key: "new-session" }),
       flexSpacer(),
       // `/ search`: the key and the word. Mouse-only — the keyboard has
-      // `/` — so the Tab ring stays `+ New`, `⋯`, the field, the list.
+      // `/` — so the Tab ring stays the title (the Menu), `+ New`, the field,
+      // the list.
       button(editor.t("dock.search_btn"), {
         key: "search-toggle",
         bare: true,
@@ -5541,16 +5520,9 @@ function buildDockSpec(): WidgetSpec {
         style: { fg: "ui.menu_disabled_fg" },
         hoverStyle: { fg: "ui.help_key_fg" },
       }),
-      spacer(2),
-      button(DOCK_MORE_GLYPH, {
-        key: "dock-menu",
-        bare: true,
-        hoverStyle: { fg: "ui.help_key_fg" },
-      }),
     ),
-    // The `⋯` menu and the project (scope) dropdown float just under the
-    // action row.
-    ...(openDialog.dockMenu?.kind === "main" ? [dockMainMenu()] : []),
+    // The project (scope) dropdown floats just under the action row. The
+    // Menu is a panel of its own (see `openMainMenu`).
     ...(openDialog.projectMenuOpen ? [dockProjectMenu()] : []),
     ...searchRow,
     ...attentionRow,
@@ -5620,7 +5592,7 @@ function dockTreeExpandedKeys(t: DockTree): string[] {
   return Array.from(loadExpanded());
 }
 
-// Dock toolbar dropdowns — the header's `⋯` menu and a session's "Move to
+// Dock toolbar dropdowns — the header's Menu and a session's "Move to
 // folder…" menu — reuse the project dropdown's mechanics: an overlaid `list`
 // keyed `DOCK_MENU_KEY` whose ↑/↓ and Enter are the list's own. The `●` marks
 // the applied choice; the list's selection is the cursor.
@@ -5631,25 +5603,53 @@ interface MenuOption {
   marked?: boolean;
 }
 
-// Options for the header's `⋯` menu: the rare creation (a folder), the
-// machines and import dialogs, then the dock's settings — density, what to show (the `●`
-// marks what is on), the project scope — and hiding the dock.
-function dockMainOptions(): MenuOption[] {
+// The header's Menu, as groups: actions on the left (they open something),
+// the dock's settings on the right (they flip in place, marked as the
+// controls they are: `(•)` for the one view, `[✓]` for each switch), and
+// hiding the dock on its own below.
+interface DockMenuGroup {
+  heading: string;
+  side: "left" | "right";
+  opts: MenuOption[];
+}
+
+function dockMainGroups(): DockMenuGroup[] {
   if (!openDialog) return [];
   const projWord = openDialog.projectFilter === null
-    ? editor.t("list.scope_all")
+    ? editor.t("dock.all_projects")
     : editor.pathBasename(openDialog.projectFilter);
-  const hideKey = editor.getKeybindingLabel("toggle_dock_focus", "normal") ?? "";
+  const radio = (on: boolean): string => (on ? "(•) " : "( ) ");
+  const check = (on: boolean): string => (on ? "[✓] " : "[ ] ");
   return [
-    { key: "main:folder", label: editor.t("dock.new_menu_folder") },
-    { key: "main:machines", label: editor.t("dock.menu_machines") },
-    { key: "main:discover", label: editor.t("dock.menu_discover") },
-    { key: "main:view:compact", label: editor.t("dock.menu_view_compact"), marked: dockView === "compact" },
-    { key: "main:view:card", label: editor.t("dock.menu_view_card"), marked: dockView === "card" },
-    { key: "main:empty", label: editor.t("dock.show_empty"), marked: !openDialog.hideTrivial },
-    { key: "main:worktrees", label: editor.t("dock.all_worktrees"), marked: openDialog.showWorktrees },
-    { key: "main:scope", label: editor.t("dock.menu_scope", { word: projWord }) },
-    { key: "main:hide", label: editor.t("dock.menu_hide", { key: hideKey }).trimEnd() },
+    {
+      heading: editor.t("dock.menu_h_create"),
+      side: "left",
+      opts: [{ key: "main:folder", label: editor.t("dock.new_menu_folder") }],
+    },
+    {
+      heading: editor.t("dock.menu_h_manage"),
+      side: "left",
+      opts: [
+        { key: "main:machines", label: editor.t("dock.menu_machines") },
+        { key: "main:discover", label: editor.t("dock.menu_discover") },
+      ],
+    },
+    {
+      heading: editor.t("dock.menu_h_view"),
+      side: "right",
+      opts: [
+        { key: "main:view:compact", label: radio(dockView === "compact") + editor.t("dock.menu_view_compact") },
+        { key: "main:view:card", label: radio(dockView === "card") + editor.t("dock.menu_view_card") },
+      ],
+    },
+    {
+      heading: editor.t("dock.menu_h_show"),
+      side: "right",
+      opts: [
+        { key: "main:empty", label: check(!openDialog.hideTrivial) + editor.t("dock.show_empty") },
+        { key: "main:worktrees", label: check(openDialog.showWorktrees) + editor.t("dock.all_worktrees") },
+      ],
+    },
   ];
 }
 
@@ -5677,8 +5677,8 @@ function dockMoveOptions(sessionId: number): MenuOption[] {
 
 function dockMenuOptions(): MenuOption[] {
   const m = openDialog?.dockMenu;
-  if (!m) return [];
-  return m.kind === "main" ? dockMainOptions() : dockMoveOptions(m.sessionId);
+  if (!m || m.kind !== "move") return [];
+  return dockMoveOptions(m.sessionId);
 }
 
 // A dropdown/context-menu row. Menu entries are *rows in a list*, not
@@ -5725,14 +5725,14 @@ function menuRows(
 // The dock's menus float over its rows as keyed overlays: the host reports a
 // press outside one as a `dismiss` on its key, which closes it (the press
 // still lands where it was aimed — a row click both closes the menu and
-// selects the row). The `⋯` button's own press arrives right after that
+// selects the row). The `Menu ▾` button's own press arrives right after that
 // dismissal, so it is held off from reopening what it just closed.
 const DOCK_MENU_OVERLAY_KEY = "dock-menu-overlay";
 const DOCK_PROJECT_OVERLAY_KEY = "dock-project-overlay";
-// The press that dismissed a menu goes on to its target, so a press on `⋯`
+// The press that dismissed a menu goes on to its target, so a press on `Menu ▾`
 // with the menu up arrives here as a dismiss and then an activate. The stamp
 // keys on which menu was dismissed: closing the project menu must not leave
-// `⋯` dead.
+// `Menu ▾` dead.
 let lastMenuDismissed = { key: "", at: 0 };
 
 /** The width a menu box needs: its widest row plus the two border columns,
@@ -5743,16 +5743,10 @@ function dockMenuBoxWidth(label: string, rows: string[]): number {
   return Math.max(widest, editor.stringWidth(label) + 4) + 2;
 }
 
-/** A dock menu box. `anchorRightAt` puts its right edge on that content
- *  column (the `⋯` it drops from); omitted, the box stays where it is
- *  emitted. Rows are padded to the widest because a `list` does not widen
- *  its box and clips longer rows. */
-function dockDropdownOverlay(
-  label: string,
-  opts: MenuOption[],
-  cursor: number,
-  anchorRightAt?: number,
-): WidgetSpec {
+/** A dock dropdown (the Move menu): an overlaid `list` keyed
+ *  `DOCK_MENU_KEY`, titled by `label`. Rows are padded to the widest because
+ *  a `list` does not widen its box and clips longer rows. */
+function dockDropdownOverlay(label: string, opts: MenuOption[], cursor: number): WidgetSpec {
   const rows = opts.map((o) => (o.marked ? "● " : "  ") + o.label);
   const box = dockMenuBoxWidth(label, rows);
   const inner = box - 2;
@@ -5768,30 +5762,101 @@ function dockDropdownOverlay(
       key: DOCK_MENU_KEY,
     }),
   });
-  if (anchorRightAt === undefined) {
-    return overlay(menu, { key: DOCK_MENU_OVERLAY_KEY });
-  }
-  // An overlay hangs off a zero-height slot node; a leading spacer moves the
-  // slot. Clamped at 0 so a dock narrower than its menu still starts at the
-  // left edge.
-  return row(spacer(Math.max(0, anchorRightAt + 1 - box)), overlay(menu, {
-    key: DOCK_MENU_OVERLAY_KEY,
-  }));
+  return overlay(menu, { key: DOCK_MENU_OVERLAY_KEY });
 }
 
-function dockMainMenu(): WidgetSpec {
-  const cursor = clampMenuIndex(
-    openDialog?.dockMenu?.kind === "main" ? openDialog.dockMenu.index : 0,
-    dockMainOptions().length,
-  );
-  // Under the `⋯`, the dock's own last column. Not `dockContentCols`, which
-  // subtracts the border and gutter the header row reaches past.
-  return dockDropdownOverlay(
-    editor.t("dock.title"),
-    dockMainOptions(),
-    cursor,
-    dockWidth() - 1,
-  );
+// The Menu: a small panel of its own, anchored under the dock's header and
+// wider than the dock, so it hangs over the editor. Two columns of groups —
+// actions on the left, settings on the right — a rule, and Hide dock. Every
+// entry is a bare full-width button, so the one with focus is the one lit,
+// and Tab / ↑↓ walk them in reading order.
+let mainMenuPanel: FloatingWidgetPanel | null = null;
+
+// Buttons are keyed `mm:<option key>`.
+const MAIN_MENU_PREFIX = "mm:";
+// The Menu's project dropdown.
+const MAIN_MENU_PROJECT_KEY = "mm-project";
+// Whether its list is up, and the option the list's selection sits on.
+let mainMenuProjectOpen = false;
+let mainMenuProjectPick: number | null = null;
+
+function buildMainMenuSpec(): WidgetSpec {
+  const groups = dockMainGroups();
+  const colW = (which: DockMenuGroup["side"]): number => Math.max(
+    ...groups.filter((g) => g.side === which)
+      .flatMap((g) => [editor.stringWidth(g.heading), ...g.opts.map((o) => editor.stringWidth(o.label))]),
+  ) + 3;
+  const leftW = colW("left");
+  const rightW = colW("right");
+  const text = (t: string, w: number, style?: Partial<OverlayOptions>): WidgetSpec =>
+    ({ kind: "raw", entries: [styledRow([style ? { text: t.padEnd(w), style } : { text: t.padEnd(w) }])] });
+  const column = (which: DockMenuGroup["side"], w: number): WidgetSpec[] => {
+    const out: WidgetSpec[] = [];
+    groups.filter((g) => g.side === which).forEach((g, i) => {
+      if (i > 0) out.push(text("", w));
+      out.push(text(` ${g.heading.toUpperCase()}`, w, SECTION_STYLE));
+      out.push(...g.opts.map((o) =>
+        button(` ${o.label}`.padEnd(w), { key: MAIN_MENU_PREFIX + o.key, bare: true })));
+    });
+    return out;
+  };
+  const left = column("left", leftW);
+  const right = column("right", rightW);
+  // The project filter is a real dropdown: it drops its list where it
+  // sits, over the panel, and scrolls when there are many projects.
+  const projects = dockProjectOptions();
+  const cur = openDialog?.projectFilter ?? null;
+  const at = cur === null ? 0 : projects.indexOf(cur) + 1;
+  right.push(text("", rightW));
+  right.push(text(` ${editor.t("dock.menu_h_project").toUpperCase()}`, rightW, SECTION_STYLE));
+  right.push(row(spacer(1), dropdown([editor.t("dock.all_projects"), ...projects.map(projectLabel)], {
+    selectedIndex: Math.max(0, at),
+    key: MAIN_MENU_PROJECT_KEY,
+  })));
+  // Two columns side by side, one rule between them: each line is a row of
+  // single-line cells, so the panel stays as wide as its content.
+  const rule = text(" │ ", 3, { fg: "ui.popup_border_fg" });
+  const lines: WidgetSpec[] = [];
+  for (let i = 0; i < Math.max(left.length, right.length); i++) {
+    lines.push(row(left[i] ?? text("", leftW), rule, right[i] ?? text("", rightW)));
+  }
+  return col(...lines);
+}
+
+function openMainMenu(): void {
+  if (!openDialog) return;
+  openDialog.dockMenu = { kind: "main" };
+  if (!mainMenuPanel) mainMenuPanel = new FloatingWidgetPanel();
+  // Sizes to its content; the percentages are unused for an anchored panel.
+  mainMenuProjectOpen = false;
+  mainMenuProjectPick = null;
+  mainMenuPanel.mount(buildMainMenuSpec(), { widthPct: 50, heightPct: 44 });
+  // Under the title strip, which is its button.
+  editor.floatingPanelControl(mainMenuPanel.id(), "anchor", packCell(0, 1));
+  mainMenuPanel.setFocusKey(MAIN_MENU_PREFIX + "main:folder");
+}
+
+function renderMainMenu(): void {
+  if (mainMenuPanel) mainMenuPanel.update(buildMainMenuSpec());
+}
+
+// Close the Menu and hand the keyboard back to the dock's list.
+function closeMainMenu(): void {
+  if (mainMenuPanel) {
+    mainMenuPanel.unmount();
+    mainMenuPanel = null;
+  }
+  if (!openDialog) return;
+  openDialog.dockMenu = null;
+  if (openPanel && dockMode) {
+    dockBlurred = false;
+    dockFocus = "list";
+    editor.floatingPanelControl(openPanel.id(), "focus", 0);
+    // Through the mirror too: it still names the Menu button the click
+    // focused, and Enter on the list reads it to pick what to run.
+    focusDockControl("sessions");
+    refreshOpenDialog();
+  }
 }
 
 function dockMoveMenu(): WidgetSpec {
@@ -5813,6 +5878,7 @@ function openDockMenu(menu: DockDropdown): void {
 }
 
 function closeDockMenu(): void {
+  if (openDialog?.dockMenu?.kind === "main") return closeMainMenu();
   if (!openDialog || !openPanel) return;
   openDialog.dockMenu = null;
   openPanel.update(buildDockSpec());
@@ -5822,7 +5888,7 @@ function closeDockMenu(): void {
 // The list's cursor moved (↑/↓, or a click on a row): mirror it, and a
 // click runs the row outright, the way a menu row answers a click.
 function dockMenuSelected(index: number, click: boolean): void {
-  if (!openDialog || !openDialog.dockMenu) return;
+  if (openDialog?.dockMenu?.kind !== "move") return;
   const opts = dockMenuOptions();
   const at = clampMenuIndex(index, opts.length);
   openDialog.dockMenu = { ...openDialog.dockMenu, index: at };
@@ -5830,7 +5896,7 @@ function dockMenuSelected(index: number, click: boolean): void {
 }
 
 function acceptDockMenu(index?: number): void {
-  if (!openDialog || !openDialog.dockMenu) return;
+  if (openDialog?.dockMenu?.kind !== "move") return;
   const opts = dockMenuOptions();
   const opt = opts[clampMenuIndex(index ?? openDialog.dockMenu.index, opts.length)];
   if (opt) runDockMenuOption(opt.key);
@@ -5861,24 +5927,17 @@ function runDockMenuOption(optKey: string): void {
   // the published verb, so the menu and a script take the same path.
   if (optKey === "main:view:compact" || optKey === "main:view:card") {
     apiSetDockView(optKey === "main:view:card" ? "card" : "compact");
+    renderMainMenu();
     return;
   }
   if (optKey === "main:empty") {
     toggleHideTrivial();
+    renderMainMenu();
     return;
   }
   if (optKey === "main:worktrees") {
     toggleShowWorktrees();
-    return;
-  }
-  if (optKey === "main:scope") {
-    closeDockMenu();
-    openProjectMenu();
-    return;
-  }
-  if (optKey === "main:hide") {
-    closeDockMenu();
-    closeOpenDialog();
+    renderMainMenu();
     return;
   }
   if (optKey.startsWith("move:") && menu?.kind === "move") {
@@ -6021,6 +6080,7 @@ function mountFolderDialog(): void {
     widthPct: 50,
     heightPct: 42,
     focusMarker: true,
+    labelAlign: "right",
     // The dialog's title + border are now native modal-frame chrome
     // (drawn by the host around the WidgetSpec), and `closable` renders
     // a native `[×]` that dismisses via the same cancel path as Esc.
@@ -6046,42 +6106,50 @@ function buildCreateFolderSpec(): WidgetSpec {
   const promptLabel = renamingSession
     ? editor.t("dock.rename_workspace_prompt")
     : editor.t("dock.new_folder_prompt");
+  // The same shape as the other forms: a padded field with its label in a
+  // right-aligned column, the checkbox under the field, and a footer rule
+  // over Cancel and the primary button with their keys.
+  const labelW = editor.stringWidth(promptLabel);
   const children: WidgetSpec[] = [
-    // Render the label inline ("Folder name: " / "Workspace name: ") so the
-    // ": " separator appears the same way in the TUI and the web UI.
-    row(
-      raw([
-        styledRow([
-          { text: promptLabel + ": ", style: { fg: "ui.menu_disabled_fg" } },
-        ]),
-      ]),
-      text({
-        value: d.name.value,
-        cursorByte: d.name.cursor,
-        placeholder: renamingSession ? "" : editor.t("dock.new_folder_default"),
-        fieldWidth: 32,
-        key: "folder-name",
-      }),
-    ),
+    spacer(0),
+    text({
+      value: d.name.value,
+      cursorByte: d.name.cursor,
+      label: promptLabel,
+      placeholder: renamingSession ? "" : editor.t("dock.new_folder_default"),
+      fullWidth: true,
+      labelWidth: labelW,
+      key: "folder-name",
+    }),
   ];
   if (sess) {
     children.push(
       toggle(d.organizeCurrent, editor.t("dock.new_folder_organize", { name: sess.label }), {
         key: "folder-organize",
+        labelWidth: labelW,
       }),
     );
   }
   children.push(
-    endRow(
-      button(editor.t("dock.new_folder_btn_cancel"), { intent: "danger", key: "folder-cancel" }),
-      spacer(2),
-      button(
-        renaming
-          ? editor.t("dock.rename_folder_btn")
-          : editor.t("dock.new_folder_btn_create"),
-        { intent: "primary", key: "folder-create" },
+    spacer(0),
+    footerRule(),
+    spacer(0),
+    row(
+      flexSpacer(),
+      withAccel(button(editor.t("dock.new_folder_btn_cancel"), { key: "folder-cancel" }), "Esc"),
+      spacer(3),
+      withAccel(
+        button(
+          renaming
+            ? editor.t("dock.rename_folder_btn")
+            : editor.t("dock.new_folder_btn_create"),
+          { intent: "primary", key: "folder-create" },
+        ),
+        "⏎",
       ),
+      spacer(2),
     ),
+    spacer(0),
   );
   // The dialog's title + border come from the native modal-frame chrome
   // (see `mountFolderDialog`), so the spec is just the content column.
@@ -6137,7 +6205,7 @@ function closeCreateFolderDialog(): void {
   if (openPanel && dockMode) {
     dockBlurred = false;
     editor.floatingPanelControl(openPanel.id(), "focus", 0);
-    openPanel.setFocusKey("sessions");
+    focusDockControl("sessions");
     refreshOpenDialog();
   }
 }
@@ -6461,7 +6529,7 @@ function closeDockContextMenuAndRestoreDock(): void {
     dockBlurred = false;
     dockFocus = "list";
     editor.floatingPanelControl(openPanel.id(), "focus", 0);
-    openPanel.setFocusKey("sessions");
+    focusDockControl("sessions");
     refreshOpenDialog();
   }
 }
@@ -8404,9 +8472,9 @@ function firstBodyFieldKey(backend: FormBackend): string {
     case "devcontainer":
       return "project_path";
     case "ssh":
-      return !form?.machineId && sshOther() ? "ssh_host" : "ssh_path";
+      return "ssh_path";
     case "kubernetes":
-      return form?.machineId ? "k8s_workspace" : "k8s_target";
+      return "k8s_workspace";
   }
 }
 
@@ -8644,12 +8712,6 @@ function machineWorkspaceCount(m: Machine): number {
   return n;
 }
 
-function localWorkspaceCount(): number {
-  let n = 0;
-  for (const s of orchestratorSessions.values()) if (!s.discovered && !s.remote) n++;
-  return n;
-}
-
 // `[user@]host[:port]` (or a pasted `ssh://…`) → the part ssh takes as the
 // destination and the port for `-p`.
 //
@@ -8697,37 +8759,13 @@ function shQuote(s: string): string {
 // answer, and a connect timeout so an unreachable one does not wedge the
 // form.
 //
-// **A picked `~/.ssh/config` alias goes to ssh as the alias.** Resolving it
-// here to `user@host:port` — which this used to do — hands ssh a destination
-// that matches no `Host` block, so every directive in the user's own entry
-// except the three this file parses (`HostName`, `User`, `Port`) silently
-// stops applying: `IdentityFile`, `IdentitiesOnly`, `UserKnownHostsFile`,
-// `StrictHostKeyChecking`, `ProxyJump`, `ProxyCommand`. The picker reads the
-// config only to *list* aliases and to show what one resolves to; ssh stays
-// the thing that interprets it. This is the same alias `captureCreateSpec`
-// hands the attach, so the probe, the worktree and the session all reach the
-// host by the same route and cannot disagree about how.
+// **A machine saved from a `~/.ssh/config` host keeps the alias as its
+// target**, so ssh still matches the `Host` block and applies every directive
+// in it (`IdentityFile`, `ProxyJump`, …), not just the three the Machines
+// dialog shows. The probe, the worktree and the session all reach the host by
+// this one route and cannot disagree about how.
 function formSshArgv(f: NewSessionForm, connectTimeout: number): string[] | null {
-  const m = f.machineId ? machineById(f.machineId) : null;
-  if (m && m.kind !== "ssh") return null;
-  const base = ["-o", "BatchMode=yes", "-o", `ConnectTimeout=${connectTimeout}`];
-  if (!m && !formSshOther(f)) {
-    const alias = f.sshHosts[f.sshPick]?.alias ?? "";
-    return alias ? [...base, "--", alias] : null;
-  }
-  const target = m ? m.target : f.sshHost.value.trim();
-  const { dest, port } = parseSshTarget(target);
-  if (!dest) return null;
-  const identity = m ? m.identity.trim() : f.sshIdentity.value.trim();
-  const options = m ? m.options.trim() : f.sshOptions.value.trim();
-  return [
-    ...base,
-    ...(port ? ["-p", port] : []),
-    ...(identity ? ["-i", expandHome(identity)] : []),
-    ...(options ? options.split(/\s+/) : []),
-    "--",
-    dest,
-  ];
+  return f.machineId ? machineKeySshArgv(f.machineId, connectTimeout) : null;
 }
 
 interface RemoteGitProbe {
@@ -9309,14 +9347,13 @@ function restoreDockAfterDialog(): void {
   if (openPanel && dockMode) {
     dockBlurred = false;
     editor.floatingPanelControl(openPanel.id(), "focus", 0);
-    openPanel.setFocusKey("sessions");
+    focusDockControl("sessions");
     refreshOpenDialog();
   }
 }
 
 // =============================================================================
-// Repositories — what a workspace works on, apart from where it runs
-// (docs/internal/launch-dialog-redesign.md §3).
+// Repositories — what a workspace works on, apart from where it runs.
 //
 // A repository is a remote plus, per machine, the **main clone** new worktrees
 // are cut from. It lives in the editor's state store next to machines, one
@@ -9443,25 +9480,21 @@ function repoRemoteLabel(r: Repository): string {
   return r.kind === "folder" ? editor.t("repo.plain_folder") : editor.t("repo.local_only");
 }
 
-// A machine's key in `Repository.clones`: Local, a saved machine or an
-// `~/.ssh/config` host — the machines that have a stable identity. A host or
-// cluster typed into the form has none, so it cannot hold a main clone.
+// A machine's key in `Repository.clones`: Local or a saved machine. The
+// devcontainer has no clone of its own.
 function machineOptionKey(o: MachineOption | undefined): string | null {
   if (!o) return null;
-  return o.kind === "local" || o.kind === "machine" || o.kind === "sshhost" ? o.key : null;
+  return o.kind === "local" || o.kind === "machine" ? o.key : null;
 }
 
 function machineKeyLabel(key: string): string {
   if (key === "local") return editor.t("machine.local");
-  if (key.startsWith("host:")) return key.slice(5);
   return machineById(key)?.name ?? key;
 }
 
 // Every machine a main clone can live on, in the Machine control's order.
 function cloneMachineKeys(): string[] {
-  const keys = ["local", ...loadMachines().map((m) => m.id)];
-  for (const h of sshConfigHosts()) keys.push(`host:${h.alias}`);
-  return keys;
+  return ["local", ...loadMachines().map((m) => m.id)];
 }
 
 // A remote path for a remote shell: `~/x` stays expandable there (quoting the
@@ -9530,10 +9563,9 @@ async function checkClonePath(
   return out;
 }
 
-// The ssh argv for a machine key (a saved ssh machine or a config host).
+// The ssh argv for a saved ssh machine's key.
 function machineKeySshArgv(key: string, timeout: number): string[] | null {
   const base = ["-o", "BatchMode=yes", "-o", `ConnectTimeout=${timeout}`];
-  if (key.startsWith("host:")) return [...base, "--", key.slice(5)];
   const m = machineById(key);
   if (!m || m.kind !== "ssh") return null;
   const { dest, port } = parseSshTarget(m.target);
@@ -9679,11 +9711,21 @@ function formFolderPath(f: NewSessionForm): string {
 interface MachineDialogState {
   id: string | null;
   kind: MachineKind;
-  // The hosts `~/.ssh/config` names, and which the `Host` picker is on
-  // (`hosts.length` = `Other host…`, the typed target). Picking an alias
-  // fills Name and Target from it; ssh resolves the rest from the entry.
+  // Seeded from a `~/.ssh/config` host that is not saved: the form sets it
+  // up as a machine, so it reads "Set up" and saves with "Add".
+  fromHost: boolean;
+  // The hosts `~/.ssh/config` names: a Host that is one of them shows what
+  // it resolves to.
   hosts: SshConfigHost[];
-  hostPick: number;
+  // The last test before this form opened; a test run here replaces it.
+  lastTest: MachineTest | null;
+  // Remove… was pressed and waits for a yes.
+  confirmRemove: boolean;
+  // What the machine reached when the form opened (host or pod): while it
+  // stays, the machine keeps its name.
+  origReach: string;
+  // Browse… beside Identity file: the shared browser, picking a file.
+  browse: FolderBrowser | null;
   name: Field;
   target: Field;
   identity: Field;
@@ -9697,32 +9739,46 @@ interface MachineDialogState {
   // its result stale.
   testToken: number;
   error: string;
-  returnTo: "machines" | "form" | "repos" | null;
+  returnTo: MachineDialogReturn;
   // The machine Save wrote, for a dialog that goes back to a picker.
   savedKey?: string;
+  // Where a `"discover"` return goes: the Import sessions dialog, handed the
+  // machine saved (null after a cancel).
+  onDone?: (savedKey: string | null) => void;
 }
+
+// Where the Add / Edit Machine dialog goes when it closes: the list or picker
+// that opened it.
+type MachineDialogReturn = "machines" | "form" | "repos" | "discover" | null;
 
 const MACHINE_DIALOG_MODE = "orchestrator-machine-dialog";
 let machineDialog: MachineDialogState | null = null;
 let machinePanel: FloatingWidgetPanel | null = null;
-let machineFocusKey = "machine-name";
+let machineFocusKey = "machine-target";
+const MACHINE_DIALOG_WIDTH_PCT = 60;
 
+/** Open Add Machine (`existing` null) or Edit Machine. `fromHost` seeds it
+ *  from a `~/.ssh/config` entry; `template` from a machine known only by its
+ *  address, such as the host of an open window. */
 function openMachineDialog(
   existing: Machine | null,
-  returnTo: "machines" | "form" | "repos" | null,
+  returnTo: MachineDialogReturn,
   fromHost?: SshConfigHost,
+  template?: Partial<Machine>,
+  onDone?: (savedKey: string | null) => void,
 ): void {
   yieldDockToDialog();
-  const m = existing;
-  const hosts = sshConfigHosts();
-  const seed = fromHost?.alias ?? m?.target.trim() ?? "";
-  const pick = hosts.findIndex((h) => h.alias === seed);
+  const m = existing ?? (template ? { ...blankMachine(), ...template } : null);
   machineDialog = {
-    id: m?.id ?? null,
+    id: existing?.id ?? null,
     kind: m?.kind ?? "ssh",
-    hosts,
-    hostPick: pick >= 0 ? pick : hosts.length,
+    fromHost: !!fromHost,
+    hosts: sshConfigHosts(),
+    lastTest: existing?.lastTest ?? (fromHost ? sshHostTests.get(fromHost.alias) ?? null : null),
+    confirmRemove: false,
     name: fieldOf(m?.name ?? fromHost?.alias ?? ""),
+    origReach: m ? (m.kind === "ssh" ? (sshTargetParts(m.target).host || m.target) : m.pod) : "",
+    browse: null,
     target: fieldOf(m?.target ?? fromHost?.alias ?? ""),
     identity: fieldOf(m?.identity ?? ""),
     options: fieldOf(m?.options ?? ""),
@@ -9734,25 +9790,51 @@ function openMachineDialog(
     testToken: 0,
     error: "",
     returnTo,
+    onDone,
   };
   machinePanel = new FloatingWidgetPanel();
   machinePanel.mount(buildMachineDialogSpec(), {
-    widthPct: 60,
+    widthPct: MACHINE_DIALOG_WIDTH_PCT,
     heightPct: 70,
     focusMarker: true,
     labelAlign: "right",
-    title: m ? editor.t("machine.edit_title") : editor.t("machine.add_title"),
+    title: existing
+      ? editor.t("machine.form_title", { name: existing.name })
+      : fromHost
+      ? editor.t("machine.setup_title", { name: fromHost.alias })
+      : editor.t("machine.add_title"),
     closable: true,
   });
   editor.floatingPanelControl(machinePanel.id(), "fullscreen", 1);
   editor.setEditorMode(MACHINE_DIALOG_MODE);
-  machineFocusKey = "machine-name";
-  machinePanel.setFocusKey("machine-name");
+  // Straight to what the machine reaches; for a new ssh machine the Host
+  // field opens with the config hosts to pick from.
+  const first = machineDialog.kind === "ssh" ? "machine-target" : "machine-context";
+  machineFocusKey = first;
+  machinePanel.setFocusKey(first);
+  suggestMachineHosts();
+}
+
+function blankMachine(): Machine {
+  return {
+    id: "",
+    name: "",
+    kind: "ssh",
+    target: "",
+    identity: "",
+    options: "",
+    context: "",
+    namespace: "",
+    pod: "",
+    path: "",
+    lastTest: null,
+  };
 }
 
 function closeMachineDialog(reopen: boolean): void {
   const returnTo = machineDialog?.returnTo ?? null;
   const savedKey = machineDialog?.savedKey ?? null;
+  const onDone = machineDialog?.onDone;
   if (machinePanel) {
     machinePanel.unmount();
     machinePanel = null;
@@ -9767,11 +9849,23 @@ function closeMachineDialog(reopen: boolean): void {
     resumeRepoDialogAfterMachine(savedKey);
     return;
   }
+  if (reopen && returnTo === "discover" && onDone) {
+    onDone(savedKey);
+    return;
+  }
   if (reopen && returnTo === "form") {
     // Back to the New Workspace form, on the machine just saved (or on
     // whatever it was on, after a cancel) — the form as it was, when it was
     // set aside rather than closed.
     if (resumeSuspendedForm()) return;
+    // A rejoin whose machine had to be added first, then was not: opening
+    // the form anyway would put the session on whatever machine was last
+    // used. Nothing is launched.
+    if (savedKey === null && pendingFormPrefill) {
+      pendingFormPrefill = null;
+      restoreDockAfterDialog();
+      return;
+    }
     dockBlurred = true;
     openForm({ fromPicker: true });
     return;
@@ -9779,10 +9873,21 @@ function closeMachineDialog(reopen: boolean): void {
   restoreDockAfterDialog();
 }
 
+// A machine is named by what it reaches: the ssh host (a config alias as
+// written, else the host of `user@host:port`), or the pod. An existing
+// machine keeps the name it has while that stays the same.
+function machineDialogName(d: MachineDialogState): string {
+  const reach = d.kind === "ssh"
+    ? (sshTargetParts(d.target.value.trim()).host || d.target.value.trim())
+    : d.pod.value.trim();
+  if (d.id !== null && d.name.value.trim() && reach === d.origReach) return d.name.value.trim();
+  return reach;
+}
+
 function machineFromDialog(d: MachineDialogState): Machine {
   return {
     id: d.id ?? newMachineId(),
-    name: d.name.value.trim(),
+    name: machineDialogName(d),
     kind: d.kind,
     target: d.target.value.trim(),
     identity: d.identity.value.trim(),
@@ -9793,63 +9898,67 @@ function machineFromDialog(d: MachineDialogState): Machine {
     path: d.path.value.trim(),
     lastTest: d.test.state === "ok" || d.test.state === "fail"
       ? { ok: d.test.state === "ok", at: Date.now(), summary: d.test.summary }
-      : null,
+      : d.lastTest,
   };
 }
 
+// A field that shares its row with `besides` columns (a button and the gap
+// before it) and still ends where the full-width fields do: the dialog's
+// width, less its frame, the marker gutter, the label and the brackets.
+function machineFieldWidth(besides: number): number {
+  const w = editor.getScreenSize().width;
+  const panel = Math.floor((w > 0 ? w : 120) * MACHINE_DIALOG_WIDTH_PCT / 100);
+  return Math.max(12, panel - 4 - 2 - FORM_LABEL_W - 2 - 2 - besides - 2);
+}
+
+// One machine, as a plain form: right-aligned labels, the editable fields,
+// what is known about it (what a config name resolves to, the last test)
+// in the same column without brackets, and the buttons in one footer.
 function buildMachineDialogSpec(): WidgetSpec {
   const d = machineDialog!;
-  const children: WidgetSpec[] = [
-    spacer(0),
-    radio([editor.t("backend.ssh"), editor.t("backend.kubernetes")], {
-      selectedIndex: d.kind === "ssh" ? 0 : 1,
-      label: editor.t("machine.kind"),
-      labelWidth: FORM_LABEL_W,
-      key: "machine-kind",
-    }),
-    spacer(0),
-  ];
-  // The Host picker, when the config names any: an alias is the target
-  // (ssh resolves user, port and identity from the entry) and the name
-  // follows it; `Other host…` leaves both to the fields below.
-  if (d.kind === "ssh" && d.hosts.length > 0) {
-    const pick = Math.min(d.hostPick, d.hosts.length);
+  const isNew = d.id === null;
+  const children: WidgetSpec[] = [spacer(0)];
+  // Only a new machine picks its kind; an existing one or a config host is
+  // what it is.
+  if (isNew && !d.fromHost) {
     children.push(
-      dropdown([...d.hosts.map((h) => h.alias), editor.t("form.ssh_other_host")], {
-        selectedIndex: pick,
-        label: splitLabel("form.ssh_host_label").label,
+      radio([editor.t("backend.ssh"), editor.t("backend.kubernetes")], {
+        selectedIndex: d.kind === "ssh" ? 0 : 1,
+        label: editor.t("machine.kind"),
         labelWidth: FORM_LABEL_W,
-        key: "machine-host-pick",
+        key: "machine-kind",
       }),
+      spacer(0),
     );
-    if (pick < d.hosts.length) children.push(fieldNote(sshResolvedTarget(d.hosts[pick])));
   }
-  children.push(...field(editor.t("machine.name"), d.name, { key: "machine-name" }));
   if (d.kind === "ssh") {
     children.push(
-      ...field(editor.t("machine.target"), d.target, {
-        key: "machine-target",
-        note: editor.t("form.ssh_host_note"),
-      }),
-      ...field(splitLabel("form.ssh_identity_label").label, d.identity, {
-        key: "machine-identity",
-        placeholder: editor.t("form.ssh_identity_placeholder"),
-      }),
-      ...field(splitLabel("form.ssh_options_label").label, d.options, {
-        key: "machine-options",
-        placeholder: splitPlaceholder(editor.t("form.ssh_options_placeholder")).placeholder,
-      }),
+      ...field(formLabel("machine.host"), d.target, { key: "machine-target" }),
+    );
+    const h = d.hosts.find((x) => x.alias === d.target.value.trim());
+    if (h) children.push(machineFact("machine.resolves_to", [{ text: sshResolvedTarget(h) }]));
+    // The key file: typed, or picked with the shared browser beside it.
+    const browse = editor.t("repo.browse");
+    children.push(
+      row(
+        text({
+          value: d.identity.value,
+          cursorByte: d.identity.cursor,
+          label: splitLabel("form.ssh_identity_label").label,
+          labelWidth: FORM_LABEL_W,
+          fieldWidth: machineFieldWidth(editor.stringWidth(browse) + 4 + 2),
+          key: "machine-identity",
+        }),
+        spacer(2),
+        actionButton(browse, "machine-identity-browse"),
+      ),
+      ...(d.browse ? browserRows(d.browse, "machine-browse-list") : []),
+      ...field(splitLabel("form.ssh_options_label").label, d.options, { key: "machine-options" }),
     );
   } else {
     children.push(
-      ...field(splitLabel("form.k8s_context_label").label, d.context, {
-        key: "machine-context",
-        placeholder: editor.t("form.k8s_context_placeholder"),
-      }),
-      ...field(formLabel("form.k8s_namespace_label"), d.namespace, {
-        key: "machine-namespace",
-        placeholder: editor.t("form.k8s_namespace_placeholder"),
-      }),
+      ...field(splitLabel("form.k8s_context_label").label, d.context, { key: "machine-context" }),
+      ...field(formLabel("form.k8s_namespace_label"), d.namespace, { key: "machine-namespace" }),
       ...field(formLabel("form.k8s_pod_label"), d.pod, {
         key: "machine-pod",
         note: editor.t("machine.pod_note"),
@@ -9857,57 +9966,71 @@ function buildMachineDialogSpec(): WidgetSpec {
     );
   }
   children.push(
-    ...field(editor.t("machine.path"), d.path, {
-      key: "machine-path",
-      placeholder: d.kind === "ssh" ? "/srv" : "/workspace",
-    }),
-    spacer(0),
+    ...field(editor.t("machine.path"), d.path, { key: "machine-path" }),
+    machineFact("machine.last_test", machineTestSegments(d)),
+    fieldColumnRow(withAccel(button(editor.t("machine.btn_test"), { key: "machine-test" }), "^T")),
   );
-  // The test's answer, beside the fields that produced it.
+  if (d.test.state === "fail" && d.test.detail) {
+    children.push(label(d.test.detail, { labelWidth: FORM_LABEL_W, style: NOTE_STYLE, wrap: true }));
+  }
   if (d.error) {
     children.push(label(`✗ ${d.error}`, {
       labelWidth: FORM_LABEL_W,
       style: { fg: "diagnostic.error_fg", bold: true },
     }));
-  } else if (d.test.state === "running") {
-    children.push(label(`… ${editor.t("machine.testing")}`, { labelWidth: FORM_LABEL_W, style: NOTE_STYLE }));
-  } else if (d.test.state === "ok") {
-    children.push(label(`✓ ${editor.t("machine.connected")} · ${d.test.summary}`, {
-      labelWidth: FORM_LABEL_W,
-      style: { fg: "ui.help_key_fg", bold: true },
-    }));
-  } else if (d.test.state === "fail") {
-    children.push(label(`✗ ${d.test.summary}`, {
-      labelWidth: FORM_LABEL_W,
-      style: { fg: "diagnostic.error_fg", bold: true },
-    }));
-    if (d.test.detail) {
-      children.push(label(`  ${d.test.detail}`, { labelWidth: FORM_LABEL_W, style: NOTE_STYLE }));
-    }
   }
-  children.push(
-    spacer(0),
-    endRow(
-      withAccel(
-        button(
-          d.test.state === "fail" ? editor.t("machine.btn_save_anyway") : editor.t("machine.btn_save"),
-          { intent: "primary", key: "machine-save" },
-        ),
-        "^⏎",
+  children.push(spacer(0), footerRule(), spacer(0));
+  if (d.confirmRemove) {
+    children.push(
+      label(`  ⚠ ${editor.t("machine.remove_confirm", { name: d.name.value.trim() })}`, {
+        style: WARN_STYLE,
+        wrap: true,
+      }),
+      endRow(
+        button(editor.t("form.btn_cancel_short"), { key: "machine-remove-no" }),
+        spacer(3),
+        button(editor.t("machine.btn_remove"), { intent: "danger", key: "machine-remove-yes" }),
+        spacer(2),
       ),
-      spacer(2),
-      withAccel(
-        button(
-          d.test.state === "fail" ? editor.t("machine.btn_test_again") : editor.t("machine.btn_test"),
-          { key: "machine-test" },
-        ),
-        "^T",
-      ),
-      spacer(2),
-      withAccel(button(editor.t("form.btn_cancel"), { intent: "danger", key: "machine-cancel" }), "Esc"),
-    ),
-  );
+    );
+    return col(...children);
+  }
+  const save = button(editor.t(d.fromHost ? "machine.btn_add" : "machine.btn_save"), {
+    intent: "primary",
+    key: "machine-save",
+  });
+  // Remove on the left, away from Save; Cancel and Save on the right.
+  children.push(row(
+    spacer(2),
+    ...(isNew ? [] : [button(editor.t("machine.btn_remove_more"), { intent: "danger", key: "machine-remove" })]),
+    flexSpacer(),
+    withAccel(button(editor.t("form.btn_cancel_short"), { key: "machine-cancel" }), "Esc"),
+    spacer(3),
+    withAccel(save, "^⏎"),
+    spacer(2),
+  ));
   return col(...children);
+}
+
+// A read-only row in the form's label column: `Label: value`, no brackets.
+// The value is one column in, where a field's text starts after its `[`.
+function machineFact(key: string, value: StyledSegment[]): WidgetSpec {
+  return label([{ text: `${formLabel(key).padStart(FORM_LABEL_W)}:  ` }, ...value]);
+}
+
+// The last test: one running now, the answer it gave, or the one before.
+function machineTestSegments(d: MachineDialogState): StyledSegment[] {
+  if (d.test.state === "running") {
+    return [{ text: editor.t("machine.testing"), style: NOTE_STYLE }];
+  }
+  if (d.test.state === "ok") return [{ text: `✓ ${editor.t("machine.connected")} · ${d.test.summary}`, style: { fg: "ui.help_key_fg" } }];
+  if (d.test.state === "fail") return [{ text: `✗ ${d.test.summary}`, style: { fg: "diagnostic.error_fg" } }];
+  const t = d.lastTest;
+  if (!t) return [{ text: editor.t("machine.never_tested"), style: NOTE_STYLE }];
+  const when = agoText(t.at);
+  return t.ok
+    ? [{ text: `✓ ${editor.t("machine.connected")} · ${t.summary} · ${when}`, style: { fg: "ui.help_key_fg" } }]
+    : [{ text: `✗ ${t.summary} · ${when}`, style: { fg: "diagnostic.error_fg" } }];
 }
 
 function renderMachineDialog(): void {
@@ -9932,9 +10055,7 @@ function saveMachineDialog(): void {
   const d = machineDialog;
   if (!d) return;
   const m = machineFromDialog(d);
-  d.error = !m.name
-    ? editor.t("machine.err_name")
-    : m.kind === "ssh" && !parseSshTarget(m.target).dest
+  d.error = m.kind === "ssh" && !parseSshTarget(m.target).dest
     ? editor.t("machine.err_target")
     : m.kind === "kubernetes" && (!m.namespace || !m.pod)
     ? editor.t("machine.err_ns_pod")
@@ -9960,16 +10081,99 @@ editor.defineMode(MACHINE_DIALOG_MODE, MACHINE_DIALOG_MODE_BINDINGS, true, true)
 
 registerHandler("orchestrator_machine_enter", () => {
   if (!machineDialog || !machinePanel) return;
-  // Enter saves from any field; on a button it is that button.
+  // The Host field's suggestions are up: Enter is theirs — it takes the
+  // highlighted host, or closes the list.
+  if (machineHostSuggesting && machineFocusKey === "machine-target") {
+    machinePanel.command(widgetKey("Enter"));
+    return;
+  }
+  // Enter saves from any field; on a button it is that button, and in the
+  // file browser it opens the folder or picks the file.
+  if (machineFocusKey === "machine-browse-list") {
+    machinePanel.command({ kind: "activate" });
+    return;
+  }
+  if (machineFocusKey === "machine-identity-browse") return browseIdentityFile();
   if (machineFocusKey === "machine-cancel") return closeMachineDialog(true);
   if (machineFocusKey === "machine-test") return runMachineTest();
+  if (machineFocusKey === "machine-remove") return askRemoveMachine(true);
+  if (machineFocusKey === "machine-remove-no") return askRemoveMachine(false);
+  if (machineFocusKey === "machine-remove-yes") return removeMachineFromDialog();
   if (machineFocusKey === "machine-kind") return;
-  // Enter on the Host picker opens it, the way every form dropdown does.
-  if (machineFocusKey === "machine-host-pick") return machinePanel.command({ kind: "key", key: "Enter" });
+  if (machineDialog.confirmRemove) return;
   saveMachineDialog();
 });
 registerHandler("orchestrator_machine_save", () => saveMachineDialog());
 registerHandler("orchestrator_machine_test", () => runMachineTest());
+
+function askRemoveMachine(ask: boolean): void {
+  const d = machineDialog;
+  if (!d || d.id === null) return;
+  d.confirmRemove = ask;
+  renderMachineDialog();
+  // Moving focus from here fires no focus event, so the mirror is set too.
+  machineFocusKey = ask ? "machine-remove-no" : "machine-remove";
+  machinePanel?.setFocusKey(machineFocusKey);
+}
+
+// Forget the machine and go back to the list; nothing on the machine changes.
+function removeMachineFromDialog(): void {
+  const d = machineDialog;
+  if (!d || d.id === null) return;
+  removeMachine(d.id);
+  closeMachineDialog(true);
+}
+
+// The Host field offers the `~/.ssh/config` hosts not yet added as machines,
+// narrowed by what is typed — the way the Machines dialog's hint says to add
+// one. Nothing is offered once the field names a host exactly.
+function suggestMachineHosts(): void {
+  const d = machineDialog;
+  if (!d || !machinePanel || d.kind !== "ssh" || d.id !== null) return;
+  const typed = d.target.value.trim().toLowerCase();
+  const items = unaddedSshHosts()
+    .map((h) => h.alias)
+    .filter((a) => a.toLowerCase().includes(typed) && a.toLowerCase() !== typed);
+  setMachineHostSuggestions(items);
+}
+
+// Whether the Host field's suggestion list is up, for Enter.
+let machineHostSuggesting = false;
+
+function setMachineHostSuggestions(items: string[]): void {
+  machineHostSuggesting = items.length > 0;
+  machinePanel?.setCompletions("machine-target", items);
+}
+
+// Browse… beside Identity file: the shared browser on this computer (ssh
+// reads the key locally), from the typed file's folder or `~/.ssh`. Pressed
+// again, it closes.
+function browseIdentityFile(): void {
+  const d = machineDialog;
+  if (!d) return;
+  if (d.browse) {
+    d.browse = null;
+    renderMachineDialog();
+    return;
+  }
+  const typed = d.identity.value.trim();
+  const b: FolderBrowser = {
+    machineKey: "local",
+    dir: "",
+    entries: [],
+    loading: true,
+    error: "",
+    index: 0,
+    picksAny: false,
+    files: true,
+  };
+  d.browse = b;
+  void browserGo(b, typed ? parentDir(typed) : "~/.ssh", () => renderMachineDialog()).then(() => {
+    if (machineDialog !== d || d.browse !== b) return;
+    machineFocusKey = "machine-browse-list";
+    machinePanel?.setFocusKey("machine-browse-list");
+  });
+}
 
 function handleMachineDialogEvent(e: WidgetEvt): void {
   const d = machineDialog!;
@@ -9981,29 +10185,42 @@ function handleMachineDialogEvent(e: WidgetEvt): void {
   }
   if (e.event_type === "focus") {
     if (typeof e.widget_key === "string" && e.widget_key.length > 0) machineFocusKey = e.widget_key;
+    if (e.widget_key === "machine-target") suggestMachineHosts();
+    else setMachineHostSuggestions([]);
     return;
   }
-  if (e.event_type === "change" && e.widget_key === "machine-host-pick") {
-    const idx = ((e.payload ?? {}) as Record<string, unknown>).index;
-    if (typeof idx === "number" && idx !== d.hostPick) {
-      const before = d.hosts[d.hostPick];
-      d.hostPick = idx;
-      const h = d.hosts[idx];
-      if (h) {
-        // The alias is the target; the name follows it unless the user
-        // typed one of their own. The fields' text is host-owned after
-        // first render, so the new values are pushed, not just re-rendered.
-        d.target = fieldOf(h.alias);
-        machinePanel?.setValue("machine-target", d.target.value, d.target.cursor);
-        if (!d.name.value.trim() || (before && d.name.value === before.alias)) {
-          d.name = fieldOf(h.alias);
-          machinePanel?.setValue("machine-name", d.name.value, d.name.cursor);
-        }
+  if (e.event_type === "completion_accept" && e.widget_key === "machine-target") {
+    const value = ((e.payload ?? {}) as Record<string, unknown>).value;
+    if (typeof value !== "string") return;
+    d.target.value = value;
+    d.target.cursor = utf8Len(value);
+    machinePanel?.setValue("machine-target", value, d.target.cursor);
+    setMachineHostSuggestions([]);
+    renderMachineDialog();
+    return;
+  }
+  if (isListEvent(e as { event_type: string; widget_key?: string; payload?: unknown }, "machine-browse-list")) {
+    const b = d.browse;
+    const idx = typeof (e.payload as Record<string, unknown> | undefined)?.index === "number"
+      ? (e.payload as Record<string, number>).index
+      : -1;
+    if (!b || idx < 0) return;
+    b.index = idx;
+    if (e.event_type === "activate") {
+      const picked = browserActivate(b, idx, () => renderMachineDialog());
+      if (picked) {
+        d.browse = null;
+        d.identity = fieldOf(tildePath(picked));
+        renderMachineDialog();
+        machinePanel?.setValue("machine-identity", d.identity.value, d.identity.cursor);
+        machineFocusKey = "machine-identity";
+        machinePanel?.setFocusKey("machine-identity");
       }
-      d.test = { state: "idle", summary: "", detail: "" };
-      d.error = "";
-      renderMachineDialog();
     }
+    return;
+  }
+  if (e.event_type === "completion_dismiss" && e.widget_key === "machine-target") {
+    machineHostSuggesting = false;
     return;
   }
   if (e.event_type === "change" && e.widget_key === "machine-kind") {
@@ -10018,7 +10235,6 @@ function handleMachineDialogEvent(e: WidgetEvt): void {
   }
   if (e.event_type === "change") {
     const slots: Record<string, Field> = {
-      "machine-name": d.name,
       "machine-target": d.target,
       "machine-identity": d.identity,
       "machine-options": d.options,
@@ -10030,6 +10246,11 @@ function handleMachineDialogEvent(e: WidgetEvt): void {
     const slot = e.widget_key ? slots[e.widget_key] : undefined;
     if (slot) {
       applyTextChange(slot, e.payload);
+      // Host decides whether a "Resolves to" row shows.
+      if (slot === d.target) {
+        suggestMachineHosts();
+        renderMachineDialog();
+      }
       // An edit outdates the test's answer and any validation error.
       if (d.test.state !== "idle" || d.error) {
         d.test = { state: "idle", summary: "", detail: "" };
@@ -10041,9 +10262,13 @@ function handleMachineDialogEvent(e: WidgetEvt): void {
     return;
   }
   if (e.event_type === "activate") {
-    if (e.widget_key === "machine-save") saveMachineDialog();
+    if (e.widget_key === "machine-identity-browse") browseIdentityFile();
+    else if (e.widget_key === "machine-save") saveMachineDialog();
     else if (e.widget_key === "machine-test") runMachineTest();
     else if (e.widget_key === "machine-cancel") closeMachineDialog(true);
+    else if (e.widget_key === "machine-remove") askRemoveMachine(true);
+    else if (e.widget_key === "machine-remove-no") askRemoveMachine(false);
+    else if (e.widget_key === "machine-remove-yes") removeMachineFromDialog();
   }
 }
 
@@ -10116,7 +10341,9 @@ function cloneTarget(r: Repository, machineKey: string): string {
   return `${cloneBase(machineKey).replace(/\/+$/, "")}/${r.name}`;
 }
 
-// A folder picker on one machine, for a text field to fill.
+// The one path picker the dialogs share: a folder browser on one machine, for
+// a text field to fill — a project's folder, a clone's, or (with `files`) a
+// file such as an ssh identity.
 interface FolderBrowser {
   machineKey: string;
   dir: string;
@@ -10126,14 +10353,20 @@ interface FolderBrowser {
   index: number;
   // A plain folder will do, so the folder shown can itself be picked.
   picksAny: boolean;
+  // Files are listed too, and picking one is the answer (dotfiles shown).
+  files?: boolean;
 }
 
-function browserItems(b: FolderBrowser): { text: string; dir: string | null; up?: boolean }[] {
+function browserItems(b: FolderBrowser): { text: string; dir: string | null; up?: boolean; file?: string }[] {
   const child = (name: string) => (b.dir === "/" ? `/${name}` : `${b.dir.replace(/\/+$/, "")}/${name}`);
   return [
     { text: "..", dir: parentDir(b.dir), up: true },
     ...(b.picksAny ? [{ text: `✓ ${editor.t("repo.use_this_folder")}`, dir: null }] : []),
-    ...b.entries.map((e) => ({ text: `${`${e.name}/`.padEnd(40)} ${e.git ? "git" : ""}`, dir: child(e.name) })),
+    ...b.entries.map((e) =>
+      e.file
+        ? { text: e.name, dir: null, file: child(e.name) }
+        : { text: `${`${e.name}/`.padEnd(40)} ${e.git ? "git" : ""}`, dir: child(e.name) }
+    ),
   ];
 }
 
@@ -10149,7 +10382,7 @@ function browserRows(b: FolderBrowser, listKey: string): WidgetSpec[] {
       visibleRows: 8,
       key: listKey,
     });
-  const hint = editor.t(b.picksAny ? "repo.browse_hint_any" : "repo.browse_hint");
+  const hint = editor.t(b.files ? "repo.browse_hint_file" : b.picksAny ? "repo.browse_hint_any" : "repo.browse_hint");
   return [row(spacer(2), labeledSection({ label: title, child: col(body, label(hint, { style: NOTE_STYLE })) }))];
 }
 
@@ -10160,7 +10393,7 @@ async function browserGo(b: FolderBrowser, dir: string, render: () => void): Pro
   b.error = "";
   b.index = 0;
   render();
-  const r = await listMachineDir(b.machineKey, dir);
+  const r = await listMachineDir(b.machineKey, dir, !!b.files);
   if (b.dir !== dir) return;
   b.entries = r.entries;
   b.error = r.error;
@@ -10178,6 +10411,7 @@ function browserActivate(b: FolderBrowser, index: number, render: () => void): s
     void browserGo(b, item.dir!, render);
     return null;
   }
+  if (item.file) return item.file;
   if (item.dir === null) return b.dir;
   const e = b.entries.find((x) => item.dir!.endsWith(`/${x.name}`));
   if (e?.git) return item.dir;
@@ -10470,7 +10704,7 @@ function handlePlaceEvent(a: PlaceAsk, host: PlaceHost, e: WidgetEvt): boolean {
 // Repositories dialog (§4.11–§4.16)
 // =============================================================================
 
-interface RepoBrowseEntry { name: string; git: boolean }
+interface RepoBrowseEntry { name: string; git: boolean; file?: boolean }
 
 interface RepoDialogState {
   // Back to the launch form when done (its state is `suspendedForm`).
@@ -10504,7 +10738,7 @@ interface RepoDialogState {
   checkToken: number;
   cloneConfirm: boolean;
   cloning: { handle: ProcessHandle<SpawnResult> } | null;
-  browse: { dir: string; entries: RepoBrowseEntry[]; loading: boolean; error: string; index: number } | null;
+  browse: FolderBrowser | null;
   // Adding a folder that is a clone: whether its `origin` becomes the
   // project's remote, or it stays on this machine only.
   useOrigin: boolean;
@@ -10698,36 +10932,7 @@ function repoMachineOptions(d: RepoDialogState): { key: string; label: string }[
 
 // Browse… (§4.13): the folders of one directory on the selected machine.
 function repoBrowseRows(d: RepoDialogState): WidgetSpec[] {
-  const b = d.browse;
-  if (!b) return [];
-  const key = d.machineKey;
-  const title = `${machineKeyLabel(key)} : ${key === "local" ? tildePath(expandHome(b.dir)) : b.dir}`;
-  let body: WidgetSpec;
-  if (b.loading) {
-    body = label(editor.t("repo.loading"), { style: NOTE_STYLE });
-  } else if (b.error) {
-    body = label(`✗ ${b.error}`, { style: { fg: "diagnostic.error_fg" }, wrap: true });
-  } else {
-    // Where a plain folder will do, the folder being shown can itself be
-    // picked: a row under `..` says so.
-    const here = browsePicksAnyFolder(d) ? [`✓ ${editor.t("repo.use_this_folder")}`] : [];
-    const items = ["..", ...here, ...b.entries.map((e) => `${e.name}/`)];
-    const tags = ["", ...here.map(() => ""), ...b.entries.map((e) => (e.git ? "git" : ""))];
-    body = list({
-      items: items.map((t, i) => ({ text: `${t.padEnd(40)} ${tags[i]}` })),
-      selectedIndex: Math.min(b.index, items.length - 1),
-      // A constant height: the list keeps the size it first rendered at, so
-      // one sized to a short folder would clip the next, longer one.
-      visibleRows: 8,
-      key: "repo_browse_list",
-    });
-  }
-  return [
-    row(spacer(2), labeledSection({
-      label: title,
-      child: col(body, label(editor.t(browsePicksAnyFolder(d) ? "repo.browse_hint_any" : "repo.browse_hint"), { style: NOTE_STYLE })),
-    })),
-  ];
+  return d.browse ? browserRows(d.browse, "repo_browse_list") : [];
 }
 
 function buildRepoDialogSpec(): WidgetSpec {
@@ -11173,17 +11378,28 @@ function scheduleRepoUrlCheck(): void {
 
 // The folders of `dir` on the dialog's machine, with a `git` tag on those that
 // hold a `.git`. Local reads the directory; a remote lists it over ssh.
-async function listMachineDir(machineKey: string, dir: string): Promise<{ entries: RepoBrowseEntry[]; error: string }> {
+async function listMachineDir(
+  machineKey: string,
+  dir: string,
+  files = false,
+): Promise<{ entries: RepoBrowseEntry[]; error: string }> {
   if (machineKey === "local") {
     const base = expandHome(dir);
     const out: RepoBrowseEntry[] = [];
+    const found: RepoBrowseEntry[] = [];
     for (const e of editor.readDir(editor.localPath(base))) {
-      if (!e.is_dir || e.name.startsWith(".")) continue;
+      // Picking a file shows dotfiles: the key lives in `~/.ssh`.
+      if (!files && e.name.startsWith(".")) continue;
+      if (!e.is_dir) {
+        if (files) found.push({ name: e.name, git: false, file: true });
+        continue;
+      }
       const p = editor.pathJoin(base, e.name);
       out.push({ name: e.name, git: editor.fileExists(editor.localPath(editor.pathJoin(p, ".git"))) });
     }
     out.sort((a, b) => a.name.localeCompare(b.name));
-    return { entries: out, error: "" };
+    found.sort((a, b) => a.name.localeCompare(b.name));
+    return { entries: [...out, ...found], error: "" };
   }
   const script = [
     `cd ${remoteShellPath(dir)} 2>/dev/null || { echo NODIR; exit 0; }`,
@@ -11212,12 +11428,18 @@ function parentDir(dir: string): string {
 async function browseTo(dir: string): Promise<void> {
   const d = repoDialog;
   if (!d) return;
-  d.browse = { dir, entries: [], loading: true, error: "", index: 0 };
-  renderRepoDialog();
-  const r = await listMachineDir(d.machineKey, dir);
-  if (repoDialog !== d || !d.browse || d.browse.dir !== dir) return;
-  d.browse = { dir, entries: r.entries, loading: false, error: r.error, index: 0 };
-  renderRepoDialog();
+  const b: FolderBrowser = {
+    machineKey: d.machineKey,
+    dir,
+    entries: [],
+    loading: true,
+    error: "",
+    index: 0,
+    picksAny: browsePicksAnyFolder(d),
+  };
+  d.browse = b;
+  await browserGo(b, dir, () => renderRepoDialog());
+  if (repoDialog !== d || d.browse !== b || b.dir !== dir) return;
   repoPanel?.setFocusKey("repo_browse_list");
   d.focus = "repo_browse_list";
 }
@@ -11258,22 +11480,10 @@ function pickBrowsed(dir: string): void {
 function browseActivate(index: number): void {
   const d = repoDialog;
   const b = d?.browse;
-  if (!d || !b || b.loading) return;
-  if (index === 0) {
-    void browseTo(parentDir(b.dir));
-    return;
-  }
-  const here = browsePicksAnyFolder(d);
-  if (here && index === 1) {
-    pickBrowsed(b.dir);
-    return;
-  }
-  const e = b.entries[index - (here ? 2 : 1)];
-  if (!e) return;
-  const next = b.dir === "/" ? `/${e.name}` : `${b.dir.replace(/\/+$/, "")}/${e.name}`;
-  // A repository is what is being looked for: picking one ends the browse.
-  if (e.git) pickBrowsed(next);
-  else void browseTo(next);
+  if (!d || !b) return;
+  // A repository (or, where one will do, the folder shown) ends the browse.
+  const picked = browserActivate(b, index, () => renderRepoDialog());
+  if (picked) pickBrowsed(picked);
 }
 
 // ── Clone (§4.15) ────────────────────────────────────────────────────────────
@@ -11784,10 +11994,10 @@ let pendingFormPrefill: { projectPath: string; cmd: string } | null = null;
 interface MachinesRow {
   key: string;
   machine: Machine | null;
-  // A host `~/.ssh/config` names, listed beside the saved machines so the
-  // dialog shows every place a workspace can run. Fresh does not own it
-  // (§5.3): it can be launched on and tested, and saved as a machine of its
-  // own, but not edited or removed here.
+  // A host `~/.ssh/config` names that is not a saved machine yet, listed so
+  // it can be added in one step. Until it is added nothing else offers it: a
+  // workspace runs only on a saved machine. Fresh does not own the entry
+  // (§5.3): it can be tested and added, not edited or removed here.
   host?: SshConfigHost;
 }
 
@@ -11805,18 +12015,17 @@ function machineCoversHost(m: Machine, h: SshConfigHost): boolean {
 
 function machinesRows(): MachinesRow[] {
   const saved = loadMachines();
-  const rows: MachinesRow[] = [
-    { key: "local", machine: null },
-    ...saved.map((m) => ({ key: m.id, machine: m })),
-  ];
-  for (const h of sshConfigHosts()) {
-    if (saved.some((m) => machineCoversHost(m, h))) continue;
-    rows.push({ key: `host:${h.alias}`, machine: null, host: h });
-  }
-  return rows;
+  return saved.map((m) => ({ key: m.id, machine: m }));
 }
 
-// The machine a config host stands for, for a test or a launch: ssh
+// The `~/.ssh/config` hosts no saved machine covers. They are not listed —
+// the list is the machines — only counted in a hint under it.
+function unaddedSshHosts(): SshConfigHost[] {
+  const saved = loadMachines();
+  return sshConfigHosts().filter((h) => !saved.some((m) => machineCoversHost(m, h)));
+}
+
+// The machine a config host stands for, for a test: ssh
 // resolves user, port and identity from the entry, so the alias is the
 // whole target.
 function machineForHost(h: SshConfigHost): Machine {
@@ -11977,12 +12186,14 @@ function openMachinesDialog(): void {
   invalidateMachines();
   yieldDockToDialog();
   const idx = machinesState?.index ?? 0;
-  machinesState = { index: Math.min(idx, machinesRows().length - 1), focus: "machines" };
+  machinesState = { index: Math.max(0, Math.min(idx, machinesRows().length - 1)), focus: "machines" };
   machinesPanel = new FloatingWidgetPanel();
+  // The Projects dialog's frame and grid, so the two managers read alike.
   machinesPanel.mount(buildMachinesSpec(), {
-    widthPct: 70,
+    widthPct: FORM_WIDTH_PCT,
     heightPct: 70,
     focusMarker: true,
+    labelAlign: "right",
     title: editor.t("machine.list_title"),
     closable: true,
   });
@@ -12002,77 +12213,112 @@ function closeMachinesDialog(): void {
   restoreDockAfterDialog();
 }
 
-function machinesRowEntry(r: MachinesRow): TextPropertyEntry {
-  const dim = { fg: "ui.menu_disabled_fg" };
-  // **A column is a width, not a minimum.** Padding alone let a name wider
-  // than its column push every column after it along, so the row fits to the
-  // column in both directions.
-  const pad = (s: string, n: number): string => {
-    const w = editor.stringWidth(s);
-    if (w === n) return s;
-    if (w > n) return n > 1 ? `${clipToWidth(s, n - 1)}\u{2026}` : clipToWidth(s, n);
-    return s + " ".repeat(n - w);
+// The list's columns, sized to what they hold: the longest name and the
+// longest address, each plus a gap.
+interface MachinesCols {
+  name: number;
+  addr: number;
+}
+
+function machinesCols(rows: MachinesRow[]): MachinesCols {
+  const w = (s: string): number => editor.stringWidth(s);
+  return {
+    name: Math.max(0, ...rows.map((r) => w(machineRowName(r)))) + 3,
+    addr: Math.max(0, ...rows.map((r) => w(machineRowAddress(r)))) + 3,
   };
-  if (!r.machine && !r.host) {
-    const n = localWorkspaceCount();
-    return styledRow([
-      { text: pad(editor.t("machine.local"), 13) },
-      { text: pad("", 5), style: dim },
-      { text: pad(editor.t("machine.local_summary"), 30), style: dim },
-      { text: pad("", 12), style: dim },
-      { text: editor.t("machine.workspaces", { n: String(n) }), style: dim },
-    ]);
-  }
+}
+
+function machineRowName(r: MachinesRow): string {
+  return r.machine?.name ?? r.host?.alias ?? "";
+}
+
+function machineRowAddress(r: MachinesRow): string {
+  return r.host ? sshResolvedTarget(r.host) : r.machine ? machineSummary(r.machine) : "";
+}
+
+// `name  kind  address  state`: the state is the last test's answer, with
+// the workspaces open on it, or `not added` for a config host.
+function machinesRowEntry(r: MachinesRow, cols: MachinesCols): TextPropertyEntry {
+  const dim = { fg: "ui.menu_disabled_fg" };
+  const pad = (s: string, n: number): string => s + " ".repeat(Math.max(0, n - editor.stringWidth(s)));
   const m = r.machine ?? machineForHost(r.host!);
-  const test = m.lastTest === null
-    ? { text: pad("—", 12), style: dim }
-    : m.lastTest.ok
-    ? { text: pad(editor.t("machine.test_ok"), 12), style: { fg: "ui.help_key_fg" } }
-    : { text: pad(`✗ ${agoText(m.lastTest.at)}`, 12), style: { fg: "diagnostic.error_fg" } };
-  const n = machineWorkspaceCount(m);
-  const tail = r.host
-    ? editor.t("machine.from_ssh_config")
-    : n > 0
-    ? editor.t("machine.workspaces", { n: String(n) })
-    : "—";
+  const state: StyledSegment[] = [];
+  if (r.host) {
+    state.push({ text: editor.t("machine.not_added"), style: { fg: "diagnostic.warning_fg" } });
+  } else {
+    const t = m.lastTest;
+    state.push(
+      t === null
+        ? { text: "—", style: dim }
+        : t.ok
+        ? { text: editor.t("machine.test_ok"), style: { fg: "ui.help_key_fg" } }
+        : { text: `✗ ${agoText(t.at)}`, style: { fg: "diagnostic.error_fg" } },
+    );
+    const n = machineWorkspaceCount(m);
+    if (n > 0) state.push({ text: ` · ${editor.t("machine.workspaces", { n: String(n) })}`, style: dim });
+  }
   return styledRow([
-    { text: pad(m.name, 13) },
+    { text: pad(machineRowName(r), cols.name) },
     { text: pad(machineKindTag(m), 5), style: dim },
-    { text: pad(r.host ? sshResolvedTarget(r.host) : machineSummary(m), 30), style: dim },
-    test,
-    { text: tail, style: dim },
+    { text: pad(machineRowAddress(r), cols.addr), style: dim },
+    ...state,
   ]);
 }
 
+// The machines in a box, and one footer: add a machine, open the selected
+// one, close. Local is not listed: there is nothing to set up about it, and
+// every machine picker offers it first.
 function buildMachinesSpec(): WidgetSpec {
   const st = machinesState!;
   const rows = machinesRows();
-  const sel = rows[st.index];
-  const editable = !!sel?.machine || !!sel?.host;
-  const removable = !!sel?.machine;
+  const sel = rows[st.index] ?? null;
+  const cols = machinesCols(rows);
   return col(
-    list({
-      items: rows.map(machinesRowEntry),
-      itemKeys: rows.map((r) => r.key),
-      selectedIndex: st.index,
-      visibleRows: Math.min(8, rows.length),
-      key: "machines",
-    }),
     spacer(0),
-    button(`+ ${editor.t("machine.add")}`, { key: "machines-add" }),
+    row(spacer(2), labeledSection({
+      label: rows.length
+        ? editor.t("machine.list_count", { count: String(rows.length) })
+        : editor.t("machine.list_title"),
+      child: list({
+        items: rows.map((r) => machinesRowEntry(r, cols)),
+        itemKeys: rows.map((r) => r.key),
+        selectedIndex: st.index,
+        // Three rows even when empty, so the box reads as a list.
+        visibleRows: Math.max(3, Math.min(8, rows.length)),
+        key: "machines",
+      }),
+    })),
+    ...machinesHint(),
     spacer(0),
-    endRow(
-      withAccel(button(editor.t("machine.btn_new_here"), { intent: "primary", key: "machines-new" }), "⏎"),
+    footerRule(),
+    spacer(0),
+    row(
       spacer(2),
-      button(editor.t("machine.btn_edit"), { key: "machines-edit", disabled: !editable }),
-      spacer(2),
-      button(editor.t("machine.btn_test"), { key: "machines-test", disabled: !editable }),
-      spacer(2),
-      button(editor.t("machine.btn_remove"), { intent: "danger", key: "machines-remove", disabled: !removable }),
-      spacer(2),
+      button(`+ ${editor.t("machine.add")}`, { key: "machines-add" }),
+      spacer(3),
+      // Opens the selected row: a saved machine to edit, a config host to
+      // set up. Inert with nothing selected.
+      withAccel(
+        button(editor.t(sel?.host ? "machine.btn_setup" : "machine.btn_edit_more"), {
+          key: "machines-open",
+          disabled: !sel,
+        }),
+        "⏎",
+      ),
+      flexSpacer(),
       withAccel(button(editor.t("machine.btn_close"), { key: "machines-close" }), "Esc"),
+      spacer(2),
     ),
+    spacer(0),
   );
+}
+
+// Under the list, in the list's inner column: how many config hosts are
+// waiting to be added, and how.
+function machinesHint(): WidgetSpec[] {
+  const n = unaddedSshHosts().length;
+  if (n === 0) return [];
+  return [label(`  ${editor.t("machine.hosts_not_added", { count: String(n) })}`, { style: NOTE_STYLE })];
 }
 
 function renderMachinesDialog(): void {
@@ -12086,38 +12332,14 @@ function machinesSelected(): MachinesRow | null {
   return machinesState ? machinesRows()[machinesState.index] ?? null : null;
 }
 
-function newWorkspaceOnSelected(): void {
+// Open the selected row: a config host is set up as a machine, a saved
+// machine is edited.
+function openSelectedMachine(): void {
   const row = machinesSelected();
   if (!row) return;
-  pendingFormMachine = {
-    kind: "option",
-    key: row.machine ? row.machine.id : row.host ? `host:${row.host.alias}` : "local",
-  };
-  closeMachinesDialog();
-  dockBlurred = true;
-  openForm({ fromPicker: true });
-}
-
-function testSelectedMachine(): void {
-  const row = machinesSelected();
-  if (!row) return;
-  if (row.host) {
-    const alias = row.host.alias;
-    void testMachine(machineForHost(row.host)).then((r) => {
-      sshHostTests.set(alias, { ok: r.ok, at: Date.now(), summary: r.summary });
-      renderMachinesDialog();
-    });
-    return;
-  }
-  if (!row.machine) return;
-  const m = row.machine;
-  void testMachine(m).then((r) => {
-    const cur = machineById(m.id);
-    if (!cur) return;
-    cur.lastTest = { ok: r.ok, at: Date.now(), summary: r.summary };
-    upsertMachine(cur);
-    renderMachinesDialog();
-  });
+  closeMachinesDialogKeepDock();
+  if (row.host) openMachineDialog(null, "machines", row.host);
+  else if (row.machine) openMachineDialog(row.machine, "machines");
 }
 
 const MACHINES_MODE_BINDINGS: [string, string][] = [
@@ -12127,7 +12349,7 @@ editor.defineMode(MACHINES_MODE, MACHINES_MODE_BINDINGS, true, true);
 
 registerHandler("orchestrator_machines_enter", () => {
   if (!machinesPanel || !machinesState) return;
-  if (machinesState.focus === "machines" || machinesState.focus === "") return newWorkspaceOnSelected();
+  if (machinesState.focus === "machines" || machinesState.focus === "") return openSelectedMachine();
   machinesPanel.command(activate());
 });
 
@@ -12148,10 +12370,11 @@ function handleMachinesEvent(e: WidgetEvt): void {
     if (e.event_type === "select" && idx >= 0) {
       const changed = idx !== st.index;
       st.index = idx;
+      // The open button's label follows the row.
       if (changed) renderMachinesDialog();
     } else if (e.event_type === "activate") {
       if (idx >= 0) st.index = idx;
-      newWorkspaceOnSelected();
+      openSelectedMachine();
     }
     return;
   }
@@ -12161,32 +12384,8 @@ function handleMachinesEvent(e: WidgetEvt): void {
       closeMachinesDialogKeepDock();
       openMachineDialog(null, "machines");
       return;
-    case "machines-edit": {
-      const row = machinesSelected();
-      if (row?.machine) {
-        closeMachinesDialogKeepDock();
-        openMachineDialog(row.machine, "machines");
-      } else if (row?.host) {
-        // Save the config host as a machine of its own: Add Machine, on it.
-        closeMachinesDialogKeepDock();
-        openMachineDialog(null, "machines", row.host);
-      }
-      return;
-    }
-    case "machines-test":
-      testSelectedMachine();
-      return;
-    case "machines-remove": {
-      const row = machinesSelected();
-      if (row?.machine) {
-        removeMachine(row.machine.id);
-        st.index = Math.min(st.index, machinesRows().length - 1);
-        renderMachinesDialog();
-      }
-      return;
-    }
-    case "machines-new":
-      newWorkspaceOnSelected();
+    case "machines-open":
+      openSelectedMachine();
       return;
     case "machines-close":
       closeMachinesDialog();
@@ -12340,31 +12539,13 @@ function sshResolvedTarget(h: SshConfigHost): string {
   return (h.user ? `${h.user}@` : "") + host + (h.port ? `:${h.port}` : "");
 }
 
-// The Host control is on `Other host…` — or there is no config to pick
-// from — so the connection is what the user types. Takes the form because
-// the two callers that hold one are not always the module's `form`.
-function formSshOther(f: NewSessionForm): boolean {
-  return f.sshHosts.length === 0 || f.sshPick >= f.sshHosts.length;
-}
-
-function sshOther(): boolean {
-  return !form || formSshOther(form);
-}
-
-// The host the SSH backend connects to: the picked alias (ssh resolves it
-// from its own config — user, port and identity included) or the typed
-// target.
-function sshChosenHost(): string {
-  if (!form) return "";
-  return sshOther() ? form.sshHost.value.trim() : form.sshHosts[form.sshPick].alias;
-}
 
 // === The form grid ==========================================================
 //
 // One rule does most of the work: every control shares `FORM_LABEL_W` and the
 // panel is mounted `labelAlign: "right"`, so every `[` opens on one column and
 // a control without a label of its own indents into it. No boxes — the
-// alignment does the grouping. See docs/internal/orchestrator-ux-redesign.md §3.
+// alignment does the grouping.
 
 // The label column, in cells. Wide enough for the longest English label
 // ("New branch name"); a longer translation is trimmed to the column with `…`.
@@ -12456,36 +12637,24 @@ function formToggle(checked: boolean, lbl: string, key: string): WidgetSpec {
 
 // === The Machine control (design §5.1, §3.8) ===============================
 //
-// The form's one host control, in every mode: Local, the saved machines, the
-// hosts `~/.ssh/config` names, `Other host…`, a manual Kubernetes target,
-// the devcontainer in this project, and `Add machine…`.
+// The form's one host control, in every mode: Local, the saved machines and
+// the devcontainer in this project. A remote runs only on a saved machine;
+// the `+ Add machine…` button under the control is how one is added.
 
 interface MachineOption {
   key: string;
   label: string;
-  kind: "local" | "machine" | "sshhost" | "other" | "k8s" | "devcontainer";
+  kind: "local" | "machine" | "devcontainer";
   machine?: Machine;
-  hostIndex?: number;
 }
 
 function machineOptions(): MachineOption[] {
   const out: MachineOption[] = [{ key: "local", label: editor.t("machine.local"), kind: "local" }];
   for (const m of loadMachines()) out.push({ key: m.id, label: m.name, kind: "machine", machine: m });
-  (form?.sshHosts ?? []).forEach((h, i) => {
-    out.push({ key: `host:${h.alias}`, label: h.alias, kind: "sshhost", hostIndex: i });
-  });
-  out.push({ key: "other", label: editor.t("form.ssh_other_host"), kind: "other" });
-  out.push({ key: "k8s", label: editor.t("form.k8s_manual"), kind: "k8s" });
   out.push({ key: "devcontainer", label: editor.t("backend.devcontainer"), kind: "devcontainer" });
-  // **No "Add machine…" here.** Picking it only *armed* a choice that a
-  // further, unadvertised Enter completed: clicking it — the obvious gesture —
-  // left the field reading "Add machine…", revealed nothing, and silently
-  // reverted to Local on Tab. Two things already do its job better and are
-  // right next to it: the `~/.ssh/config` hosts above, which need no
-  // registration at all, and `Other host…` for one typed by hand. Registering
-  // a machine keeps its own home in the dock's `⋯` → Machines and the
-  // `Orchestrator: Machines` command; a control that needs a secret keystroke
-  // beside two that do not only teaches distrust.
+  // **No "Add machine…" option here.** Picking it only *armed* a choice that
+  // a further, unadvertised Enter completed. Adding a machine is the
+  // `+ Add machine…` button under the control, which does what it says.
   return out;
 }
 
@@ -12496,8 +12665,6 @@ function machineOptionNote(o: MachineOption): string {
       return editor.t("machine.local_summary");
     case "machine":
       return `${machineKindTag(o.machine!)} · ${machineSummary(o.machine!)}`;
-    case "sshhost":
-      return form ? sshResolvedTarget(form.sshHosts[o.hostIndex!]) : "";
     case "devcontainer":
       return editor.t("machine.devcontainer_summary");
     default:
@@ -12520,17 +12687,6 @@ function applyMachinePick(index: number): void {
       form.backend = o.machine!.kind;
       form.machineId = o.machine!.id;
       break;
-    case "sshhost":
-      form.backend = "ssh";
-      form.sshPick = o.hostIndex!;
-      break;
-    case "other":
-      form.backend = "ssh";
-      form.sshPick = form.sshHosts.length;
-      break;
-    case "k8s":
-      form.backend = "kubernetes";
-      break;
     case "devcontainer":
       form.backend = "devcontainer";
       break;
@@ -12550,11 +12706,11 @@ function applyMachinePick(index: number): void {
 
 /** How `agent` rejoins session `id`, per the agent registry. `exact` is false
  *  for an agent with no id-addressed resume (codex `resume --last` takes the
- *  newest session in the directory). */
+ *  newest session in the directory), and when no id is known (empty). */
 function resumeArgv(agent: string, id: string): { argv: string[]; exact: boolean } | null {
   const entry = agentEntryForCmd(agent);
   if (!entry) return null;
-  if (entry.spec.provision) {
+  if (entry.spec.provision && id) {
     return {
       argv: [agent, ...entry.spec.provision.resumeArgs.map((a) => a.replace("{id}", id))],
       exact: true,
@@ -12570,10 +12726,20 @@ function resumeArgv(agent: string, id: string): { argv: string[]; exact: boolean
  *  discovered session is rejoined. The form, not a silent launch, so the
  *  reader sees what will run where and a connect gets its trust decision. */
 function openWorkspaceForm(seed: FormSeed, prefill: { projectPath: string; cmd: string }): void {
-  pendingFormMachine = seed;
   pendingFormPrefill = prefill;
-  dockBlurred = true;
-  openForm({ fromPicker: true });
+  if (seed.kind === "option") {
+    pendingFormMachine = seed;
+    dockBlurred = true;
+    openForm({ fromPicker: true });
+    return;
+  }
+  // A machine that is not saved (an open window's host or pod): a workspace
+  // runs only on a saved machine, so it is added first, prefilled, and the
+  // form follows on Save.
+  const template: Partial<Machine> = seed.kind === "ssh"
+    ? { kind: "ssh", target: seed.target, name: sshTargetParts(seed.target).host }
+    : { kind: "kubernetes", namespace: seed.namespace, pod: seed.pod, name: seed.pod };
+  openMachineDialog(null, "form", undefined, template);
 }
 
 function seedFormMachine(): void {
@@ -12585,21 +12751,9 @@ function seedFormMachine(): void {
     if (typeof last === "string") pickMachineOption(last);
     return;
   }
-  switch (asked.kind) {
-    case "option":
-      pickMachineOption(asked.key);
-      return;
-    // A host the registry does not know: the form's hand-typed entry, prefilled.
-    case "ssh":
-      pickMachineOption("other");
-      form.sshHost = { value: asked.target, cursor: asked.target.length };
-      return;
-    case "kubernetes":
-      pickMachineOption("k8s");
-      form.k8sNamespace = { value: asked.namespace, cursor: asked.namespace.length };
-      form.k8sPod = { value: asked.pod, cursor: asked.pod.length };
-      return;
-  }
+  // Only a saved machine reaches the form; `openWorkspaceForm` adds any other
+  // first.
+  if (asked.kind === "option") pickMachineOption(asked.key);
 }
 
 /** Apply the `machineOptions()` entry with this key, if it is offered. */
@@ -12608,7 +12762,7 @@ function pickMachineOption(key: string): void {
   if (idx >= 0) applyMachinePick(idx);
 }
 
-// The Machine control, without its note: it shares a row with Project.
+// The Machine control: the first row of WHERE, with `+ Add machine…` beside it.
 function machineDropdown(): WidgetSpec {
   const opts = machineOptions();
   // Machines can be deleted while the form is open, so the stored pick is
@@ -12616,88 +12770,23 @@ function machineDropdown(): WidgetSpec {
   if (form!.machinePick >= opts.length || form!.machinePick < 0) applyMachinePick(0);
   return dropdown(opts.map((o) => o.label), {
     selectedIndex: form!.machinePick,
-    label: editor.t("form.machine"),
+    label: formLabel("form.machine"),
+    labelWidth: FORM_LABEL_W,
     key: "machine",
   });
 }
 
-// What a non-local machine resolves to (`user@host:port`, a pod); Local needs
-// no gloss.
-function machineNoteRows(): WidgetSpec[] {
+// The Machine row — the control, then `+ Add machine…` right beside it — and
+// under it what a non-local machine resolves to (`user@host:port`, a pod);
+// Local needs no gloss.
+function machineRows(): WidgetSpec[] {
   const o = machineOptions()[form!.machinePick];
   const note = !o || o.kind === "local" ? "" : machineOptionNote(o);
-  return note ? [fieldNote(note)] : [];
-}
-
-// A name for a remembered machine when the user gives none: the host of an
-// ssh target, the pod or namespace of a cluster.
-function rememberDefaultName(): string {
-  if (!form) return "";
-  if (form.backend === "ssh") {
-    return parseSshTarget(form.sshHost.value).dest.replace(/^[^@]*@/, "");
-  }
-  return form.k8sPod.value.trim() || form.k8sNamespace.value.trim();
-}
-
-// `[v] Remember this machine` / `as [name]` (§5.2), under a hand-typed host
-// or cluster.
-function rememberFields(f: NewSessionForm): WidgetSpec[] {
   const out: WidgetSpec[] = [
-    spacer(0),
-    formToggle(f.remember, editor.t("form.remember_machine"), "remember"),
+    row(machineDropdown(), spacer(3), actionButton(`+ ${editor.t("machine.add")}`, "form_add_machine")),
   ];
-  if (f.remember) {
-    out.push(
-      ...field(editor.t("form.remember_as"), f.rememberAs, {
-        key: "remember_name",
-        placeholder: rememberDefaultName(),
-      }),
-    );
-  }
+  if (note) out.push(label(noteText(note), { labelWidth: FORM_LABEL_W, style: NOTE_STYLE }));
   return out;
-}
-
-function rememberKeys(): string[] {
-  return form?.remember ? ["remember", "remember_name"] : ["remember"];
-}
-
-// On submit: save what was typed as a machine, so the next workspace picks
-// it from the list.
-function rememberMachineFromForm(f: NewSessionForm): void {
-  if (!f.remember || f.machineId) return;
-  const name = f.rememberAs.value.trim() || rememberDefaultName();
-  if (!name) return;
-  const base = { id: newMachineId(), name, lastTest: null };
-  if (f.backend === "ssh") {
-    if (!formSshOther(f)) return;
-    upsertMachine({
-      ...base,
-      kind: "ssh",
-      target: f.sshHost.value.trim(),
-      identity: f.sshIdentity.value.trim(),
-      options: f.sshOptions.value.trim(),
-      context: "",
-      namespace: "",
-      pod: "",
-      path: f.sshPath.value.trim(),
-    });
-  } else if (f.backend === "kubernetes") {
-    // A `.fresh/k8s.json` target names the pod for the launch; the manual
-    // fields are then blank and a machine saved from them could never be
-    // tested or launched. Nothing to remember in that case.
-    if (f.k8sTarget.value.trim() && !(f.k8sNamespace.value.trim() && f.k8sPod.value.trim())) return;
-    upsertMachine({
-      ...base,
-      kind: "kubernetes",
-      target: "",
-      identity: "",
-      options: "",
-      context: f.k8sContext.value.trim(),
-      namespace: f.k8sNamespace.value.trim(),
-      pod: f.k8sPod.value.trim(),
-      path: f.k8sWorkspace.value.trim(),
-    });
-  }
 }
 
 // Agent selector: a single dropdown of the preset labels (terminal, the
@@ -13074,57 +13163,6 @@ function remoteWorktreeKeys(f: NewSessionForm): string[] {
   return f.createWorktree ? ["worktree", "branch", "new_branch"] : ["worktree"];
 }
 
-// The connection section (§3.8): what identifies the machine when it is
-// typed by hand — the SSH target with its identity and options, or the
-// cluster's target / context / namespace / pod. Empty for Local, a config
-// host, a saved machine and the devcontainer: their connection is known.
-function connectionFields(f: NewSessionForm): WidgetSpec[] {
-  if (f.machineId) return [];
-  if (f.backend === "ssh" && formSshOther(f)) {
-    const options = splitPlaceholder(editor.t("form.ssh_options_placeholder"));
-    return [
-      ...field(editor.t("form.ssh_target_label"), f.sshHost, {
-        key: "ssh_host",
-        note: editor.t("form.ssh_host_note"),
-      }),
-      ...field(splitLabel("form.ssh_identity_label").label, f.sshIdentity, {
-        key: "ssh_identity",
-        placeholder: editor.t("form.ssh_identity_placeholder"),
-      }),
-      ...field(splitLabel("form.ssh_options_label").label, f.sshOptions, {
-        key: "ssh_options",
-        placeholder: options.placeholder,
-        note: options.note,
-      }),
-    ];
-  }
-  if (f.backend === "kubernetes") {
-    const hasTarget = f.k8sTarget.value.trim().length > 0;
-    const fields = field(splitLabel("form.k8s_target_label").label, f.k8sTarget, {
-      key: "k8s_target",
-      note: editor.t("form.k8s_target_note"),
-    });
-    if (!hasTarget) {
-      fields.push(
-        ...field(splitLabel("form.k8s_context_label").label, f.k8sContext, {
-          key: "k8s_context",
-          placeholder: editor.t("form.k8s_context_placeholder"),
-        }),
-        ...field(formLabel("form.k8s_namespace_label"), f.k8sNamespace, {
-          key: "k8s_namespace",
-          placeholder: editor.t("form.k8s_namespace_placeholder"),
-        }),
-        ...field(formLabel("form.k8s_pod_label"), f.k8sPod, {
-          key: "k8s_pod",
-          placeholder: editor.t("form.k8s_pod_placeholder"),
-        }),
-      );
-    }
-    return fields;
-  }
-  return [];
-}
-
 /** Put a caller's directory into the slot this backend's Project Path reads
  *  (see `projectPathFields`). Empty is left alone so a session with no
  *  recorded directory falls back to the machine's default. */
@@ -13174,30 +13212,16 @@ function projectPathFields(): WidgetSpec[] {
   }
 }
 
-// Whether the form is on a host or cluster typed by hand — the one the
-// `Remember this machine` toggle can save. Takes the form, so a candidate
-// shape can be asked the same question as the live one.
-function formTypedMachine(f: NewSessionForm): boolean {
-  if (f.machineId) return false;
-  return (f.backend === "ssh" && formSshOther(f)) || f.backend === "kubernetes";
-}
-
-function typedMachine(): boolean {
-  return !!form && formTypedMachine(form);
-}
-
 // The mode-only tail (§3.8): what has no equivalent elsewhere — the worktree
-// group for Local, `Remember this machine` for a typed host or cluster.
-// Each starts with its own blank row.
+// group. Each starts with its own blank row.
 function modeTailFields(f: NewSessionForm): WidgetSpec[] {
   if (f.target !== "new") return [];
   if (f.backend === "local") return worktreeFields(f);
   // A remote workspace gets the same worktree offer a local one does — the
   // repository is simply on the other side of the connection.
   if (f.backend === "ssh") {
-    return [...remoteWorktreeFields(f), ...(formTypedMachine(f) ? rememberFields(f) : [])];
+    return remoteWorktreeFields(f);
   }
-  if (formTypedMachine(f)) return rememberFields(f);
   return [];
 }
 
@@ -13213,9 +13237,8 @@ function tailFocusKeys(f: NewSessionForm): string[] {
       ? ["worktree", "branch", "new_branch"]
       : ["worktree", "branch"];
   }
-  const remember = formTypedMachine(f) ? rememberKeys() : [];
-  if (f.backend === "ssh") return [...remoteWorktreeKeys(f), ...remember];
-  return remember;
+  if (f.backend === "ssh") return remoteWorktreeKeys(f);
+  return [];
 }
 
 // While a submit is in flight the dialog is disabled: a read-only summary in
@@ -13231,22 +13254,11 @@ function buildConnectingView(): WidgetSpec {
   const machine = form.machineId ? machineById(form.machineId) : null;
   if (form.backend === "ssh") {
     rows.push(roRow(editor.t("form.ro_run_in"), machine ? machine.name : editor.t("backend.ssh")));
-    rows.push(
-      roRow(
-        editor.t("form.ro_host"),
-        machine
-          ? machine.target
-          : sshOther()
-          ? form.sshHost.value.trim()
-          : sshResolvedTarget(form.sshHosts[form.sshPick]),
-      ),
-    );
+    rows.push(roRow(editor.t("form.ro_host"), machine ? machine.target : ""));
     if (form.sshPath.value.trim()) rows.push(roRow(editor.t("form.ro_remote_path"), form.sshPath.value.trim()));
   } else if (form.backend === "kubernetes") {
     rows.push(roRow(editor.t("form.ro_run_in"), machine ? machine.name : editor.t("backend.kubernetes")));
-    const ns = machine ? machine.namespace : form.k8sNamespace.value.trim();
-    const pod = machine ? machine.pod : form.k8sPod.value.trim();
-    rows.push(roRow(editor.t("form.ro_pod"), (machine ? "" : form.k8sTarget.value.trim()) || `${ns}/${pod}`));
+    rows.push(roRow(editor.t("form.ro_pod"), machine ? `${machine.namespace}/${machine.pod}` : ""));
   } else {
     rows.push(roRow(
       editor.t("form.ro_run_in"),
@@ -13308,17 +13320,12 @@ function formIsSubmittable(): boolean {
     case "devcontainer":
       return !!(form.projectPath.value.trim() || form.defaultProjectPath);
     case "ssh":
-      return !!form.machineId || sshChosenHost().length > 0;
     case "kubernetes":
-      return (
-        !!form.machineId ||
-        form.k8sTarget.value.trim().length > 0 ||
-        form.k8sPod.value.trim().length > 0
-      );
+      return !!form.machineId;
   }
 }
 
-// ── The launch form's layout (docs/internal/launch-dialog-redesign.md) ──────
+// ── The launch form's layout ──────────────────────────────────────────────────
 //
 // Sections top to bottom: the mode switch, PROMPT, AGENT, WHERE (new
 // workspace only), GIT (details open, git paths only), then the footer. The
@@ -13327,9 +13334,37 @@ function formIsSubmittable(): boolean {
 // fold, a typed host, a warning). There is no row reservation: a section is
 // as tall as what it shows.
 
-// Rows of the prompt box. Two on a short terminal (see `formRoomy`).
+// Rows of the prompt box when it is short: two on a short terminal (see
+// `formRoomy`). A longer prompt grows the box, up to `promptMaxRows`, and
+// scrolls past that.
 const PROMPT_ROWS = 3;
 const PROMPT_ROWS_SHORT = 2;
+
+// The most rows the prompt box grows to: a quarter of the terminal, so the
+// sections under it stay on screen.
+function promptMaxRows(): number {
+  const h = editor.getScreenSize().height;
+  return Math.max(formRoomy() ? PROMPT_ROWS : PROMPT_ROWS_SHORT, Math.floor((h > 0 ? h : 40) / 4));
+}
+
+// Rows the prompt's text takes, wrapped at the box's width: the panel, less
+// its frame and the box's inset and frame.
+function promptTextRows(value: string): number {
+  const w = editor.getScreenSize().width;
+  const panel = Math.floor((w > 0 ? w : 120) * FORM_WIDTH_PCT / 100);
+  const width = Math.max(10, panel - 2 - 2 - 4 - 2);
+  let rows = 0;
+  for (const line of value.split("\n")) {
+    rows += Math.max(1, Math.ceil(editor.stringWidth(line) / width));
+  }
+  return rows;
+}
+
+// The prompt box's height: its text's, between the resting size and the cap.
+function promptRows(f: NewSessionForm): number {
+  const min = formRoomy() ? PROMPT_ROWS : PROMPT_ROWS_SHORT;
+  return Math.min(promptMaxRows(), Math.max(min, promptTextRows(f.startPrompt.value)));
+}
 
 const SECTION_STYLE = { fg: "ui.menu_disabled_fg", bold: true } as const;
 const WARN_STYLE = { fg: "diagnostic.warning_fg" } as const;
@@ -13352,11 +13387,11 @@ function gap(): WidgetSpec[] {
 // The rule above a dialog's buttons, inset like the section rules so it
 // keeps the same margin from the ring on both sides.
 function footerRule(): WidgetSpec {
-  return label(`  ${"─".repeat(400)}`, { style: { fg: "ui.menu_disabled_fg" } });
+  return label("─".repeat(400), { style: { fg: "ui.menu_disabled_fg" } });
 }
 
 function sectionHeader(key: string): WidgetSpec {
-  return label(`  ${editor.t(key)} ${"─".repeat(400)}`, { style: SECTION_STYLE });
+  return label(`${editor.t(key)} ${"─".repeat(400)}`, { style: SECTION_STYLE });
 }
 
 // The mode switch: a new workspace, or here. Both options are always on
@@ -13390,7 +13425,7 @@ function promptBox(f: NewSessionForm): WidgetSpec {
   const spec = text({
     value: takes ? f.startPrompt.value : "",
     cursorByte: f.startPrompt.cursor,
-    rows: formRoomy() ? PROMPT_ROWS : PROMPT_ROWS_SHORT,
+    rows: promptRows(f),
     fullWidth: true,
     placeholder: takes ? editor.t("form.prompt_placeholder") : editor.t("form.prompt_none"),
     readOnly: !takes,
@@ -13398,7 +13433,7 @@ function promptBox(f: NewSessionForm): WidgetSpec {
   });
   // Inset from the dialog's edges: a margin on the left, and a width that
   // leaves the same on the right (a section otherwise fills its row).
-  return row(spacer(3), labeledSection({ child: spec }));
+  return row(spacer(2), labeledSection({ child: spec }));
 }
 
 // The agent and its own switches on one row; `custom…` adds the command row
@@ -13460,28 +13495,23 @@ function planWorktreeText(branch: string, base: string, name: string): string {
     : editor.t("form.plan_worktree_nobase", { branch });
 }
 
-// The WHERE section (§4.1): Project and Machine on one row, the connection
-// fields for a host typed by hand, then either the repository's main clone or
-// the folder, then one line saying what Launch will do to git.
+// The WHERE section (§4.1): Project and Machine on one row, the button that
+// adds a machine beside what the picked one resolves to, then either the
+// repository's main clone or the folder, then one line saying what Launch
+// will do to git.
 function whereFields(f: NewSessionForm): WidgetSpec[] {
   const out: WidgetSpec[] = [
-    row(
-      dropdown(projectOptionLabels(), {
-        selectedIndex: projectPickIndex(f),
-        label: formLabel("form.project"),
-        labelWidth: FORM_LABEL_W,
-        key: "project",
-      }),
-      spacer(5),
-      machineDropdown(),
-    ),
-    ...machineNoteRows(),
-    ...connectionFields(f),
+    ...machineRows(),
+    dropdown(projectOptionLabels(), {
+      selectedIndex: projectPickIndex(f),
+      label: formLabel("form.project"),
+      labelWidth: FORM_LABEL_W,
+      key: "project",
+    }),
   ];
   const r = formRepo(f);
   if (r) out.push(...repoWhereRows(f, r));
   else out.push(...projectPathFields(), ...folderRepoRows(f));
-  if (formTypedMachine(f)) out.push(...rememberFields(f));
   if (f.detailsOpen) {
     out.push(...field(formLabel("form.workspace_short"), f.name, {
       key: "name",
@@ -13604,45 +13634,35 @@ function gitSectionShown(f: NewSessionForm): boolean {
   return f.target === "new" && f.detailsOpen && gitSectionFields(f).length > 0;
 }
 
-// The footer: a rule, the actions flush right (the background launch as a
-// quiet link beside the primary button), then the key hints — or the last
-// error in their place.
+// The footer: a rule, then the actions flush right, each with its key beside
+// it — and the last error under them, when there is one.
 function formFooterRows(creating: boolean): WidgetSpec[] {
   if (!form) return [];
   if (creating && form.place) return placeFooterRows(form, form.place);
   const ok = formIsSubmittable();
+  // One row: each button with its key beside it, the primary last.
   const actions = creating
     ? endRow(
-      button(editor.t("form.btn_cancel_short"), { key: "cancel" }),
-      spacer(5),
-      button(editor.t("form.btn_launch_bg"), { key: "create-bg", disabled: !ok }),
-      spacer(5),
-      button(`  ${editor.t("form.btn_launch")}  `, { intent: "primary", key: "create-visit", disabled: !ok }),
+      withAccel(button(editor.t("form.btn_cancel_short"), { key: "cancel" }), "Esc"),
       spacer(3),
+      withAccel(button(editor.t("form.btn_launch_bg"), { key: "create-bg", disabled: !ok }), "Alt+⏎"),
+      spacer(3),
+      withAccel(button(editor.t("form.btn_launch"), { intent: "primary", key: "create-visit", disabled: !ok }), "Ctrl+⏎"),
+      spacer(2),
     )
     : endRow(
-      button(editor.t("form.btn_cancel_short"), { key: "cancel" }),
-      spacer(5),
-      button(`  ${editor.t("run_agent.btn_run")}  `, { intent: "primary", key: "create-visit", disabled: !ok }),
+      withAccel(button(editor.t("form.btn_cancel_short"), { key: "cancel" }), "Esc"),
       spacer(3),
+      withAccel(button(editor.t("run_agent.btn_run"), { intent: "primary", key: "create-visit", disabled: !ok }), "Ctrl+⏎"),
+      spacer(2),
     );
-  const hints = creating
-    ? [
-      { keys: "Ctrl+⏎", label: editor.t("hint.launch") },
-      { keys: "Alt+⏎", label: editor.t("hint.background") },
-      { keys: "Esc", label: editor.t("hint.close") },
-    ]
-    : [
-      { keys: "Ctrl+⏎", label: editor.t("hint.run") },
-      { keys: "Esc", label: editor.t("hint.close") },
-    ];
   const tail = form.lastError
-    ? label(editor.t("form.error_prefix") + form.lastError, {
+    ? [...gap(), label(editor.t("form.error_prefix") + form.lastError, {
       style: { fg: "diagnostic.error_fg", bold: true },
       wrap: true,
-    })
-    : row(flexSpacer(), hintBar(hints), flexSpacer());
-  return [footerRule(), ...gap(), actions, ...gap(), tail];
+    })]
+    : [];
+  return [footerRule(), ...gap(), actions, ...tail, ...gap()];
 }
 
 // Launch asks where the project is on this machine (§4.17): the question
@@ -13821,20 +13841,9 @@ function openForm(options?: { fromPicker?: boolean; target?: RunAgentTarget }): 
     folderOrigin: "",
     place: null,
     backend: "local",
-    sshHost: { value: "", cursor: 0 },
-    sshHosts: sshConfigHosts(),
-    sshPick: 0,
     machineId: null,
     machinePick: 0,
-    remember: false,
-    rememberAs: { value: "", cursor: 0 },
     sshPath: { value: "", cursor: 0 },
-    sshIdentity: { value: "", cursor: 0 },
-    sshOptions: { value: "", cursor: 0 },
-    k8sTarget: { value: "", cursor: 0 },
-    k8sContext: { value: "", cursor: 0 },
-    k8sNamespace: { value: "", cursor: 0 },
-    k8sPod: { value: "", cursor: 0 },
     k8sWorkspace: { value: "", cursor: 0 },
     projectPath: { value: "", cursor: 0 },
     name: { value: "", cursor: 0 },
@@ -14377,7 +14386,7 @@ function restoreDockAfterForm(): boolean {
   dockBlurred = false;
   dockFocus = "list";
   editor.floatingPanelControl(openPanel.id(), "focus", 0);
-  openPanel.setFocusKey("sessions");
+  focusDockControl("sessions");
   refreshOpenDialog();
   return true;
 }
@@ -14729,39 +14738,10 @@ function captureCreateSpec(f: NewSessionForm): CaptureResult {
     return { ok: false, error: editor.t("err.devcontainer_unsupported") };
   }
 
-  if (f.backend === "kubernetes") {
-    return buildK8sSpec({
-      ...agentOptions,
-      target: f.k8sTarget.value.trim(),
-      context: f.k8sContext.value.trim(),
-      namespace: f.k8sNamespace.value.trim(),
-      pod: f.k8sPod.value.trim(),
-      workspace: f.k8sWorkspace.value.trim(),
-      name: sessionName,
-      cmd,
-    });
-  }
-
-  if (f.backend === "ssh") {
-    // A picked config host goes to ssh as its alias: user, port, identity
-    // and options come from the entry, so the manual fields are not sent.
-    const other = formSshOther(f);
-    const options = other ? f.sshOptions.value.trim() : "";
-    return buildSshSpec({
-      ...agentOptions,
-      host: other ? f.sshHost.value.trim() : f.sshHosts[f.sshPick].alias,
-      // The auto-generated name counts as a name. Leaving the field blank is
-      // the common case, and passing "" here left the row with no workspace
-      // name at all — the very thing the label change is for — while the
-      // worktree it created was named all along (the plan below uses the same
-      // fallback).
-      name: sessionName || formDefaultSessionName(f),
-      cmd,
-      remotePath: f.sshPath.value.trim(),
-      identity: other ? f.sshIdentity.value.trim() : "",
-      extraArgs: options ? options.split(/\s+/) : [],
-      worktree: remoteWorktreePlan(f, sessionName || formDefaultSessionName(f)) ?? undefined,
-    });
+  // A remote with no saved machine behind it: the machine was removed while
+  // the form was open.
+  if (f.backend === "kubernetes" || f.backend === "ssh") {
+    return { ok: false, error: editor.t("machine.err_gone") };
   }
 
   // Every `FormBackend` has returned above; this keeps the compiler honest
@@ -15713,10 +15693,6 @@ async function submitForm(visit: boolean): Promise<void> {
     renderForm();
     return;
   }
-  // A hand-typed host or cluster the user asked to keep becomes a machine
-  // now, and whatever ran is what the next form opens on — by option key,
-  // since most options (an ssh-config host, Kubernetes) have no machine id.
-  rememberMachineFromForm(form);
   // Claim a remote workspace's auto-generated name so the *next* dialog does
   // not propose it again. A local create derives its own name at create time
   // and advances the counter there (`runLocalCreate`, which also pins the
@@ -16912,6 +16888,8 @@ editor.exportPluginApi("orchestrator", {
   scanTargets,
   resumeArgv,
   openWorkspaceForm,
+  addMachine: (done: (savedKey: string | null) => void) =>
+    openMachineDialog(null, "discover", undefined, undefined, done),
   yieldDock: yieldDockToDialog,
   restoreDock: restoreDockAfterDialog,
   runAgent,
@@ -17507,7 +17485,7 @@ editor.on("widget_event", (e) => {
       if (openPanel && dockMode) {
         dockBlurred = false;
         editor.floatingPanelControl(openPanel.id(), "focus", 0);
-        openPanel.setFocusKey("sessions");
+        focusDockControl("sessions");
         refreshOpenDialog();
       }
       return;
@@ -17554,6 +17532,41 @@ editor.on("widget_event", (e) => {
   // ---------------------------------------------------------------------
   // Dock session context menu (right-click): Visit / Archive / Delete.
   // ---------------------------------------------------------------------
+  // ---------------------------------------------------------------------
+  // The dock's Menu panel.
+  // ---------------------------------------------------------------------
+  if (mainMenuPanel && e.panel_id === mainMenuPanel.id()) {
+    if (e.event_type === "cancel") {
+      // Esc or a press outside: the host unmounted it already. A press on
+      // the Menu button is spent on the dismissal, so it cannot reopen it.
+      mainMenuPanel = null;
+      closeMainMenu();
+      return;
+    }
+    // The project dropdown walks its list live, but the filter only moves
+    // once a value is accepted: the list closes on a click or Enter (Esc
+    // first puts the selection back). A change while it is closed is an
+    // accept in itself.
+    if (e.event_type === "dropdown_open" && e.widget_key === MAIN_MENU_PROJECT_KEY) {
+      mainMenuProjectOpen = ((e.payload ?? {}) as Record<string, unknown>).open === true;
+      if (!mainMenuProjectOpen && mainMenuProjectPick !== null) {
+        const pick = mainMenuProjectPick;
+        mainMenuProjectPick = null;
+        applyProjectFilter(projectMenuKeys()[pick] ?? "");
+      }
+      return;
+    }
+    if (e.event_type === "change" && e.widget_key === MAIN_MENU_PROJECT_KEY) {
+      const index = Number(((e.payload ?? {}) as Record<string, unknown>).index ?? 0);
+      if (mainMenuProjectOpen) mainMenuProjectPick = index;
+      else applyProjectFilter(projectMenuKeys()[index] ?? "");
+      return;
+    }
+    if (e.event_type === "activate" && typeof e.widget_key === "string" && e.widget_key.startsWith(MAIN_MENU_PREFIX)) {
+      runDockMenuOption(e.widget_key.slice(MAIN_MENU_PREFIX.length));
+    }
+    return;
+  }
   if (dockMenuPanel && dockMenuState && e.panel_id === dockMenuPanel.id()) {
     const target = dockMenuState.target;
     if (e.event_type === "cancel") {
@@ -17566,7 +17579,7 @@ editor.on("widget_event", (e) => {
         dockBlurred = false;
         dockFocus = "list";
         editor.floatingPanelControl(openPanel.id(), "focus", 0);
-        openPanel.setFocusKey("sessions");
+        focusDockControl("sessions");
         refreshOpenDialog();
       }
       return;
@@ -17716,13 +17729,6 @@ editor.on("widget_event", (e) => {
       }
       return;
     }
-    if (e.event_type === "toggle" && e.widget_key === "remember") {
-      const checked = (e.payload as { checked?: unknown })?.checked;
-      form.remember = typeof checked === "boolean" ? checked : !form.remember;
-      rebuildFormFocusCycle();
-      renderForm();
-      return;
-    }
     if (e.event_type === "change" && e.widget_key === "launch_mode") {
       // New workspace ⇄ here. The prompt, agent and options carry over; the
       // panel re-mounts because its title is mount-time chrome.
@@ -17814,27 +17820,13 @@ editor.on("widget_event", (e) => {
         ? form.branch
         : field === "new_branch"
         ? form.newBranch
-        : field === "remember_name"
-        ? form.rememberAs
-        : field === "ssh_host"
-        ? form.sshHost
         : field === "ssh_path"
         ? form.sshPath
-        : field === "ssh_identity"
-        ? form.sshIdentity
-        : field === "ssh_options"
-        ? form.sshOptions
-        : field === "k8s_target"
-        ? form.k8sTarget
-        : field === "k8s_context"
-        ? form.k8sContext
-        : field === "k8s_namespace"
-        ? form.k8sNamespace
-        : field === "k8s_pod"
-        ? form.k8sPod
         : field === "k8s_workspace"
         ? form.k8sWorkspace
         : null;
+      // The prompt box grows with its text: re-lay-out when its height moves.
+      const promptRowsBefore = field === "start_prompt" ? promptRows(form) : 0;
       if (slot) {
         slot.value = value;
         if (typeof cursor === "number") slot.cursor = cursor;
@@ -17847,18 +17839,14 @@ editor.on("widget_event", (e) => {
         // for us to intercept).
         snapFormFocusTo(field);
       }
+      if (field === "start_prompt" && promptRows(form) !== promptRowsBefore) renderForm();
       if (field === "project_path") {
         scheduleProjectPathReprobe();
         scheduleCompletionRefresh("project_path");
         // Re-render so the Create gating (which keys off the project path)
         // updates the disabled state as the user types.
         renderForm();
-      } else if (
-        field === "ssh_path" || field === "ssh_host" ||
-        field === "ssh_identity" || field === "ssh_options"
-      ) {
-        // The remote answer depends on the path *and* on who is being asked,
-        // so the connection fields re-probe as surely as the path does.
+      } else if (field === "ssh_path") {
         scheduleRemoteReprobe();
         renderForm();
       } else if (field === "branch") {
@@ -17871,13 +17859,6 @@ editor.on("widget_event", (e) => {
         // Any other field's change implicitly closes the
         // dropdown (the user moved on).
         closeCompletion();
-        // The Kubernetes "Target" field toggles whether the explicit
-        // context/namespace/pod/workspace inputs are shown, so a change
-        // here re-lays-out the body and the Tab cycle.
-        if (field === "k8s_target") {
-          rebuildFormFocusCycle();
-          renderForm();
-        }
         // Editing the command changes which agent it resolves to, and thus
         // whether the Auto mode / Start prompt controls appear — re-lay-out.
         if (field === "cmd") {
@@ -17893,10 +17874,7 @@ editor.on("widget_event", (e) => {
         // `name` and `new_branch` are here for the branch/worktree preview:
         // it names the branch and the directory the create will make, both
         // of which are derived from these two.
-        if (
-          field === "ssh_host" || field === "k8s_pod" ||
-          field === "name" || field === "new_branch"
-        ) {
+        if (field === "name" || field === "new_branch") {
           renderForm();
         }
       }
@@ -17994,6 +17972,10 @@ editor.on("widget_event", (e) => {
         }
       } else if (e.widget_key === "save_repo") {
         openAddRepositoryFromForm(tildePath(formFolderPath(form)), formMachineKey(form));
+      } else if (e.widget_key === "form_add_machine") {
+        // Set the form aside; Save brings it back on the new machine.
+        suspendForm();
+        openMachineDialog(null, "form");
       } else if (e.widget_key === "cancel") {
         cancelForm();
       }
@@ -18039,7 +18021,9 @@ editor.on("widget_event", (e) => {
         // Task… ▾" and "Move to Folder…" overlays: they are menus, and
         // clicking away from a menu dismisses it.
         openDialog.projectMenuOpen = false;
-        openDialog.dockMenu = null;
+        // The Menu is a panel of its own that takes the keyboard, so the
+        // dock blurs when it opens; it stays up.
+        if (!mainMenuPanel) openDialog.dockMenu = null;
         // The search row goes with them — unless a needle keeps it (a
         // dive keeps the filter, see below), which the render decides.
         openDialog.searchOpen = false;
@@ -18093,7 +18077,7 @@ editor.on("widget_event", (e) => {
           openDialog.projectMenuOpen = false;
           openPanel?.update(buildDockSpec());
         }
-        if (openDialog.dockMenu !== null && e.widget_key !== DOCK_MENU_KEY) {
+        if (openDialog.dockMenu?.kind === "move" && e.widget_key !== DOCK_MENU_KEY) {
           openDialog.dockMenu = null;
           openPanel?.update(buildDockSpec());
         }
@@ -18323,12 +18307,10 @@ editor.on("widget_event", (e) => {
     }
     if (e.event_type === "activate" && e.widget_key === "dock-menu") {
       if (openDialog.dockMenu?.kind === "main") closeDockMenu();
-      else if (
-        lastMenuDismissed.key !== DOCK_MENU_OVERLAY_KEY || Date.now() - lastMenuDismissed.at > 300
-      ) openDockMenu({ kind: "main", index: 0 });
+      else openMainMenu();
       return;
     }
-    // The `⋯` / "Move to folder…" dropdown list: ↑/↓ move its
+    // The `Menu ▾` / "Move to folder…" dropdown list: ↑/↓ move its
     // cursor, Enter runs the cursor's option, a click runs the clicked one.
     if (isListEvent(e, DOCK_MENU_KEY)) {
       const payload = (e.payload ?? {}) as Record<string, unknown>;

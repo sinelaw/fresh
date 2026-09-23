@@ -28,6 +28,8 @@ fn ssh_submit_is_non_blocking_and_shows_connecting_row() {
     let project = base.path().join("project");
     std::fs::create_dir_all(&project).unwrap();
     let project = project.canonicalize().unwrap();
+    // A remote workspace runs only on a saved machine.
+    launch_form::plant_saved_ssh_machine(&dir_context.data_dir, "dead-host", "dead-host", "dead-host");
 
     let plugins_dir = project.join("plugins");
     std::fs::create_dir_all(&plugins_dir).unwrap();
@@ -53,18 +55,12 @@ fn ssh_submit_is_non_blocking_and_shows_connecting_row() {
 
     // Open the form.
     launch_form::open_new_workspace_form(&mut h);
-    // The form opens on the agent; the Folder field is a few stops on.
-    launch_form::focus_stop(&mut h, "Folder:");
-
-    // Switch the Machine control from Local to `Other host…` (Shift+Tab
-    // lands focus on it, → advances one option and fills the connection
-    // section), then Tab into its first field (Target) and type a host.
-    h.send_key(KeyCode::BackTab, KeyModifiers::NONE).unwrap();
+    // Switch the Machine control from Local to the saved machine, the next
+    // option.
+    launch_form::focus_stop(&mut h, "▸ Machine:");
     h.send_key(KeyCode::Right, KeyModifiers::NONE).unwrap();
-    h.wait_until(|h| h.screen_to_string().contains("Target:"))
+    h.wait_until(|h| h.screen_to_string().contains("Machine: [dead-host"))
         .unwrap();
-    h.send_key(KeyCode::Tab, KeyModifiers::NONE).unwrap();
-    h.type_text("dead-host").unwrap();
 
     // Submit — the connect starts in the background and the form closes.
     h.send_key(KeyCode::Enter, KeyModifiers::CONTROL).unwrap();

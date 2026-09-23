@@ -83,3 +83,14 @@ pub fn choose_terminal_agent(harness: &mut EditorTestHarness) {
         .wait_until(|h| h.screen_to_string().contains("Agent: [terminal"))
         .unwrap();
 }
+
+/// Save an ssh machine, as Add Machine would, before the editor starts. The
+/// orchestrator imports `<data dir>/orchestrator/machines/<id>.json` the first
+/// time it reads the machine list. A workspace runs only on a saved machine,
+/// so this is how a test gets a remote to pick.
+pub fn plant_saved_ssh_machine(data_dir: &std::path::Path, id: &str, name: &str, target: &str) {
+    let dir = data_dir.join("orchestrator").join("machines");
+    std::fs::create_dir_all(&dir).unwrap();
+    let json = serde_json::json!({ "id": id, "name": name, "kind": "ssh", "target": target });
+    std::fs::write(dir.join(format!("{id}.json")), json.to_string()).unwrap();
+}

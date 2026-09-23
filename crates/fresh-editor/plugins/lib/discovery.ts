@@ -29,6 +29,9 @@ export interface DiscoveryHost {
   resumeArgv(agent: string, id: string): { argv: string[]; exact: boolean } | null;
   /** Open the New Workspace form on `seed`, with these fields filled. */
   openWorkspaceForm(seed: FormSeed, prefill: { projectPath: string; cmd: string }): void;
+  /** Open Add Machine; `done` gets the saved machine's id, or null after a
+   *  cancel. The dock stays handed over throughout. */
+  addMachine(done: (savedKey: string | null) => void): void;
   /** Hand the dock's focus to a dialog, and take it back. */
   yieldDock(): void;
   restoreDock(): void;
@@ -46,7 +49,7 @@ export interface DiscoverCell {
 /** Rows that line up with each other. Each family has its own column
  *  widths: a tool name belongs under a tool name, not under a session's
  *  branch, and a heading's columns are not a session's at all. */
-export type DiscoverFamily = "group" | "session" | "absent" | "problem";
+export type DiscoverFamily = "group" | "session" | "problem";
 
 export interface DiscoverRow {
   key: string;
@@ -111,13 +114,13 @@ export interface DiscoverScan {
 export type DiscoverVerb =
   | { kind: "attach"; argv: string[] }
   | { kind: "resume"; argv: string[]; exact: boolean }
+  /** A folder with no agent to rejoin (an Orca worktree): the form opens on
+   *  it and the agent is chosen there. */
+  | { kind: "open"; argv: string[] }
   | { kind: "none"; why: string };
 
 /** The problems heading's key; the filter's auto-expand leaves it alone. */
 export const DISCOVER_PROBLEMS_KEY = "group:problems";
-
-/** The heading for tools not on the machine. Named for the same reason. */
-export const DISCOVER_ABSENT_KEY = "group:absent";
 
 /** Columns a session row is indented under its heading. */
 export const DISCOVER_INDENT_COLS = 2;
@@ -141,8 +144,12 @@ export function discoverVerbFor(
     return { kind: "attach", argv: [session.attach.program, ...session.attach.args] };
   }
   const agent = session.agent ?? "";
+  if (!agent && session.openable && session.cwd) return { kind: "open", argv: [] };
   if (!agent) return { kind: "none", why: t("discover.no_resume_none") };
-  const resume = resumeArgv(agent, session.id);
+  // A row that records another tool's session (an Orca tab running Claude)
+  // resumes that one; an empty id there means "the newest in the directory".
+  const resume = resumeArgv(agent, session.agentSessionId ?? session.id);
+  if (!resume && session.openable && session.cwd) return { kind: "open", argv: [] };
   if (!resume) return { kind: "none", why: t("discover.no_resume_unknown", { agent }) };
   return { kind: "resume", argv: resume.argv, exact: resume.exact };
 }
@@ -213,7 +220,8 @@ export function discoverPathProject(cwd: string): ProjectIdentity | null {
   };
 }
 
-/** Turn scans into rows: filtered, grouped, then absent tools, then problems.
+/** Turn scans into rows: filtered, grouped, then problems. A tool that is
+ *  not installed on a machine is simply not listed.
  *  Machines are merged; the machine a row is on rides with the row. */
 export function discoverRowsFrom(
   scans: DiscoverScan[],
@@ -318,30 +326,6 @@ export function discoverRowsFrom(
     }
   }
 
-  // Absent tools get their own heading so the problems list holds only problems.
-  const absent: DiscoverRow[] = [];
-  for (const from of scans) {
-    for (const tool of from.scan.tools) {
-      if (tool.status !== "absent" && tool.status !== "unsupported") continue;
-      const why = tool.status === "unsupported" ? (tool.note ?? "") : t("discover.not_installed");
-      absent.push({
-        key: `absent:${from.key}/${tool.id}`,
-        family: "absent",
-        cells: manyMachines
-          ? [{ text: tool.displayName }, { text: why }, { text: from.label }]
-          : [{ text: tool.displayName }, { text: why }],
-      });
-    }
-  }
-  if (absent.length > 0) {
-    rows.push({
-      key: DISCOVER_ABSENT_KEY,
-      family: "group",
-      cells: [{ text: t("discover.absent", { count: String(absent.length) }) }],
-    });
-    rows.push(...absent.sort((a, b) => byName(a.cells[0].text, b.cells[0].text)));
-  }
-
   // Problems are not filtered: hiding one because it does not match the
   // filter would hide the reason the search found nothing.
   const problems: { key: string; text: string }[] = [];
@@ -411,6 +395,10 @@ export interface DiscoverLayout {
 export function discoverLayout(
   rows: DiscoverRow[],
   measure: (s: string) => number,
+  /** The row width the list has room for. A table wider than this is cut
+   *  by the list itself, at the row's end — on top of a path's own cut at
+   *  its start — so the columns are narrowed to fit instead. */
+  room = 140,
 ): DiscoverLayout {
   const widths = new Map<DiscoverFamily, number[]>();
   for (const r of rows) {
@@ -420,15 +408,61 @@ export function discoverLayout(
     });
     widths.set(r.family, w);
   }
+  const limit = Math.max(24, Math.min(140, room));
   let natural = 0;
   for (const [family, w] of widths) {
     // The tree draws the child indent, but it still costs the row width.
     const indent = family === "group" ? 0 : DISCOVER_INDENT_COLS;
     const gaps = Math.max(0, w.length - 1) * DISCOVER_COL_GAP;
-    natural = Math.max(natural, indent + gaps + w.reduce((a, b) => a + b, 0));
+    const used = (): number => indent + gaps + w.reduce((a, b) => a + b, 0);
+    // Too wide: the widest column gives a column at a time, so the long
+    // path goes before the short name and branch do.
+    while (used() > limit) {
+      const widest = w.indexOf(Math.max(...w));
+      if (w[widest] <= DISCOVER_COL_MIN) break;
+      w[widest] -= 1;
+    }
+    natural = Math.max(natural, used());
   }
-  return { widths, total: Math.max(48, Math.min(140, natural)) };
+  return { widths, total: Math.max(Math.min(48, limit), Math.min(limit, natural)) };
 }
+
+/** The narrowest a column is squeezed to when the table must fit. */
+export const DISCOVER_COL_MIN = 8;
+
+/** What each column of a session row holds, for the header over the list:
+ *  the heading already says the rest. */
+export function discoverColumnTitles(grouping: DiscoverGrouping, manyMachines: boolean, t: Translate): string[] {
+  const titles = [t("discover.col_session")];
+  if (grouping === "project") titles.push(t("discover.col_tool"), t("discover.col_branch"));
+  else if (grouping === "branch") titles.push(t("discover.col_project"), t("discover.col_tool"));
+  else titles.push(t("discover.col_directory"), t("discover.col_branch"));
+  if (manyMachines) titles.push(t("discover.col_machine"));
+  return titles;
+}
+
+/** The header row: each title over its column of session rows, where the
+ *  tree draws those rows (past its fold glyph and the child indent, and the
+ *  row's two-column mark). */
+export function discoverHeaderEntry(
+  titles: string[],
+  layout: DiscoverLayout,
+  measure: (s: string) => number,
+): TextPropertyEntry {
+  const widths = layout.widths.get("session") ?? [];
+  const style = { fg: "ui.menu_disabled_fg", bold: true };
+  const segments: StyledSegment[] = [{ text: " ".repeat(DISCOVER_TREE_GLYPH_COLS + DISCOVER_INDENT_COLS + 2) }];
+  titles.forEach((title, i) => {
+    const width = Math.max(0, (widths[i] ?? measure(title)) - (i === 0 ? 2 : 0));
+    const text = discoverElide(title, width, "head", measure);
+    const last = i === titles.length - 1;
+    segments.push({ text: last ? text : text + " ".repeat(Math.max(0, width - measure(text)) + DISCOVER_COL_GAP), style });
+  });
+  return styledRow(segments);
+}
+
+/** Columns the tree spends on its fold glyph (`▶ `) before a row's text. */
+export const DISCOVER_TREE_GLYPH_COLS = 2;
 
 /** `text` cut to `width` columns, with `…` marking the cut. Which end goes
  *  is the cell's: a path keeps its tail, a name its head. */
@@ -469,7 +503,7 @@ export function discoverRowEntry(
 ): TextPropertyEntry {
   const dim = { fg: "ui.menu_disabled_fg" };
   const group = discoverIsGroup(r);
-  const inert = !group && (!r.session || r.verb?.kind !== "attach" && r.verb?.kind !== "resume");
+  const inert = !group && (!r.session || !r.verb || r.verb.kind === "none");
   const widths = layout.widths.get(r.family) ?? [];
   const indent = group ? 0 : DISCOVER_INDENT_COLS;
   const segments: StyledSegment[] = [];
@@ -503,7 +537,7 @@ export function discoverRowEntry(
 export function discoverRowAction(r: DiscoverRow, t: Translate): string | null {
   if (discoverIsGroup(r) || !r.session) return null;
   const kind = r.verb?.kind;
-  return kind === "attach" || kind === "resume" ? t("discover.btn_import") : null;
+  return kind && kind !== "none" ? t("discover.btn_import") : null;
 }
 
 /** Quote one argv element for the form's command field. `splitAgentCmd` has

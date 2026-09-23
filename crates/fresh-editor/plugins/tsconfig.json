@@ -13,7 +13,6 @@
   },
   "files": [
     "lib/fresh.d.ts",
-    "lib/agent_catalog.ts",
     "lib/agent_scanner.ts",
     "lib/claude_code_format.ts",
     "lib/discovery.ts",
@@ -30,10 +29,8 @@
     "lib/widgets.ts",
     "agent_discovery.ts",
     "agent_sessions.ts",
-    "agent_sessions_catalog.ts",
     "agent_sessions_claude_code.ts",
     "agent_sessions_codex.ts",
-    "agent_sessions_herdr.ts",
     "agent_sessions_multiplexers.ts",
     "agent_sessions_orchestrators.ts",
     "agent_sessions_tmux.ts",
