@@ -12,7 +12,7 @@
 //! terminal, and the commands act in the window that owns it.
 //!
 //! Skips when the environment has no PTY.
-#![cfg(unix)]
+#![cfg(all(unix, feature = "plugins"))]
 
 use crate::common::harness::{EditorTestHarness, HarnessOptions};
 use fresh_core::api::PluginCommand;
