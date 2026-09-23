@@ -751,6 +751,7 @@ impl Editor {
                             result_id: decoded.result_id,
                             data: decoded.raw_data,
                             tokens: decoded.spans,
+                            stale: false,
                         });
                     }
                 }
@@ -771,6 +772,12 @@ impl Editor {
                 match result {
                     Err(_) => {
                         // Error already logged by the generic LSP response handler.
+                        // The server may not know our `previousResultId` (e.g. it
+                        // restarted); forget it so the next request is a plain
+                        // `full` instead of repeating the failing delta forever.
+                        if let Some(store) = state.semantic_tokens.as_mut() {
+                            store.result_id = None;
+                        }
                     }
                     Ok(tokens_opt) => {
                         let existing_store = state.semantic_tokens.as_ref();
@@ -862,6 +869,7 @@ impl Editor {
                             result_id: decoded.result_id,
                             data: decoded.raw_data,
                             tokens: spans,
+                            stale: false,
                         });
                     }
                 }
@@ -984,6 +992,8 @@ impl Editor {
             "LSP ({}) semantic-tokens refresh requested, re-pulling semantic tokens",
             language
         );
+        // Same server, so its `resultId`s stay valid: keep delta requests.
+        self.invalidate_semantic_tokens_for_language(&language, false);
         self.request_semantic_tokens_for_language(&language);
     }
 
@@ -1022,6 +1032,14 @@ impl Editor {
         // Only re-issue requests on a net-new capability; an unregister or a
         // no-op registration should not trigger a fresh round of requests.
         if changed && register {
+            // A newly registered semantic-tokens provider may be a different
+            // server than the one whose tokens (and `resultId`) we hold.
+            if registrations
+                .iter()
+                .any(|(method, _)| method.starts_with("textDocument/semanticTokens"))
+            {
+                self.invalidate_semantic_tokens_for_language(&language, true);
+            }
             self.request_semantic_tokens_for_language(&language);
             self.request_folding_ranges_for_language(&language);
             self.request_inlay_hints_for_language(&language);
@@ -1943,6 +1961,25 @@ impl Editor {
                     }
                 }
             }
+        }
+    }
+
+    /// Mark the semantic tokens of every open buffer of `language` as stale
+    /// (see `Window::invalidate_semantic_tokens`), so the next scheduled
+    /// request is sent even for buffers that have not been edited.
+    pub(super) fn invalidate_semantic_tokens_for_language(
+        &mut self,
+        language: &str,
+        forget_result_id: bool,
+    ) {
+        let buffer_ids: Vec<_> = self
+            .buffers_for_language(language)
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        for buffer_id in buffer_ids {
+            self.active_window_mut()
+                .invalidate_semantic_tokens(buffer_id, forget_result_id);
         }
     }
 

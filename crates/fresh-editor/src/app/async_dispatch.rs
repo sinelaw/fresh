@@ -703,6 +703,12 @@ impl Editor {
         );
         self.active_window_mut().status_message = Some(format!("LSP ({}) ready", language));
 
+        // A (re)started server has none of the previous process's
+        // semantic-token state: whatever we hold is stale and its `resultId`
+        // is meaningless to the new process, so re-pull with a plain `full`.
+        let provides_semantic_tokens =
+            capabilities.semantic_tokens_full || capabilities.semantic_tokens_range;
+
         // Store capabilities on the specific server handle
         let __active_id = self.active_window;
         if let Some(lsp) = self.windows.get_mut(&__active_id).map(|w| &mut w.lsp) {
@@ -711,6 +717,9 @@ impl Editor {
 
         // Send didOpen for all open buffers of this language
         self.resend_did_open_for_language(&language);
+        if provides_semantic_tokens {
+            self.invalidate_semantic_tokens_for_language(&language, true);
+        }
         self.request_semantic_tokens_for_language(&language);
         self.request_folding_ranges_for_language(&language);
         // Now that capabilities are known, kick off inlay hints

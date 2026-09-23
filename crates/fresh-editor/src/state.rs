@@ -1981,6 +1981,23 @@ impl EditorState {
     pub fn clear_semantic_tokens(&mut self) {
         self.semantic_tokens = None;
     }
+
+    /// Mark cached semantic tokens as needing a re-pull even though the
+    /// buffer has not changed (the server sent
+    /// `workspace/semanticTokens/refresh`, or it restarted). The tokens stay
+    /// displayed until the new response replaces them, avoiding a flicker.
+    ///
+    /// `forget_result_id` drops the server's `resultId` so the next request
+    /// is a plain `full` rather than a `full/delta` against a baseline the
+    /// (possibly new) server process has never seen.
+    pub fn mark_semantic_tokens_stale(&mut self, forget_result_id: bool) {
+        if let Some(store) = self.semantic_tokens.as_mut() {
+            store.stale = true;
+            if forget_result_id {
+                store.result_id = None;
+            }
+        }
+    }
 }
 
 /// Implement DocumentModel trait for EditorState
@@ -2185,6 +2202,9 @@ pub struct SemanticTokenStore {
     pub data: Vec<u32>,
     /// All semantic token spans resolved to byte ranges.
     pub tokens: Vec<SemanticTokenSpan>,
+    /// The server asked for a re-pull (refresh / restart): the tokens are
+    /// still shown, but must not count as up to date for `version`.
+    pub stale: bool,
 }
 
 /// A semantic token span resolved to buffer byte offsets.

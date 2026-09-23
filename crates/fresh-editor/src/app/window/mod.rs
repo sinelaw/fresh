@@ -4288,6 +4288,55 @@ impl Window {
             .insert(buffer_id, next_time);
     }
 
+    /// Forget that `buffer_id`'s semantic tokens are up to date, so the next
+    /// full / range request is actually sent even though the buffer has not
+    /// changed. Used when the server sends `workspace/semanticTokens/refresh`
+    /// or (re)starts. The displayed highlights are kept until the new
+    /// response replaces them.
+    ///
+    /// Requests already in flight are cancelled and forgotten (a late
+    /// response is then ignored as unknown): they were computed before
+    /// whatever prompted the refresh, and letting them land would mark the
+    /// buffer fresh again. `forget_result_id` drops the delta baseline — see
+    /// `EditorState::mark_semantic_tokens_stale`.
+    pub(crate) fn invalidate_semantic_tokens(
+        &mut self,
+        buffer_id: BufferId,
+        forget_result_id: bool,
+    ) {
+        let Some(state) = self.buffers.get_mut(&buffer_id) else {
+            return;
+        };
+        state.mark_semantic_tokens_stale(forget_result_id);
+        let language = state.language.clone();
+
+        let mut superseded = Vec::new();
+        if let Some((request_id, _, _)) = self.semantic_tokens_in_flight.remove(&buffer_id) {
+            self.pending_semantic_token_requests.remove(&request_id);
+            superseded.push(request_id);
+        }
+        if let Some((request_id, _, _, _)) = self.semantic_tokens_range_in_flight.remove(&buffer_id)
+        {
+            self.pending_semantic_token_range_requests
+                .remove(&request_id);
+            superseded.push(request_id);
+        }
+        if !superseded.is_empty() {
+            if let Some(sh) = self
+                .lsp
+                .handle_for_feature_mut(&language, LspFeature::SemanticTokens)
+            {
+                for request_id in superseded {
+                    if let Err(e) = sh.handle.cancel_request(request_id) {
+                        tracing::debug!("Failed to cancel semantic token request: {}", e);
+                    }
+                }
+            }
+        }
+        self.semantic_tokens_range_applied.remove(&buffer_id);
+        self.semantic_tokens_range_last_request.remove(&buffer_id);
+    }
+
     /// Forward incremental LSP `didChange` notifications for `buffer_id`
     /// to every server registered for the buffer's language. Sends
     /// `didOpen` first when a server hasn't yet seen this buffer, and
