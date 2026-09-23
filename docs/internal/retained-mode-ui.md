@@ -262,12 +262,40 @@ Its remaining members are listed under *Smaller residue*.
 | Popups, context menus, theme inspector | `view::shell::popup`, `context_menu`, `theme_info` |
 | The web's projections | `view::scene` — reads rectangles off the tree by key |
 
-`app/chrome/` is no longer a chrome system: what is left there is the handlers
-those nodes dispatch *to*, plus two hover reactions.
+`app/chrome/` is no longer a chrome system, and no longer a registry either:
+what is left there is the handlers those nodes dispatch *to*, two of which are
+hover reactions the `UiFact::Hover` arm calls by name.
 
 ---
 
 ## What is open
+
+Everything still owed, one line each. The sections below give each of these
+its reasoning, and also record what **closed** — kept because the argument for
+the shape is what stops it growing back.
+
+- **Composite buffer panes** — never migrated at all: `compute_pane_layout`
+  writes `pane_widths`, four hand-rolled hit tests read it back, a fifth site
+  hardcodes `gutter_width = 4`. The largest piece, and its own change.
+- **The keyed geometry index** — `Ui::find_by_key` is still a depth-first walk
+  with ~180 editor call sites, some inside per-item loops. The live asymptotic
+  hole.
+- **The gutter** — line numbers, folds and diagnostics are painted, not nodes,
+  so `click_geometry` re-derives the compose-mode gutter reclaim by hand. The
+  run form is blocked on frame order; the gutter as its own *leaf* is not.
+- **Per-frame deep clones** — `panel_interior` clones the spec and re-`Rc`s it
+  every frame, so `ptr_eq` can never hold. Precondition for the next one.
+- **The memos sit below the work** — all three `memo` sites cache the node
+  build, not the content pass `shell_frame` redoes every frame regardless.
+- **Instrumentation** — no purity check, no `BuildCx`-cannot-see-geometry type
+  guard, no frame-level reconcile count, and no `benches/` at all, so every
+  claim about frame cost is unmeasured.
+- **The web** — `view::scene`'s region views retire one at a time, as each
+  surface's rows reach the display list.
+- **The shell's stylesheet** — shipped, with three named gaps left: class-keyed
+  *metrics*, the indented-card box, and per-side padding.
+- **Smaller residue** — `Paint::Lit`, no palette-resolve cache,
+  `EntryDialogState`, and the pointer's legacy walk (see *The one asymmetry*).
 
 ### The markdown document view
 
@@ -571,13 +599,67 @@ The strip asks for `NEW_TAB_BUTTON_WIDTH` and gives the caps the `+`'s own two
 theme pairs, so `<`, `>` and `+` are one kind of thing and nothing about
 meeting one tells you which it was.
 
-One deliberate change, from removing a dependency on the offset: a name is
-capped at `TAB_NAME_MAX_COLS` always, where the cap used to be lifted when
-every label fitted — that was a measurement of the whole strip made before the
-description existed, and a window can show what does not fit, so the cap is a
-rule about tab names rather than about the room they have.
+**The name cap stays conditional, and one attempt to make it unconditional is
+worth recording.** A tab name is capped at `TAB_NAME_MAX_COLS` only when the
+tabs, with their names whole, are wider than the strip — as it was before this
+arc. For a while here it was capped at *every* width, on the reasoning that the
+old rule needed a measurement of the whole strip and a window can show what does
+not fit.
 
-**Checked against the installed 0.5.1 release**, driven side by side in tmux:
+That reasoning had a hole. The reason the old rule needed a pre-layout
+measurement is that the cap was applied as **string truncation in the
+description** — `label` called `elided_tab_name` and put an already-shortened
+name in the node, which is the pre-fitted string this whole document is about,
+in the one surface it is most about. Nothing had to be measured early; the
+decision had to stop being made early.
+
+It is **feedback** now, the same shape as the palette's column widths:
+`tabs::natural_width` (what these labels measure uncapped) against the window's
+outer width from the frame before. The outer width is what the strip row leaves
+after the control cluster, so it does not move with the names — which is what
+keeps the predicate from feeding itself and a frame from capping, fitting,
+un-capping and overflowing again. One frame late after a resize, unset on the
+very first frame, and both of those show whole names, which the window scrolls.
+
+**The cost of getting it wrong was a 26-column name elided on a 160-column
+screen showing one tab**, and four tests written by other people said so —
+two of them by waiting for a label that could no longer appear, so they hung
+rather than failed. They pass unchanged again.
+
+**There was never a second rule here, though it looked like one.** A tab
+disambiguated by path was appearing as `…/añadido.txt` where master showed the
+whole `*719a543:notas/añadido.txt*`, which read as a separate decision about
+path prefixes and was written up as one. It is the same cap: `elided_tab_name`
+shortens a path-shaped name from the *front* (`elide_path_label`), so the file
+name survives where trailing truncation would throw away the part that
+identifies it. One rule, two shapes, and making it conditional again fixed
+both — the test that hung on the full title passes with that title restored.
+
+The cap's one wart, on master as here: two tabs that differ only in a prefix
+the elision removes come out reading the same. Worth knowing before raising
+`TAB_NAME_MAX_COLS` as the answer to anything.
+
+**Checked against master, screen for screen.** Both binaries driven through the
+same scripted scenarios in tmux — tab strip (hover, steps, wheel, activation,
+close, `+`, drag-reorder, context menu), menu bar and dropdowns, palette, find
+bar, file explorer with git decorations, settings dialog, keybinding editor,
+file browser, splits, scrollbar drag — capturing every screen *with its
+colours*, so a hover highlight is part of the comparison. 98 screens at three
+terminal widths.
+
+Every difference is one of the two intended ones: the strip's own rows, and the
+status bar's `…` for `...`. Everything else is byte-identical, including every
+hover highlight outside the strip.
+
+One difference is worth recording because it is not a redraw of the same state:
+after a wheel over the command palette, the branch's column widths are those of
+the rows now on screen while master still shows the previous frame's, catching
+up on the next input. That is `Ui::needs_frame` counting `layout_dirty` — the
+wheel marks the window, so the frame it changed is drawn now. The same fix that
+lights an overflow cap.
+
+**Also checked against the installed 0.5.1 release**, driven side by side in
+tmux:
 identical cell for cell at every width tried, for the initial scroll, the
 `<`/`>` steps, the wheel, tab activation and a vertical split — but for the
 intended differences. The caps are three cells at each edge rather than one
@@ -834,52 +916,8 @@ becomes theme-file data. Nothing depends on either.
 
 ### Smaller residue
 
-- **Library surface nothing asks for is gone.** The working rule is that a
-  library change needs a caller in the same PR; a sweep for `pub fn`s in
-  `fresh-ui` with no reference anywhere — editor, tests, examples — found nine,
-  three of them whole mechanisms rather than conveniences. `Anchor::
-  scroll_to_end` took `Command::ScrollToEnd` and its arm in the command loop
-  with it; `Event::release_pointer` took `Ctl::release_request` and the branch
-  in `apply_controls` that cleared the capture (a capture ends when the pointer
-  is released or the element unmounts, which is what every caller relies on).
-  The rest were sugar with no user: `Event::is_key`, `Node::on_secondary_click`
-  (the gesture kind stays — it is the context menu's), `Node::child_if_some`,
-  `InitCx::geometry_of`, `GeomHandle::rect_of_key`, `Commands::is_bound`.
-- **And the surfaces that migrated left their measuring behind.** Each of
-  these was the *other half* of something already deleted, kept alive by
-  nothing: `ExplorerTrailingSlotProvider::hit_test_width`, its two overrides
-  and `COMPATIBILITY_TRAILING_SLOT_HIT_WIDTH` — the trailing slot is a node,
-  and how wide it is to the pointer is its rectangle;
-  `entry_dialog::layout_field_action_buttons`, whose comment said it was
-  "shared by the renderer and the click hit-tester so their geometry can't
-  drift" when neither had existed for some time; `Popup::scroll_state` (for
-  "scrollbar rendering" the window does now) and `Popup::description_height`;
-  the prompt's own `select_next_suggestion`, `select_prev_suggestion` and
-  `get_final_input`. `FileExplorerRenderer` went too — the type was a
-  namespace around one predicate about paths, which now sits beside the row
-  that asks it.
-- **The `ChromeComponent` registry is gone.** Its last cargo was two hover
-  reactions, dispatched through a trait whose `on_hover_change` had a `false`
-  default body — so a surface that was registered but had not written one took
-  the default in silence. The menu bar did exactly that: hovering a submenu
-  parent opened nothing while `menu_hover_reaction` sat with no callers at
-  all. The `UiFact::Hover` arm now calls both reactions by name (with `|`, not
-  `||`, so one answering "changed" cannot decide whether the other is offered
-  the move), and a reaction that is not run is a name that does not resolve.
-  `app::chrome`'s modules stay: they are where each surface's `Editor` methods
-  live, which was never the registry's doing.
-- **And the same sweep run over the whole view layer.** Every `pub fn` under
-  `view/` and `widgets/` with no reference anywhere — 880 lines across
-  nineteen files. Some is plainly the migration's: `Popup`'s four unused
-  builders and its three `is_*_popup` predicates, `MarginManager::
-  {get_at_line, right_total_width}`, `LineWrap`'s `cursor_sig_for_line` and
-  `char_position_in_layout`, the widget renderer's `blank_list_row`,
-  `render_section_top_border` and `wrap_in_side_border` (with the two border
-  constants only they used). Some predates it — `ScrollSyncManager`'s group
-  API and its `next_id`, ten `SettingsState` accessors, ten `SplitManager`
-  ones, seven on `CompositeViewState`. All of it was dead either way, and the
-  compiler could not say so because it was `pub`. The cascades were followed
-  to a fixed point: the sweep leaves the dead-code warning set unchanged.
+Still open:
+
 - The pointer's legacy walk (see *The one asymmetry*), whose members are now
   the terminal's own mouse and the multi-click detector; the markdown drag was
   its last grab and is the run's own capture.
@@ -888,9 +926,9 @@ becomes theme-file data. Nothing depends on either.
   *tier* in the audit rather than a blank surface.
 - No palette-resolve cache.
 - `EntryDialogState` still carries the settings entry dialog's own state model.
-- `SplitRenderer::render_phantom_leaf` writes cells into a `Buffer` directly,
-  while the sibling branch sixty lines earlier in the same function goes
-  through `shell_host::paint_embed` — two paint paths in one function.
+
+Closed, and worth keeping the reasoning for:
+
 - **The settings dialog's second copy of its own heights is gone.**
   `ScrollItem for TreeRow` fed `ScrollablePanel::ensure_focused_visible`, which
   walked every row's height to compute an offset nothing read — the tree
@@ -901,6 +939,73 @@ becomes theme-file data. Nothing depends on either.
   `SettingControl::control_height`), whose note in `items.rs` had claimed it
   was already deleted. `ScrollState` survives for the keybinding editor's
   table, which is not the tree's yet.
+- **The `ChromeComponent` registry is gone.** Its last cargo was two hover
+  reactions, dispatched through a trait whose `on_hover_change` had a `false`
+  default body — so a surface that was registered but had not written one took
+  the default in silence. The menu bar did exactly that: hovering a submenu
+  parent opened nothing while `menu_hover_reaction` sat with no callers at
+  all. The `UiFact::Hover` arm now calls both reactions by name (with `|`, not
+  `||`, so one answering "changed" cannot decide whether the other is offered
+  the move), and a reaction that is not run is a name that does not resolve.
+  `app::chrome`'s modules stay: they are where each surface's `Editor` methods
+  live, which was never the registry's doing.
+- **`render_phantom_leaf` is not a duplicate, and this note used to say it
+  was.** It was listed here as "two paint paths in one function", because
+  `paint_card_preview` reaches it down one branch and `shell_host::paint_embed`
+  down the other. They are not two spellings of one job: `paint_embed` draws
+  *another window's whole grid* into the card, and `render_phantom_leaf` draws
+  *one buffer* into a rectangle through the per-leaf pipeline. Both write cells
+  because the pane content pass does; that is *The gutter* above, not a
+  duplication. Nothing to delete here.
+
+### The sweep for code nothing calls
+
+**Closed, and it is a method rather than a one-off.** `pub` hides dead code
+from the compiler, and a migration leaves its residue `pub`: the old half of a
+pair stays exported long after the new half stopped calling it. So the sweep is
+mechanical — every `pub fn` whose name appears exactly once in the workspace,
+counting the editor, the library, their tests and the examples — and it runs to
+a fixed point, because rustc *does* report private dead code and each round of
+deletions exposes another. The stopping condition is that the dead-code warning
+set is unchanged.
+
+**In `fresh-ui` it found nine, three of them whole mechanisms.** The working
+rule is that a library change needs a caller in the same PR; these had none.
+`Anchor::scroll_to_end` took `Command::ScrollToEnd` and its arm in the command
+loop with it. `Event::release_pointer` took `Ctl::release_request` and the
+branch in `apply_controls` that cleared the capture — a second way out of a
+capture that nothing ever took, where every caller relies on the first (release
+the pointer, or unmount). `Commands::is_bound` asked a question that sending
+answers. The rest were sugar: `Event::is_key`, `Node::on_secondary_click` (the
+gesture kind stays — it is the context menu's), `Node::child_if_some`,
+`InitCx::geometry_of`, `GeomHandle::rect_of_key`.
+
+**In the editor it found the other half of things already deleted.**
+`ExplorerTrailingSlotProvider::hit_test_width`, its two overrides and the
+`COMPATIBILITY_TRAILING_SLOT_HIT_WIDTH` they returned — the trailing slot is a
+node, and how wide it is to the pointer is its rectangle.
+`entry_dialog::layout_field_action_buttons`, whose comment said it was "shared
+by the renderer and the click hit-tester so their geometry can't drift" when
+neither had existed for some time. `Popup::scroll_state`, which packed
+`(total, visible, offset)` "for scrollbar rendering" the window does itself,
+and `Popup::description_height`, which wrapped the description a second time to
+measure it. The prompt's own `select_next_suggestion`,
+`select_prev_suggestion`, `scroll_results` and `get_final_input`.
+`FileExplorerRenderer`, by then a namespace around one predicate about paths,
+which sits beside the row that asks it.
+
+**And then the same sweep over the whole view layer: 880 lines, nineteen
+files.** Some was plainly the migration's — `Popup`'s four unused builders (the
+fields stay; every one is set by a struct literal and read), its three
+`is_*_popup` predicates, `MarginManager::{get_at_line, right_total_width}`,
+`LineWrap::{cursor_sig_for_line, char_position_in_layout}`, `Viewport::
+{mark_needs_sync, sync_with_cursor, ensure_cursors_visible}`, the widget
+renderer's `blank_list_row`, `render_section_top_border` and
+`wrap_in_side_border` with the two border constants only they used. Some
+predated it and was dead anyway: `ScrollSyncManager`'s group API and the
+`next_id` only `create_group` touched, ten `SettingsState` accessors, ten
+`SplitManager` ones, seven on `CompositeViewState`, and a scatter of others.
+The distinction did not change what to do about any of it.
 
 ---
 
@@ -979,7 +1084,19 @@ Not re-argued:
 - **Send two events before rendering** when the property is about ordering.
 - **Never test a windowed list with one-cell items only.**
 - **Delete the comment with the code.** Reviews repeatedly found load-bearing
-  claims the code contradicted.
+  claims the code contradicted. Three of them survived into this arc and were
+  each refuted by a grep: a roster entry for a field that no longer existed, a
+  helper "shared by the renderer and the click hit-tester" when neither did,
+  and a recorder naming a consumer (`cursor_obscured_by_overlay`) that is
+  nowhere in the workspace.
+- **`pub` hides dead code from the compiler, so sweep by name.** A migration
+  leaves its residue exported: the old half of a pair stays `pub` long after
+  the new half stopped calling it, and rustc says nothing. Count each `pub fn`
+  name across the workspace — editor, library, tests, examples — and one
+  occurrence means the definition. Run it to a fixed point, because private
+  dead code *is* reported and every round exposes more; stop when the
+  dead-code warning set stops changing. See *The sweep for code nothing
+  calls*.
 - **Check `--no-default-features --features runtime --all-targets` and
   `--all-features`** before every push.
 
@@ -1003,3 +1120,8 @@ Named here so it is not rediscovered as a gap in this arc:
 - The scrollbar-markers plugin API, which `Draw::Scrollbar`'s marks unblocked.
 - The LSP hover tooltip that cannot be dismissed through the gutter
   (pre-existing, identical on master).
+- **`WidgetRegistry::{has_focus_follower, focus_follower_of}`**, and the
+  `focus_follows_cursor` field behind them. The view-layer sweep found them
+  unreferenced, and left them: they are the gate on a plugin-facing
+  `focusFollowsCursor` feature that was written and not wired up, not something
+  the migration abandoned. Deleting a half-built feature is a product call.
