@@ -236,6 +236,14 @@ column measuring, fitting, eliding and padding — are deleted.
   one gap and one label in the New Workspace form and the Projects dialog
   (they had used different gaps and translation keys).
 
+Found trying it in tmux: the browser's hint promised `⌫ up · Esc close`, but
+only the Projects dialog wired them — in Add Machine, Esc closed the whole
+dialog. Every dialog now binds them to the picker's list (`on:<listKey>`).
+And going up or into a folder dropped the keyboard focus onto the dialog's
+first control, because the list was swapped for a "Loading…" label while the
+folder was read; the list now stays mounted (keeping its `..` row) and the
+loading line or the error goes under it.
+
 Tests: `plugins/tests/pickers.test.ts` (run with `plugins/tests/run.sh`).
 
 ## Checklist

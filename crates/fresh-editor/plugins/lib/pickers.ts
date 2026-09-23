@@ -228,23 +228,30 @@ export class PathPicker {
 
   private browserRow(b: FolderBrowser): WidgetSpec {
     const t = (k: string) => this.o.source.t(k);
-    const items = this.items(b);
-    const body = b.loading
+    // The list stays mounted while a folder loads or fails to list: taking
+    // it out of the tree would drop the keyboard focus it holds onto
+    // whatever control comes first. What is happening goes in the line under
+    // it instead. Its `..` row stays too, the way back from a folder that
+    // would not list.
+    const items = b.loading || b.error ? this.items(b).slice(0, 1) : this.items(b);
+    const body = list({
+      items: items.map((i) => ({ text: i.text })),
+      selectedIndex: Math.max(0, Math.min(b.index, items.length - 1)),
+      visibleRows: BROWSER_ROWS,
+      key: this.o.listKey,
+    });
+    const hint = b.loading
       ? label(t("repo.loading"), { style: NOTE_STYLE })
       : b.error
       ? label(`✗ ${b.error}`, { style: { fg: "diagnostic.error_fg" }, wrap: true })
-      : list({
-        items: items.map((i) => ({ text: i.text })),
-        selectedIndex: Math.min(b.index, items.length - 1),
-        visibleRows: BROWSER_ROWS,
-        key: this.o.listKey,
+      : label(t(b.files ? "repo.browse_hint_file" : b.picksAny ? "repo.browse_hint_any" : "repo.browse_hint"), {
+        style: NOTE_STYLE,
       });
-    const hint = t(b.files ? "repo.browse_hint_file" : b.picksAny ? "repo.browse_hint_any" : "repo.browse_hint");
     return row(
       spacer(2),
       labeledSection({
         label: this.o.source.title(b.machineKey, b.dir),
-        child: col(body, label(hint, { style: NOTE_STYLE })),
+        child: col(body, hint),
       }),
     );
   }

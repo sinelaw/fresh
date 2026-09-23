@@ -9939,8 +9939,19 @@ const MACHINE_DIALOG_MODE_BINDINGS: string[][] = [
   ["Enter", "orchestrator_machine_enter"],
   ["C-Enter", "orchestrator_machine_save", "shortcut"],
   ["C-t", "orchestrator_machine_test"],
+  // In the identity file's browser: Esc closes it (not the dialog), ⌫ goes
+  // up a folder — what its hint says.
+  ["Escape", "orchestrator_machine_browse_close", "on:machine-browse-list"],
+  ["Backspace", "orchestrator_machine_browse_up", "on:machine-browse-list"],
 ];
 editor.defineMode(MACHINE_DIALOG_MODE, MACHINE_DIALOG_MODE_BINDINGS, true, true);
+
+registerHandler("orchestrator_machine_browse_close", () => {
+  machineDialog?.identityPicker.close();
+});
+registerHandler("orchestrator_machine_browse_up", () => {
+  if (machineDialog && machinePanel) machineDialog.identityPicker.up(machinePanel.focusKey());
+});
 
 // Enter that no control used: a text field's — including the Host field's
 // after its suggestion list, not stepped into, closed itself. It saves.
@@ -16448,6 +16459,8 @@ const FORM_MODE_BINDINGS: string[][] = [
   ["C-Enter", "orchestrator_form_submit", "shortcut"],
   ["M-Enter", "orchestrator_form_submit_bg", "shortcut"],
   ["Escape", "orchestrator_form_key_escape"],
+  // ⌫ in the "where is this project?" folder browser goes up a folder.
+  ["Backspace", "orchestrator_form_browse_up", "on:place_browse_list"],
   // ↑/↓ on the fields that remember what was typed: history, or the
   // suggestions with history mixed in. On every other control ↑/↓ are the
   // host's — they move focus to the control above or below.
@@ -16666,6 +16679,9 @@ function toggleFormDetails(): void {
   formPanel.setFocusKey("details");
 }
 
+registerHandler("orchestrator_form_browse_up", () => {
+  if (form?.place && formPanel) form.place.browse.up(formPanel.focusKey());
+});
 registerHandler("orchestrator_form_key_escape", () => {
   // An open suggestion list or dropdown took the first Esc already (the
   // focused control answers before this binding); this is the dialog's.
