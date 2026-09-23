@@ -18,6 +18,8 @@ use std::sync::Arc;
 
 use crate::server::ipc::ClientConnection;
 use crate::server::protocol::TermSize;
+#[cfg(windows)]
+use crate::server::protocol::{ClientControl, ServerControl};
 
 #[cfg(unix)]
 mod relay_unix;
