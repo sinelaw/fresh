@@ -608,6 +608,12 @@ export function treeNode(
      * a row too wide for the panel slides under its button rather than
      * pushing it off. Ignored on a bordered card. */
     action?: string;
+    /** A table row: one cell per column of a `tree({ columns })`. The host
+     * fits the columns to the width the tree is laid out at and elides each
+     * cell at its column's end; the row is drawn from these instead of
+     * `text`. A node without cells in a table (a group heading) is drawn
+     * from `text` across the whole row. */
+    cells?: Array<string | { text: string; style?: Partial<OverlayOptions> }>;
   },
 ): TreeNode {
   // `checked` is intentionally Optional<bool>, not a default-false
@@ -639,6 +645,9 @@ export function treeNode(
   }
   if (options?.action !== undefined) {
     node.action = options.action;
+  }
+  if (options?.cells && options.cells.length > 0) {
+    node.cells = options.cells.map((c) => (typeof c === "string" ? { text: c } : c));
   }
   return node;
 }
@@ -710,6 +719,13 @@ export function tree(options: {
    * expansion (and selects it), not only a click on the `▶`/`▼` glyph.
    * The toggle fires `expand` with `payload: { index, key, expanded }`. */
   toggleOnClick?: boolean;
+  /** **A table**: the columns of the rows that carry `cells`. The host
+   * measures the cells, fits the columns to the width layout gives the
+   * tree (the widest column gives first), elides each cell at its
+   * column's end — `elide: "head"` keeps a path's tail, the default keeps
+   * a name's head — and draws a header row of the titles above the rows.
+   * Nothing about widths is the plugin's to compute. */
+  columns?: Array<{ title: string; elide?: "none" | "head" | "tail"; maxWidth?: number }>;
   key?: string;
 }): WidgetSpec {
   return {
@@ -724,6 +740,11 @@ export function tree(options: {
     cardBorders: options.cardBorders ?? false,
     indentCols: options.indentCols ?? 2,
     toggleOnClick: options.toggleOnClick ?? false,
+    columns: (options.columns ?? []).map((c) => ({
+      title: c.title,
+      elide: c.elide ?? "tail",
+      maxWidth: c.maxWidth ?? 0,
+    })),
     key: options.key,
   };
 }

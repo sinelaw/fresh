@@ -2109,7 +2109,7 @@ pub struct RenderedTreeRow {
 /// Measured in one place because three readers need the same number:
 /// the paint that draws it, the budget that keeps the body clear of it,
 /// and [`pan_bounds`], which says how far the body may travel.
-fn tree_row_action_cols(node: &TreeNode) -> usize {
+pub fn tree_row_action_cols(node: &TreeNode) -> usize {
     node.action
         .as_deref()
         .map(|label| ACTION_GAP + crate::primitives::display_width::str_width(label) + 4)
@@ -4548,6 +4548,7 @@ pub mod tests {
             checked: None,
             extra_lines: Vec::new(),
             window_anchor: None,
+            cells: Vec::new(),
             action: None,
         }
     }
@@ -4570,6 +4571,7 @@ pub mod tests {
             item_height: 1,
             card_borders: false,
             toggle_on_click: false,
+            columns: Vec::new(),
             indent_cols: 2,
             key: key.map(|s| s.to_string()),
         }

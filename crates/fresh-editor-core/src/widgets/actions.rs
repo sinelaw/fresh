@@ -379,6 +379,7 @@ mod tests {
             checked: None,
             extra_lines: Vec::new(),
             window_anchor: None,
+            cells: Vec::new(),
             action: None,
         }
     }
@@ -436,6 +437,7 @@ mod tests {
             item_height: 1,
             card_borders: false,
             toggle_on_click: false,
+            columns: Vec::new(),
             indent_cols: 2,
             key: Some("t".into()),
         };
@@ -476,6 +478,7 @@ mod tests {
             item_height: 1,
             card_borders: false,
             toggle_on_click: false,
+            columns: Vec::new(),
             indent_cols: 2,
             key: Some("t".into()),
         };
@@ -517,6 +520,7 @@ mod tests {
             item_height: 1,
             card_borders: false,
             toggle_on_click: false,
+            columns: Vec::new(),
             indent_cols: 2,
             key: Some("t".into()),
         };
@@ -547,6 +551,7 @@ mod tests {
             item_height: 1,
             card_borders: false,
             toggle_on_click: false,
+            columns: Vec::new(),
             indent_cols: 2,
             key: Some("real".into()),
         };

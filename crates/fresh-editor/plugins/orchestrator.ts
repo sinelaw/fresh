@@ -9765,15 +9765,6 @@ function machineFromDialog(d: MachineDialogState): Machine {
   };
 }
 
-// A field that shares its row with `besides` columns (a button and the gap
-// before it) and still ends where the full-width fields do: the dialog's
-// width, less its frame, the marker gutter, the label and the brackets.
-function machineFieldWidth(besides: number): number {
-  const w = editor.getScreenSize().width;
-  const panel = Math.floor((w > 0 ? w : 120) * MACHINE_DIALOG_WIDTH_PCT / 100);
-  return Math.max(12, panel - 4 - 2 - FORM_LABEL_W - 2 - 2 - besides - 2);
-}
-
 // One machine, as a plain form: right-aligned labels, the editable fields,
 // what is known about it (what a config name resolves to, the last test)
 // in the same column without brackets, and the buttons in one footer.
@@ -9800,7 +9791,9 @@ function buildMachineDialogSpec(): WidgetSpec {
     );
     const h = d.hosts.find((x) => x.alias === d.target.value.trim());
     if (h) children.push(machineFact("machine.resolves_to", [{ text: sshResolvedTarget(h) }]));
-    // The key file: typed, or picked with the shared browser beside it.
+    // The key file: typed, or picked with the shared browser beside it. The
+    // field fills what the row leaves beside the button — the host sizes it
+    // from the width it is laid out at.
     const browse = editor.t("repo.browse");
     children.push(
       row(
@@ -9809,7 +9802,7 @@ function buildMachineDialogSpec(): WidgetSpec {
           cursorByte: d.identity.cursor,
           label: splitLabel("form.ssh_identity_label").label,
           labelWidth: FORM_LABEL_W,
-          fieldWidth: machineFieldWidth(editor.stringWidth(browse) + 4 + 2),
+          fullWidth: true,
           key: "machine-identity",
         }),
         spacer(2),
