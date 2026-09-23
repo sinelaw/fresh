@@ -2921,16 +2921,17 @@ impl Editor {
                 if old == target {
                     return;
                 }
-                // **Every registered reaction, not one hand-picked one.**
-                // The tree says where the pointer is; what each surface does
-                // about it stays with that surface. Calling
-                // `menu_hover_reaction` directly instead silently dropped the
-                // reactions belonging to two surfaces that had *also*
-                // migrated: the explorer's git-status tooltip
+                // **Every reaction, and each one called by name.** The tree
+                // says where the pointer is; what each surface does about it
+                // stays with that surface. Calling `menu_hover_reaction`
+                // directly and nothing else once dropped two surfaces that had
+                // *also* migrated — the explorer's git-status tooltip
                 // (`FileExplorerStatusIndicator`) and the status bar's
-                // indicator styling. This is the only thing that reaches any
-                // of them — a reaction this fact does not run is a reaction
-                // that never runs.
+                // indicator styling — and the registry that replaced that call
+                // then dropped the menu's, because its trait method had a
+                // `false` default body and the menu had not written one. Two
+                // surfaces react. Both are named here, so a reaction that is
+                // not run is a name that does not resolve.
                 //
                 // The pointer cell the reactions want is the one the fact
                 // arrived at; a hover fact is always produced by a pointer
@@ -2938,11 +2939,15 @@ impl Editor {
                 // A reaction that changed state — a submenu opened under the
                 // pointer — is a change the next input's routing reads, and
                 // the hover fact itself is transient: this is where it says so.
+                // `|`, not `||`: both reactions run. One surface answering
+                // "yes, that changed something" must not decide whether the
+                // other is offered the move at all — that early return is the
+                // bug the central ladder had.
                 let (col, row) = ev.at;
-                for c in crate::app::chrome::components() {
-                    if c.on_hover_change(self, old.as_ref(), target.as_ref(), col, row) {
-                        self.shell_description_stale = true;
-                    }
+                let changed = self.menu_hover_reaction(target.as_ref())
+                    | self.explorer_hover_reaction(old.as_ref(), target.as_ref(), col, row);
+                if changed {
+                    self.shell_description_stale = true;
                 }
             }
             UiFact::MenuBarPress { index } => {
