@@ -1153,8 +1153,7 @@ impl Editor {
         self.drain_pending_vb_animations();
 
         // Initialize popup/suggestion layout state (rendered after status bar below)
-        self.active_chrome_mut().suggestions_area = None;
-        self.active_chrome_mut().suggestions_outer_area = None;
+        self.active_chrome_mut().suggestions_window = None;
 
         // Clone all immutable values before the mutable borrow
         let display_name = self
@@ -4486,12 +4485,9 @@ impl Editor {
                 .collect(),
             selected: prompt.selected_suggestion,
             // Last frame's window, for the column widths only — see
-            // `Suggestions::window`. `suggestions_area` is where
-            // `record_suggestions_geometry` put it.
-            window: self
-                .active_chrome()
-                .suggestions_area
-                .map(|(_, first, visible, _)| (first, visible)),
+            // `Suggestions::window`. `record_suggestions_window` is where it
+            // came from.
+            window: self.active_chrome().suggestions_window,
             place,
             // The row the painter drew under the popup, now stacked in the
             // layer with it. `render_quick_open_hints` is what this replaces.
@@ -5149,7 +5145,7 @@ impl Editor {
                     prompt.ensure_selected_visible_within(visible);
                 }
             }
-            self.record_suggestions_geometry();
+            self.record_suggestions_window();
             return;
         }
 
@@ -5167,51 +5163,33 @@ impl Editor {
         // box (a themed box fills its own ground), the `y` arithmetic that had
         // to agree with a second copy in `chrome::Prompt::collect`, and the
         // quick-open hints row, which is now the layer's own last row.
-        self.record_suggestions_geometry();
+        self.record_suggestions_window();
     }
 
-    /// Copy the suggestion list's rectangles out of the shell tree.
+    /// Carry the suggestion list's window over to the next description.
     ///
-    /// A bridge, and it is meant to read like one. The click and hover walks
-    /// and the scrollbar drag are gestures in the tree now, and took the
-    /// scrollbar rect with them. What is left reads coordinates for reasons
-    /// that are not input routing: the web `Scene`, which draws from rects;
-    /// `cursor_obscured_by_overlay`, which asks whether the terminal caret is
-    /// under the box; and the column widths the next description is measured
-    /// against. Each of those is a separate migration. Until then they read
-    /// one answer, produced once, by the layout that actually placed the box —
-    /// which is already better than the painter's return value, because there
-    /// is no longer a second derivation to disagree with.
-    fn record_suggestions_geometry(&mut self) {
+    /// The rest of what this recorded is gone: the click and hover walks and
+    /// the scrollbar drag became gestures in the tree, and the two rectangles
+    /// that outlived them had one reader, the web `Scene`, which asks the
+    /// tree for them directly now. What is left is not a cache of anything —
+    /// it is *feedback*, the palette's next description measuring its columns
+    /// against the rows this layout put on screen, and the tree cannot answer
+    /// that while it is the thing being described.
+    ///
+    /// A list with no scrollbar reports no window, and then the window is the
+    /// whole list: every row it has room for, starting at the first.
+    fn record_suggestions_window(&mut self) {
         use crate::view::shell::prompt as p;
         let read = self.shell_ui.as_ref().map(|ui| {
             let spec = ui.spec();
-            (
-                p::suggestions_rect(spec),
-                p::suggestions_list_rect(spec),
-                p::suggestions_window(spec),
-            )
+            (p::suggestions_list_rect(spec), p::suggestions_window(spec))
         });
-        let Some((outer, list, window)) = read else {
+        let Some((list, window)) = read else {
             return;
         };
-        let total = self
-            .active_window()
-            .prompt
-            .as_ref()
-            .map(|p| p.suggestions.len())
-            .unwrap_or(0);
-        let to_rect = |r: fresh_ui::Rect| ratatui::layout::Rect {
-            x: r.x.max(0) as u16,
-            y: r.y.max(0) as u16,
-            width: r.w,
-            height: r.h,
-        };
-        let chrome = self.active_chrome_mut();
-        chrome.suggestions_outer_area = outer.map(to_rect);
-        chrome.suggestions_area = list.map(|r| {
+        self.active_chrome_mut().suggestions_window = list.map(|r| {
             let (first, visible) = window.unwrap_or((0, r.h as usize));
-            (to_rect(r), first, visible.max(r.h as usize), total)
+            (first, visible.max(r.h as usize))
         });
     }
 
