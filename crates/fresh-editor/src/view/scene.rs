@@ -742,21 +742,41 @@ fn project_popup(
 impl Editor {
     /// All visible popups across the per-buffer and global stacks, projected
     /// semantically. Single derivation shared by the web frontend (native HTML)
-    /// and available to the TUI compositor; geometry comes from the pipeline's
-    /// popup-area caches so clicks/scroll route through the existing hit-tester.
+    /// and available to the TUI compositor.
+    ///
+    /// **Geometry is the tree's, by key.** This read two caches that `render`
+    /// filled — `ChromeLayout::popup_areas` and `global_popup_areas`, the last
+    /// two members of the paint-recorded roster — each of which took the outer
+    /// rect off this very tree and then re-derived the content rect from it by
+    /// hand, in two copy-pasted blocks of border arithmetic. Both are keyed
+    /// nodes (`popup::rects_of`, `popup::inner_rects_of`), the popups' order in
+    /// the description is `Editor::popup_counts`' — the buffer's stack, then
+    /// the top of the global one — and the scroll offset was never geometry at
+    /// all: it is on the popup.
     pub fn popups_view(&self) -> Vec<ScenePopup> {
-        let chrome = self.active_chrome();
+        let (buffer_n, total) = self.popup_counts();
+        let outers = self.popup_rects();
+        let inners = self.popup_content_rects();
+        let at = |i: usize| -> (ratatui::layout::Rect, ratatui::layout::Rect) {
+            (
+                outers.get(i).copied().unwrap_or_default(),
+                inners.get(i).copied().unwrap_or_default(),
+            )
+        };
         let mut out = Vec::new();
-        let locals = self.active_state().popups.all();
-        for (idx, outer, inner, scroll, _n, _sb, _t) in &chrome.popup_areas {
-            if let Some(p) = locals.get(*idx) {
-                out.push(project_popup(p, *outer, *inner, *scroll));
+        for (idx, p) in self.active_state().popups.all().iter().enumerate() {
+            if idx >= buffer_n {
+                break;
             }
+            let (outer, inner) = at(idx);
+            out.push(project_popup(p, outer, inner, p.scroll_offset));
         }
-        let globals = self.global_popups.all();
-        for (idx, outer, inner, scroll, _n) in &chrome.global_popup_areas {
-            if let Some(p) = globals.get(*idx) {
-                out.push(project_popup(p, *outer, *inner, *scroll));
+        // The description carries at most the top of the global stack, after
+        // the buffer's — so it is the last entry, and only when there is one.
+        if total > buffer_n {
+            if let Some(p) = self.global_popups.top() {
+                let (outer, inner) = at(buffer_n);
+                out.push(project_popup(p, outer, inner, p.scroll_offset));
             }
         }
         out

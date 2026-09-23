@@ -175,54 +175,6 @@ impl crate::view::shell::fold::ProvenanceSink for FoldProvenance {
 }
 
 impl Editor {
-    /// Render the topmost global popup at its computed area and register its
-    /// click region in `global_popup_areas`. Shared by the generic
-    /// global-popup slot and the workspace-trust modal band so the area math
-    /// lives in exactly one place.
-    fn cache_top_global_popup_area(&mut self) {
-        if self.global_popups.top().is_none() {
-            return;
-        }
-        let top_idx = self.global_popups.all().len() - 1;
-        // The tree's answer. The global top is the last entry the description
-        // carries — the buffer's stack, then this over it.
-        let (buffer_n, _) = self.popup_counts();
-        let popup_area = self
-            .popup_rects()
-            .get(buffer_n)
-            .copied()
-            .unwrap_or_default();
-        let popup = self.global_popups.top().expect("checked just above");
-        let desc_height = popup.description_height();
-        let inner_area = if popup.bordered {
-            ratatui::layout::Rect {
-                x: popup_area.x + 1,
-                y: popup_area.y + 1 + desc_height,
-                width: popup_area.width.saturating_sub(2),
-                height: popup_area.height.saturating_sub(2 + desc_height),
-            }
-        } else {
-            ratatui::layout::Rect {
-                x: popup_area.x,
-                y: popup_area.y + desc_height,
-                width: popup_area.width,
-                height: popup_area.height.saturating_sub(desc_height),
-            }
-        };
-        let num_items = match &popup.content {
-            crate::view::popup::PopupContent::List { items, .. } => items.len(),
-            _ => 0,
-        };
-        let scroll_offset = popup.scroll_offset;
-        self.active_chrome_mut().global_popup_areas.push((
-            top_idx,
-            popup_area,
-            inner_area,
-            scroll_offset,
-            num_items,
-        ));
-    }
-
     /// Ask for another frame because plugin work was deferred out of this one.
     /// The drawing itself never blocks on the plugin lock — every hook site
     /// inside the draw uses `try_read` and skips on contention — so anything
@@ -1225,10 +1177,6 @@ impl Editor {
         // so they overlay on top of both (fixes bottom border being overwritten by status bar)
         self.settle_prompt_suggestions();
 
-        // Cursor-anchored buffer popups (completion, hover, signature help):
-        // recompute their areas for hit-testing and paint them.
-        self.cache_buffer_popup_areas();
-
         // Render editor-level popups (e.g. plugin action popups) on top of any
         // buffer content so they stay visible across buffer switches and over
         // virtual buffers (Dashboard, diagnostics) that own the whole split.
@@ -1239,15 +1187,6 @@ impl Editor {
         // but only the top one renders & receives input. Deeper popups
         // surface as the top is resolved — the alternative (drawing all at
         // the same BottomRight slot) makes them illegible.
-        self.active_chrome_mut().global_popup_areas.clear();
-        // The workspace-trust prompt is a blocking modal: it renders later in
-        // the dedicated modal z-band (alongside settings / wizard) on a dimmed
-        // backdrop, so it can't be lost amongst dashboard/explorer chrome.
-        // Everything else on the global stack renders here, above buffer content.
-        let top_is_trust_modal = self.workspace_trust_on_top();
-        if !top_is_trust_modal {
-            self.cache_top_global_popup_area();
-        }
 
         // The full-screen modals (settings, calibration wizard, keybinding
         // editor, event-debug dialog) and the blocking workspace-trust prompt
@@ -1621,7 +1560,7 @@ impl Editor {
     /// The same rule `popup_descriptions` builds by, stated once so the two
     /// painters index the tree's answer the way the description filled it: the
     /// buffer's stack first, the top of the global one after.
-    fn popup_counts(&self) -> (usize, usize) {
+    pub(crate) fn popup_counts(&self) -> (usize, usize) {
         let buffer = match self.active_state().popups.is_visible() {
             true => self.active_state().popups.all().len(),
             false => 0,
@@ -1631,8 +1570,8 @@ impl Editor {
         (buffer, buffer + global)
     }
 
-    /// Where the tree put the popups.
-    fn popup_rects(&self) -> Vec<ratatui::layout::Rect> {
+    /// Where the tree put the popups: the box each one fills.
+    pub(crate) fn popup_rects(&self) -> Vec<ratatui::layout::Rect> {
         let (_, total) = self.popup_counts();
         match self.shell_ui.as_ref() {
             Some(ui) => crate::view::shell::popup::rects_of(ui, total),
@@ -1640,77 +1579,14 @@ impl Editor {
         }
     }
 
-    fn cache_buffer_popup_areas(&mut self) {
-        self.active_chrome_mut().popup_areas.clear();
-        if !self.active_state().popups.is_visible() {
-            return;
+    /// Where the tree put each popup's content slot — inside the frame, past
+    /// the description. Indexed the same way as [`Self::popup_rects`].
+    pub(crate) fn popup_content_rects(&self) -> Vec<ratatui::layout::Rect> {
+        let (_, total) = self.popup_counts();
+        match self.shell_ui.as_ref() {
+            Some(ui) => crate::view::shell::popup::inner_rects_of(ui, total),
+            None => vec![ratatui::layout::Rect::default(); total],
         }
-        // Where each one landed, read off the tree. This was the caret's
-        // screen position computed here and handed to `calculate_area`, which
-        // then said "clamp to the area's edges" six times; the caret is
-        // published to the tree now (`publish_popup_carets`) and the layer
-        // that names it has already been placed.
-        let rects = self.popup_rects();
-        let popup_info: Vec<_> = self
-            .active_state()
-            .popups
-            .all()
-            .iter()
-            .enumerate()
-            .map(|(popup_idx, popup)| {
-                let popup_area = rects.get(popup_idx).copied().unwrap_or_default();
-                // The rows a painter still owns, inside the frame the tree
-                // placed: the description occupies the top of them.
-                let desc_height = popup.description_height();
-                let inner_area = if popup.bordered {
-                    ratatui::layout::Rect {
-                        x: popup_area.x + 1,
-                        y: popup_area.y + 1 + desc_height,
-                        width: popup_area.width.saturating_sub(2),
-                        height: popup_area.height.saturating_sub(2 + desc_height),
-                    }
-                } else {
-                    ratatui::layout::Rect {
-                        x: popup_area.x,
-                        y: popup_area.y + desc_height,
-                        width: popup_area.width,
-                        height: popup_area.height.saturating_sub(desc_height),
-                    }
-                };
-                let num_items = match &popup.content {
-                    crate::view::popup::PopupContent::List { items, .. } => items.len(),
-                    _ => 0,
-                };
-                let total_lines = popup.item_count();
-                let visible_lines = inner_area.height as usize;
-                let scrollbar_rect = if total_lines > visible_lines && inner_area.width > 2 {
-                    Some(ratatui::layout::Rect {
-                        x: inner_area.x + inner_area.width - 1,
-                        y: inner_area.y,
-                        width: 1,
-                        height: inner_area.height,
-                    })
-                } else {
-                    None
-                };
-                (
-                    popup_idx,
-                    popup_area,
-                    inner_area,
-                    popup.scroll_offset,
-                    num_items,
-                    scrollbar_rect,
-                    total_lines,
-                )
-            })
-            .collect();
-
-        // Store popup areas for mouse hit testing
-        self.active_chrome_mut().popup_areas = popup_info.clone();
-
-        // Nothing is painted here any more: a popup is a layer in the shell's
-        // tree, and the overlay band draws it. What survives is the area cache
-        // above, which the not-yet-migrated hit-testing still reads.
     }
 
     /// Draw the software mouse cursor (GPM, which can't paint its own caret on

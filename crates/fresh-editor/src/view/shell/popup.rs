@@ -274,6 +274,17 @@ pub fn popup_key(i: usize) -> Key {
     Key::Pair("popup".into(), i as u64)
 }
 
+/// The key a placed popup's *content slot* carries — inside the frame, past
+/// the description, which is the rectangle the rows are laid out in.
+///
+/// The editor used to derive this rectangle from the popup's outer rect by
+/// hand, in two copy-pasted blocks: add one for a border, add the
+/// description's height, take two off the width. It is a node, so it is a
+/// read. See [`inner_rects_of`].
+pub fn popup_content_key(i: usize) -> Key {
+    Key::Pair("popup_content".into(), i as u64)
+}
+
 /// The key of a popup's keyboard seam — the focusable that holds focus
 /// while the popup owns the keyboard — which names the popup's key
 /// section: `frame::key_context_of` reads `KeyContext::Completion` or
@@ -310,7 +321,7 @@ pub fn placed_layers(ps: &[Placed]) -> Vec<Node<UiMsg>> {
                     .dismiss(fresh_ui::Dismiss::OUTSIDE_POINTER.passing_through())
                     .on_dismiss(|_| UiMsg::Ui(UiFact::PopupDismissTransient));
             }
-            let content = body(&p.body)
+            let content = body(&p.body, i)
                 .w(Sizing::Cells(p.size.0))
                 .h(Sizing::Cells(p.size.1));
             match &p.keys {
@@ -473,17 +484,22 @@ fn keyboard(l: Node<UiMsg>, content: Node<UiMsg>, k: &Keys) -> Node<UiMsg> {
 /// `Paragraph` put `[×]` over it three cells from the right; both are one row
 /// stacked over the frame, and the row says where each sits instead of two
 /// widgets each computing an `x`.
-pub fn body(b: &Body) -> Node<UiMsg> {
+pub fn body(b: &Body, i: usize) -> Node<UiMsg> {
     // **The content fills the popup, and says so.** It is a flex child under
     // the description, and flex divides what is *left* — so a column that
     // asked only for its natural height gave it nothing to divide (rule L15)
     // and the popup came out empty inside its own frame.
+    //
+    // It carries [`popup_content_key`], because where it lands is the answer
+    // the web's projection wants and layout is what settles it.
     let inner = col().h(Sizing::Flex(1)).children([
         match &b.description {
             Some(d) => description(d),
             None => col().h(Sizing::Cells(0)),
         },
-        content(&b.content, b.selected_hint.as_deref()).flex(1),
+        content(&b.content, b.selected_hint.as_deref())
+            .flex(1)
+            .key(popup_content_key(i)),
     ]);
     // Absorbing *inside* the frame, not around the whole thing: the stacked
     // paths are tried in order and the first that claims ends it, so an absorb
@@ -588,6 +604,29 @@ pub fn rects_of(ui: &fresh_ui::Ui<UiMsg>, n: usize) -> Vec<ratatui::layout::Rect
         .map(|i| {
             let r = ui
                 .find_by_key(&popup_key(i))
+                .map(|id| ui.rect_of(id))
+                .unwrap_or_default();
+            ratatui::layout::Rect {
+                x: r.x.max(0) as u16,
+                y: r.y.max(0) as u16,
+                width: r.w,
+                height: r.h,
+            }
+        })
+        .collect()
+}
+
+/// Where the tree put each popup's *content slot*, in declaration order.
+///
+/// The partner of [`rects_of`] for the rectangle inside the frame and below
+/// the description — what the rows are laid out in, and what the web's
+/// projection reports as the popup's content rect. Same convention: a popup
+/// the tree did not place reports an empty rectangle rather than being absent.
+pub fn inner_rects_of(ui: &fresh_ui::Ui<UiMsg>, n: usize) -> Vec<ratatui::layout::Rect> {
+    (0..n)
+        .map(|i| {
+            let r = ui
+                .find_by_key(&popup_content_key(i))
                 .map(|id| ui.rect_of(id))
                 .unwrap_or_default();
             ratatui::layout::Rect {

@@ -102,10 +102,6 @@ impl ViewLineMapping {
     }
 }
 
-/// Type alias for popup area layout information used in mouse hit testing.
-/// Fields: (popup_index, rect, inner_rect, scroll_offset, num_items, scrollbar_rect, total_lines)
-pub(crate) type PopupAreaLayout = (usize, Rect, Rect, usize, usize, Option<Rect>, usize);
-
 /// Editor-chrome layout cache: full-frame and chrome-region rects
 /// (status bar, menu bar, prompt overlay, popups) plus the screen-
 /// indexed cell-theme map. Per-window geometry is the retained tree's:
@@ -120,12 +116,8 @@ pub(crate) type PopupAreaLayout = (usize, Rect, Rect, usize, usize, Option<Rect>
 /// product (content-measured popups, dialog layout math), each with
 /// standing debug parity or documented rationale at its site:
 ///
-///   - `popup_areas` / `global_popup_areas` (info/message popups)
 ///   - `suggestions_area` / `suggestions_outer_area` (the prompt's
 ///     suggestion list, both forms)
-///   - `prompt_toolbar_boxes` (overlay toolbar box tree, in the
-///     toolbar band's own coordinates — the tree gesture reports the
-///     press in that space, so no origin travels with it)
 ///
 /// This list is the ONE enumeration of the parallel geometry path
 /// (recorded by ruling; `docs/internal/retained-mode-ui.md` "The keyed geometry index" retires it).
@@ -133,16 +125,15 @@ pub(crate) type PopupAreaLayout = (usize, Rect, Rect, usize, usize, Option<Rect>
 /// event-time derivation is the default, and this class must not
 /// grow surface by surface without one; retiring it entirely is the
 /// paint-time compositing arc (sinelaw/fresh#3024).
+///
+/// Two entries left it. `popup_areas` / `global_popup_areas` are keyed nodes
+/// now (`shell::popup::{rects_of, inner_rects_of}`): both caches took the
+/// outer rect off the tree and then re-derived the content rect by hand, so
+/// they were a second statement of an answer the tree already held.
+/// `prompt_toolbar_boxes` was listed here and exists nowhere in the
+/// workspace — a roster entry outliving its field.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct ChromeLayout {
-    /// Popup areas for mouse hit testing
-    /// scrollbar_rect is Some if popup has a scrollbar
-    pub popup_areas: Vec<PopupAreaLayout>,
-    /// Editor-level popup areas (e.g. plugin action popups) for mouse hit
-    /// testing. Stored separately from buffer popups because they're owned by
-    /// `Editor.global_popups` rather than the active buffer's state.
-    /// Fields: (popup_index, rect, inner_rect, scroll_offset, num_items)
-    pub global_popup_areas: Vec<(usize, Rect, Rect, usize, usize)>,
     /// Suggestions area for mouse hit testing
     /// (inner_rect, scroll_start_idx, visible_count, total_count)
     pub suggestions_area: Option<(Rect, usize, usize, usize)>,
