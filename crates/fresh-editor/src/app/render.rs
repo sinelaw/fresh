@@ -6619,65 +6619,36 @@ impl Editor {
                 + sep_w * right.len().saturating_sub(1);
             let left_min_target = available.saturating_mul(2).saturating_div(5).min(40);
             let right_budget = available.saturating_sub(left_min_target + 1);
-            if total_right > right_budget && right.len() > 1 {
+            // How many right elements are kept whatever happens. Normally one,
+            // so a user who configured any right-side status keeps some of it.
+            // On a bar too narrow to host both sides — `sb::BOTH_SIDES_MIN`,
+            // the boundary `render_status` drew and `left_budget` kept — it is
+            // none: the left side is what survives there, which is what
+            // "reserve nothing for the right" amounted to when the right was
+            // then clipped to whatever the left had not taken. Said as which
+            // elements are on the bar, because that is the decision it is.
+            let keep = usize::from(available >= sb::BOTH_SIDES_MIN);
+            if total_right > right_budget && right.len() > keep {
                 let mut current = total_right;
-                while current > right_budget && right.len() > 1 {
+                while current > right_budget && right.len() > keep {
                     let Some(dropped) = right.pop() else { break };
                     current = current.saturating_sub(dropped.1).saturating_sub(sep_w);
                 }
             }
 
-            // **And the other half of the budget: cap the left side.**
+            // **The left side is not pre-fitted here, and that is the
+            // point.** `render_status` reserved the right side, spent what was
+            // left on the left, truncated the element that straddled the
+            // boundary and dropped the rest; the migration ported that
+            // arithmetic into `sb::left_budget` and ran it over measured text
+            // before the description existed, which is a picture with a
+            // pre-fitted string in it.
             //
-            // `render_status` reserved the right side first and spent what was
-            // left on the left, truncating the element that did not fit and
-            // dropping the rest. Only the right-hand drop above was ported;
-            // this was not, and layout does not stand in for it — see
-            // `sb::left_budget`, which is the rule and where it is tested.
-            // Without it a long status message pushed `LSP (off)` and
-            // `Palette: Ctrl+P` off the edge, where before the message itself
-            // became `...`.
-            let right_width: usize = right.iter().map(|(_, w, _, _)| *w).sum::<usize>()
-                + sep_w * right.len().saturating_sub(1);
-            let widths: Vec<usize> = left.iter().map(|(_, w, _, _)| *w).collect();
-            let allowed = sb::left_budget(&widths, right_width, sep_w, available);
-            let left: Vec<_> = left
-                .into_iter()
-                .zip(allowed)
-                .map(|((spans, w, kind, token_key), cap)| {
-                    if w <= cap {
-                        return (spans, w, kind, token_key);
-                    }
-                    // The element that did not fit is truncated over its
-                    // concatenated text, as before. Its runs keep their own
-                    // themes rather than collapsing to one style — the only
-                    // difference from `render_status`, and invisible for a
-                    // single-run element like the message.
-                    let text: String = spans.iter().map(|s| s.content.as_ref()).collect();
-                    let cut = crate::view::ui::status_bar::truncate_to_width(&text, cap);
-                    let cut_w = crate::primitives::display_width::str_width(&cut);
-                    let mut budget = cut_w;
-                    let mut kept: Vec<ratatui::text::Span<'static>> = Vec::new();
-                    for sp in spans {
-                        if budget == 0 {
-                            break;
-                        }
-                        let w = crate::primitives::display_width::str_width(&sp.content);
-                        if w <= budget {
-                            budget -= w;
-                            kept.push(sp);
-                        } else {
-                            let part = crate::view::ui::status_bar::truncate_to_width(
-                                sp.content.as_ref(),
-                                budget,
-                            );
-                            budget = 0;
-                            kept.push(ratatui::text::Span::styled(part, sp.style));
-                        }
-                    }
-                    (kept, cut_w, kind, token_key)
-                })
-                .collect();
+            // The description states what is on the bar; who yields and where
+            // the cut falls are `Node::priority` and `Elide::Tail` — see
+            // `sb::yields_last`. The regression the budget existed for (a long
+            // message costing the right side its place) is the priority, and
+            // the cut is made at paint against the width layout settled on.
 
             let item = |(spans, _w, kind, token_key): (
                 Vec<ratatui::text::Span<'static>>,
